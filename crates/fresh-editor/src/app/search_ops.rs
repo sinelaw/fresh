@@ -165,38 +165,14 @@ impl Editor {
     /// update the cached line number (used by the status bar), and scroll
     /// the active split so the cursor is visible.
     ///
-    /// If the match was off-screen and required a scroll, the viewport is
+    /// Delegates to [`Editor::jump_active_cursor_to`] so the viewport
+    /// invariant (cursor must end up visible) is enforced uniformly with
+    /// every other navigation flow (LSP goto-def, jump-to-line, etc.). If
+    /// the match was off-screen and required a scroll, the viewport is
     /// vertically centered on the match to provide surrounding context
-    /// (issue #1251). Matches already visible are not re-scrolled.
+    /// (issue #1251); matches already visible are not re-scrolled.
     fn move_cursor_to_match(&mut self, position: usize) {
-        let active_split = self.split_manager.active_split();
-        let active_buffer = self.active_buffer();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            view_state.cursors.primary_mut().position = position;
-            view_state.cursors.primary_mut().anchor = None;
-            let state = self.buffers.get_mut(&active_buffer).unwrap();
-            if let Some(pos) = state.buffer.offset_to_position(position) {
-                state.primary_cursor_line_number =
-                    crate::model::buffer::LineNumber::Absolute(pos.line);
-            }
-            let top_byte_before = view_state.viewport.top_byte;
-            view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-            if view_state.viewport.top_byte != top_byte_before {
-                // We had to scroll: recenter the match vertically so the user
-                // sees context above and below the match.
-                let viewport_height = view_state.viewport.visible_line_count();
-                let target_rows_from_top = viewport_height / 2;
-                let mut iter = state.buffer.line_iterator(position, 80);
-                for _ in 0..target_rows_from_top {
-                    if iter.prev().is_none() {
-                        break;
-                    }
-                }
-                view_state.viewport.top_byte = iter.current_position();
-                view_state.viewport.top_view_line_offset = 0;
-                view_state.viewport.set_skip_ensure_visible();
-            }
-        }
+        self.jump_active_cursor_to(position, super::navigation::JumpOptions::navigation());
     }
 
     pub(super) fn perform_search(&mut self, query: &str) {

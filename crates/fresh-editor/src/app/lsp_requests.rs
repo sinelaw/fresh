@@ -287,6 +287,10 @@ impl Editor {
                     let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
                     state.apply(cursors, &event);
                 }
+                // Without this the cursor lands at the definition but the
+                // viewport never scrolls when the target file is already
+                // open (#1689).
+                self.ensure_active_cursor_visible_for_navigation(true);
             }
 
             self.status_message = Some(

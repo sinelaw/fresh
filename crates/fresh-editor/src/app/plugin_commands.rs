@@ -989,18 +989,13 @@ impl Editor {
         // state.primary_cursor_line_number which was set before the jump.
         state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(target_line);
 
-        // Update cursors (now in SplitViewState)
-        let cursors = self.active_cursors_mut();
-        cursors.primary_mut().position = clamped_position;
-        cursors.primary_mut().anchor = None;
-
-        // Ensure the position is visible in the active split's viewport
-        let active_split = self.split_manager.active_split();
-        let active_buffer = self.active_buffer();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-            let state = self.buffers.get_mut(&active_buffer).unwrap();
-            view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-        }
+        // Funnel through the navigation primitive so the cursor is guaranteed
+        // visible in the viewport (#1689 — without this, jump_to_line_column
+        // could land off-screen if a prior scroll set skip_ensure_visible).
+        self.jump_active_cursor_to(
+            clamped_position,
+            super::navigation::JumpOptions::navigation(),
+        );
     }
 
     /// Handle OpenFileAtLocation command

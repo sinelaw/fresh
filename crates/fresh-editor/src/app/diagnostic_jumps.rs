@@ -63,6 +63,9 @@ impl Editor {
             };
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);
+            // Diagnostics can be on any line; the viewport must scroll so the
+            // user actually sees the error after pressing F8 (#1689).
+            self.ensure_active_cursor_visible_for_navigation(true);
 
             // Show diagnostic message in status bar
             let state = self.active_state();
@@ -131,6 +134,9 @@ impl Editor {
             };
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);
+            // Diagnostics can be on any line; the viewport must scroll so the
+            // user actually sees the error after pressing F8 (#1689).
+            self.ensure_active_cursor_visible_for_navigation(true);
 
             // Show diagnostic message in status bar
             let state = self.active_state();

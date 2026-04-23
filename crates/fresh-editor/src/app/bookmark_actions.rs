@@ -60,6 +60,10 @@ impl Editor {
 
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
+        // Bookmarks can point anywhere in the file; the viewport must scroll
+        // to follow the jump even when the bookmark target is in the same
+        // buffer that's already visible (#1689).
+        self.ensure_active_cursor_visible_for_navigation(true);
         self.set_status_message(t!("bookmark.jumped", key = key).to_string());
     }
 

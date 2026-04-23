@@ -47,6 +47,7 @@ mod macros;
 mod menu_actions;
 mod menu_context;
 mod mouse_input;
+mod navigation;
 mod on_save_actions;
 mod path_utils;
 mod plugin_commands;

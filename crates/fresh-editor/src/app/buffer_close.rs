@@ -752,6 +752,10 @@ impl Editor {
                 let state = self.buffers.get_mut(&target_buffer).unwrap();
                 let view_state = self.split_view_states.get_mut(&split_id).unwrap();
                 state.apply(&mut view_state.cursors, &event);
+                // Position-history entries can land anywhere in the buffer;
+                // the viewport must scroll to the restored cursor or the user
+                // sees the same page after Ctrl+- / Ctrl+= (#1689).
+                self.ensure_active_cursor_visible_for_navigation(true);
             }
         }
 
@@ -792,6 +796,10 @@ impl Editor {
                 let state = self.buffers.get_mut(&target_buffer).unwrap();
                 let view_state = self.split_view_states.get_mut(&split_id).unwrap();
                 state.apply(&mut view_state.cursors, &event);
+                // Position-history entries can land anywhere in the buffer;
+                // the viewport must scroll to the restored cursor or the user
+                // sees the same page after Ctrl+- / Ctrl+= (#1689).
+                self.ensure_active_cursor_visible_for_navigation(true);
             }
         }
 
