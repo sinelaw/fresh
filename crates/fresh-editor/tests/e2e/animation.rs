@@ -5,6 +5,7 @@
 //! dashboard animations live in `e2e/plugins/dashboard.rs`.
 
 use crate::common::harness::EditorTestHarness;
+use fresh::config::Config;
 
 /// Cycling to the next tab fires a slide-in effect over the active
 /// split's content area. We don't assert the direction of the slide
@@ -13,9 +14,14 @@ use crate::common::harness::EditorTestHarness;
 /// `animations.is_active()` to flip true, which proves the Editor
 /// actually kicked the animation off. Then we wait for it to settle
 /// and verify the post-animation frame shows the new active buffer.
+///
+/// Animations are off by default in the test harness (see the comment
+/// in common/harness.rs); this test opts them back on via an explicit
+/// Config::default().
 #[test]
 fn next_buffer_kicks_off_a_slide_animation() {
-    let mut harness = EditorTestHarness::with_temp_project(100, 24).unwrap();
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(100, 24, Config::default()).unwrap();
     let project_dir = harness.project_dir().unwrap();
 
     // Two files with distinctive content so the post-settle frame

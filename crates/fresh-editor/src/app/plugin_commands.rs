@@ -2642,6 +2642,9 @@ impl Editor {
         rect: fresh_core::api::AnimationRect,
         kind: fresh_core::api::PluginAnimationKind,
     ) {
+        if !self.config.editor.animations {
+            return;
+        }
         let area = ratatui::layout::Rect::new(rect.x, rect.y, rect.width, rect.height);
         if area.width == 0 || area.height == 0 {
             return;
@@ -2666,6 +2669,9 @@ impl Editor {
         buffer_id: BufferId,
         kind: fresh_core::api::PluginAnimationKind,
     ) {
+        if !self.config.editor.animations {
+            return;
+        }
         match self.virtual_buffer_screen_rect(buffer_id) {
             Some(area) => {
                 let animation_kind = translate_plugin_animation_kind(kind);

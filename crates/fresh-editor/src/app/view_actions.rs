@@ -84,6 +84,9 @@ impl Editor {
         if direction == 0 {
             return;
         }
+        if !self.config.editor.animations {
+            return;
+        }
         let Some(area) = self
             .cached_layout
             .split_areas

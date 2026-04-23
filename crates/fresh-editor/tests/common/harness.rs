@@ -442,10 +442,16 @@ impl EditorTestHarness {
         // If no config provided, use defaults; if config provided, respect its settings
         let config_was_provided = options.config.is_some();
         let mut config = options.config.unwrap_or_default();
-        // Only override auto_indent/auto_close if no config was explicitly provided
+        // Only override auto_indent/auto_close/animations if no config was
+        // explicitly provided. Animations span multiple render ticks, so
+        // tests that drive the UI via single `render()` calls and then
+        // inspect the screen would see mid-slide frames instead of the
+        // settled result. Tests that want to exercise the animation
+        // layer pass their own Config with `animations: true`.
         if !config_was_provided {
             config.editor.auto_indent = false; // Disable for simpler testing
             config.editor.auto_close = false; // Disable for simpler testing
+            config.editor.animations = false;
         }
         // Force "default" keybinding map for consistent test behavior across platforms
         // (Config::default() uses platform-specific keymaps which breaks test assumptions)

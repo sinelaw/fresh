@@ -144,6 +144,7 @@ pub struct PartialEditorConfig {
     pub auto_indent: Option<bool>,
     pub auto_close: Option<bool>,
     pub auto_surround: Option<bool>,
+    pub animations: Option<bool>,
     pub line_numbers: Option<bool>,
     pub relative_line_numbers: Option<bool>,
     pub scroll_offset: Option<usize>,
@@ -216,6 +217,7 @@ impl Merge for PartialEditorConfig {
         self.auto_indent.merge_from(&other.auto_indent);
         self.auto_close.merge_from(&other.auto_close);
         self.auto_surround.merge_from(&other.auto_surround);
+        self.animations.merge_from(&other.animations);
         self.line_numbers.merge_from(&other.line_numbers);
         self.relative_line_numbers
             .merge_from(&other.relative_line_numbers);
@@ -496,6 +498,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             auto_indent: Some(cfg.auto_indent),
             auto_close: Some(cfg.auto_close),
             auto_surround: Some(cfg.auto_surround),
+            animations: Some(cfg.animations),
             line_numbers: Some(cfg.line_numbers),
             relative_line_numbers: Some(cfg.relative_line_numbers),
             scroll_offset: Some(cfg.scroll_offset),
@@ -574,6 +577,7 @@ impl PartialEditorConfig {
             auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
             auto_close: self.auto_close.unwrap_or(defaults.auto_close),
             auto_surround: self.auto_surround.unwrap_or(defaults.auto_surround),
+            animations: self.animations.unwrap_or(defaults.animations),
             line_numbers: self.line_numbers.unwrap_or(defaults.line_numbers),
             relative_line_numbers: self
                 .relative_line_numbers
