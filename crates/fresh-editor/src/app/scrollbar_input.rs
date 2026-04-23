@@ -289,6 +289,12 @@ impl Editor {
             if buffer_len <= large_file_threshold {
                 // When line wrapping is enabled, use visual row calculations
                 if line_wrap_enabled {
+                    let pipeline_inputs_ver =
+                        crate::view::line_wrap_cache::pipeline_inputs_version(
+                            state.buffer.version(),
+                            state.soft_breaks.version(),
+                            state.conceals.version(),
+                        );
                     super::scrollbar_math::scrollbar_drag_relative_visual(
                         &mut state.buffer,
                         row,
@@ -299,6 +305,8 @@ impl Editor {
                         drag_start_view_line_offset,
                         viewport_height,
                         viewport_width,
+                        &mut state.line_wrap_cache,
+                        pipeline_inputs_ver,
                     )
                 } else {
                     // Small file without line wrap: thumb follows mouse
@@ -470,11 +478,19 @@ impl Editor {
                 if line_wrap_enabled {
                     // calculate_scrollbar_jump_visual already handles max scroll limiting
                     // and returns both byte position and view line offset
+                    let pipeline_inputs_ver =
+                        crate::view::line_wrap_cache::pipeline_inputs_version(
+                            state.buffer.version(),
+                            state.soft_breaks.version(),
+                            state.conceals.version(),
+                        );
                     super::scrollbar_math::scrollbar_jump_visual(
                         &mut state.buffer,
                         ratio,
                         viewport_height,
                         viewport_width,
+                        &mut state.line_wrap_cache,
+                        pipeline_inputs_ver,
                     )
                 } else {
                     // Small file without line wrap: use line-based calculation for precision
