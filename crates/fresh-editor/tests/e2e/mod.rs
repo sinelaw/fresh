@@ -72,6 +72,7 @@ pub mod large_file_inplace_write_bug;
 pub mod large_file_mode;
 pub mod lifecycle;
 pub mod line_number_bugs;
+pub mod line_wrap_cache_consistency;
 pub mod line_wrap_full_visibility;
 pub mod line_wrap_scroll_bugs;
 pub mod line_wrapping;
