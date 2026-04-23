@@ -860,6 +860,10 @@ impl Editor {
         self.key_context == KeyContext::FileExplorer
     }
 
+    pub fn file_explorer_context_menu_open(&self) -> bool {
+        self.file_explorer_context_menu.is_some()
+    }
+
     /// Get current prompt input (for display)
     pub fn prompt_input(&self) -> Option<&str> {
         self.prompt.as_ref().map(|p| p.input.as_str())

@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "挂起进程",
   "cmd.suspend_process_desc": "使用 SIGTSTP 挂起编辑器（Unix）；在父 shell 中用 `fg` 恢复",
   "status.resumed_after_suspend": "已恢复",
-  "status.suspend_unsupported": "此平台不支持挂起"
+  "status.suspend_unsupported": "此平台不支持挂起",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "新建文件名称：",
+  "explorer.new_directory_prompt": "新建文件夹名称："
 }

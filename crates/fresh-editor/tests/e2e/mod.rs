@@ -28,6 +28,7 @@ pub mod duplicate_line;
 pub mod emacs_actions;
 pub mod encoding;
 pub mod explorer_bugs;
+pub mod explorer_context_menu;
 pub mod explorer_menu;
 pub mod external_file_save_as_tab;
 pub mod file_browser;

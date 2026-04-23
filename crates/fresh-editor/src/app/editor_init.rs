@@ -648,6 +648,7 @@ impl Editor {
             interactive_replace_state: None,
             mouse_state: MouseState::default(),
             tab_context_menu: None,
+            file_explorer_context_menu: None,
             theme_info_popup: None,
             cached_layout: CachedLayout::default(),
             command_registry,

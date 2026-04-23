@@ -223,7 +223,7 @@ fn test_explorer_n_keybinding_creates_file() {
         .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
         .unwrap();
     // Wait for the rename prompt to appear (file is created and opened)
-    harness.wait_for_screen_contains("Rename to:").unwrap();
+    harness.wait_for_screen_contains("New file name:").unwrap();
 
     // Check status bar for confirmation
     let screen = harness.screen_to_string();

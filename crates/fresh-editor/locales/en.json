@@ -1352,5 +1352,14 @@
   "warnings.none": "No warnings",
   "settings.field.editor.auto_close": "Auto Close",
   "explorer.move_source_removal_failed": "Copied to destination but could not remove source '%{name}': %{error}",
-  "explorer.move_source_removal_failed_n": "Copied to destination but %{count} sources could not be removed"
+  "explorer.move_source_removal_failed_n": "Copied to destination but %{count} sources could not be removed",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "New file name: ",
+  "explorer.new_directory_prompt": "New folder name: "
 }

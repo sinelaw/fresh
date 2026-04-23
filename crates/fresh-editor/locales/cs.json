@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "Pozastavit proces",
   "cmd.suspend_process_desc": "Pozastavit editor pomocí SIGTSTP (Unix); obnovit pomocí `fg` v nadřazeném shellu",
   "status.resumed_after_suspend": "Obnoveno",
-  "status.suspend_unsupported": "Pozastavení není na této platformě podporováno"
+  "status.suspend_unsupported": "Pozastavení není na této platformě podporováno",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "Název nového souboru: ",
+  "explorer.new_directory_prompt": "Název nové složky: "
 }

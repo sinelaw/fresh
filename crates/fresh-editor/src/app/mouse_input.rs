@@ -530,6 +530,15 @@ impl Editor {
             }
         }
 
+        if let Some(&HoverTarget::FileExplorerContextMenuItem(item_idx)) = new_target.as_ref() {
+            if let Some(ref mut menu) = self.file_explorer_context_menu {
+                if menu.highlighted != item_idx {
+                    menu.highlighted = item_idx;
+                    return true;
+                }
+            }
+        }
+
         // Handle file explorer status indicator hover - show tooltip
         // Always dismiss existing tooltip first when target changes
         if old_target != new_target
@@ -565,7 +574,10 @@ impl Editor {
 
         // Suppress LSP hover when a popup is already visible (e.g. theme info popup,
         // tab context menu) to avoid hover tooltips overlapping other popups.
-        if self.theme_info_popup.is_some() || self.tab_context_menu.is_some() {
+        if self.theme_info_popup.is_some()
+            || self.tab_context_menu.is_some()
+            || self.file_explorer_context_menu.is_some()
+        {
             if self.mouse_state.lsp_hover_state.is_some() {
                 self.mouse_state.lsp_hover_state = None;
                 self.mouse_state.lsp_hover_request_sent = false;
@@ -779,6 +791,26 @@ impl Editor {
 
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
+        if let Some(ref menu) = self.file_explorer_context_menu {
+            let (menu_x, menu_y) = menu.clamped_position(
+                self.cached_layout.last_frame_width,
+                self.cached_layout.last_frame_height,
+            );
+            let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
+            let menu_height = menu.height();
+
+            if col >= menu_x
+                && col < menu_x + menu_width
+                && row > menu_y
+                && row < menu_y + menu_height - 1
+            {
+                let item_idx = (row - menu_y - 1) as usize;
+                if item_idx < menu.items().len() {
+                    return Some(HoverTarget::FileExplorerContextMenuItem(item_idx));
+                }
+            }
+        }
+
         // Check tab context menu first (it's rendered on top)
         if let Some(ref menu) = self.tab_context_menu {
             let menu_x = menu.position.0;
@@ -1357,6 +1389,12 @@ impl Editor {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
+        if self.file_explorer_context_menu.is_some() {
+            if let Some(result) = self.handle_file_explorer_context_menu_click(col, row) {
+                return result;
+            }
+        }
+
         // Check if click is on tab context menu first
         if self.tab_context_menu.is_some() {
             if let Some(result) = self.handle_tab_context_menu_click(col, row) {
@@ -2493,6 +2531,22 @@ impl Editor {
 
     /// Handle right-click event
     pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        if let Some(ref menu) = self.file_explorer_context_menu {
+            let (menu_x, menu_y) = menu.clamped_position(
+                self.cached_layout.last_frame_width,
+                self.cached_layout.last_frame_height,
+            );
+            let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
+            let menu_height = menu.height();
+            if col >= menu_x
+                && col < menu_x + menu_width
+                && row >= menu_y
+                && row < menu_y + menu_height
+            {
+                return Ok(());
+            }
+        }
+
         // First check if a tab context menu is open and the click is on a menu item
         if let Some(ref menu) = self.tab_context_menu {
             let menu_x = menu.position.0;
@@ -2510,6 +2564,43 @@ impl Editor {
                 return Ok(());
             }
         }
+
+        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+            if col >= explorer_area.x
+                && col < explorer_area.x + explorer_area.width
+                && row < explorer_area.y + explorer_area.height
+                && row > explorer_area.y
+            // skip title row
+            {
+                let relative_row = row.saturating_sub(explorer_area.y + 1);
+                let (is_multi, is_root_selected) =
+                    if let Some(ref mut explorer) = self.file_explorer {
+                        let display_nodes = explorer.get_display_nodes();
+                        let scroll_offset = explorer.get_scroll_offset();
+                        let clicked_index = (relative_row as usize) + scroll_offset;
+                        let mut clicked_is_root = false;
+                        if clicked_index < display_nodes.len() {
+                            let (node_id, _) = display_nodes[clicked_index];
+                            explorer.set_selected(Some(node_id));
+                            clicked_is_root = node_id == explorer.tree().root_id();
+                        }
+                        (explorer.has_multi_selection(), clicked_is_root)
+                    } else {
+                        (false, false)
+                    };
+                self.key_context = crate::input::keybindings::KeyContext::FileExplorer;
+                self.tab_context_menu = None;
+                self.file_explorer_context_menu = Some(super::types::FileExplorerContextMenu::new(
+                    col,
+                    row + 1,
+                    is_multi,
+                    is_root_selected,
+                ));
+                return Ok(());
+            }
+        }
+
+        self.file_explorer_context_menu = None;
 
         // Check if right-click is on a tab
         let tab_hit =
@@ -2606,6 +2697,106 @@ impl Editor {
         }
 
         Ok(())
+    }
+
+    /// Handle keyboard navigation for the file explorer context menu.
+    /// Returns `Some` if the key was consumed, `None` to let normal dispatch continue.
+    pub(super) fn handle_file_explorer_context_menu_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<AnyhowResult<()>> {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyModifiers;
+
+        if modifiers != KeyModifiers::NONE {
+            return None;
+        }
+
+        match code {
+            KeyCode::Up => {
+                if let Some(ref mut menu) = self.file_explorer_context_menu {
+                    menu.prev_item();
+                }
+                Some(Ok(()))
+            }
+            KeyCode::Down => {
+                if let Some(ref mut menu) = self.file_explorer_context_menu {
+                    menu.next_item();
+                }
+                Some(Ok(()))
+            }
+            KeyCode::Enter => {
+                let item = {
+                    let menu = self.file_explorer_context_menu.as_ref()?;
+                    menu.items()[menu.highlighted]
+                };
+                self.file_explorer_context_menu = None;
+                self.execute_file_explorer_context_menu_action(item);
+                Some(Ok(()))
+            }
+            KeyCode::Esc => {
+                self.file_explorer_context_menu = None;
+                Some(Ok(()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Handle left-click on the file explorer context menu
+    pub(super) fn handle_file_explorer_context_menu_click(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        // Extract all needed values while the immutable borrow is live, then mutate.
+        let clicked_item: Option<super::types::FileExplorerContextMenuItem> = {
+            let menu = self.file_explorer_context_menu.as_ref()?;
+            let (menu_x, menu_y) = menu.clamped_position(
+                self.cached_layout.last_frame_width,
+                self.cached_layout.last_frame_height,
+            );
+            let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
+            let menu_height = menu.height();
+
+            if col < menu_x
+                || col >= menu_x + menu_width
+                || row < menu_y
+                || row >= menu_y + menu_height
+            {
+                self.file_explorer_context_menu = None;
+                return Some(Ok(()));
+            }
+
+            if row == menu_y || row == menu_y + menu_height - 1 {
+                return Some(Ok(()));
+            }
+
+            let item_idx = (row - menu_y - 1) as usize;
+            menu.items().get(item_idx).copied()
+        };
+
+        self.file_explorer_context_menu = None;
+        if let Some(item) = clicked_item {
+            self.execute_file_explorer_context_menu_action(item);
+        }
+        Some(Ok(()))
+    }
+
+    fn execute_file_explorer_context_menu_action(
+        &mut self,
+        item: super::types::FileExplorerContextMenuItem,
+    ) {
+        use super::types::FileExplorerContextMenuItem;
+        match item {
+            FileExplorerContextMenuItem::NewFile => self.file_explorer_new_file(),
+            FileExplorerContextMenuItem::NewDirectory => self.file_explorer_new_directory(),
+            FileExplorerContextMenuItem::Rename => self.file_explorer_rename(),
+            FileExplorerContextMenuItem::Cut => self.file_explorer_cut(),
+            FileExplorerContextMenuItem::Copy => self.file_explorer_copy(),
+            FileExplorerContextMenuItem::Paste => self.file_explorer_paste(),
+            FileExplorerContextMenuItem::Delete => self.file_explorer_delete(),
+        }
     }
 
     /// Show a tooltip for a file explorer status indicator

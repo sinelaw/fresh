@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_BACKGROUND_FILE: &str = "scripts/landscape-wide.txt";
 
+pub const FILE_EXPLORER_CONTEXT_MENU_WIDTH: u16 = 18;
+
 /// Unique identifier for a buffer group
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferGroupId(pub usize);
@@ -565,6 +567,8 @@ pub enum HoverTarget {
     SearchOptionConfirmEach,
     /// Hovering over a tab context menu item (item_index)
     TabContextMenuItem(usize),
+    /// Hovering over a file explorer context menu item (item_index)
+    FileExplorerContextMenuItem(usize),
 }
 
 /// Tab context menu items
@@ -646,6 +650,119 @@ impl TabContextMenu {
         let items = TabContextMenuItem::all();
         self.highlighted = if self.highlighted == 0 {
             items.len() - 1
+        } else {
+            self.highlighted - 1
+        };
+    }
+}
+
+/// File explorer context menu items
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileExplorerContextMenuItem {
+    NewFile,
+    NewDirectory,
+    Rename,
+    Cut,
+    Copy,
+    Paste,
+    Delete,
+}
+
+impl FileExplorerContextMenuItem {
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::NewFile,
+            Self::NewDirectory,
+            Self::Rename,
+            Self::Cut,
+            Self::Copy,
+            Self::Paste,
+            Self::Delete,
+        ]
+    }
+
+    pub fn multi_selection() -> &'static [Self] {
+        &[Self::Cut, Self::Copy, Self::Paste, Self::Delete]
+    }
+
+    pub fn root_single_selection() -> &'static [Self] {
+        &[Self::NewFile, Self::NewDirectory, Self::Paste]
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::NewFile => t!("explorer.context.new_file").to_string(),
+            Self::NewDirectory => t!("explorer.context.new_directory").to_string(),
+            Self::Rename => t!("explorer.context.rename").to_string(),
+            Self::Cut => t!("explorer.context.cut").to_string(),
+            Self::Copy => t!("explorer.context.copy").to_string(),
+            Self::Paste => t!("explorer.context.paste").to_string(),
+            Self::Delete => t!("explorer.context.delete").to_string(),
+        }
+    }
+}
+
+/// State for file explorer context menu (right-click popup in the file explorer)
+#[derive(Debug, Clone)]
+pub struct FileExplorerContextMenu {
+    /// Screen position where the menu should appear (x, y)
+    pub position: (u16, u16),
+    /// Currently highlighted menu item index
+    pub highlighted: usize,
+    /// Whether the menu was opened with multiple items selected
+    pub is_multi_selection: bool,
+    /// Whether the sole selected node is the project root
+    pub is_root_selected: bool,
+}
+
+impl FileExplorerContextMenu {
+    pub fn new(x: u16, y: u16, is_multi_selection: bool, is_root_selected: bool) -> Self {
+        Self {
+            position: (x, y),
+            highlighted: 0,
+            is_multi_selection,
+            is_root_selected,
+        }
+    }
+
+    pub fn items(&self) -> &'static [FileExplorerContextMenuItem] {
+        if self.is_multi_selection {
+            FileExplorerContextMenuItem::multi_selection()
+        } else if self.is_root_selected {
+            FileExplorerContextMenuItem::root_single_selection()
+        } else {
+            FileExplorerContextMenuItem::all()
+        }
+    }
+
+    pub fn height(&self) -> u16 {
+        self.items().len() as u16 + 2
+    }
+
+    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
+        let x = if self.position.0 + FILE_EXPLORER_CONTEXT_MENU_WIDTH > screen_width {
+            screen_width.saturating_sub(FILE_EXPLORER_CONTEXT_MENU_WIDTH)
+        } else {
+            self.position.0
+        };
+        let h = self.height();
+        let y = if self.position.1 + h > screen_height {
+            screen_height.saturating_sub(h)
+        } else {
+            self.position.1
+        };
+        (x, y)
+    }
+
+    pub fn next_item(&mut self) {
+        let len = self.items().len();
+        self.highlighted = (self.highlighted + 1) % len;
+    }
+
+    pub fn prev_item(&mut self) {
+        let len = self.items().len();
+        self.highlighted = if self.highlighted == 0 {
+            len - 1
         } else {
             self.highlighted - 1
         };

@@ -152,8 +152,8 @@ pub(crate) fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
 }
 
 use self::types::{
-    Bookmark, CachedLayout, EventLineInfo, InteractiveReplaceState, LspMessageEntry,
-    LspProgressInfo, MacroRecordingState, MouseState, SearchState, TabContextMenu,
+    Bookmark, CachedLayout, EventLineInfo, FileExplorerContextMenu, InteractiveReplaceState,
+    LspMessageEntry, LspProgressInfo, MacroRecordingState, MouseState, SearchState, TabContextMenu,
     DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
@@ -596,6 +596,9 @@ pub struct Editor {
 
     /// Tab context menu state (right-click on tabs)
     tab_context_menu: Option<TabContextMenu>,
+
+    /// File explorer context menu state (right-click in file explorer)
+    file_explorer_context_menu: Option<FileExplorerContextMenu>,
 
     /// Theme inspector popup state (Ctrl+Right-Click)
     theme_info_popup: Option<types::ThemeInfoPopup>,
@@ -1505,6 +1508,7 @@ impl Editor {
             lsp_status: String::new(),
             mouse_state: MouseState::default(),
             tab_context_menu: None,
+            file_explorer_context_menu: None,
             theme_info_popup: None,
             cached_layout: CachedLayout::default(),
             command_registry,

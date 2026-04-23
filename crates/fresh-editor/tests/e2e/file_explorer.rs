@@ -2016,10 +2016,10 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     let screen_after = harness.screen_to_string();
     println!("Screen after new file:\n{}", screen_after);
 
-    // A rename prompt should be visible (asking for the new file name)
+    // A prompt should be visible asking for the new file name
     assert!(
-        screen_after.contains("Rename to:"),
-        "A rename prompt should appear after creating new file. Screen:\n{}",
+        screen_after.contains("New file name:"),
+        "A new file name prompt should appear after creating new file. Screen:\n{}",
         screen_after
     );
 
@@ -2029,14 +2029,14 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     // so user can type the desired name from scratch
     let prompt_line = screen_after
         .lines()
-        .find(|l| l.contains("Rename to:"))
+        .find(|l| l.contains("New file name:"))
         .unwrap_or("");
     println!("Prompt line: '{}'", prompt_line);
 
-    // Verify prompt is empty (just "Rename to:" without any filename after)
-    // The prompt line should end with "Rename to:" followed by only whitespace
+    // Verify prompt is empty (just "New file name:" without any filename after)
+    // The prompt line should end with "New file name:" followed by only whitespace
     assert!(
-        prompt_line.trim() == "Rename to:" || prompt_line.trim().ends_with("Rename to:"),
+        prompt_line.trim() == "New file name:" || prompt_line.trim().ends_with("New file name:"),
         "Prompt should start empty (no pre-filled filename). Got: '{}'",
         prompt_line
     );

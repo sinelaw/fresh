@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "프로세스 일시 중단",
   "cmd.suspend_process_desc": "SIGTSTP로 에디터 일시 중단 (Unix); 상위 셸에서 `fg`로 재개",
   "status.resumed_after_suspend": "재개됨",
-  "status.suspend_unsupported": "이 플랫폼에서는 일시 중단이 지원되지 않습니다"
+  "status.suspend_unsupported": "이 플랫폼에서는 일시 중단이 지원되지 않습니다",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "새 파일 이름: ",
+  "explorer.new_directory_prompt": "새 폴더 이름: "
 }

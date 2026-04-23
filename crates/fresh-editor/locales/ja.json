@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "プロセスを一時停止",
   "cmd.suspend_process_desc": "SIGTSTP でエディタを一時停止（Unix）。親シェルで `fg` を実行すると再開",
   "status.resumed_after_suspend": "再開しました",
-  "status.suspend_unsupported": "このプラットフォームでは一時停止はサポートされていません"
+  "status.suspend_unsupported": "このプラットフォームでは一時停止はサポートされていません",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "新しいファイル名: ",
+  "explorer.new_directory_prompt": "新しいフォルダー名: "
 }

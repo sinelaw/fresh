@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "Tạm dừng tiến trình",
   "cmd.suspend_process_desc": "Tạm dừng trình soạn thảo bằng SIGTSTP (Unix); tiếp tục bằng `fg` trong shell cha",
   "status.resumed_after_suspend": "Đã tiếp tục",
-  "status.suspend_unsupported": "Nền tảng này không hỗ trợ tạm dừng"
+  "status.suspend_unsupported": "Nền tảng này không hỗ trợ tạm dừng",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "Tên tệp mới: ",
+  "explorer.new_directory_prompt": "Tên thư mục mới: "
 }

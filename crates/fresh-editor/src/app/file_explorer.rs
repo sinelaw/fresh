@@ -527,6 +527,9 @@ impl Editor {
                                 {
                                     tracing::warn!("Failed to refresh file tree: {}", e);
                                 }
+                                if let Some(ref mut explorer) = self.file_explorer {
+                                    explorer.navigate_to_path(&path_clone);
+                                }
                                 self.set_status_message(
                                     t!("explorer.created_file", name = &filename).to_string(),
                                 );
@@ -536,10 +539,8 @@ impl Editor {
                                     tracing::warn!("Failed to open new file: {}", e);
                                 }
 
-                                // Enter rename mode for the new file with empty prompt
-                                // so user can type the desired filename from scratch
                                 let prompt = crate::view::prompt::Prompt::new(
-                                    t!("explorer.rename_prompt").to_string(),
+                                    t!("explorer.new_file_prompt").to_string(),
                                     crate::view::prompt::PromptType::FileExplorerRename {
                                         original_path: path_clone,
                                         original_name: filename.clone(),
@@ -585,13 +586,15 @@ impl Editor {
                                 {
                                     tracing::warn!("Failed to refresh file tree: {}", e);
                                 }
+                                if let Some(ref mut explorer) = self.file_explorer {
+                                    explorer.navigate_to_path(&path_clone);
+                                }
                                 self.set_status_message(
                                     t!("explorer.created_dir", name = &dirname_clone).to_string(),
                                 );
 
-                                // Enter rename mode for the new folder
                                 let prompt = crate::view::prompt::Prompt::with_initial_text(
-                                    t!("explorer.rename_prompt").to_string(),
+                                    t!("explorer.new_directory_prompt").to_string(),
                                     crate::view::prompt::PromptType::FileExplorerRename {
                                         original_path: path_clone,
                                         original_name: dirname_clone,

@@ -875,6 +875,26 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Simulate a right-click at specific coordinates
+    pub fn mouse_right_click(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
+        let mouse_down = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_down)?;
+        let mouse_up = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Right),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        self.send_mouse(mouse_up)?;
+        self.render()?;
+        Ok(())
+    }
+
     /// Simulate a mouse move (hover) at specific coordinates
     pub fn mouse_move(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
         let mouse_event = MouseEvent {

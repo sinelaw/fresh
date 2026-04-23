@@ -164,8 +164,8 @@ pub fn editor_tick(
 pub(crate) use path_utils::normalize_path;
 
 use self::types::{
-    CachedLayout, InteractiveReplaceState, LspMessageEntry, LspProgressInfo, MouseState,
-    SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
+    CachedLayout, FileExplorerContextMenu, InteractiveReplaceState, LspMessageEntry,
+    LspProgressInfo, MouseState, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;
@@ -727,6 +727,9 @@ pub struct Editor {
 
     /// Tab context menu state (right-click on tabs)
     tab_context_menu: Option<TabContextMenu>,
+
+    /// File explorer context menu state (right-click in file explorer)
+    file_explorer_context_menu: Option<FileExplorerContextMenu>,
 
     /// Theme inspector popup state (Ctrl+Right-Click)
     theme_info_popup: Option<types::ThemeInfoPopup>,

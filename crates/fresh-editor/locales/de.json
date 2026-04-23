@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "Prozess anhalten",
   "cmd.suspend_process_desc": "Editor mit SIGTSTP anhalten (Unix); in der übergeordneten Shell mit `fg` fortsetzen",
   "status.resumed_after_suspend": "Fortgesetzt",
-  "status.suspend_unsupported": "Anhalten wird auf dieser Plattform nicht unterstützt"
+  "status.suspend_unsupported": "Anhalten wird auf dieser Plattform nicht unterstützt",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "Name der neuen Datei: ",
+  "explorer.new_directory_prompt": "Name des neuen Ordners: "
 }

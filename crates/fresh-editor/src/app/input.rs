@@ -74,6 +74,12 @@ impl Editor {
             self.theme_info_popup = None;
         }
 
+        if self.file_explorer_context_menu.is_some() {
+            if let Some(result) = self.handle_file_explorer_context_menu_key(code, modifiers) {
+                return result;
+            }
+        }
+
         // Determine the current context first
         let mut context = self.get_key_context();
 

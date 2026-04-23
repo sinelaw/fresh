@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "Suspender processo",
   "cmd.suspend_process_desc": "Suspender o editor com SIGTSTP (Unix); retomar com `fg` no shell pai",
   "status.resumed_after_suspend": "Retomado",
-  "status.suspend_unsupported": "Suspensão não é suportada nesta plataforma"
+  "status.suspend_unsupported": "Suspensão não é suportada nesta plataforma",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "Nome do novo arquivo: ",
+  "explorer.new_directory_prompt": "Nome da nova pasta: "
 }

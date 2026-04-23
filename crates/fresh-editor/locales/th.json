@@ -1352,5 +1352,14 @@
   "cmd.suspend_process": "พักกระบวนการ",
   "cmd.suspend_process_desc": "พักโปรแกรมแก้ไขด้วย SIGTSTP (Unix); กลับมาทำงานด้วย `fg` ในเชลล์หลัก",
   "status.resumed_after_suspend": "กลับมาทำงานแล้ว",
-  "status.suspend_unsupported": "แพลตฟอร์มนี้ไม่รองรับการพักการทำงาน"
+  "status.suspend_unsupported": "แพลตฟอร์มนี้ไม่รองรับการพักการทำงาน",
+  "explorer.context.copy": "Copy",
+  "explorer.context.cut": "Cut",
+  "explorer.context.delete": "Delete",
+  "explorer.context.new_directory": "New Directory",
+  "explorer.context.new_file": "New File",
+  "explorer.context.paste": "Paste",
+  "explorer.context.rename": "Rename",
+  "explorer.new_file_prompt": "ชื่อไฟล์ใหม่: ",
+  "explorer.new_directory_prompt": "ชื่อโฟลเดอร์ใหม่: "
 }
