@@ -220,6 +220,22 @@ let lastPaintedContentKey: string | null = null;
 // case from the user's request).
 let lastPaintedFocusedIndex = -1;
 
+// Edge the slide-in enters from. Maps 1:1 to the plugin API's `from`
+// field and is resolved from config (plugins.dashboard.slide_from) on
+// each paint() so hot-reload of the setting Just Works. Defaults to
+// "bottom" (slide up from below).
+type SlideFrom = "top" | "bottom" | "left" | "right";
+function resolveSlideFrom(): SlideFrom {
+    const config = editor.getConfig() as Record<string, unknown> | null;
+    const plugins = config?.plugins as Record<string, unknown> | undefined;
+    const dashCfg = plugins?.dashboard as Record<string, unknown> | undefined;
+    const raw = dashCfg?.slide_from;
+    if (raw === "top" || raw === "bottom" || raw === "left" || raw === "right") {
+        return raw;
+    }
+    return "bottom";
+}
+
 // Registered sections, in render order. Built-ins are registered at
 // plugin load (see the bottom of this file); third-party plugins
 // append via the exported `registerSection` API.
@@ -806,7 +822,7 @@ function paint(dims?: { width: number; height: number }) {
         }
         activeAnimationId = editor.animateVirtualBuffer(bufferId, {
             kind: "slideIn",
-            from: "bottom",
+            from: resolveSlideFrom(),
             durationMs: 520,
             delayMs: 0,
         });
