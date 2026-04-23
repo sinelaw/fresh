@@ -1098,7 +1098,7 @@ const gitRefresh: SectionRefresh = async (ctx) => {
     );
 
     // Clickable "review branch" action. Triggers the audit_mode
-    // plugin's `start_review_diff` handler via the plugin-action
+    // plugin's `start_review_branch` handler via the plugin-action
     // bridge — executeAction falls through to Action::PluginAction
     // for any name that's not a built-in, and the plugin manager
     // dispatches that to the registered handler by name.
@@ -1106,7 +1106,7 @@ const gitRefresh: SectionRefresh = async (ctx) => {
     ctx.text("▶ review branch", {
         color: "accent",
         bold: true,
-        onClick: () => editor.executeAction("start_review_diff"),
+        onClick: () => editor.executeAction("start_review_branch"),
     });
     ctx.newline();
 };
