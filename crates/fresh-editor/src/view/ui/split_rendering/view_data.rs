@@ -140,18 +140,6 @@ pub(super) fn build_view_data(
     let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
     tokens = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
 
-    // The renderer-side writeback to `LineWrapCache` is temporarily
-    // disabled as part of the cache-value-type refactor (row count ->
-    // Arc<Vec<ViewLine>>).  Phase 3 of the plan re-enables it by
-    // slicing the full-frame ViewLines per logical line and storing
-    // those Arc<Vec<ViewLine>>s.
-    //
-    // While disabled, the cache is filled only by miss-handler
-    // computations in scroll-math (and the viewport-local count
-    // cache).  No correctness impact — just a temporary perf
-    // regression for first-render cache warmth.
-    let _ = (viewport, view_mode, has_view_transform, line_wrap_enabled);
-
     // Convert tokens to display lines using the view pipeline.
     let is_binary = state.buffer.is_binary();
     let ansi_aware = !is_binary;
@@ -180,6 +168,124 @@ pub(super) fn build_view_data(
     )
     .with_fold_skip(&fold_skip)
     .collect();
+
+    // Writeback to the line-wrap cache.
+    //
+    // We have the full pipeline's output (`source_lines`) for the
+    // visible window.  Slice it by logical line and store each slice
+    // as an `Arc<Vec<ViewLine>>` under the key the scroll-math /
+    // cursor-nav readers will query.  This means subsequent queries
+    // for a line the renderer just visited are O(1) cache hits.
+    //
+    // Skipped when:
+    //   - A plugin view_transform is active.  Its token stream doesn't
+    //     come from raw line text via `build_base_tokens`, so the miss
+    //     handler cannot reproduce it from a one-line input — cached
+    //     entries would mismatch a cache-miss recompute.
+    //   - Line wrap is off.  Every logical line is one visual row;
+    //     caching the trivial answer provides no benefit.
+    //   - Folds or virtual-text injection are active.  Those
+    //     post-processing steps run AFTER this writeback and can add
+    //     lines / reshape rows that a per-line miss-handler recompute
+    //     wouldn't see — keep the cache to pre-fold, pre-virtual-text
+    //     reality so the two writers agree.  (The renderer still uses
+    //     the folded / injected output for drawing; the cache just
+    //     reflects what `compute_line_layout` would produce for the
+    //     same line.)
+    if !has_view_transform
+        && line_wrap_enabled
+        && fold_skip.is_empty()
+        && state.virtual_texts.is_empty()
+    {
+        use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode, LineWrapKey};
+        use crate::view::ui::view_pipeline::LineStart;
+        use std::sync::Arc;
+
+        let cache_view_mode = if matches!(view_mode, ViewMode::PageView) {
+            CacheViewMode::Compose
+        } else {
+            CacheViewMode::Source
+        };
+        let pipeline_inputs_ver = pipeline_inputs_version(
+            state.buffer.version(),
+            state.soft_breaks.version(),
+            state.conceals.version(),
+        );
+        let make_key = |line_start: usize, mode: CacheViewMode| LineWrapKey {
+            pipeline_inputs_version: pipeline_inputs_ver,
+            view_mode: mode,
+            line_start,
+            effective_width: effective_width as u32,
+            gutter_width: gutter_width as u16,
+            wrap_column: viewport.wrap_column.map(|c| c as u32),
+            hanging_indent,
+            line_wrap_enabled: true,
+        };
+
+        // Walk `source_lines` grouping consecutive rows that belong to
+        // the same logical line.  A new logical line begins when we
+        // see `LineStart::Beginning` (only on row 0 of the window) or
+        // `LineStart::AfterSourceNewline`.  `AfterBreak` rows are
+        // wrap continuations — same logical line.
+        // `AfterInjectedNewline` is for plugin-injected breaks; we
+        // conservatively don't publish those runs (their line_start
+        // byte is ambiguous).
+        //
+        // The first row's `source_start_byte` anchors the group to a
+        // buffer byte; if it's `None` (e.g. injected content), skip
+        // the whole group.
+        let mut i = 0;
+        while i < source_lines.len() {
+            let first = &source_lines[i];
+            let is_group_start = match first.line_start {
+                LineStart::Beginning | LineStart::AfterSourceNewline => true,
+                LineStart::AfterInjectedNewline | LineStart::AfterBreak => false,
+            };
+            if !is_group_start {
+                i += 1;
+                continue;
+            }
+            let Some(line_start_byte) = first.source_start_byte else {
+                i += 1;
+                continue;
+            };
+            // Find the end of this logical line's group.
+            let mut j = i + 1;
+            let mut has_injected = false;
+            while j < source_lines.len() {
+                match source_lines[j].line_start {
+                    LineStart::AfterBreak => {
+                        j += 1;
+                    }
+                    LineStart::AfterInjectedNewline => {
+                        has_injected = true;
+                        break;
+                    }
+                    LineStart::Beginning | LineStart::AfterSourceNewline => {
+                        break;
+                    }
+                }
+            }
+            if !has_injected {
+                // Slice `source_lines[i..j]` corresponds to one logical
+                // line with no plugin-injected reshaping.  Store it.
+                let slice: Vec<ViewLine> = source_lines[i..j].to_vec();
+                let arc = Arc::new(slice);
+                state
+                    .line_wrap_cache
+                    .put(make_key(line_start_byte, cache_view_mode), arc.clone());
+                // Also write under `Source` so scroll math (which
+                // queries with its `Source` convention) hits the
+                // same entry.  Same value, same Arc — no deep copy.
+                if !matches!(cache_view_mode, CacheViewMode::Source) {
+                    state
+                        .line_wrap_cache
+                        .put(make_key(line_start_byte, CacheViewMode::Source), arc);
+                }
+            }
+            i = j;
+        }
+    }
 
     // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager.
     let lines = inject_virtual_lines(source_lines, state, theme);
