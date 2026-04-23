@@ -1133,6 +1133,13 @@ pub struct Editor {
     /// main loop consults `is_active`/`next_deadline` to keep re-rendering
     /// while animations are running.
     pub animations: crate::view::animation::AnimationRunner,
+
+    /// Deferred plugin animations targeting a virtual buffer whose
+    /// on-screen Rect wasn't in the cached split layout at command
+    /// dispatch time. Drained at the top of each render pass once
+    /// `split_areas` has been recomputed, so the animation starts on
+    /// the very first frame the buffer actually occupies screen space.
+    pub(crate) pending_vb_animations: Vec<(u64, BufferId, fresh_core::api::PluginAnimationKind)>,
 }
 
 /// A file that should be opened after the TUI starts

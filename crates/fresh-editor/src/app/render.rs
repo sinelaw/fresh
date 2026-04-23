@@ -566,6 +566,12 @@ impl Editor {
         self.cached_layout.close_split_areas = close_split_areas;
         self.cached_layout.maximize_split_areas = maximize_split_areas;
         self.cached_layout.view_line_mappings = view_line_mappings;
+
+        // Promote any deferred virtual-buffer animations whose Rect is now
+        // known. Done here (after split_areas is recomputed, before
+        // apply_all runs at the end of render) so the first frame of the
+        // effect lands on the same paint that made the buffer visible.
+        self.drain_pending_vb_animations();
         let mut separator_areas = self
             .split_manager
             .get_separators_with_ids(editor_content_area);

@@ -2656,15 +2656,17 @@ impl Editor {
 
     /// Handle StartAnimationVirtualBuffer: resolve the virtual buffer's
     /// current on-screen Rect, then delegate to `handle_start_animation_area`.
-    /// If the buffer is not visible, the command is dropped.
+    /// If the rect isn't in the cached split layout yet (common when the
+    /// buffer was just created and no render pass has placed it), the
+    /// request is queued and drained at the top of the next render pass
+    /// once `split_areas` has been recomputed.
     pub(super) fn handle_start_animation_virtual_buffer(
         &mut self,
         id: u64,
         buffer_id: BufferId,
         kind: fresh_core::api::PluginAnimationKind,
     ) {
-        let rect = self.virtual_buffer_screen_rect(buffer_id);
-        match rect {
+        match self.virtual_buffer_screen_rect(buffer_id) {
             Some(area) => {
                 let animation_kind = translate_plugin_animation_kind(kind);
                 self.animations.start_with_id(
@@ -2675,16 +2677,47 @@ impl Editor {
             }
             None => {
                 tracing::debug!(
-                    "animate_virtual_buffer: buffer {:?} not currently visible",
+                    "animate_virtual_buffer: buffer {:?} not yet on screen, deferring",
                     buffer_id
                 );
+                self.pending_vb_animations.push((id, buffer_id, kind));
+            }
+        }
+    }
+
+    /// Retry deferred virtual-buffer animations now that split_areas has
+    /// been recomputed. Called from render() after layout but before
+    /// animations.apply_all so the first frame of the effect lands in
+    /// the same render pass.
+    pub(crate) fn drain_pending_vb_animations(&mut self) {
+        if self.pending_vb_animations.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending_vb_animations);
+        for (id, buffer_id, kind) in pending {
+            match self.virtual_buffer_screen_rect(buffer_id) {
+                Some(area) => {
+                    let animation_kind = translate_plugin_animation_kind(kind);
+                    self.animations.start_with_id(
+                        crate::view::animation::AnimationId::from_raw(id),
+                        area,
+                        animation_kind,
+                    );
+                }
+                None => {
+                    // Still not visible; keep pending for next frame.
+                    self.pending_vb_animations.push((id, buffer_id, kind));
+                }
             }
         }
     }
 
     /// Look up the on-screen Rect currently occupied by `buffer_id`, if any.
     /// Reads from the cached split layout captured in the last render pass.
-    fn virtual_buffer_screen_rect(&self, buffer_id: BufferId) -> Option<ratatui::layout::Rect> {
+    pub(crate) fn virtual_buffer_screen_rect(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<ratatui::layout::Rect> {
         self.cached_layout
             .split_areas
             .iter()

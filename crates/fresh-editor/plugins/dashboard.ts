@@ -201,11 +201,9 @@ type RegisteredSection = {
 let dashboardBufferId: number | null = null;
 let fetchToken = 0; // bumped each open; late fetches from a prior open no-op.
 
-// Set to the current dashboardBufferId once per open; the next
-// viewport_changed fire starts the bringup slide and clears the flag.
-// Using viewport_changed as the trigger ensures the buffer's on-screen
-// Rect is already cached by the editor before animateVirtualBuffer runs.
-let bringupPending: number | null = null;
+// Id of the in-flight bringup animation, so we can cancel it if the
+// dashboard is closed mid-slide (either via buffer_closed or a real
+// file being opened). Null once the animation has been released.
 let bringupAnimationId: number | null = null;
 
 // Registered sections, in render order. Built-ins are registered at
@@ -1521,10 +1519,16 @@ async function openDashboard() {
     }
 
     // Bringup animation: slide the whole dashboard up from the bottom.
-    // Runs once per open. The first render after showBuffer is what
-    // populates the virtual buffer's screen rect, so defer the start
-    // by one frame to give the layout cache a chance to update.
-    bringupPending = dashboardBufferId;
+    // The editor defers the start by one frame if the virtual buffer
+    // isn't in the cached layout yet, so calling this right after
+    // showBuffer is safe — it'll attach to the first frame the
+    // dashboard actually occupies screen space.
+    bringupAnimationId = editor.animateVirtualBuffer(dashboardBufferId, {
+        kind: "slideIn",
+        from: "bottom",
+        durationMs: 520,
+        delayMs: 0,
+    });
 
     bootstrapDashboard(dashboardBufferId);
 }
@@ -1601,7 +1605,6 @@ registerHandler(
                 editor.cancelAnimation(bringupAnimationId);
                 bringupAnimationId = null;
             }
-            bringupPending = null;
             dashboardBufferId = null;
             return;
         }
@@ -1625,7 +1628,6 @@ registerHandler(
             editor.cancelAnimation(bringupAnimationId);
             bringupAnimationId = null;
         }
-        bringupPending = null;
         editor.closeBuffer(dashboardBufferId);
         dashboardBufferId = null;
     },
@@ -1640,18 +1642,6 @@ registerHandler(
     (data: { buffer_id: number; width: number; height: number }) => {
         if (dashboardBufferId === null) return;
         if (data.buffer_id !== dashboardBufferId) return;
-        // First viewport_changed after open: trigger the slide-in over
-        // the dashboard's now-known Rect and forget the pending flag so
-        // subsequent resize events don't re-animate.
-        if (bringupPending !== null && bringupPending === dashboardBufferId) {
-            bringupPending = null;
-            bringupAnimationId = editor.animateVirtualBuffer(dashboardBufferId, {
-                kind: "slideIn",
-                from: "bottom",
-                durationMs: 520,
-                delayMs: 0,
-            });
-        }
         if (data.width === lastPaintedW && data.height === lastPaintedH) return;
         // Pass the fresh dims through so we center against the new
         // split width on this very tick — the getViewport() snapshot
