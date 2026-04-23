@@ -301,6 +301,113 @@ fn scroll_math_miss_handler_matches_fresh_recompute() {
     }
 }
 
+/// Layer 6: terminal resize mid-session.  Resize changes
+/// `effective_width`, which is part of the cache key.  After the
+/// resize, existing entries (under the old width) must not be
+/// returned for queries at the new width — fresh entries are
+/// computed and populated.  Tests that the width dimension is
+/// correctly honored as a separation dimension.
+#[test]
+fn resize_produces_fresh_cache_entries_at_new_width() {
+    let mut harness =
+        EditorTestHarness::with_config(80, TERMINAL_HEIGHT, config_with_wrap()).expect("harness");
+    let fixture = harness
+        .load_buffer_from_text(&mixed_buffer())
+        .expect("load");
+    std::mem::forget(fixture);
+    harness.render().expect("render");
+
+    // Capture geometry BEFORE and sample a line start.
+    let sample_line = {
+        let lines = enumerate_lines(&mut harness, 10);
+        lines[0].0
+    };
+    let (_compose_before, source_before) = current_keys(&harness, sample_line);
+    let v_before = read_cache_entry(&harness, &source_before);
+
+    // Resize to a narrower width.  This changes both width AND gutter
+    // (indirectly through viewport.width).
+    harness.resize(50, TERMINAL_HEIGHT).expect("resize");
+    harness.render().expect("render");
+
+    let (_compose_after, source_after) = current_keys(&harness, sample_line);
+    // The effective width must have changed; otherwise the resize
+    // didn't propagate to viewport.width and this test doesn't
+    // exercise what it claims.
+    assert_ne!(
+        source_before.effective_width, source_after.effective_width,
+        "resize didn't change effective_width — test setup is broken"
+    );
+
+    // A query under the OLD key must still return its stored value
+    // (it's in the map; it just won't be queried by active consumers).
+    if let Some(v) = v_before {
+        assert_eq!(read_cache_entry(&harness, &source_before), Some(v));
+    }
+
+    // A query under the NEW key hits fresh entries written by the
+    // re-render.  The value must match a fresh recompute at the new
+    // width.
+    let post = read_cache_entry(&harness, &source_after);
+    if let Some(v) = post {
+        // Need the line text to recompute.  Enumerate lines fresh.
+        let lines = enumerate_lines(&mut harness, 10);
+        let text = &lines[0].1;
+        let fresh = count_visual_rows_for_text(
+            text,
+            source_after.effective_width as usize,
+            source_after.gutter_width as usize,
+            source_after.hanging_indent,
+        );
+        assert_eq!(v, fresh, "post-resize entry disagrees with fresh recompute");
+    }
+}
+
+/// Layer 6: many small edits in sequence.  Each edit bumps
+/// `buffer.version()`, so each render populates entries under a fresh
+/// key.  The cache should stay bounded and never return a stale value
+/// under the current version.
+#[test]
+fn repeated_edits_keep_cache_consistent() {
+    let mut harness =
+        EditorTestHarness::with_config(80, TERMINAL_HEIGHT, config_with_wrap()).expect("harness");
+    let fixture = harness
+        .load_buffer_from_text(&mixed_buffer())
+        .expect("load");
+    std::mem::forget(fixture);
+    harness.render().expect("render");
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .expect("ctrl+home");
+
+    // Rapid-fire small edits.  Each toggles buffer version, so the
+    // cache should never return a pre-edit value after the edit.
+    for i in 0..30usize {
+        harness.type_text(&format!("{}", i % 10)).expect("type");
+        harness.render().expect("render");
+
+        // Probe all currently-cached lines against a fresh recompute.
+        let lines = enumerate_lines(&mut harness, 20);
+        for (line_start, line_text) in &lines {
+            let (_compose_key, source_key) = current_keys(&harness, *line_start);
+            if let Some(v) = read_cache_entry(&harness, &source_key) {
+                let fresh = count_visual_rows_for_text(
+                    line_text,
+                    source_key.effective_width as usize,
+                    source_key.gutter_width as usize,
+                    source_key.hanging_indent,
+                );
+                assert_eq!(
+                    v, fresh,
+                    "iteration {i}: stale value at line_start={line_start}, \
+                     line_text={line_text:?}, cached={v}, fresh={fresh}"
+                );
+            }
+        }
+    }
+}
+
 /// Layer 5b: after an edit, stale entries must never be returned.
 ///
 /// Flow: load buffer, render (populates cache at version V).  Type a
