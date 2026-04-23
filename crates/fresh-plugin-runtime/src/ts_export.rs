@@ -15,15 +15,16 @@ use oxc_span::SourceType;
 use ts_rs::{Config as TsConfig, TS};
 
 use fresh_core::api::{
-    ActionPopupAction, ActionPopupOptions, ActionSpec, BackgroundProcessResult, BufferInfo,
-    BufferSavedDiff, CompositeHunk, CompositeLayoutConfig, CompositePaneStyle,
+    ActionPopupAction, ActionPopupOptions, ActionSpec, AnimationRect, BackgroundProcessResult,
+    BufferInfo, BufferSavedDiff, CompositeHunk, CompositeLayoutConfig, CompositePaneStyle,
     CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, LanguagePackConfig,
-    LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions, ProcessLimitsPackConfig,
-    ReplaceResult, SpawnResult, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan,
-    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
+    PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SpawnResult, TerminalResult,
+    TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
+    ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -38,6 +39,11 @@ fn get_type_decl(type_name: &str) -> Option<String> {
     // Map TypeScript type names to their ts-rs declarations
     // The type name should match either the Rust struct name or the ts(rename = "...") value
     match type_name {
+        // Animation types
+        "AnimationRect" => Some(AnimationRect::decl(&cfg)),
+        "PluginAnimationEdge" => Some(PluginAnimationEdge::decl(&cfg)),
+        "PluginAnimationKind" => Some(PluginAnimationKind::decl(&cfg)),
+
         // Core types
         "BufferInfo" => Some(BufferInfo::decl(&cfg)),
         "CursorInfo" => Some(CursorInfo::decl(&cfg)),
@@ -213,6 +219,9 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "OverlayColorSpec",               // Used by OverlayOptions.fg/bg
     "InlineOverlay",                  // Used by TextPropertyEntry.inlineOverlays
     "GrammarInfoSnapshot",            // Used by listGrammars
+    "AnimationRect",                  // Used by animateArea
+    "PluginAnimationEdge",            // Used by PluginAnimationKind
+    "PluginAnimationKind",            // Used by animateArea/animateVirtualBuffer
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro
@@ -857,6 +866,9 @@ mod tests {
             "openFileInSplit",
             "showBuffer",
             "closeBuffer",
+            "animateArea",
+            "animateVirtualBuffer",
+            "cancelAnimation",
             "on",
             "off",
             "getEnv",

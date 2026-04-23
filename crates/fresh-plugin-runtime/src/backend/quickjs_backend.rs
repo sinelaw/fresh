@@ -672,6 +672,52 @@ pub struct PluginHandler {
     pub handler_name: String,
 }
 
+/// Parse an `AnimationRect` from a JS object. Missing fields are treated
+/// as 0, which renders as a zero-area rect the runner drops immediately.
+fn parse_animation_rect(
+    obj: &rquickjs::Object<'_>,
+) -> rquickjs::Result<fresh_core::api::AnimationRect> {
+    Ok(fresh_core::api::AnimationRect {
+        x: obj.get::<_, u16>("x").unwrap_or(0),
+        y: obj.get::<_, u16>("y").unwrap_or(0),
+        width: obj.get::<_, u16>("width").unwrap_or(0),
+        height: obj.get::<_, u16>("height").unwrap_or(0),
+    })
+}
+
+/// Parse a `PluginAnimationKind` from a JS object keyed by `kind`. Unknown
+/// kinds fall back to the default `slideIn` shape so the editor side can
+/// still construct something sensible rather than crash.
+fn parse_animation_kind(
+    obj: &rquickjs::Object<'_>,
+) -> rquickjs::Result<fresh_core::api::PluginAnimationKind> {
+    use fresh_core::api::{PluginAnimationEdge, PluginAnimationKind};
+    let kind: String = obj.get::<_, String>("kind").unwrap_or_default();
+    match kind.as_str() {
+        "slideIn" | "" => {
+            let from_str: String = obj.get::<_, String>("from").unwrap_or_default();
+            let from = match from_str.as_str() {
+                "top" => PluginAnimationEdge::Top,
+                "left" => PluginAnimationEdge::Left,
+                "right" => PluginAnimationEdge::Right,
+                _ => PluginAnimationEdge::Bottom,
+            };
+            let duration_ms: u32 = obj.get::<_, u32>("durationMs").unwrap_or(300);
+            let delay_ms: u32 = obj.get::<_, u32>("delayMs").unwrap_or(0);
+            Ok(PluginAnimationKind::SlideIn {
+                from,
+                duration_ms,
+                delay_ms,
+            })
+        }
+        other => Err(rquickjs::Error::new_from_js_message(
+            "string",
+            "PluginAnimationKind",
+            format!("unknown animation kind: {}", other),
+        )),
+    }
+}
+
 /// JavaScript-exposed Editor API using rquickjs class system
 /// This allows proper lifetime handling for methods returning JS values
 #[derive(rquickjs::class::Trace, rquickjs::JsLifetime)]
@@ -1406,6 +1452,63 @@ impl JsEditorApi {
             .send(PluginCommand::CloseBuffer {
                 buffer_id: BufferId(buffer_id as usize),
             })
+            .is_ok()
+    }
+
+    // === Frame-buffer animations ===
+
+    /// Allocate a fresh animation id from the shared request-id counter.
+    /// Not exposed to JS — used internally by `animateArea` /
+    /// `animateVirtualBuffer`.
+    #[plugin_api(skip)]
+    #[qjs(skip)]
+    fn alloc_animation_id(&self) -> u64 {
+        let mut id_ref = self.next_request_id.borrow_mut();
+        let id = *id_ref;
+        *id_ref += 1;
+        id
+    }
+
+    /// Start a frame-buffer animation over an arbitrary screen region.
+    /// Returns an animation id usable with `cancelAnimation`.
+    pub fn animate_area<'js>(
+        &self,
+        #[plugin_api(ts_type = "AnimationRect")] rect: rquickjs::Object<'js>,
+        #[plugin_api(ts_type = "PluginAnimationKind")] kind: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<u64> {
+        let rect = parse_animation_rect(&rect)?;
+        let kind = parse_animation_kind(&kind)?;
+        let id = self.alloc_animation_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::StartAnimationArea { id, rect, kind });
+        Ok(id)
+    }
+
+    /// Start an animation over the on-screen Rect currently occupied by a
+    /// virtual buffer. No-op if the buffer is not visible.
+    pub fn animate_virtual_buffer<'js>(
+        &self,
+        buffer_id: u32,
+        #[plugin_api(ts_type = "PluginAnimationKind")] kind: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<u64> {
+        let kind = parse_animation_kind(&kind)?;
+        let id = self.alloc_animation_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::StartAnimationVirtualBuffer {
+                id,
+                buffer_id: BufferId(buffer_id as usize),
+                kind,
+            });
+        Ok(id)
+    }
+
+    /// Cancel an animation previously started via `animateArea` or
+    /// `animateVirtualBuffer`. No-op if the ID is unknown or already done.
+    pub fn cancel_animation(&self, id: u64) -> bool {
+        self.command_sender
+            .send(PluginCommand::CancelAnimation { id })
             .is_ok()
     }
 

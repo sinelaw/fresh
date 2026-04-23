@@ -631,6 +631,19 @@ type GrammarInfoSnapshot = {
 	*/
 	short_name: string | null;
 };
+type AnimationRect = {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+};
+type PluginAnimationEdge = "top" | "bottom" | "left" | "right";
+type PluginAnimationKind = {
+	"kind": "slideIn";
+	from: PluginAnimationEdge;
+	durationMs: number;
+	delayMs: number;
+};
 type AuthorityFilesystem = {
 	kind: "local";
 };
@@ -1139,6 +1152,21 @@ interface EditorAPI {
 	* Close a buffer
 	*/
 	closeBuffer(bufferId: number): boolean;
+	/**
+	* Start a frame-buffer animation over an arbitrary screen region.
+	* Returns an animation id usable with `cancelAnimation`.
+	*/
+	animateArea(rect: AnimationRect, kind: PluginAnimationKind): number;
+	/**
+	* Start an animation over the on-screen Rect currently occupied by a
+	* virtual buffer. No-op if the buffer is not visible.
+	*/
+	animateVirtualBuffer(bufferId: number, kind: PluginAnimationKind): number;
+	/**
+	* Cancel an animation previously started via `animateArea` or
+	* `animateVirtualBuffer`. No-op if the ID is unknown or already done.
+	*/
+	cancelAnimation(id: number): boolean;
 	/**
 	* Subscribe to an editor event
 	*/

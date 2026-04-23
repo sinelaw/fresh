@@ -164,6 +164,44 @@ pub struct VirtualBufferResult {
     pub split_id: Option<u64>,
 }
 
+/// A rectangular region, in cells. Used by the animation plugin API so
+/// callers can target arbitrary screen regions without going through a
+/// virtual buffer.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct AnimationRect {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+/// Edge a slide-in effect enters from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub enum PluginAnimationEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+/// Plugin-facing animation description. Tagged by `kind`. Additional
+/// variants can be added later; plugins must handle the `kind` they send.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum PluginAnimationKind {
+    #[serde(rename_all = "camelCase")]
+    SlideIn {
+        from: PluginAnimationEdge,
+        duration_ms: u32,
+        delay_ms: u32,
+    },
+}
+
 /// Result of creating a buffer group
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1475,6 +1513,28 @@ pub enum PluginCommand {
 
     /// Switch the current split to display a buffer
     ShowBuffer { buffer_id: BufferId },
+
+    /// Start a frame-buffer animation over a given screen region. The `id`
+    /// is allocated on the plugin side so the JS call can return it
+    /// synchronously; the editor uses it verbatim.
+    StartAnimationArea {
+        id: u64,
+        rect: AnimationRect,
+        kind: PluginAnimationKind,
+    },
+
+    /// Start an animation over the on-screen Rect currently occupied by a
+    /// virtual buffer. If the buffer is not visible, the editor ignores
+    /// the command.
+    StartAnimationVirtualBuffer {
+        id: u64,
+        buffer_id: BufferId,
+        kind: PluginAnimationKind,
+    },
+
+    /// Cancel an animation by the ID returned from `animateArea` /
+    /// `animateVirtualBuffer`. No-op if the ID is unknown or already done.
+    CancelAnimation { id: u64 },
 
     /// Create a virtual buffer in an existing split (replaces current buffer in that split)
     CreateVirtualBufferInExistingSplit {

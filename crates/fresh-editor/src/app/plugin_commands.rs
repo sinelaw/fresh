@@ -2633,4 +2633,88 @@ impl Editor {
         let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
         self.plugin_manager.resolve_callback(callback_id, json);
     }
+
+    /// Handle StartAnimationArea: translate the plugin description into an
+    /// AnimationKind and start it at the given Rect with the plugin's ID.
+    pub(super) fn handle_start_animation_area(
+        &mut self,
+        id: u64,
+        rect: fresh_core::api::AnimationRect,
+        kind: fresh_core::api::PluginAnimationKind,
+    ) {
+        let area = ratatui::layout::Rect::new(rect.x, rect.y, rect.width, rect.height);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let animation_kind = translate_plugin_animation_kind(kind);
+        self.animations.start_with_id(
+            crate::view::animation::AnimationId::from_raw(id),
+            area,
+            animation_kind,
+        );
+    }
+
+    /// Handle StartAnimationVirtualBuffer: resolve the virtual buffer's
+    /// current on-screen Rect, then delegate to `handle_start_animation_area`.
+    /// If the buffer is not visible, the command is dropped.
+    pub(super) fn handle_start_animation_virtual_buffer(
+        &mut self,
+        id: u64,
+        buffer_id: BufferId,
+        kind: fresh_core::api::PluginAnimationKind,
+    ) {
+        let rect = self.virtual_buffer_screen_rect(buffer_id);
+        match rect {
+            Some(area) => {
+                let animation_kind = translate_plugin_animation_kind(kind);
+                self.animations.start_with_id(
+                    crate::view::animation::AnimationId::from_raw(id),
+                    area,
+                    animation_kind,
+                );
+            }
+            None => {
+                tracing::debug!(
+                    "animate_virtual_buffer: buffer {:?} not currently visible",
+                    buffer_id
+                );
+            }
+        }
+    }
+
+    /// Look up the on-screen Rect currently occupied by `buffer_id`, if any.
+    /// Reads from the cached split layout captured in the last render pass.
+    fn virtual_buffer_screen_rect(&self, buffer_id: BufferId) -> Option<ratatui::layout::Rect> {
+        self.cached_layout
+            .split_areas
+            .iter()
+            .find(|(_, bid, _, _, _, _)| *bid == buffer_id)
+            .map(|(_, _, content_rect, _, _, _)| *content_rect)
+    }
+}
+
+/// Translate the plugin-facing animation description to the internal
+/// `AnimationKind` the runner consumes.
+fn translate_plugin_animation_kind(
+    kind: fresh_core::api::PluginAnimationKind,
+) -> crate::view::animation::AnimationKind {
+    use crate::view::animation::{AnimationKind, Edge};
+    use fresh_core::api::{PluginAnimationEdge, PluginAnimationKind};
+    use std::time::Duration;
+    match kind {
+        PluginAnimationKind::SlideIn {
+            from,
+            duration_ms,
+            delay_ms,
+        } => AnimationKind::SlideIn {
+            from: match from {
+                PluginAnimationEdge::Top => Edge::Top,
+                PluginAnimationEdge::Bottom => Edge::Bottom,
+                PluginAnimationEdge::Left => Edge::Left,
+                PluginAnimationEdge::Right => Edge::Right,
+            },
+            duration: Duration::from_millis(duration_ms as u64),
+            delay: Duration::from_millis(delay_ms as u64),
+        },
+    }
 }

@@ -188,6 +188,14 @@ impl AnimationRunner {
     pub fn start(&mut self, area: Rect, kind: AnimationKind) -> AnimationId {
         let id = AnimationId(self.next_id);
         self.next_id += 1;
+        self.start_with_id(id, area, kind);
+        id
+    }
+
+    /// Start an effect using a caller-supplied ID. Intended for the plugin
+    /// bridge, where the plugin-side counter is the source of truth so the
+    /// JS call can return the ID synchronously.
+    pub fn start_with_id(&mut self, id: AnimationId, area: Rect, kind: AnimationKind) {
         let now = Instant::now();
         let (effect, delay, duration): (Box<dyn FrameEffect + Send>, Duration, Duration) =
             match kind {
@@ -206,7 +214,6 @@ impl AnimationRunner {
             status: EffectStatus::Running,
             deadline: now + delay + duration,
         });
-        id
     }
 
     pub fn cancel(&mut self, id: AnimationId) {

@@ -760,6 +760,22 @@ impl Editor {
                 self.handle_close_buffer(buffer_id);
             }
 
+            // ==================== Animation Commands ====================
+            PluginCommand::StartAnimationArea { id, rect, kind } => {
+                self.handle_start_animation_area(id, rect, kind);
+            }
+            PluginCommand::StartAnimationVirtualBuffer {
+                id,
+                buffer_id,
+                kind,
+            } => {
+                self.handle_start_animation_virtual_buffer(id, buffer_id, kind);
+            }
+            PluginCommand::CancelAnimation { id } => {
+                self.animations
+                    .cancel(crate::view::animation::AnimationId::from_raw(id));
+            }
+
             // ==================== LSP Commands ====================
             PluginCommand::SendLspRequest {
                 language,
