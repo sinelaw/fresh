@@ -348,6 +348,56 @@ pub fn state_pipeline_inputs_version(state: &EditorState) -> u64 {
     )
 }
 
+/// Count visual rows for a single line's text under the renderer's
+/// wrap algorithm.  Pure function of (text, geometry).
+///
+/// Behaves exactly like the renderer's per-logical-line wrap count:
+/// runs `apply_wrapping_transform` on a single-`Text`-token input and
+/// tallies non-empty rows.  A trailing `Break` emitted when the last
+/// chunk exactly fills the effective width is followed by nothing
+/// meaningful and does not count as a row.
+pub fn count_visual_rows_for_text(
+    line_text: &str,
+    effective_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+) -> u32 {
+    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
+    use fresh_core::api::ViewTokenWire;
+
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(0),
+        kind: ViewTokenWireKind::Text(line_text.to_string()),
+        style: None,
+    }];
+    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
+    let mut rows: u32 = 0;
+    let mut row_has_content = false;
+    for t in &wrapped {
+        match &t.kind {
+            ViewTokenWireKind::Newline => break,
+            ViewTokenWireKind::Break => {
+                if row_has_content {
+                    rows += 1;
+                }
+                row_has_content = false;
+            }
+            ViewTokenWireKind::Text(s) => {
+                if !s.is_empty() {
+                    row_has_content = true;
+                }
+            }
+            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
+                row_has_content = true;
+            }
+        }
+    }
+    if row_has_content {
+        rows += 1;
+    }
+    rows.max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +526,280 @@ mod tests {
     #[should_panic]
     fn zero_capacity_rejected() {
         LineWrapCache::with_capacity(0);
+    }
+
+    // -------------------------------------------------------------------
+    // Layer 4: wrap-function invariants.
+    //
+    // These hold for any correct wrap regardless of cache state. A cache
+    // bug that corrupts a stored value would eventually violate one of
+    // them via the cache-backed path (e.g. width-monotonicity).
+    // -------------------------------------------------------------------
+
+    /// An empty line wraps to exactly one visual row.
+    #[test]
+    fn empty_line_is_one_row() {
+        for width in [5usize, 10, 42, 80, 120] {
+            assert_eq!(count_visual_rows_for_text("", width, 0, false), 1);
+            assert_eq!(count_visual_rows_for_text("", width, 6, false), 1);
+        }
+    }
+
+    /// A line whose visual width fits inside the available width wraps to
+    /// exactly one row.  Tests a few short ASCII strings at a few widths.
+    #[test]
+    fn line_that_fits_is_one_row() {
+        // "hello world" = 11 chars; at effective_width=80, gutter=6 →
+        // available width = 74 > 11, must be 1 row.
+        for text in ["hello", "hello world", "a b c d"] {
+            assert_eq!(count_visual_rows_for_text(text, 80, 6, false), 1);
+        }
+    }
+
+    /// Width monotonicity: widening `effective_width` never *increases*
+    /// the row count.
+    ///
+    /// For a fixed text, any correct wrap satisfies
+    ///     w1 <= w2  →  rows(w1) >= rows(w2).
+    #[test]
+    fn width_monotonicity() {
+        let texts = [
+            "",
+            "short",
+            "a b c d e f g h i j k l m n o",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "word00 word01 word02 word03 word04 word05 word06 word07",
+        ];
+        let gutter = 2usize;
+        for text in &texts {
+            let mut prev_rows: Option<u32> = None;
+            // effective_width must be > gutter to leave any available
+            // width; start well above.
+            for w in [10usize, 15, 20, 30, 50, 80, 120, 200] {
+                let rows = count_visual_rows_for_text(text, w, gutter, false);
+                if let Some(prev) = prev_rows {
+                    assert!(
+                        rows <= prev,
+                        "width monotonicity violated: rows({} chars, w={}) = {} > rows at prev w = {}. \
+                         text={:?}",
+                        text.len(),
+                        w,
+                        rows,
+                        prev,
+                        text,
+                    );
+                }
+                prev_rows = Some(rows);
+            }
+        }
+    }
+
+    /// No row count is ever zero — even pathologically narrow widths or
+    /// unusual inputs return at least 1.
+    #[test]
+    fn row_count_is_always_at_least_one() {
+        let cases = [
+            ("", 80usize),
+            ("x", 80),
+            ("", 2), // near-minimum width
+            ("abc", 3),
+            ("a very long line with lots of words that will definitely wrap", 20),
+        ];
+        for (text, w) in cases {
+            assert!(
+                count_visual_rows_for_text(text, w, 0, false) >= 1,
+                "row count < 1 for text={:?}, width={}",
+                text,
+                w,
+            );
+        }
+    }
+
+    /// Adding characters never *decreases* the row count at a fixed width.
+    ///
+    /// Subset-superset property: if `a` is a prefix of `b`, `rows(a) <=
+    /// rows(b)`.  A cache that returned a stale value for a shortened
+    /// line would fail this.
+    #[test]
+    fn prefix_never_has_more_rows() {
+        let base = "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee";
+        let width = 20usize;
+        let gutter = 2usize;
+        let mut prev_rows: u32 = 0;
+        for len in (0..=base.len()).step_by(5) {
+            let prefix = &base[..len];
+            let rows = count_visual_rows_for_text(prefix, width, gutter, false);
+            assert!(
+                rows >= prev_rows,
+                "prefix property violated: len={}, rows={}, prev_rows={}",
+                len,
+                rows,
+                prev_rows,
+            );
+            prev_rows = rows;
+        }
+    }
+
+    /// Deterministic: same input → same output, always.
+    #[test]
+    fn count_is_deterministic() {
+        let text = "word00 word01 word02 word03 word04 word05 word06 word07 word08 word09";
+        let w = 30usize;
+        let g = 4usize;
+        let r1 = count_visual_rows_for_text(text, w, g, false);
+        for _ in 0..16 {
+            let r = count_visual_rows_for_text(text, w, g, false);
+            assert_eq!(r, r1, "non-deterministic row count");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Layer 3 (partial): shadow-model property test.
+    //
+    // A "shadow" cache always recomputes from the pure `count_visual_rows
+    // _for_text` function; the "real" cache uses `LineWrapCache`. A
+    // mutation-free op stream with random (text, width) probes must
+    // always agree between real and shadow — otherwise the cache is
+    // returning a value inconsistent with fresh computation. Covers the
+    // insert / hit / evict surfaces on the cache primitive without
+    // running the full editor pipeline.
+    //
+    // Full plugin-state shadow (buffer edits, soft-break injection,
+    // conceals, view-mode toggles) lives in an e2e-level test — this
+    // layer is the pure-primitive check.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_agreement_pure_primitive() {
+        // Deterministic "random" inputs from simple counters, so this is
+        // reproducible without a proptest dep.
+        let texts: Vec<String> = (0..30)
+            .map(|i| {
+                let n = (i * 7 + 3) % 120 + 5;
+                let seed = [b'a', b'b', b'c', b' ', b'd', b'e', b'f', b' ', b'1', b'2'];
+                (0..n).map(|k| seed[k % seed.len()] as char).collect()
+            })
+            .collect();
+        let widths: [usize; 5] = [12, 20, 42, 80, 120];
+
+        // Op stream: pick (text_idx, width_idx) pairs, query both real
+        // and shadow.
+        let mut real = LineWrapCache::with_capacity(16);
+        for step in 0..400usize {
+            let t_idx = (step * 37 + 11) % texts.len();
+            let w_idx = (step * 5 + 3) % widths.len();
+            let text = &texts[t_idx];
+            let width = widths[w_idx];
+
+            let shadow_val = count_visual_rows_for_text(text, width, 2, false);
+
+            let key = LineWrapKey {
+                pipeline_inputs_version: 0,
+                view_mode: CacheViewMode::Source,
+                line_start: t_idx, // stand-in for byte; distinct per text
+                effective_width: width as u32,
+                gutter_width: 2,
+                wrap_column: None,
+                hanging_indent: false,
+                line_wrap_enabled: true,
+            };
+            let real_val =
+                real.get_or_insert_with(key, || count_visual_rows_for_text(text, width, 2, false));
+
+            assert_eq!(
+                real_val, shadow_val,
+                "shadow disagreement at step {step}: text_idx={t_idx}, width={width}, \
+                 real={real_val}, shadow={shadow_val}",
+            );
+            assert!(real.len() <= 16, "cache exceeded capacity");
+        }
+    }
+
+    /// Version-bump invalidation: entries stored under version V are
+    /// NEVER returned when a lookup is built at version V+1.  The
+    /// old entry sits in memory until FIFO evicts it, but no caller
+    /// should ever get the stale value.
+    #[test]
+    fn version_bump_makes_old_entry_unreachable() {
+        let mut cache = LineWrapCache::with_capacity(16);
+        let key_v0 = LineWrapKey {
+            pipeline_inputs_version: 100,
+            view_mode: CacheViewMode::Source,
+            line_start: 42,
+            effective_width: 80,
+            gutter_width: 6,
+            wrap_column: None,
+            hanging_indent: false,
+            line_wrap_enabled: true,
+        };
+        cache.get_or_insert_with(key_v0, || 5);
+        assert_eq!(cache.get(&key_v0), Some(5));
+
+        let key_v1 = LineWrapKey {
+            pipeline_inputs_version: 101,
+            ..key_v0
+        };
+        assert_eq!(
+            cache.get(&key_v1),
+            None,
+            "v1 lookup must miss even though v0 entry is still present"
+        );
+
+        // Miss path stores under v1; v0 remains in the map, untouched.
+        let mut miss_called = 0;
+        let v = cache.get_or_insert_with(key_v1, || {
+            miss_called += 1;
+            7
+        });
+        assert_eq!(v, 7);
+        assert_eq!(miss_called, 1);
+        assert_eq!(cache.get(&key_v1), Some(7));
+        assert_eq!(cache.get(&key_v0), Some(5), "v0 entry preserved until evicted");
+    }
+
+    /// All geometry dimensions in the key are distinct — changing any one
+    /// produces a miss.
+    #[test]
+    fn every_key_dimension_separates_entries() {
+        let base = LineWrapKey {
+            pipeline_inputs_version: 1,
+            view_mode: CacheViewMode::Source,
+            line_start: 10,
+            effective_width: 80,
+            gutter_width: 6,
+            wrap_column: None,
+            hanging_indent: false,
+            line_wrap_enabled: true,
+        };
+
+        // Vary each field in turn; each variation must be a distinct key.
+        let variations: [LineWrapKey; 8] = [
+            LineWrapKey { pipeline_inputs_version: 2, ..base },
+            LineWrapKey { view_mode: CacheViewMode::Compose, ..base },
+            LineWrapKey { line_start: 11, ..base },
+            LineWrapKey { effective_width: 81, ..base },
+            LineWrapKey { gutter_width: 7, ..base },
+            LineWrapKey { wrap_column: Some(70), ..base },
+            LineWrapKey { hanging_indent: true, ..base },
+            LineWrapKey { line_wrap_enabled: false, ..base },
+        ];
+
+        let mut cache = LineWrapCache::with_capacity(16);
+        cache.get_or_insert_with(base, || 1);
+        for (i, v) in variations.iter().enumerate() {
+            assert_ne!(*v, base, "variation {i} shouldn't equal base");
+            assert_eq!(
+                cache.get(v),
+                None,
+                "variation {i} unexpectedly hit base entry"
+            );
+            cache.get_or_insert_with(*v, || 2 + i as u32);
+        }
+        // Base entry is still reachable.
+        assert_eq!(cache.get(&base), Some(1));
+        // Each variation stored its own value.
+        for (i, v) in variations.iter().enumerate() {
+            assert_eq!(cache.get(v), Some(2 + i as u32));
+        }
     }
 }
