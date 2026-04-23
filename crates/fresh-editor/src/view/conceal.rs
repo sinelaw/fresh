@@ -59,12 +59,24 @@ impl ConcealRange {
 #[derive(Debug, Clone)]
 pub struct ConcealManager {
     ranges: Vec<ConcealRange>,
+    /// Monotonic counter bumped on every mutation. Consumers that cache derived
+    /// data (e.g. `LineWrapCache`) fold this into their key so any mutation
+    /// invalidates stale entries automatically.
+    version: u32,
 }
 
 impl ConcealManager {
     /// Create a new empty conceal manager
     pub fn new() -> Self {
-        Self { ranges: Vec::new() }
+        Self {
+            ranges: Vec::new(),
+            version: 0,
+        }
+    }
+
+    /// Monotonic version, bumped on every mutation.
+    pub fn version(&self) -> u32 {
+        self.version
     }
 
     /// Add a conceal range
@@ -84,6 +96,7 @@ impl ConcealManager {
             end_marker,
             replacement,
         });
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Remove all conceal ranges in a namespace
@@ -97,11 +110,15 @@ impl ConcealManager {
             .collect();
 
         // Remove ranges
+        let before = self.ranges.len();
         self.ranges.retain(|r| &r.namespace != namespace);
 
         // Delete markers
         for marker_id in markers_to_delete {
             marker_list.delete(marker_id);
+        }
+        if self.ranges.len() != before {
+            self.version = self.version.wrapping_add(1);
         }
     }
 
@@ -114,20 +131,28 @@ impl ConcealManager {
             .flat_map(|r| vec![r.start_marker, r.end_marker])
             .collect();
 
+        let before = self.ranges.len();
         self.ranges.retain(|r| !r.overlaps(range, marker_list));
 
         for marker_id in markers_to_delete {
             marker_list.delete(marker_id);
         }
+        if self.ranges.len() != before {
+            self.version = self.version.wrapping_add(1);
+        }
     }
 
     /// Clear all conceal ranges and their markers
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
+        let had_any = !self.ranges.is_empty();
         for range in &self.ranges {
             marker_list.delete(range.start_marker);
             marker_list.delete(range.end_marker);
         }
         self.ranges.clear();
+        if had_any {
+            self.version = self.version.wrapping_add(1);
+        }
     }
 
     /// Query conceal ranges that overlap a viewport range.

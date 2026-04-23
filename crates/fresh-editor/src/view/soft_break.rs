@@ -51,12 +51,24 @@ impl SoftBreakPoint {
 #[derive(Debug, Clone)]
 pub struct SoftBreakManager {
     breaks: Vec<SoftBreakPoint>,
+    /// Monotonic counter bumped on every mutation. Consumers that cache derived
+    /// data (e.g. `LineWrapCache`) fold this into their key so any mutation
+    /// invalidates stale entries automatically.
+    version: u32,
 }
 
 impl SoftBreakManager {
     /// Create a new empty soft break manager
     pub fn new() -> Self {
-        Self { breaks: Vec::new() }
+        Self {
+            breaks: Vec::new(),
+            version: 0,
+        }
+    }
+
+    /// Monotonic version, bumped on every mutation.
+    pub fn version(&self) -> u32 {
+        self.version
     }
 
     /// Add a soft break point
@@ -74,6 +86,7 @@ impl SoftBreakManager {
             marker_id,
             indent,
         });
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Remove all soft breaks in a namespace
@@ -85,10 +98,14 @@ impl SoftBreakManager {
             .map(|b| b.marker_id)
             .collect();
 
+        let before = self.breaks.len();
         self.breaks.retain(|b| &b.namespace != namespace);
 
         for marker_id in markers_to_delete {
             marker_list.delete(marker_id);
+        }
+        if self.breaks.len() != before {
+            self.version = self.version.wrapping_add(1);
         }
     }
 
@@ -101,19 +118,27 @@ impl SoftBreakManager {
             .map(|b| b.marker_id)
             .collect();
 
+        let before = self.breaks.len();
         self.breaks.retain(|b| !b.in_range(start, end, marker_list));
 
         for marker_id in markers_to_delete {
             marker_list.delete(marker_id);
         }
+        if self.breaks.len() != before {
+            self.version = self.version.wrapping_add(1);
+        }
     }
 
     /// Clear all soft breaks and their markers
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
+        let had_any = !self.breaks.is_empty();
         for bp in &self.breaks {
             marker_list.delete(bp.marker_id);
         }
         self.breaks.clear();
+        if had_any {
+            self.version = self.version.wrapping_add(1);
+        }
     }
 
     /// Query soft breaks that fall within a viewport range.
