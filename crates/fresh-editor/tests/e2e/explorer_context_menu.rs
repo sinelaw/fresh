@@ -18,6 +18,14 @@ use std::fs;
 const EXPLORER_COL: u16 = 10;
 const EXPLORER_ROW: u16 = 5; // well inside content rows
 
+// The "Paste" item is present in every mode of the context menu (single,
+// multi-selection, root).  Matching on " Paste " — with surrounding
+// whitespace so it does NOT collide with status messages like "Pasted:" —
+// is a reliable observe-only signal for "menu is visible on screen".
+fn context_menu_visible(h: &EditorTestHarness) -> bool {
+    h.screen_to_string().contains(" Paste ")
+}
+
 // ── open helper ──────────────────────────────────────────────────────────────
 
 fn harness_with_explorer() -> EditorTestHarness {
@@ -35,12 +43,12 @@ fn harness_with_explorer() -> EditorTestHarness {
 fn test_right_click_opens_context_menu() {
     let mut h = harness_with_explorer();
 
-    assert!(!h.editor().file_explorer_context_menu_open());
+    assert!(!context_menu_visible(&h));
 
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
 
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Context menu should be open after right-click in file explorer"
     );
 }
@@ -65,13 +73,13 @@ fn test_context_menu_shows_all_items() {
 fn test_right_click_outside_closes_menu() {
     let mut h = harness_with_explorer();
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(h.editor().file_explorer_context_menu_open());
+    assert!(context_menu_visible(&h));
 
     // Right-click in the editor area (right of the explorer)
     h.mouse_right_click(60, 10).unwrap();
 
     assert!(
-        !h.editor().file_explorer_context_menu_open(),
+        !context_menu_visible(&h),
         "Context menu should be closed after right-click outside the explorer"
     );
 }
@@ -81,13 +89,13 @@ fn test_right_click_outside_closes_menu() {
 fn test_left_click_outside_closes_menu() {
     let mut h = harness_with_explorer();
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(h.editor().file_explorer_context_menu_open());
+    assert!(context_menu_visible(&h));
 
     // Left-click somewhere outside the menu
     h.mouse_click(60, 10).unwrap();
 
     assert!(
-        !h.editor().file_explorer_context_menu_open(),
+        !context_menu_visible(&h),
         "Context menu should be closed after left-click outside"
     );
 }
@@ -100,7 +108,7 @@ fn test_right_click_title_row_no_menu() {
     h.mouse_right_click(EXPLORER_COL, 1).unwrap();
 
     assert!(
-        !h.editor().file_explorer_context_menu_open(),
+        !context_menu_visible(&h),
         "Right-clicking the title row should not open the context menu"
     );
 }
@@ -116,7 +124,7 @@ fn test_no_menu_when_explorer_closed() {
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
 
     assert!(
-        !h.editor().file_explorer_context_menu_open(),
+        !context_menu_visible(&h),
         "Context menu must not open when file explorer is not visible"
     );
 }
@@ -140,7 +148,7 @@ fn test_right_click_selects_node() {
 
     // The context menu opens (confirming a node was found at that row).
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Right-clicking a file node should open the context menu"
     );
 }
@@ -292,12 +300,10 @@ fn test_context_menu_delete_action() {
         screen
     );
 
-    // Cancel the deletion.
-    if let Some(prompt) = h.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("n");
-    }
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Cancel the deletion via Esc (drives through the keyboard, not internal
+    // prompt state).  ConfirmDeleteFile only deletes on "y"/"yes" input, so
+    // Esc dismissing the prompt is sufficient to cancel.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
 
     assert!(
@@ -329,12 +335,9 @@ fn test_context_menu_rename_action() {
     h.mouse_right_click(EXPLORER_COL, 3).unwrap();
     h.mouse_click(EXPLORER_COL + 2, rename_row).unwrap();
 
-    // Should show rename prompt.
+    // Should show the rename prompt with its "Rename to:" label.
     h.wait_for_prompt().unwrap();
-    assert!(
-        h.editor().is_prompting(),
-        "Rename prompt should appear after clicking Rename in context menu"
-    );
+    h.assert_screen_contains("Rename to");
 
     // Cancel.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -370,12 +373,12 @@ fn test_context_menu_paste_empty_clipboard() {
 fn test_keyboard_escape_closes_menu() {
     let mut h = harness_with_explorer();
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(h.editor().file_explorer_context_menu_open());
+    assert!(context_menu_visible(&h));
 
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 
     assert!(
-        !h.editor().file_explorer_context_menu_open(),
+        !context_menu_visible(&h),
         "Escape should close the context menu"
     );
 }
@@ -392,17 +395,14 @@ fn test_keyboard_down_enter_executes_item() {
         .count();
 
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(h.editor().file_explorer_context_menu_open());
+    assert!(context_menu_visible(&h));
 
     // Down moves from index 0 (New File) to index 1 (New Directory).
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     // Enter activates New Directory, which shows a prompt.
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    assert!(
-        !h.editor().file_explorer_context_menu_open(),
-        "Menu should close after Enter"
-    );
+    assert!(!context_menu_visible(&h), "Menu should close after Enter");
 
     // Accept the default folder name.
     h.wait_for_prompt().unwrap();
@@ -425,12 +425,12 @@ fn test_keyboard_down_enter_executes_item() {
 fn test_keyboard_up_wraps() {
     let mut h = harness_with_explorer();
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(h.editor().file_explorer_context_menu_open());
+    assert!(context_menu_visible(&h));
 
     // Up from index 0 should wrap to the last item (Delete) and keep menu open.
     h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Menu should remain open after Up key"
     );
 }
@@ -448,7 +448,7 @@ fn test_keyboard_down_wraps() {
     // One more Down should wrap to index 0 — menu stays open.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Menu should remain open after Down wraps around"
     );
 }
@@ -461,7 +461,7 @@ fn test_keyboard_down_wraps() {
 fn test_context_menu_hover_stays_open() {
     let mut h = harness_with_explorer();
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(h.editor().file_explorer_context_menu_open());
+    assert!(context_menu_visible(&h));
 
     // Hover over the second item (New Directory).
     let menu_y = EXPLORER_ROW + 1;
@@ -469,7 +469,7 @@ fn test_context_menu_hover_stays_open() {
     h.mouse_move(EXPLORER_COL + 2, new_dir_item_row).unwrap();
 
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Context menu should remain open while hovering over items"
     );
 }
@@ -483,12 +483,12 @@ fn test_second_right_click_replaces_menu() {
     let mut h = harness_with_explorer();
 
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW).unwrap();
-    assert!(h.editor().file_explorer_context_menu_open());
+    assert!(context_menu_visible(&h));
 
     // Right-click at a different row — should reopen at the new position.
     h.mouse_right_click(EXPLORER_COL, EXPLORER_ROW + 2).unwrap();
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Context menu should be open after second right-click"
     );
 }
@@ -517,7 +517,7 @@ fn test_multi_selection_hides_create_and_rename() {
     h.mouse_right_click(EXPLORER_COL, 3).unwrap();
 
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Context menu should open in multi-selection mode"
     );
 
@@ -662,7 +662,7 @@ fn test_root_menu_hides_destructive_items() {
     h.mouse_right_click(EXPLORER_COL, ROOT_ROW).unwrap();
 
     assert!(
-        h.editor().file_explorer_context_menu_open(),
+        context_menu_visible(&h),
         "Context menu should open on root right-click"
     );
 
