@@ -191,6 +191,21 @@ let fetchToken = 0; // bumped each open; late fetches from a prior open no-op.
 let nextSectionId = 1;
 const registeredSections: RegisteredSection[] = [];
 
+// Ordered list of focusable clickable targets on the currently-painted
+// frame. Rebuilt every paint() from `currentRowActions`. One entry per
+// row that carries at least one action — when a row holds multiple
+// ranges (e.g. PR rows with both #num and title clickable), the highlight
+// spans the union and the activation dispatches the first range's action
+// so Enter matches the leftmost click target on that row.
+type ClickTarget = {
+    bufferRow: number; // absolute buffer row (after topPad)
+    colStart: number; // visual col (inclusive)
+    colEnd: number; // visual col (exclusive)
+    action: ClickAction;
+};
+let clickableTargets: ClickTarget[] = [];
+let focusedIndex = 0;
+
 // ── Drawing primitives ─────────────────────────────────────────────────
 
 function utf8Len(s: string): number {
@@ -612,6 +627,23 @@ let lastPaintedH = -1;
 // the click handler can gate on buffer_col too. Rebuilt every paint.
 let currentRowActions: Map<number, ClickActionRange[]> = new Map();
 
+// Map a visual column (counted from the start of the line) to a UTF-8
+// byte offset inside `text`. Used to translate the visual col ranges
+// stored in ClickTarget into the byte-offset range an InlineOverlay
+// needs. Walks chars with visualWidth/utf8Len so frame glyphs like
+// `│` (3 bytes, 1 col) and future wide chars stay aligned.
+function visualColToByteOffset(text: string, visualCol: number): number {
+    if (visualCol <= 0) return 0;
+    let col = 0;
+    let bytes = 0;
+    for (const ch of text) {
+        if (col >= visualCol) return bytes;
+        col += visualWidth(ch);
+        bytes += utf8Len(ch);
+    }
+    return bytes;
+}
+
 function paint(dims?: { width: number; height: number }) {
     if (dashboardBufferId === null) return;
     const bufferId = dashboardBufferId;
@@ -647,6 +679,65 @@ function paint(dims?: { width: number; height: number }) {
         abs.set(row + topPad, ranges);
     }
     currentRowActions = abs;
+
+    // Rebuild the ordered focus targets in visual row order. A row with
+    // multiple ranges collapses into a single target whose highlight
+    // spans the union of its ranges; Enter dispatches the first range's
+    // action, matching the leftmost click target on that row.
+    const targets: ClickTarget[] = [];
+    const sortedRows = [...abs.keys()].sort((a, b) => a - b);
+    for (const row of sortedRows) {
+        const ranges = abs.get(row)!;
+        if (ranges.length === 0) continue;
+        let minCol = ranges[0].colStart;
+        let maxCol = ranges[0].colEnd;
+        for (const r of ranges) {
+            if (r.colStart < minCol) minCol = r.colStart;
+            if (r.colEnd > maxCol) maxCol = r.colEnd;
+        }
+        targets.push({
+            bufferRow: row,
+            colStart: minCol,
+            colEnd: maxCol,
+            action: ranges[0].action,
+        });
+    }
+    clickableTargets = targets;
+    if (targets.length === 0) {
+        focusedIndex = 0;
+    } else if (focusedIndex < 0 || focusedIndex >= targets.length) {
+        focusedIndex =
+            ((focusedIndex % targets.length) + targets.length) % targets.length;
+    }
+
+    // Paint the focus highlight by mutating the entry for the focused
+    // row: translate its visual col range into a byte range and push an
+    // inline overlay on top of whatever foreground/underline spans the
+    // frame renderer already added. Using `editor.selection_bg` keeps
+    // the highlight theme-aware — it follows theme switches for free
+    // and matches other selection-style highlights elsewhere in the UI.
+    if (targets.length > 0) {
+        const focus = targets[focusedIndex];
+        const entry = entries[focus.bufferRow];
+        if (entry) {
+            const lineText = entry.text.endsWith("\n")
+                ? entry.text.slice(0, -1)
+                : entry.text;
+            const byteStart = visualColToByteOffset(lineText, focus.colStart);
+            const byteEnd = visualColToByteOffset(lineText, focus.colEnd);
+            if (byteEnd > byteStart) {
+                const overlays: InlineOverlay[] = entry.inlineOverlays
+                    ? [...entry.inlineOverlays]
+                    : [];
+                overlays.push({
+                    start: byteStart,
+                    end: byteEnd,
+                    style: { bg: "editor.selection_bg" },
+                });
+                entry.inlineOverlays = overlays;
+            }
+        }
+    }
 
     editor.setVirtualBufferContent(bufferId, entries);
     lastPaintedW = width;
@@ -1337,6 +1428,7 @@ async function openDashboard() {
 
     const res = await editor.createVirtualBuffer({
         name: "Dashboard",
+        mode: "dashboard",
         readOnly: true,
         showLineNumbers: false,
         showCursors: false,
@@ -1344,6 +1436,7 @@ async function openDashboard() {
     });
     dashboardBufferId = res.bufferId;
     dashboardOpening = false;
+    focusedIndex = 0;
 
     // Re-check: while we were awaiting createVirtualBuffer, a real
     // file may have landed — e.g. a CLI file from `fresh my_file`
@@ -1462,6 +1555,49 @@ registerHandler(
         paint({ width: data.width, height: data.height });
     },
 );
+// Keyboard navigation. The dashboard buffer is `showCursors: false` +
+// `editingDisabled: true`, so there's no native cursor to drive
+// selection — we track focus ourselves via `focusedIndex` and repaint
+// to move the highlight. Wraparound in both directions so the user
+// can't walk off either end of the clickable list.
+function moveFocus(delta: number) {
+    if (clickableTargets.length === 0) return;
+    focusedIndex =
+        (focusedIndex + delta + clickableTargets.length) %
+        clickableTargets.length;
+    paint();
+}
+registerHandler("dashboardFocusNext", () => moveFocus(1));
+registerHandler("dashboardFocusPrev", () => moveFocus(-1));
+registerHandler("dashboardActivate", () => {
+    if (clickableTargets.length === 0) return;
+    const target = clickableTargets[focusedIndex];
+    if (!target) return;
+    dispatchClickAction(target.action);
+});
+
+// Mode bindings mirror the standard "list with selectable rows"
+// idiom: Tab / Down / j step forward, BackTab / Up / k step back,
+// Return activates. `inheritNormalBindings: false` because every
+// useful key on a read-only, no-cursor buffer is either bound above
+// or intentionally inert (we don't want j/k falling through to cursor
+// movement commands that would silently do nothing here).
+editor.defineMode(
+    "dashboard",
+    [
+        ["Tab", "dashboardFocusNext"],
+        ["Down", "dashboardFocusNext"],
+        ["j", "dashboardFocusNext"],
+        ["BackTab", "dashboardFocusPrev"],
+        ["Up", "dashboardFocusPrev"],
+        ["k", "dashboardFocusPrev"],
+        ["Return", "dashboardActivate"],
+    ],
+    true, // read-only
+    false, // allow_text_input
+    false, // don't inherit Normal bindings — no cursor to move
+);
+
 // Dispatch clicks on rows that carry an action. We don't trust the
 // terminal to honor OSC-8 hyperlinks on the `url` span — many strip
 // them silently — so every clickable element also registers a
