@@ -4684,17 +4684,11 @@ registerHandler("on_review_branch_cursor_moved", on_review_branch_cursor_moved);
 editor.defineMode(
     "review-branch",
     [
-        // Mode bindings replace globals, so we re-bind the editor's built-in
-        // motion actions here explicitly — without this, j/k and Up/Down
-        // do nothing in the commit list.
-        ["Up", "move_up"],
-        ["Down", "move_down"],
+        // vi-style aliases for Up/Down. Everything else (arrows,
+        // Page{Up,Down}, Home/End, selection motion, …) is inherited
+        // from the Normal keymap via `inheritNormalBindings: true`.
         ["k", "move_up"],
         ["j", "move_down"],
-        ["PageUp", "move_page_up"],
-        ["PageDown", "move_page_down"],
-        ["Home", "move_line_start"],
-        ["End", "move_line_end"],
         // Enter: focus the right-hand detail panel.
         ["Return", "review_branch_enter"],
         ["Tab", "review_branch_enter"],
@@ -4702,7 +4696,9 @@ editor.defineMode(
         ["q", "review_branch_close_or_back"],
         ["Escape", "review_branch_close_or_back"],
     ],
-    true,
+    true, // readOnly
+    false, // allowTextInput — keeps plain letters from inserting into the RO buffer
+    true, // inheritNormalBindings — PageUp/PageDown/arrows/Home/End come from Normal
 );
 
 // Register Modes and Commands
