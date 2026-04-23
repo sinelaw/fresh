@@ -12,7 +12,7 @@
 //! mutable access for lazy-load internals; neither touches `Editor`.
 
 use crate::model::buffer::Buffer;
-use crate::primitives::line_wrapping::{wrap_line, WrapConfig};
+use crate::primitives::line_wrapping::WrapConfig;
 
 /// Width estimate of the gutter, used to build the wrap config. Kept in
 /// sync with the real gutter sizing in the render path (indicator + digits
