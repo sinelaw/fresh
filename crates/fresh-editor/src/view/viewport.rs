@@ -203,6 +203,7 @@ impl Viewport {
         line_text: &str,
         wrap_config: &WrapConfig,
         soft_breaks: &[usize],
+        cache: Option<(&mut crate::view::line_wrap_cache::LineWrapCache, u64)>,
     ) -> usize {
         let lo = soft_breaks.partition_point(|&p| p < line_start);
         let hi = soft_breaks.partition_point(|&p| p < line_end);
@@ -210,6 +211,10 @@ impl Viewport {
         if break_count > 0 {
             // Plugin's soft breaks describe the actual on-screen wrapping;
             // each break adds one visual row to the base row.
+            //
+            // Not cached: the soft-breaks array is already pre-computed
+            // and the count is a single subtraction — caching this would
+            // add a hash lookup to save nothing.
             break_count + 1
         } else {
             // Run the renderer's wrap function on a single-Text-token view of
@@ -217,9 +222,6 @@ impl Viewport {
             // boundary semantics and uses the same effective width the
             // renderer uses — no more char-wrap-vs-word-wrap drift.
             // See docs/internal/line-wrap-cache-plan.md.
-            use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
-            use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
             // `apply_wrapping_transform`'s available text width is
             //   effective_width - gutter_width
             // where `effective_width` is the value passed as its
@@ -238,50 +240,92 @@ impl Viewport {
                 .first_line_width
                 .saturating_add(wrap_config.gutter_width)
                 .max(2);
-            let tokens = vec![ViewTokenWire {
-                source_offset: Some(line_start),
-                kind: ViewTokenWireKind::Text(line_text.to_string()),
-                style: None,
-            }];
-            let wrapped = apply_wrapping_transform(
-                tokens,
+
+            // Cache lookup — miss path computes via apply_wrapping_transform.
+            // Cache is typed on u32; fits row counts far past any realistic line.
+            let compute = || compute_wrap_row_count_for_text(
+                line_text,
                 effective_width,
                 wrap_config.gutter_width,
                 wrap_config.hanging_indent,
             );
-            // Count non-empty visual rows.  `apply_wrapping_transform` can
-            // emit a *trailing* `Break` when the last chunk fills
-            // `effective_width` exactly — that Break is width-triggered and
-            // is followed by nothing, so it doesn't represent a real wrap.
-            // Walk the stream, start a new row on each Break, and only
-            // count rows that contained at least one content token.
-            let mut rows: usize = 0;
-            let mut row_has_content = false;
-            for t in &wrapped {
-                match &t.kind {
-                    ViewTokenWireKind::Newline => break,
-                    ViewTokenWireKind::Break => {
-                        if row_has_content {
-                            rows += 1;
-                        }
-                        row_has_content = false;
-                    }
-                    ViewTokenWireKind::Text(s) => {
-                        if !s.is_empty() {
-                            row_has_content = true;
-                        }
-                    }
-                    ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
-                        row_has_content = true;
-                    }
-                }
+            if let Some((cache, pipeline_inputs_ver)) = cache {
+                use crate::view::line_wrap_cache::{CacheViewMode, LineWrapKey};
+                let key = LineWrapKey {
+                    pipeline_inputs_version: pipeline_inputs_ver,
+                    // Viewport scroll math is fed uniform geometry by the
+                    // caller; ViewMode isn't available here, so match the
+                    // scrollbar_math writer's convention (Source). The
+                    // renderer writeback will populate entries under the
+                    // actual ViewMode; both coexist in the cache.
+                    view_mode: CacheViewMode::Source,
+                    line_start,
+                    effective_width: effective_width as u32,
+                    gutter_width: wrap_config.gutter_width as u16,
+                    wrap_column: None,
+                    hanging_indent: wrap_config.hanging_indent,
+                    line_wrap_enabled: true,
+                };
+                return cache.get_or_insert_with(key, compute) as usize;
             }
-            if row_has_content {
-                rows += 1;
-            }
-            rows.max(1)
+            return compute() as usize;
         }
     }
+}
+
+/// Compute the visual-row count for a single line's text by running
+/// `apply_wrapping_transform` on a single-Text-token input and walking
+/// the output token stream. Module-private helper shared by the cache
+/// hit and miss paths of `count_visual_rows_for_line`.
+fn compute_wrap_row_count_for_text(
+    line_text: &str,
+    effective_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+) -> u32 {
+    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
+    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(0),
+        kind: ViewTokenWireKind::Text(line_text.to_string()),
+        style: None,
+    }];
+    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
+    // Count non-empty visual rows.  `apply_wrapping_transform` can emit a
+    // *trailing* `Break` when the last chunk fills `effective_width` exactly
+    // — that Break is width-triggered and is followed by nothing, so it
+    // doesn't represent a real wrap. Walk the stream, start a new row on
+    // each Break, and only count rows that contained at least one content
+    // token.
+    let mut rows: u32 = 0;
+    let mut row_has_content = false;
+    for t in &wrapped {
+        match &t.kind {
+            ViewTokenWireKind::Newline => break,
+            ViewTokenWireKind::Break => {
+                if row_has_content {
+                    rows += 1;
+                }
+                row_has_content = false;
+            }
+            ViewTokenWireKind::Text(s) => {
+                if !s.is_empty() {
+                    row_has_content = true;
+                }
+            }
+            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
+                row_has_content = true;
+            }
+        }
+    }
+    if row_has_content {
+        rows += 1;
+    }
+    rows.max(1)
+}
+
+impl Viewport {
 
     /// Scroll up by N lines (byte-based)
     /// When line_wrap_enabled is true, scrolls by visual rows instead of logical lines
@@ -379,6 +423,7 @@ impl Viewport {
                 &line_content,
                 &wrap_config,
                 soft_breaks,
+                None,
             );
 
             if visual_rows_in_line >= rows_remaining {
@@ -438,6 +483,7 @@ impl Viewport {
             &current_line_content,
             &wrap_config,
             soft_breaks,
+            None,
         );
         let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset);
 
@@ -487,6 +533,7 @@ impl Viewport {
                 &line_content,
                 &wrap_config,
                 soft_breaks,
+                None,
             );
 
             if rows_remaining < visual_rows_in_line {
@@ -541,6 +588,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
+                None,
             );
             visual_rows_remaining += line_visual_rows.saturating_sub(self.top_view_line_offset);
         }
@@ -555,6 +603,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
+                None,
             );
 
             // Early exit if we have enough rows
@@ -619,6 +668,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
+                None,
             );
 
             for offset in 0..visual_rows_in_line {
@@ -1196,6 +1246,7 @@ impl Viewport {
                     line_text,
                     &wrap_config,
                     soft_breaks,
+                    None,
                 );
                 if visual_rows >= viewport_height {
                     self.top_byte = proposed_top_byte;
