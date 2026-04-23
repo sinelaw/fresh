@@ -150,10 +150,17 @@ export type SectionRefresh = (ctx: DashboardContext) => Promise<void>;
 /**
  * Public surface of the bundled `dashboard` plugin, reachable through
  * `editor.getPluginApi("dashboard")`. Third-party plugins and user
- * init.ts can contribute their own rows via `registerSection`.
+ * init.ts can contribute their own rows via `registerSection`, and can
+ * tear them down again via `removeSection` / `clearAllSections`.
  */
 export type DashboardApi = {
     registerSection(name: string, refresh: SectionRefresh): () => void;
+    /** Remove every registered section whose name matches `name`.
+     *  Returns true if at least one section was removed. */
+    removeSection(name: string): boolean;
+    /** Remove every registered section, including the bundled
+     *  built-ins (weather, git, github, disk). */
+    clearAllSections(): void;
 };
 
 declare global {
@@ -349,6 +356,32 @@ function registerSection(name: string, refresh: SectionRefresh): () => void {
             paint();
         }
     };
+}
+
+// Remove every registered section whose name matches `name`. Returns
+// true if at least one section was removed. Names are compared verbatim
+// — no case folding or trimming — matching the name passed to
+// `registerSection`. In-flight refreshes for removed sections resolve
+// onto detached entry objects and no longer influence what's rendered.
+function removeSection(name: string): boolean {
+    let removed = false;
+    for (let i = registeredSections.length - 1; i >= 0; i--) {
+        if (registeredSections[i].name === name) {
+            registeredSections.splice(i, 1);
+            removed = true;
+        }
+    }
+    if (removed) paint();
+    return removed;
+}
+
+// Clear every registered section, including the bundled built-ins.
+// The dashboard frame is still drawn — only the section body between
+// header and footer is empty until something registers a new section.
+function clearAllSections(): void {
+    if (registeredSections.length === 0) return;
+    registeredSections.length = 0;
+    paint();
 }
 
 async function refreshSection(entry: RegisteredSection, myToken: number) {
@@ -1479,10 +1512,11 @@ registerSection("git", gitRefresh);
 registerSection("github", githubRefresh);
 registerSection("disk", diskRefresh);
 
-// Expose the section-registration entry point to other plugins and
-// to user init.ts. The API is intentionally small: a single
-// `registerSection(name, refresh)` that returns an unregister
-// callback. The refresh callback receives a `DashboardContext` with
+// Expose the section-management entry points to other plugins and to
+// user init.ts. `registerSection(name, refresh)` adds a section and
+// returns an unregister callback; `removeSection(name)` tears sections
+// down by name; `clearAllSections()` removes every section, built-ins
+// included. The refresh callback receives a `DashboardContext` with
 // `kv`, `text`, `newline`, and `error` primitives — see the init.ts
 // starter template for an end-to-end example.
 editor.exportPluginApi("dashboard", {
@@ -1494,6 +1528,15 @@ editor.exportPluginApi("dashboard", {
             throw new Error("dashboard.registerSection: refresh must be a function");
         }
         return registerSection(name, refresh);
+    },
+    removeSection(name: string): boolean {
+        if (typeof name !== "string" || name.length === 0) {
+            throw new Error("dashboard.removeSection: name must be a non-empty string");
+        }
+        return removeSection(name);
+    },
+    clearAllSections(): void {
+        clearAllSections();
     },
 });
 
