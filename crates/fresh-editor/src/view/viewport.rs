@@ -116,10 +116,12 @@ impl Viewport {
             max_line_length_seen: 0,
             sync_scroll_to_end: false,
             scrolled_up_in_wrap: false,
-            // Small cap — the scroll hot paths only ever ask about
-            // a handful of nearby lines per event, and this cache
+            // 512 KiB byte budget — the scroll hot paths only ever
+            // touch a handful of nearby lines per event, so this cache
             // doesn't need to remember every line of every buffer.
-            wrap_row_cache: crate::view::line_wrap_cache::LineWrapCache::with_capacity(512),
+            wrap_row_cache: crate::view::line_wrap_cache::LineWrapCache::with_byte_budget(
+                512 * 1024,
+            ),
         }
     }
 
@@ -263,25 +265,27 @@ impl Viewport {
                 .saturating_add(wrap_config.gutter_width)
                 .max(2);
 
-            // Cache lookup — miss path computes via apply_wrapping_transform.
-            // Cache is typed on u32; fits row counts far past any realistic line.
+            // The viewport-local cache is a count-only memoization for
+            // the scroll hot paths — it doesn't need real ViewLine
+            // layout.  Compute the row count via the pure wrap helper
+            // and wrap it in a placeholder `Vec<ViewLine>` so the
+            // shared `LineWrapCache` value type is honoured; consumers
+            // of this cache only read `.len()`.  The cross-consumer
+            // cache on `EditorState` holds real `ViewLine`s populated
+            // from the full pipeline.
             let compute = || {
-                compute_wrap_row_count_for_text(
+                let n = compute_wrap_row_count_for_text(
                     line_text,
                     effective_width,
                     wrap_config.gutter_width,
                     wrap_config.hanging_indent,
-                )
+                );
+                crate::view::line_wrap_cache::placeholder_layout_for_row_count(n)
             };
             if let Some((cache, pipeline_inputs_ver)) = cache {
                 use crate::view::line_wrap_cache::{CacheViewMode, LineWrapKey};
                 let key = LineWrapKey {
                     pipeline_inputs_version: pipeline_inputs_ver,
-                    // Viewport scroll math is fed uniform geometry by the
-                    // caller; ViewMode isn't available here, so match the
-                    // scrollbar_math writer's convention (Source). The
-                    // renderer writeback will populate entries under the
-                    // actual ViewMode; both coexist in the cache.
                     view_mode: CacheViewMode::Source,
                     line_start,
                     effective_width: effective_width as u32,
@@ -290,9 +294,9 @@ impl Viewport {
                     hanging_indent: wrap_config.hanging_indent,
                     line_wrap_enabled: true,
                 };
-                return cache.get_or_insert_with(key, compute) as usize;
+                return cache.get_or_insert_with(key, compute).len();
             }
-            return compute() as usize;
+            return compute().len();
         }
     }
 }

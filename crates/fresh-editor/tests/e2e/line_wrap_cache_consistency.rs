@@ -114,10 +114,14 @@ fn current_keys(harness: &EditorTestHarness, line_start: usize) -> (LineWrapKey,
 /// Retrieve an editor `fresh::view::viewport::Viewport` reference to
 /// read geometry. Kept as a tiny helper so the test is resilient to
 /// future harness changes.
+/// Read a cache entry's row count (`.len()` of the `Vec<ViewLine>` it
+/// stores).  The consistency tests only need the row count; full
+/// layout agreement is covered by dedicated tests that walk the
+/// `ViewLine` fields directly.
 fn read_cache_entry(harness: &EditorTestHarness, key: &LineWrapKey) -> Option<u32> {
     let editor = harness.editor();
     let state = editor.active_state();
-    state.line_wrap_cache.get(key)
+    state.line_wrap_cache.get(key).map(|v| v.len() as u32)
 }
 
 /// Walk buffer lines and return `Vec<(line_start, line_text)>` for the

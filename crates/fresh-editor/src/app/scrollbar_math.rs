@@ -13,7 +13,8 @@
 
 use crate::model::buffer::Buffer;
 use crate::primitives::line_wrapping::WrapConfig;
-use crate::view::line_wrap_cache::{CacheViewMode, LineWrapCache, LineWrapKey};
+use crate::state::EditorState;
+use crate::view::line_wrap_cache::{compute_line_layout, CacheViewMode, WrapGeometry};
 
 /// Width estimate of the gutter, used to build the wrap config. Kept in
 /// sync with the real gutter sizing in the render path (indicator + digits
@@ -29,114 +30,76 @@ fn estimated_gutter_width(buffer: &Buffer) -> usize {
     1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
 }
 
-/// Count visual rows for a single line's text via the renderer's
-/// word-boundary wrap. Matches the formula used by the renderer's
-/// `apply_wrapping_transform` output, walking tokens and counting
-/// non-empty rows (a trailing `Break` from a chunk that exactly fills
-/// the effective width is NOT followed by content and must not count).
-fn count_row_from_wrap(
-    line_text: &str,
-    effective_width: usize,
-    gutter_width: usize,
-    hanging_indent: bool,
-) -> u32 {
-    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
-    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-    let tokens = vec![ViewTokenWire {
-        source_offset: Some(0),
-        kind: ViewTokenWireKind::Text(line_text.to_string()),
-        style: None,
-    }];
-    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-    let mut visual_rows: u32 = 0;
-    let mut row_has_content = false;
-    for t in &wrapped {
-        match &t.kind {
-            ViewTokenWireKind::Newline => break,
-            ViewTokenWireKind::Break => {
-                if row_has_content {
-                    visual_rows += 1;
-                }
-                row_has_content = false;
-            }
-            ViewTokenWireKind::Text(s) => {
-                if !s.is_empty() {
-                    row_has_content = true;
-                }
-            }
-            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
-                row_has_content = true;
-            }
-        }
-    }
-    if row_has_content {
-        visual_rows += 1;
-    }
-    visual_rows.max(1)
-}
-
 /// Build a map of `(line_start_byte, visual_row_offset_within_line)` for
 /// every visual row in the buffer, and the total row count.
 ///
 /// Per-line row count goes through `LineWrapCache`:
-///   - cache hit → O(1) lookup;
-///   - cache miss → compute via the renderer's word-boundary wrap and
-///     store for future drag/jump events.
+///   - cache hit → O(1) `Arc` clone;
+///   - cache miss → `compute_line_layout` runs the full per-line
+///     pipeline (same as the renderer) and stores the result for future
+///     drag/jump events.
 ///
-/// This keeps scrollbar-drag / scrollbar-jump math in lock-step with the
-/// rendered layout and makes repeated drags on the same buffer cheap —
-/// see `docs/internal/line-wrap-cache-plan.md`.
-#[allow(clippy::too_many_arguments)]
+/// Scroll math only needs the row count (`entry.len()`), but the cache
+/// holds the full `Vec<ViewLine>` so any other consumer that queries
+/// the same key (e.g. future cursor-nav migration) gets a consistent
+/// value — see `docs/internal/line-wrap-cache-plan.md`.
 fn build_visual_row_map(
-    buffer: &mut Buffer,
+    state: &mut EditorState,
     viewport_width: usize,
-    cache: &mut LineWrapCache,
     pipeline_inputs_ver: u64,
 ) -> (Vec<(usize, usize)>, usize) {
-    let gutter_width = estimated_gutter_width(buffer);
+    let gutter_width = estimated_gutter_width(&state.buffer);
     let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
-    // `wrap_config.first_line_width` is the effective text column budget.
-    // `apply_wrapping_transform` expects `content_width` (from which it
-    // subtracts `gutter_width` internally), so add gutter back in.
     let effective_width = wrap_config
         .first_line_width
         .saturating_add(gutter_width)
         .max(2);
+    let geom = WrapGeometry {
+        effective_width,
+        gutter_width,
+        hanging_indent: wrap_config.hanging_indent,
+        wrap_column: None,
+        line_wrap_enabled: true,
+        // Scrollbar-math runs without access to the view mode. The
+        // renderer's writeback populates keys under the active mode;
+        // here we use Source as a fixed convention and cache hits pick
+        // up entries the renderer wrote under the same convention.
+        view_mode: CacheViewMode::Source,
+    };
 
+    // First pass: collect line boundaries while the buffer iterator
+    // holds a mutable borrow. We release the borrow before the second
+    // pass so `compute_line_layout` can re-borrow `&mut state`.
+    let line_ranges: Vec<(usize, usize)> = {
+        let mut iter = state.buffer.line_iterator(0, 80);
+        let mut out = Vec::new();
+        while let Some((line_start, _content)) = iter.next_line() {
+            let end = iter.current_position();
+            out.push((line_start, end));
+        }
+        out
+    };
+
+    // Second pass: query cache per line, filling on miss via the
+    // per-line mini-pipeline. Both borrows of `state` are disjoint from
+    // the iterator borrow above (which has been dropped).
     let mut total_visual_rows = 0;
     let mut visual_row_positions: Vec<(usize, usize)> = Vec::new();
-
-    let mut iter = buffer.line_iterator(0, 80);
-    while let Some((line_start, content)) = iter.next_line() {
-        let key = LineWrapKey {
-            pipeline_inputs_version: pipeline_inputs_ver,
-            // Scrollbar-math path is called only when line wrap is on; it
-            // doesn't branch on view mode. The renderer writeback will
-            // populate matching keys under whichever ViewMode is active,
-            // and the cache separates entries per view mode automatically.
-            view_mode: CacheViewMode::Source,
-            line_start,
-            effective_width: effective_width as u32,
-            gutter_width: gutter_width as u16,
-            wrap_column: None,
-            hanging_indent: wrap_config.hanging_indent,
-            line_wrap_enabled: true,
+    for (line_start, line_end) in line_ranges {
+        let key = geom.key(line_start, pipeline_inputs_ver);
+        let entry = if let Some(cached) = state.line_wrap_cache.get(&key) {
+            cached
+        } else {
+            let layout = compute_line_layout(state, line_start, line_end, &geom);
+            let arc = std::sync::Arc::new(layout);
+            state.line_wrap_cache.put(key, arc.clone());
+            arc
         };
-        let line_content = content.trim_end_matches(['\n', '\r']).to_string();
-        let visual_rows_in_line = cache.get_or_insert_with(key, || {
-            count_row_from_wrap(
-                &line_content,
-                effective_width,
-                gutter_width,
-                wrap_config.hanging_indent,
-            )
-        }) as usize;
-
-        for offset in 0..visual_rows_in_line {
+        let rows = entry.len();
+        for offset in 0..rows {
             visual_row_positions.push((line_start, offset));
         }
-        total_visual_rows += visual_rows_in_line;
+        total_visual_rows += rows;
     }
 
     (visual_row_positions, total_visual_rows)
@@ -158,19 +121,18 @@ fn position_at(visual_row_positions: &[(usize, usize)], target_row: usize) -> (u
 /// and the wrap-segment offset inside that line.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn scrollbar_jump_visual(
-    buffer: &mut Buffer,
+    state: &mut EditorState,
     ratio: f64,
     viewport_height: usize,
     viewport_width: usize,
-    cache: &mut LineWrapCache,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
-    if buffer.len() == 0 || viewport_height == 0 {
+    if state.buffer.len() == 0 || viewport_height == 0 {
         return (0, 0);
     }
 
     let (visual_row_positions, total_visual_rows) =
-        build_visual_row_map(buffer, viewport_width, cache, pipeline_inputs_ver);
+        build_visual_row_map(state, viewport_width, pipeline_inputs_ver);
     if total_visual_rows == 0 {
         return (0, 0);
     }
@@ -193,7 +155,7 @@ pub(crate) fn scrollbar_jump_visual(
 /// the user originally clicked.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn scrollbar_drag_relative_visual(
-    buffer: &mut Buffer,
+    state: &mut EditorState,
     current_row: u16,
     scrollbar_y: u16,
     scrollbar_height: usize,
@@ -202,15 +164,14 @@ pub(crate) fn scrollbar_drag_relative_visual(
     drag_start_view_line_offset: usize,
     viewport_height: usize,
     viewport_width: usize,
-    cache: &mut LineWrapCache,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
-    if buffer.len() == 0 || viewport_height == 0 || scrollbar_height <= 1 {
+    if state.buffer.len() == 0 || viewport_height == 0 || scrollbar_height <= 1 {
         return (0, 0);
     }
 
     let (visual_row_positions, total_visual_rows) =
-        build_visual_row_map(buffer, viewport_width, cache, pipeline_inputs_ver);
+        build_visual_row_map(state, viewport_width, pipeline_inputs_ver);
     if total_visual_rows == 0 {
         return (0, 0);
     }

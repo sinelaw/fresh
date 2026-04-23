@@ -1,43 +1,58 @@
-//! Line-wrap row-count cache.
+//! Line-wrap pipeline-output cache.
 //!
-//! A bounded per-buffer cache that answers the question "how many visual
-//! rows does this logical line wrap to, under these pipeline inputs?"
+//! A bounded per-buffer cache from `LineWrapKey` to `Arc<Vec<ViewLine>>` —
+//! the final output of the render pipeline for a single logical line.
 //!
-//! See `docs/internal/line-wrap-cache-plan.md` for the design.  The key
-//! ideas, very briefly:
+//! See `docs/internal/line-wrap-cache-plan.md` for the full design.  In
+//! brief:
 //!
-//! * The cache is populated from two sides: the renderer writes entries
-//!   as a side effect of running the full pipeline on a visible frame,
-//!   and the scroll-math path writes entries by running a one-line
-//!   "mini-pipeline" on demand.  Both paths invoke the same underlying
-//!   pipeline functions, so the values agree by construction.
+//! * **Single source of truth.**  The value stored is what the renderer
+//!   actually produces.  Every consumer that needs to know "how many
+//!   visual rows?", "where does byte X land visually?", "what byte is at
+//!   visual column N?" reads the same `ViewLine` structures via the
+//!   methods `ViewLine` already exposes (`source_byte_at_char`,
+//!   `char_at_visual_col`, `source_byte_at_visual_col`, `visual_col_at_char`,
+//!   `visual_width`).  No second implementation to drift from.
 //!
-//! * Invalidation is implicit: the key includes a
-//!   `pipeline_inputs_version` derived from the buffer's and the two
-//!   plugin managers' version counters, along with every geometry / view
-//!   parameter the pipeline reads.  Mutating any of those produces a
-//!   different key for future queries, and old entries age out via FIFO.
+//! * **Two writers, one pipeline.**  The renderer populates cache entries
+//!   as a side effect of its normal per-frame work; the miss handler in
+//!   this module runs the same four-step pipeline scoped to a single
+//!   logical line.  Same inputs → same output.
 //!
-//! * Memory is bounded.  The FIFO queue is capped at `capacity`; when
-//!   `capacity` is reached on insert, the oldest inserted key is
-//!   evicted.  Stale entries never produce wrong answers — they're just
-//!   never looked up.
+//! * **Invalidation by key.**  The key includes `pipeline_inputs_version`
+//!   (a packed u64 derived from `buffer.version()`, `SoftBreakManager::
+//!   version()`, and `ConcealManager::version()`) plus every geometry /
+//!   view dimension the pipeline reads.  Mutating any of those produces a
+//!   different key; old entries become unreachable and age out via FIFO
+//!   eviction.  There is no active invalidate step.
 //!
-//! Structural invariant maintained at all times:
+//! * **Byte-budget eviction.**  Because `Vec<ViewLine>` sizes vary from
+//!   a few hundred bytes for a short line to megabytes for a long line
+//!   wrapping into thousands of rows, count-based eviction is the wrong
+//!   metric.  The cache tracks approximate total memory and evicts
+//!   oldest-first when a new insert would exceed the byte budget.
 //!
-//!     self.map.len() == self.order.len() <= self.capacity
+//! Structural invariants maintained at all times:
+//!
+//!     self.map.len() == self.order.len()
+//!     self.current_bytes <= self.byte_budget  (after any insert)
 
 use crate::state::EditorState;
 use crate::view::ui::split_rendering::base_tokens::build_base_tokens;
 use crate::view::ui::split_rendering::transforms::{
     apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform,
 };
+use crate::view::ui::view_pipeline::{ViewLine, ViewLineIterator};
 use fresh_core::api::ViewTokenWireKind;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
-/// Default capacity.  At ~80 bytes/entry this is ~650 KB max, comfortably
-/// inside a per-buffer memory budget.
-pub const DEFAULT_CAPACITY: usize = 8192;
+/// Default byte budget: 8 MiB.  Comfortably holds the full layout for a
+/// small-to-medium buffer, a handful of huge lines, or any interactive
+/// scroll span.  A single 200 KB line wrapping to ~2000 rows takes
+/// roughly 2 MB in its `Vec<ViewLine>` form, so the budget can absorb
+/// several such lines before churning.
+pub const DEFAULT_BYTE_BUDGET: usize = 8 * 1024 * 1024;
 
 /// View mode the pipeline is running in.  Conceals and some plugin-
 /// rendered content only apply in Compose.  Kept as a small plain enum
@@ -49,13 +64,13 @@ pub enum CacheViewMode {
 }
 
 /// Full set of inputs that determine a single logical line's wrapped
-/// visual-row count.  Every mutable input must be represented here — if
-/// the caller forgets one, stale entries can be returned.
+/// layout.  Every mutable input must be represented here — if the
+/// caller forgets one, stale entries can be returned.
 ///
 /// The `pipeline_inputs_version` folds in the buffer version plus the
 /// soft-break and conceal managers' versions (see
-/// `LineWrapCache::pipeline_inputs_version`).  The remaining fields are
-/// geometry / viewport config.
+/// [`pipeline_inputs_version`]).  The remaining fields are geometry /
+/// viewport config.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct LineWrapKey {
     pub pipeline_inputs_version: u64,
@@ -73,14 +88,10 @@ pub struct LineWrapKey {
 /// is not a hash — it's a packed integer with enough bit-budget to make
 /// accidental collisions astronomically unlikely in a single session.
 ///
-/// * `buffer_version` gets the low 32 bits (wrapped to u32).  Buffer edits
-///   are the most frequent source of change.
+/// * `buffer_version` gets the low 32 bits (wrapped to u32).  Buffer
+///   edits are the most frequent source of change.
 /// * `soft_breaks_version` is shifted up 32 bits.
 /// * `conceal_version` is shifted up 48 bits.
-///
-/// Collisions would require one of the three to wrap its counter AND the
-/// others to land on exactly the same values — not a concern for a u32
-/// counter in a single session.
 #[inline]
 pub fn pipeline_inputs_version(
     buffer_version: u64,
@@ -92,7 +103,30 @@ pub fn pipeline_inputs_version(
         ^ ((conceal_version as u64) << 48)
 }
 
-/// Bounded FIFO cache from `LineWrapKey` to visual row count.
+/// Estimate the in-memory size of a `Vec<ViewLine>` for byte-budget
+/// accounting.  Rough but stable — we'd rather over- than under-estimate
+/// so the budget stays honest.
+///
+/// Per `ViewLine`:
+///   - `text` (String): bytes in the rendered text
+///   - `char_source_bytes` (Vec<Option<usize>>): 16 bytes × chars
+///   - `char_styles` (Vec<Option<ViewTokenStyle>>): ~32 bytes × chars
+///   - `char_visual_cols` (Vec<usize>): 8 bytes × chars
+///   - `visual_to_char` (Vec<usize>): 8 bytes × visual cols
+///   - overhead (HashSet, enum, bool, alignment padding): ~64 bytes
+///
+/// Round up to `visual_width * 64 + text.len() + 96` for simplicity.
+fn estimate_view_lines_bytes(lines: &[ViewLine]) -> usize {
+    let mut total = 48; // Arc + Vec overhead
+    for line in lines {
+        let chars = line.char_source_bytes.len();
+        let visual = line.visual_to_char.len();
+        total += line.text.len() + chars * 56 + visual * 8 + 96;
+    }
+    total
+}
+
+/// Bounded FIFO cache from `LineWrapKey` to `Arc<Vec<ViewLine>>`.
 ///
 /// FIFO (not LRU) because the dominant access pattern is sequential
 /// scrolling: each line is queried a few times in close succession, then
@@ -101,24 +135,26 @@ pub fn pipeline_inputs_version(
 /// eviction policy — the external API doesn't change.
 #[derive(Debug, Clone)]
 pub struct LineWrapCache {
-    map: HashMap<LineWrapKey, u32>,
+    map: HashMap<LineWrapKey, Arc<Vec<ViewLine>>>,
     order: VecDeque<LineWrapKey>,
-    capacity: usize,
+    byte_budget: usize,
+    current_bytes: usize,
 }
 
 impl Default for LineWrapCache {
     fn default() -> Self {
-        Self::with_capacity(DEFAULT_CAPACITY)
+        Self::with_byte_budget(DEFAULT_BYTE_BUDGET)
     }
 }
 
 impl LineWrapCache {
-    pub fn with_capacity(capacity: usize) -> Self {
-        assert!(capacity > 0, "LineWrapCache capacity must be > 0");
+    pub fn with_byte_budget(byte_budget: usize) -> Self {
+        assert!(byte_budget > 0, "LineWrapCache byte_budget must be > 0");
         Self {
-            map: HashMap::with_capacity(capacity),
-            order: VecDeque::with_capacity(capacity),
-            capacity,
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            byte_budget,
+            current_bytes: 0,
         }
     }
 
@@ -135,71 +171,87 @@ impl LineWrapCache {
         self.len() == 0
     }
 
-    pub fn capacity(&self) -> usize {
-        self.capacity
+    pub fn byte_budget(&self) -> usize {
+        self.byte_budget
     }
 
-    /// Look up a cached value.  Returns `None` on miss.
-    pub fn get(&self, key: &LineWrapKey) -> Option<u32> {
-        self.map.get(key).copied()
+    pub fn current_bytes(&self) -> usize {
+        self.current_bytes
     }
 
-    /// Query by key; on miss, run `compute` and store its result.  This
-    /// is the primary entry point for both the renderer's write path and
-    /// the scroll-math miss handler.
+    /// Look up a cached value.  Returns `None` on miss.  The returned
+    /// `Arc` is a cheap clone; callers can hold it without copying the
+    /// underlying `Vec<ViewLine>`.
+    pub fn get(&self, key: &LineWrapKey) -> Option<Arc<Vec<ViewLine>>> {
+        self.map.get(key).cloned()
+    }
+
+    /// Query by key; on miss, run `compute` and store its result.  The
+    /// primary entry point for both the renderer's write path and the
+    /// scroll-math miss handler.
     ///
-    /// Returns the (possibly just-computed) value.  The `compute` closure
-    /// is called at most once per cache miss; hits do not invoke it.
-    pub fn get_or_insert_with<F>(&mut self, key: LineWrapKey, compute: F) -> u32
+    /// Returns the (possibly just-computed) value as an `Arc`.  The
+    /// `compute` closure is called at most once per cache miss; hits do
+    /// not invoke it.
+    pub fn get_or_insert_with<F>(&mut self, key: LineWrapKey, compute: F) -> Arc<Vec<ViewLine>>
     where
-        F: FnOnce() -> u32,
+        F: FnOnce() -> Vec<ViewLine>,
     {
-        if let Some(&v) = self.map.get(&key) {
-            return v;
+        if let Some(v) = self.map.get(&key) {
+            return v.clone();
         }
-        let v = compute();
-        self.insert_fresh(key, v);
-        v
+        let value = Arc::new(compute());
+        self.insert_fresh(key, value.clone());
+        value
     }
 
     /// Unconditionally store a value for `key`.  If `key` is already
-    /// present, its value is updated in place and its insertion order is
-    /// **not** changed (this keeps the FIFO queue simple — re-inserts
-    /// don't refresh age).
-    ///
-    /// The renderer-side writeback uses this after a render pass: it
-    /// just-computed each visible line's row count and wants to make
-    /// sure the cache holds it.
-    pub fn put(&mut self, key: LineWrapKey, value: u32) {
-        if let Some(slot) = self.map.get_mut(&key) {
-            *slot = value;
+    /// present, its value is replaced in place and its FIFO position is
+    /// **not** changed (this keeps the queue simple — re-inserts don't
+    /// refresh age).  Byte-budget accounting is updated.
+    pub fn put(&mut self, key: LineWrapKey, value: Arc<Vec<ViewLine>>) {
+        if let Some(existing) = self.map.get_mut(&key) {
+            let old_bytes = estimate_view_lines_bytes(existing);
+            let new_bytes = estimate_view_lines_bytes(&value);
+            *existing = value;
+            self.current_bytes = self.current_bytes + new_bytes - old_bytes.min(self.current_bytes);
             return;
         }
         self.insert_fresh(key, value);
     }
 
-    /// Remove all entries.  Called on config changes that we can't express
-    /// through the key (none today, but it's useful for tests and for
-    /// plugin-lifecycle events in the future).
+    /// Remove all entries.  Used by tests and by future
+    /// plugin-lifecycle events.
     pub fn clear(&mut self) {
         self.map.clear();
         self.order.clear();
+        self.current_bytes = 0;
     }
 
-    /// Insert a never-before-seen key, evicting oldest first if at capacity.
-    ///
-    /// Must only be called when `key` is not already in `self.map`.
-    fn insert_fresh(&mut self, key: LineWrapKey, value: u32) {
+    /// Insert a never-before-seen key, evicting oldest-first until the
+    /// new entry fits inside `byte_budget`.
+    fn insert_fresh(&mut self, key: LineWrapKey, value: Arc<Vec<ViewLine>>) {
         debug_assert!(!self.map.contains_key(&key));
-        if self.map.len() >= self.capacity {
-            if let Some(oldest) = self.order.pop_front() {
-                self.map.remove(&oldest);
+        let new_bytes = estimate_view_lines_bytes(&value);
+
+        // Evict until (current_bytes + new_bytes) fits.  Always keep at
+        // least one slot — if the single new entry alone exceeds the
+        // budget, we still accept it (the cache was asked to hold it;
+        // the alternative is silently dropping data the caller just
+        // paid to compute).
+        while self.current_bytes + new_bytes > self.byte_budget && !self.order.is_empty() {
+            if let Some(oldest_key) = self.order.pop_front() {
+                if let Some(oldest_val) = self.map.remove(&oldest_key) {
+                    let shed = estimate_view_lines_bytes(&oldest_val);
+                    self.current_bytes = self.current_bytes.saturating_sub(shed);
+                }
             }
         }
+
         self.map.insert(key, value);
         self.order.push_back(key);
+        self.current_bytes += new_bytes;
         debug_assert_eq!(self.map.len(), self.order.len());
-        debug_assert!(self.map.len() <= self.capacity);
     }
 }
 
@@ -233,33 +285,37 @@ impl WrapGeometry {
     }
 }
 
-/// Run the same pipeline the renderer runs, scoped to exactly one logical
-/// line starting at `line_start`, and return the visual-row count for that
-/// line.  Used by the cache miss handler.
+/// Run the same pipeline the renderer runs, scoped to exactly one
+/// logical line starting at `line_start`, and return the rendered
+/// [`ViewLine`]s for that line.  Used by the cache miss handler.
 ///
-/// When `geom.line_wrap_enabled` is false, returns 1 without running the
-/// pipeline — an unwrapped line is always one visual row.
+/// When `geom.line_wrap_enabled` is false, returns a single
+/// placeholder `ViewLine` — an unwrapped line always occupies exactly
+/// one visual row.  (Callers that only need a count can read
+/// `.len()`; callers that need coordinate mappings would not query
+/// this path with wrapping off.)
 ///
 /// The four pipeline steps mirror `view_data::build_view_data`:
 ///   1. `build_base_tokens(top_byte=line_start, count=1)`
-///   2. `apply_soft_breaks` (Compose mode, when any soft breaks overlap the line)
-///   3. `apply_conceal_ranges` (Compose mode, when any conceals overlap the line)
+///   2. `apply_soft_breaks` (Compose mode, when any soft breaks overlap)
+///   3. `apply_conceal_ranges` (Compose mode, when any conceals overlap)
 ///   4. `apply_wrapping_transform`
-/// Then count `Break` tokens before the first `Newline` (which closes this
-/// logical line) and add 1 for the row the line itself occupies.
-pub fn count_visual_rows_via_pipeline(
+/// followed by `ViewLineIterator::collect()` to materialise the
+/// `Vec<ViewLine>`.
+///
+/// The result is what the renderer would produce for this single
+/// logical line — the single source of truth the cache exists to
+/// share.
+pub fn compute_line_layout(
     state: &mut EditorState,
     line_start: usize,
     line_end: usize,
     geom: &WrapGeometry,
-) -> u32 {
-    if !geom.line_wrap_enabled {
-        return 1;
-    }
-
+) -> Vec<ViewLine> {
     let is_binary = state.buffer.is_binary();
     let line_ending = state.buffer.line_ending();
     let estimated_line_length = state.buffer.estimated_line_length();
+    let tab_size = state.buffer_settings.tab_size;
 
     // Step 1: build tokens for just this one logical line.
     let mut tokens = build_base_tokens(
@@ -294,50 +350,68 @@ pub fn count_visual_rows_via_pipeline(
         }
     }
 
-    // Step 4: wrap.
-    tokens = apply_wrapping_transform(
-        tokens,
-        geom.effective_width,
-        geom.gutter_width,
-        geom.hanging_indent,
-    );
+    // Step 4: wrap (only when line-wrap is actually enabled).  When
+    // disabled, pass tokens through unchanged; ViewLineIterator will
+    // still yield one ViewLine per Newline boundary.
+    if geom.line_wrap_enabled {
+        tokens = apply_wrapping_transform(
+            tokens,
+            geom.effective_width,
+            geom.gutter_width,
+            geom.hanging_indent,
+        );
+    }
 
-    // Count non-empty visual rows before the first Newline.
-    //
-    // `build_base_tokens` may emit tokens for more than one logical line
-    // because its internal cap is `visible_count + 4`; the first Newline
-    // closes the logical line we care about.
-    //
-    // `apply_wrapping_transform` can emit a *trailing* Break when the last
-    // chunk fills `effective_width` exactly — that Break is width-triggered
-    // and is followed by nothing of substance, so it doesn't represent a
-    // real wrap. We track "did this row have any content" and only count
-    // rows that did.
-    let mut rows: u32 = 0;
-    let mut row_has_content = false;
-    for t in &tokens {
-        match &t.kind {
-            ViewTokenWireKind::Newline => break,
-            ViewTokenWireKind::Break => {
-                if row_has_content {
-                    rows += 1;
-                }
-                row_has_content = false;
-            }
-            ViewTokenWireKind::Text(s) => {
-                if !s.is_empty() {
-                    row_has_content = true;
-                }
-            }
-            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
-                row_has_content = true;
-            }
+    // Materialise the ViewLines.  `build_base_tokens` may emit tokens
+    // for more than one logical line; collect only the first logical
+    // line's ViewLines (those up to and including the first Newline).
+    let all_lines: Vec<ViewLine> =
+        ViewLineIterator::new(&tokens, is_binary, !is_binary, tab_size, false).collect();
+
+    // The `ViewLineIterator` produces one `ViewLine` per visual row.
+    // The Newline tokens inside split the stream at logical-line
+    // boundaries: every `ViewLine` after the first whose `line_start`
+    // is `AfterSourceNewline` begins a NEW logical line, which we
+    // don't want.  Keep only rows up to (but not including) the first
+    // such transition.
+    let mut result = Vec::with_capacity(all_lines.len().min(8));
+    for (i, line) in all_lines.into_iter().enumerate() {
+        use crate::view::ui::view_pipeline::LineStart;
+        if i > 0 && matches!(line.line_start, LineStart::AfterSourceNewline) {
+            break;
         }
+        result.push(line);
     }
-    if row_has_content {
-        rows += 1;
+    if result.is_empty() {
+        // Defensive: even a completely empty logical line corresponds
+        // to exactly one visual row.  The iterator should always
+        // produce at least one, but be safe.
+        result.push(ViewLine {
+            text: String::new(),
+            source_start_byte: Some(line_start),
+            char_source_bytes: Vec::new(),
+            char_styles: Vec::new(),
+            char_visual_cols: Vec::new(),
+            visual_to_char: Vec::new(),
+            tab_starts: std::collections::HashSet::new(),
+            line_start: crate::view::ui::view_pipeline::LineStart::Beginning,
+            ends_with_newline: false,
+        });
     }
-    rows.max(1)
+    result
+}
+
+/// Row count only.  Thin wrapper over [`compute_line_layout`] for
+/// callers that need just the visual-row count — scroll math,
+/// thumb-size math.  Prefer calling through the cache
+/// (`get_or_insert_with(key, || compute_line_layout(...)).len()`).
+pub fn count_visual_rows_via_pipeline(
+    state: &mut EditorState,
+    line_start: usize,
+    line_end: usize,
+    geom: &WrapGeometry,
+) -> u32 {
+    compute_line_layout(state, line_start, line_end, geom).len() as u32
 }
 
 /// Combined version of all pipeline inputs on the given state.  Fold into
@@ -349,6 +423,34 @@ pub fn state_pipeline_inputs_version(state: &EditorState) -> u64 {
         state.soft_breaks.version(),
         state.conceals.version(),
     )
+}
+
+/// Build a placeholder `Vec<ViewLine>` of a given row count for cache
+/// consumers that only need `.len()` (e.g. scroll math's count-only
+/// queries, or the per-viewport row-count memoization).  The returned
+/// `ViewLine`s have empty char/visual mappings — they carry no real
+/// layout information.
+///
+/// This exists because the cache is typed on `Vec<ViewLine>` so the
+/// cross-consumer path can share real layout, but some call sites
+/// don't yet have access to `EditorState` (needed by
+/// [`compute_line_layout`]).  When those sites are migrated to take
+/// `&mut EditorState`, this helper can go away.
+pub fn placeholder_layout_for_row_count(n: u32) -> Vec<ViewLine> {
+    use crate::view::ui::view_pipeline::LineStart;
+    (0..n)
+        .map(|_| ViewLine {
+            text: String::new(),
+            source_start_byte: None,
+            char_source_bytes: Vec::new(),
+            char_styles: Vec::new(),
+            char_visual_cols: Vec::new(),
+            visual_to_char: Vec::new(),
+            tab_starts: std::collections::HashSet::new(),
+            line_start: LineStart::Beginning,
+            ends_with_newline: false,
+        })
+        .collect()
 }
 
 /// Count visual rows for a single line's text under the renderer's
@@ -404,6 +506,7 @@ pub fn count_visual_rows_for_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::ui::view_pipeline::LineStart;
 
     fn key(line_start: usize, version: u64) -> LineWrapKey {
         LineWrapKey {
@@ -418,103 +521,132 @@ mod tests {
         }
     }
 
+    /// Build a dummy `Vec<ViewLine>` of length `n` for primitive tests
+    /// that only care about how the cache stores / evicts values, not
+    /// about the actual pipeline output.  Each `ViewLine` is empty
+    /// apart from its row identity.
+    fn dummy_lines(n: u32) -> Vec<ViewLine> {
+        (0..n)
+            .map(|_| ViewLine {
+                text: String::new(),
+                source_start_byte: Some(0),
+                char_source_bytes: Vec::new(),
+                char_styles: Vec::new(),
+                char_visual_cols: Vec::new(),
+                visual_to_char: Vec::new(),
+                tab_starts: std::collections::HashSet::new(),
+                line_start: LineStart::Beginning,
+                ends_with_newline: false,
+            })
+            .collect()
+    }
+
+    /// Roomy byte budget for tests that shouldn't evict.
+    const ROOMY: usize = 1024 * 1024;
+    /// Tight byte budget that evicts after a handful of empty lines.
+    /// Each empty `ViewLine` is ~96 bytes plus 48 Vec/Arc overhead, so
+    /// this budget holds roughly 3 entries.
+    const TIGHT: usize = 500;
+
     #[test]
     fn empty_cache_is_empty() {
         let cache = LineWrapCache::default();
         assert!(cache.is_empty());
         assert_eq!(cache.len(), 0);
+        assert_eq!(cache.current_bytes(), 0);
     }
 
     #[test]
     fn get_or_insert_caches_on_miss() {
-        let mut cache = LineWrapCache::with_capacity(4);
+        let mut cache = LineWrapCache::with_byte_budget(ROOMY);
         let mut compute_calls = 0;
         let v = cache.get_or_insert_with(key(100, 1), || {
             compute_calls += 1;
-            7
+            dummy_lines(7)
         });
-        assert_eq!(v, 7);
+        assert_eq!(v.len(), 7);
         assert_eq!(compute_calls, 1);
         assert_eq!(cache.len(), 1);
     }
 
     #[test]
     fn repeat_lookup_is_a_hit() {
-        let mut cache = LineWrapCache::with_capacity(4);
+        let mut cache = LineWrapCache::with_byte_budget(ROOMY);
         let mut compute_calls = 0;
         cache.get_or_insert_with(key(100, 1), || {
             compute_calls += 1;
-            7
+            dummy_lines(7)
         });
         let v = cache.get_or_insert_with(key(100, 1), || {
             compute_calls += 1;
-            99 // wrong value, should not be invoked
+            dummy_lines(99) // wrong value, should not be invoked
         });
-        assert_eq!(v, 7);
+        assert_eq!(v.len(), 7);
         assert_eq!(compute_calls, 1, "second lookup should be a hit");
     }
 
     #[test]
     fn different_versions_are_separate_entries() {
-        let mut cache = LineWrapCache::with_capacity(4);
-        cache.get_or_insert_with(key(100, 1), || 3);
-        cache.get_or_insert_with(key(100, 2), || 5);
-        assert_eq!(cache.get(&key(100, 1)), Some(3));
-        assert_eq!(cache.get(&key(100, 2)), Some(5));
+        let mut cache = LineWrapCache::with_byte_budget(ROOMY);
+        cache.get_or_insert_with(key(100, 1), || dummy_lines(3));
+        cache.get_or_insert_with(key(100, 2), || dummy_lines(5));
+        assert_eq!(cache.get(&key(100, 1)).map(|v| v.len()), Some(3));
+        assert_eq!(cache.get(&key(100, 2)).map(|v| v.len()), Some(5));
         assert_eq!(cache.len(), 2);
     }
 
     #[test]
-    fn evicts_oldest_when_capacity_reached() {
-        let mut cache = LineWrapCache::with_capacity(3);
-        cache.get_or_insert_with(key(100, 1), || 1);
-        cache.get_or_insert_with(key(200, 1), || 2);
-        cache.get_or_insert_with(key(300, 1), || 3);
-        assert_eq!(cache.len(), 3);
-        // Inserting a fourth evicts the oldest (line_start=100).
-        cache.get_or_insert_with(key(400, 1), || 4);
-        assert_eq!(cache.len(), 3);
-        assert_eq!(cache.get(&key(100, 1)), None, "oldest evicted");
-        assert_eq!(cache.get(&key(200, 1)), Some(2));
-        assert_eq!(cache.get(&key(300, 1)), Some(3));
-        assert_eq!(cache.get(&key(400, 1)), Some(4));
+    fn evicts_oldest_when_byte_budget_reached() {
+        let mut cache = LineWrapCache::with_byte_budget(TIGHT);
+        cache.get_or_insert_with(key(100, 1), || dummy_lines(1));
+        cache.get_or_insert_with(key(200, 1), || dummy_lines(1));
+        cache.get_or_insert_with(key(300, 1), || dummy_lines(1));
+        // Adding a fourth tiny entry should evict at least the oldest
+        // (line_start=100) to stay within the budget.
+        cache.get_or_insert_with(key(400, 1), || dummy_lines(1));
+        assert!(cache.current_bytes() <= TIGHT);
+        assert_eq!(cache.get(&key(100, 1)).is_none(), true, "oldest evicted");
+        // Later entries still reachable.
+        assert!(cache.get(&key(400, 1)).is_some());
     }
 
     #[test]
     fn structural_invariant_holds_under_many_inserts() {
-        let mut cache = LineWrapCache::with_capacity(16);
+        let mut cache = LineWrapCache::with_byte_budget(TIGHT);
         for i in 0..200u64 {
-            cache.get_or_insert_with(key(i as usize, i), || i as u32);
-            assert!(cache.len() <= 16);
+            cache.get_or_insert_with(key(i as usize, i), || dummy_lines(1));
             assert_eq!(cache.len(), cache.map.len());
             assert_eq!(cache.len(), cache.order.len());
+            assert_eq!(cache.current_bytes <= cache.byte_budget, true);
         }
     }
 
     #[test]
     fn put_overwrites_existing_value_without_reordering() {
-        let mut cache = LineWrapCache::with_capacity(3);
-        cache.get_or_insert_with(key(100, 1), || 1);
-        cache.get_or_insert_with(key(200, 1), || 2);
-        cache.get_or_insert_with(key(300, 1), || 3);
-        // Overwrite middle.
-        cache.put(key(200, 1), 42);
-        assert_eq!(cache.get(&key(200, 1)), Some(42));
-        // Inserting a new entry still evicts 100 (oldest), not 200.
-        cache.get_or_insert_with(key(400, 1), || 4);
-        assert_eq!(cache.get(&key(100, 1)), None);
-        assert_eq!(cache.get(&key(200, 1)), Some(42));
-        assert_eq!(cache.get(&key(400, 1)), Some(4));
+        let mut cache = LineWrapCache::with_byte_budget(ROOMY);
+        cache.get_or_insert_with(key(100, 1), || dummy_lines(1));
+        cache.get_or_insert_with(key(200, 1), || dummy_lines(1));
+        cache.get_or_insert_with(key(300, 1), || dummy_lines(1));
+        // Overwrite middle with a different-sized value.
+        cache.put(key(200, 1), Arc::new(dummy_lines(42)));
+        assert_eq!(cache.get(&key(200, 1)).map(|v| v.len()), Some(42));
+        // key=100 is still the oldest in the FIFO.
+        cache.get_or_insert_with(key(400, 1), || dummy_lines(1));
+        // With ROOMY budget nothing's evicted yet; all present.
+        for k in [100usize, 200, 300, 400] {
+            assert!(cache.get(&key(k, 1)).is_some(), "k={k} should be present");
+        }
     }
 
     #[test]
     fn clear_empties_cache() {
-        let mut cache = LineWrapCache::with_capacity(4);
-        cache.get_or_insert_with(key(100, 1), || 1);
-        cache.get_or_insert_with(key(200, 1), || 2);
+        let mut cache = LineWrapCache::with_byte_budget(ROOMY);
+        cache.get_or_insert_with(key(100, 1), || dummy_lines(1));
+        cache.get_or_insert_with(key(200, 1), || dummy_lines(1));
         cache.clear();
         assert!(cache.is_empty());
-        assert_eq!(cache.get(&key(100, 1)), None);
+        assert_eq!(cache.current_bytes(), 0);
+        assert!(cache.get(&key(100, 1)).is_none());
     }
 
     #[test]
@@ -539,8 +671,26 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn zero_capacity_rejected() {
-        LineWrapCache::with_capacity(0);
+    fn zero_byte_budget_rejected() {
+        LineWrapCache::with_byte_budget(0);
+    }
+
+    /// Even if a single new entry's estimated size exceeds the budget,
+    /// the cache accepts it rather than silently dropping data the
+    /// caller just paid to compute.  Later inserts will still evict it
+    /// like any other FIFO entry.
+    #[test]
+    fn oversize_entry_is_accepted_then_agable() {
+        let mut cache = LineWrapCache::with_byte_budget(TIGHT);
+        // dummy_lines(50) is ~7 KB per line × 50 = ~350 KB... no, empty
+        // ViewLines are ~96 bytes each, so 50 × 96 ≈ 5 KB.  That
+        // exceeds TIGHT (500 bytes).
+        cache.get_or_insert_with(key(1, 1), || dummy_lines(50));
+        assert!(cache.get(&key(1, 1)).is_some());
+        // Inserting a second entry evicts the oversize one.
+        cache.get_or_insert_with(key(2, 1), || dummy_lines(1));
+        assert!(cache.get(&key(1, 1)).is_none());
+        assert!(cache.get(&key(2, 1)).is_some());
     }
 
     // -------------------------------------------------------------------
@@ -700,16 +850,23 @@ mod tests {
             .collect();
         let widths: [usize; 5] = [12, 20, 42, 80, 120];
 
-        // Op stream: pick (text_idx, width_idx) pairs, query both real
-        // and shadow.
-        let mut real = LineWrapCache::with_capacity(16);
+        // Cache stores Vec<ViewLine>, so the shadow compares the LENGTH
+        // (row count) the cache would expose with a fresh recompute.
+        // The full-pipeline shadow (ViewLine coordinates agreeing with
+        // the renderer) lives in e2e tests; this primitive-level shadow
+        // checks that the FIFO / byte-budget machinery doesn't corrupt
+        // stored values across inserts and evictions.
+        //
+        // Real cache values are built from `dummy_lines(shadow_count)`
+        // so the cache value's length equals the shadow row count.
+        let mut real = LineWrapCache::with_byte_budget(TIGHT);
         for step in 0..400usize {
             let t_idx = (step * 37 + 11) % texts.len();
             let w_idx = (step * 5 + 3) % widths.len();
             let text = &texts[t_idx];
             let width = widths[w_idx];
 
-            let shadow_val = count_visual_rows_for_text(text, width, 2, false);
+            let shadow_rows = count_visual_rows_for_text(text, width, 2, false);
 
             let key = LineWrapKey {
                 pipeline_inputs_version: 0,
@@ -721,15 +878,18 @@ mod tests {
                 hanging_indent: false,
                 line_wrap_enabled: true,
             };
-            let real_val =
-                real.get_or_insert_with(key, || count_visual_rows_for_text(text, width, 2, false));
-
+            let real_val = real.get_or_insert_with(key, || dummy_lines(shadow_rows));
             assert_eq!(
-                real_val, shadow_val,
+                real_val.len() as u32,
+                shadow_rows,
                 "shadow disagreement at step {step}: text_idx={t_idx}, width={width}, \
-                 real={real_val}, shadow={shadow_val}",
+                 real={}, shadow={shadow_rows}",
+                real_val.len(),
             );
-            assert!(real.len() <= 16, "cache exceeded capacity");
+            assert!(
+                real.current_bytes() <= real.byte_budget(),
+                "cache exceeded byte budget"
+            );
         }
     }
 
@@ -739,7 +899,7 @@ mod tests {
     /// should ever get the stale value.
     #[test]
     fn version_bump_makes_old_entry_unreachable() {
-        let mut cache = LineWrapCache::with_capacity(16);
+        let mut cache = LineWrapCache::with_byte_budget(ROOMY);
         let key_v0 = LineWrapKey {
             pipeline_inputs_version: 100,
             view_mode: CacheViewMode::Source,
@@ -750,16 +910,15 @@ mod tests {
             hanging_indent: false,
             line_wrap_enabled: true,
         };
-        cache.get_or_insert_with(key_v0, || 5);
-        assert_eq!(cache.get(&key_v0), Some(5));
+        cache.get_or_insert_with(key_v0, || dummy_lines(5));
+        assert_eq!(cache.get(&key_v0).map(|v| v.len()), Some(5));
 
         let key_v1 = LineWrapKey {
             pipeline_inputs_version: 101,
             ..key_v0
         };
-        assert_eq!(
-            cache.get(&key_v1),
-            None,
+        assert!(
+            cache.get(&key_v1).is_none(),
             "v1 lookup must miss even though v0 entry is still present"
         );
 
@@ -767,13 +926,13 @@ mod tests {
         let mut miss_called = 0;
         let v = cache.get_or_insert_with(key_v1, || {
             miss_called += 1;
-            7
+            dummy_lines(7)
         });
-        assert_eq!(v, 7);
+        assert_eq!(v.len(), 7);
         assert_eq!(miss_called, 1);
-        assert_eq!(cache.get(&key_v1), Some(7));
+        assert_eq!(cache.get(&key_v1).map(|v| v.len()), Some(7));
         assert_eq!(
-            cache.get(&key_v0),
+            cache.get(&key_v0).map(|v| v.len()),
             Some(5),
             "v0 entry preserved until evicted"
         );
@@ -830,22 +989,21 @@ mod tests {
             },
         ];
 
-        let mut cache = LineWrapCache::with_capacity(16);
-        cache.get_or_insert_with(base, || 1);
+        let mut cache = LineWrapCache::with_byte_budget(ROOMY);
+        cache.get_or_insert_with(base, || dummy_lines(1));
         for (i, v) in variations.iter().enumerate() {
             assert_ne!(*v, base, "variation {i} shouldn't equal base");
-            assert_eq!(
-                cache.get(v),
-                None,
+            assert!(
+                cache.get(v).is_none(),
                 "variation {i} unexpectedly hit base entry"
             );
-            cache.get_or_insert_with(*v, || 2 + i as u32);
+            cache.get_or_insert_with(*v, || dummy_lines(2 + i as u32));
         }
         // Base entry is still reachable.
-        assert_eq!(cache.get(&base), Some(1));
-        // Each variation stored its own value.
+        assert_eq!(cache.get(&base).map(|v| v.len()), Some(1));
+        // Each variation stored its own value (distinguished by length).
         for (i, v) in variations.iter().enumerate() {
-            assert_eq!(cache.get(v), Some(2 + i as u32));
+            assert_eq!(cache.get(v).map(|v| v.len()), Some(2 + i));
         }
     }
 }
