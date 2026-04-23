@@ -16,6 +16,11 @@ const editor = getEditor();
 //   it is never loaded, so no buffers are created, no timers run,
 //   and no network fetches fire.
 //
+//   A second flag `plugins.dashboard.auto-open` (default true) gates
+//   only the ambient open paths (startup + last-buffer-closed). When
+//   false the plugin still loads and the "Show Dashboard" command is
+//   still available — it just won't appear on its own.
+//
 //   - Auto-centers both horizontally and vertically. Repaints when the
 //     viewport changes (terminal resize, file-explorer toggle, split
 //     reshape).
@@ -159,8 +164,19 @@ export type DashboardApi = {
      *  Returns true if at least one section was removed. */
     removeSection(name: string): boolean;
     /** Remove every registered section, including the bundled
-     *  built-ins (weather, git, github, disk). */
+     *  built-ins (git, disk). */
     clearAllSections(): void;
+    /** Toggle the ambient auto-open behaviour for this session.
+     *  Equivalent to setting `plugins.dashboard.auto-open` in the
+     *  user config, but scoped to the current process. */
+    setAutoOpen(enabled: boolean): void;
+    /** Refresh handlers for the built-in widgets that aren't
+     *  registered by default (both hit the network). Pass one to
+     *  `registerSection` from init.ts to enable it. */
+    builtinHandlers: {
+        weather: SectionRefresh;
+        github: SectionRefresh;
+    };
 };
 
 declare global {
@@ -1528,8 +1544,24 @@ async function dashboardShowOrFocus() {
 }
 registerHandler("dashboardShowOrFocus", dashboardShowOrFocus);
 
+// Auto-open resolution: the session override (set via the exported
+// plugin API from init.ts) wins over the user config. We read from
+// getUserConfig (raw file) rather than getConfig because unknown
+// fields are dropped when the Config struct reserializes. Default
+// is true.
+let autoOpenOverride: boolean | null = null;
+
+function autoOpenEnabled(): boolean {
+    if (autoOpenOverride !== null) return autoOpenOverride;
+    const cfg = editor.getUserConfig() as Record<string, unknown> | null;
+    const plugins = cfg?.plugins as Record<string, unknown> | undefined;
+    const dashboard = plugins?.dashboard as Record<string, unknown> | undefined;
+    return dashboard?.["auto-open"] !== false;
+}
+
 function shouldShowDashboard(): boolean {
     if (dashboardBufferId !== null) return false;
+    if (!autoOpenEnabled()) return false;
     const all = editor.listBuffers();
     const realFiles = all.filter(
         (b) => !b.is_virtual && b.path && b.path.length > 0,
@@ -1680,9 +1712,12 @@ registerHandler(
 // Register the built-in sections. They use the same public
 // `DashboardContext` API that third-party plugins consume, so any
 // change to the context contract surfaces here first.
-registerSection("weather", weatherRefresh);
+//
+// `weather` and `github` are opt-in — they hit the network on every
+// refresh, so we only register `git` and `disk` by default. Users
+// wire the others up from init.ts via the exported plugin API; see
+// the init.ts starter template for a ready-to-paste example.
 registerSection("git", gitRefresh);
-registerSection("github", githubRefresh);
 registerSection("disk", diskRefresh);
 
 // Expose the section-management entry points to other plugins and to
@@ -1710,6 +1745,13 @@ editor.exportPluginApi("dashboard", {
     },
     clearAllSections(): void {
         clearAllSections();
+    },
+    setAutoOpen(enabled: boolean): void {
+        autoOpenOverride = !!enabled;
+    },
+    builtinHandlers: {
+        weather: weatherRefresh,
+        github: githubRefresh,
     },
 });
 

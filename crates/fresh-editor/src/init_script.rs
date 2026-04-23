@@ -106,6 +106,29 @@ const editor = getEditor();
 //     if (api) api.configure({ option: "value" });
 // });
 
+// Example: enable the opt-in Dashboard widgets (weather, GitHub).
+// Both hit the network on every refresh, so the plugin ships with
+// only `git` and `disk` registered by default. The handlers live
+// on the exported plugin API as `builtinHandlers` — pass them to
+// `registerSection` with whatever name you like.
+//
+// editor.on("plugins_loaded", () => {
+//     const dash = editor.getPluginApi("dashboard");
+//     if (!dash) return;
+//     dash.registerSection("weather", dash.builtinHandlers.weather);
+//     dash.registerSection("github", dash.builtinHandlers.github);
+// });
+
+// Example: disable the Dashboard's auto-open behaviour on this
+// machine (it will still be available via the "Show Dashboard"
+// command). The same toggle can also be set persistently in
+// config.json at `plugins.dashboard.auto-open`.
+//
+// editor.on("plugins_loaded", () => {
+//     const dash = editor.getPluginApi("dashboard");
+//     if (dash) dash.setAutoOpen(false);
+// });
+
 // Example: add a custom section to the Dashboard plugin.
 //
 // `editor.getPluginApi("dashboard")` is typed automatically via

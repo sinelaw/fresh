@@ -2,10 +2,36 @@
 
 ## 0.2.26
 
+This version brings major features and many quality-of-life improvements and bug fixes:
+
+- A cool dashboard plugin
+- Devcontainer support
+- init.ts
+
+And more (see below). A large version is more likely to contain regression bugs, so please bear with me if you encounter problems, and open github issues without hesitation.
+
 ### Features
 
-* **`init.ts`**: Fresh now auto-loads `~/.config/fresh/init.ts`! Allows you to run plugin code on startup, which complements the purely declarative config system with imperative, environment-aware logic. Use command palette `init: Edit` to generate a template with some examples. Enable LSP to get help and completions when editing your init file. Use `init: Reload` to run it after editing. Use `--no-init` / `--safe` to skip loading. Example (for the Dashboard plugin):
+* **Dashboard plugin**: Built-in TUI dashboard that replaces the usual "[No Name]" with useful at-a-glance info.
+    - Default widgets: git status + repo URL, a "vs master" row (commits ahead/behind), and disk usage for common mounts.
+    - Opt-in widgets: weather, and open GitHub PRs for the current repo.
+    - Auto-open (on startup / last-buffer-close) is configurable — e.g. `editor.getPluginApi("dashboard")?.setAutoOpen(false)` in `init.ts`. When off, use the "Show Dashboard" command in the palette.
+    - Third-party plugins and `init.ts` can contribute their own rows via the `registerSection()` API. The `init.ts` starter template includes ready-to-paste snippets for enabling the opt-in widgets, toggling auto-open, and registering custom sections (see below).
+
+* **Devcontainer support** (thanks @masak1yu!): Fresh integrates with the [devcontainer CLI](https://github.com/devcontainers/cli) (install it yourself).
+    - Detects `.devcontainer/devcontainer.json` and offers Attach / Rebuild / Detach.
+    - Embedded terminal, filesystem, and LSP servers all run inside the devcontainer.
+    - `Dev Container: Create Config` scaffolds a config for projects that don't have one.
+    - `Dev Container: Show Ports` merges configured `forwardPorts` with live `docker port` output.
+    - `Dev Container: Show Logs` captures the container's recent stdout/stderr.
+    - Build log streams into a workspace split; failed attaches offer Retry / Show Logs / Detach via a recovery popup.
+    - `initializeCommand` runs on attach.
+
+* **`init.ts`**: Fresh now auto-loads `~/.config/fresh/init.ts`! Allows you to run plugin code on startup, which complements the purely declarative config system with imperative, environment-aware logic. Use command palette `init: Edit` to generate a template with some examples. Use `init: Reload` to run it after editing. Use `--no-init` / `--safe` to skip loading.  
+    - Tip: *Enable LSP* when editing `init.ts` to get help and completions. 
+    - Example (for the Dashboard plugin):
     ```typescript
+    // in your init.ts file:
     const dash = editor.getPluginApi("dashboard");
     if (dash) {
       dash.registerSection("env", async (ctx) => {
@@ -13,23 +39,22 @@
       });
     }
     ```
-    Will add a line like this:
+    Will add a line like this to your dashboard:
     ```
     │ ▎  ENV                              │
     │    USER      someone                │
     ```
 
-* **Dashboard plugin**: Built-in TUI dashboard that replaces the usual "[No Name]" with weather info, git status + repo URL, a "vs master" row (commits ahead/behind), open GitHub PRs for the current repo, and disk usage for common mounts. Enable via `plugins.dashboard.enabled` in `config.json` or the Settings UI. Third-party plugins and `init.ts` can contribute their own rows via the `registerSection()` API.
-
-* **Devcontainer support**: Detects `.devcontainer/devcontainer.json` and offers Attach / Rebuild / Detach via the [devcontainer CLI](https://github.com/devcontainers/cli), which you need to install. Embedded terminal, filesystem, and LSP servers all run inside the devcontainer. `Dev Container: Create Config` scaffolds a config for projects that don't have one. `Dev Container: Show Ports` merges configured `forwardPorts` with live `docker port` output; `Dev Container: Show Logs` captures the container's recent stdout/stderr. The build log streams into a workspace split, and failed attaches offer Retry/Show Logs/Detach through a recovery popup. `initializeCommand` runs on attach.
-
 * **`{remote}` status-bar indicator**: Clickable status-bar element that lights up when you're attached to an SSH remote or devcontainer, with a context-aware menu (detach, show logs, retry attach, …). Surfaces `Connecting` / `Connected` / `FailedAttach` states. Fresh's config v1→v2 migration injects `{remote}` into customized `status_bar.left`.
 
 * **Hot-exit restore split from session restore**: `editor.restore_previous_session` config and the `--no-restore` / `--restore` CLI flags now control workspace/tab restoration separately from hot-exit content — unsaved scratch buffers come back even when you opt out of full session restore (#1404).
 
-* **File explorer — cut/copy/paste + multi-selection**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` in the explorer with same-dir auto-rename, per-file conflict prompt on cross-dir paste, and `Shift+Up/Down` multi-select. Cut-pending items are dimmed until pasted; cancel a pending cut with Escape or by pasting back into the same directory. Renaming a file or directory relocates any open buffers inside it; deleting a file closes its buffer.
-
-* **Dashboard — keyboard navigation**: `Tab` / `Down` / `j` steps forward through clickable rows (PR numbers, repo URL, review-branch action, …), `Shift+Tab` / `Up` / `k` steps back, `Enter` activates the focused row. Mouse clicks continue to work.
+* **File explorer — cut/copy/paste + multi-selection + right-click context menu** (thanks @theogravity!):
+    - `Ctrl+C` / `Ctrl+X` / `Ctrl+V` with same-dir auto-rename and per-file conflict prompt on cross-dir paste.
+    - `Shift+Up/Down` for multi-select.
+    - Right-click context menu (#1684) with the usual file operations, honoring the active multi-selection.
+    - Cut-pending items are dimmed until pasted; cancel a pending cut with Escape or by pasting back into the same directory.
+    - Renaming a file or directory relocates any open buffers inside it; deleting a file closes its buffer.
 
 * **File explorer — keyboard preview**: Moving the cursor with Up/Down in the explorer previews the highlighted file in a preview tab (#1570), so you can scan files without leaving the keyboard.
 
@@ -67,7 +92,15 @@
   - "file://${HOME}/themes/x.json" — absolute path; ${HOME}, ${XDG_CONFIG_HOME} are expanded
   - "https://github.com/foo/themes#dark" — URL-packaged theme
 
-* **Plugin API additions**: `editor.overrideThemeColors(...)` for in-memory theme mutation, `editor.parseJsonc(...)` for host-side JSONC parsing, and plugin-created terminals now have an ephemeral lifetime (they close cleanly when the action that spawned them finishes). Plugin authors can also augment `FreshPluginRegistry` to make `editor.getPluginApi("name")` return a typed interface — no `as`-cast needed on the consumer side; augmentations are emitted to `~/.config/fresh/types/plugins.d.ts` at load time. `spawnHostProcess` now returns a handle with `kill()` (and a matching `KillHostProcess` command). `BufferInfo.splits` surfaces which splits display a buffer, for "focus-if-visible" dedupe. `editor.setRemoteIndicatorState(...)` / `clearRemoteIndicatorState()` let remote plugins drive the status-bar `{remote}` element. Dashboard gains `dash.registerSection()` (with a returned remover) and `dash.clearAllSections()` for plugin extension.
+* **Plugin API additions**:
+    - `editor.overrideThemeColors(...)` for in-memory theme mutation.
+    - `editor.parseJsonc(...)` for host-side JSONC parsing.
+    - Plugin-created terminals now have an ephemeral lifetime — they close cleanly when the action that spawned them finishes.
+    - Plugin authors can augment `FreshPluginRegistry` to make `editor.getPluginApi("name")` return a typed interface (no `as`-cast needed). Augmentations are emitted to `~/.config/fresh/types/plugins.d.ts` at load time.
+    - `spawnHostProcess` now returns a handle with `kill()` (and a matching `KillHostProcess` command).
+    - `BufferInfo.splits` surfaces which splits display a buffer, for "focus-if-visible" dedupe.
+    - `editor.setRemoteIndicatorState(...)` / `clearRemoteIndicatorState()` let remote plugins drive the status-bar `{remote}` element.
+    - Dashboard gains `dash.registerSection()` (with a returned remover) and `dash.clearAllSections()` for plugin extension.
 
 * **JSONC language**: `.jsonc` files and well-known JSONC-with-`.json`-suffix files (`devcontainer.json`, `tsconfig.json`, `.eslintrc.json`, `.babelrc`, VS Code settings files) now get a dedicated `jsonc` language with comment-tolerant highlighting and LSP routing through `vscode-json-language-server` with the correct `languageId`.
 
