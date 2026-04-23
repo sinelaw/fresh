@@ -104,6 +104,59 @@ fn dashboard_opens_when_no_file_is_queued() {
         .unwrap();
 }
 
+/// End-to-end check for the bringup slide-in. Opens the dashboard,
+/// waits semantically for the animation runner to drain (no fixed
+/// timer), then confirms the dashboard is rendered at its resting
+/// position by sampling a glyph inside the ASCII "FRESH" banner. The
+/// animation itself shifts cells vertically, so the banner only lands
+/// at its final row once the effect reports Done; that's exactly the
+/// semantic we wait on.
+#[test]
+fn dashboard_bringup_animation_settles_and_renders() {
+    let (mut harness, _tmp) = harness_with_dashboard_plugin();
+
+    harness.editor_mut().fire_ready_hook();
+
+    // Dashboard is the active buffer once the ready hook fires and
+    // its createVirtualBuffer round-trip resolves.
+    harness
+        .wait_until(|h| {
+            let active = h.editor().active_buffer();
+            h.editor().get_buffer_display_name(active) == "Dashboard"
+        })
+        .unwrap();
+
+    // Wait for the bringup effect to actually start. This guards
+    // against a regression where the plugin never calls
+    // animate_virtual_buffer (e.g. if the viewport_changed trigger
+    // silently breaks) — the test would otherwise pass trivially
+    // because a never-started animation looks identical to a
+    // finished one.
+    harness
+        .wait_until(|h| h.editor().animations.is_active())
+        .unwrap();
+
+    // Now settle the bringup animation: the runner flips is_active to
+    // false once every effect returns Done, so this fires exactly
+    // when the final resting frame has been painted.
+    harness
+        .wait_until(|h| !h.editor().animations.is_active())
+        .unwrap();
+
+    // Post-settle: the banner row is at its natural position and the
+    // "FRESH" text is readable on screen. Don't assert against the
+    // status bar — it gets repainted asynchronously. The banner is
+    // well inside the dashboard's own Rect.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("FRESH"),
+        "dashboard banner should be visible after bringup settles — screen:\n{}",
+        screen
+    );
+
+    harness.assert_no_plugin_errors();
+}
+
 /// Third-party plugins (and user init.ts) can add their own section
 /// to the dashboard via the exported `registerSection` plugin API.
 /// This test drops a sidecar plugin next to the dashboard that
