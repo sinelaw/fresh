@@ -4691,8 +4691,8 @@ editor.defineMode(
         ["Down", "move_down"],
         ["k", "move_up"],
         ["j", "move_down"],
-        ["PageUp", "page_up"],
-        ["PageDown", "page_down"],
+        ["PageUp", "move_page_up"],
+        ["PageDown", "move_page_down"],
         ["Home", "move_line_start"],
         ["End", "move_line_end"],
         // Enter: focus the right-hand detail panel.

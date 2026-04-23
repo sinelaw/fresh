@@ -4186,3 +4186,106 @@ fn test_review_branch_prompt_defaults_to_repo_default_branch() {
         screen
     );
 }
+
+/// PageDown in the detail pane of Review PR Branch should page the
+/// buffer, not trip the "Action page_down is not defined as a global
+/// function" error. The bug was that the review-branch mode bound
+/// PageUp/PageDown to action names that don't exist; they should map
+/// to the built-in `move_page_up` / `move_page_down`.
+#[test]
+fn test_review_branch_detail_pane_page_down_works() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("a.txt", "base\n");
+    repo.git_add_all();
+    repo.git_commit("base commit");
+    rename_head_branch(&repo, "master");
+
+    // Long feature-branch commit so the detail pane has enough
+    // content that PageDown is meaningful — a single one-line diff
+    // fits on one screen and wouldn't exercise paging.
+    run_git(&repo, &["checkout", "-b", "feature"]);
+    let mut body = String::new();
+    for i in 0..200 {
+        body.push_str(&format!("line {i}\n"));
+    }
+    repo.create_file("big.txt", &body);
+    repo.git_add_all();
+    repo.git_commit("add big file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review PR Branch").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            h.editor().is_prompting() && s.contains("Base ref")
+        })
+        .unwrap();
+    // Accept the default (master) — confirms fix #1 is live too.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for the review-branch view to finish loading.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("add big file"))
+        .unwrap();
+
+    // Wait for the detail pane to actually populate (git show is
+    // fetched async so it can lag behind the log-panel render).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("line 0"))
+        .unwrap();
+
+    // Tab from the log panel into the detail panel. process_async_and_render
+    // drains the JS queue so the focus-switch handler lands before we
+    // send the next key.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*detail* [RO]"))
+        .unwrap();
+
+    // Page down: the bug surface is that the broken `page_down`
+    // binding was a no-op and logged an error, so the cursor stays on
+    // Ln 1. With the fix in place, `move_page_down` advances it by a
+    // page, which shows up as a larger line number in the status bar.
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // The detail panel's status line looks like
+            //   `*detail* [RO] | Ln <N>, Col <M> | ...`
+            // We only care that N is no longer 1 (i.e. paging actually
+            // moved the cursor). Match "| Ln 2" / "Ln 3" / … without
+            // accidentally matching the old "Ln 1".
+            let has_detail = s.contains("*detail* [RO]");
+            let moved = [
+                "| Ln 2", "| Ln 3", "| Ln 4", "| Ln 5", "| Ln 6", "| Ln 7", "| Ln 8", "| Ln 9",
+            ]
+            .iter()
+            .any(|prefix| s.contains(prefix));
+            has_detail && moved
+        })
+        .unwrap();
+}
