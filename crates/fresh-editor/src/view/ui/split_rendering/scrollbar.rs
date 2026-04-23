@@ -58,7 +58,9 @@ pub(super) fn scrollbar_visual_row_counts(
     viewport: &Viewport,
     buffer_len: usize,
 ) -> (usize, usize) {
-    use crate::primitives::line_wrapping::{wrap_line, WrapConfig};
+    use crate::primitives::line_wrapping::WrapConfig;
+    use crate::view::line_wrap_cache::{layout_for_plain_text, pipeline_inputs_version, CacheViewMode, LineWrapKey};
+    use std::sync::Arc;
 
     if buffer_len == 0 {
         return (1, 0);
@@ -90,11 +92,77 @@ pub(super) fn scrollbar_visual_row_counts(
         true,
         viewport.wrap_indent,
     );
+    let effective_width = wrap_config
+        .first_line_width
+        .saturating_add(gutter_width)
+        .max(2);
+    let hanging_indent = wrap_config.hanging_indent;
+    let tab_size = state.buffer_settings.tab_size;
+    let pipeline_inputs_ver = pipeline_inputs_version(
+        state.buffer.version(),
+        state.soft_breaks.version(),
+        state.conceals.version(),
+    );
+    // Build the LineWrapKey template used for each line — only
+    // `line_start` varies across lines.
+    let make_key = |line_start: usize| LineWrapKey {
+        pipeline_inputs_version: pipeline_inputs_ver,
+        view_mode: CacheViewMode::Source,
+        line_start,
+        effective_width: effective_width as u32,
+        gutter_width: gutter_width as u16,
+        wrap_column: None,
+        hanging_indent,
+        line_wrap_enabled: viewport.line_wrap_enabled,
+    };
 
     let line_count = state
         .buffer
         .line_count()
         .unwrap_or_else(|| (buffer_len / state.buffer.estimated_line_length()).max(1));
+
+    // Helper: per-line row count.  Goes through the shared
+    // LineWrapCache so the result matches the renderer's word-boundary
+    // wrap.  On miss, runs layout_for_plain_text (no soft-breaks /
+    // conceals — matching the OLD wrap_line behavior here; we keep
+    // that gap documented rather than quietly widening it).
+    fn row_count_for_line(
+        state: &mut EditorState,
+        line_idx: usize,
+        buffer_len: usize,
+        effective_width: usize,
+        gutter_width: usize,
+        hanging_indent: bool,
+        tab_size: usize,
+        make_key: &impl Fn(usize) -> LineWrapKey,
+    ) -> (usize, usize) {
+        // Returns (line_start, row_count).
+        let line_start = state
+            .buffer
+            .line_start_offset(line_idx)
+            .unwrap_or(buffer_len);
+        let key = make_key(line_start);
+        if let Some(cached) = state.line_wrap_cache.get(&key) {
+            return (line_start, cached.len().max(1));
+        }
+        let Some(bytes) = state.buffer.get_line(line_idx) else {
+            return (line_start, 0);
+        };
+        let line_content = String::from_utf8_lossy(&bytes)
+            .trim_end_matches('\n')
+            .trim_end_matches('\r')
+            .to_string();
+        let layout = layout_for_plain_text(
+            &line_content,
+            effective_width,
+            gutter_width,
+            hanging_indent,
+            tab_size,
+        );
+        let rows = layout.len().max(1);
+        state.line_wrap_cache.put(key, Arc::new(layout));
+        (line_start, rows)
+    }
 
     let mut total_visual_rows = 0;
     let mut top_visual_row = 0;
@@ -102,41 +170,27 @@ pub(super) fn scrollbar_visual_row_counts(
 
     if total_rows_valid {
         total_visual_rows = cache.total_visual_rows;
-        for line_idx in 0..line_count {
-            let line_start = state
-                .buffer
-                .line_start_offset(line_idx)
-                .unwrap_or(buffer_len);
-
-            if line_start >= viewport.top_byte {
-                top_visual_row = total_visual_rows.min(0);
-                break;
-            }
-        }
         let mut rows_before_top = 0;
         for line_idx in 0..line_count {
-            let line_start = state
-                .buffer
-                .line_start_offset(line_idx)
-                .unwrap_or(buffer_len);
-
+            let (line_start, rows) = row_count_for_line(
+                state,
+                line_idx,
+                buffer_len,
+                effective_width,
+                gutter_width,
+                hanging_indent,
+                tab_size,
+                &make_key,
+            );
             if line_start >= viewport.top_byte {
                 top_visual_row = rows_before_top + viewport.top_view_line_offset;
                 found_top = true;
                 break;
             }
-
-            let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
-                String::from_utf8_lossy(&bytes)
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r')
-                    .to_string()
-            } else {
+            if rows == 0 {
                 break;
-            };
-
-            let segments = wrap_line(&line_content, &wrap_config);
-            rows_before_top += segments.len().max(1);
+            }
+            rows_before_top += rows;
         }
 
         if !found_top {
@@ -144,27 +198,24 @@ pub(super) fn scrollbar_visual_row_counts(
         }
     } else {
         for line_idx in 0..line_count {
-            let line_start = state
-                .buffer
-                .line_start_offset(line_idx)
-                .unwrap_or(buffer_len);
-
+            let (line_start, rows) = row_count_for_line(
+                state,
+                line_idx,
+                buffer_len,
+                effective_width,
+                gutter_width,
+                hanging_indent,
+                tab_size,
+                &make_key,
+            );
             if !found_top && line_start >= viewport.top_byte {
                 top_visual_row = total_visual_rows + viewport.top_view_line_offset;
                 found_top = true;
             }
-
-            let line_content = if let Some(bytes) = state.buffer.get_line(line_idx) {
-                String::from_utf8_lossy(&bytes)
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r')
-                    .to_string()
-            } else {
+            if rows == 0 {
                 break;
-            };
-
-            let segments = wrap_line(&line_content, &wrap_config);
-            total_visual_rows += segments.len().max(1);
+            }
+            total_visual_rows += rows;
         }
 
         if !found_top {
