@@ -16,11 +16,16 @@ use crate::primitives::line_wrapping::{wrap_line, WrapConfig};
 
 /// Width estimate of the gutter, used to build the wrap config. Kept in
 /// sync with the real gutter sizing in the render path (indicator + digits
-/// + separator).
+/// + separator) — see `Viewport::gutter_width`, which uses the same
+/// formula with `MIN_LINE_NUMBER_DIGITS` as the floor. If this diverges
+/// from the renderer's gutter width, scroll math counts visual rows at a
+/// different text-area width than the renderer actually uses, so
+/// `max_scroll_row` ends up too high or too low and the scroll stops
+/// short of the bottom (or past it) when line wrap is enabled.
 fn estimated_gutter_width(buffer: &Buffer) -> usize {
     let line_count = buffer.line_count().unwrap_or(1);
     let digits = (line_count as f64).log10().floor() as usize + 1;
-    1 + digits.max(4) + 3
+    1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
 }
 
 /// Build a map of `(line_start_byte, visual_row_offset_within_line)` for

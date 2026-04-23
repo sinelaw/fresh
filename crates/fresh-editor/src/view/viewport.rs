@@ -375,8 +375,13 @@ impl Viewport {
         let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset);
 
         if rows_remaining < rows_left_in_current {
-            // Can satisfy scroll within current line
+            // Can satisfy scroll within current line, but we still
+            // need to reclamp: if the current line is the last line
+            // of the buffer, advancing `top_view_line_offset` can push
+            // the viewport past the point where it can be filled with
+            // real content, leaving past-EOF `~` rows below.
             self.top_view_line_offset += rows_remaining;
+            self.apply_visual_scroll_limit(buffer, soft_breaks, &wrap_config);
             return;
         }
 
