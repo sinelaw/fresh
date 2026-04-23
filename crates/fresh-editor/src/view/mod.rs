@@ -13,6 +13,8 @@ pub mod theme;
 
 // WASM-compatible modules (pure rendering, no runtime deps)
 #[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod animation;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod color_support;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod composite_view;
