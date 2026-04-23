@@ -42,6 +42,7 @@ pub mod gui;
 pub mod hanging_wrap_indent;
 pub mod horizontal_scrollbar;
 pub mod hot_exit_flows;
+pub mod hot_exit_recovery_lsp_sync;
 pub mod indent_dedent;
 pub mod inline_diagnostics;
 pub mod issue_1147_wrapped_line_nav;

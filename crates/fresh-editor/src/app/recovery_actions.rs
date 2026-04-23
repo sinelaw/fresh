@@ -14,6 +14,29 @@ use crate::model::event::BufferId;
 use super::Editor;
 
 impl Editor {
+    /// Push the buffer's full current content to LSP after an out-of-band
+    /// mutation (hot-exit recovery replay / crash-recovery replay). The
+    /// replay paths edit the buffer directly via `buffer.delete` and
+    /// `buffer.insert`, which don't route through the normal event log
+    /// that also emits `didChange`. If LSP's `didOpen` already fired with
+    /// the on-disk content, the server is left on a stale base and every
+    /// position it returns is offset by the net byte delta.
+    pub(crate) fn sync_lsp_after_recovery_replay(&mut self, buffer_id: BufferId) {
+        let Some(text) = self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.to_string())
+        else {
+            return;
+        };
+        let full_change = lsp_types::TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text,
+        };
+        self.send_lsp_changes_for_buffer(buffer_id, vec![full_change]);
+    }
+
     /// Start the recovery session (call on editor startup after recovery check)
     pub fn start_recovery_session(&mut self) -> AnyhowResult<()> {
         Ok(self.recovery_service.start_session()?)
@@ -106,7 +129,7 @@ impl Editor {
                     if let Some(path) = original_path {
                         // Open the file path (this creates the buffer)
                         match self.open_file(&path) {
-                            Ok(_) => {
+                            Ok(buffer_id) => {
                                 // Replace buffer content with recovered content
                                 {
                                     let state = self.active_state_mut();
@@ -119,6 +142,10 @@ impl Editor {
                                 // Invalidate the event log's saved position so undo
                                 // can't incorrectly clear the modified flag
                                 self.active_event_log_mut().clear_saved_position();
+                                // Recovery replay mutates the buffer directly —
+                                // push the new content to LSP so tokens and
+                                // positions don't drift against an on-disk base.
+                                self.sync_lsp_after_recovery_replay(buffer_id);
                                 recovered_count += 1;
                                 tracing::info!("Recovered buffer: {}", path.display());
                             }
@@ -135,7 +162,7 @@ impl Editor {
                         }
                     } else {
                         // Unsaved buffer - create new buffer with recovered content
-                        self.new_buffer();
+                        let buffer_id = self.new_buffer();
                         {
                             let state = self.active_state_mut();
                             state.buffer.insert(0, &text);
@@ -144,6 +171,7 @@ impl Editor {
                         // Invalidate the event log's saved position so undo
                         // can't incorrectly clear the modified flag
                         self.active_event_log_mut().clear_saved_position();
+                        self.sync_lsp_after_recovery_replay(buffer_id);
                         recovered_count += 1;
                         tracing::info!("Recovered unsaved buffer");
                     }
@@ -153,7 +181,7 @@ impl Editor {
                     chunks,
                 }) => {
                     // Chunked recovery for large files - apply chunks directly
-                    if self.open_file(&original_path).is_ok() {
+                    if let Ok(buffer_id) = self.open_file(&original_path) {
                         {
                             let state = self.active_state_mut();
 
@@ -175,6 +203,7 @@ impl Editor {
                         // Invalidate the event log's saved position so undo
                         // can't incorrectly clear the modified flag
                         self.active_event_log_mut().clear_saved_position();
+                        self.sync_lsp_after_recovery_replay(buffer_id);
                         recovered_count += 1;
                         tracing::info!("Recovered buffer with chunks: {}", original_path.display());
                     }
@@ -253,7 +282,7 @@ impl Editor {
                     let text = String::from_utf8_lossy(&content).into_owned();
                     if let Some(path) = original_path {
                         match self.open_file(&path) {
-                            Ok(_) => {
+                            Ok(buffer_id) => {
                                 {
                                     let state = self.active_state_mut();
                                     let total = state.buffer.total_bytes();
@@ -263,6 +292,7 @@ impl Editor {
                                     state.buffer.set_recovery_pending(false);
                                 }
                                 self.active_event_log_mut().clear_saved_position();
+                                self.sync_lsp_after_recovery_replay(buffer_id);
                                 restored += 1;
                                 tracing::info!(
                                     "Hot-exit restore: reopened {} with unsaved changes",
@@ -298,6 +328,7 @@ impl Editor {
                         if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
                             meta.recovery_id = Some(entry.id.clone());
                         }
+                        self.sync_lsp_after_recovery_replay(buffer_id);
                         restored += 1;
                         tracing::info!(
                             "Hot-exit restore: reopened unnamed buffer (recovery_id={})",
@@ -309,7 +340,7 @@ impl Editor {
                     original_path,
                     chunks,
                 }) => match self.open_file(&original_path) {
-                    Ok(_) => {
+                    Ok(buffer_id) => {
                         {
                             let state = self.active_state_mut();
                             for chunk in chunks.into_iter().rev() {
@@ -325,6 +356,7 @@ impl Editor {
                             state.buffer.set_recovery_pending(false);
                         }
                         self.active_event_log_mut().clear_saved_position();
+                        self.sync_lsp_after_recovery_replay(buffer_id);
                         restored += 1;
                         tracing::info!(
                             "Hot-exit restore: reopened {} with chunked changes",

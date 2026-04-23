@@ -600,6 +600,7 @@ impl Editor {
                     Ok(crate::services::recovery::RecoveryResult::Recovered {
                         content, ..
                     }) => {
+                        let mut mutated = false;
                         if let Some(state) = self.buffers.get_mut(&buffer_id) {
                             let current_len = state.buffer.total_bytes();
                             let text = String::from_utf8_lossy(&content).into_owned();
@@ -617,6 +618,7 @@ impl Editor {
                                 if let Some(log) = self.event_logs.get_mut(&buffer_id) {
                                     log.clear_saved_position();
                                 }
+                                mutated = true;
                                 recovered += 1;
                                 tracing::info!(
                                     "Restored unsaved changes for {:?} from hot exit recovery",
@@ -624,11 +626,15 @@ impl Editor {
                                 );
                             }
                         }
+                        if mutated {
+                            self.sync_lsp_after_recovery_replay(buffer_id);
+                        }
                     }
                     Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
                         chunks,
                         ..
                     }) => {
+                        let mut mutated = false;
                         if let Some(state) = self.buffers.get_mut(&buffer_id) {
                             for chunk in chunks.into_iter().rev() {
                                 let text = String::from_utf8_lossy(&chunk.content).into_owned();
@@ -646,11 +652,15 @@ impl Editor {
                             if let Some(log) = self.event_logs.get_mut(&buffer_id) {
                                 log.clear_saved_position();
                             }
+                            mutated = true;
                             recovered += 1;
                             tracing::info!(
                                 "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
                                 file_path
                             );
+                        }
+                        if mutated {
+                            self.sync_lsp_after_recovery_replay(buffer_id);
                         }
                     }
                     Ok(crate::services::recovery::RecoveryResult::OriginalFileModified {
@@ -868,6 +878,7 @@ impl Editor {
                                 ..
                             }) => {
                                 // Small file: replace buffer content with full recovered version
+                                let mut mutated = false;
                                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                                     let current_len = state.buffer.total_bytes();
                                     let text = String::from_utf8_lossy(&content).into_owned();
@@ -881,6 +892,7 @@ impl Editor {
                                         state.buffer.insert(0, &text);
                                         state.buffer.set_modified(true);
                                         state.buffer.set_recovery_pending(false);
+                                        mutated = true;
                                         tracing::info!(
                                             "Restored unsaved changes for {:?} from hot exit recovery",
                                             file_path
@@ -892,12 +904,16 @@ impl Editor {
                                 if let Some(log) = self.event_logs.get_mut(&buffer_id) {
                                     log.clear_saved_position();
                                 }
+                                if mutated {
+                                    self.sync_lsp_after_recovery_replay(buffer_id);
+                                }
                             }
                             Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
                                 chunks,
                                 ..
                             }) => {
                                 // Large file: apply diff chunks on top of on-disk content
+                                let mut mutated = false;
                                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                                     for chunk in chunks.into_iter().rev() {
                                         let text =
@@ -911,6 +927,7 @@ impl Editor {
                                     }
                                     state.buffer.set_modified(true);
                                     state.buffer.set_recovery_pending(false);
+                                    mutated = true;
                                     tracing::info!(
                                         "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
                                         file_path
@@ -920,6 +937,9 @@ impl Editor {
                                 // incorrectly clear the modified flag
                                 if let Some(log) = self.event_logs.get_mut(&buffer_id) {
                                     log.clear_saved_position();
+                                }
+                                if mutated {
+                                    self.sync_lsp_after_recovery_replay(buffer_id);
                                 }
                             }
                             Ok(
