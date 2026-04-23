@@ -16,7 +16,7 @@
 //! handler routed the activation through `active_split` instead of the
 //! clicked split.
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -51,9 +51,11 @@ fn clicking_group_tab_activates_group_in_the_clicked_split() {
     repo.setup_typical_project();
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
-
+    // Deliberately not calling `repo.change_to_repo_dir()` — it mutates
+    // process-global cwd, which is not safe under parallel test execution
+    // (CONTRIBUTING §4). The git_log plugin passes `editor.getCwd()` to
+    // `spawnProcess`, which resolves to the editor's `working_dir` set
+    // below — process cwd is not needed.
     let width = 120u16;
     let height = 40u16;
     let mut harness = EditorTestHarness::with_config_and_working_dir(
