@@ -173,3 +173,45 @@ fn is_cursor_line_visible(
     let viewport_height = viewport.visible_line_count();
     cursor_line >= top_line && cursor_line < top_line.saturating_add(viewport_height)
 }
+
+/// Reconcile a freshly-restored `(buf_state.viewport, buf_state.cursors)` pair
+/// so the cursor is guaranteed visible.
+///
+/// Session/workspace restore re-applies the previously-saved viewport
+/// `top_byte` (and `top_view_line_offset` in wrap mode) and the previously-
+/// saved cursor position independently. If those two were *already* out of
+/// sync at save time — for example because the cursor moved off-screen via a
+/// prior bug or via plugin scroll-to-position — the restore re-creates an
+/// off-screen cursor that arrow keys can't escape (the wrap-mode early
+/// return in `viewport.rs::ensure_visible` kicks in for any cursor whose
+/// byte position is `>= viewport.top_byte`, which is true for *all* cursors
+/// below the viewport top — so naive Up/Down can never bring the viewport
+/// back to the cursor).
+///
+/// Call this on each restored buffer's state right after writing the
+/// scroll/cursor fields. If the cursor's line is already visible inside the
+/// restored viewport this is a no-op — we keep the user's saved scroll
+/// position for free. If not, recenter so the cursor lands mid-viewport
+/// (#1689 follow-up).
+pub(crate) fn reconcile_restored_buffer_view(
+    buf_state: &mut crate::view::split::BufferViewState,
+    buffer: &mut crate::model::buffer::Buffer,
+) {
+    let cursor_pos = buf_state.cursors.primary().position;
+    if is_cursor_line_visible(buf_state, buffer, cursor_pos) {
+        return;
+    }
+    let viewport_height = buf_state.viewport.visible_line_count();
+    let target_rows_from_top = viewport_height / 2;
+    let mut iter = buffer.line_iterator(cursor_pos, 80);
+    for _ in 0..target_rows_from_top {
+        if iter.prev().is_none() {
+            break;
+        }
+    }
+    buf_state.viewport.top_byte = iter.current_position();
+    buf_state.viewport.top_view_line_offset = 0;
+    // Restore code already calls set_skip_resize_sync; we don't need to also
+    // pin against ensure_visible because the next render will see the cursor
+    // is already inside the viewport range we just chose.
+}

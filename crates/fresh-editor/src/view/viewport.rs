@@ -1331,8 +1331,26 @@ impl Viewport {
         // If the cursor is *above* `top_byte`, the byte-oriented math is
         // still correct (scroll up to bring the earlier line into view),
         // so we only skip when the cursor is below the current top.
+        //
+        // BUT: only defer when the cursor is plausibly inside (or just past)
+        // the visible area. If the cursor is far below `top_byte` — say more
+        // than two viewport heights of source lines away — the byte-math
+        // undercount cannot account for the disagreement, and
+        // `ensure_visible_in_layout` won't help either because its
+        // `view_lines` slice only covers the rendered window. Falling
+        // through here lets us perform a real scroll so cursor jumps
+        // (programmatic scroll, plugin cursor-set, restored-state with stale
+        // cursor) end up on screen instead of stranding the cursor far below
+        // a frozen viewport (#1689 follow-up).
         if self.top_view_line_offset > 0 && cursor.position >= self.top_byte {
-            return;
+            let top_line = buffer.get_line_number(self.top_byte);
+            let cursor_line = buffer.get_line_number(cursor.position);
+            let viewport_height = self.visible_line_count().max(1);
+            if cursor_line < top_line.saturating_add(viewport_height.saturating_mul(2)) {
+                return;
+            }
+            // Cursor is far below — fall through and let the byte-oriented
+            // scroll path bring the viewport down.
         }
 
         // Check if we should skip sync due to session restore

@@ -760,8 +760,12 @@ impl Editor {
             None => return,
         };
 
-        // Apply cursor position and viewport (scroll) state to SplitViewState
-        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        // Apply cursor position and viewport (scroll) state to SplitViewState.
+        // Field-disjoint borrows: `split_view_states` and `buffers` are
+        // separate fields, so we can hold mut borrows on both at once.
+        let view_state_opt = self.split_view_states.get_mut(&split_id);
+        let buffer_state_opt = self.buffers.get_mut(&buffer_id);
+        if let (Some(view_state), Some(buffer_state)) = (view_state_opt, buffer_state_opt) {
             if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
                 let cursor_pos = file_state.cursor.position.min(max_pos);
                 buf_state.cursors.primary_mut().position = cursor_pos;
@@ -770,6 +774,13 @@ impl Editor {
             }
             view_state.viewport.top_byte = file_state.scroll.top_byte;
             view_state.viewport.left_column = file_state.scroll.left_column;
+            // Saved cursor and saved viewport are written from independent
+            // fields and may be out of sync (e.g. cursor moved off-screen
+            // before save). Reconcile so the restored view always shows the
+            // cursor — without this, arrow keys in wrap mode can't bring the
+            // viewport back because of the `top_view_line_offset > 0` early
+            // return in `viewport.rs::ensure_visible` (#1689 follow-up).
+            super::navigation::reconcile_restored_buffer_view(view_state, &mut buffer_state.buffer);
         }
     }
 

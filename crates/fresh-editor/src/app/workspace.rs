@@ -1602,6 +1602,17 @@ impl Editor {
             buf_state.viewport.left_column = file_state.scroll.left_column;
             buf_state.viewport.set_skip_resize_sync();
 
+            // Saved cursor and saved viewport are independent fields; if they
+            // were already out of sync at save time (cursor moved off-screen
+            // before the user closed) the restore re-creates an off-screen
+            // cursor that arrow keys can't escape (the wrap-mode early return
+            // in `viewport.rs::ensure_visible` no-ops for any cursor whose
+            // byte position is `>= viewport.top_byte`). Reconcile so the
+            // restored view always shows the cursor (#1689 follow-up).
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                super::navigation::reconcile_restored_buffer_view(buf_state, &mut state.buffer);
+            }
+
             // Restore per-buffer view mode and compose width
             buf_state.view_mode = match file_state.view_mode {
                 SerializedViewMode::Source => ViewMode::Source,
