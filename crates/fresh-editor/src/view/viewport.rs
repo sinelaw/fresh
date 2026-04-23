@@ -212,7 +212,74 @@ impl Viewport {
             // each break adds one visual row to the base row.
             break_count + 1
         } else {
-            wrap_line(line_text, wrap_config).len().max(1)
+            // Run the renderer's wrap function on a single-Text-token view of
+            // the line.  This matches `apply_wrapping_transform`'s word-
+            // boundary semantics and uses the same effective width the
+            // renderer uses — no more char-wrap-vs-word-wrap drift.
+            // See docs/internal/line-wrap-cache-plan.md.
+            use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
+            use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
+            // `apply_wrapping_transform`'s available text width is
+            //   effective_width - gutter_width
+            // where `effective_width` is the value passed as its
+            // `content_width` parameter.
+            //
+            // We want the inner `available_width` to equal
+            // `wrap_config.first_line_width` — that IS the text column
+            // budget the renderer uses (its content_width is
+            // `viewport.width - 1` for EOL-cursor reservation, and
+            // viewport.width already excludes the scrollbar; WrapConfig
+            // happens to encode the same end result because its caller
+            // doubles the scrollbar subtraction).
+            //
+            // So: effective_width = first_line_width + gutter_width.
+            let effective_width = wrap_config
+                .first_line_width
+                .saturating_add(wrap_config.gutter_width)
+                .max(2);
+            let tokens = vec![ViewTokenWire {
+                source_offset: Some(line_start),
+                kind: ViewTokenWireKind::Text(line_text.to_string()),
+                style: None,
+            }];
+            let wrapped = apply_wrapping_transform(
+                tokens,
+                effective_width,
+                wrap_config.gutter_width,
+                wrap_config.hanging_indent,
+            );
+            // Count non-empty visual rows.  `apply_wrapping_transform` can
+            // emit a *trailing* `Break` when the last chunk fills
+            // `effective_width` exactly — that Break is width-triggered and
+            // is followed by nothing, so it doesn't represent a real wrap.
+            // Walk the stream, start a new row on each Break, and only
+            // count rows that contained at least one content token.
+            let mut rows: usize = 0;
+            let mut row_has_content = false;
+            for t in &wrapped {
+                match &t.kind {
+                    ViewTokenWireKind::Newline => break,
+                    ViewTokenWireKind::Break => {
+                        if row_has_content {
+                            rows += 1;
+                        }
+                        row_has_content = false;
+                    }
+                    ViewTokenWireKind::Text(s) => {
+                        if !s.is_empty() {
+                            row_has_content = true;
+                        }
+                    }
+                    ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
+                        row_has_content = true;
+                    }
+                }
+            }
+            if row_has_content {
+                rows += 1;
+            }
+            rows.max(1)
         }
     }
 

@@ -30,12 +30,28 @@ fn estimated_gutter_width(buffer: &Buffer) -> usize {
 
 /// Build a map of `(line_start_byte, visual_row_offset_within_line)` for
 /// every visual row in the buffer, and the total row count.
+///
+/// Per-line row count is computed by running the renderer's word-boundary
+/// wrap on each logical line (as a single `Text` token), matching the
+/// pipeline the renderer uses for display. This keeps scrollbar-drag /
+/// scrollbar-jump math in lock-step with the rendered layout — see
+/// `docs/internal/line-wrap-cache-plan.md` for the rationale.
 fn build_visual_row_map(
     buffer: &mut Buffer,
     viewport_width: usize,
 ) -> (Vec<(usize, usize)>, usize) {
+    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
+    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
     let gutter_width = estimated_gutter_width(buffer);
     let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
+    // `wrap_config.first_line_width` is the effective text column budget.
+    // `apply_wrapping_transform` expects `content_width` (from which it
+    // subtracts `gutter_width` internally), so add gutter back in.
+    let effective_width = wrap_config
+        .first_line_width
+        .saturating_add(gutter_width)
+        .max(2);
 
     let mut total_visual_rows = 0;
     let mut visual_row_positions: Vec<(usize, usize)> = Vec::new();
@@ -43,8 +59,45 @@ fn build_visual_row_map(
     let mut iter = buffer.line_iterator(0, 80);
     while let Some((line_start, content)) = iter.next_line() {
         let line_content = content.trim_end_matches(['\n', '\r']).to_string();
-        let segments = wrap_line(&line_content, &wrap_config);
-        let visual_rows_in_line = segments.len().max(1);
+        let tokens = vec![ViewTokenWire {
+            source_offset: Some(line_start),
+            kind: ViewTokenWireKind::Text(line_content),
+            style: None,
+        }];
+        let wrapped = apply_wrapping_transform(
+            tokens,
+            effective_width,
+            gutter_width,
+            wrap_config.hanging_indent,
+        );
+        // Count non-empty visual rows (a trailing Break that the wrap
+        // emits when the final chunk fills `effective_width` exactly is
+        // NOT followed by content and must not count as a new row).
+        let mut visual_rows_in_line: usize = 0;
+        let mut row_has_content = false;
+        for t in &wrapped {
+            match &t.kind {
+                ViewTokenWireKind::Newline => break,
+                ViewTokenWireKind::Break => {
+                    if row_has_content {
+                        visual_rows_in_line += 1;
+                    }
+                    row_has_content = false;
+                }
+                ViewTokenWireKind::Text(s) => {
+                    if !s.is_empty() {
+                        row_has_content = true;
+                    }
+                }
+                ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
+                    row_has_content = true;
+                }
+            }
+        }
+        if row_has_content {
+            visual_rows_in_line += 1;
+        }
+        let visual_rows_in_line = visual_rows_in_line.max(1);
 
         for offset in 0..visual_rows_in_line {
             visual_row_positions.push((line_start, offset));

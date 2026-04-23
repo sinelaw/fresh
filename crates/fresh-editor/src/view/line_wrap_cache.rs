@@ -299,19 +299,42 @@ pub fn count_visual_rows_via_pipeline(
         geom.hanging_indent,
     );
 
-    // Count Break tokens before the first Newline.  `build_base_tokens`
-    // may emit tokens for more than one logical line because its internal
-    // cap is `visible_count + 4`; the first Newline closes the logical
-    // line we care about.
-    let mut breaks: u32 = 0;
+    // Count non-empty visual rows before the first Newline.
+    //
+    // `build_base_tokens` may emit tokens for more than one logical line
+    // because its internal cap is `visible_count + 4`; the first Newline
+    // closes the logical line we care about.
+    //
+    // `apply_wrapping_transform` can emit a *trailing* Break when the last
+    // chunk fills `effective_width` exactly — that Break is width-triggered
+    // and is followed by nothing of substance, so it doesn't represent a
+    // real wrap. We track "did this row have any content" and only count
+    // rows that did.
+    let mut rows: u32 = 0;
+    let mut row_has_content = false;
     for t in &tokens {
-        match t.kind {
+        match &t.kind {
             ViewTokenWireKind::Newline => break,
-            ViewTokenWireKind::Break => breaks += 1,
-            _ => {}
+            ViewTokenWireKind::Break => {
+                if row_has_content {
+                    rows += 1;
+                }
+                row_has_content = false;
+            }
+            ViewTokenWireKind::Text(s) => {
+                if !s.is_empty() {
+                    row_has_content = true;
+                }
+            }
+            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
+                row_has_content = true;
+            }
         }
     }
-    breaks + 1
+    if row_has_content {
+        rows += 1;
+    }
+    rows.max(1)
 }
 
 /// Combined version of all pipeline inputs on the given state.  Fold into
