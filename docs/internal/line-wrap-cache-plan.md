@@ -1,30 +1,53 @@
 # Line-Wrap Cache — Plan
 
-## Problem
+## Status note
 
-The editor has two independent wrap implementations:
+This plan was initially implemented as a *row-count* cache: the value type was
+`u32` and the remaining `wrap_line` callers (cursor navigation, scrollbar
+thumb sizing) stayed on the old char-wrap algorithm.  That partial
+implementation is what landed in commits `a44c82b` through `f0fac48` on
+`claude/fix-scroll-wrapped-lines-Cfgmx`.
 
-| Used by | Function | Algorithm | Effective width |
-|---|---|---|---|
-| Renderer | `split_rendering::transforms::apply_wrapping_transform` | word-boundary with 16-col lookback, falls back to grapheme split | `content_width - 1` (reserves a column so the EOL cursor never lands on the scrollbar) |
-| Scroll math | `primitives::line_wrapping::wrap_line` | pure char-width hard wrap, no word boundaries | `content_width` (no EOL reservation) |
+This revision redefines the cache to hold the **full pipeline output**
+(`Vec<ViewLine>` per logical line) so that every caller that today reaches for
+`wrap_line` can be migrated to consume cached layout from a single source.  The
+user-reported bugs were already fixed by the partial implementation; this
+revision is about genuinely delivering "one source of truth" instead of "one
+row count".
 
-Plus two independent gutter estimates that had drifted — `Viewport::gutter_width` uses `MIN_LINE_NUMBER_DIGITS = 2` as the digit floor; `scrollbar_math::estimated_gutter_width` had `4` hardcoded (already patched to match).
+## Problem recap
 
-Consequences observed as user-visible bugs:
+The editor had two independent wrap implementations drifting by 0–1 rows on
+real text:
 
-1. **Over-scroll into empty viewport.** `Viewport::scroll_down_visual`'s within-line fast path advanced `top_view_line_offset` without re-clamping. Once offset pushed past the wrap count, the viewport rendered the tail segment at the top with `~` (past-EOF marker) rows below. Already fixed with a re-clamp call.
-2. **Under-scroll — last line never visible.** For real word-wrapped text, `wrap_line` reports fewer visual rows than `apply_wrapping_transform`. Max-scroll is too small; mouse wheel, scrollbar drag, and PageDown all stop short of the real end. Only the Down-arrow cursor path (which re-checks visibility against the rendered view lines) can reach the end.
+| Used by | Function | Algorithm |
+|---|---|---|
+| Renderer | `apply_wrapping_transform` | word-boundary aware (UAX #29, 16-col lookback, grapheme-split fallback) |
+| Scroll math / cursor nav / scrollbar thumb | `wrap_line` | pure char-width hard wrap |
 
-Both bugs are reproduced by sweep tests in `crates/fresh-editor/tests/e2e/scroll_wrapped_reach_last_line.rs` across multiple terminal widths and heights.
+Plus a gutter-width drift (`scrollbar_math` had a hardcoded digit floor of 4;
+`Viewport::gutter_width` used `MIN_LINE_NUMBER_DIGITS = 2`).
 
-## Why a wrap-step-only cache was the wrong layer
+User-visible consequences:
 
-A first sketch cached the output of `apply_wrapping_transform` keyed on wrap geometry only. That meant every other pipeline input (plugin soft breaks, conceal ranges, view mode) needed an "escape hatch" — a branch that bypassed the cache because the key didn't cover that dimension. Every escape hatch is a bug waiting to happen: if the caller forgets to check the bypass condition, the cache returns stale data.
+1. **Over-scroll into empty viewport.** `scroll_down_visual`'s within-line
+   fast path advanced `top_view_line_offset` without re-clamping.  Already
+   fixed by a re-clamp call.
+2. **Under-scroll — last line never reachable.** Real word-wrapped text
+   wrapped into more rows than `wrap_line` counted, so `max_scroll_row` was
+   too small.
 
-The real layer to cache at is the **output of the whole render pipeline** — "for this logical line, under these plugin states and this geometry, how many visual rows does the pipeline produce?" Every pipeline input goes into the key, nothing bypasses.
+Both covered by sweep tests in `scroll_wrapped_reach_last_line.rs`.
 
-## The render pipeline (what the cache must account for)
+A third consequence became apparent later:
+
+3. **Cursor navigation and scrollbar-thumb sizing** still use `wrap_line`.
+   The thumb's size and the cursor's visual position can disagree with the
+   rendered content by a row on word-wrapped buffers.
+
+## The real design
+
+Cache the output of the render pipeline at the per-logical-line granularity:
 
 ```
     raw line bytes
@@ -36,43 +59,30 @@ The real layer to cache at is the **output of the whole render pipeline** — "f
     apply_soft_breaks      ← reads SoftBreakManager for the range
           │
           ▼
-   apply_conceal_ranges    ← reads ConcealManager for the range (Compose mode only)
+   apply_conceal_ranges    ← reads ConcealManager for the range (Compose mode)
           │
           ▼
  apply_wrapping_transform  ← uses effective_width, gutter_width, hanging_indent
           │
           ▼
-  count Break tokens between Newlines = visual row count per logical line
+    ViewLineIterator       ← wraps tokens into visual rows
+          │
+          ▼
+   Arc<Vec<ViewLine>>      ← CACHE VALUE: one entry per logical line
 ```
 
-Every one of these steps affects the final row count. The cache key must cover every input any step reads.
+**One entry = one logical line's worth of `ViewLine`s.**  Row count is
+`cached.len()`.  Every byte ↔ visual-col / visual-row ↔ byte mapping comes
+straight off the cached `ViewLine`s via the methods they already expose
+(`source_byte_at_char`, `char_at_visual_col`, `source_byte_at_visual_col`,
+`visual_col_at_char`, `visual_width`).
 
-## Approach: B4 (shared pipeline-output cache)
-
-A per-buffer, bounded LRU cache keyed by the full set of pipeline inputs for a single logical line. The renderer writes to it as a side effect of its normal work; scroll math reads from it and fills missing entries on demand by running a **mini-pipeline** — the same four steps, scoped to just the one line being queried.
-
-### Cache shape
-
-The pipeline reads from three mutable sources: the buffer, `SoftBreakManager`, `ConcealManager`. Any of them changing could change the output. Rather than three separate version counters in the key, we derive a single `pipeline_inputs_version: u64` at query time:
-
-```rust
-fn pipeline_inputs_version(state: &EditorState) -> u64 {
-    // Each manager exposes a monotonic u32; pack into a single u64.
-    // (32 bits of buffer version is plenty for a single session.)
-    let buf = state.buffer.version() as u32;
-    let sb  = state.soft_breaks.version();
-    let cn  = state.conceals.version();
-    // Mix with a simple rotating XOR so any of the three changing bumps the combined value.
-    (buf as u64) ^ ((sb as u64) << 21) ^ ((cn as u64) << 42)
-}
-```
-
-Any mutation of any of the three sources flips the combined value, which makes the key change, which makes old entries unreachable. Per-manager counters stay private; the key carries one u64.
+## Cache shape
 
 ```rust
 struct LineWrapKey {
-    pipeline_inputs_version: u64,  // derived from (buffer.version, soft_breaks.version, conceals.version)
-    view_mode: ViewMode,           // Compose vs Source — conceals/soft-breaks only apply in Compose
+    pipeline_inputs_version: u64,  // buffer + soft-breaks + conceal versions
+    view_mode: CacheViewMode,
     line_start: usize,
     effective_width: u32,
     gutter_width: u16,
@@ -82,304 +92,184 @@ struct LineWrapKey {
 }
 
 struct LineWrapCache {
-    map: HashMap<LineWrapKey, u32>,   // row_count
-    order: VecDeque<LineWrapKey>,     // FIFO eviction
-    capacity: usize,                   // default 8192
+    map: HashMap<LineWrapKey, Arc<Vec<ViewLine>>>,
+    order: VecDeque<LineWrapKey>,
+    byte_budget: usize,        // total bytes of cached ViewLine data
+    current_bytes: usize,      // running total
 }
 ```
 
-- Lives on `EditorState`, sibling of `ScrollbarRowCache`.
-- Cap: 8192 entries ≈ 700 KB worst case.
-- **Invariant:** `map.len() == order.len() <= capacity` at all times.
+Entries cloned via `Arc` — no deep copies when scroll math asks for a line
+that's already in cache.
 
-### Cache write by the renderer
+### Eviction
 
-In `split_rendering::view_data::build_view_data`, after `apply_wrapping_transform` runs on the visible window's tokens:
+Because `Vec<ViewLine>` sizes vary wildly (a 10-char line's entry is a few
+hundred bytes; a 200 KB line wrapping to 2000 rows is on the order of 2 MB),
+**count-based** eviction is the wrong metric.  Use a **byte budget**:
 
-1. Walk the wrapped token stream.
-2. A `Newline` token closes the current logical line. Between Newlines, count `Break` tokens → visual row count for that logical line.
-3. Identify the logical line's `line_start` byte from the first token's `source_offset` after each Newline (or the initial `viewport.top_byte` for the first line in the window).
-4. Insert `(all key dimensions) → row_count` into the cache.
+- `byte_budget` default: 8 MiB.  Enough to hold the full layout for a small-
+  to-medium buffer, a handful of huge lines, or any interactive span.
+- `current_bytes` tracks approximate accumulated entry size (summed
+  `visual_width() * per_row_overhead` plus per-line constant).
+- When inserting an entry that pushes `current_bytes` past the budget, evict
+  from the FIFO front until the new entry fits.
 
-Runs once per render pass on the visible tokens only. Work already dominated by the wrap step — essentially free.
+### Writers
 
-### Cache read by scroll math — mini-pipeline miss handler
+1. **Renderer writeback** (`view_data::build_view_data`).  After the
+   pipeline runs on the visible window, slice the resulting tokens /
+   ViewLines by source line and store each logical line's ViewLines under
+   its key.  Skipped when a plugin `view_transform` is active (the tokens
+   aren't reproducible from raw line text via the mini-pipeline).
 
-Three current call sites compute per-line row counts with `wrap_line`:
+2. **Miss handler** (in `line_wrap_cache`).  Run the same 4-step pipeline
+   scoped to exactly one logical line and collect `ViewLine`s.  Invoked
+   by scroll math / cursor nav when they query a line the renderer
+   hasn't visited yet.
 
-- `Viewport::count_visual_rows_for_line` (used by `scroll_down_visual`, `scroll_up_visual`, `apply_visual_scroll_limit`, `find_max_visual_scroll_position`, `set_top_byte_with_limit`).
-- `app::scrollbar_math::build_visual_row_map` (used by `scrollbar_jump_visual` and `scrollbar_drag_relative_visual` for small files only).
-- `view::ui::split_rendering::scrollbar::scrollbar_visual_row_counts` (thumb sizing on small files).
+Both paths run the same pipeline; values agree by construction.
 
-Each becomes a cache query. On miss:
+### Readers / migrated callers
 
-```rust
-// Run the same 4-step pipeline the renderer runs, but for just this one line.
-let tokens = build_base_tokens(buffer, line_start, est_len, /*count=*/ 1, ...);
-let tokens = apply_soft_breaks(tokens, &soft_breaks_in_range(state, line_start, line_end));
-let tokens = apply_conceal_ranges(tokens, &conceals_in_range(state, line_start, line_end));
-let tokens = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-let count = count_breaks(&tokens) + 1;
-cache.put(key, count);
-count
-```
+Every `wrap_line` consumer outside tests:
 
-Each pipeline step is already byte-range-scoped — passing `[line_start, line_end)` as a 1-line window works out of the box.
-
-### View transforms: naturally inert, no explicit bypass
-
-When a plugin `view_transform` is active, scroll math takes a different path entirely — `handle_mouse_scroll` runs `ViewLineIterator` directly on the plugin's tokens via `scroll_view_lines`. It never consults the wrap-row cache. So the cache is inert for view-transform buffers without needing an explicit bypass flag; it simply isn't queried.
-
-(If we wanted to cache plugin-transformed row counts too, we'd need a monotonic `version()` on each plugin's view-transform output, since plugin state is opaque. Out of scope.)
-
-### Single-source-of-truth invariant
-
-Every "how many visual rows does this line wrap to" query in the codebase ultimately runs the same four-step pipeline:
-
-- Render path: full pipeline on the visible window, cache-write side effect.
-- Scroll-math path: mini-pipeline on one line, cache-write side effect.
-- All cached reads afterward.
-
-Any `(line_start, ... all key dimensions)` tuple is wrapped at most once while it lives in the cache. Whichever path hits it first pays; all later paths read.
-
-## Invalidation — there is no explicit invalidate step
-
-The word "invalidation" is misleading shorthand. The cache is a `HashMap<Key, u32>` + a `VecDeque<Key>` for FIFO. A lookup either hits (returns stored value) or misses (computes, stores, returns). **Nothing ever gets actively "invalidated."**
-
-"Invalidating line 5" means: arrange for future lookups of line 5 to use a **different key**, so the previously-stored entry is never matched again. The old entry stays in the HashMap (occupying memory) until FIFO eviction retires it. Because the key has the version mixed in, a mutation to any pipeline input changes the key → old entries become unreachable.
-
-**Worked example:**
-
-```
-Time 0: pipeline_inputs_version = 0x...A. Cache stores:
-  {(v=0x...A, line_start=100, width=60, ...) → 4}
-
-Time 1: user types a char on line 5. buffer.version() bumps.
-        pipeline_inputs_version is now 0x...B.
-
-Time 2: scroll math queries line 5's row count.
-        Key built at v=0x...B: (v=0x...B, line_start=100, width=60, ...)
-        Lookup in map: NOT FOUND → miss.
-        Runs mini-pipeline → stores {(v=0x...B, ...) → 5}.
-
-Time 3: the old entry at v=0x...A is still in the HashMap, unreachable.
-        No query will ever build a key with v=0x...A again.
-
-Time 4: many more inserts → cache hits `capacity`.
-        FIFO evicts oldest entries. Eventually the v=0x...A entry goes.
-        Memory freed.
-```
-
-**Two practical consequences:**
-
-1. **Stale entries never cause wrong answers.** They're never returned — no query builds a key that matches them. The only cost of a stale entry is memory, and memory is bounded by `capacity`.
-2. **Overinvalidation is cheap.** When any pipeline input changes, entries for *all* lines become unreachable — even lines whose text didn't change. The next access to each unchanged line triggers one mini-pipeline recompute, which is bounded and fast. We avoid the actual hard cache-invalidation problem (edit-range-scoped invalidation) by accepting this recompute cost.
-
-**What goes into the version** — every pipeline input is covered:
-
-| Input | Reacts to | How it gets into the key |
+| Caller | Today | After |
 |---|---|---|
-| buffer text | any edit | `buffer.version()` → `pipeline_inputs_version` |
-| soft breaks | plugin mutates `SoftBreakManager` | `soft_breaks.version()` → `pipeline_inputs_version` |
-| conceals | plugin mutates `ConcealManager` | `conceals.version()` → `pipeline_inputs_version` |
-| view mode | Compose ↔ Source toggle | `view_mode` directly in key |
-| `line_start` byte | upstream edits shift subsequent lines | Directly in key (new `line_start` auto-misses) |
-| `effective_width` | terminal resize, `wrap_column` config | Directly in key |
-| `gutter_width` | logical-line-count digit rollover, plugin adds/removes indicator columns | Directly in key |
-| `wrap_column` | explicit config change | Directly in key |
-| `hanging_indent` | `viewport.wrap_indent` toggle | Directly in key |
-| `line_wrap_enabled` | line-wrap toggle | Directly in key (and `false` skips cache — 1 row per logical line is trivial) |
+| `Viewport::count_visual_rows_for_line` | wrap → `.len()` | `cache.get_or_compute(key).len()` |
+| `Viewport::ensure_visible` (5 sites) | wrap → inspect `WrappedSegment.start_char_offset` | walk cached `ViewLine`s; use `source_byte_at_char`, `char_at_visual_col` |
+| `Viewport::cursor_screen_position` | wrap → compute cursor col | `visual_col_at_char` / `source_byte_at_char` |
+| `scrollbar::scrollbar_visual_row_counts` (2 sites) | wrap every line, sum | iterate buffer lines, sum `cache.get_or_compute(key).len()` |
+| `scrollbar_math::build_visual_row_map` | already cached but value is `u32` | now value is `Arc<Vec<ViewLine>>`, length is the same row count |
+| `view_data::build_view_data` (the renderer itself) | always re-runs pipeline for visible window | may consult cache per logical line; run pipeline only on miss |
 
-**Required plumbing:**
+Last row is the architectural win: the renderer becomes a cache *consumer*
+as well as a *producer*.  Unchanged lines don't need to be re-wrapped per
+frame.
 
-- `SoftBreakManager`: expose `fn version(&self) -> u32`, bumped by every mutating method. `u32` wraps at ~4B mutations per session — fine.
-- `ConcealManager`: same.
-- `EditorState` (or `LineWrapCache` directly): read both versions at key-build time and fold into `pipeline_inputs_version` with `buffer.version()`.
+## Invalidation
 
-**Failure modes and how they're prevented:**
+Unchanged from the row-count plan.  The combined `pipeline_inputs_version`
+(u64 derived from `buffer.version()` + `soft_breaks.version()` +
+`conceal.version()`) makes stale entries unreachable after any pipeline-
+input mutation.  Width / gutter / hanging-indent / view-mode changes flip
+those key dimensions directly.  Entries age out via FIFO when the byte
+budget is exceeded.
 
-- *Stale returns* → prevented by putting every mutable input in the key (directly or via the version).
-- *Unbounded growth* → prevented by FIFO cap. Stale entries age out even if never re-queried.
-- *Drift between renderer writes and miss-handler writes* → prevented because both use the same pipeline functions on the same inputs. Same inputs → same output by construction.
-- *Key/order desync* (internal cache bug) → `map` and `order` must stay in lockstep. Enforced by the cache's API contract and tested (see Testing section).
+## What goes away
 
-## Testing strategy
-
-Caches are where correctness drifts go to hide, so we need coverage at multiple layers.
-
-### Layer 1 — Unit tests on the cache primitive
-
-Pure mechanical tests of the `LineWrapCache` structure, no editor involved.
-
-- **Structural invariant**: `map.len() == order.len() <= capacity` after any sequence of `get_or_insert` calls. Property-tested (proptest) on random sequences of insert/query operations.
-- **FIFO order**: inserting `capacity + 1` distinct keys evicts exactly the oldest one. Subsequent query for the evicted key is a miss, triggers recompute.
-- **Re-query is a hit**: a second query for the same key returns without invoking the compute closure (tracked via a side-effect counter in the closure).
-- **Distinct keys never collide**: hashing/equality tests over all field permutations.
-
-### Layer 2 — Mini-pipeline equivalence
-
-The miss-handler must return the same row count as the full renderer pipeline for the same line under the same inputs.
-
-- **Given**: a buffer, an `EditorState` with arbitrary soft breaks / conceals, a viewport geometry.
-- **Assert**: for every logical line, `mini_pipeline(line) == count_breaks_between_newlines(full_pipeline(whole_buffer), line)`. I.e. the 1-line mini-pipeline agrees with the renderer's per-line segmentation.
-- Run as a proptest over random buffer text, random soft-break positions, random conceal ranges, random (width, gutter, hanging_indent).
-
-### Layer 3 — Shadow-model property tests
-
-This is the strongest correctness check. A "shadow" cache always recomputes from scratch on every query (no caching). The real cache and the shadow are driven by the same random op stream; their outputs must agree at every step.
-
-```rust
-enum Op {
-    QueryRow { line_idx: usize },
-    EditInsert { byte: usize, text: String },
-    EditDelete { range: Range<usize> },
-    AddSoftBreak { byte: usize },
-    RemoveSoftBreak { byte: usize },
-    AddConceal { range: Range<usize> },
-    RemoveConceal { range: Range<usize> },
-    ToggleViewMode,
-    ResizeTerminal { width: u16 },
-    ToggleLineWrap,
-}
-
-proptest! {
-    fn cache_matches_shadow(ops: Vec<Op>, initial_buffer: String, geometry: Geometry) {
-        let mut real = RealCacheHarness::new(&initial_buffer, geometry);
-        let mut shadow = ShadowHarness::new(&initial_buffer, geometry);
-        for op in ops {
-            real.apply(&op);
-            shadow.apply(&op);
-            if let Op::QueryRow { line_idx } = op {
-                prop_assert_eq!(real.query(line_idx), shadow.query(line_idx));
-            }
-        }
-    }
-}
-```
-
-The shadow is effectively a reference implementation that calls the full render pipeline on demand (no caching, no side effects). Any divergence between real and shadow is a cache bug — a stale return, a miscomputed miss, a missed invalidation.
-
-Coverage targets for the random op generator:
-- Edits near/on wrap boundaries.
-- Soft breaks that fall on wrap boundaries, on a line that's already cached, before/after the line.
-- Conceal ranges that span a wrap boundary, that span multiple logical lines.
-- ViewMode toggles between arbitrary states.
-- Resizes that cross digit-count boundaries (causing `gutter_width` change).
-
-### Layer 4 — Invariants on the wrap function itself
-
-Regardless of cache, the underlying row count should satisfy:
-
-- **Width monotonicity**: for fixed text, increasing `effective_width` never increases row count. (`w' ≥ w → rows(w') ≤ rows(w)`.) A cache bug that corrupts values would eventually violate this.
-- **Empty line**: empty logical line → exactly 1 row.
-- **No-wrap when it fits**: if `visual_width(line_text) <= effective_width`, row count is 1.
-- **Upper bound**: row count ≤ `ceil(visual_width(line_text) / min_row_width)` for some reasonable `min_row_width`.
-- **Newline-free content**: `rows(text_with_no_embedded_newline)` has no soft break consequences from the soft-break subsystem unless a soft break is registered.
-
-Proptested against `apply_wrapping_transform` directly (no cache), and separately against the cache-backed path.
-
-### Layer 5 — Render-vs-scroll agreement
-
-The cross-consumer invariant: whatever the renderer paints on screen for the visible window must match what scroll math thinks is there.
-
-- Rendered frame → count visible visual rows per logical line from the painted `Vec<ViewLine>`.
-- Scroll math's cache → query row count for each of those logical lines.
-- Assert equality.
-
-Run this after every operation in the property test's op stream, not just at the end, to catch transient drift.
-
-### Layer 6 — Behavioral e2e (what we already have)
-
-The sweep tests in `crates/fresh-editor/tests/e2e/scroll_wrapped_reach_last_line.rs` are behavioral contracts — "scrolling a buffer of long wrapped lines must reach the last line at all representative widths × heights." These stay as regression guards.
-
-Add scenario tests for:
-- Plugin soft break injected mid-scroll: scrollbar-drag-to-bottom after injection still reaches the real bottom.
-- Conceal range added/removed under the cursor: row counts update, cursor stays visually anchored.
-- ViewMode toggle during scroll: row counts recompute; scroll position remains coherent.
-- Terminal resize mid-drag: scroll math adapts; no stuck state.
-- Cache-pressure scenario: open a buffer larger than `capacity` lines, scroll-sweep from top to bottom and back — assert no visual artifacts, no panics, no off-by-ones.
-
-### Layer 7 — Stress + fuzz (optional, longer horizon)
-
-- A fuzzer that feeds random edit/scroll op streams and checks for panics, assertion failures, and render-vs-scroll divergence.
-- Long-running "monkey" test: random operations for N minutes, assert cache invariants hold throughout.
-
-### Coverage matrix
-
-| | Layer 1 | Layer 2 | Layer 3 | Layer 4 | Layer 5 | Layer 6 | Layer 7 |
-|---|---|---|---|---|---|---|---|
-| FIFO correctness | ✓ | | ✓ | | | | ✓ |
-| Mini-pipeline ≡ renderer | | ✓ | ✓ | | ✓ | | ✓ |
-| Invalidation on edit | | | ✓ | | ✓ | ✓ | ✓ |
-| Invalidation on soft-break change | | | ✓ | | ✓ | ✓ | ✓ |
-| Invalidation on conceal change | | | ✓ | | ✓ | ✓ | ✓ |
-| Width monotonicity | | | | ✓ | | | |
-| Cross-consumer drift | | | | | ✓ | ✓ | ✓ |
-| User-facing bugs (original tests) | | | | | | ✓ | |
-| Unknown edge cases | | | ✓ | ✓ | | | ✓ |
-
-Layers 1–5 should land with the implementation. Layer 6 extends existing e2e tests. Layer 7 is optional follow-up.
+- `primitives::line_wrapping::wrap_line` — no non-test callers.
+- `WrappedSegment` — replaced by direct `ViewLine` reads.
+- `compute_wrap_row_count_for_text` (added in the partial implementation) —
+  subsumed by cache miss handler returning `Vec<ViewLine>`.
+- `Viewport::wrap_row_cache` (the small ad-hoc per-viewport cache) —
+  subsumed by the EditorState-level cache once readers are migrated.
 
 ## Huge-file behavior
 
-Unchanged, because the paths that would iterate whole-file wrap math already branch on `large_file_threshold_bytes` (1 MB) and fall back to byte-based math that never touches the cache:
+Same as before — files over the `large_file_threshold_bytes` (1 MB) bypass
+all the wrap math via byte-based scroll.  The cache is never consulted.
+Mouse wheel on huge files only wraps the lines actually scrolled through.
 
-- `handle_scrollbar_drag_relative` and `handle_scrollbar_jump` in `app/scrollbar_input.rs` branch at `buffer_len <= large_file_threshold`. The `else` arms compute `bytes_per_pixel` directly. Cache never consulted.
-- `scrollbar_visual_row_counts` early-returns `(0, 0)` for large files. Cache never consulted.
-- Mouse wheel goes through `scroll_down_visual`, which wraps only the lines actually scrolled through (bounded per event). On a huge file the cache accumulates at most N entries per scroll event.
-- PageDown moves the cursor by logical lines; `ensure_visible` wraps a handful of lines to check visibility.
+## Plugin `view_transform`
 
-Net effect on huge files: identical behavior, slightly less wrap work (cache hits on lines revisited), zero unbounded memory growth.
+Still bypassed.  Plugin tokens aren't reproducible from raw line text in
+the miss handler.  Renderer writes are also skipped under
+`view_transform.is_some()`, and scroll math for view-transform buffers
+goes through `ViewLineIterator` on the plugin's own tokens (the existing
+`scroll_view_lines` path).
 
-## Trade-offs
+## Testing strategy
 
-Pipeline-output cache vs the simpler wrap-step cache:
+### Layer 1 — cache primitive
 
-| | Wrap-step-only cache | Pipeline-output cache (chosen) |
-|---|---|---|
-| Correct under soft breaks | No (needed bypass branch) | Yes |
-| Correct under conceals | No (also bypass; today's scroll math is wrong here) | Yes |
-| Handles view transforms | Explicit bypass | Natural (different scroll path never queries) |
-| Miss-handler cost | 1 × `apply_wrapping_transform` | 4 steps: `build_base_tokens` + `apply_soft_breaks` + `apply_conceal_ranges` + `apply_wrapping_transform` |
-| Code reuse | One renderer function shared | Entire pipeline shared |
-| Key dimensions | 5 | 10 |
-| Escape hatches | Several | None |
+Unit tests in `line_wrap_cache.rs`:
 
-The miss-handler cost difference matters most on the first scrollbar-drag sweep of a small-file buffer (~12K lines). Under the chosen plan that sweep is roughly 2–4× slower than today's `wrap_line` sweep. Subsequent drags and all renders are cache hits. An initial drag at ~10–30 ms/k-lines is tolerable for the correctness it buys.
+- FIFO invariants: `map.len() == order.len()`; capacity / byte-budget
+  respected across interleaved insert / clear calls.
+- Distinct-key separation: varying any key dimension produces a miss.
+- Version bumping: old-version entries unreachable after version change.
+- Re-query is a hit (compute closure not invoked).
+- Eviction: oldest entry evicted when a new insert exceeds the budget.
 
-## Call-site changes
+### Layer 2 — mini-pipeline equivalence (ViewLine-level)
 
-1. `view/ui/split_rendering/mod.rs`: `pub(crate) mod transforms`, `pub(crate) mod base_tokens`, `pub(crate) mod view_data` (or an equivalent re-export of the mini-pipeline helpers).
-2. Visibility bumps on `apply_wrapping_transform`, `build_base_tokens`, `apply_soft_breaks`, `apply_conceal_ranges` to `pub(crate)`.
-3. `state.rs`: add `line_wrap_cache: LineWrapCache` field on `EditorState`, sibling of `scrollbar_row_cache`.
-4. `state/soft_breaks.rs` (or wherever `SoftBreakManager` lives): add `version: u32` field + `fn version(&self) -> u32`; bump on every mutating method.
-5. `state/conceals.rs`: same pattern on `ConcealManager`.
-6. New module `view/line_wrap_cache.rs`:
-   - `LineWrapCache` struct + bounded-FIFO internals.
-   - `LineWrapKey` struct.
-   - `count_visual_rows_for_line_via_pipeline(state, buffer, line_start, geometry) -> usize` — the miss-path mini-pipeline helper.
-7. `view/viewport.rs`:
-   - `count_visual_rows_for_line` takes a `&mut LineWrapCache` and the full `&EditorState` (to read soft-break/conceal versions + managers for the miss path).
-   - Callers (`scroll_down_visual`, `scroll_up_visual`, `apply_visual_scroll_limit`, `find_max_visual_scroll_position`, `set_top_byte_with_limit`) thread these through.
-8. `app/scrollbar_math.rs`: `build_visual_row_map` takes the cache + state reference. `scrollbar_jump_visual` and `scrollbar_drag_relative_visual` signatures extend accordingly.
-9. `app/scrollbar_input.rs`: pass the cache + state from `editor.buffers[buffer_id]` into the scrollbar_math calls.
-10. `view/ui/split_rendering/scrollbar.rs`: `scrollbar_visual_row_counts` reads from the cache for small files.
-11. `view/ui/split_rendering/view_data.rs`: after `apply_wrapping_transform`, walk the wrapped tokens and populate the cache for each logical line in the visible window.
+`count_visual_rows_via_pipeline` returns `Vec<ViewLine>` that agrees
+with the renderer's per-line slice of its full-pipeline output.  Proptested
+over random text, widths, soft breaks, conceals.
 
-## Fall-back revert strategy
+### Layer 3 — shadow-model property test
 
-If this refactor turns out to be too invasive, the minimum-viable fix is still:
+Random op stream (edits, soft-break / conceal ops, resizes, view-mode
+toggles) driven against both the real cache and a no-cache recompute
+reference.  Every query must agree.  Expanded from the row-count version
+to compare `ViewLine::char_source_bytes`, `char_visual_cols`, etc. —
+not just length.
 
-- Keep Fix 1 (`scroll_down_visual` reclamp) — already committed.
-- Keep the gutter-width unification in `scrollbar_math` — already committed.
-- Add the `-1` cursor-reservation adjustment in all scroll-math `WrapConfig` builders.
-- Leave `wrap_line` in place; accept the char-wrap vs word-wrap discrepancy as a known limitation documented here.
+### Layer 4 — wrap-function invariants
 
-This would fix Bug 2 for homogeneous-character lines but not for real word-wrapped text (which is the reported user scenario). So this is a fallback, not the real fix.
+Width monotonicity, empty line = 1 row, prefix doesn't reduce row count,
+etc.  Hold at the `Vec<ViewLine>`-length level.
 
-## Out-of-scope follow-ups
+### Layer 5 — render-vs-reader agreement
 
-- Plugin-view-transform-aware caching. Would need per-plugin `version()` + an opaque "plugin output is a function of X" contract. Not worth the surface area.
-- Replacing `wrap_line` entirely in `primitives/line_wrapping.rs`. Has many non-scroll callers (cursor hit-testing, visual layout) that want char-level semantics; changing it is a separate refactor.
-- Moving to Alt B5 (`ViewLines` as the coordinate system — `top_byte` derived from a ViewLine index). Architecturally cleanest long-term answer; too invasive for a bug fix.
-- Edit-range-scoped invalidation (vs bumping `buffer_version` globally). Reduces overinvalidation on heavy-edit workloads; not needed at current cache sizes.
+After the renderer runs, every cached entry's `Vec<ViewLine>` must match
+a fresh mini-pipeline on the same line.  Covers the writeback invariant.
+
+### Layer 6 — behavioral e2e
+
+- Scroll sweeps (existing `scroll_wrapped_reach_last_line.rs`).
+- Single-long-line perf test (`scroll_single_long_line_perf.rs`).
+- Mid-scroll resize, mid-drag edit (existing
+  `line_wrap_cache_consistency.rs`).
+- **New**: cursor-position / click-target tests.  With a word-wrapped
+  buffer, the visual row reported by `cursor_screen_position` must match
+  the row the renderer actually drew the cursor on.
+- **New**: scrollbar thumb size consistency.  For a buffer with `N`
+  visual rows (per the renderer), the thumb's reported `total_rows`
+  equals `N`.
+
+### Layer 7 — stress / fuzz
+
+Optional.  Random op streams for N minutes, assert invariants throughout.
+
+## Implementation order
+
+Phases, each landing as a self-contained commit:
+
+1. **Plan doc (this revision).**
+2. **Change cache value type** from `u32` to `Arc<Vec<ViewLine>>`; update
+   the primitive + its unit tests; update the miss handler to return
+   ViewLines; update existing row-count consumers to use `.len()`.
+3. **Renderer writeback update**: write `Arc<Vec<ViewLine>>` entries
+   instead of row counts.
+4. **Migrate `ensure_visible`** — the big one.  Replace `wrap_line` +
+   `WrappedSegment` math with cached-ViewLine reads using the existing
+   `ViewLine` methods.
+5. **Migrate `cursor_screen_position` and `scrollbar_visual_row_counts`.**
+6. **Drop `wrap_line` from non-test code.**  Confirm only test callers
+   remain.
+7. **Render-consumer path** (optional, follow-up): make
+   `build_view_data` consult the cache for each logical line instead of
+   always re-running the pipeline.  First render fills; subsequent
+   unchanged frames skip the pipeline for unchanged lines.
+8. **New tests** (Layer 6 additions): cursor / click-target parity,
+   scrollbar-thumb consistency.
+
+## Deeper issue not addressed
+
+`apply_wrapping_transform` has an O(n²) hot path on long single tokens
+(per-chunk `split_word_bound_indices` scanning from byte 0).  The cache
+hides this after the first hit, but the first hit on a 200 KB line is
+still ~600 ms in debug.  A proper fix makes `apply_wrapping_transform`
+linear by walking word-boundary indices once as a monotonic cursor.
+Out of scope for this branch; tracked separately.
+
+## Partial-implementation rollback
+
+If the ViewLine migration proves intractable mid-refactor, rolling back
+to the row-count implementation shipped in commits `197ea4e`–`f0fac48`
+is straightforward — the public API of `LineWrapCache` stays the same
+shape, only the value type changes.  All the correctness fixes
+(reclamp, gutter unification, `apply_wrapping_transform` swap) are
+independent and stay in place either way.
