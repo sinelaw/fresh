@@ -37,7 +37,7 @@ use std::collections::HashSet;
 ///      boundary qualifies — guaranteeing forward progress and, as a
 ///      post-condition, that no row is ever emitted wider than
 ///      `eff_width`.
-pub(super) fn apply_wrapping_transform(
+pub(crate) fn apply_wrapping_transform(
     tokens: Vec<ViewTokenWire>,
     content_width: usize,
     gutter_width: usize,
@@ -443,7 +443,7 @@ pub(super) fn apply_wrapping_transform(
 /// - For other tokens: insert Newline + indent Spaces before the token
 ///
 /// Tokens without source_offset (injected/virtual) pass through unchanged.
-pub(super) fn apply_soft_breaks(
+pub(crate) fn apply_soft_breaks(
     tokens: Vec<ViewTokenWire>,
     soft_breaks: &[(usize, u16)],
 ) -> Vec<ViewTokenWire> {
@@ -517,7 +517,7 @@ pub(super) fn apply_soft_breaks(
 /// tokens (Space, Newline) are treated as single-byte.
 ///
 /// Tokens without source_offset (injected/virtual) always pass through.
-pub(super) fn apply_conceal_ranges(
+pub(crate) fn apply_conceal_ranges(
     tokens: Vec<ViewTokenWire>,
     conceal_ranges: &[(std::ops::Range<usize>, Option<&str>)],
 ) -> Vec<ViewTokenWire> {

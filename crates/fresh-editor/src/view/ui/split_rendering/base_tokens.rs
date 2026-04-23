@@ -11,7 +11,7 @@ use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 /// Build tokens from a text buffer starting at `top_byte`, stopping roughly
 /// after `visible_count` visual lines. Honors CRLF / LF line endings and
 /// renders unsafe control characters as `BinaryByte` tokens.
-pub(super) fn build_base_tokens(
+pub(crate) fn build_base_tokens(
     buffer: &mut Buffer,
     top_byte: usize,
     estimated_line_length: usize,

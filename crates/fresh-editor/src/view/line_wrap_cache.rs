@@ -27,6 +27,12 @@
 //!
 //!     self.map.len() == self.order.len() <= self.capacity
 
+use crate::state::EditorState;
+use crate::view::ui::split_rendering::base_tokens::build_base_tokens;
+use crate::view::ui::split_rendering::transforms::{
+    apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform,
+};
+use fresh_core::api::ViewTokenWireKind;
 use std::collections::{HashMap, VecDeque};
 
 /// Default capacity.  At ~80 bytes/entry this is ~650 KB max, comfortably
@@ -192,6 +198,131 @@ impl LineWrapCache {
         debug_assert_eq!(self.map.len(), self.order.len());
         debug_assert!(self.map.len() <= self.capacity);
     }
+}
+
+/// Geometry + view config inputs to the wrap pipeline that aren't carried
+/// by `EditorState`.  Bundled so the plumbing through call sites doesn't
+/// grow a laundry list of parameters.
+#[derive(Debug, Clone, Copy)]
+pub struct WrapGeometry {
+    pub effective_width: usize,
+    pub gutter_width: usize,
+    pub hanging_indent: bool,
+    pub wrap_column: Option<u32>,
+    pub line_wrap_enabled: bool,
+    pub view_mode: CacheViewMode,
+}
+
+impl WrapGeometry {
+    /// Build a cache key for a logical line at `line_start` under these
+    /// geometry and pipeline-input versions.
+    pub fn key(&self, line_start: usize, pipeline_inputs_version: u64) -> LineWrapKey {
+        LineWrapKey {
+            pipeline_inputs_version,
+            view_mode: self.view_mode,
+            line_start,
+            effective_width: self.effective_width as u32,
+            gutter_width: self.gutter_width as u16,
+            wrap_column: self.wrap_column,
+            hanging_indent: self.hanging_indent,
+            line_wrap_enabled: self.line_wrap_enabled,
+        }
+    }
+}
+
+/// Run the same pipeline the renderer runs, scoped to exactly one logical
+/// line starting at `line_start`, and return the visual-row count for that
+/// line.  Used by the cache miss handler.
+///
+/// When `geom.line_wrap_enabled` is false, returns 1 without running the
+/// pipeline — an unwrapped line is always one visual row.
+///
+/// The four pipeline steps mirror `view_data::build_view_data`:
+///   1. `build_base_tokens(top_byte=line_start, count=1)`
+///   2. `apply_soft_breaks` (Compose mode, when any soft breaks overlap the line)
+///   3. `apply_conceal_ranges` (Compose mode, when any conceals overlap the line)
+///   4. `apply_wrapping_transform`
+/// Then count `Break` tokens before the first `Newline` (which closes this
+/// logical line) and add 1 for the row the line itself occupies.
+pub fn count_visual_rows_via_pipeline(
+    state: &mut EditorState,
+    line_start: usize,
+    line_end: usize,
+    geom: &WrapGeometry,
+) -> u32 {
+    if !geom.line_wrap_enabled {
+        return 1;
+    }
+
+    let is_binary = state.buffer.is_binary();
+    let line_ending = state.buffer.line_ending();
+    let estimated_line_length = state.buffer.estimated_line_length();
+
+    // Step 1: build tokens for just this one logical line.
+    let mut tokens = build_base_tokens(
+        &mut state.buffer,
+        line_start,
+        estimated_line_length,
+        1, // just this one logical line
+        is_binary,
+        line_ending,
+        &[], // no fold skip ranges — folds affect what's rendered, not per-line wrap count
+    );
+
+    let is_compose = matches!(geom.view_mode, CacheViewMode::Compose);
+
+    // Step 2: soft breaks (Compose mode only; same gating as the renderer).
+    if is_compose && !state.soft_breaks.is_empty() {
+        let sb = state
+            .soft_breaks
+            .query_viewport(line_start, line_end, &state.marker_list);
+        if !sb.is_empty() {
+            tokens = apply_soft_breaks(tokens, &sb);
+        }
+    }
+
+    // Step 3: conceal ranges (Compose mode only).
+    if is_compose && !state.conceals.is_empty() {
+        let cr = state
+            .conceals
+            .query_viewport(line_start, line_end, &state.marker_list);
+        if !cr.is_empty() {
+            tokens = apply_conceal_ranges(tokens, &cr);
+        }
+    }
+
+    // Step 4: wrap.
+    tokens = apply_wrapping_transform(
+        tokens,
+        geom.effective_width,
+        geom.gutter_width,
+        geom.hanging_indent,
+    );
+
+    // Count Break tokens before the first Newline.  `build_base_tokens`
+    // may emit tokens for more than one logical line because its internal
+    // cap is `visible_count + 4`; the first Newline closes the logical
+    // line we care about.
+    let mut breaks: u32 = 0;
+    for t in &tokens {
+        match t.kind {
+            ViewTokenWireKind::Newline => break,
+            ViewTokenWireKind::Break => breaks += 1,
+            _ => {}
+        }
+    }
+    breaks + 1
+}
+
+/// Combined version of all pipeline inputs on the given state.  Fold into
+/// a `LineWrapKey` to make stale entries unreachable on any mutation.
+#[inline]
+pub fn state_pipeline_inputs_version(state: &EditorState) -> u64 {
+    pipeline_inputs_version(
+        state.buffer.version(),
+        state.soft_breaks.version(),
+        state.conceals.version(),
+    )
 }
 
 #[cfg(test)]

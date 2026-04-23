@@ -12,7 +12,7 @@
 //! The public API is re-exposed via the [`SplitRenderer`] façade at the
 //! bottom of this file; it forwards to `orchestration::*`.
 
-mod base_tokens;
+pub(crate) mod base_tokens;
 mod char_style;
 mod folding;
 mod gutter;
@@ -22,7 +22,7 @@ mod post_pass;
 mod scrollbar;
 mod spans;
 mod style;
-mod transforms;
+pub(crate) mod transforms;
 mod view_data;
 
 use crate::app::types::ViewLineMapping;
