@@ -58,6 +58,14 @@ pub trait FrameEffect {
     fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus;
 }
 
+/// True iff `outer` fully contains `inner` (all corners inside).
+fn rect_contains(outer: Rect, inner: Rect) -> bool {
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner.x.saturating_add(inner.width) <= outer.x.saturating_add(outer.width)
+        && inner.y.saturating_add(inner.height) <= outer.y.saturating_add(outer.height)
+}
+
 /// Ease-out cubic: starts fast, decelerates.
 fn ease_out_cubic(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
@@ -231,6 +239,12 @@ struct ActiveEffect {
 pub struct AnimationRunner {
     next_id: u64,
     active: Vec<ActiveEffect>,
+    /// Full snapshot of the buffer at the end of the previous render
+    /// pass. Ratatui's swap_buffers resets the "current" buffer, so at
+    /// the start of the next draw `frame.buffer_mut()` is blank — not
+    /// the previous frame. We keep our own copy so `capture_before`
+    /// can see what the user actually saw last frame.
+    last_frame: Option<Buffer>,
 }
 
 impl Default for AnimationRunner {
@@ -244,6 +258,7 @@ impl AnimationRunner {
         Self {
             next_id: 1,
             active: Vec::new(),
+            last_frame: None,
         }
     }
 
@@ -282,19 +297,31 @@ impl AnimationRunner {
         self.active.retain(|e| e.id != id);
     }
 
-    /// Let each active effect peek at the buffer BEFORE the main paint
-    /// walk overwrites it. Effects like `SlideIn` use this to capture
-    /// the outgoing content so they can push it out as new content
-    /// slides in. Called once per render, at the start of the pass.
-    /// Effects still in their `delay` window are skipped — they haven't
-    /// conceptually started yet.
-    pub fn capture_before_all(&mut self, buf: &Buffer) {
+    /// Let each active effect snapshot the "before" state of its Rect
+    /// from the cached last-frame buffer. Called once per render, at
+    /// the start of the pass. We can't read the live `frame.buffer_mut()`
+    /// here because ratatui resets the current buffer before each draw
+    /// (see `swap_buffers`); our own cache is what actually holds what
+    /// was on screen last frame.
+    ///
+    /// Effects still in their `delay` window are skipped, and effects
+    /// whose Rect falls outside the cached buffer (resize shrank the
+    /// terminal) are skipped too — they fall back to the slide-over-
+    /// blanks path.
+    pub fn capture_before_all(&mut self) {
         let now = Instant::now();
+        let Some(prev) = self.last_frame.as_ref() else {
+            return;
+        };
+        let prev_area = prev.area;
         for e in self.active.iter_mut() {
             if now < e.started + e.delay {
                 continue;
             }
-            e.effect.capture_before(buf, e.area);
+            if !rect_contains(prev_area, e.area) {
+                continue;
+            }
+            e.effect.capture_before(prev, e.area);
         }
     }
 
@@ -309,6 +336,11 @@ impl AnimationRunner {
             e.status = e.effect.apply(buf, e.area, elapsed);
         }
         self.active.retain(|e| e.status == EffectStatus::Running);
+
+        // Cache the final painted buffer so the next frame's
+        // `capture_before_all` can read it. We clone because ratatui
+        // resets the current buffer before the next draw.
+        self.last_frame = Some(buf.clone());
     }
 
     pub fn is_active(&self) -> bool {
@@ -441,6 +473,64 @@ mod tests {
                 assert_eq!(cell.symbol(), "N");
             }
         }
+    }
+
+    #[test]
+    fn runner_caches_last_frame_for_push_transition() {
+        // Simulate two frames:
+        //   frame 1: buf contains OLD content, no effects, runner
+        //            caches this as last_frame.
+        //   frame 2: an effect is started, capture_before_all reads
+        //            OLD from the cache (not the blank live buffer),
+        //            then buf is repainted with NEW, apply_all runs
+        //            the push using OLD as the before.
+        let area = Rect::new(0, 0, 3, 3);
+        let mut runner = AnimationRunner::new();
+
+        // Frame 1: paint OLD into buf, run apply_all (no effects) so
+        // the runner caches it.
+        let mut frame1 = make_buf(3, 3);
+        paint(&mut frame1, area, 'O', Color::Green);
+        runner.apply_all(&mut frame1);
+        assert!(runner.last_frame.is_some());
+
+        // Frame 2: start the effect, capture_before_all (reads cache),
+        // paint NEW into a fresh blank buf (simulating ratatui reset),
+        // then apply_all.
+        let id = runner.start(
+            area,
+            AnimationKind::SlideIn {
+                from: Edge::Bottom,
+                duration: Duration::from_millis(100),
+                delay: Duration::ZERO,
+            },
+        );
+        runner.capture_before_all();
+        let mut frame2 = make_buf(3, 3); // blank, like ratatui's reset
+        paint(&mut frame2, area, 'N', Color::Blue);
+        runner.apply_all(&mut frame2);
+
+        // Mid-transition the painted cells should include OLD pixels
+        // being pushed out — not blanks where OLD used to be.
+        let mut seen_old = false;
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let cell = frame2.cell((area.x + dx, area.y + dy)).unwrap();
+                if cell.symbol() == "O" {
+                    seen_old = true;
+                }
+                assert!(
+                    cell.symbol() == "O" || cell.symbol() == "N",
+                    "push should paint only OLD or NEW, got {:?}",
+                    cell.symbol()
+                );
+            }
+        }
+        assert!(
+            seen_old,
+            "at least one OLD cell should still be visible mid-transition"
+        );
+        let _ = id;
     }
 
     #[test]

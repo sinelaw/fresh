@@ -7,10 +7,11 @@ impl Editor {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
-        // Let active animations peek at the previous frame's buffer
-        // before the main paint walk overwrites it. SlideIn uses this
-        // to capture outgoing content for push transitions.
-        self.animations.capture_before_all(frame.buffer_mut());
+        // Let active animations snapshot the previous frame's buffer
+        // from the runner's own cache. We can't read the live
+        // `frame.buffer_mut()` — ratatui resets it before each draw —
+        // so the runner keeps a post-apply clone from the last frame.
+        self.animations.capture_before_all();
 
         // Save frame dimensions for recompute_layout (used by macro replay)
         self.cached_layout.last_frame_width = size.width;
