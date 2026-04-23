@@ -2035,6 +2035,29 @@ impl Editor {
                     return Ok(());
                 }
                 TabHit::TabName(target) => {
+                    // Direction of the slide: +1 if the clicked tab
+                    // sits to the right of the currently-active one in
+                    // the split's open_buffers order, -1 if left, 0 if
+                    // clicking the active tab (→ animate_tab_switch is
+                    // a no-op for 0). Computed BEFORE the switch so
+                    // we're reading the pre-switch active_target.
+                    let direction = self
+                        .split_view_states
+                        .get(&split_id)
+                        .map(|vs| {
+                            let open = &vs.open_buffers;
+                            let cur = vs.active_target();
+                            let cur_idx = open.iter().position(|t| *t == cur);
+                            let new_idx = open.iter().position(|t| *t == target);
+                            match (cur_idx, new_idx) {
+                                (Some(c), Some(n)) if n > c => 1,
+                                (Some(c), Some(n)) if n < c => -1,
+                                _ => 0,
+                            }
+                        })
+                        .unwrap_or(0);
+                    self.animate_tab_switch(split_id, direction);
+
                     match target {
                         crate::view::split::TabTarget::Buffer(buffer_id) => {
                             self.focus_split(split_id, buffer_id);

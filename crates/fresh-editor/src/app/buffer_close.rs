@@ -694,6 +694,15 @@ impl Editor {
             .record_movement(self.active_buffer(), position, anchor);
         self.position_history.commit_pending_movement();
 
+        // Start the slide before the switch so the runner's cached
+        // last-frame captures the OUTGOING tab's content. The new
+        // content gets painted on the next render and the push fires
+        // over it. Direction: next-tab pushes from the right, prev
+        // from the left. Wraparound still follows the user's intent
+        // (Next wraps right, Prev wraps left) so the animation
+        // direction matches the keystroke rather than the idx delta.
+        self.animate_tab_switch(active_split, direction.signum());
+
         match targets[next_idx] {
             TabTarget::Buffer(buffer_id) => {
                 self.set_active_buffer(buffer_id);

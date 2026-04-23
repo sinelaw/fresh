@@ -3,6 +3,7 @@
 //! This module contains handlers for view-related actions like compose mode toggling.
 
 use super::Editor;
+use crate::model::event::LeafId;
 use crate::state::ViewMode;
 use rust_i18n::t;
 
@@ -67,5 +68,46 @@ impl Editor {
             ViewMode::Source => "Source".to_string(),
         };
         self.set_status_message(t!("view.mode", mode = mode_label).to_string());
+    }
+
+    /// Start a horizontal slide over the given split's content area to
+    /// visualize a tab switch. `direction`: +1 = the new tab is to
+    /// the right of the previous one in tab order, so the new view
+    /// pushes in from the right; -1 = the new tab is to the left,
+    /// view pushes in from the left; 0 = no animation.
+    ///
+    /// The split's Rect is resolved from the cached layout captured
+    /// in the last render pass. If the split isn't on screen yet
+    /// (freshly created) the call is a no-op — animation is a purely
+    /// decorative layer and missing it does not affect correctness.
+    pub(crate) fn animate_tab_switch(&mut self, split_id: LeafId, direction: i32) {
+        if direction == 0 {
+            return;
+        }
+        let Some(area) = self
+            .cached_layout
+            .split_areas
+            .iter()
+            .find(|(sid, _, _, _, _, _)| *sid == split_id)
+            .map(|(_, _, content_rect, _, _, _)| *content_rect)
+        else {
+            return;
+        };
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let from = if direction > 0 {
+            crate::view::animation::Edge::Right
+        } else {
+            crate::view::animation::Edge::Left
+        };
+        self.animations.start(
+            area,
+            crate::view::animation::AnimationKind::SlideIn {
+                from,
+                duration: std::time::Duration::from_millis(260),
+                delay: std::time::Duration::ZERO,
+            },
+        );
     }
 }
