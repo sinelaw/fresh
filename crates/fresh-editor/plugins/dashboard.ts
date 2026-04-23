@@ -1421,6 +1421,34 @@ async function refreshLoop(myBufferId: number) {
 // and create a second Dashboard tab.
 let dashboardOpening = false;
 
+// Kick section refreshes and start the periodic refresh loop. Used
+// both by the ambient auto-open path and by the command-palette
+// "Show Dashboard" handler — the parts that differ (whether to bail
+// on real files, whether to sweep untitled scratch) live in the
+// callers.
+function bootstrapDashboard(bufferId: number) {
+    // Reset section draws to "loading…" and kick a fresh refresh for
+    // each registered section. Token guards against late resolvers
+    // from a prior open clobbering the new one.
+    //
+    // GitHub's section callback reuses the last-good PR snapshot (if
+    // any) on its first call post-open so a re-opened dashboard can
+    // draw real data on the first frame while the refresh round-trip
+    // is still in flight. Refresh failures surface via the in-panel
+    // stale-data banner.
+    fetchToken++;
+    const myToken = fetchToken;
+    for (const entry of registeredSections) {
+        entry.draw = loadingDraw();
+        void refreshSection(entry, myToken);
+    }
+    paint();
+
+    // Kick off the 5-second refresh loop. It stops itself when the
+    // dashboard is closed.
+    refreshLoop(bufferId);
+}
+
 async function openDashboard() {
     if (dashboardBufferId !== null) return; // already open
     if (dashboardOpening) return; // another openDashboard is mid-await
@@ -1469,27 +1497,36 @@ async function openDashboard() {
         }
     }
 
-    // Reset section draws to "loading…" and kick a fresh refresh for
-    // each registered section. Token guards against late resolvers
-    // from a prior open clobbering the new one.
-    //
-    // GitHub's section callback reuses the last-good PR snapshot (if
-    // any) on its first call post-open so a re-opened dashboard can
-    // draw real data on the first frame while the refresh round-trip
-    // is still in flight. Refresh failures surface via the in-panel
-    // stale-data banner.
-    fetchToken++;
-    const myToken = fetchToken;
-    for (const entry of registeredSections) {
-        entry.draw = loadingDraw();
-        void refreshSection(entry, myToken);
-    }
-    paint();
-
-    // Kick off the 5-second refresh loop. It stops itself when the
-    // dashboard is closed.
-    refreshLoop(dashboardBufferId);
+    bootstrapDashboard(dashboardBufferId);
 }
+
+// Command-palette handler: show the dashboard if it isn't open, or
+// bring it to the front of the current split if it is. Unlike the
+// ambient open path, this never closes real files or untitled scratch
+// — if the user has a file open and types "Show Dashboard", the
+// dashboard opens alongside it rather than replacing it.
+async function dashboardShowOrFocus() {
+    if (dashboardBufferId !== null) {
+        editor.showBuffer(dashboardBufferId);
+        return;
+    }
+    if (dashboardOpening) return;
+    dashboardOpening = true;
+    const res = await editor.createVirtualBuffer({
+        name: "Dashboard",
+        mode: "dashboard",
+        readOnly: true,
+        showLineNumbers: false,
+        showCursors: false,
+        editingDisabled: true,
+    });
+    dashboardBufferId = res.bufferId;
+    dashboardOpening = false;
+    focusedIndex = 0;
+    editor.showBuffer(dashboardBufferId);
+    bootstrapDashboard(dashboardBufferId);
+}
+registerHandler("dashboardShowOrFocus", dashboardShowOrFocus);
 
 function shouldShowDashboard(): boolean {
     if (dashboardBufferId !== null) return false;
@@ -1692,6 +1729,15 @@ editor.on("buffer_closed", "dashboardOnBufferClosed");
 editor.on("viewport_changed", "dashboardOnViewportChanged");
 editor.on("mouse_click", "dashboardOnMouseClick");
 editor.on("after_file_open", "dashboardOnAfterFileOpen");
+
+// Command-palette entry. No-op when the dashboard is already the
+// focused tab (showBuffer on a visible buffer is a cheap re-focus).
+editor.registerCommand(
+    "Show Dashboard",
+    "Open the dashboard, or bring it to the front if it's already open",
+    "dashboardShowOrFocus",
+);
+
 if (editor.listBuffers().length > 0 && shouldShowDashboard()) {
     openDashboard();
 }
