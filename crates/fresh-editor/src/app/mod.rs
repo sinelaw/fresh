@@ -1128,6 +1128,11 @@ pub struct Editor {
     /// Viewport top_byte when search overlays were last refreshed.
     /// Used to detect viewport scrolling so overlays can be updated.
     search_overlay_top_byte: Option<usize>,
+
+    /// Frame-buffer animation layer. Applied at the end of `render`; the
+    /// main loop consults `is_active`/`next_deadline` to keep re-rendering
+    /// while animations are running.
+    pub animations: crate::view::animation::AnimationRunner,
 }
 
 /// A file that should be opened after the TUI starts

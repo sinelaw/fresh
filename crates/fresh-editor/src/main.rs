@@ -3796,6 +3796,12 @@ where
             continue;
         }
 
+        // Active animations force a render every FRAME_DURATION.
+        let animations_active = editor.animations.is_active();
+        if animations_active {
+            needs_render = true;
+        }
+
         if needs_render && last_render.elapsed() >= FRAME_DURATION {
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
@@ -3811,11 +3817,22 @@ where
         let event = if let Some(e) = pending_event.take() {
             Some(e)
         } else {
-            let timeout = if needs_render {
+            let mut timeout = if needs_render {
                 FRAME_DURATION.saturating_sub(last_render.elapsed())
             } else {
                 Duration::from_millis(50)
             };
+            // While animations are running, cap the timeout so the next
+            // iteration fires in time for the next frame — but never past
+            // the earliest animation deadline.
+            if editor.animations.is_active() {
+                let until_next_frame = FRAME_DURATION.saturating_sub(last_render.elapsed());
+                timeout = timeout.min(until_next_frame);
+                if let Some(deadline) = editor.animations.next_deadline() {
+                    let until_deadline = deadline.saturating_duration_since(Instant::now());
+                    timeout = timeout.min(until_deadline);
+                }
+            }
 
             poll_event(timeout)?
         };

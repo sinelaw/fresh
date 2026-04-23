@@ -1196,6 +1196,9 @@ impl Editor {
             frame.buffer_mut(),
             self.color_capability,
         );
+
+        // Frame-buffer animations run last so they mutate the final paint.
+        self.animations.apply_all(frame.buffer_mut());
     }
 
     /// Returns true if `(x, y)` falls inside any popup-style overlay that

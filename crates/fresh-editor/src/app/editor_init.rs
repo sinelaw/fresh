@@ -769,6 +769,7 @@ impl Editor {
             global_popups: crate::view::popup::PopupManager::new(),
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
+            animations: crate::view::animation::AnimationRunner::new(),
         };
 
         // Apply clipboard configuration
