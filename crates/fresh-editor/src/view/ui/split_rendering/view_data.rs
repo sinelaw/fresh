@@ -140,6 +140,122 @@ pub(super) fn build_view_data(
     let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
     tokens = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
 
+    // Writeback to the line-wrap cache.
+    //
+    // Walk the wrapped token stream and, for each logical line that
+    // started in this render's visible window, store its visual-row
+    // count under the LineWrapKey matching what scroll math will query.
+    // This populates the cache from the renderer's side of the pipeline
+    // so that subsequent scroll-math queries for the same lines are
+    // O(1) cache hits instead of re-running `apply_wrapping_transform`.
+    //
+    // Skipped when:
+    //   - A plugin view_transform is active (its token stream doesn't
+    //     come from raw line text via `build_base_tokens`, so the
+    //     scroll-math miss handler cannot reproduce it from a one-
+    //     line input — cache entries would mismatch).
+    //   - Line wrap is off (1 row per logical line is trivial; no
+    //     benefit from caching).
+    if !has_view_transform && line_wrap_enabled {
+        use crate::view::line_wrap_cache::{
+            pipeline_inputs_version, CacheViewMode, LineWrapKey,
+        };
+        use fresh_core::api::ViewTokenWireKind;
+
+        // Scroll math uses `CacheViewMode::Source` as its writer
+        // convention because it runs without access to the view mode.
+        // The renderer writes under the actual view mode; both coexist
+        // in the cache keyed by the `view_mode` field. To make the
+        // renderer's entries visible to scroll-math reads, we also
+        // write a Source-keyed twin entry. The two entries have the
+        // same value (compute once); this just makes both lookup
+        // shapes hit.
+        let cache_view_mode = if matches!(view_mode, ViewMode::PageView) {
+            CacheViewMode::Compose
+        } else {
+            CacheViewMode::Source
+        };
+        let pipeline_inputs_ver = pipeline_inputs_version(
+            state.buffer.version(),
+            state.soft_breaks.version(),
+            state.conceals.version(),
+        );
+        let make_key = |line_start: usize, mode: CacheViewMode| LineWrapKey {
+            pipeline_inputs_version: pipeline_inputs_ver,
+            view_mode: mode,
+            line_start,
+            effective_width: effective_width as u32,
+            gutter_width: gutter_width as u16,
+            wrap_column: viewport.wrap_column.map(|c| c as u32),
+            hanging_indent,
+            line_wrap_enabled: true,
+        };
+
+        // Walk tokens, accumulating non-empty-row counts between
+        // Newlines. A token with `source_offset` anchors the current
+        // logical line to a `line_start` byte. When we close a line
+        // (via Newline), we write the count.
+        let mut current_line_start: Option<usize> = None;
+        let mut rows_in_line: u32 = 0;
+        let mut row_has_content = false;
+        for t in &tokens {
+            if current_line_start.is_none() {
+                if let Some(off) = t.source_offset {
+                    // The renderer's tokens can include injected tokens
+                    // without source_offset (indents, etc.). Anchor on
+                    // the first real source position seen in this line.
+                    current_line_start = Some(off);
+                }
+            }
+            match &t.kind {
+                ViewTokenWireKind::Newline => {
+                    if let Some(line_start) = current_line_start {
+                        if row_has_content {
+                            rows_in_line += 1;
+                        }
+                        let count = rows_in_line.max(1);
+                        state
+                            .line_wrap_cache
+                            .put(make_key(line_start, cache_view_mode), count);
+                        state
+                            .line_wrap_cache
+                            .put(make_key(line_start, CacheViewMode::Source), count);
+                    }
+                    current_line_start = None;
+                    rows_in_line = 0;
+                    row_has_content = false;
+                }
+                ViewTokenWireKind::Break => {
+                    if row_has_content {
+                        rows_in_line += 1;
+                    }
+                    row_has_content = false;
+                }
+                ViewTokenWireKind::Text(s) => {
+                    if !s.is_empty() {
+                        row_has_content = true;
+                    }
+                }
+                ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
+                    row_has_content = true;
+                }
+            }
+        }
+        // Tail line with no trailing Newline (last line of the buffer).
+        if let Some(line_start) = current_line_start {
+            if row_has_content {
+                rows_in_line += 1;
+            }
+            let count = rows_in_line.max(1);
+            state
+                .line_wrap_cache
+                .put(make_key(line_start, cache_view_mode), count);
+            state
+                .line_wrap_cache
+                .put(make_key(line_start, CacheViewMode::Source), count);
+        }
+    }
+
     // Convert tokens to display lines using the view pipeline.
     let is_binary = state.buffer.is_binary();
     let ansi_aware = !is_binary;
