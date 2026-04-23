@@ -7,6 +7,11 @@ impl Editor {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
+        // Let active animations peek at the previous frame's buffer
+        // before the main paint walk overwrites it. SlideIn uses this
+        // to capture outgoing content for push transitions.
+        self.animations.capture_before_all(frame.buffer_mut());
+
         // Save frame dimensions for recompute_layout (used by macro replay)
         self.cached_layout.last_frame_width = size.width;
         self.cached_layout.last_frame_height = size.height;

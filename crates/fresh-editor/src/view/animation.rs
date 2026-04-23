@@ -48,6 +48,13 @@ impl AnimationId {
 }
 
 pub trait FrameEffect {
+    /// Optionally capture the pre-paint ("before") state of `area` from
+    /// the buffer at the start of a render pass. Called by the runner
+    /// once per render before the main paint walk, so effects like
+    /// `SlideIn` can snapshot the outgoing content and push it out
+    /// while new content slides in. Default: no-op.
+    fn capture_before(&mut self, _buf: &Buffer, _area: Rect) {}
+
     fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus;
 }
 
@@ -58,14 +65,17 @@ fn ease_out_cubic(t: f32) -> f32 {
     1.0 - inv * inv * inv
 }
 
-/// Slide-in effect: snapshots the cells in `area` on first apply, then paints
-/// a shifted version converging to the snapshot. Cells vacated by the shift
-/// are filled with the default cell (blank) so prior buffer contents don't
-/// bleed through.
+/// Slide-in effect. Paints the incoming ("after") content sliding in from
+/// `from`. When the runner captures a "before" snapshot at the start of
+/// the render pass, the outgoing content is pushed out the opposite
+/// direction in lock-step — giving a "push" transition that replaces
+/// old content with new. Without a before snapshot (initial bringup,
+/// buffer didn't exist yet), the vacated cells are blank.
 pub struct SlideIn {
     from: Edge,
     duration: Duration,
-    snapshot: Option<SlideSnapshot>,
+    after: Option<SlideSnapshot>,
+    before: Option<SlideSnapshot>,
 }
 
 struct SlideSnapshot {
@@ -78,11 +88,12 @@ impl SlideIn {
         Self {
             from,
             duration,
-            snapshot: None,
+            after: None,
+            before: None,
         }
     }
 
-    fn take_snapshot(&mut self, buf: &Buffer, area: Rect) {
+    fn snapshot_area(buf: &Buffer, area: Rect) -> SlideSnapshot {
         let mut cells = Vec::with_capacity(area.width as usize * area.height as usize);
         for dy in 0..area.height {
             for dx in 0..area.width {
@@ -92,24 +103,37 @@ impl SlideIn {
                 cells.push(cell);
             }
         }
-        self.snapshot = Some(SlideSnapshot { area, cells });
+        SlideSnapshot { area, cells }
     }
 }
 
 impl FrameEffect for SlideIn {
-    fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus {
-        if self.snapshot.is_none() {
-            self.take_snapshot(buf, area);
+    fn capture_before(&mut self, buf: &Buffer, area: Rect) {
+        if self.before.is_none() {
+            self.before = Some(Self::snapshot_area(buf, area));
         }
-        let snap = match &self.snapshot {
+    }
+
+    fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus {
+        // First apply captures the post-paint "after" snapshot. The
+        // "before" snapshot, if any, was captured at the top of this
+        // render pass via the trait hook.
+        if self.after.is_none() {
+            self.after = Some(Self::snapshot_area(buf, area));
+        }
+        let after = match &self.after {
             Some(s) if s.area == area => s,
             Some(_) => {
-                // Area changed mid-animation (resize) — re-snapshot at new size.
-                self.take_snapshot(buf, area);
-                self.snapshot.as_ref().unwrap()
+                // Area changed mid-animation (resize) — re-snapshot the
+                // after, and drop the before whose dimensions no longer
+                // match. Falls back to the slide-in-with-blanks path.
+                self.after = Some(Self::snapshot_area(buf, area));
+                self.before = None;
+                self.after.as_ref().unwrap()
             }
             None => unreachable!(),
         };
+        let before = self.before.as_ref().filter(|b| b.area == area);
 
         let t = if self.duration.is_zero() {
             1.0
@@ -118,6 +142,10 @@ impl FrameEffect for SlideIn {
         };
         let eased = ease_out_cubic(t);
 
+        // offset_row/col: how far the AFTER snapshot is shifted toward
+        // `from` at t. At t=0 it sits fully off the `from` edge; at
+        // t=1 it's at its natural position. BEFORE moves the same
+        // distance in the opposite direction (the "push out").
         let (offset_row, offset_col) = match self.from {
             Edge::Bottom => (((1.0 - eased) * area.height as f32).round() as i32, 0i32),
             Edge::Top => (-(((1.0 - eased) * area.height as f32).round() as i32), 0),
@@ -125,23 +153,57 @@ impl FrameEffect for SlideIn {
             Edge::Left => (0, -(((1.0 - eased) * area.width as f32).round() as i32)),
         };
 
+        // Before is pushed opposite to After: if After enters from
+        // below (offset_row > 0), Before exits upward (offset_row -
+        // height in the Bottom case). Same for horizontal edges.
+        let (before_offset_row, before_offset_col) = match self.from {
+            Edge::Bottom => (offset_row - area.height as i32, 0),
+            Edge::Top => (offset_row + area.height as i32, 0),
+            Edge::Right => (0, offset_col - area.width as i32),
+            Edge::Left => (0, offset_col + area.width as i32),
+        };
+
         let blank = Cell::default();
         for dy in 0..area.height {
             for dx in 0..area.width {
                 let x = area.x + dx;
                 let y = area.y + dy;
-                let src_dy = dy as i32 - offset_row;
-                let src_dx = dx as i32 - offset_col;
-                let new_cell = if src_dy >= 0
-                    && src_dy < area.height as i32
-                    && src_dx >= 0
-                    && src_dx < area.width as i32
+
+                // Try the incoming snapshot first (post-slide it's what
+                // everyone sees); fall back to the outgoing one, then
+                // to blank if neither slice covers this cell.
+                let after_src_dy = dy as i32 - offset_row;
+                let after_src_dx = dx as i32 - offset_col;
+                let after_cell = if after_src_dy >= 0
+                    && after_src_dy < area.height as i32
+                    && after_src_dx >= 0
+                    && after_src_dx < area.width as i32
                 {
-                    let idx = src_dy as usize * area.width as usize + src_dx as usize;
-                    snap.cells[idx].clone()
+                    let idx = after_src_dy as usize * area.width as usize + after_src_dx as usize;
+                    Some(after.cells[idx].clone())
                 } else {
-                    blank.clone()
+                    None
                 };
+
+                let before_cell = if let Some(before) = before {
+                    let before_src_dy = dy as i32 - before_offset_row;
+                    let before_src_dx = dx as i32 - before_offset_col;
+                    if before_src_dy >= 0
+                        && before_src_dy < area.height as i32
+                        && before_src_dx >= 0
+                        && before_src_dx < area.width as i32
+                    {
+                        let idx =
+                            before_src_dy as usize * area.width as usize + before_src_dx as usize;
+                        Some(before.cells[idx].clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let new_cell = after_cell.or(before_cell).unwrap_or_else(|| blank.clone());
                 if let Some(dst) = buf.cell_mut((x, y)) {
                     *dst = new_cell;
                 }
@@ -218,6 +280,22 @@ impl AnimationRunner {
 
     pub fn cancel(&mut self, id: AnimationId) {
         self.active.retain(|e| e.id != id);
+    }
+
+    /// Let each active effect peek at the buffer BEFORE the main paint
+    /// walk overwrites it. Effects like `SlideIn` use this to capture
+    /// the outgoing content so they can push it out as new content
+    /// slides in. Called once per render, at the start of the pass.
+    /// Effects still in their `delay` window are skipped — they haven't
+    /// conceptually started yet.
+    pub fn capture_before_all(&mut self, buf: &Buffer) {
+        let now = Instant::now();
+        for e in self.active.iter_mut() {
+            if now < e.started + e.delay {
+                continue;
+            }
+            e.effect.capture_before(buf, e.area);
+        }
     }
 
     pub fn apply_all(&mut self, buf: &mut Buffer) {
@@ -320,6 +398,47 @@ mod tests {
                 let cell = buf.cell((area.x + dx, area.y + dy)).unwrap();
                 assert_eq!(cell.symbol(), "X");
                 assert_eq!(cell.fg, Color::Red);
+            }
+        }
+    }
+
+    #[test]
+    fn slide_in_with_before_snapshot_pushes_old_out() {
+        // Before: 'O' everywhere. After: 'N' everywhere.
+        let area = Rect::new(0, 0, 3, 4);
+        let mut before_buf = make_buf(3, 4);
+        paint(&mut before_buf, area, 'O', Color::Green);
+        let mut after_buf = make_buf(3, 4);
+        paint(&mut after_buf, area, 'N', Color::Blue);
+
+        let mut effect = SlideIn::new(Edge::Bottom, Duration::from_millis(100));
+        effect.capture_before(&before_buf, area);
+        // Mid-transition: at t=0.5, half of OLD should still be
+        // visible (shifted up) and half of NEW should have entered
+        // (shifted down from the bottom). No blank cells — push
+        // means the edge vacated by OLD is filled by NEW.
+        let mut work = after_buf.clone();
+        effect.apply(&mut work, area, Duration::from_millis(50));
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let cell = work.cell((area.x + dx, area.y + dy)).unwrap();
+                let sym = cell.symbol();
+                assert!(
+                    sym == "N" || sym == "O",
+                    "push should paint only OLD or NEW cells, got {:?} at ({},{})",
+                    sym,
+                    dx,
+                    dy
+                );
+            }
+        }
+        // And: at t=duration, the AFTER content is fully in place.
+        let status = effect.apply(&mut work, area, Duration::from_millis(100));
+        assert_eq!(status, EffectStatus::Done);
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let cell = work.cell((area.x + dx, area.y + dy)).unwrap();
+                assert_eq!(cell.symbol(), "N");
             }
         }
     }
