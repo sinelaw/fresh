@@ -74,6 +74,7 @@ pub mod lifecycle;
 pub mod line_number_bugs;
 pub mod line_wrap_cache_consistency;
 pub mod line_wrap_full_visibility;
+pub mod line_wrap_parity;
 pub mod line_wrap_scroll_bugs;
 pub mod line_wrapping;
 pub mod live_grep;
