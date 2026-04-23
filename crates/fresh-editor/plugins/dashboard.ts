@@ -206,24 +206,38 @@ let fetchToken = 0; // bumped each open; late fetches from a prior open no-op.
 // mid-slide. Null once the animation settles or is cleared.
 let activeAnimationId: number | null = null;
 
-// Serialized entries from the last paint, taken BEFORE the focus
-// highlight is applied. paint() compares the fresh pre-focus entries
-// against this: when identical (same section data), no re-animation.
-// Keyboard focus changes don't flip this key, so Tab/Shift-Tab move
-// the highlight without re-sliding the whole dashboard.
-let lastPaintedContentKey: string | null = null;
+// Hash of all entries at the last paint (post-focus-highlight too —
+// it's what ultimately lands in the virtual buffer). Used to decide
+// whether setVirtualBufferContent needs to run at all: identical
+// full hash AND identical focus → nothing changed, skip the VB
+// round-trip entirely.
+let lastPaintedFullKey: string | null = null;
 
-// focusedIndex the last successful setVirtualBufferContent ran with,
-// paired with lastPaintedContentKey. If BOTH still match, a full
-// paint() call has nothing new to push — we can skip the VB update
-// and the animation entirely (the "identical render → do nothing"
-// case from the user's request).
+// Hash of the entries with the clock stamp stripped. Animations only
+// fire when THIS hash changes, so the 1 Hz clock tick on the top
+// frame updates in place without re-sliding the whole dashboard.
+// Keyboard focus changes don't move this hash either (the hash is
+// taken before the focus overlay is laid on top), so Tab/Shift-Tab
+// pan the highlight without re-animating.
+let lastPaintedStructuralKey: string | null = null;
+
+// focusedIndex the last successful setVirtualBufferContent ran with.
+// Paired with the keys above so we can tell "focus moved but section
+// data is the same" (update VB for the highlight, no animation).
 let lastPaintedFocusedIndex = -1;
+
+// Matches an HH:MM:SS clock stamp. Anything shaped like that is
+// stripped from the structural hash so clock ticks don't animate.
+// The frame renderer is the only dashboard author that emits such a
+// string; if a third-party section happens to show a value in the
+// same shape, the worst case is "we don't re-animate when that
+// value changes" — acceptable noise floor.
+const CLOCK_RE = /\d\d:\d\d:\d\d/g;
 
 // Edge the slide-in enters from. Maps 1:1 to the plugin API's `from`
 // field and is resolved from config (plugins.dashboard.slide_from) on
 // each paint() so hot-reload of the setting Just Works. Defaults to
-// "bottom" (slide up from below).
+// "right" (new content pushes in from the right, old exits left).
 type SlideFrom = "top" | "bottom" | "left" | "right";
 function resolveSlideFrom(): SlideFrom {
     const config = editor.getConfig() as Record<string, unknown> | null;
@@ -233,7 +247,7 @@ function resolveSlideFrom(): SlideFrom {
     if (raw === "top" || raw === "bottom" || raw === "left" || raw === "right") {
         return raw;
     }
-    return "bottom";
+    return "right";
 }
 
 // Registered sections, in render order. Built-ins are registered at
@@ -761,19 +775,23 @@ function paint(dims?: { width: number; height: number }) {
             ((focusedIndex % targets.length) + targets.length) % targets.length;
     }
 
-    // Snapshot entries BEFORE applying the focus highlight so keyboard
-    // focus changes don't look like content changes. Section data
-    // updates flip the key; Tab/Shift-Tab to move the cursor does not.
-    const contentKey = JSON.stringify(entries);
-    const contentChanged = contentKey !== lastPaintedContentKey;
+    // Two hashes, taken BEFORE the focus highlight goes on top:
+    //   fullKey      — everything including the clock. Drives the
+    //                  setVirtualBufferContent skip check, so the
+    //                  clock still redraws in place every second.
+    //   structuralKey — clock stamps stripped. Drives the animation.
+    //                  A clock tick alone does not flip this, so it
+    //                  updates silently; a real section data change
+    //                  does, and the slide fires.
+    const fullKey = JSON.stringify(entries);
+    const structuralKey = fullKey.replace(CLOCK_RE, "##:##:##");
+    const fullChanged = fullKey !== lastPaintedFullKey;
+    const structuralChanged = structuralKey !== lastPaintedStructuralKey;
     const focusChanged = focusedIndex !== lastPaintedFocusedIndex;
 
-    // Identical render → short-circuit. No new entries, no focus
-    // movement, nothing for setVirtualBufferContent to apply. The
-    // refresh loop repaints every 5s even when section data is
-    // unchanged; without this, the screen would still re-animate
-    // (via contentChanged below) any time a single byte differed.
-    if (!contentChanged && !focusChanged) {
+    // Identical render → short-circuit. Nothing to push to the
+    // buffer, nothing to animate.
+    if (!fullChanged && !focusChanged) {
         return;
     }
 
@@ -809,14 +827,15 @@ function paint(dims?: { width: number; height: number }) {
     editor.setVirtualBufferContent(bufferId, entries);
     lastPaintedW = width;
     lastPaintedH = height;
-    lastPaintedContentKey = contentKey;
+    lastPaintedFullKey = fullKey;
+    lastPaintedStructuralKey = structuralKey;
     lastPaintedFocusedIndex = focusedIndex;
 
-    // Content-change-driven re-animation: cancel any in-flight slide
-    // and start a fresh one over the new content. Focus-only changes
-    // land via the early-exit identical check plus the focus highlight
-    // applied above — no new animation.
-    if (contentChanged) {
+    // Structural-change-driven re-animation: fire only when something
+    // OTHER than the clock or the focus highlight actually differs.
+    // Cancel any in-flight slide first so the new one snapshots the
+    // fresh content (not mid-slide pixels).
+    if (structuralChanged) {
         if (activeAnimationId !== null) {
             editor.cancelAnimation(activeAnimationId);
         }
@@ -1587,7 +1606,8 @@ async function openDashboard() {
     // survive close/re-open cycles by default so repeated refreshes
     // with identical data don't re-animate; resetting them here is
     // what carves out the "opening" path from that steady-state.
-    lastPaintedContentKey = null;
+    lastPaintedFullKey = null;
+    lastPaintedStructuralKey = null;
     lastPaintedFocusedIndex = -1;
 
     bootstrapDashboard(dashboardBufferId);
