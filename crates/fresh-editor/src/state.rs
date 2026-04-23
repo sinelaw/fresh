@@ -230,6 +230,14 @@ pub struct EditorState {
     /// Cached scrollbar visual row counts to avoid O(n) recomputation per frame.
     /// Invalidated when buffer version, viewport width, or top_byte changes.
     pub scrollbar_row_cache: ScrollbarRowCache,
+
+    /// Per-logical-line visual-row-count cache (pipeline-output).
+    /// Populated by both the renderer (as a side effect of rendering a
+    /// visible frame) and the scroll-math miss handler.  Entries are
+    /// keyed on every pipeline input; mutations to any input produce a
+    /// different key so stale entries are never returned — see
+    /// `docs/internal/line-wrap-cache-plan.md`.
+    pub line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache,
 }
 
 /// Cache for scrollbar visual row counts.
@@ -306,6 +314,7 @@ impl EditorState {
             language: "text".to_string(),
             display_name: "Text".to_string(),
             scrollbar_row_cache: ScrollbarRowCache::default(),
+            line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
         }
     }
 
