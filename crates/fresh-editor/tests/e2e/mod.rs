@@ -139,6 +139,7 @@ pub mod rendering;
 pub mod save_as_language_detection;
 pub mod save_nonexistent_directory;
 pub mod scroll_clearing;
+pub mod scroll_single_long_line_perf;
 pub mod scroll_wrapped_reach_last_line;
 pub mod scrolling;
 pub mod search;

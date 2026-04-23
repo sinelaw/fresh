@@ -76,6 +76,24 @@ pub struct Viewport {
     /// by one wrap segment for some long paragraphs (issue #1574, Up-arrow
     /// jumpy variant).
     pub(crate) scrolled_up_in_wrap: bool,
+
+    /// Small per-viewport row-count cache used by the scroll hot paths
+    /// (`scroll_down_visual`, `apply_visual_scroll_limit`, etc.) to
+    /// avoid re-running `apply_wrapping_transform` on the same logical
+    /// line for every mouse-wheel tick. Particularly important for
+    /// buffers with a single very long wrapped line — without this,
+    /// each tick pays the O(n²) word-boundary wrap cost over the whole
+    /// line.
+    ///
+    /// Distinct from the cross-consumer cache on `EditorState`: that
+    /// one is shared between the renderer and scroll math, while this
+    /// one is purely a local memoization for the viewport's own
+    /// per-tick counting. The keys use `buffer.version()` as the
+    /// version; plugin-driven (soft-break / conceal) changes aren't
+    /// detected here, but in the absence of plugins the per-line row
+    /// count depends only on buffer content + geometry, which is what
+    /// this cache covers.
+    pub(crate) wrap_row_cache: crate::view::line_wrap_cache::LineWrapCache,
 }
 
 impl Viewport {
@@ -98,6 +116,10 @@ impl Viewport {
             max_line_length_seen: 0,
             sync_scroll_to_end: false,
             scrolled_up_in_wrap: false,
+            // Small cap — the scroll hot paths only ever ask about
+            // a handful of nearby lines per event, and this cache
+            // doesn't need to remember every line of every buffer.
+            wrap_row_cache: crate::view::line_wrap_cache::LineWrapCache::with_capacity(512),
         }
     }
 
@@ -375,6 +397,7 @@ impl Viewport {
             return;
         }
 
+        let buffer_version = buffer.version();
         let gutter_width = self.gutter_width(buffer);
         let wrap_config =
             WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
@@ -424,7 +447,7 @@ impl Viewport {
                 &line_content,
                 &wrap_config,
                 soft_breaks,
-                None,
+                Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
             if visual_rows_in_line >= rows_remaining {
@@ -456,6 +479,7 @@ impl Viewport {
             return;
         }
 
+        let buffer_version = buffer.version();
         let gutter_width = self.gutter_width(buffer);
         let wrap_config =
             WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
@@ -484,7 +508,7 @@ impl Viewport {
             &current_line_content,
             &wrap_config,
             soft_breaks,
-            None,
+            Some((&mut self.wrap_row_cache, buffer_version)),
         );
         let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset);
 
@@ -534,7 +558,7 @@ impl Viewport {
                 &line_content,
                 &wrap_config,
                 soft_breaks,
-                None,
+                Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
             if rows_remaining < visual_rows_in_line {
@@ -575,6 +599,7 @@ impl Viewport {
             return;
         }
 
+        let buffer_version = buffer.version();
         // Count visual rows from current position to end of buffer
         let mut visual_rows_remaining = 0;
         let mut iter = buffer.line_iterator(self.top_byte, 80);
@@ -589,7 +614,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
-                None,
+                Some((&mut self.wrap_row_cache, buffer_version)),
             );
             visual_rows_remaining += line_visual_rows.saturating_sub(self.top_view_line_offset);
         }
@@ -604,7 +629,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
-                None,
+                Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
             // Early exit if we have enough rows
@@ -631,12 +656,13 @@ impl Viewport {
     /// Find the maximum scroll position that still shows viewport_height visual rows.
     /// Returns (top_byte, top_view_line_offset) for the max scroll position.
     fn find_max_visual_scroll_position(
-        &self,
+        &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[usize],
         wrap_config: &WrapConfig,
         viewport_height: usize,
     ) -> (usize, usize) {
+        let buffer_version = buffer.version();
         let buffer_len = buffer.len();
         if buffer_len == 0 {
             return (0, 0);
@@ -669,7 +695,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
-                None,
+                Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
             for offset in 0..visual_rows_in_line {
@@ -1231,6 +1257,7 @@ impl Viewport {
             // instead of logical lines. Each logical line may wrap into multiple
             // visual rows, so we must account for that when checking whether the
             // viewport can be filled from proposed_top_byte.
+            let buffer_version = buffer.version();
             let gutter_width = self.gutter_width(buffer);
             let wrap_config =
                 WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
@@ -1247,7 +1274,7 @@ impl Viewport {
                     line_text,
                     &wrap_config,
                     soft_breaks,
-                    None,
+                    Some((&mut self.wrap_row_cache, buffer_version)),
                 );
                 if visual_rows >= viewport_height {
                     self.top_byte = proposed_top_byte;
