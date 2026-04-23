@@ -2225,4 +2225,132 @@ mod tests {
             vp.left_column
         );
     }
+
+    /// Regression for #1689 follow-up: in wrap mode with
+    /// `top_view_line_offset > 0`, the early-return at the top of
+    /// `ensure_visible` used to fire for *any* cursor below `top_byte`,
+    /// stranding cursors that were many lines below the viewport. Verify
+    /// the early-return now defers to a real scroll when the cursor is
+    /// far below (more than 2x viewport height in source lines).
+    #[test]
+    fn test_ensure_visible_far_below_top_with_wrap_offset_does_scroll() {
+        // 200 lines so we have plenty of room for "far below".
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!("line_{i}\n"));
+        }
+        let mut buffer = Buffer::from_str_test(&content);
+
+        let mut vp = Viewport::new(80, 10); // 10 visible lines
+        vp.line_wrap_enabled = true;
+
+        // Park top_byte at line 5 and inject a non-zero wrap offset to
+        // trigger the wrap-mode early-return. (Real users hit this state
+        // via the wrap-aware scroll-up path, but we set it manually here.)
+        let mut iter = buffer.line_iterator(0, 80);
+        let mut line_5_byte = 0;
+        for i in 0..5 {
+            if let Some((line_start, _)) = iter.next_line() {
+                if i == 4 {
+                    line_5_byte = line_start;
+                    break;
+                }
+            }
+        }
+        vp.top_byte = line_5_byte;
+        vp.top_view_line_offset = 2; // > 0 → triggers the early-return path
+
+        let top_before = vp.top_byte;
+
+        // Move cursor to line 100 — way below `top_byte` (10*2=20 viewport
+        // heights of 1 source line each, so cursor at line 100 is well
+        // beyond `top_line + 2*viewport_height`).
+        let mut iter = buffer.line_iterator(0, 80);
+        let mut line_100_byte = 0;
+        for i in 0..100 {
+            if let Some((line_start, _)) = iter.next_line() {
+                if i == 99 {
+                    line_100_byte = line_start;
+                    break;
+                }
+            }
+        }
+        let cursor = Cursor::new(line_100_byte);
+
+        vp.ensure_visible(&mut buffer, &cursor, &[]);
+
+        assert_ne!(
+            vp.top_byte, top_before,
+            "ensure_visible must scroll when the cursor is far below the viewport \
+             top, even in wrap mode with `top_view_line_offset > 0`. Pre-fix this \
+             early-returned at the top of `ensure_visible` and the viewport stalled."
+        );
+
+        // Cursor should now be inside the viewport's source-line range.
+        let new_top_line = buffer.get_line_number(vp.top_byte);
+        let cursor_line = buffer.get_line_number(line_100_byte);
+        let viewport_height = vp.visible_line_count();
+        assert!(
+            cursor_line >= new_top_line && cursor_line < new_top_line + viewport_height,
+            "After scrolling, cursor line {cursor_line} should be inside viewport \
+             line range [{new_top_line}, {})",
+            new_top_line + viewport_height
+        );
+    }
+
+    /// Companion case: in the SAME wrap-mode + `top_view_line_offset > 0`
+    /// state, a cursor that's only slightly below the viewport top must
+    /// still trigger the early-return so we don't undo the wrap-aware
+    /// scroll machinery that was added for #1574. The fix's heuristic is
+    /// "skip when cursor is within 2x viewport-height of top".
+    #[test]
+    fn test_ensure_visible_close_below_top_with_wrap_offset_still_skips() {
+        let mut content = String::new();
+        for i in 0..50 {
+            content.push_str(&format!("line_{i}\n"));
+        }
+        let mut buffer = Buffer::from_str_test(&content);
+
+        let mut vp = Viewport::new(80, 10);
+        vp.line_wrap_enabled = true;
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let mut line_5_byte = 0;
+        for i in 0..5 {
+            if let Some((line_start, _)) = iter.next_line() {
+                if i == 4 {
+                    line_5_byte = line_start;
+                    break;
+                }
+            }
+        }
+        vp.top_byte = line_5_byte;
+        vp.top_view_line_offset = 2;
+
+        let top_before = vp.top_byte;
+
+        // Cursor at line 8 — only 3 lines below top, well within 2x
+        // viewport height (=20). Should hit the early-return: viewport
+        // unchanged, deferred to render-time `ensure_visible_in_layout`.
+        let mut iter = buffer.line_iterator(0, 80);
+        let mut line_8_byte = 0;
+        for i in 0..8 {
+            if let Some((line_start, _)) = iter.next_line() {
+                if i == 7 {
+                    line_8_byte = line_start;
+                    break;
+                }
+            }
+        }
+        let cursor = Cursor::new(line_8_byte);
+
+        vp.ensure_visible(&mut buffer, &cursor, &[]);
+
+        assert_eq!(
+            vp.top_byte, top_before,
+            "Cursor close below top in wrap mode must still defer to \
+             ensure_visible_in_layout (the #1574 invariant). Got top_byte={}, expected {}",
+            vp.top_byte, top_before
+        );
+    }
 }
