@@ -2013,10 +2013,11 @@ impl Editor {
                             ));
                         }
                         crate::view::split::TabTarget::Group(group_leaf) => {
-                            // Activate the group tab: set the active leaf to the
-                            // group's preferred inner leaf so this group is
-                            // rendered and its scrollable panel receives focus.
-                            self.activate_group_tab(group_leaf);
+                            // Activate the group tab in the split that owns
+                            // the clicked tab bar — not the currently-focused
+                            // split. The two may differ when the user clicks
+                            // a group tab in a non-focused pane.
+                            self.activate_group_tab(split_id, group_leaf);
                         }
                     }
                     return Ok(());

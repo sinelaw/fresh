@@ -257,7 +257,7 @@ impl Editor {
                 self.focus_file_explorer();
             }
             if let Some(group_leaf) = return_to_group {
-                self.activate_group_tab(group_leaf);
+                self.activate_group_tab(active_split, group_leaf);
             }
         }
 
@@ -699,7 +699,7 @@ impl Editor {
                 self.set_active_buffer(buffer_id);
             }
             TabTarget::Group(group_leaf_id) => {
-                self.activate_group_tab(group_leaf_id);
+                self.activate_group_tab(active_split, group_leaf_id);
             }
         }
     }

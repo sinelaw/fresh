@@ -433,10 +433,14 @@ impl super::Editor {
         }
     }
 
-    /// Activate a group tab by its Grouped-node LeafId. This sets the
-    /// active tab of the current split so the group's layout becomes visible
-    /// in the split's content area. The active inner leaf receives focus.
-    pub(crate) fn activate_group_tab(&mut self, group_leaf: LeafId) {
+    /// Activate a group tab by its Grouped-node LeafId in the given split.
+    /// Records the group as the split's active tab so the group's layout
+    /// becomes visible in that split's content area, and moves keyboard
+    /// focus to the group's active inner leaf. If `split_id` is not the
+    /// currently active split (e.g. the user clicked a group tab in a
+    /// non-focused pane), focus is transferred to it — tab clicks are
+    /// commitment gestures pointing at the clicked pane.
+    pub(crate) fn activate_group_tab(&mut self, split_id: LeafId, group_leaf: LeafId) {
         // Find the inner active leaf and its buffer from the stored Grouped node.
         let Some(crate::view::split::SplitNode::Grouped {
             active_inner_leaf, ..
@@ -446,20 +450,24 @@ impl super::Editor {
         };
         let inner_leaf = *active_inner_leaf;
 
-        // Set the current split's "effective active target" by recording
-        // the group as the active-tab for this split.
-        let active_split = self.split_manager.active_split();
-        if let Some(vs) = self.split_view_states.get_mut(&active_split) {
-            vs.active_group_tab = Some(group_leaf);
+        // If activating a group tab in a non-focused split, transfer focus
+        // to that split first so subsequent keyboard input routes to the
+        // group's inner panel rather than the previously-active pane. This
+        // mirrors how clicking a buffer tab in another split moves focus.
+        if self.split_manager.active_split() != split_id {
+            self.promote_preview_if_not_in_split(split_id);
+            if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+            }
+            self.split_manager.set_active_split(split_id);
         }
 
-        // Focus the inner leaf's buffer so keyboard input goes there.
-        // NOTE: the inner leaf is NOT in the main split tree — it only
-        // exists inside the stashed Grouped subtree. Focus routing
-        // through focus_split won't work directly.
-        // Instead we set a separate "focused group leaf" marker that the
-        // input router can consult.
-        if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+        // Record the group as the active-tab and focused inner leaf for
+        // this split. The inner leaf is NOT in the main split tree — it
+        // only exists inside the stashed Grouped subtree — so focus is
+        // routed via `focused_group_leaf` rather than `focus_split`.
+        if let Some(vs) = self.split_view_states.get_mut(&split_id) {
+            vs.active_group_tab = Some(group_leaf);
             vs.focused_group_leaf = Some(inner_leaf);
         }
     }

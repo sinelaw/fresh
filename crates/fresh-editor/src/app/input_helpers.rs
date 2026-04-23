@@ -49,7 +49,7 @@ impl Editor {
             }
             Some(TabTarget::Group(leaf_id)) => {
                 if self.grouped_subtrees.contains_key(&leaf_id) {
-                    self.activate_group_tab(leaf_id);
+                    self.activate_group_tab(active_split, leaf_id);
                 } else {
                     self.set_status_message(t!("status.previous_tab_closed").to_string());
                 }

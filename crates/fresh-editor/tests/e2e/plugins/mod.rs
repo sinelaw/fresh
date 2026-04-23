@@ -13,6 +13,7 @@ pub mod diagnostics_panel_jump;
 pub mod diff_cursor;
 pub mod find_file;
 pub mod git;
+pub mod git_log_split_tab_focus;
 pub mod gutter;
 pub mod init_script;
 pub mod language_pack;
