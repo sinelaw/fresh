@@ -1170,20 +1170,28 @@ fn test_comments_appear_before_fields() {
 
     // In the two-panel layout, field descriptions appear in the right-side picker panel
     // when a field is selected. The Editor section starts expanded by default, so just
-    // press Down to navigate from the section header to the first field (bg).
+    // press Down to navigate from the section header to the first field.
+    //
+    // The plugin sorts fields alphabetically within a section, so *which* field is
+    // first depends on whichever editor color sorts first by key — this must not be
+    // hard-coded to any specific name (see #779: adding `after_eof_bg` bumped the
+    // alphabetically-first field, breaking the old matcher). Instead, verify that
+    // *some* editor field is selected and shown in the picker.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Wait for the picker panel to show the field path (plugin may need extra render cycles).
-    // On macOS the long temp-dir path can push "editor.fg"/"editor.bg" off the right panel
-    // header, so also match the selected-field indicator (▸) next to the short field name.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("editor.bg")
-                || screen.contains("editor.fg")
-                || screen.contains("\u{25B8} bg")
-                || screen.contains("\u{25B8} fg")
+            // The tree panel shows the selection marker `▸` in front of a field row.
+            // The picker panel shows the path of the currently-selected field as
+            // `editor.<field_name> - <display_name>`. Matching either is enough;
+            // on narrow terminals the picker header can be truncated, so accept
+            // the tree-panel marker as an equivalent signal.
+            screen.contains("\u{25B8} ")
+                || screen
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("editor."))
         })
         .unwrap();
 }
