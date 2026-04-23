@@ -4097,3 +4097,92 @@ fn test_review_diff_capital_s_stages_whole_file() {
         })
         .unwrap();
 }
+
+/// Run `git` with the given args in the given repo and panic on failure.
+fn run_git(repo: &GitTestRepo, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(&repo.path)
+        .output()
+        .unwrap_or_else(|e| panic!("git {:?} failed to spawn: {}", args, e));
+    if !out.status.success() {
+        panic!(
+            "git {:?} failed: stdout={} stderr={}",
+            args,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+}
+
+/// Rename the current branch to the given name so the test doesn't depend
+/// on whatever `init.defaultBranch` the host happens to have configured.
+fn rename_head_branch(repo: &GitTestRepo, name: &str) {
+    run_git(repo, &["branch", "-M", name]);
+}
+
+/// Review PR Branch should default the base-ref prompt to the repo's
+/// actual default branch (master in this test), not a hardcoded "main"
+/// that doesn't even exist here.
+#[test]
+fn test_review_branch_prompt_defaults_to_repo_default_branch() {
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Force the default branch to `master` — this is the scenario the
+    // original bug hit: the plugin suggested `main`, which wasn't a
+    // valid ref, so the user had to type `master` manually.
+    repo.create_file("a.txt", "one\n");
+    repo.git_add_all();
+    repo.git_commit("base commit");
+    rename_head_branch(&repo, "master");
+
+    // Feature branch with commits so the review view has something
+    // to render once the prompt is accepted.
+    run_git(&repo, &["checkout", "-b", "feature"]);
+    repo.create_file("a.txt", "one\ntwo\n");
+    repo.git_add_all();
+    repo.git_commit("add line two");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review PR Branch").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // The command runs async and eventually opens a second prompt
+    // asking for the base ref. Wait for the base-ref prompt to show
+    // up (command-palette closes, then the new prompt opens).
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            h.editor().is_prompting() && s.contains("Base ref")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("master"),
+        "Base-ref prompt should default to the repo's actual default \
+         branch (master), but screen was:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("default: main"),
+        "Prompt shouldn't advertise a hardcoded 'main' default when \
+         the repo's default branch is master. Screen:\n{}",
+        screen
+    );
+}

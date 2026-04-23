@@ -4396,11 +4396,46 @@ const branchState: ReviewBranchState = {
     detailBufferId: null,
     commits: [],
     selectedIndex: 0,
-    baseRef: "main",
+    // Empty means "not yet detected"; start_review_branch fills this in
+    // from the repo's actual default branch (main, master, or whatever
+    // origin/HEAD points at) before showing the prompt.
+    baseRef: "",
     detailCache: null,
     pendingDetailId: 0,
     logRowByteOffsets: [],
 };
+
+/**
+ * Best-effort detection of the repo's default branch. Checks, in order:
+ *   1. `origin/HEAD` (the remote's notion of the default branch)
+ *   2. local `main`
+ *   3. local `master`
+ * Falls back to `main` if none match, so the prompt still has a sensible
+ * default in an empty / unusual repo.
+ */
+async function detectDefaultBranch(): Promise<string> {
+    try {
+        const r = await editor.spawnProcess("git", [
+            "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
+        ]);
+        if (r.exit_code === 0) {
+            const name = r.stdout.trim();
+            // Output looks like "origin/main"; strip the remote prefix.
+            const slash = name.indexOf("/");
+            const branch = slash >= 0 ? name.slice(slash + 1) : name;
+            if (branch) return branch;
+        }
+    } catch { /* fall through */ }
+    for (const candidate of ["main", "master"]) {
+        try {
+            const r = await editor.spawnProcess("git", [
+                "show-ref", "--verify", "--quiet", `refs/heads/${candidate}`,
+            ]);
+            if (r.exit_code === 0) return candidate;
+        } catch { /* fall through */ }
+    }
+    return "main";
+}
 
 // UTF-8 byte length helper, local copy so audit_mode doesn't pull in the one
 // from git_history (keeps the import list tiny).
@@ -4509,16 +4544,20 @@ async function start_review_branch(): Promise<void> {
         return;
     }
     // Prompt for the base ref so the user can review any PR, not just
-    // one branched off main.
-    const input = await editor.prompt(
-        editor.t("prompt.branch_base") || "Base ref (default: main):",
-        branchState.baseRef,
-    );
+    // one branched off main. The default offered is either what the user
+    // picked last time in this session, or the repo's actual default
+    // branch (main/master/etc.) on first use.
+    const suggested = branchState.baseRef || await detectDefaultBranch();
+    const rawPromptText = editor.t("prompt.branch_base", { default: suggested });
+    const promptText = (rawPromptText && !rawPromptText.startsWith("prompt."))
+        ? rawPromptText
+        : `Base ref to compare against (default: ${suggested}):`;
+    const input = await editor.prompt(promptText, suggested);
     if (input === null) {
         editor.setStatus(editor.t("status.cancelled") || "Cancelled");
         return;
     }
-    const base = input.trim() || "main";
+    const base = input.trim() || suggested;
     branchState.baseRef = base;
 
     editor.setStatus(editor.t("status.loading") || "Loading commits…");
