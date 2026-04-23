@@ -201,10 +201,24 @@ type RegisteredSection = {
 let dashboardBufferId: number | null = null;
 let fetchToken = 0; // bumped each open; late fetches from a prior open no-op.
 
-// Id of the in-flight bringup animation, so we can cancel it if the
-// dashboard is closed mid-slide (either via buffer_closed or a real
-// file being opened). Null once the animation has been released.
-let bringupAnimationId: number | null = null;
+// Id of the in-flight slide-in, so we can cancel it when starting a
+// new one (on content change) or when the dashboard is closed
+// mid-slide. Null once the animation settles or is cleared.
+let activeAnimationId: number | null = null;
+
+// Serialized entries from the last paint, taken BEFORE the focus
+// highlight is applied. paint() compares the fresh pre-focus entries
+// against this: when identical (same section data), no re-animation.
+// Keyboard focus changes don't flip this key, so Tab/Shift-Tab move
+// the highlight without re-sliding the whole dashboard.
+let lastPaintedContentKey: string | null = null;
+
+// focusedIndex the last successful setVirtualBufferContent ran with,
+// paired with lastPaintedContentKey. If BOTH still match, a full
+// paint() call has nothing new to push — we can skip the VB update
+// and the animation entirely (the "identical render → do nothing"
+// case from the user's request).
+let lastPaintedFocusedIndex = -1;
 
 // Registered sections, in render order. Built-ins are registered at
 // plugin load (see the bottom of this file); third-party plugins
@@ -731,6 +745,22 @@ function paint(dims?: { width: number; height: number }) {
             ((focusedIndex % targets.length) + targets.length) % targets.length;
     }
 
+    // Snapshot entries BEFORE applying the focus highlight so keyboard
+    // focus changes don't look like content changes. Section data
+    // updates flip the key; Tab/Shift-Tab to move the cursor does not.
+    const contentKey = JSON.stringify(entries);
+    const contentChanged = contentKey !== lastPaintedContentKey;
+    const focusChanged = focusedIndex !== lastPaintedFocusedIndex;
+
+    // Identical render → short-circuit. No new entries, no focus
+    // movement, nothing for setVirtualBufferContent to apply. The
+    // refresh loop repaints every 5s even when section data is
+    // unchanged; without this, the screen would still re-animate
+    // (via contentChanged below) any time a single byte differed.
+    if (!contentChanged && !focusChanged) {
+        return;
+    }
+
     // Paint the focus highlight by mutating the entry for the focused
     // row: translate its visual col range into a byte range and push an
     // inline overlay on top of whatever foreground/underline spans the
@@ -763,6 +793,24 @@ function paint(dims?: { width: number; height: number }) {
     editor.setVirtualBufferContent(bufferId, entries);
     lastPaintedW = width;
     lastPaintedH = height;
+    lastPaintedContentKey = contentKey;
+    lastPaintedFocusedIndex = focusedIndex;
+
+    // Content-change-driven re-animation: cancel any in-flight slide
+    // and start a fresh one over the new content. Focus-only changes
+    // land via the early-exit identical check plus the focus highlight
+    // applied above — no new animation.
+    if (contentChanged) {
+        if (activeAnimationId !== null) {
+            editor.cancelAnimation(activeAnimationId);
+        }
+        activeAnimationId = editor.animateVirtualBuffer(bufferId, {
+            kind: "slideIn",
+            from: "bottom",
+            durationMs: 520,
+            delayMs: 0,
+        });
+    }
 }
 
 // Open a URL in the user's browser via the platform's "open" helper.
@@ -1518,17 +1566,13 @@ async function openDashboard() {
         }
     }
 
-    // Bringup animation: slide the whole dashboard up from the bottom.
-    // The editor defers the start by one frame if the virtual buffer
-    // isn't in the cached layout yet, so calling this right after
-    // showBuffer is safe — it'll attach to the first frame the
-    // dashboard actually occupies screen space.
-    bringupAnimationId = editor.animateVirtualBuffer(dashboardBufferId, {
-        kind: "slideIn",
-        from: "bottom",
-        durationMs: 520,
-        delayMs: 0,
-    });
+    // Clear the content/focus keys so the first paint after open is
+    // treated as a content change and the slide-in fires. The keys
+    // survive close/re-open cycles by default so repeated refreshes
+    // with identical data don't re-animate; resetting them here is
+    // what carves out the "opening" path from that steady-state.
+    lastPaintedContentKey = null;
+    lastPaintedFocusedIndex = -1;
 
     bootstrapDashboard(dashboardBufferId);
 }
@@ -1601,9 +1645,9 @@ registerHandler(
         // If the dashboard itself was closed, clear our handle so we'll
         // re-open on the next "last tab closed" event.
         if (dashboardBufferId !== null && e.buffer_id === dashboardBufferId) {
-            if (bringupAnimationId !== null) {
-                editor.cancelAnimation(bringupAnimationId);
-                bringupAnimationId = null;
+            if (activeAnimationId !== null) {
+                editor.cancelAnimation(activeAnimationId);
+                activeAnimationId = null;
             }
             dashboardBufferId = null;
             return;
@@ -1624,9 +1668,9 @@ registerHandler(
     "dashboardOnAfterFileOpen",
     (_e: { buffer_id: number; path: string }) => {
         if (dashboardBufferId === null) return;
-        if (bringupAnimationId !== null) {
-            editor.cancelAnimation(bringupAnimationId);
-            bringupAnimationId = null;
+        if (activeAnimationId !== null) {
+            editor.cancelAnimation(activeAnimationId);
+            activeAnimationId = null;
         }
         editor.closeBuffer(dashboardBufferId);
         dashboardBufferId = null;
