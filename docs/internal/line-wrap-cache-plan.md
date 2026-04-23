@@ -53,11 +53,25 @@ A per-buffer, bounded LRU cache keyed by the full set of pipeline inputs for a s
 
 ### Cache shape
 
+The pipeline reads from three mutable sources: the buffer, `SoftBreakManager`, `ConcealManager`. Any of them changing could change the output. Rather than three separate version counters in the key, we derive a single `pipeline_inputs_version: u64` at query time:
+
+```rust
+fn pipeline_inputs_version(state: &EditorState) -> u64 {
+    // Each manager exposes a monotonic u32; pack into a single u64.
+    // (32 bits of buffer version is plenty for a single session.)
+    let buf = state.buffer.version() as u32;
+    let sb  = state.soft_breaks.version();
+    let cn  = state.conceals.version();
+    // Mix with a simple rotating XOR so any of the three changing bumps the combined value.
+    (buf as u64) ^ ((sb as u64) << 21) ^ ((cn as u64) << 42)
+}
+```
+
+Any mutation of any of the three sources flips the combined value, which makes the key change, which makes old entries unreachable. Per-manager counters stay private; the key carries one u64.
+
 ```rust
 struct LineWrapKey {
-    buffer_version: u64,
-    soft_breaks_version: u32,
-    conceal_version: u32,
+    pipeline_inputs_version: u64,  // derived from (buffer.version, soft_breaks.version, conceals.version)
     view_mode: ViewMode,           // Compose vs Source — conceals/soft-breaks only apply in Compose
     line_start: usize,
     effective_width: u32,
@@ -75,7 +89,8 @@ struct LineWrapCache {
 ```
 
 - Lives on `EditorState`, sibling of `ScrollbarRowCache`.
-- Cap: 8192 entries ≈ 800 KB worst case (slightly larger key than the first draft).
+- Cap: 8192 entries ≈ 700 KB worst case.
+- **Invariant:** `map.len() == order.len() <= capacity` at all times.
 
 ### Cache write by the renderer
 
@@ -127,30 +142,183 @@ Every "how many visual rows does this line wrap to" query in the codebase ultima
 
 Any `(line_start, ... all key dimensions)` tuple is wrapped at most once while it lives in the cache. Whichever path hits it first pays; all later paths read.
 
-## Invalidation
+## Invalidation — there is no explicit invalidate step
 
-Every input the pipeline reads is in the key. Invalidation happens naturally via key mismatch + FIFO eviction:
+The word "invalidation" is misleading shorthand. The cache is a `HashMap<Key, u32>` + a `VecDeque<Key>` for FIFO. A lookup either hits (returns stored value) or misses (computes, stores, returns). **Nothing ever gets actively "invalidated."**
 
-| Input | Reacts to | How invalidation happens |
+"Invalidating line 5" means: arrange for future lookups of line 5 to use a **different key**, so the previously-stored entry is never matched again. The old entry stays in the HashMap (occupying memory) until FIFO eviction retires it. Because the key has the version mixed in, a mutation to any pipeline input changes the key → old entries become unreachable.
+
+**Worked example:**
+
+```
+Time 0: pipeline_inputs_version = 0x...A. Cache stores:
+  {(v=0x...A, line_start=100, width=60, ...) → 4}
+
+Time 1: user types a char on line 5. buffer.version() bumps.
+        pipeline_inputs_version is now 0x...B.
+
+Time 2: scroll math queries line 5's row count.
+        Key built at v=0x...B: (v=0x...B, line_start=100, width=60, ...)
+        Lookup in map: NOT FOUND → miss.
+        Runs mini-pipeline → stores {(v=0x...B, ...) → 5}.
+
+Time 3: the old entry at v=0x...A is still in the HashMap, unreachable.
+        No query will ever build a key with v=0x...A again.
+
+Time 4: many more inserts → cache hits `capacity`.
+        FIFO evicts oldest entries. Eventually the v=0x...A entry goes.
+        Memory freed.
+```
+
+**Two practical consequences:**
+
+1. **Stale entries never cause wrong answers.** They're never returned — no query builds a key that matches them. The only cost of a stale entry is memory, and memory is bounded by `capacity`.
+2. **Overinvalidation is cheap.** When any pipeline input changes, entries for *all* lines become unreachable — even lines whose text didn't change. The next access to each unchanged line triggers one mini-pipeline recompute, which is bounded and fast. We avoid the actual hard cache-invalidation problem (edit-range-scoped invalidation) by accepting this recompute cost.
+
+**What goes into the version** — every pipeline input is covered:
+
+| Input | Reacts to | How it gets into the key |
 |---|---|---|
-| `buffer_version` | any buffer edit | Key bumps → old entries unreachable → FIFO evicts |
-| `soft_breaks_version` | plugin mutates `SoftBreakManager` | Same |
-| `conceal_version` | plugin mutates `ConcealManager` | Same |
-| `view_mode` | Compose ↔ Source toggle | Same |
-| `line_start` | upstream edits shift subsequent lines | Queries use new `line_start` → miss → recompute |
-| `effective_width` | terminal resize, `wrap_column` config | Same |
-| `gutter_width` | logical-line-count digit rollover (9→10, 99→100…), plugin adds/removes indicator columns | Same |
-| `wrap_column` | explicit config change | Same |
-| `hanging_indent` | `viewport.wrap_indent` toggle | Same |
-| `line_wrap_enabled` | line-wrap toggle | Same (and line_wrap_enabled=false skips cache — 1 row per logical line is trivial) |
+| buffer text | any edit | `buffer.version()` → `pipeline_inputs_version` |
+| soft breaks | plugin mutates `SoftBreakManager` | `soft_breaks.version()` → `pipeline_inputs_version` |
+| conceals | plugin mutates `ConcealManager` | `conceals.version()` → `pipeline_inputs_version` |
+| view mode | Compose ↔ Source toggle | `view_mode` directly in key |
+| `line_start` byte | upstream edits shift subsequent lines | Directly in key (new `line_start` auto-misses) |
+| `effective_width` | terminal resize, `wrap_column` config | Directly in key |
+| `gutter_width` | logical-line-count digit rollover, plugin adds/removes indicator columns | Directly in key |
+| `wrap_column` | explicit config change | Directly in key |
+| `hanging_indent` | `viewport.wrap_indent` toggle | Directly in key |
+| `line_wrap_enabled` | line-wrap toggle | Directly in key (and `false` skips cache — 1 row per logical line is trivial) |
 
-**Overinvalidation is intentional.** When line 5 gets edited, `buffer_version` bumps and entries for lines 1–4, 6+ all become logically dead even though their text didn't change. They age out via FIFO and recompute on next access. Refining this to edit-byte-range tracking is the actual hard cache-invalidation problem; we avoid it by making recomputation cheap and bounded.
+**Required plumbing:**
 
-**Required plumbing** for the new key dimensions:
-
-- `SoftBreakManager`: expose `fn version(&self) -> u32`, bumped on any mutation. A `u32` wraps at 4B edits — fine.
+- `SoftBreakManager`: expose `fn version(&self) -> u32`, bumped by every mutating method. `u32` wraps at ~4B mutations per session — fine.
 - `ConcealManager`: same.
-- `EditorState`: read both versions when building the key.
+- `EditorState` (or `LineWrapCache` directly): read both versions at key-build time and fold into `pipeline_inputs_version` with `buffer.version()`.
+
+**Failure modes and how they're prevented:**
+
+- *Stale returns* → prevented by putting every mutable input in the key (directly or via the version).
+- *Unbounded growth* → prevented by FIFO cap. Stale entries age out even if never re-queried.
+- *Drift between renderer writes and miss-handler writes* → prevented because both use the same pipeline functions on the same inputs. Same inputs → same output by construction.
+- *Key/order desync* (internal cache bug) → `map` and `order` must stay in lockstep. Enforced by the cache's API contract and tested (see Testing section).
+
+## Testing strategy
+
+Caches are where correctness drifts go to hide, so we need coverage at multiple layers.
+
+### Layer 1 — Unit tests on the cache primitive
+
+Pure mechanical tests of the `LineWrapCache` structure, no editor involved.
+
+- **Structural invariant**: `map.len() == order.len() <= capacity` after any sequence of `get_or_insert` calls. Property-tested (proptest) on random sequences of insert/query operations.
+- **FIFO order**: inserting `capacity + 1` distinct keys evicts exactly the oldest one. Subsequent query for the evicted key is a miss, triggers recompute.
+- **Re-query is a hit**: a second query for the same key returns without invoking the compute closure (tracked via a side-effect counter in the closure).
+- **Distinct keys never collide**: hashing/equality tests over all field permutations.
+
+### Layer 2 — Mini-pipeline equivalence
+
+The miss-handler must return the same row count as the full renderer pipeline for the same line under the same inputs.
+
+- **Given**: a buffer, an `EditorState` with arbitrary soft breaks / conceals, a viewport geometry.
+- **Assert**: for every logical line, `mini_pipeline(line) == count_breaks_between_newlines(full_pipeline(whole_buffer), line)`. I.e. the 1-line mini-pipeline agrees with the renderer's per-line segmentation.
+- Run as a proptest over random buffer text, random soft-break positions, random conceal ranges, random (width, gutter, hanging_indent).
+
+### Layer 3 — Shadow-model property tests
+
+This is the strongest correctness check. A "shadow" cache always recomputes from scratch on every query (no caching). The real cache and the shadow are driven by the same random op stream; their outputs must agree at every step.
+
+```rust
+enum Op {
+    QueryRow { line_idx: usize },
+    EditInsert { byte: usize, text: String },
+    EditDelete { range: Range<usize> },
+    AddSoftBreak { byte: usize },
+    RemoveSoftBreak { byte: usize },
+    AddConceal { range: Range<usize> },
+    RemoveConceal { range: Range<usize> },
+    ToggleViewMode,
+    ResizeTerminal { width: u16 },
+    ToggleLineWrap,
+}
+
+proptest! {
+    fn cache_matches_shadow(ops: Vec<Op>, initial_buffer: String, geometry: Geometry) {
+        let mut real = RealCacheHarness::new(&initial_buffer, geometry);
+        let mut shadow = ShadowHarness::new(&initial_buffer, geometry);
+        for op in ops {
+            real.apply(&op);
+            shadow.apply(&op);
+            if let Op::QueryRow { line_idx } = op {
+                prop_assert_eq!(real.query(line_idx), shadow.query(line_idx));
+            }
+        }
+    }
+}
+```
+
+The shadow is effectively a reference implementation that calls the full render pipeline on demand (no caching, no side effects). Any divergence between real and shadow is a cache bug — a stale return, a miscomputed miss, a missed invalidation.
+
+Coverage targets for the random op generator:
+- Edits near/on wrap boundaries.
+- Soft breaks that fall on wrap boundaries, on a line that's already cached, before/after the line.
+- Conceal ranges that span a wrap boundary, that span multiple logical lines.
+- ViewMode toggles between arbitrary states.
+- Resizes that cross digit-count boundaries (causing `gutter_width` change).
+
+### Layer 4 — Invariants on the wrap function itself
+
+Regardless of cache, the underlying row count should satisfy:
+
+- **Width monotonicity**: for fixed text, increasing `effective_width` never increases row count. (`w' ≥ w → rows(w') ≤ rows(w)`.) A cache bug that corrupts values would eventually violate this.
+- **Empty line**: empty logical line → exactly 1 row.
+- **No-wrap when it fits**: if `visual_width(line_text) <= effective_width`, row count is 1.
+- **Upper bound**: row count ≤ `ceil(visual_width(line_text) / min_row_width)` for some reasonable `min_row_width`.
+- **Newline-free content**: `rows(text_with_no_embedded_newline)` has no soft break consequences from the soft-break subsystem unless a soft break is registered.
+
+Proptested against `apply_wrapping_transform` directly (no cache), and separately against the cache-backed path.
+
+### Layer 5 — Render-vs-scroll agreement
+
+The cross-consumer invariant: whatever the renderer paints on screen for the visible window must match what scroll math thinks is there.
+
+- Rendered frame → count visible visual rows per logical line from the painted `Vec<ViewLine>`.
+- Scroll math's cache → query row count for each of those logical lines.
+- Assert equality.
+
+Run this after every operation in the property test's op stream, not just at the end, to catch transient drift.
+
+### Layer 6 — Behavioral e2e (what we already have)
+
+The sweep tests in `crates/fresh-editor/tests/e2e/scroll_wrapped_reach_last_line.rs` are behavioral contracts — "scrolling a buffer of long wrapped lines must reach the last line at all representative widths × heights." These stay as regression guards.
+
+Add scenario tests for:
+- Plugin soft break injected mid-scroll: scrollbar-drag-to-bottom after injection still reaches the real bottom.
+- Conceal range added/removed under the cursor: row counts update, cursor stays visually anchored.
+- ViewMode toggle during scroll: row counts recompute; scroll position remains coherent.
+- Terminal resize mid-drag: scroll math adapts; no stuck state.
+- Cache-pressure scenario: open a buffer larger than `capacity` lines, scroll-sweep from top to bottom and back — assert no visual artifacts, no panics, no off-by-ones.
+
+### Layer 7 — Stress + fuzz (optional, longer horizon)
+
+- A fuzzer that feeds random edit/scroll op streams and checks for panics, assertion failures, and render-vs-scroll divergence.
+- Long-running "monkey" test: random operations for N minutes, assert cache invariants hold throughout.
+
+### Coverage matrix
+
+| | Layer 1 | Layer 2 | Layer 3 | Layer 4 | Layer 5 | Layer 6 | Layer 7 |
+|---|---|---|---|---|---|---|---|
+| FIFO correctness | ✓ | | ✓ | | | | ✓ |
+| Mini-pipeline ≡ renderer | | ✓ | ✓ | | ✓ | | ✓ |
+| Invalidation on edit | | | ✓ | | ✓ | ✓ | ✓ |
+| Invalidation on soft-break change | | | ✓ | | ✓ | ✓ | ✓ |
+| Invalidation on conceal change | | | ✓ | | ✓ | ✓ | ✓ |
+| Width monotonicity | | | | ✓ | | | |
+| Cross-consumer drift | | | | | ✓ | ✓ | ✓ |
+| User-facing bugs (original tests) | | | | | | ✓ | |
+| Unknown edge cases | | | ✓ | ✓ | | | ✓ |
+
+Layers 1–5 should land with the implementation. Layer 6 extends existing e2e tests. Layer 7 is optional follow-up.
 
 ## Huge-file behavior
 
