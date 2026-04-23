@@ -788,6 +788,16 @@ function paint(dims?: { width: number; height: number }) {
     const fullChanged = fullKey !== lastPaintedFullKey;
     const structuralChanged = structuralKey !== lastPaintedStructuralKey;
     const focusChanged = focusedIndex !== lastPaintedFocusedIndex;
+    // A resize / viewport-shape change reshapes frame padding, dash
+    // runs, and centering, which flips the structural hash even when
+    // section data is unchanged. We repaint so the new layout takes
+    // effect but skip the slide — nothing NEW showed up, the user is
+    // just resizing a window. openDashboard clears lastPaintedW/H to
+    // -1 so the first paint after open doesn't trip this guard.
+    const dimsChanged =
+        lastPaintedW !== -1 &&
+        lastPaintedH !== -1 &&
+        (width !== lastPaintedW || height !== lastPaintedH);
 
     // Identical render → short-circuit. Nothing to push to the
     // buffer, nothing to animate.
@@ -831,11 +841,12 @@ function paint(dims?: { width: number; height: number }) {
     lastPaintedStructuralKey = structuralKey;
     lastPaintedFocusedIndex = focusedIndex;
 
-    // Structural-change-driven re-animation: fire only when something
-    // OTHER than the clock or the focus highlight actually differs.
-    // Cancel any in-flight slide first so the new one snapshots the
-    // fresh content (not mid-slide pixels).
-    if (structuralChanged) {
+    // Structural-change-driven re-animation: fire only when the
+    // section payload actually differs AND the dashboard isn't just
+    // reshaping in place (clock tick, focus move, and resize all
+    // land here without animating). Cancel any in-flight slide
+    // first so the new one snapshots the fresh content.
+    if (structuralChanged && !dimsChanged) {
         if (activeAnimationId !== null) {
             editor.cancelAnimation(activeAnimationId);
         }
@@ -1601,14 +1612,16 @@ async function openDashboard() {
         }
     }
 
-    // Clear the content/focus keys so the first paint after open is
-    // treated as a content change and the slide-in fires. The keys
-    // survive close/re-open cycles by default so repeated refreshes
-    // with identical data don't re-animate; resetting them here is
-    // what carves out the "opening" path from that steady-state.
+    // Clear the content/focus keys and dims so the first paint after
+    // open is treated as a content change and the slide-in fires.
+    // Dim reset is needed because open is the one case where we DO
+    // want the animation despite "dims changed" (there was no prior
+    // dimension, so the change is really "buffer just appeared").
     lastPaintedFullKey = null;
     lastPaintedStructuralKey = null;
     lastPaintedFocusedIndex = -1;
+    lastPaintedW = -1;
+    lastPaintedH = -1;
 
     bootstrapDashboard(dashboardBufferId);
 }
