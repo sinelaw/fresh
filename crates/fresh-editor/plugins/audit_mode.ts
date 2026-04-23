@@ -4552,7 +4552,7 @@ async function start_review_branch(): Promise<void> {
     const promptText = (rawPromptText && !rawPromptText.startsWith("prompt."))
         ? rawPromptText
         : `Base ref to compare against (default: ${suggested}):`;
-    const input = await editor.prompt(promptText, suggested);
+    const input = await editor.prompt(promptText + " ", suggested);
     if (input === null) {
         editor.setStatus(editor.t("status.cancelled") || "Cancelled");
         return;
