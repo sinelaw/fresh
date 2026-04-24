@@ -3,6 +3,7 @@
 //! A dialog for debugging terminal key events. Shows raw key codes and modifiers
 //! as they are received from the terminal, helping diagnose keybinding issues.
 
+use crate::input::keybindings::{format_keybinding, normalize_key_event};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Maximum number of events to display in the history
@@ -158,6 +159,24 @@ impl EventDebug {
                 e.event.modifiers.bits(),
                 e.event.kind,
                 e.event.state
+            )
+        })
+    }
+
+    /// Get the normalized keybinding lookup for the most recent event.
+    pub fn last_event_lookup_details(&self) -> Option<String> {
+        self.history.first().map(|e| {
+            let (code, modifiers) = normalize_key_event(&e.event);
+            let label = format_keybinding(&code, &modifiers);
+            format!(
+                "lookup={:?}, modifiers={:?}{}",
+                code,
+                modifiers,
+                if label.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", label)
+                }
             )
         })
     }

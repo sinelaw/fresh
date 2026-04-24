@@ -132,6 +132,12 @@ pub fn render_event_debug(frame: &mut Frame, area: Rect, debug: &EventDebug, the
             details,
             Style::default().fg(theme.line_number_fg),
         )]));
+        if let Some(lookup_details) = debug.last_event_lookup_details() {
+            control_lines.push(Line::from(vec![Span::styled(
+                lookup_details,
+                Style::default().fg(theme.line_number_fg),
+            )]));
+        }
     }
 
     let controls_para = Paragraph::new(control_lines)

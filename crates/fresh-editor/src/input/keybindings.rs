@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventState, KeyModifiers};
 use rust_i18n::t;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,12 +11,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///   strip the redundant SHIFT so bindings defined as "BackTab" match.
 /// - Shift+Backspace has no distinct semantics from plain Backspace — strip
 ///   the redundant SHIFT so bindings defined as "Backspace" match both.
-/// - Uppercase letters may arrive as `Char('P')` + SHIFT (real Shift press)
-///   or `Char('A')` without SHIFT (CapsLock on, kitty keyboard protocol).
-///   In both cases, lowercase the character and preserve the existing
-///   modifiers. This ensures CapsLock+Ctrl+A matches the `Ctrl+A` binding,
-///   while Shift+P still matches the `Shift+P` binding.
-fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+/// - With Kitty alternate keycodes enabled, crossterm's Unix parser replaces
+///   Shift+letter with the shifted codepoint and clears the SHIFT modifier
+///   (for example Ctrl+Shift+K becomes `Char('K')` + Ctrl). Recover the lost
+///   SHIFT bit unless Caps Lock is what produced the uppercase character.
+/// - Uppercase letters may also arrive as `Char('A')` without SHIFT when Caps
+///   Lock is enabled. Lowercase the character, but do not infer SHIFT in that
+///   case so `Ctrl+A` still matches with Caps Lock on.
+pub(crate) fn normalize_key_event(event: &KeyEvent) -> (KeyCode, KeyModifiers) {
+    let mut code = event.code;
+    let mut modifiers = event.modifiers;
+
     if code == KeyCode::BackTab {
         return (code, modifiers.difference(KeyModifiers::SHIFT));
     }
@@ -25,7 +30,12 @@ fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifie
     }
     if let KeyCode::Char(c) = code {
         if c.is_ascii_uppercase() {
-            return (KeyCode::Char(c.to_ascii_lowercase()), modifiers);
+            if !modifiers.contains(KeyModifiers::SHIFT)
+                && !event.state.contains(KeyEventState::CAPS_LOCK)
+            {
+                modifiers.insert(KeyModifiers::SHIFT);
+            }
+            code = KeyCode::Char(c.to_ascii_lowercase());
         }
     }
     (code, modifiers)
@@ -1625,9 +1635,12 @@ impl KeybindingResolver {
         // Build the full sequence: existing chord state + new key, all normalized
         let mut full_sequence: Vec<(KeyCode, KeyModifiers)> = chord_state
             .iter()
-            .map(|(c, m)| normalize_key(*c, *m))
+            .map(|(c, m)| {
+                let event = KeyEvent::new(*c, *m);
+                normalize_key_event(&event)
+            })
             .collect();
-        let (norm_code, norm_mods) = normalize_key(event.code, event.modifiers);
+        let (norm_code, norm_mods) = normalize_key_event(event);
         full_sequence.push((norm_code, norm_mods));
 
         tracing::trace!(
@@ -1688,7 +1701,7 @@ impl KeybindingResolver {
     pub fn resolve(&self, event: &KeyEvent, context: KeyContext) -> Action {
         // Normalize key for lookups (e.g., BackTab+SHIFT → BackTab, Char('T')+SHIFT → Char('t')+SHIFT)
         // but keep original event for the InsertChar fallback at the end.
-        let (norm_code, norm_mods) = normalize_key(event.code, event.modifiers);
+        let (norm_code, norm_mods) = normalize_key_event(event);
         let norm = &(norm_code, norm_mods);
         tracing::trace!(
             "KeybindingResolver.resolve: code={:?}, modifiers={:?}, context={:?}",
@@ -1797,7 +1810,7 @@ impl KeybindingResolver {
     /// a specific binding without being overridden by Global bindings.
     /// Returns None if no binding found in the specified context.
     pub fn resolve_in_context_only(&self, event: &KeyEvent, context: KeyContext) -> Option<Action> {
-        let norm = normalize_key(event.code, event.modifiers);
+        let norm = normalize_key_event(event);
         // Try custom bindings for this context
         if let Some(context_bindings) = self.bindings.get(&context) {
             if let Some(action) = context_bindings.get(&norm) {
@@ -1819,7 +1832,7 @@ impl KeybindingResolver {
     /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
     /// Returns Action::None if the key doesn't map to a UI action.
     pub fn resolve_terminal_ui_action(&self, event: &KeyEvent) -> Action {
-        let norm = normalize_key(event.code, event.modifiers);
+        let norm = normalize_key_event(event);
         tracing::trace!(
             "KeybindingResolver.resolve_terminal_ui_action: code={:?}, modifiers={:?}",
             event.code,
@@ -2570,6 +2583,7 @@ impl KeybindingResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyEventKind;
 
     #[test]
     fn test_parse_key() {
@@ -3060,6 +3074,57 @@ mod tests {
         assert_eq!(action_shift, Action::InsertChar('s')); // Shift alone is still character input
                                                            // Ctrl+Shift+S is not bound by default, should return None
         assert_eq!(action_ctrl_shift, Action::None);
+    }
+
+    #[test]
+    fn test_normalize_recovers_shift_for_uppercase_letters_without_caps_lock() {
+        let event = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::CONTROL);
+        assert_eq!(
+            normalize_key_event(&event),
+            (
+                KeyCode::Char('k'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )
+        );
+    }
+
+    #[test]
+    fn test_normalize_does_not_infer_shift_for_caps_lock_uppercase() {
+        let event = KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('K'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+            KeyEventState::CAPS_LOCK,
+        );
+        assert_eq!(
+            normalize_key_event(&event),
+            (KeyCode::Char('k'), KeyModifiers::CONTROL)
+        );
+    }
+
+    #[test]
+    fn test_ctrl_shift_letter_binding_matches_crossterm_alternate_keycode_shape() {
+        use crate::config::Keybinding;
+
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "k".to_string(),
+            modifiers: vec!["ctrl".to_string(), "shift".to_string()],
+            keys: vec![],
+            action: "delete_line".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+
+        let resolver = KeybindingResolver::new(&config);
+
+        // Crossterm's Unix CSI-u parser can report Ctrl+Shift+K as uppercase K
+        // with SHIFT removed when alternate keycodes are enabled.
+        let raw_crossterm_shape = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&raw_crossterm_shape, KeyContext::Normal),
+            Action::DeleteLine
+        );
     }
 
     #[test]

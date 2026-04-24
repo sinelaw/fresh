@@ -1,6 +1,6 @@
 {
   "inherits": "default",
-  "comment": "macOS keymap - avoids Ctrl+Shift combos, ASCII control chars (Ctrl+J=LF), and international keyboard conflicts",
+  "comment": "macOS keymap - prefers portable fallbacks for Ctrl+Shift chords, avoids ASCII control chars (Ctrl+J=LF), and avoids international keyboard conflicts",
   "bindings": [
     {
       "comment": "Ctrl+R -> Redo (Ctrl+Y is Unix yank, Ctrl+Shift+Z produces caron)",
@@ -27,7 +27,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+Alt+K -> Delete line (Ctrl+Shift+K doesn't work on Mac)",
+      "comment": "Ctrl+Alt+K -> Delete line (portable fallback for terminals/parsers that collapse Ctrl+Shift+K)",
       "key": "k",
       "modifiers": ["ctrl", "alt"],
       "action": "delete_line",
@@ -43,7 +43,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+T -> Go to symbol in file (Ctrl+Shift+O doesn't work on Mac)",
+      "comment": "Ctrl+T -> Go to symbol in file (portable fallback for terminals/parsers that collapse Ctrl+Shift+O)",
       "key": "t",
       "modifiers": ["ctrl"],
       "action": "command_palette",
@@ -59,7 +59,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+= -> Navigate forward (Ctrl+Shift+- doesn't work on Mac)",
+      "comment": "Ctrl+= -> Navigate forward (portable fallback for terminals/parsers that collapse Ctrl+Shift+-)",
       "key": "=",
       "modifiers": ["ctrl"],
       "action": "navigate_forward",
@@ -91,7 +91,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+, -> Find all references (Ctrl+Shift+. doesn't work on Mac)",
+      "comment": "Ctrl+, -> Find all references (portable fallback for terminals/parsers that collapse Ctrl+Shift+.)",
       "key": ",",
       "modifiers": ["ctrl"],
       "action": "lsp_references",
@@ -99,7 +99,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+Alt+R -> Rename symbol (Ctrl+Shift+R doesn't work on Mac)",
+      "comment": "Ctrl+Alt+R -> Rename symbol (portable fallback for terminals/parsers that collapse Ctrl+Shift+R)",
       "key": "r",
       "modifiers": ["ctrl", "alt"],
       "action": "lsp_rename",
@@ -269,7 +269,7 @@
       "when": "normal"
     },
     {
-      "comment": "Ctrl+; -> Previous error (Ctrl+Shift+' doesn't work on Mac)",
+      "comment": "Ctrl+; -> Previous error (portable fallback for terminals/parsers that collapse Ctrl+Shift+')",
       "key": ";",
       "modifiers": ["ctrl"],
       "action": "jump_to_previous_error",

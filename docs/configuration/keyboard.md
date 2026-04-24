@@ -55,7 +55,7 @@ Fresh includes a dedicated macOS keymap that addresses terminal-specific challen
 
 The macOS keymap is designed around these constraints:
 
-**Ctrl+Shift combinations don't work.** Some macOS terminals cannot reliably send Ctrl+Shift sequences. For example, Ctrl+Shift+Z produces a caron character (ˇ) instead of being recognized as a key chord. The macOS keymap uses Ctrl+Alt as an alternative modifier.
+**Ctrl+Shift combinations are not uniformly portable.** Some macOS terminals still cannot reliably send Ctrl+Shift sequences. For example, Ctrl+Shift+Z may produce a caron character (ˇ) instead of being recognized as a key chord. On terminals with Kitty Keyboard Protocol support, Fresh now restores Shift for uppercase alternate keycodes (for example `Ctrl+Shift+K` in Ghostty), but the macOS keymap still prefers Ctrl+Alt fallbacks for portability across terminals.
 
 **Some Ctrl keys are ASCII control characters.** In terminal protocols, Ctrl+J is Line Feed (newline), Ctrl+M is Carriage Return (Enter), and Ctrl+I is Tab. Binding actions to these keys causes erratic behavior. The macOS keymap avoids these collisions.
 
