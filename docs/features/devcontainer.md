@@ -1,6 +1,6 @@
 # Devcontainers
 
-> **Palette:** `Dev Container: Attach`, `Dev Container: Detach`, `Dev Container: Rebuild`, `Dev Container: Create Config`, `Dev Container: Show Info`, `Dev Container: Show Ports`, `Dev Container: Show Logs`, `Dev Container: Show Features`, `Dev Container: Open Config`, `Dev Container: Run Lifecycle Command`. A proactive popup also appears on launch for projects with a `.devcontainer/devcontainer.json`.
+> **Palette:** `Dev Container: Attach`, `Dev Container: Detach`, `Dev Container: Rebuild`, `Dev Container: Cancel Startup`, `Dev Container: Create Config`, `Dev Container: Show Info`, `Dev Container: Show Ports`, `Dev Container: Show Forwarded Ports`, `Dev Container: Show Logs`, `Dev Container: Show Build Logs`, `Dev Container: Show Features`, `Dev Container: Open Config`, `Dev Container: Run Lifecycle Command`. A proactive popup also appears on launch for projects with a `.devcontainer/devcontainer.json`.
 
 Fresh detects projects that ship a `.devcontainer/devcontainer.json` and prompts to **Attach** or **Rebuild** the container. When attached, the embedded terminal runs *inside* the container, and filesystem and process operations target the container instead of your host — including LSP servers, which Fresh spawns through the container so you don't need a host toolchain.
 
@@ -20,7 +20,7 @@ If a project doesn't have a `.devcontainer/devcontainer.json` yet, run **Dev Con
 
 Open a project that contains `.devcontainer/devcontainer.json`. Run **Dev Container: Attach** from the command palette (`Ctrl+P`). The first attach runs the devcontainer `initializeCommand` (if any) on the host, then builds and starts the container; subsequent attaches reuse it. **Dev Container: Rebuild** forces a full rebuild — reach for it after changing the Dockerfile or `devcontainer.json`.
 
-During build or attach, the **build log** streams into a workspace split. If an attach fails, a recovery popup offers **Retry**, **Show Logs**, or **Detach**; subsequent launches don't re-prompt. The status-bar **{remote}** indicator tracks the lifecycle — `Connecting`, `Connected`, or `FailedAttach` — and clicking it opens a context-aware menu.
+During build or attach, the **build log** streams into a workspace split. If an attach fails, a recovery popup offers **Retry**, **Show Build Logs**, or **Reopen Locally** (Esc dismisses without changing authority). The launch-time attach prompt itself is one-shot per workspace: once you choose Attach or Dismiss, reopening the same project doesn't re-prompt. The status-bar **{remote}** indicator tracks the lifecycle — `Connecting`, `Connected`, or `FailedAttach` — and clicking it opens a context-aware menu.
 
 While attached:
 
