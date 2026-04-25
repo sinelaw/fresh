@@ -273,6 +273,7 @@ pub fn layout_for_plain_text(
     hanging_indent: bool,
     tab_size: usize,
 ) -> Vec<ViewLine> {
+    use crate::view::ui::view_pipeline::LineStart;
     use fresh_core::api::ViewTokenWire;
     let tokens = vec![ViewTokenWire {
         source_offset: Some(0),
@@ -280,7 +281,26 @@ pub fn layout_for_plain_text(
         style: None,
     }];
     let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-    ViewLineIterator::new(&wrapped, false, true, tab_size, false).collect()
+    let mut lines: Vec<ViewLine> =
+        ViewLineIterator::new(&wrapped, false, true, tab_size, false).collect();
+    // Invariant: every logical line is at least one visual row.  An
+    // empty input produces zero ViewLines through the iterator; emit
+    // one placeholder so callers (scrollbar row counts, scroll math)
+    // see consistent ≥1 results matching `compute_line_layout`.
+    if lines.is_empty() {
+        lines.push(ViewLine {
+            text: String::new(),
+            source_start_byte: Some(0),
+            char_source_bytes: Vec::new(),
+            char_styles: Vec::new(),
+            char_visual_cols: Vec::new(),
+            visual_to_char: Vec::new(),
+            tab_starts: std::collections::HashSet::new(),
+            line_start: LineStart::Beginning,
+            ends_with_newline: false,
+        });
+    }
+    lines
 }
 
 /// Look up a line's layout in the cache, running the mini-pipeline to
