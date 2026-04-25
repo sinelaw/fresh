@@ -3,6 +3,7 @@
 Fresh is a terminal text editor. These docs cover core features, configuration, and plugins.
 
 ## Blog
+- **[Fresh 0.3.0](./blog/fresh-0.3.0/)** — startup script (init.ts), dashboard, devcontainers, review diff rewrite, git log, preview tabs, customizable status bar, and more
 - **[Fresh 0.2.18](./blog/fresh-0.2.18/)** — project-wide search & replace, inline diagnostics, surround selection, 30 new syntax grammars, and more
 - **[Fresh 0.2.9](./blog/fresh-0.2.9/)** — code folding, markdown compose mode, large file scanning, vertical rulers, auto-save, and more
 - **[Fresh 0.2](./blog/fresh-0.2/)** — session persistence, keybinding editor, improved line editing, regex capture groups, and more
