@@ -48,4 +48,4 @@ The `ctx` parameter exposes `kv`, `text`, `newline`, and `error` primitives. Col
 
 `registerSection` returns a function you can call to remove that one section later; `dash.clearAllSections()` drops every section a plugin has registered. Call these when your plugin unloads so hot-reload doesn't leave stale rows.
 
-See it in action: [What's New in 0.2.26 → Dashboard](/blog/fresh-0.2.26/#dashboard).
+See it in action: [What's New in 0.3.0 → Dashboard](/blog/fresh-0.3.0/#dashboard).

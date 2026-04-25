@@ -76,7 +76,7 @@ editors to handle. It compares against Fresh's current support levels.
 | LaTeX | [#807](https://github.com/sinelaw/fresh/issues/807) | Closed/Added | Syntect + LSP config | Done (highlighting via syntect) |
 | Zig | [#737](https://github.com/sinelaw/fresh/issues/737) | Closed/Added | Embedded grammar + LSP | Done |
 | Bash/Zsh configs | [#383](https://github.com/sinelaw/fresh/issues/383) | Closed/Added | Tree-sitter + Syntect | Done |
-| Config file fallback | [#1219](https://github.com/sinelaw/fresh/issues/1219) | Added (v0.2.18) | `fallback` config field | Set `"fallback": {"grammar": "bash", "comment_prefix": "#"}` in config. See [Configuration docs](./configuration/index.md#set-a-fallback-language-for-unrecognized-files). |
+| Config file fallback | [#1219](https://github.com/sinelaw/fresh/issues/1219) | Added (v0.2.18) | `fallback` config field | Set `"fallback": {"grammar": "bash", "comment_prefix": "#"}` in config. See [Configuration docs](../configuration/index.md#set-a-fallback-language-for-unrecognized-files). |
 
 ---
 

@@ -1,9 +1,9 @@
 ---
-title: "What's New in Fresh (0.2.26)"
+title: "What's New in Fresh (0.3.0)"
 outline: false
 ---
 
-# What's New in Fresh (0.2.26)
+# What's New in Fresh (0.3.0)
 
 *April 21, 2026*
 

@@ -80,7 +80,7 @@ evidence, and (where applicable) a suggested change.
 | Spec bullet | Status | Notes |
 |---|---|---|
 | Detect `.devcontainer/devcontainer.json` or `.devcontainer.json` on workspace open | ✅ | `plugins/devcontainer.ts::findConfig()` checks `.devcontainer/devcontainer.json`, then `.devcontainer.json`, then `.devcontainer/<subfolder>/devcontainer.json` in priority order. |
-| Non-blocking toast prompt when Local | ⚠️ | Implemented as `editor.showActionPopup({...})`, not a toast. The popup is modal-ish (keyboard capture) but non-blocking wrt. editing; functionally similar. **Wording gap:** spec says "Folder contains a Dev Container configuration. Reopen in container?"; plugin says "Attach to dev container '<name>'?" with [Attach] / [Not now]. |
+| Non-blocking toast prompt when Local | ⚠️ | Implemented as `editor.showActionPopup({...})`, not a toast. The popup is modal-ish (keyboard capture) but non-blocking wrt. editing; functionally similar. **Wording gap:** spec says "Folder contains a Dev Container configuration. Reopen in container?"; plugin says "Attach to dev container `'<name>'`?" with [Attach] / [Not now]. |
 | Actions: "[Reopen in Container]" / "[Ignore]" | ⚠️ | Labels differ ("Attach" / "Not now"). Decision is persisted per-workspace in plugin global state so it isn't re-prompted on reopen — a desirable behavior the spec doesn't mention but is worth preserving. |
 
 **Recommended follow-ups for §2**

@@ -8,10 +8,10 @@ Updates on new features and changes in Fresh.
 
 <div class="blog-grid">
 
-<a class="blog-card" href="./fresh-0.2.26/">
-  <img src="./fresh-0.2.26/review-diff/showcase.gif" alt="What's New (0.2.26)" />
+<a class="blog-card" href="./fresh-0.3.0/">
+  <img src="./fresh-0.3.0/review-diff/showcase.gif" alt="What's New (0.3.0)" />
   <div class="blog-card-body">
-    <h3>What's New (0.2.26)</h3>
+    <h3>What's New (0.3.0)</h3>
     <p>Startup script (init.ts), dashboard, devcontainers, review diff rewrite, git log, preview tabs, customizable status bar, and more.</p>
   </div>
 </a>

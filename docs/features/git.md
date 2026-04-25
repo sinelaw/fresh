@@ -33,4 +33,4 @@ Inside a review:
 
 The built-in **Diff Chunk Navigation** plugin merges two sources of hunks — the active git diff and any saved diff files — so you can jump between changes the same way in either context. It adds commands like **Next Diff Chunk** and **Previous Diff Chunk** to the palette.
 
-See it in action: [Review Diff](/blog/fresh-0.2.26/#review-diff-rewrite) and [Git Log](/blog/fresh-0.2.26/#git-log) in the 0.2.26 blog post.
+See it in action: [Review Diff](/blog/fresh-0.3.0/#review-diff-rewrite) and [Git Log](/blog/fresh-0.3.0/#git-log) in the 0.3.0 blog post.

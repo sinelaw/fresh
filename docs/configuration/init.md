@@ -79,4 +79,4 @@ if (editor.getEnv("FRESH_PROFILE") === "writing") {
 
 The full API surface is the same as plugins — see the [Plugin API reference](/plugins/api/).
 
-See it in action: [What's New in 0.2.26 → init.ts](/blog/fresh-0.2.26/#init-ts-a-startup-script).
+See it in action: [What's New in 0.3.0 → init.ts](/blog/fresh-0.3.0/#init-ts-a-startup-script).
