@@ -57,8 +57,8 @@ fn word_wrapped_buffer() -> String {
 #[test]
 fn cursor_hardware_position_matches_content_under_cursor() {
     for &width in &[60u16, 80, 100] {
-        let mut harness = EditorTestHarness::with_config(width, 20, config_with_wrap())
-            .expect("harness");
+        let mut harness =
+            EditorTestHarness::with_config(width, 20, config_with_wrap()).expect("harness");
         let fixture = harness
             .load_buffer_from_text(&word_wrapped_buffer())
             .expect("load");
@@ -70,7 +70,9 @@ fn cursor_hardware_position_matches_content_under_cursor() {
             .send_key(KeyCode::Home, KeyModifiers::CONTROL)
             .expect("ctrl+home");
         // Go down one line (into the first wrapped paragraph).
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).expect("down");
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::NONE)
+            .expect("down");
         // Right a few chars to land mid-line.  45 keeps us near a
         // wrap boundary on many widths — exactly the place the
         // old char-wrap/word-wrap drift showed up.
@@ -145,18 +147,11 @@ fn scrollbar_thumb_reaches_bottom_on_word_wrapped_buffer() {
     let scrollbar_col = WIDTH - 1;
     let (first, last) = harness.content_area_rows();
     harness
-        .mouse_drag(
-            scrollbar_col,
-            first as u16,
-            scrollbar_col,
-            last as u16,
-        )
+        .mouse_drag(scrollbar_col, first as u16, scrollbar_col, last as u16)
         .expect("drag");
     harness.render().expect("render");
 
-    let content: Vec<String> = (first..=last)
-        .map(|r| harness.get_screen_row(r))
-        .collect();
+    let content: Vec<String> = (first..=last).map(|r| harness.get_screen_row(r)).collect();
     let visible = content.iter().any(|row| row.contains("TAIL_MARKER_XYZ"));
     assert!(
         visible,
@@ -178,8 +173,8 @@ fn scrollbar_thumb_reaches_bottom_on_word_wrapped_buffer() {
 #[test]
 fn drag_to_bottom_reaches_end_at_multiple_widths() {
     for &width in &[50u16, 70, 90, 120] {
-        let mut harness = EditorTestHarness::with_config(width, 20, config_with_wrap())
-            .expect("harness");
+        let mut harness =
+            EditorTestHarness::with_config(width, 20, config_with_wrap()).expect("harness");
         let fixture = harness
             .load_buffer_from_text(&word_wrapped_buffer())
             .expect("load");
@@ -193,9 +188,7 @@ fn drag_to_bottom_reaches_end_at_multiple_widths() {
             .expect("drag");
         harness.render().expect("render");
 
-        let content: Vec<String> = (first..=last)
-            .map(|r| harness.get_screen_row(r))
-            .collect();
+        let content: Vec<String> = (first..=last).map(|r| harness.get_screen_row(r)).collect();
         let visible = content.iter().any(|row| row.contains("TAIL_MARKER_XYZ"));
         assert!(
             visible,

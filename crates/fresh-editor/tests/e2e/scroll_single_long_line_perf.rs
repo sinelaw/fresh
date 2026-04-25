@@ -50,9 +50,9 @@ fn build_long_single_line() -> String {
         "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
         "lambda", "mu", "nu", "xi", "omicron", "pi", "rho", "sigma", "tau", "upsilon",
     ];
-    let mut s = String::with_capacity(50_000);
+    let mut s = String::with_capacity(200_000);
     let mut i: usize = 0;
-    while s.len() < 50_000 {
+    while s.len() < 200_000 {
         if !s.is_empty() {
             s.push(' ');
         }

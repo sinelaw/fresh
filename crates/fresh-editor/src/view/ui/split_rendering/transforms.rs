@@ -205,6 +205,26 @@ pub(crate) fn apply_wrapping_transform(
                     let mut grapheme_idx = 0;
                     let source_base = token.source_offset;
 
+                    // Pre-compute UAX #29 word boundary byte offsets ONCE
+                    // for the entire text.  Each chunk later filters this
+                    // sorted list down to its window (slice_start ..=
+                    // slice_end_hard) and walks it as a monotonic cursor.
+                    //
+                    // Without this, the per-chunk loop below called
+                    // `text.split_word_bound_indices()` afresh — an O(n)
+                    // scan from byte 0 of the WHOLE text on every chunk.
+                    // For a single very long token wrapping into thousands
+                    // of chunks, that's O(n²) per token.  Lifting the
+                    // boundary list out of the loop and walking it with a
+                    // monotonic cursor brings the loop's amortised cost
+                    // back to O(n).
+                    let word_bounds: Vec<usize> =
+                        text.split_word_bound_indices().map(|(b, _)| b).collect();
+                    // Cursor: word_bounds[wb_lo..] are all > most recent
+                    // chunk's slice_start.  Advanced monotonically as
+                    // chunks progress.
+                    let mut wb_lo: usize = 0;
+
                     while grapheme_idx < graphemes.len() {
                         let eff_width =
                             effective_width(available_width, line_indent, on_continuation);
@@ -300,23 +320,59 @@ pub(crate) fn apply_wrapping_transform(
                                 slice_end_hard
                             };
 
-                            // Include `slice_end_hard` in the window
-                            // and treat `text.len()` as a virtual
-                            // boundary.  `split_word_bound_indices`
-                            // only yields positions at which a new
-                            // segment starts, not at end-of-string,
-                            // so without this a chunk that happens to
-                            // end at the token's end would be shrunk
-                            // to the nearest earlier boundary and
-                            // leak characters onto the next row.
-                            let best_target_byte = text
-                                .split_word_bound_indices()
-                                .map(|(b, _)| b)
-                                .chain(std::iter::once(text.len()))
-                                .filter(|&b| b > slice_start)
-                                .filter(|&b| b >= floor_byte)
-                                .filter(|&b| b <= slice_end_hard)
-                                .next_back();
+                            // Walk the precomputed `word_bounds` list as
+                            // a monotonic cursor.  `wb_lo` advances past
+                            // entries already <= slice_start; from there
+                            // we look forward only until we cross
+                            // slice_end_hard.  Amortised O(1) per chunk,
+                            // O(N) total — replacing the previous
+                            // per-chunk full-text rescan that made the
+                            // whole loop O(n²) on a single very long
+                            // token.
+                            //
+                            // We still treat `text.len()` as a virtual
+                            // boundary so a chunk that happens to end
+                            // exactly at the text end isn't shrunk to
+                            // an earlier boundary (leaking chars onto
+                            // the next row).
+                            while wb_lo < word_bounds.len() && word_bounds[wb_lo] <= slice_start {
+                                wb_lo += 1;
+                            }
+                            let mut wb_hi = wb_lo;
+                            while wb_hi < word_bounds.len() && word_bounds[wb_hi] <= slice_end_hard
+                            {
+                                wb_hi += 1;
+                            }
+                            // Within `word_bounds[wb_lo..wb_hi]`, find the
+                            // largest entry >= floor_byte.  We scan from
+                            // the back since we want the MAX qualifier.
+                            let mut best_target_byte = word_bounds[wb_lo..wb_hi]
+                                .iter()
+                                .rev()
+                                .copied()
+                                .find(|&b| b >= floor_byte);
+                            // Consider `text.len()` as a virtual
+                            // boundary if it's within the window.
+                            let end_byte = text.len();
+                            if best_target_byte.is_none()
+                                && end_byte > slice_start
+                                && end_byte >= floor_byte
+                                && end_byte <= slice_end_hard
+                            {
+                                best_target_byte = Some(end_byte);
+                            } else if let Some(b) = best_target_byte {
+                                // We found one in the precomputed list,
+                                // but text.len() (if eligible) might be
+                                // larger.  next_back semantics in the
+                                // original picked the maximum across
+                                // both sources.
+                                if end_byte <= slice_end_hard
+                                    && end_byte >= floor_byte
+                                    && end_byte > b
+                                {
+                                    best_target_byte = Some(end_byte);
+                                }
+                            }
 
                             if let Some(target_byte) = best_target_byte {
                                 let new_count = graphemes[grapheme_idx..]

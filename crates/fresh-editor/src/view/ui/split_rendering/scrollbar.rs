@@ -59,7 +59,9 @@ pub(super) fn scrollbar_visual_row_counts(
     buffer_len: usize,
 ) -> (usize, usize) {
     use crate::primitives::line_wrapping::WrapConfig;
-    use crate::view::line_wrap_cache::{layout_for_plain_text, pipeline_inputs_version, CacheViewMode, LineWrapKey};
+    use crate::view::line_wrap_cache::{
+        layout_for_plain_text, pipeline_inputs_version, CacheViewMode, LineWrapKey,
+    };
     use std::sync::Arc;
 
     if buffer_len == 0 {
