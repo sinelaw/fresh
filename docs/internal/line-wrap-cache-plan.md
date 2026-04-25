@@ -249,10 +249,26 @@ Phases, each landing as a self-contained commit:
 5. **Migrate `cursor_screen_position` and `scrollbar_visual_row_counts`.**
 6. **Drop `wrap_line` from non-test code.**  Confirm only test callers
    remain.
-7. **Render-consumer path** (optional, follow-up): make
-   `build_view_data` consult the cache for each logical line instead of
-   always re-running the pipeline.  First render fills; subsequent
-   unchanged frames skip the pipeline for unchanged lines.
+7. **Render-consumer path** — DEFERRED to a follow-up.  Attempted in
+   the initial pass; reverted.  The naive short-circuit (return early
+   from `build_view_data` when every visible logical line is cached)
+   broke scroll math because:
+   - The renderer's `ViewLineIterator` emits trailing artefacts at
+     end-of-buffer (`at_buffer_end` rule) that the per-logical-line
+     cache doesn't model.  Returning fewer rows than the viewport
+     expects causes `ensure_visible_in_layout` to mis-clamp scroll
+     position downstream.
+   - The writeback only stores FULL logical-line groups (skips
+     mid-line edges of the visible window), so the cache's
+     coverage of the visible window is incomplete during scrolls
+     through long wrapped lines — exactly the case Section 7 was
+     supposed to optimize.  The short-circuit then either misses
+     (correct fall-through) or over-serves a partial cache.
+   - A correct implementation needs to either model the
+     end-of-buffer trailing artefact in cache entries, or walk
+     ViewLines downstream of the short-circuit and patch the
+     trailing rows back in — non-trivial.  Tracked as a follow-up
+     issue.
 8. **New tests** (Layer 6 additions): cursor / click-target parity,
    scrollbar-thumb consistency.
 
