@@ -406,6 +406,89 @@ distance from cursor receive the first N letters of the pool.
 **Property: determinism.** Same buffer + same cursor + same
 pattern → identical label assignment.
 
+#### Liveness / progress invariants
+
+The properties above are *safety* — "nothing bad happens." The
+properties below are *liveness* — "good things eventually
+happen." Liveness is what makes flash actually useful: the
+feature exists to guarantee that any visible match can be
+reached.
+
+**Property: reachability (the headline liveness property).**
+For any buffer, viewport, cursor, and visible match `m` of any
+pattern, there exists a finite sequence of keystrokes that
+lands the cursor at `m.start`. Tested by *constructing* the
+sequence — the "play it perfectly" simulator:
+
+```rust
+proptest! {
+    #[test]
+    fn prop_every_visible_match_is_reachable(
+        text in "[a-zA-Z0-9 ]{1,500}",
+        target_idx in 0usize..50,
+        cursor in 0usize..500,
+    ) {
+        let chars = visible_chars(&text, cursor);
+        prop_assume!(!chars.is_empty());
+        let target_byte = chars[target_idx % chars.len()];
+
+        let mut state = FlashState::new(&text, cursor);
+        let mut steps = 0;
+        loop {
+            // Pick a pattern character that keeps `target_byte` in the
+            // match set; if the target now has a label, press it; if
+            // it's the unique surviving match, autojump fires.
+            match state.optimal_next_step(target_byte) {
+                Step::Jumped(b)   => { prop_assert_eq!(b, target_byte); break; }
+                Step::PressLabel  => state.press_label_for(target_byte),
+                Step::ExtendChar(c) => state.extend(c),
+            }
+            steps += 1;
+            prop_assert!(steps < text.len() + LABEL_POOL.len(),
+                         "no progress toward target {} after {} steps",
+                         target_byte, steps);
+        }
+    }
+}
+```
+
+If this property fails on a generated case, flash has a
+genuinely unreachable on-screen match — a real bug.
+
+**Property: monotone narrowing.** Extending the pattern never
+grows the match set: `matches(P + c) ⊆ matches(P)` for any `P`,
+`c`. Without this, reachability isn't well-defined; it's also
+the precondition for label-stability across keystrokes.
+
+**Property: bounded progress per keystroke.** Every accepted
+keystroke results in exactly one of: jump, cancel, or a strict
+change in `(pattern, matches, labels)`. No keystroke leaves the
+state unchanged — that would be a "soft hang" where the user
+mashes keys with no visible effect.
+
+**Property: eventual termination under random input.** For any
+random keystroke sequence of bounded length, flash exits
+(jumps, cancels, or aborts on max-length). Mode never gets
+stuck; the plugin's main loop always drains. Tested by feeding
+proptest-generated arbitrary key sequences and asserting the
+mode is no longer active after the sequence.
+
+**Property: cleanup happens-after exit.** After a jump or
+cancel, the *next* render frame contains no overlays or virtual
+text in the flash namespace. This is liveness, not safety —
+"eventually clean," not "never present." Tested by driving
+flash to exit, calling `harness.render()` once, and asserting
+`assert_no_orphan_overlays_in_namespace("flash")`.
+
+**Property: progress under hostile input (adversarial).**
+Generate keystroke sequences specifically designed to confuse
+the labeler — keys that match label letters, keys that don't
+match any pattern, repeated backspaces, alternating
+extend/backspace. Flash must still terminate and (when a target
+existed in the original viewport) must still allow reaching
+it via *some* re-driven sequence. This is the "user mashing
+keys after a typo" case — common in real use.
+
 **Unit: edge cases.**
 
 - Empty pattern → no matches, no labels.
