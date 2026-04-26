@@ -230,8 +230,16 @@ impl Viewport {
         line_text: &str,
         wrap_config: &WrapConfig,
         soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
         cache: Option<(&mut crate::view::line_wrap_cache::LineWrapCache, u64)>,
     ) -> usize {
+        // Plugin virtual lines (e.g. markdown_compose's `┌─┬─┐` table
+        // borders) draw real rows the renderer paints; without them
+        // here, mouse wheel / PageDown clamp short of the buffer's
+        // tail.
+        let v_lo = virtual_lines.partition_point(|p| *p < line_start);
+        let v_hi = virtual_lines.partition_point(|p| *p < line_end);
+        let extra_virtual_rows = v_hi - v_lo;
         let lo = soft_breaks.partition_point(|p| p.0 < line_start);
         let hi = soft_breaks.partition_point(|p| p.0 < line_end);
         let line_breaks = &soft_breaks[lo..hi];
@@ -253,7 +261,8 @@ impl Viewport {
                 effective_width,
                 wrap_config.gutter_width,
                 wrap_config.hanging_indent,
-            ) as usize;
+            ) as usize
+                + extra_virtual_rows;
         }
         {
             // Run the renderer's wrap function on a single-Text-token view of
@@ -309,9 +318,9 @@ impl Viewport {
                     hanging_indent: wrap_config.hanging_indent,
                     line_wrap_enabled: true,
                 };
-                return cache.get_or_insert_with(key, compute).len();
+                return cache.get_or_insert_with(key, compute).len() + extra_virtual_rows;
             }
-            compute().len()
+            compute().len() + extra_virtual_rows
         }
     }
 }
@@ -374,9 +383,15 @@ impl Viewport {
     ///
     /// `soft_breaks` is a sorted slice of plugin-injected break byte positions.
     /// Pass an empty slice when there are no plugin breaks (raw mode, etc.).
-    pub fn scroll_up(&mut self, buffer: &mut Buffer, soft_breaks: &[(usize, u16)], lines: usize) {
+    pub fn scroll_up(
+        &mut self,
+        buffer: &mut Buffer,
+        soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
+        lines: usize,
+    ) {
         if self.line_wrap_enabled {
-            self.scroll_up_visual(buffer, soft_breaks, lines);
+            self.scroll_up_visual(buffer, soft_breaks, virtual_lines, lines);
         } else {
             let mut iter = buffer.line_iterator(self.top_byte, 80);
             for _ in 0..lines {
@@ -385,7 +400,7 @@ impl Viewport {
                 }
             }
             let new_position = iter.current_position();
-            self.set_top_byte_with_limit(buffer, soft_breaks, new_position);
+            self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, new_position);
         }
     }
 
@@ -394,9 +409,15 @@ impl Viewport {
     ///
     /// `soft_breaks` is a sorted slice of plugin-injected break byte positions.
     /// Pass an empty slice when there are no plugin breaks (raw mode, etc.).
-    pub fn scroll_down(&mut self, buffer: &mut Buffer, soft_breaks: &[(usize, u16)], lines: usize) {
+    pub fn scroll_down(
+        &mut self,
+        buffer: &mut Buffer,
+        soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
+        lines: usize,
+    ) {
         if self.line_wrap_enabled {
-            self.scroll_down_visual(buffer, soft_breaks, lines);
+            self.scroll_down_visual(buffer, soft_breaks, virtual_lines, lines);
         } else {
             let mut iter = buffer.line_iterator(self.top_byte, 80);
             for _ in 0..lines {
@@ -405,7 +426,7 @@ impl Viewport {
                 }
             }
             let new_position = iter.current_position();
-            self.set_top_byte_with_limit(buffer, soft_breaks, new_position);
+            self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, new_position);
         }
     }
 
@@ -415,6 +436,7 @@ impl Viewport {
         &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
         visual_rows: usize,
     ) {
         if visual_rows == 0 {
@@ -471,6 +493,7 @@ impl Viewport {
                 &line_content,
                 &wrap_config,
                 soft_breaks,
+                virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
@@ -497,6 +520,7 @@ impl Viewport {
         &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
         visual_rows: usize,
     ) {
         if visual_rows == 0 {
@@ -532,6 +556,7 @@ impl Viewport {
             &current_line_content,
             &wrap_config,
             soft_breaks,
+            virtual_lines,
             Some((&mut self.wrap_row_cache, buffer_version)),
         );
         let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset);
@@ -543,7 +568,7 @@ impl Viewport {
             // the viewport past the point where it can be filled with
             // real content, leaving past-EOF `~` rows below.
             self.top_view_line_offset += rows_remaining;
-            self.apply_visual_scroll_limit(buffer, soft_breaks, &wrap_config);
+            self.apply_visual_scroll_limit(buffer, soft_breaks, virtual_lines, &wrap_config);
             return;
         }
 
@@ -563,7 +588,7 @@ impl Viewport {
 
             // Check for end of buffer
             if line_start >= buffer_len {
-                self.set_top_byte_with_limit(buffer, soft_breaks, line_start);
+                self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, line_start);
                 return;
             }
 
@@ -572,7 +597,7 @@ impl Viewport {
                 (end, content.trim_end_matches(['\n', '\r']).to_string())
             } else {
                 // End of buffer
-                self.set_top_byte_with_limit(buffer, soft_breaks, line_start);
+                self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, line_start);
                 return;
             };
 
@@ -582,6 +607,7 @@ impl Viewport {
                 &line_content,
                 &wrap_config,
                 soft_breaks,
+                virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
@@ -590,7 +616,7 @@ impl Viewport {
                 self.top_byte = line_start;
                 self.top_view_line_offset = rows_remaining;
                 // Apply visual-row-aware scroll limit
-                self.apply_visual_scroll_limit(buffer, soft_breaks, &wrap_config);
+                self.apply_visual_scroll_limit(buffer, soft_breaks, virtual_lines, &wrap_config);
                 return;
             }
 
@@ -603,7 +629,7 @@ impl Viewport {
                 self.top_byte = next_pos;
                 self.top_view_line_offset = 0;
                 // Apply visual-row-aware scroll limit
-                self.apply_visual_scroll_limit(buffer, soft_breaks, &wrap_config);
+                self.apply_visual_scroll_limit(buffer, soft_breaks, virtual_lines, &wrap_config);
                 return;
             }
         }
@@ -616,6 +642,7 @@ impl Viewport {
         &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
         wrap_config: &WrapConfig,
     ) {
         let viewport_height = self.visible_line_count();
@@ -638,6 +665,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
+                virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
             );
             visual_rows_remaining += line_visual_rows.saturating_sub(self.top_view_line_offset);
@@ -653,6 +681,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
+                virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
@@ -669,6 +698,7 @@ impl Viewport {
             let (max_byte, max_offset) = self.find_max_visual_scroll_position(
                 buffer,
                 soft_breaks,
+                virtual_lines,
                 wrap_config,
                 viewport_height,
             );
@@ -683,6 +713,7 @@ impl Viewport {
         &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
         wrap_config: &WrapConfig,
         viewport_height: usize,
     ) -> (usize, usize) {
@@ -719,6 +750,7 @@ impl Viewport {
                 &line_content,
                 wrap_config,
                 soft_breaks,
+                virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
             );
 
@@ -1257,6 +1289,7 @@ impl Viewport {
         &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
+        virtual_lines: &[usize],
         proposed_top_byte: usize,
     ) {
         tracing::trace!(
@@ -1298,6 +1331,7 @@ impl Viewport {
                     line_text,
                     &wrap_config,
                     soft_breaks,
+                    virtual_lines,
                     Some((&mut self.wrap_row_cache, buffer_version)),
                 );
                 if visual_rows >= viewport_height {
@@ -1316,6 +1350,7 @@ impl Viewport {
             let (max_byte, max_offset) = self.find_max_visual_scroll_position(
                 buffer,
                 soft_breaks,
+                virtual_lines,
                 &wrap_config,
                 viewport_height,
             );
@@ -1413,7 +1448,7 @@ impl Viewport {
                     // Soft breaks unknown here (called from cursor flows that
                     // don't have ready access to the buffer's marker state).
                     // Pass empty: limit calc will use width-only wrap_line.
-                    self.set_top_byte_with_limit(buffer, &[], line_start);
+                    self.set_top_byte_with_limit(buffer, &[], &[], line_start);
                     return;
                 }
                 current_line += 1;
@@ -1425,7 +1460,7 @@ impl Viewport {
 
         // If we didn't find the line, stay at the last valid position
         let target_position = iter.current_position();
-        self.set_top_byte_with_limit(buffer, &[], target_position);
+        self.set_top_byte_with_limit(buffer, &[], &[], target_position);
     }
 
     /// Scroll so the last view line sits at the bottom of the viewport.
@@ -1839,7 +1874,7 @@ impl Viewport {
                 // Stay on this line and use top_view_line_offset to place
                 // the cursor at the right row.
                 if cursor_near_top && visual_rows_counted >= target_visual_rows {
-                    self.set_top_byte_with_limit(buffer, &[], cursor_line_start);
+                    self.set_top_byte_with_limit(buffer, &[], &[], cursor_line_start);
                     self.top_view_line_offset =
                         cursor_segment_idx_in_line.saturating_sub(effective_offset);
                     self.scrolled_up_in_wrap = true;
@@ -1913,7 +1948,7 @@ impl Viewport {
                 // ensure_visible is called from cursor-driven flows that don't
                 // surface soft-break markers here; the limit calc falls back
                 // to width-only wrap_line counting.
-                self.set_top_byte_with_limit(buffer, &[], new_top_byte);
+                self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
                 self.top_view_line_offset = top_offset_in_landing_line;
                 if cursor_near_top {
                     self.scrolled_up_in_wrap = true;
@@ -1952,7 +1987,7 @@ impl Viewport {
                 // ensure_visible is called from cursor-driven flows that don't
                 // surface soft-break markers here; the limit calc falls back
                 // to width-only wrap_line counting.
-                self.set_top_byte_with_limit(buffer, &[], new_top_byte);
+                self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
                 self.top_view_line_offset = 0;
             }
         }
@@ -2031,7 +2066,7 @@ impl Viewport {
             }
             let position = iter.current_position();
             // Cursor-positioning flow: no soft-break info available here.
-            self.set_top_byte_with_limit(buffer, &[], position);
+            self.set_top_byte_with_limit(buffer, &[], &[], position);
         }
     }
 
@@ -2146,7 +2181,7 @@ impl Viewport {
             }
             let position = iter.current_position();
             // Cursor-positioning flow: no soft-break info available here.
-            self.set_top_byte_with_limit(buffer, &[], position);
+            self.set_top_byte_with_limit(buffer, &[], &[], position);
         } else {
             // Can't fit all cursors, ensure primary is visible
             let primary_cursor = sorted_cursors[0].1;
@@ -2251,16 +2286,16 @@ mod tests {
         let mut buffer = Buffer::from_str_test(&content);
         let mut vp = Viewport::new(80, 24);
 
-        vp.scroll_down(&mut buffer, &[], 10);
+        vp.scroll_down(&mut buffer, &[], &[], 10);
         // Check that we scrolled down (top_byte should be > 0)
         assert!(vp.top_byte > 0);
 
         let prev_top = vp.top_byte;
-        vp.scroll_up(&mut buffer, &[], 5);
+        vp.scroll_up(&mut buffer, &[], &[], 5);
         // Check that we scrolled up (top_byte should be less than before)
         assert!(vp.top_byte < prev_top);
 
-        vp.scroll_up(&mut buffer, &[], 100);
+        vp.scroll_up(&mut buffer, &[], &[], 100);
         assert_eq!(vp.top_byte, 0); // Can't scroll past 0
     }
 

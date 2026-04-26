@@ -502,11 +502,7 @@ fn compose_default_width_table_arrow_down_reaches_marker() {
     );
 }
 
-// TODO: PageDown / mouse-wheel paths in `Viewport::scroll_*` don't yet
-// count plugin virtual lines (markdown_compose's table borders).  See
-// docs/internal/line-wrap-cache-plan.md follow-up note.
 #[test]
-#[ignore = "needs viewport.scroll_* virtual-line plumbing"]
 fn compose_default_width_table_pagedown_reaches_marker() {
     sweep(
         "default-width/table/page-down",
@@ -517,7 +513,6 @@ fn compose_default_width_table_pagedown_reaches_marker() {
 }
 
 #[test]
-#[ignore = "needs viewport.scroll_* virtual-line plumbing"]
 fn compose_default_width_table_mouse_wheel_reaches_marker() {
     sweep(
         "default-width/table/mouse-wheel",
@@ -614,7 +609,6 @@ fn compose_default_width_long_lines_scrollbar_drag_reaches_marker() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "needs viewport.scroll_* virtual-line plumbing"]
 fn compose_width80_table_pagedown_reaches_marker() {
     sweep(
         "cw80/table/page-down",
@@ -625,7 +619,6 @@ fn compose_width80_table_pagedown_reaches_marker() {
 }
 
 #[test]
-#[ignore = "needs viewport.scroll_* virtual-line plumbing"]
 fn compose_width80_table_mouse_wheel_reaches_marker() {
     sweep(
         "cw80/table/mouse-wheel",

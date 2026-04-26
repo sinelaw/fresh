@@ -121,6 +121,7 @@ impl Editor {
             // at long-wrap item boundaries or got clamped short of EOF,
             // leaving the bottom half empty).
             let soft_breaks = state.collect_soft_break_positions();
+            let virtual_lines = state.collect_virtual_line_positions();
             let buffer = &mut state.buffer;
             let top_byte_before = view_state.viewport.top_byte;
             if let Some(tokens) = view_transform_tokens {
@@ -137,15 +138,21 @@ impl Editor {
                 if delta < 0 {
                     // Scroll up
                     let lines_to_scroll = delta.unsigned_abs() as usize;
-                    view_state
-                        .viewport
-                        .scroll_up(buffer, &soft_breaks, lines_to_scroll);
+                    view_state.viewport.scroll_up(
+                        buffer,
+                        &soft_breaks,
+                        &virtual_lines,
+                        lines_to_scroll,
+                    );
                 } else {
                     // Scroll down
                     let lines_to_scroll = delta as usize;
-                    view_state
-                        .viewport
-                        .scroll_down(buffer, &soft_breaks, lines_to_scroll);
+                    view_state.viewport.scroll_down(
+                        buffer,
+                        &soft_breaks,
+                        &virtual_lines,
+                        lines_to_scroll,
+                    );
                 }
             }
             // Skip ensure_visible so the scroll position isn't undone during render

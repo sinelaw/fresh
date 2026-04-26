@@ -1134,6 +1134,31 @@ impl EditorState {
         Ok(())
     }
 
+    /// Resolve all plugin-injected virtual-line anchor byte positions
+    /// for this buffer.  Sorted ascending.
+    ///
+    /// Used by `Viewport::scroll_down` / `scroll_up` /
+    /// `find_max_visual_scroll_position` so the scroll math counts the
+    /// rows the renderer actually draws (e.g. markdown_compose's
+    /// `┌─┬─┐` table borders) when computing `max_scroll_row`.  Without
+    /// this, mouse wheel and PageDown clamp to a row count that
+    /// ignores virtual lines and stop short of the buffer's real tail.
+    ///
+    /// Empty when no plugin has added virtual lines.
+    pub fn collect_virtual_line_positions(&self) -> Vec<usize> {
+        if self.virtual_texts.is_empty() {
+            return Vec::new();
+        }
+        let mut v: Vec<usize> = self
+            .virtual_texts
+            .query_lines_in_range(&self.marker_list, 0, self.buffer.len() + 1)
+            .into_iter()
+            .map(|(pos, _vt)| pos)
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
     /// Resolve all plugin-injected soft-break `(byte_position, indent)`
     /// pairs for this buffer.
     ///

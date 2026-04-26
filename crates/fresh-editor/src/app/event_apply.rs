@@ -723,6 +723,7 @@ impl Editor {
                 // (avoids the wheel-absorbed / empty-bottom mouse-scroll bugs
                 // for compose-mode markdown — see scroll_down_visual).
                 let soft_breaks = state.collect_soft_break_positions();
+                let virtual_lines = state.collect_virtual_line_positions();
                 let buffer = &mut state.buffer;
                 if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
                     if let Some(tokens) = view_transform_tokens {
@@ -738,12 +739,14 @@ impl Editor {
                             view_state.viewport.scroll_down(
                                 buffer,
                                 &soft_breaks,
+                                &virtual_lines,
                                 line_offset as usize,
                             );
                         } else {
                             view_state.viewport.scroll_up(
                                 buffer,
                                 &soft_breaks,
+                                &virtual_lines,
                                 line_offset.unsigned_abs(),
                             );
                         }
