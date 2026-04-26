@@ -668,17 +668,15 @@ impl schemars::JsonSchema for StatusBarElement {
 }
 
 fn default_status_bar_left() -> Vec<StatusBarElement> {
-    // Keep this list tight enough to fit comfortably on 80-col
-    // terminals — several e2e tests pin that width and depend on
-    // specific element contents (filename, cursor position,
-    // diagnostics badge, status messages) not getting
-    // ellipsis-truncated.
-    //
-    // Users who want the Remote Indicator at the far left either
-    // add `"{remote}"` manually or get it injected by the v1→v2
-    // config migration when they upgrade from an older Fresh with
-    // a customized `status_bar.left`.
+    // `{remote}` leads so the clickable Remote Indicator is the
+    // first thing on the bottom-left, matching the spec's
+    // "persistent control" requirement and the place users learn
+    // to look for it from VS Code. The local label is short (" Local ")
+    // so the rest of the bar still fits on 80-col terminals; tests
+    // that pin that width assert via substring matches, not
+    // column-anchored positions.
     vec![
+        StatusBarElement::RemoteIndicator,
         StatusBarElement::Filename,
         StatusBarElement::Cursor,
         StatusBarElement::Diagnostics,

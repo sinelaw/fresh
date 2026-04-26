@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "显示 LSP 状态和故障排除信息",
   "cmd.show_manual": "显示手册",
   "cmd.show_manual_desc": "打开帮助手册",
+  "cmd.show_remote_indicator_menu": "显示远程指示器菜单",
+  "cmd.show_remote_indicator_menu_desc": "打开左下角远程权限菜单（Local / SSH / Container 操作）",
   "cmd.show_signature_help": "显示签名帮助",
   "cmd.show_signature_help_desc": "显示函数参数提示",
   "cmd.show_warnings": "显示警告",

@@ -736,6 +736,14 @@
       "when": "normal"
     },
     {
+      "comment": "Open the Remote Indicator menu (Local / SSH / Container actions)",
+      "key": "F6",
+      "modifiers": [],
+      "action": "show_remote_indicator_menu",
+      "args": {},
+      "when": "global"
+    },
+    {
       "comment": "Composite buffer context - Close view (q)",
       "key": "q",
       "modifiers": [],

@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "Afficher l'état du LSP et les informations de dépannage",
   "cmd.show_manual": "Afficher le manuel",
   "cmd.show_manual_desc": "Ouvrir le manuel d'aide",
+  "cmd.show_remote_indicator_menu": "Afficher le menu de l'indicateur distant",
+  "cmd.show_remote_indicator_menu_desc": "Ouvrir le menu d'autorité distante (actions Local / SSH / Conteneur)",
   "cmd.show_signature_help": "Afficher l'aide à la signature",
   "cmd.show_signature_help_desc": "Afficher les conseils sur les paramètres de fonction",
   "cmd.show_warnings": "Afficher les avertissements",

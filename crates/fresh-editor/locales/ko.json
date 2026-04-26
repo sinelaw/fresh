@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "LSP 상태 및 문제 해결 정보 표시",
   "cmd.show_manual": "매뉴얼 표시",
   "cmd.show_manual_desc": "도움말 매뉴얼 열기",
+  "cmd.show_remote_indicator_menu": "원격 표시기 메뉴 표시",
+  "cmd.show_remote_indicator_menu_desc": "왼쪽 아래 원격 권한 메뉴 열기 (Local / SSH / Container 작업)",
   "cmd.show_signature_help": "서명 도움말 표시",
   "cmd.show_signature_help_desc": "함수 매개변수 힌트 표시",
   "cmd.show_warnings": "경고 표시",

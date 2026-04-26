@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "Zobrazit stav LSP a informace o řešení problémů",
   "cmd.show_manual": "Zobrazit příručku",
   "cmd.show_manual_desc": "Otevřít příručku nápovědy",
+  "cmd.show_remote_indicator_menu": "Zobrazit nabídku vzdáleného indikátoru",
+  "cmd.show_remote_indicator_menu_desc": "Otevřít nabídku vzdáleného oprávnění (akce Local / SSH / Container)",
   "cmd.show_signature_help": "Zobrazit nápovědu k signatuře",
   "cmd.show_signature_help_desc": "Zobrazit nápovědu k parametrům funkce",
   "cmd.show_warnings": "Zobrazit varování",

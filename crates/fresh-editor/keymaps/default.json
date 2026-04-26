@@ -612,6 +612,14 @@
       "when": "normal"
     },
     {
+      "comment": "Global - Open the Remote Indicator menu (Local / SSH / Container actions)",
+      "key": "F6",
+      "modifiers": [],
+      "action": "show_remote_indicator_menu",
+      "args": {},
+      "when": "global"
+    },
+    {
       "comment": "Normal context - Smart editing",
       "key": "/",
       "modifiers": ["ctrl"],

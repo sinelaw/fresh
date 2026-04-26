@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "LSPステータスとトラブルシューティング情報を表示します",
   "cmd.show_manual": "マニュアルを表示",
   "cmd.show_manual_desc": "ヘルプマニュアルを開きます",
+  "cmd.show_remote_indicator_menu": "リモートインジケータのメニューを表示",
+  "cmd.show_remote_indicator_menu_desc": "ステータスバー左下のリモート権限メニューを開きます (Local / SSH / Container アクション)",
   "cmd.show_signature_help": "署名ヘルプを表示",
   "cmd.show_signature_help_desc": "関数パラメータのヒントを表示します",
   "cmd.show_warnings": "警告を表示",

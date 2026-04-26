@@ -1118,6 +1118,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.show_remote_indicator_menu",
+        desc_key: "cmd.show_remote_indicator_menu_desc",
+        action: || Action::ShowRemoteIndicatorMenu,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.clear_warnings",
         desc_key: "cmd.clear_warnings_desc",
         action: || Action::ClearWarnings,

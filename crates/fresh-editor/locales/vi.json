@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "Hiển thị trạng thái LSP và thông tin khắc phục sự cố",
   "cmd.show_manual": "Hiển thị hướng dẫn",
   "cmd.show_manual_desc": "Mở hướng dẫn trợ giúp",
+  "cmd.show_remote_indicator_menu": "Hiển thị menu chỉ báo từ xa",
+  "cmd.show_remote_indicator_menu_desc": "Mở menu quyền truy cập từ xa ở góc dưới bên trái (hành động Local / SSH / Container)",
   "cmd.show_signature_help": "Hiển thị trợ giúp chữ ký",
   "cmd.show_signature_help_desc": "Hiển thị gợi ý tham số hàm",
   "cmd.show_warnings": "Hiển thị cảnh báo",

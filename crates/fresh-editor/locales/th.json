@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "แสดงสถานะ LSP และข้อมูลการแก้ไขปัญหา",
   "cmd.show_manual": "แสดงคู่มือ",
   "cmd.show_manual_desc": "เปิดคู่มือการใช้งาน",
+  "cmd.show_remote_indicator_menu": "แสดงเมนูตัวบ่งชี้ระยะไกล",
+  "cmd.show_remote_indicator_menu_desc": "เปิดเมนูสิทธิ์ระยะไกลที่มุมล่างซ้าย (Local / SSH / Container)",
   "cmd.show_signature_help": "แสดงความช่วยเหลือลายเซ็น",
   "cmd.show_signature_help_desc": "แสดงคำแนะนำพารามิเตอร์ของฟังก์ชัน",
   "cmd.show_warnings": "แสดงคำเตือน",

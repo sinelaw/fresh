@@ -611,6 +611,8 @@
   "cmd.show_lsp_status_desc": "Показати статус LSP та інформацію для діагностики",
   "cmd.show_manual": "Показати посібник",
   "cmd.show_manual_desc": "Відкрити посібник довідки",
+  "cmd.show_remote_indicator_menu": "Показати меню віддаленого індикатора",
+  "cmd.show_remote_indicator_menu_desc": "Відкрити меню віддаленого керування в нижньому лівому куті (Local / SSH / Container)",
   "cmd.show_signature_help": "Показати довідку сигнатури",
   "cmd.show_signature_help_desc": "Показати підказки параметрів функції",
   "cmd.show_warnings": "Показати попередження",

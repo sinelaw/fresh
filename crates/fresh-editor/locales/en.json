@@ -623,6 +623,8 @@
   "cmd.show_lsp_status_desc": "Show LSP status and troubleshooting info",
   "cmd.show_manual": "Show Manual",
   "cmd.show_manual_desc": "Open the help manual",
+  "cmd.show_remote_indicator_menu": "Show Remote Indicator Menu",
+  "cmd.show_remote_indicator_menu_desc": "Open the bottom-left remote authority menu (Local / SSH / Container actions)",
   "cmd.show_signature_help": "Show Signature Help",
   "cmd.show_signature_help_desc": "Show function parameter hints",
   "cmd.show_warnings": "Show Warnings",
