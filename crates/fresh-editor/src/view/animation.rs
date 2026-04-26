@@ -284,6 +284,18 @@ impl FrameEffect for CursorJump {
         } else {
             (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
         };
+
+        // Final frame: paint nothing and report Done. We MUST leave the
+        // buffer clean here — the runner removes the effect after this
+        // call and the main loop stops scheduling renders (is_active is
+        // now false), so any trail cells painted now would persist on
+        // screen until the user does something else. The hardware cursor
+        // at the target is drawn by the editor's own pass, so the user
+        // still sees the cursor at its final spot.
+        if t >= 1.0 {
+            return EffectStatus::Done;
+        }
+
         let eased = ease_out_cubic(t);
 
         let (fx, fy) = (self.from.0 as f32, self.from.1 as f32);
@@ -307,11 +319,7 @@ impl FrameEffect for CursorJump {
             Self::highlight_cell(buf, col, row);
         }
 
-        if t >= 1.0 {
-            EffectStatus::Done
-        } else {
-            EffectStatus::Running
-        }
+        EffectStatus::Running
     }
 }
 
@@ -799,21 +807,56 @@ mod tests {
     }
 
     #[test]
-    fn cursor_jump_at_t1_highlights_target() {
+    fn cursor_jump_final_frame_is_clean() {
         // Background painted with '.', cursor jumps from (0,0) to (4,2).
+        // At t>=1.0 the effect must paint nothing and just report Done so
+        // the last frame on screen has no leftover trail (no further redraw
+        // is scheduled once the runner drops the effect).
         let area = Rect::new(0, 0, 6, 4);
         let mut buf = make_buf(6, 4);
         paint(&mut buf, area, '.', Color::White);
 
         let mut effect = CursorJump::new((0, 0), (4, 2), Duration::from_millis(100));
-        // Drive past the duration so the head lands exactly on the target.
         let status = effect.apply(&mut buf, area, Duration::from_millis(100));
         assert_eq!(status, EffectStatus::Done);
 
-        let head = buf.cell((4, 2)).unwrap();
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let cell = buf.cell((area.x + dx, area.y + dy)).unwrap();
+                assert!(
+                    !cell.style().add_modifier.contains(Modifier::REVERSED),
+                    "no cell should be modified at t>=1.0, but ({}, {}) is REVERSED",
+                    dx,
+                    dy
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cursor_jump_mid_flight_paints_a_head() {
+        // At t<1.0 the effect should paint at least one highlighted cell
+        // along the path between source and target.
+        let area = Rect::new(0, 0, 10, 5);
+        let mut buf = make_buf(10, 5);
+        paint(&mut buf, area, '.', Color::White);
+
+        let mut effect = CursorJump::new((0, 0), (8, 4), Duration::from_millis(100));
+        let status = effect.apply(&mut buf, area, Duration::from_millis(50));
+        assert_eq!(status, EffectStatus::Running);
+
+        let mut highlighted = 0;
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let cell = buf.cell((area.x + dx, area.y + dy)).unwrap();
+                if cell.style().add_modifier.contains(Modifier::REVERSED) {
+                    highlighted += 1;
+                }
+            }
+        }
         assert!(
-            head.style().add_modifier.contains(Modifier::REVERSED),
-            "head cell at target should be REVERSED"
+            highlighted > 0,
+            "expected at least one REVERSED cell mid-flight"
         );
     }
 
