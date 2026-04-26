@@ -104,8 +104,8 @@ pub(super) fn scrollbar_visual_row_counts(
     // plus the wrap-segment offset within that line.
     let (line_idx, _) = state.visual_row_index.line_for_byte(viewport.top_byte);
     let top_first_row = state.visual_row_index.line_first_row(line_idx) as usize;
-    let top_visual_row = (top_first_row + viewport.top_view_line_offset)
-        .min(total_visual_rows.saturating_sub(1));
+    let top_visual_row =
+        (top_first_row + viewport.top_view_line_offset).min(total_visual_rows.saturating_sub(1));
 
     (total_visual_rows, top_visual_row)
 }

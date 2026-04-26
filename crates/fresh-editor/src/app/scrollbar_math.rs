@@ -94,9 +94,7 @@ pub(crate) fn scrollbar_jump_visual(
     let target_row = (ratio * max_scroll_row as f64).round() as usize;
     let target_row = target_row.min(max_scroll_row);
 
-    let (_line_idx, line_start, offset) = state
-        .visual_row_index
-        .position_at_row(target_row as u32);
+    let (_line_idx, line_start, offset) = state.visual_row_index.position_at_row(target_row as u32);
     (line_start, offset)
 }
 
@@ -170,8 +168,6 @@ pub(crate) fn scrollbar_drag_relative_visual(
     let target_row = (target_scroll_ratio * max_scroll_row as f64).round() as usize;
     let target_row = target_row.min(max_scroll_row);
 
-    let (_line_idx, line_start, offset) = state
-        .visual_row_index
-        .position_at_row(target_row as u32);
+    let (_line_idx, line_start, offset) = state.visual_row_index.position_at_row(target_row as u32);
     (line_start, offset)
 }

@@ -29,8 +29,6 @@ pub mod folding;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod line_wrap_cache;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
-pub mod visual_row_index;
-#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod margin;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod overlay;
@@ -44,6 +42,8 @@ pub mod ui;
 pub mod viewport;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod virtual_text;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod visual_row_index;
 
 // Settings module has internal gating (schema is WASM-compatible)
 #[cfg(any(feature = "runtime", feature = "wasm"))]

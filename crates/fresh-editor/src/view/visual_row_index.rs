@@ -123,10 +123,7 @@ impl VisualRowIndex {
 
     /// First visual row of logical line `line_idx` (O(1)).
     pub fn line_first_row(&self, line_idx: usize) -> u32 {
-        *self
-            .prefix_sums
-            .get(line_idx)
-            .unwrap_or(&self.total_rows())
+        *self.prefix_sums.get(line_idx).unwrap_or(&self.total_rows())
     }
 
     /// Visual row count of logical line `line_idx` (O(1)).
@@ -260,9 +257,7 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
                 continue;
             };
             let line_content = String::from_utf8_lossy(&bytes);
-            let trimmed = line_content
-                .trim_end_matches('\n')
-                .trim_end_matches('\r');
+            let trimmed = line_content.trim_end_matches('\n').trim_end_matches('\r');
             count_visual_rows_for_text(trimmed, effective_width, gutter_width, hanging_indent)
         };
 
