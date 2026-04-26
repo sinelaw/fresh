@@ -60,13 +60,17 @@ fn set_up_probe_workspace(
     fs::create_dir_all(&dc).unwrap();
 
     let container_env_block = match container_env {
-        Some((k, v)) => format!(r#"  "containerEnv": {{ "{k}": "{v}" }},
-"#),
+        Some((k, v)) => format!(
+            r#"  "containerEnv": {{ "{k}": "{v}" }},
+"#
+        ),
         None => String::new(),
     };
     let remote_env_block = match remote_env {
-        Some((k, v)) => format!(r#"  "remoteEnv": {{ "{k}": "{v}" }},
-"#),
+        Some((k, v)) => format!(
+            r#"  "remoteEnv": {{ "{k}": "{v}" }},
+"#
+        ),
         None => String::new(),
     };
 
@@ -170,7 +174,9 @@ fn run_attach_and_postcreate(harness: &mut EditorTestHarness, probe: &Path) -> S
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    bounded_wait(harness, "palette prompt open", |h| h.editor().is_prompting());
+    bounded_wait(harness, "palette prompt open", |h| {
+        h.editor().is_prompting()
+    });
     harness.type_text("Dev Container: Run Lifecycle").unwrap();
     bounded_wait(harness, "lifecycle palette match", |h| {
         h.screen_to_string()
@@ -190,9 +196,9 @@ fn run_attach_and_postcreate(harness: &mut EditorTestHarness, probe: &Path) -> S
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap(); // wipe filter (the picker shares state)
-    // Type the suggestion text (some pickers filter on it).
-    // Simpler: just press Enter on the default, which is
-    // postCreateCommand because we only define that hook.
+                   // Type the suggestion text (some pickers filter on it).
+                   // Simpler: just press Enter on the default, which is
+                   // postCreateCommand because we only define that hook.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -298,8 +304,11 @@ fn lifecycle_command_must_see_remote_env() {
 /// expectation explicitly.
 #[test]
 fn lifecycle_command_must_see_container_env() {
-    let (_w_temp, workspace, probe) =
-        set_up_probe_workspace("s3-container-env", Some(("CE_TEST", "from-containerEnv")), None);
+    let (_w_temp, workspace, probe) = set_up_probe_workspace(
+        "s3-container-env",
+        Some(("CE_TEST", "from-containerEnv")),
+        None,
+    );
 
     let mut harness = EditorTestHarness::create(
         160,

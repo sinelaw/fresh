@@ -522,9 +522,11 @@ fn lifecycle_object_form_must_run_all_entries_even_on_failure() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    bounded_wait(&mut harness, "lifecycle picker shows postCreateCommand", |h| {
-        h.screen_to_string().contains("postCreateCommand")
-    });
+    bounded_wait(
+        &mut harness,
+        "lifecycle picker shows postCreateCommand",
+        |h| h.screen_to_string().contains("postCreateCommand"),
+    );
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1060,8 +1062,7 @@ fn wait_for_default_blocks_up_at_update_content_command() {
 
     // Now wait for all bg hooks to drain. `postAttach` is the
     // slowest at sleep 1.4s; give a generous deadline.
-    let final_done_deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(5);
+    let final_done_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < final_done_deadline {
         let lines = read_order_log(&order);
         if lines.len() >= 6 {
@@ -1138,8 +1139,7 @@ fn wait_for_explicit_value_changes_the_cutoff() {
          later must NOT have run when `up` returned. Got: {immediate:?}"
     );
 
-    let final_done_deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(5);
+    let final_done_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < final_done_deadline {
         let lines = read_order_log(&order);
         if lines.len() >= 4 {

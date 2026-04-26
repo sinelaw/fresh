@@ -270,10 +270,7 @@ fn attach_failure_surfaces_failed_attach_popup() {
     // Per-test env knob — the harness lock from with_fake_devcontainer
     // serializes us with other tests, so this set_var is safe.
     std::env::set_var("FAKE_DC_UP_FAIL", "1");
-    std::env::set_var(
-        "FAKE_DC_UP_FAIL_REASON",
-        "image not found: bogus:latest",
-    );
+    std::env::set_var("FAKE_DC_UP_FAIL_REASON", "image not found: bogus:latest");
 
     let mut harness = EditorTestHarness::create(
         160,
@@ -473,7 +470,10 @@ fn attach_decision_persists_in_plugin_global_state() {
             panic!(
                 "expected `devcontainer` plugin to have written global state. \
                  Plugin map: {:?}",
-                workspace_state.plugin_global_state.keys().collect::<Vec<_>>()
+                workspace_state
+                    .plugin_global_state
+                    .keys()
+                    .collect::<Vec<_>>()
             )
         });
 

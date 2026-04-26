@@ -274,13 +274,10 @@ impl HarnessOptions {
     /// without sleeps; tests that want to exercise streaming should
     /// override the env var explicitly after this call.
     pub fn with_fake_devcontainer(mut self) -> Self {
-        let fake_bin =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../scripts/fake-devcontainer/bin")
-                .canonicalize()
-                .expect(
-                    "scripts/fake-devcontainer/bin must exist relative to CARGO_MANIFEST_DIR",
-                );
+        let fake_bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/fake-devcontainer/bin")
+            .canonicalize()
+            .expect("scripts/fake-devcontainer/bin must exist relative to CARGO_MANIFEST_DIR");
 
         let temp = TempDir::new().expect("tempdir for fake-devcontainer state");
         let state_path = temp.path().to_path_buf();
@@ -296,14 +293,9 @@ impl HarnessOptions {
         // same in-tree fake bin dir, so racing threads only ever
         // converge on the same prefix.
         let path = std::env::var("PATH").unwrap_or_default();
-        let already_on_path = path
-            .split(':')
-            .any(|p| std::path::Path::new(p) == fake_bin);
+        let already_on_path = path.split(':').any(|p| std::path::Path::new(p) == fake_bin);
         if !already_on_path {
-            std::env::set_var(
-                "PATH",
-                format!("{}:{}", fake_bin.display(), path),
-            );
+            std::env::set_var("PATH", format!("{}:{}", fake_bin.display(), path));
         }
         std::env::set_var("FAKE_DEVCONTAINER_STATE", &state_path);
         std::env::set_var("FAKE_DC_UP_DELAY_MS", "0");
