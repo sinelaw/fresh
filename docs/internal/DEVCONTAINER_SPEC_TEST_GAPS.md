@@ -22,13 +22,15 @@ turn each spec gap into a concrete reproducer.
   `portsAttributes`.
 - `devcontainer_failed_attach_popup.rs` — popup shape + action
   routing.
-- `devcontainer_spec_repros.rs` — spec-bug reproducers:
-  - **S1** (failing) lifecycle command cwd vs. `remoteWorkspaceFolder`
-  - **S2** (failing) `remoteEnv` not propagated
+- `devcontainer_spec_repros.rs` — spec-bug reproducers (all green
+  now that the bugs are fixed; locked in as regression guards):
+  - **S1** (passing) lifecycle command cwd is `remoteWorkspaceFolder`
+  - **S2** (passing) `remoteEnv` propagated via `env` wrapper
   - **S3** (passing) `containerEnv` replay regression guard
-- `devcontainer_spec_conformance.rs` — broader spec coverage:
-  - **R1** (failing) object-form lifecycle must run in parallel
-  - **R2** (failing) object-form must run all entries even on failure
+- `devcontainer_spec_conformance.rs` — broader spec coverage
+  (all 14 passing now that the bugs are fixed):
+  - **R1** (passing) object-form lifecycle runs entries in parallel
+  - **R2** (passing) object-form runs all entries even on failure
   - **R3** (passing) lifecycle hooks fire in spec order during `up`
   - **G1** (passing) lifecycle array form executes verbatim
   - **G2** (passing) no `remoteUser`/`containerUser` → no `-u` flag
@@ -39,14 +41,15 @@ turn each spec gap into a concrete reproducer.
   - **G7** (passing) `portsAttributes.onAutoForward` renders
   - **B1a** (passing) default `waitFor=updateContentCommand` blocks `up` at the right point; post-waitFor hooks run in background
   - **B1b** (passing) explicit `waitFor` changes the cutoff
-  - **B2** (failing) `shutdownAction: stopContainer` must stop on Detach
-  - **B3** (failing) `userEnvProbe` must apply captured env
+  - **B2** (passing) `shutdownAction: stopContainer` stops on Detach
+  - **B3** (passing) `userEnvProbe` applies captured env to lifecycle commands
 - `remote_indicator_popup.rs` — Local-with-config and
   Container-state branches of the F6 menu.
 
-Status summary: **6 failing reproducers** pinning real spec violations
-or unimplemented features (S1, S2, R1, R2, B2, B3), **15 passing
-regression guards** (everything else), zero ignored.
+Status summary: **All 17 spec-related tests pass**, locked in as
+regression guards. The six bugs that originally surfaced as failing
+reproducers (S1, S2, R1, R2, B2, B3) have all been fixed in the plugin
+— the formerly-red tests now keep them fixed.
 
 ---
 
@@ -455,19 +458,19 @@ What's landed on this branch (test layer):
   B2, B3) + thirteen passing guards.
 - ✓ Fake-CLI changes F-1, F-2, F-4, F-5, F-8, F-9.
 
-What's still open (plugin work needed before a test could pass):
+All six original bugs fixed:
 
-| Spec gap | What's needed |
+| Spec gap | Fix landed |
 |---|---|
-| **S1 cwd** | Plugin: pass `remoteWorkspaceFolder` (not host cwd) as `-w` for lifecycle commands, OR formally document "host path always wins" and update the test's expected value. |
-| **S2 remoteEnv** | Plugin: parse `config.remoteEnv` + plumb through DockerExecSpawner via env injection (`-e KEY=VALUE` per pair, or `--env-file`). |
-| **R1 parallelism** | Plugin: rewrite `devcontainer_on_lifecycle_confirmed`'s object branch to use `Promise.all`, collect results, and report aggregate failure. |
-| **R2 fail-fast** | Plugin: same rewrite as R1 (parallel implies all run). |
-| **B2 shutdownAction** | Plugin: read `config.shutdownAction`; on `Detach` (and on quit for `stopContainer` default), spawn `docker stop <id>` via `spawnHostProcess`. |
-| **B3 userEnvProbe** | Plugin: read `config.userEnvProbe`; spawn the probe shell once at attach, capture env, propagate to spawner. Cross-cuts S2 (the propagation mechanism). |
+| **S1 cwd** | Plugin captures `remoteWorkspaceFolder` at attach into plugin global state; lifecycle commands pass it as `cwd` to `spawnProcess` so `docker exec -w` lands in the in-container path. |
+| **S2 remoteEnv** | Plugin reads `config.remoteEnv`; lifecycle commands wrap with `env K1=V1 K2=V2 bin args...`. (GNU `env` doesn't accept `--`, learned the hard way.) |
+| **R1 parallelism** | Plugin's object-form branch now uses `Promise.all` and collects per-entry exit codes. |
+| **R2 fail-fast** | Same rewrite — every entry runs to completion; the stage fails iff any entry exited non-zero. First failure surfaces in the status message; others are debug-logged. |
+| **B2 shutdownAction** | `devcontainer_detach` now resolves `config.shutdownAction` (default `stopContainer`) and spawns `docker stop <id>` via `spawnHostProcess` *before* `clearAuthority`. Failures are debug-logged, never block the detach. |
+| **B3 userEnvProbe** | Plugin reads `config.userEnvProbe`; `getOrComputeProbedEnv` spawns the probe shell with appropriate flags (`-l`, `-i`), captures `env` output, caches via plugin global state. `effectiveLifecycleEnv` merges probe ∪ remoteEnv into the env wrapper. |
 
-Spec gaps explicitly NOT testable today (need product decisions
-or larger plumbing before a test would mean anything):
+Spec gaps explicitly NOT covered (need product decisions or
+upstream-CLI work):
 
 | Gap | Why deferred |
 |---|---|

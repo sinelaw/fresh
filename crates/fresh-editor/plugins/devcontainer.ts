@@ -33,6 +33,7 @@ interface DevContainerConfig {
   appPort?: number | string | (number | string)[];
   containerEnv?: Record<string, string>;
   remoteEnv?: Record<string, string>;
+  userEnvProbe?: "none" | "loginShell" | "loginInteractiveShell" | "interactiveShell";
   containerUser?: string;
   remoteUser?: string;
   mounts?: (string | MountConfig)[];
@@ -689,42 +690,238 @@ async function devcontainer_on_lifecycle_confirmed(data: {
   const cmd = (config as Record<string, unknown>)[cmdName] as LifecycleCommand | undefined;
   if (!cmd) return;
 
+  // cwd: when attached to a Container, pass the in-container
+  // `remoteWorkspaceFolder` so `docker exec -w` lands inside
+  // the container. When local, pass "" — the runtime treats
+  // empty-string cwd the same as omitted (both fall back to
+  // working_dir). Avoids passing literal `undefined` through
+  // the QuickJS bridge, which the marshaller rejects with
+  // "Error converting from js 'undefined' into type 'string'".
+  const cwd = lifecycleCwd() ?? "";
+  const env = await effectiveLifecycleEnv();
   if (typeof cmd === "string") {
     editor.setStatus(editor.t("status.running", { name: cmdName }));
-    const result = await editor.spawnProcess("sh", ["-c", cmd], editor.getCwd());
+    const [bin, args] = wrapWithEnv(env, "sh", ["-c", cmd]);
+    const result = await editor.spawnProcess(bin, args, cwd);
     if (result.exit_code === 0) {
       editor.setStatus(editor.t("status.completed", { name: cmdName }));
     } else {
       editor.setStatus(editor.t("status.failed", { name: cmdName, code: String(result.exit_code) }));
     }
   } else if (Array.isArray(cmd)) {
-    const [bin, ...args] = cmd;
+    const [origBin, ...origArgs] = cmd;
+    const [bin, args] = wrapWithEnv(env, origBin, origArgs);
     editor.setStatus(editor.t("status.running", { name: cmdName }));
-    const result = await editor.spawnProcess(bin, args, editor.getCwd());
+    const result = await editor.spawnProcess(bin, args, cwd);
     if (result.exit_code === 0) {
       editor.setStatus(editor.t("status.completed", { name: cmdName }));
     } else {
       editor.setStatus(editor.t("status.failed", { name: cmdName, code: String(result.exit_code) }));
     }
   } else {
-    // Object form: run each named sub-command sequentially
-    for (const [label, subcmd] of Object.entries(cmd)) {
-      editor.setStatus(editor.t("status.running_sub", { name: cmdName, label }));
-      let bin: string;
-      let args: string[];
-      if (Array.isArray(subcmd)) {
-        [bin, ...args] = subcmd;
-      } else {
-        bin = "sh";
-        args = ["-c", subcmd as string];
-      }
-      const result = await editor.spawnProcess(bin, args, editor.getCwd());
-      if (result.exit_code !== 0) {
-        editor.setStatus(editor.t("status.failed_sub", { name: cmdName, label, code: String(result.exit_code) }));
-        return;
-      }
+    // Object form: see the rewritten parallel branch in
+    // `runLifecycleObjectForm`.
+    await runLifecycleObjectForm(cmdName, cmd);
+  }
+}
+
+/// Per-workspace storage for `remoteWorkspaceFolder` captured at
+/// attach time. The plugin module re-loads after `setAuthority`'s
+/// restart, losing in-memory state, so we persist via plugin
+/// global state. Read back via `lifecycleCwd()` when running
+/// lifecycle commands.
+function remoteWorkspaceKey(): string {
+  return "remote-workspace:" + editor.getCwd();
+}
+
+function writeRemoteWorkspace(value: string | null): void {
+  editor.setGlobalState(remoteWorkspaceKey(), value);
+}
+
+function readRemoteWorkspace(): string | null {
+  const raw = editor.getGlobalState(remoteWorkspaceKey()) as unknown;
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+/// Pick the cwd to pass to lifecycle-command `spawnProcess` calls.
+/// When attached to a Container authority, returns the recorded
+/// `remoteWorkspaceFolder` so `docker exec -w` lands inside the
+/// container. Otherwise returns undefined so the runtime fills
+/// in the editor's host working_dir (the local-authority path).
+function lifecycleCwd(): string | undefined {
+  if (editor.getAuthorityLabel().startsWith("Container:")) {
+    return readRemoteWorkspace() ?? undefined;
+  }
+  return undefined;
+}
+
+/// Per-workspace cache of the `userEnvProbe` result. Spec says
+/// the tool runs the probe shell once at attach and applies the
+/// captured env to every subsequent remote process. We persist
+/// across the post-attach restart via plugin global state so the
+/// reloaded plugin instance reuses the same snapshot.
+function userEnvProbeKey(): string {
+  return "user-env-probe:" + editor.getCwd();
+}
+
+function readCachedProbedEnv(): Record<string, string> | null {
+  const raw = editor.getGlobalState(userEnvProbeKey()) as unknown;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string") out[k] = v;
     }
+    return out;
+  }
+  return null;
+}
+
+function writeCachedProbedEnv(env: Record<string, string>): void {
+  editor.setGlobalState(userEnvProbeKey(), env as unknown);
+}
+
+/// Run the `userEnvProbe` shell (per spec) and capture its env.
+/// Caches the result so subsequent calls are free. Returns `{}`
+/// when probe is unset / "none" / failed.
+async function getOrComputeProbedEnv(): Promise<Record<string, string>> {
+  const cached = readCachedProbedEnv();
+  if (cached !== null) return cached;
+
+  const probe = config?.userEnvProbe;
+  if (!probe || probe === "none") {
+    writeCachedProbedEnv({});
+    return {};
+  }
+
+  // Map enum → bash flags. `loginShell` = `bash -lc`,
+  // `interactiveShell` = `bash -ic`, etc. The probe runs `env`
+  // and we parse stdout into KEY=VALUE pairs.
+  const flagMap: Record<string, string[]> = {
+    loginShell: ["-l"],
+    loginInteractiveShell: ["-l", "-i"],
+    interactiveShell: ["-i"],
+  };
+  const flags = flagMap[probe] ?? [];
+  const cwd = lifecycleCwd() ?? "";
+  // The probe shell needs `remoteEnv` applied too so users can put
+  // BASH_ENV / ENV / NODE_OPTIONS / etc. there and have the probe
+  // pick them up. Without this, bash's non-interactive-login
+  // semantics (`BASH_ENV` sourcing) wouldn't see the user's
+  // configured rc file.
+  const baseEnv: Record<string, string> = config?.remoteEnv ?? {};
+  const [bin, probeArgs] = wrapWithEnv(baseEnv, "bash", [...flags, "-c", "env"]);
+  const result = await editor.spawnProcess(bin, probeArgs, cwd);
+  if (result.exit_code !== 0) {
+    editor.debug(
+      `devcontainer: userEnvProbe (${probe}) failed: ${result.stderr.trim()}`,
+    );
+    writeCachedProbedEnv({});
+    return {};
+  }
+  const env: Record<string, string> = {};
+  for (const line of result.stdout.split("\n")) {
+    const eq = line.indexOf("=");
+    if (eq > 0) {
+      env[line.slice(0, eq)] = line.slice(eq + 1);
+    }
+  }
+  writeCachedProbedEnv(env);
+  return env;
+}
+
+/// Build the merged env passed to lifecycle commands per spec:
+///   userEnvProbe-captured ∪ remoteEnv (remoteEnv overrides probe).
+/// Skipped when not attached to a Container — remoteEnv is a
+/// container-side concept, the local case relies on whatever env
+/// the editor itself has.
+async function effectiveLifecycleEnv(): Promise<Record<string, string>> {
+  if (!editor.getAuthorityLabel().startsWith("Container:")) return {};
+  const probed = await getOrComputeProbedEnv();
+  const out: Record<string, string> = { ...probed };
+  if (config?.remoteEnv) {
+    for (const [k, v] of Object.entries(config.remoteEnv)) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/// Wrap `[bin, args]` with an `env K1=V1 K2=V2 bin args...`
+/// invocation when `env` is non-empty. Returns the original pair
+/// when env is empty (no wrapper needed).
+///
+/// Note: GNU `env` doesn't recognize `--` as an options
+/// terminator (it dies with `env: '--': No such file or directory`).
+/// `env` parses K=V pairs greedily until it hits a non-K=V word,
+/// which it treats as the command. As long as `bin` doesn't
+/// contain `=`, this is unambiguous.
+function wrapWithEnv(
+  env: Record<string, string>,
+  bin: string,
+  args: string[],
+): [string, string[]] {
+  const keys = Object.keys(env);
+  if (keys.length === 0) return [bin, args];
+  const envArgs = keys.map((k) => `${k}=${env[k]}`);
+  return ["env", [...envArgs, bin, ...args]];
+}
+
+/// Spec: object-form lifecycle commands run their entries in
+/// parallel; the stage waits for all to complete; the stage
+/// succeeds iff every entry exited 0. Implementation:
+/// `Promise.all` over an array of per-entry promises, each
+/// reporting its exit code. We aggregate failures into a single
+/// status message at the end.
+async function runLifecycleObjectForm(
+  cmdName: string,
+  cmd: Record<string, string | string[]>,
+): Promise<void> {
+  const entries = Object.entries(cmd);
+  if (entries.length === 0) {
     editor.setStatus(editor.t("status.completed", { name: cmdName }));
+    return;
+  }
+  editor.setStatus(editor.t("status.running", { name: cmdName }));
+
+  const cwd = lifecycleCwd() ?? "";
+  const env = await effectiveLifecycleEnv();
+  const results = await Promise.all(
+    entries.map(async ([label, subcmd]) => {
+      let origBin: string;
+      let origArgs: string[];
+      if (Array.isArray(subcmd)) {
+        [origBin, ...origArgs] = subcmd;
+      } else {
+        origBin = "sh";
+        origArgs = ["-c", subcmd as string];
+      }
+      const [bin, args] = wrapWithEnv(env, origBin, origArgs);
+      const r = await editor.spawnProcess(bin, args, cwd);
+      return { label, code: r.exit_code };
+    }),
+  );
+
+  const failed = results.filter((r) => r.code !== 0);
+  if (failed.length === 0) {
+    editor.setStatus(editor.t("status.completed", { name: cmdName }));
+    return;
+  }
+  // Surface the first failure in the status message — same key
+  // the old sequential path used so existing translations keep
+  // working. Other failures are debug-logged so users can see
+  // the full picture in the log.
+  const first = failed[0];
+  editor.setStatus(
+    editor.t("status.failed_sub", {
+      name: cmdName,
+      label: first.label,
+      code: String(first.code),
+    }),
+  );
+  for (const f of failed.slice(1)) {
+    editor.debug(
+      `devcontainer: ${cmdName} (${f.label}) also failed (exit ${f.code})`,
+    );
   }
 }
 registerHandler("devcontainer_on_lifecycle_confirmed", devcontainer_on_lifecycle_confirmed);
@@ -1503,6 +1700,13 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   // decide between success (container authority live) and silent
   // failure (no authority landed — surfaces as FailedAttach).
   writeAttachAttempt();
+  // Persist `remoteWorkspaceFolder` so the post-restart plugin
+  // instance can pass it as the cwd to lifecycle commands. The
+  // runtime's `spawnProcess` auto-fills working_dir (host path)
+  // when cwd is omitted — that breaks `docker exec -w` for
+  // configs whose `workspaceFolder` differs from the host
+  // workspace path. See `lifecycleCwd()`.
+  writeRemoteWorkspace(parsed.remoteWorkspaceFolder ?? null);
   editor.setAuthority(payload);
 }
 
@@ -1646,9 +1850,47 @@ async function devcontainer_retry_attach(): Promise<void> {
 registerHandler("devcontainer_retry_attach", devcontainer_retry_attach);
 
 async function devcontainer_detach(): Promise<void> {
+  // Honor `shutdownAction` per spec: default for image/Dockerfile
+  // is `stopContainer`. Stop the container BEFORE clearing
+  // authority — clearing the authority drops our spawner, so we'd
+  // lose the easy way to issue `docker stop` against the right
+  // daemon. Use `spawnHostProcess` because the container is about
+  // to disappear; routing through the soon-to-be-cleared container
+  // authority makes no sense.
+  await stopContainerIfShutdownActionRequires();
   editor.clearAuthority();
 }
 registerHandler("devcontainer_detach", devcontainer_detach);
+
+/// If `shutdownAction` says to stop the container (default for
+/// image/Dockerfile), spawn `docker stop <id>` on the host.
+/// No-op for `none` / `stopCompose` (compose has its own
+/// teardown the plugin doesn't drive). Failures are logged but
+/// don't block the detach itself — the user's intent is to stop
+/// using the container, and forcing them to keep it because
+/// `docker stop` errored would be worse than leaving an orphan.
+async function stopContainerIfShutdownActionRequires(): Promise<void> {
+  const action = config?.shutdownAction ?? "stopContainer";
+  if (action !== "stopContainer") return;
+
+  const label = editor.getAuthorityLabel();
+  const prefix = "Container:";
+  if (!label.startsWith(prefix)) return;
+  const containerId = label.slice(prefix.length);
+  if (containerId.length === 0) return;
+
+  const which = await editor.spawnHostProcess("which", ["docker"]);
+  if (which.exit_code !== 0) {
+    editor.debug(`devcontainer: docker not on PATH; skipping shutdownAction=stopContainer`);
+    return;
+  }
+  const result = await editor.spawnHostProcess("docker", ["stop", containerId]);
+  if (result.exit_code !== 0) {
+    editor.debug(
+      `devcontainer: docker stop ${containerId} exited ${result.exit_code}: ${result.stderr.trim()}`,
+    );
+  }
+}
 
 /// Abort an in-flight attach by killing the `devcontainer up` host
 /// spawn. No-op when nothing is in flight. The indicator is flipped

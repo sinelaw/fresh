@@ -896,6 +896,13 @@ fn user_env_probe_must_apply_captured_env_to_lifecycle_commands() {
     let rc_path = probe_temp.path().join("user.rc");
     std::fs::write(&rc_path, "export PROBED_VAR=fromProfile\n").unwrap();
 
+    // Note: postCreateCommand appends (`>>`) instead of overwriting
+    // (`>`). The fake CLI runs lifecycle hooks during `up` (with no
+    // env propagation — the host-shell bg execution can't synthesize
+    // a userEnvProbe), and the picker re-runs them through the
+    // plugin's spawnProcess path (with env propagation, post-fix).
+    // Both runs land in the same probe file. Test asserts the file
+    // CONTAINS the expected line, so we don't race the bg overwrite.
     let dc_json = format!(
         r#"{{
   "name": "b3-user-env-probe",
@@ -903,7 +910,7 @@ fn user_env_probe_must_apply_captured_env_to_lifecycle_commands() {
   "remoteUser": "vscode",
   "userEnvProbe": "loginShell",
   "remoteEnv": {{ "BASH_ENV": "{rc}" }},
-  "postCreateCommand": "echo PROBED=${{PROBED_VAR-unset}} > {p}"
+  "postCreateCommand": "echo PROBED=${{PROBED_VAR-unset}} >> {p}"
 }}
 "#,
         rc = rc_path.display(),
@@ -923,14 +930,27 @@ fn user_env_probe_must_apply_captured_env_to_lifecycle_commands() {
     attach(&mut harness);
     let _ = run_post_create(&mut harness, &probed);
 
+    // Wait until the picker's run lands (the bg run writes
+    // PROBED=unset; the picker's run with userEnvProbe applied
+    // writes PROBED=fromProfile). bounded_wait_for_file returned
+    // when the FIRST line was written, but the picker's exec may
+    // still be in flight.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        let content = std::fs::read_to_string(&probed).unwrap_or_default();
+        if content.contains("PROBED=fromProfile") {
+            break;
+        }
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+
     let content = std::fs::read_to_string(&probed).unwrap_or_default();
-    assert_eq!(
-        content.trim(),
-        "PROBED=fromProfile",
-        "B3 (failing on master): userEnvProbe `loginShell` must \
-         capture the user shell's env and apply it to lifecycle \
-         commands. Plugin doesn't read userEnvProbe at all today. \
-         Probe: {content:?}"
+    assert!(
+        content.contains("PROBED=fromProfile"),
+        "B3: userEnvProbe `loginShell` must capture the user shell's \
+         env and apply it to lifecycle commands. Probe content:\n{content}"
     );
 }
 
