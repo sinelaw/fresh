@@ -152,6 +152,11 @@ function tryParse(path: string, content: string): boolean {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     lastParseError = { path, message };
+    // Set `configPath` to the broken file so the recovery
+    // command set's `Open Config` can route the user there.
+    // `config` stays null so callers that depend on parsed
+    // fields (rebuild, attach) don't crash.
+    configPath = path;
     editor.debug(`devcontainer: failed to parse ${path}: ${message}`);
     return false;
   }
@@ -2199,6 +2204,48 @@ const ATTACHED_ONLY_COMMANDS = [
 ];
 const DETACHED_ONLY_COMMANDS = ["%cmd.attach", "%cmd.cancel_attach"];
 
+/// Bug #3 (L170): when `devcontainer.json` exists but fails to
+/// parse, register *only* a tiny recovery set so the user has an
+/// in-editor path to fix the JSON. Without this, the plugin's
+/// init path used to register zero commands and the user lost
+/// the entire `Dev Container:` family until restarting the
+/// editor.
+function registerRecoveryCommands(): void {
+  // Drop full-mode entries in case we're transitioning from a
+  // working config to a broken one (rebuild → restart → reparse
+  // fails). `unregisterCommand` is a no-op when the name isn't
+  // registered.
+  for (const name of ATTACHED_ONLY_COMMANDS) editor.unregisterCommand(name);
+  for (const name of DETACHED_ONLY_COMMANDS) editor.unregisterCommand(name);
+  for (const name of [
+    "%cmd.show_info",
+    "%cmd.show_features",
+    "%cmd.show_ports",
+    "%cmd.rebuild",
+    "%cmd.run_lifecycle",
+  ]) {
+    editor.unregisterCommand(name);
+  }
+  // `Open Config` is the recovery escape hatch — we set
+  // `configPath` even on parse failure so this opens the broken
+  // file in the editor for the user to repair.
+  editor.registerCommand(
+    "%cmd.open_config",
+    "%cmd.open_config_desc",
+    "devcontainer_open_config",
+    null,
+  );
+  // `Show Build Logs` stays available so the user can read the
+  // last rebuild output (likely shows the validation error from
+  // the CLI / docker layer too).
+  editor.registerCommand(
+    "%cmd.show_build_logs",
+    "%cmd.show_build_logs_desc",
+    "devcontainer_show_build_logs",
+    null,
+  );
+}
+
 function registerCommands(): void {
   // Commands that are state-relevant in BOTH local and container
   // modes (`Show Info`, `Open Config`, etc.) get registered
@@ -2389,13 +2436,16 @@ if (findConfig()) {
   );
   editor.on("plugins_loaded", "devcontainer_maybe_show_attach_prompt");
 } else {
-  // Bug #2: a `devcontainer.json` that exists but fails to parse
-  // used to fail silently — `findConfig` returns false, no
-  // commands register, no status message. Surface the parse
-  // error so the user knows what to fix instead of just losing
-  // the entire `Dev Container:` palette.
+  // Bug #2 + #3: a `devcontainer.json` that exists but fails to
+  // parse used to fail silently AND drop every `Dev Container:`
+  // command from the palette, leaving no in-editor recovery path
+  // (the user had to restart the editor). Now: surface the parse
+  // error in the status bar AND register a small recovery set
+  // (Open Config + Show Build Logs) so the user can navigate to
+  // the broken file and fix it.
   if (lastParseError) {
     showParseErrorIfAny();
+    registerRecoveryCommands();
   } else {
     editor.debug("Dev Container plugin: no devcontainer.json found");
   }

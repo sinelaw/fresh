@@ -451,3 +451,79 @@ fn broken_devcontainer_json_surfaces_parse_error_in_status_bar() {
          screen:\n{screen}"
     );
 }
+
+/// **Bug #3 (L170, Critical).** When the plugin re-loads against a
+/// broken `devcontainer.json` (which is what happens on the post-
+/// rebuild editor restart), the user used to lose every
+/// `Dev Container:` palette command — including `Open Config`,
+/// the only path back to fix the file. They had to kill the
+/// editor and restart with valid JSON.
+///
+/// The fix is to register a small recovery set
+/// (`Open Config` + `Show Build Logs`) when `findConfig` fails
+/// due to a parse error, so the user can navigate to the broken
+/// file from inside the editor.
+///
+/// Regression guard for that fix: same harness setup as Bug #2
+/// (broken JSON in workspace, boot the editor) but assert that
+/// the recovery set is registered — `%cmd.open_config` and
+/// `%cmd.show_build_logs` present, full set (`%cmd.rebuild`,
+/// `%cmd.attach`) absent.
+#[test]
+fn broken_devcontainer_json_keeps_recovery_commands_registered() {
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().canonicalize().unwrap();
+
+    let dc = workspace.join(".devcontainer");
+    fs::create_dir_all(&dc).unwrap();
+    fs::write(
+        dc.join("devcontainer.json"),
+        r#"{
+  "name": broken,
+  "image": "ubuntu:22.04"
+"#,
+    )
+    .unwrap();
+
+    let plugins_dir = workspace.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "devcontainer");
+
+    let mut harness = EditorTestHarness::with_working_dir(160, 40, workspace).unwrap();
+
+    // Plugin loads on first tick; pump a few times to let the
+    // recovery registration land.
+    for _ in 0..20 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+
+    let names = dev_container_command_names(&harness);
+
+    assert!(
+        names.iter().any(|n| n == "%cmd.open_config"),
+        "broken-config recovery: `%cmd.open_config` must stay registered \
+         so the user can open the broken file. Registered: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "%cmd.show_build_logs"),
+        "broken-config recovery: `%cmd.show_build_logs` must stay registered \
+         so the user can see the last rebuild output. Registered: {names:?}"
+    );
+    // Full-config-only commands must NOT be in the recovery set —
+    // they'd no-op (or worse) without a parsed `config`.
+    assert!(
+        !names.iter().any(|n| n == "%cmd.rebuild"),
+        "broken-config recovery: `%cmd.rebuild` must be removed when \
+         config is unparseable (would call into `attach` with no config). \
+         Registered: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "%cmd.attach"),
+        "broken-config recovery: `%cmd.attach` must be removed when \
+         config is unparseable. Registered: {names:?}"
+    );
+}
