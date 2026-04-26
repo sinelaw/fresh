@@ -1285,6 +1285,8 @@ impl Editor {
                 from: prev,
                 to: current,
                 duration: std::time::Duration::from_millis(140),
+                cursor_color: self.theme.cursor,
+                bg_color: self.theme.editor_bg,
             },
         );
         self.cursor_jump_animation = Some(id);

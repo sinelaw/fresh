@@ -10,7 +10,7 @@
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::Color;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,14 +34,17 @@ pub enum AnimationKind {
         duration: Duration,
         delay: Duration,
     },
-    /// Animate the cursor moving from one screen cell to another. Paints an
-    /// inverted-color "head" cell at the interpolated position with a short
-    /// fading trail along the line from `from` to `to`. `from`/`to` are
+    /// Animate the cursor moving from one screen cell to another. Paints a
+    /// short trail of cells along the line from `from` to `to`: the head
+    /// cell uses `cursor_color` as background; trailing cells fade toward
+    /// `bg_color` (older positions are closer to bg). `from`/`to` are
     /// absolute screen coordinates (col, row).
     CursorJump {
         from: (u16, u16),
         to: (u16, u16),
         duration: Duration,
+        cursor_color: Color,
+        bg_color: Color,
     },
 }
 
@@ -238,26 +241,44 @@ impl FrameEffect for SlideIn {
 
 /// Cursor-jump effect. Paints a moving "head" cell along the straight line
 /// from `from` to `to` with a short fading trail. Both endpoints are in
-/// absolute screen coordinates (col, row). The effect operates outside the
-/// `area` snapshot model used by `SlideIn`: it directly mutates cells along
-/// the interpolated path and never reads/snapshots an area, so the `area`
-/// passed to the runner is only used for dedupe/replacement bookkeeping.
+/// absolute screen coordinates (col, row). The head cell's background is
+/// set to `cursor_color`; trailing cells blend toward `bg_color` so that
+/// older positions appear progressively dimmer. The effect operates
+/// outside the `area` snapshot model used by `SlideIn`: it directly
+/// mutates cells along the interpolated path and never reads/snapshots an
+/// area, so the `area` passed to the runner is only used for dedupe and
+/// replacement bookkeeping.
 pub struct CursorJump {
     from: (i32, i32),
     to: (i32, i32),
     duration: Duration,
+    cursor_rgb: (u8, u8, u8),
+    bg_rgb: (u8, u8, u8),
 }
 
 impl CursorJump {
-    pub fn new(from: (u16, u16), to: (u16, u16), duration: Duration) -> Self {
+    pub fn new(
+        from: (u16, u16),
+        to: (u16, u16),
+        duration: Duration,
+        cursor_color: Color,
+        bg_color: Color,
+    ) -> Self {
+        // Themes occasionally use Color::Reset / named colors for which we
+        // have no RGB; fall back to white/black so the effect still
+        // visibly fades rather than silently no-oping.
+        let cursor_rgb = color_to_rgb(cursor_color).unwrap_or((255, 255, 255));
+        let bg_rgb = color_to_rgb(bg_color).unwrap_or((0, 0, 0));
         Self {
             from: (from.0 as i32, from.1 as i32),
             to: (to.0 as i32, to.1 as i32),
             duration,
+            cursor_rgb,
+            bg_rgb,
         }
     }
 
-    fn highlight_cell(buf: &mut Buffer, col: i32, row: i32) {
+    fn paint_cell(buf: &mut Buffer, col: i32, row: i32, bg: Color) {
         if col < 0 || row < 0 {
             return;
         }
@@ -272,7 +293,7 @@ impl CursorJump {
             return;
         }
         if let Some(cell) = buf.cell_mut((c, r)) {
-            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+            cell.set_bg(bg);
         }
     }
 }
@@ -303,23 +324,62 @@ impl FrameEffect for CursorJump {
         let dx = tx - fx;
         let dy = ty - fy;
 
-        // Trail length scales with how much of the jump has been completed,
-        // so the early frames have a short tail and later frames a longer
-        // one — gives a sense of acceleration.
+        // Trail length scales with the path so short jumps don't get an
+        // oversized tail. Min 2 keeps a hint of motion even on tiny jumps.
         let path_cells = dx.abs().max(dy.abs()).round() as i32;
         let trail_len = (path_cells.min(8).max(2)) as usize;
 
         for i in 0..trail_len {
-            // Trail samples behind the head: i=0 is the head, larger i is
-            // further back along the path.
+            // Trail samples behind the head: i=0 is the head (alpha=1, full
+            // cursor color), larger i is further back along the path with
+            // alpha decreasing toward 0 (full bg color).
             let back = (i as f32) / (trail_len as f32);
             let sample = (eased - back * 0.12).max(0.0);
             let col = (fx + dx * sample).round() as i32;
             let row = (fy + dy * sample).round() as i32;
-            Self::highlight_cell(buf, col, row);
+            let alpha = 1.0 - back;
+            let blended = blend_rgb(self.cursor_rgb, self.bg_rgb, alpha);
+            Self::paint_cell(buf, col, row, blended);
         }
 
         EffectStatus::Running
+    }
+}
+
+fn blend_rgb(fg: (u8, u8, u8), bg: (u8, u8, u8), alpha: f32) -> Color {
+    let a = alpha.clamp(0.0, 1.0);
+    let mix = |f: u8, b: u8| -> u8 {
+        ((f as f32) * a + (b as f32) * (1.0 - a))
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color::Rgb(mix(fg.0, bg.0), mix(fg.1, bg.1), mix(fg.2, bg.2))
+}
+
+fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
+    match color {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Black => Some((0, 0, 0)),
+        Color::Red => Some((205, 0, 0)),
+        Color::Green => Some((0, 205, 0)),
+        Color::Yellow => Some((205, 205, 0)),
+        Color::Blue => Some((0, 0, 238)),
+        Color::Magenta => Some((205, 0, 205)),
+        Color::Cyan => Some((0, 205, 205)),
+        Color::Gray => Some((229, 229, 229)),
+        Color::DarkGray => Some((127, 127, 127)),
+        Color::LightRed => Some((255, 0, 0)),
+        Color::LightGreen => Some((0, 255, 0)),
+        Color::LightYellow => Some((255, 255, 0)),
+        Color::LightBlue => Some((92, 92, 255)),
+        Color::LightMagenta => Some((255, 0, 255)),
+        Color::LightCyan => Some((0, 255, 255)),
+        Color::White => Some((255, 255, 255)),
+        // 256-color palette: skip — themes virtually always supply RGB
+        // for cursor/editor_bg, and this would pull in a lookup table for
+        // a vanishingly rare case.
+        Color::Indexed(_) => None,
+        Color::Reset => None,
     }
 }
 
@@ -403,8 +463,16 @@ impl AnimationRunner {
                     from,
                     to,
                     duration,
+                    cursor_color,
+                    bg_color,
                 } => (
-                    Box::new(CursorJump::new(from, to, duration)),
+                    Box::new(CursorJump::new(
+                        from,
+                        to,
+                        duration,
+                        cursor_color,
+                        bg_color,
+                    )),
                     Duration::ZERO,
                     duration,
                 ),
@@ -808,72 +876,102 @@ mod tests {
 
     #[test]
     fn cursor_jump_final_frame_is_clean() {
-        // Background painted with '.', cursor jumps from (0,0) to (4,2).
-        // At t>=1.0 the effect must paint nothing and just report Done so
-        // the last frame on screen has no leftover trail (no further redraw
-        // is scheduled once the runner drops the effect).
+        // Cursor jumps from (0,0) to (4,2). At t>=1.0 the effect must
+        // paint nothing and just report Done so the last frame on screen
+        // has no leftover trail (no further redraw is scheduled once the
+        // runner drops the effect).
         let area = Rect::new(0, 0, 6, 4);
         let mut buf = make_buf(6, 4);
         paint(&mut buf, area, '.', Color::White);
+        let bg_before: Vec<_> = (0..area.height)
+            .flat_map(|dy| (0..area.width).map(move |dx| (dx, dy)))
+            .map(|(dx, dy)| buf.cell((area.x + dx, area.y + dy)).unwrap().bg)
+            .collect();
 
-        let mut effect = CursorJump::new((0, 0), (4, 2), Duration::from_millis(100));
+        let mut effect = CursorJump::new(
+            (0, 0),
+            (4, 2),
+            Duration::from_millis(100),
+            Color::Rgb(255, 200, 0),
+            Color::Rgb(20, 20, 20),
+        );
         let status = effect.apply(&mut buf, area, Duration::from_millis(100));
         assert_eq!(status, EffectStatus::Done);
 
+        let mut idx = 0;
         for dy in 0..area.height {
             for dx in 0..area.width {
                 let cell = buf.cell((area.x + dx, area.y + dy)).unwrap();
-                assert!(
-                    !cell.style().add_modifier.contains(Modifier::REVERSED),
-                    "no cell should be modified at t>=1.0, but ({}, {}) is REVERSED",
-                    dx,
-                    dy
+                assert_eq!(
+                    cell.bg, bg_before[idx],
+                    "no cell bg should change at t>=1.0, but ({}, {}) did",
+                    dx, dy
                 );
+                idx += 1;
             }
         }
     }
 
     #[test]
-    fn cursor_jump_mid_flight_paints_a_head() {
-        // At t<1.0 the effect should paint at least one highlighted cell
-        // along the path between source and target.
-        let area = Rect::new(0, 0, 10, 5);
-        let mut buf = make_buf(10, 5);
+    fn cursor_jump_head_uses_cursor_color() {
+        // Mid-flight, the head cell (sample at the leading edge of the
+        // trail) should be painted with the full cursor color (alpha=1).
+        let area = Rect::new(0, 0, 12, 5);
+        let mut buf = make_buf(12, 5);
         paint(&mut buf, area, '.', Color::White);
 
-        let mut effect = CursorJump::new((0, 0), (8, 4), Duration::from_millis(100));
+        let cursor = Color::Rgb(255, 100, 0);
+        let bg = Color::Rgb(0, 0, 0);
+        let mut effect = CursorJump::new((0, 0), (10, 4), Duration::from_millis(100), cursor, bg);
         let status = effect.apply(&mut buf, area, Duration::from_millis(50));
         assert_eq!(status, EffectStatus::Running);
 
-        let mut highlighted = 0;
+        let mut found_full_cursor = false;
         for dy in 0..area.height {
             for dx in 0..area.width {
                 let cell = buf.cell((area.x + dx, area.y + dy)).unwrap();
-                if cell.style().add_modifier.contains(Modifier::REVERSED) {
-                    highlighted += 1;
+                if cell.bg == cursor {
+                    found_full_cursor = true;
                 }
             }
         }
         assert!(
-            highlighted > 0,
-            "expected at least one REVERSED cell mid-flight"
+            found_full_cursor,
+            "head cell should be painted with the full cursor color"
         );
     }
 
     #[test]
-    fn cursor_jump_at_t0_highlights_source() {
-        let area = Rect::new(0, 0, 6, 4);
-        let mut buf = make_buf(6, 4);
+    fn cursor_jump_trail_fades_toward_bg() {
+        // Tail cells (older positions) must blend toward bg; checking that
+        // among cells the effect touches there is at least one whose bg is
+        // strictly between the cursor color and the bg color (i.e., a true
+        // blend, not just one or the other).
+        let area = Rect::new(0, 0, 20, 5);
+        let mut buf = make_buf(20, 5);
         paint(&mut buf, area, '.', Color::White);
 
-        let mut effect = CursorJump::new((0, 0), (4, 2), Duration::from_millis(100));
-        let status = effect.apply(&mut buf, area, Duration::ZERO);
-        assert_eq!(status, EffectStatus::Running);
+        let cursor = Color::Rgb(255, 0, 0);
+        let bg = Color::Rgb(0, 0, 0);
+        let mut effect = CursorJump::new((0, 0), (18, 4), Duration::from_millis(100), cursor, bg);
+        let _ = effect.apply(&mut buf, area, Duration::from_millis(70));
 
-        let head = buf.cell((0, 0)).unwrap();
+        let mut blended_count = 0;
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let cell = buf.cell((area.x + dx, area.y + dy)).unwrap();
+                if let Color::Rgb(r, g, b) = cell.bg {
+                    // Strictly between cursor (255,0,0) and bg (0,0,0):
+                    // red channel partially attenuated, others still 0.
+                    if r > 0 && r < 255 && g == 0 && b == 0 {
+                        blended_count += 1;
+                    }
+                }
+            }
+        }
         assert!(
-            head.style().add_modifier.contains(Modifier::REVERSED),
-            "head cell at source should be REVERSED at t=0"
+            blended_count > 0,
+            "at least one trail cell should be a blend between cursor and bg"
         );
     }
 
@@ -887,6 +985,8 @@ mod tests {
                 from: (1, 1),
                 to: (8, 4),
                 duration: Duration::from_millis(50),
+                cursor_color: Color::Rgb(255, 255, 0),
+                bg_color: Color::Rgb(0, 0, 0),
             },
         );
         assert!(runner.is_active());
