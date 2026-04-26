@@ -76,12 +76,22 @@ fn set_up_probe_workspace(
 
     // The probe writes EVERY interesting env var unconditionally.
     // Tests assert on whichever ones are relevant.
+    //
+    // Append (`>>`) instead of overwrite (`>`) because the fake
+    // `up` ALSO runs `postCreateCommand` in the background (per
+    // spec, anything past `waitFor` runs async) — that bg run
+    // doesn't go through `docker exec`/`wrapWithEnv` so it
+    // produces different output (e.g. `CE_TEST=unset`,
+    // `FAKE_DC_USER=`). With `>` the two runs race and either
+    // can clobber the other; with `>>` both contributions end up
+    // in the file and tests can scan for the one the picker
+    // would have produced.
     let dc_json = format!(
         r#"{{
   "name": "{name}",
   "image": "ubuntu:22.04",
   "remoteUser": "vscode",
-{container_env_block}{remote_env_block}  "postCreateCommand": "{{ echo PWD=$PWD; echo REQUESTED_CWD=$FAKE_DC_REQUESTED_CWD; echo CE_TEST=${{CE_TEST-unset}}; echo RE_TEST=${{RE_TEST-unset}}; }} > {probe} 2>&1"
+{container_env_block}{remote_env_block}  "postCreateCommand": "{{ echo PWD=$PWD; echo REQUESTED_CWD=$FAKE_DC_REQUESTED_CWD; echo CE_TEST=${{CE_TEST-unset}}; echo RE_TEST=${{RE_TEST-unset}}; }} >> {probe} 2>&1"
 }}
 "#,
         probe = probe.display(),
@@ -241,13 +251,15 @@ fn lifecycle_command_cwd_must_be_remote_workspace_folder() {
     let probe_text = run_attach_and_postcreate(&mut harness, &probe);
     std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
 
-    let requested = probe_text
-        .lines()
-        .find_map(|l| l.strip_prefix("REQUESTED_CWD="))
-        .unwrap_or("")
-        .to_string();
-    assert_eq!(
-        requested, "/workspaces/s1-cwd-distinct",
+    // The probe is appended to by both the picker run (via
+    // `docker exec` — the path under test) AND the fake `up`'s
+    // background postCreateCommand (direct sh, no `-w`). Look
+    // for the picker run's line by exact match — order varies
+    // by host scheduler.
+    assert!(
+        probe_text
+            .lines()
+            .any(|l| l == "REQUESTED_CWD=/workspaces/s1-cwd-distinct"),
         "S1 (failing on master): lifecycle commands should pass the in-container \
          workspace as `-w` to docker exec; today they pass the host path. Probe:\n{probe_text}"
     );
@@ -277,13 +289,12 @@ fn lifecycle_command_must_see_remote_env() {
 
     let probe_text = run_attach_and_postcreate(&mut harness, &probe);
 
-    let value = probe_text
-        .lines()
-        .find_map(|l| l.strip_prefix("RE_TEST="))
-        .unwrap_or("")
-        .to_string();
-    assert_eq!(
-        value, "from-remoteEnv",
+    // Picker-run line scan; see S1 for why the probe has both
+    // a picker contribution and a fake-`up`-bg contribution.
+    assert!(
+        probe_text
+            .lines()
+            .any(|l| l == "RE_TEST=from-remoteEnv"),
         "S2 (failing on master): lifecycle commands should inherit \
          `remoteEnv` per the spec; today the plugin never propagates it. \
          Probe:\n{probe_text}"
@@ -322,13 +333,12 @@ fn lifecycle_command_must_see_container_env() {
 
     let probe_text = run_attach_and_postcreate(&mut harness, &probe);
 
-    let value = probe_text
-        .lines()
-        .find_map(|l| l.strip_prefix("CE_TEST="))
-        .unwrap_or("")
-        .to_string();
-    assert_eq!(
-        value, "from-containerEnv",
+    // Picker-run line scan; see S1 for why the probe has both
+    // a picker contribution and a fake-`up`-bg contribution.
+    assert!(
+        probe_text
+            .lines()
+            .any(|l| l == "CE_TEST=from-containerEnv"),
         "S3 regression guard: fake docker exec replays containerEnv from \
          `<state>/containers/<id>/container_env`. Probe:\n{probe_text}"
     );

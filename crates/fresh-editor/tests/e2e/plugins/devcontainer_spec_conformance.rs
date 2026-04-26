@@ -341,12 +341,16 @@ fn remote_user_defaults_to_container_user() {
     let probe_temp = tempfile::tempdir().unwrap();
     let probe = probe_temp.path().join("g3.log");
 
+    // Append (`>>`) so the picker run and the fake `up`'s
+    // background-spawned `postCreateCommand` (direct sh, no
+    // `-u`, sees `FAKE_DC_USER=`) don't clobber each other.
+    // We then scan for the picker run's exact line.
     let dc_json = format!(
         r#"{{
   "name": "g3-fallback",
   "image": "ubuntu:22.04",
   "containerUser": "node",
-  "postCreateCommand": "echo USER=$FAKE_DC_USER > {}"
+  "postCreateCommand": "echo USER=$FAKE_DC_USER >> {}"
 }}
 "#,
         probe.display(),
@@ -365,9 +369,8 @@ fn remote_user_defaults_to_container_user() {
     attach(&mut harness);
     let probe_text = run_post_create(&mut harness, &probe);
 
-    assert_eq!(
-        probe_text.trim(),
-        "USER=node",
+    assert!(
+        probe_text.lines().any(|l| l == "USER=node"),
         "G3: with no remoteUser declared, spawner should pass \
          `-u <containerUser>`. Probe: {probe_text:?}"
     );

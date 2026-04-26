@@ -86,6 +86,14 @@ fn wait_for_run_lifecycle_command(harness: &mut EditorTestHarness) {
 /// Drives the bug: `Run Lifecycle` → confirm `initializeCommand` →
 /// expect the sentinel file. The handler's wrong field name keeps it
 /// from ever calling `spawnProcess`, so the sentinel never appears.
+///
+/// Unix-only: the test's `initializeCommand` is `sh -c "touch <path>"`,
+/// which doesn't survive the round-trip through `cmd.exe` on
+/// Windows (backslash paths get treated as escapes). The bug being
+/// guarded is in the plugin's prompt-handler field name (`data.input`
+/// vs `data.value`), which is platform-agnostic — so the Linux/macOS
+/// runs of this test are already a sufficient regression guard.
+#[cfg(unix)]
 #[test]
 fn run_lifecycle_executes_initialize_command() {
     let sentinel_temp = tempfile::tempdir().unwrap();
