@@ -117,7 +117,11 @@ fn attach(harness: &mut EditorTestHarness) {
 /// Waits for `probe` to materialize, returns its content. If the
 /// plugin runs entries in parallel the file appears quickly; if
 /// sequentially the wall clock balloons and tests can detect that.
-fn run_post_create(harness: &mut EditorTestHarness, probe: &Path) -> String {
+/// Drive the lifecycle picker for the (assumed-only)
+/// postCreateCommand entry. Returns once `Enter` has been
+/// dispatched on the picker — does NOT wait for any side-effect
+/// (file creation, screen update). Callers add the right wait.
+fn drive_lifecycle_picker(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -136,16 +140,18 @@ fn run_post_create(harness: &mut EditorTestHarness, probe: &Path) -> String {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+}
+
+fn run_post_create(harness: &mut EditorTestHarness, probe: &Path) -> String {
+    drive_lifecycle_picker(harness);
     bounded_wait_for_file(harness, probe, std::time::Duration::from_secs(10));
     fs::read_to_string(probe).unwrap_or_default()
 }
 
-/// Wait for `path` to materialize, ticking the harness on every
-/// iteration so the plugin's pending async work (the
-/// `editor.spawnProcess` Promise the lifecycle handler is awaiting)
-/// can resolve. Without the tick the spawned child runs but its
-/// completion message is never drained, and the post-spawn
-/// `setStatus("completed")` call never happens.
+/// Existence-only variant kept for tests where the picker's
+/// command is `touch <sentinel>` and the assertion is on file
+/// presence rather than content. For content-based assertions
+/// see [`bounded_wait_for_probe_line`].
 fn bounded_wait_for_file(
     harness: &mut EditorTestHarness,
     path: &Path,
@@ -162,6 +168,46 @@ fn bounded_wait_for_file(
     }
     panic!(
         "file {path:?} never appeared within {deadline:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Wait for `path` to materialize and contain a line satisfying
+/// `expected`, ticking the harness on every iteration so the
+/// plugin's pending async work (the `editor.spawnProcess` Promise
+/// the lifecycle handler is awaiting) can resolve. Without the
+/// tick the spawned child runs but its completion message is
+/// never drained, and the post-spawn `setStatus("completed")`
+/// call never happens.
+///
+/// We can't just wait for *existence* because the fake `up` runs
+/// `postCreateCommand` in the background (per spec, anything past
+/// `waitFor` is async) and that bg run produces a different line
+/// than the picker run we're testing — see the `>>` rationale on
+/// the test JSONs. Whichever run finishes first creates the file;
+/// returning then would race with the slower picker run.
+fn bounded_wait_for_probe_line(
+    harness: &mut EditorTestHarness,
+    path: &Path,
+    expected: impl Fn(&str) -> bool,
+    deadline: std::time::Duration,
+) {
+    let start = std::time::Instant::now();
+    while start.elapsed() < deadline {
+        harness.tick_and_render().unwrap();
+        if path.exists() {
+            let content = fs::read_to_string(path).unwrap_or_default();
+            if content.lines().any(&expected) {
+                return;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        harness.advance_time(std::time::Duration::from_millis(25));
+    }
+    let content = fs::read_to_string(path).unwrap_or_default();
+    panic!(
+        "expected line never appeared in {path:?} within {deadline:?}. \
+         Probe contents:\n{content}\nScreen:\n{}",
         harness.screen_to_string()
     );
 }
@@ -367,7 +413,18 @@ fn remote_user_defaults_to_container_user() {
     .unwrap();
     harness.tick_and_render().unwrap();
     attach(&mut harness);
-    let probe_text = run_post_create(&mut harness, &probe);
+    drive_lifecycle_picker(&mut harness);
+    // Wait for the *picker's* contribution. The bg-run line
+    // (`USER=`) will land first because the bg path skips
+    // `docker exec`; without this wait we'd read a probe with
+    // only the bg line and miss the picker's line entirely.
+    bounded_wait_for_probe_line(
+        &mut harness,
+        &probe,
+        |l| l == "USER=node",
+        std::time::Duration::from_secs(10),
+    );
+    let probe_text = fs::read_to_string(&probe).unwrap_or_default();
 
     assert!(
         probe_text.lines().any(|l| l == "USER=node"),

@@ -127,8 +127,21 @@ where
 
 /// Drive the popup → attach flow, simulate the production restart
 /// the plugin's `setAuthority` triggers, and run `postCreateCommand`
-/// from the lifecycle picker. Returns the probe-file content.
-fn run_attach_and_postcreate(harness: &mut EditorTestHarness, probe: &Path) -> String {
+/// from the lifecycle picker. Waits until the probe file contains
+/// a line satisfying `expected_line` and returns its content.
+///
+/// Why a content predicate instead of bare existence: the fake
+/// `up` runs `postCreateCommand` in the background (per spec,
+/// post-`waitFor` hooks are async). That bg run skips the
+/// `docker exec` / `wrapWithEnv` path, so it produces a *different*
+/// line than the picker run we're testing. Whichever finishes
+/// first creates the file; existence-only would race the slower
+/// picker run.
+fn run_attach_and_postcreate(
+    harness: &mut EditorTestHarness,
+    probe: &Path,
+    expected_line: impl Fn(&str) -> bool,
+) -> String {
     // Wait for plugin command registration (plugin loaded).
     bounded_wait(harness, "plugin command registration", |h| {
         let reg = h.editor().command_registry().read().unwrap();
@@ -213,8 +226,13 @@ fn run_attach_and_postcreate(harness: &mut EditorTestHarness, probe: &Path) -> S
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for the probe file to land.
-    bounded_wait(harness, "probe file written", |_| probe.exists());
+    // Wait until the probe contains the picker run's expected
+    // line — see the doc-comment for why bare existence races
+    // the bg run.
+    bounded_wait(harness, "probe file has expected line", |_| {
+        let content = fs::read_to_string(probe).unwrap_or_default();
+        content.lines().any(&expected_line)
+    });
 
     fs::read_to_string(probe).unwrap_or_default()
 }
@@ -248,7 +266,9 @@ fn lifecycle_command_cwd_must_be_remote_workspace_folder() {
     .unwrap();
     harness.tick_and_render().unwrap();
 
-    let probe_text = run_attach_and_postcreate(&mut harness, &probe);
+    let probe_text = run_attach_and_postcreate(&mut harness, &probe, |l| {
+        l == "REQUESTED_CWD=/workspaces/s1-cwd-distinct"
+    });
     std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
 
     // The probe is appended to by both the picker run (via
@@ -287,7 +307,8 @@ fn lifecycle_command_must_see_remote_env() {
     .unwrap();
     harness.tick_and_render().unwrap();
 
-    let probe_text = run_attach_and_postcreate(&mut harness, &probe);
+    let probe_text =
+        run_attach_and_postcreate(&mut harness, &probe, |l| l == "RE_TEST=from-remoteEnv");
 
     // Picker-run line scan; see S1 for why the probe has both
     // a picker contribution and a fake-`up`-bg contribution.
@@ -329,7 +350,8 @@ fn lifecycle_command_must_see_container_env() {
     .unwrap();
     harness.tick_and_render().unwrap();
 
-    let probe_text = run_attach_and_postcreate(&mut harness, &probe);
+    let probe_text =
+        run_attach_and_postcreate(&mut harness, &probe, |l| l == "CE_TEST=from-containerEnv");
 
     // Picker-run line scan; see S1 for why the probe has both
     // a picker contribution and a fake-`up`-bg contribution.
