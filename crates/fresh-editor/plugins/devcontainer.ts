@@ -2156,12 +2156,47 @@ registerHandler("devcontainer_on_attach_popup", devcontainer_on_attach_popup);
 
 editor.on("prompt_confirmed", "devcontainer_on_lifecycle_confirmed");
 editor.on("action_popup_result", "devcontainer_on_action_result");
+editor.on("authority_changed", "devcontainer_on_authority_changed");
+
+/// Re-register state-gated commands when the authority transitions
+/// (local ↔ container). Without this, after `setAuthority` lands a
+/// container we'd still have `Attach` / `Cancel Startup` in the
+/// palette and `Detach` / `Show Logs` missing.
+function devcontainer_on_authority_changed(_data: unknown): void {
+  registerCommands();
+}
+registerHandler("devcontainer_on_authority_changed", devcontainer_on_authority_changed);
 
 // =============================================================================
 // Command Registration
 // =============================================================================
 
+/// State-gated commands that get re-evaluated on every authority
+/// transition. Listed in one place so `registerCommands` and the
+/// `authority_changed` cleanup path stay in sync.
+const ATTACHED_ONLY_COMMANDS = [
+  "%cmd.detach",
+  "%cmd.show_logs",
+  "%cmd.show_forwarded_ports_panel",
+];
+const DETACHED_ONLY_COMMANDS = ["%cmd.attach", "%cmd.cancel_attach"];
+
 function registerCommands(): void {
+  // Commands that are state-relevant in BOTH local and container
+  // modes (`Show Info`, `Open Config`, etc.) get registered
+  // unconditionally. Commands that are only meaningful in one
+  // mode are gated below — `attach` / `cancel_attach` only when
+  // not already attached, `detach` / `show_forwarded_ports_panel` /
+  // `show_logs` only when attached. The plugin reloads after
+  // `setAuthority` AND we listen for `authority_changed` so this
+  // function runs on every transition.
+  const attached = editor.getAuthorityLabel().startsWith("Container:");
+  // Drop any stale state-gated registrations from the previous
+  // mode before re-registering. `editor.unregisterCommand` is a
+  // no-op when the name isn't registered, so this is safe to call
+  // even on first init.
+  for (const name of ATTACHED_ONLY_COMMANDS) editor.unregisterCommand(name);
+  for (const name of DETACHED_ONLY_COMMANDS) editor.unregisterCommand(name);
   editor.registerCommand(
     "%cmd.show_info",
     "%cmd.show_info_desc",
@@ -2172,12 +2207,6 @@ function registerCommands(): void {
     "%cmd.open_config",
     "%cmd.open_config_desc",
     "devcontainer_open_config",
-    null,
-  );
-  editor.registerCommand(
-    "%cmd.run_lifecycle",
-    "%cmd.run_lifecycle_desc",
-    "devcontainer_run_lifecycle",
     null,
   );
   editor.registerCommand(
@@ -2199,41 +2228,53 @@ function registerCommands(): void {
     null,
   );
   editor.registerCommand(
-    "%cmd.attach",
-    "%cmd.attach_desc",
-    "devcontainer_attach",
-    null,
-  );
-  editor.registerCommand(
-    "%cmd.detach",
-    "%cmd.detach_desc",
-    "devcontainer_detach",
-    null,
-  );
-  editor.registerCommand(
-    "%cmd.show_logs",
-    "%cmd.show_logs_desc",
-    "devcontainer_show_logs",
-    null,
-  );
-  editor.registerCommand(
     "%cmd.show_build_logs",
     "%cmd.show_build_logs_desc",
     "devcontainer_show_build_logs",
     null,
   );
+  // `run_lifecycle` works in both modes — `initializeCommand` is
+  // host-side per spec, the rest are container-side. The picker
+  // itself filters which entries are runnable.
   editor.registerCommand(
-    "%cmd.cancel_attach",
-    "%cmd.cancel_attach_desc",
-    "devcontainer_cancel_attach",
+    "%cmd.run_lifecycle",
+    "%cmd.run_lifecycle_desc",
+    "devcontainer_run_lifecycle",
     null,
   );
-  editor.registerCommand(
-    "%cmd.show_forwarded_ports_panel",
-    "%cmd.show_forwarded_ports_panel_desc",
-    "devcontainer_show_forwarded_ports_panel",
-    null,
-  );
+  if (attached) {
+    editor.registerCommand(
+      "%cmd.detach",
+      "%cmd.detach_desc",
+      "devcontainer_detach",
+      null,
+    );
+    editor.registerCommand(
+      "%cmd.show_logs",
+      "%cmd.show_logs_desc",
+      "devcontainer_show_logs",
+      null,
+    );
+    editor.registerCommand(
+      "%cmd.show_forwarded_ports_panel",
+      "%cmd.show_forwarded_ports_panel_desc",
+      "devcontainer_show_forwarded_ports_panel",
+      null,
+    );
+  } else {
+    editor.registerCommand(
+      "%cmd.attach",
+      "%cmd.attach_desc",
+      "devcontainer_attach",
+      null,
+    );
+    editor.registerCommand(
+      "%cmd.cancel_attach",
+      "%cmd.cancel_attach_desc",
+      "devcontainer_cancel_attach",
+      null,
+    );
+  }
 }
 
 // =============================================================================

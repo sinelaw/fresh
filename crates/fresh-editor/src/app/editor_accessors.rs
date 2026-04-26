@@ -496,7 +496,20 @@ impl Editor {
             lsp.set_long_running_spawner(self.authority.long_running_spawner.clone());
         }
         #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
+        {
+            self.update_plugin_state_snapshot();
+            // Notify plugins so they can re-register state-gated
+            // commands (e.g. devcontainer `Attach` only when not
+            // attached). Production transitions also trigger a full
+            // editor restart that re-runs plugin init, but firing
+            // here keeps in-process transitions and the test harness
+            // (which simulates the restart inline) consistent.
+            let label = self.authority.display_label.clone();
+            self.plugin_manager.run_hook(
+                "authority_changed",
+                crate::services::plugins::hooks::HookArgs::AuthorityChanged { label },
+            );
+        }
     }
 
     /// Read-only access to the active authority.

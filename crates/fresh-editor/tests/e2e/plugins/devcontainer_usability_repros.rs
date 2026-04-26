@@ -377,6 +377,17 @@ fn palette_attach_command_hidden_when_already_attached() {
     harness.tick_and_render().unwrap();
 
     attach_via_fake(&mut harness);
+    // The plugin reacts to `set_boot_authority` via the
+    // `authority_changed` hook; that's a fire-and-forget message,
+    // so we tick the harness until the registry reflects the
+    // unregister side-effect (or time out so a real regression
+    // surfaces as a clear failure).
+    harness
+        .wait_until(|h| {
+            let reg = h.editor().command_registry().read().unwrap();
+            !reg.get_all().iter().any(|c| c.name == "%cmd.attach")
+        })
+        .unwrap();
 
     let reg = harness.editor().command_registry().read().unwrap();
     let attach_visible = reg

@@ -124,6 +124,18 @@ pub enum HookArgs {
     /// restored, and the active buffer exists. Design §3.3 (phase 3).
     Ready,
 
+    /// The editor's active authority changed (e.g. local → container,
+    /// container → local). Fires after the new authority is in place
+    /// and the plugin state snapshot has been refreshed, so handlers
+    /// can read the new label via `editor.getAuthorityLabel()`.
+    /// Plugins use this to re-register state-dependent commands
+    /// that should only appear in one authority mode (e.g. dev
+    /// container `Detach` only when attached). In production a
+    /// transition triggers a full editor restart that re-runs plugin
+    /// init from scratch; this hook lets plugins react inline
+    /// without that, which keeps the harness in sync too.
+    AuthorityChanged { label: String },
+
     /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
     RenderStart { buffer_id: BufferId },
 
@@ -561,6 +573,9 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
         }
         HookArgs::Ready => {
             serde_json::json!({})
+        }
+        HookArgs::AuthorityChanged { label } => {
+            serde_json::json!({ "label": label })
         }
         HookArgs::PromptChanged { prompt_type, input } => {
             serde_json::json!({
