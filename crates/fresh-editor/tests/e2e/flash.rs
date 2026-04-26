@@ -8,15 +8,22 @@
 //! API #1 (`editor.getNextKey()`) when used by a plugin that does
 //! NOT also use `defineMode` bindings.
 
-use crate::common::fixtures::TestFixture;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
+use std::path::PathBuf;
 
 /// Build a harness with the `flash` plugin loaded into an isolated
-/// per-test project directory.
-fn flash_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir) {
+/// per-test project directory.  Returns the harness, the TempDir
+/// guard (must outlive the harness), and the project root path —
+/// callers should put any test fixtures **under that root** so that
+/// the editor displays them with short relative paths in the status
+/// bar.  Long absolute paths (like macOS `/private/var/folders/…`
+/// temp paths) push the rest of the status bar off the visible
+/// area, including the plugin's own `Flash[…]` text the tests wait
+/// on.
+fn flash_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempDir, PathBuf) {
     init_tracing_from_env();
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
@@ -31,10 +38,20 @@ fn flash_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempD
         width,
         height,
         Default::default(),
-        project_root,
+        project_root.clone(),
     )
     .unwrap();
-    (harness, temp_dir)
+    (harness, temp_dir, project_root)
+}
+
+/// Write `content` to `name` inside the harness project root and
+/// return the resulting path.  Use this in place of
+/// `TestFixture::new` so the file lives **under** the editor's
+/// working directory and renders with a short relative path.
+fn write_fixture(project_root: &std::path::Path, name: &str, content: &str) -> PathBuf {
+    let path = project_root.join(name);
+    fs::write(&path, content).unwrap();
+    path
 }
 
 /// Open the command palette, type `Flash: Jump`, press Enter, and
@@ -92,9 +109,13 @@ fn flash_jumps_to_label() {
     // the assertion screen-only (CONTRIBUTING rule #2), we then
     // insert a marker character and observe where it lands in the
     // rendered buffer.
-    let (mut harness, _temp) = flash_harness(120, 24);
-    let fixture = TestFixture::new("test.txt", "hello world\nhello there\nhello again\n").unwrap();
-    harness.open_file(&fixture.path).unwrap();
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "hello world\nhello there\nhello again\n",
+    );
+    harness.open_file(&path).unwrap();
     harness.render().unwrap();
 
     arm_flash(&mut harness);
@@ -123,9 +144,13 @@ fn flash_jumps_to_label() {
 
 #[test]
 fn flash_escape_cancels_no_movement() {
-    let (mut harness, _temp) = flash_harness(120, 24);
-    let fixture = TestFixture::new("test.txt", "hello world\nhello there\nhello again\n").unwrap();
-    harness.open_file(&fixture.path).unwrap();
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "hello world\nhello there\nhello again\n",
+    );
+    harness.open_file(&path).unwrap();
     harness.render().unwrap();
 
     arm_flash(&mut harness);
@@ -152,9 +177,13 @@ fn flash_backspace_shrinks_pattern() {
     // After Backspace the prior label set should be re-assigned.
     // Verify by typing a too-narrow pattern first ("there"), then
     // Backspacing back to a multi-match prefix and pressing a label.
-    let (mut harness, _temp) = flash_harness(120, 24);
-    let fixture = TestFixture::new("test.txt", "hello world\nhello there\nhello again\n").unwrap();
-    harness.open_file(&fixture.path).unwrap();
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "hello world\nhello there\nhello again\n",
+    );
+    harness.open_file(&path).unwrap();
     harness.render().unwrap();
 
     arm_flash(&mut harness);
@@ -207,9 +236,13 @@ fn flash_backspace_shrinks_pattern() {
 fn flash_label_substitutes_rendered_glyph() {
     // Same buffer shape as `flash_jumps_to_label` so the harness
     // setup that's already known to work doesn't surprise us.
-    let (mut harness, _temp) = flash_harness(120, 24);
-    let fixture = TestFixture::new("test.txt", "hello world\nhello there\nhello again\n").unwrap();
-    harness.open_file(&fixture.path).unwrap();
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "hello world\nhello there\nhello again\n",
+    );
+    harness.open_file(&path).unwrap();
     harness.render().unwrap();
 
     arm_flash(&mut harness);
@@ -273,13 +306,13 @@ fn flash_jumps_across_splits() {
     // each split.  The active split's match sorts first (label "a"),
     // the other split's match second (label "s").  Pressing "s" must
     // (a) focus the other split and (b) place the cursor on its match.
-    let (mut harness, _temp) = flash_harness(120, 30);
+    let (mut harness, _temp, project_root) = flash_harness(120, 30);
 
-    let temp_files = tempfile::TempDir::new().unwrap();
-    let f1 = temp_files.path().join("left.txt");
-    let f2 = temp_files.path().join("right.txt");
-    fs::write(&f1, "alpha left side\n").unwrap();
-    fs::write(&f2, "alpha right side\n").unwrap();
+    // Place both files **under** the harness project root so the
+    // editor renders short relative paths (`left.txt` / `right.txt`)
+    // in the status bar.  See the comment on `flash_harness`.
+    let f1 = write_fixture(&project_root, "left.txt", "alpha left side\n");
+    let f2 = write_fixture(&project_root, "right.txt", "alpha right side\n");
 
     // Open left file in initial split, then create a vertical split
     // and open right file in the new (active) split.
@@ -345,9 +378,13 @@ fn flash_jumps_across_splits() {
 
 #[test]
 fn flash_enter_jumps_to_closest() {
-    let (mut harness, _temp) = flash_harness(120, 24);
-    let fixture = TestFixture::new("test.txt", "hello world\nhello there\nhello again\n").unwrap();
-    harness.open_file(&fixture.path).unwrap();
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "hello world\nhello there\nhello again\n",
+    );
+    harness.open_file(&path).unwrap();
     harness.render().unwrap();
 
     arm_flash(&mut harness);
