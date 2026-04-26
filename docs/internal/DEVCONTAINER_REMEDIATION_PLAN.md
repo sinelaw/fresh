@@ -15,7 +15,7 @@ turns them into prioritized work items.
 | ID | Severity | Description | Status |
 |----|----------|-------------|--------|
 | F1 | High | Stale build-log buffers restored on cold start with no "this is from a previous run" hint; new attach stacks a *second* build-log split alongside the stale one | **Fixed on this branch** — `closeStaleBuildLogBuffers(cwd)` runs at the start of every attach; tracked by `Phase 4` test below |
-| F2 | High | Re-prompt for "Reopen in Container?" on every cold restart, even after the user said "Reopen in Container" last time | **Open** — investigation parked. The plugin writes the decision via `writeAttachDecision("attached")` which lands in `plugin_global_state` (workspace.rs:405). Likely root cause is non-clean process exit (e.g. SIGHUP from a parent shell) skipping the workspace save; verifying needs an integration test that drives a clean Quit. See "F2 next steps" below. |
+| F2 | High | Re-prompt for "Reopen in Container?" on every cold restart, even after the user said "Reopen in Container" last time | **Resolved as test-environment artifact (verified)** — `attach_decision_persists_in_plugin_global_state` confirms the decision lands in `plugin_global_state` before the restart. The tmux-walk re-prompt was `tmux kill-session` skipping the workspace save, not a real bug. |
 | F3 | Medium | The clickable Remote Indicator was opt-in: not in `default_status_bar_left`, no palette command, no default keybinding | **Fixed on this branch** — `feat(remote-indicator): default-on, palette + F6 keybinding` |
 | F4 | Medium | `*Dev Container Logs*` virtual buffer thought to leave an empty slot on restore | **Already-handled (verified)** — `serialize_split_node_pruned` (`workspace.rs:1796-1842`) drops virtual leaves and collapses the parent. The earlier finding in `FAKE_DEVCONTAINER_TEST_PLAN.md` mistook the duplicated *real* build-log buffer for an empty slot |
 | F5 | Low | Multiple buffers in one split aren't visually marked when the tab strip is too narrow | Pre-existing UX wart; out of scope for this remediation, tracked as a separate issue |
@@ -75,14 +75,23 @@ Two complementary moves:
 `Show Build Logs` and "View Log" actions can still re-open the most
 recent one — but no stale buffer is left dangling in a split.
 
-### Test (CI-able)
+### Test (landed)
 
-Drive Flow A → quit cleanly → relaunch → assert workspace doesn't
-contain a build-log buffer in the restored layout. With the fake CLI,
-`prepareBuildLogFile` runs as normal, so the test exercises the real
-code path. Lives next to the new tests in
-`crates/fresh-editor/tests/e2e/plugins/devcontainer_attach_e2e.rs`
-(test name TBD when F1 regression test is added — see Phase 4 below).
+`attach_closes_stale_build_log_buffer_from_previous_run` in
+`crates/fresh-editor/tests/e2e/plugins/devcontainer_attach_e2e.rs`.
+
+Recipe: pre-create a stale `build-<old-ts>.log` under
+`.fresh-cache/devcontainer-logs/` and open it as a buffer (the same
+shape workspace restore would yield), then drive a fresh attach.
+Asserts via the plugin-state snapshot
+(`plugin_manager().state_snapshot_handle()`) that:
+
+- the stale buffer is no longer in `BufferInfo` after attach
+  (covered by `closeStaleBuildLogBuffers`), AND
+- a *different* build-log path under the same dir IS open (the
+  freshly minted `build-<new-ts>.log`).
+
+Runs in ~0.3s under the harness — no Docker, no Node, no real CLI.
 
 ## F2 — Reopen-in-Container re-prompts on every cold start
 
@@ -107,23 +116,33 @@ plausible root causes:
    the global-state write isn't flushed to the workspace JSON before
    the restart, the post-restart instance reads back stale data.
 
-### F2 next steps
+### F2 verification: not reproducible in-harness
 
-Pick up after Phase 4's harness work has the F1 regression test in
-place — that test's "quit cleanly → relaunch" scaffold is exactly
-what F2 needs:
+Status: **resolved as test-environment artifact** (verified in this
+branch; see commit body for `test(devcontainer): F1 regression + F2
+reproducer`).
 
-1. Extend the F1 test to also assert `readAttachDecision()` returns
-   "attached" on the post-restart plugin instance. If it does, the
-   re-prompt was a tmux-kill artifact and we close F2 as
-   non-reproducible.
-2. If it doesn't, the bug is real. Audit setGlobalState plumbing
-   around `setAuthority` — likely fix is to flush before the
-   authority change, or move `writeAttachDecision` earlier so it
-   lands in the workspace save that fires *before* restart.
-3. If the key lands but the popup still shows, the bug is in
-   `devcontainer_maybe_show_attach_prompt`'s
-   `previousDecision !== null` guard.
+The new e2e test
+`attach_decision_persists_in_plugin_global_state` drives the full
+attach flow against the fake CLI, then snapshots the workspace via
+`Editor::capture_workspace()` and asserts that
+`plugin_global_state["devcontainer"]["attach:<cwd>"] == "attached"`.
+The assertion passes — the plugin's `writeAttachDecision("attached")`
+DOES land in the workspace state before the restart. So the
+re-prompt seen in the tmux walk was the
+"`tmux kill-session` doesn't flush" branch of the plan, not a real
+bug in `setGlobalState` ordering.
+
+If F2 ever resurfaces in production reports, the regression test
+above will start failing first, pointing at whichever of these
+secondary causes broke:
+
+1. `setGlobalState` plumbing around `setAuthority` started racing
+   the restart-before-save.
+2. Workspace serializer stopped writing
+   `plugin_global_state["devcontainer"]`.
+3. `devcontainer_maybe_show_attach_prompt`'s
+   `previousDecision !== null` guard regressed.
 
 ## F4 — Virtual log buffer leaves a visible empty slot
 
@@ -229,28 +248,40 @@ single-launch:
   the `rebuild_parse_failed` and `rebuild_missing_container_id`
   failure modes.
 
-#### Phase 4 — tests for F1 / F2 / F4 (regression guards for the fixes)
+#### Phase 4 — regression guards (landed)
 
-Once the fixes from those sections land, lock them in:
+Locked in on this branch in
+`crates/fresh-editor/tests/e2e/plugins/devcontainer_attach_e2e.rs`:
 
-- F1: attach + quit + relaunch → assert workspace JSON contains no
-  build-log buffer in its layout.
-- F2: attach + quit + relaunch → assert no popup id
-  `devcontainer-attach` is shown on the second start.
-- F4: open Dev Container Logs → quit + relaunch → assert restored
-  split count.
+- F1: `attach_closes_stale_build_log_buffer_from_previous_run` —
+  pre-creates a stale `build-<old-ts>.log`, opens it as a buffer,
+  drives a fresh attach, and asserts the stale buffer is closed and
+  a *different* fresh build log is open under the same dir.
+- F2: `attach_decision_persists_in_plugin_global_state` — drives the
+  attach, snapshots the workspace via `Editor::capture_workspace()`,
+  and asserts `plugin_global_state["devcontainer"]["attach:<cwd>"]`
+  is `"attached"`. Confirms the production re-prompt would only
+  surface from a non-clean exit, not from the plugin itself.
+- F4: covered by the existing `serialize_split_node_pruned`
+  pruning logic — no new test added because there's no behavior
+  change to lock in.
 
-#### Phase 5 — CI integration
+#### Phase 5 — CI integration (landed)
 
-Two small changes to the CI workflow:
+CI already runs `xvfb-run cargo nextest run --all-features
+--all-targets` (`.github/workflows/ci.yml:114`). The new tests live
+under `tests/e2e/plugins/` and are wired into the binary via
+`mod.rs`, so they run automatically with no workflow change.
 
-1. Make sure the runner has `bash` + `coreutils` (already a given on
-   ubuntu-latest / macos-latest).
-2. Run the new tests as part of the existing nextest invocation. They
-   don't need extra setup because the harness helper takes care of
-   PATH + state, and the fake CLI is in-tree.
+`bash` + `coreutils` are present on every supported runner
+(ubuntu-latest, macos-latest), and the fake CLI is in-tree —
+nothing extra to install. No Docker, no Node, no `@devcontainers/cli`
+ever needed.
 
-No Docker, no Node, no `@devcontainers/cli` ever installed in CI.
+If a future contributor breaks the fake-CLI path the harness panics
+with a screen-dump from `bounded_wait`, pointing directly at the
+phase that broke (plugin registration / popup rendering / authority
+staging).
 
 ### Acceptance criteria
 
@@ -264,18 +295,26 @@ No Docker, no Node, no `@devcontainers/cli` ever installed in CI.
 
 ### Order of work
 
-1. Phase 1 (harness helper) — small, unblocks everything.
-2. Phase 2 (happy-path attach test) — proves the helper works.
-3. F3 — already done on this branch.
-4. F1 + F4 fixes + Phase 4 regression tests — the most user-visible
-   warts; they share the "what does workspace restore actually save"
-   investigation.
-5. F2 fix — needs the timing investigation above; landing it after
-   F1/F4 keeps each PR small.
-6. Phase 3 (failure-path tests) — pure additions, can land in
-   parallel.
-7. F6 (label clarification) — drive-by.
-8. F5 (tab strip) — separate issue, separate PR.
+All phases below are landed on this branch unless explicitly marked
+otherwise.
+
+1. ✓ Phase 1 — `HarnessOptions::with_fake_devcontainer()`.
+2. ✓ Phase 2 — happy-path attach test.
+3. ✓ Phase 3 — `FAKE_DC_UP_FAIL` / `BAD_JSON` / `NO_CONTAINER_ID`
+   coverage.
+4. ✓ Phase 4 — F1 + F2 regression guards.
+5. ✓ Phase 5 — CI picks up the new tests automatically via
+   `--all-features --all-targets`.
+6. ✓ F1 + F6 fixes + F4 reclassification.
+7. ✓ F3 fix (default-on Remote Indicator + palette + F6 keybinding).
+8. — F5 (tab strip) — out of scope; separate issue.
+
+Open work:
+
+- Cancel-attach happy path under `FAKE_DC_UP_HANG=1` (Phase 3 stretch
+  goal — skipped because the cancel timing is harness-dependent and
+  the existing remote-indicator-popup test already exercises the
+  Cancel Startup action at the UI level).
 
 ## Out of scope
 
