@@ -23,8 +23,8 @@ use fresh_core::api::{
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
     PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SpawnResult,
-    TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
-    ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    SplitSnapshot, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
+    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -49,6 +49,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "CursorInfo" => Some(CursorInfo::decl(&cfg)),
         "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
         "KeyEventPayload" => Some(KeyEventPayload::decl(&cfg)),
+        "SplitSnapshot" => Some(SplitSnapshot::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
         "BufferSavedDiff" => Some(BufferSavedDiff::decl(&cfg)),
         "LayoutHints" => Some(LayoutHints::decl(&cfg)),
@@ -198,6 +199,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCreateCompositeBufferOptions", // Options for createCompositeBuffer
     "ViewportInfo",                   // Used by plugins for viewport queries
     "KeyEventPayload",                // Used by editor.getNextKey()
+    "SplitSnapshot",                  // Used by editor.listSplits()
     "LayoutHints",                    // Used by plugins for view transforms
     "ViewTokenWire",                  // Used by plugins for view transforms
     "ViewTokenWireKind",              // Used by ViewTokenWire
@@ -451,6 +453,7 @@ mod tests {
             "CursorInfo",
             "ViewportInfo",
             "KeyEventPayload",
+            "SplitSnapshot",
             "ActionSpec",
             "BufferSavedDiff",
             "LayoutHints",

@@ -220,6 +220,33 @@ impl Editor {
                 snapshot.selected_text = None;
             }
 
+            // Per-split snapshot — every split's active buffer + viewport
+            // so plugins (multi-split flash labels, sync decorations,
+            // etc.) can iterate every visible buffer instead of only the
+            // active one.
+            snapshot.splits.clear();
+            for (leaf_id, vs) in &self.split_view_states {
+                let buf_id = vs.active_buffer;
+                let top_line = self.buffers.get(&buf_id).and_then(|state| {
+                    if state.buffer.line_count().is_some() {
+                        Some(state.buffer.get_line_number(vs.viewport.top_byte))
+                    } else {
+                        None
+                    }
+                });
+                snapshot.splits.push(fresh_core::api::SplitSnapshot {
+                    split_id: leaf_id.0 .0,
+                    buffer_id: buf_id,
+                    viewport: ViewportInfo {
+                        top_byte: vs.viewport.top_byte,
+                        top_line,
+                        left_column: vs.viewport.left_column,
+                        width: vs.viewport.width,
+                        height: vs.viewport.height,
+                    },
+                });
+            }
+
             // Update clipboard (provide internal clipboard content to plugins)
             snapshot.clipboard = self.clipboard.get_internal().to_string();
 

@@ -465,6 +465,24 @@ pub struct ViewportInfo {
     pub height: u16,
 }
 
+/// Per-split state surfaced to plugins via `editor.listSplits()`.
+///
+/// Plugins that need to operate on every visible buffer (multi-split
+/// flash labels, syncing decorations across panes, ...) can iterate
+/// this list rather than only seeing the active split's `getViewport()`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct SplitSnapshot {
+    /// Stable split identifier; matches the values used by
+    /// `setSplitBuffer`, `focusSplit`, `getSplitByLabel`, etc.
+    pub split_id: usize,
+    /// Buffer currently shown in this split.
+    pub buffer_id: BufferId,
+    /// Viewport (top byte / dimensions) for this split's active buffer.
+    pub viewport: ViewportInfo,
+}
+
 /// Payload delivered to a plugin's `editor.getNextKey()` Promise when
 /// the next keypress arrives in the editor's input dispatch.
 ///
@@ -811,6 +829,10 @@ pub struct EditorStateSnapshot {
     pub all_cursors: Vec<CursorInfo>,
     /// Viewport information for the active buffer
     pub viewport: Option<ViewportInfo>,
+    /// Per-split snapshots: split id, buffer shown, viewport.
+    /// Includes the active split.  Order is unspecified.
+    #[serde(default)]
+    pub splits: Vec<SplitSnapshot>,
     /// Cursor positions per buffer (for buffers other than active)
     pub buffer_cursor_positions: HashMap<BufferId, usize>,
     /// Text properties per buffer (for virtual buffers with properties)
@@ -917,6 +939,7 @@ impl EditorStateSnapshot {
             primary_cursor: None,
             all_cursors: Vec::new(),
             viewport: None,
+            splits: Vec::new(),
             buffer_cursor_positions: HashMap::new(),
             buffer_text_properties: HashMap::new(),
             selected_text: None,

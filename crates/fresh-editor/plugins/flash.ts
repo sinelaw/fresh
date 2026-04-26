@@ -6,15 +6,14 @@ const editor = getEditor();
  *
  * Label-based jump navigation, ported in spirit from flash.nvim.
  *
- *   1. User invokes the `Flash: Jump` command (Cmd+P → "Flash: Jump",
- *      or a custom binding to action `flash_jump`).
+ *   1. User invokes the `Flash: Jump` command.
  *   2. Each character typed extends a literal-substring pattern. Every
- *      visible match in the active buffer's viewport is highlighted; a
- *      single-letter label is rendered after each match.
- *   3. Pressing a label moves the cursor to that match.  Pressing
- *      Backspace shrinks the pattern.  Pressing Enter jumps to the
- *      closest match.  Pressing Escape (or any non-character key)
- *      cancels and restores the prior cursor and mode.
+ *      visible match across **every split** gets a single-letter label.
+ *   3. Pressing a label moves the cursor to that match.  If the match
+ *      lives in a different split, focus is transferred to that split
+ *      first.  Backspace shrinks the pattern; Enter jumps to the
+ *      closest match in the active split; Escape (or any non-character
+ *      key) cancels and restores the prior cursor and mode.
  *
  * Labels are picked so that no label letter equals the next character
  * after any visible match — this is the flash.nvim "skip" rule and
@@ -31,33 +30,49 @@ const VTEXT_PREFIX = "flash-";
 const LABEL_POOL = "asdfghjklqwertyuiopzxcvbnm";
 
 interface Match {
-  /** Byte offset where the match starts in the buffer. */
+  /** Byte offset where the match starts in its buffer. */
   start: number;
   /** Byte offset just past the end of the match. */
   end: number;
-  /** Char index of the first match char in the viewport text snapshot. */
+  /** Char index of the first match char in the split's viewport text. */
   charIdx: number;
-  /** Char index just past the end of the match in the viewport text. */
+  /** Char index just past the end of the match in the split's viewport text. */
   charEnd: number;
+  /** The buffer this match lives in. */
+  bufferId: number;
+  /** The split currently displaying that buffer. */
+  splitId: number;
   /** Assigned label letter, or undefined when out of label pool. */
   label?: string;
 }
 
+interface SplitView {
+  splitId: number;
+  bufferId: number;
+  snap: ViewportSnapshot;
+}
+
 interface FlashState {
   active: boolean;
-  bufferId: number;
   pattern: string;
   matches: Match[];
+  /** Buffers we've drawn decorations on — track for cleanup. */
+  touchedBuffers: Set<number>;
+  /** Active-split's primary cursor at activation, used as distance origin. */
   startCursor: number;
+  startBufferId: number;
+  startSplitId: number;
   priorMode: string | null;
 }
 
 const state: FlashState = {
   active: false,
-  bufferId: 0,
   pattern: "",
   matches: [],
+  touchedBuffers: new Set<number>(),
   startCursor: 0,
+  startBufferId: 0,
+  startSplitId: 0,
   priorMode: null,
 };
 
@@ -92,7 +107,7 @@ function buildByteIndex(text: string): number[] {
 }
 
 // =============================================================================
-// Viewport read
+// Viewport read (one snapshot per split)
 // =============================================================================
 
 interface ViewportSnapshot {
@@ -101,37 +116,57 @@ interface ViewportSnapshot {
   byteAt: number[];
 }
 
-async function readViewport(bufferId: number): Promise<ViewportSnapshot | null> {
-  const vp = editor.getViewport();
-  if (!vp) return null;
+async function readSplitViewport(
+  bufferId: number,
+  topByte: number,
+  width: number,
+  height: number,
+): Promise<ViewportSnapshot | null> {
   const bufLen = editor.getBufferLength(bufferId);
-  // We don't know exact end-of-viewport byte offset without an extra
-  // round-trip, so we over-read by a generous margin (height × (width+4),
-  // capped at buffer length).  The over-read is harmless: matches outside
-  // the actual viewport just render off-screen and the next clearNamespace
-  // wipes them.
-  const estEnd = Math.min(bufLen, vp.topByte + (vp.height + 2) * (vp.width + 4));
-  if (estEnd <= vp.topByte) return null;
-  const text = await editor.getBufferText(bufferId, vp.topByte, estEnd);
-  return { text, topByte: vp.topByte, byteAt: buildByteIndex(text) };
+  // Over-read by a generous margin (height × (width+4)), capped at
+  // buffer length.  Over-read is harmless: matches outside the actual
+  // viewport just render off-screen and clearNamespace wipes them.
+  const estEnd = Math.min(bufLen, topByte + (height + 2) * (width + 4));
+  if (estEnd <= topByte) return null;
+  const text = await editor.getBufferText(bufferId, topByte, estEnd);
+  return { text, topByte, byteAt: buildByteIndex(text) };
+}
+
+async function readAllSplits(): Promise<SplitView[]> {
+  const splits = editor.listSplits();
+  const out: SplitView[] = [];
+  for (const s of splits) {
+    const snap = await readSplitViewport(
+      s.bufferId,
+      s.viewport.topByte,
+      s.viewport.width,
+      s.viewport.height,
+    );
+    if (snap) {
+      out.push({ splitId: s.splitId, bufferId: s.bufferId, snap });
+    }
+  }
+  return out;
 }
 
 // =============================================================================
-// Matching
+// Matching (across every split)
 // =============================================================================
 
-function findMatches(snap: ViewportSnapshot, pattern: string): Match[] {
+function findMatchesInSplit(view: SplitView, pattern: string): Match[] {
   if (!pattern) return [];
   const out: Match[] = [];
   let from = 0;
   while (true) {
-    const i = snap.text.indexOf(pattern, from);
+    const i = view.snap.text.indexOf(pattern, from);
     if (i < 0) break;
     out.push({
-      start: snap.topByte + snap.byteAt[i],
-      end: snap.topByte + snap.byteAt[i + pattern.length],
+      start: view.snap.topByte + view.snap.byteAt[i],
+      end: view.snap.topByte + view.snap.byteAt[i + pattern.length],
       charIdx: i,
       charEnd: i + pattern.length,
+      bufferId: view.bufferId,
+      splitId: view.splitId,
     });
     // Allow overlapping advances by one char so e.g. pattern "aa" in
     // "aaa" produces two matches; flash.nvim does the same.
@@ -140,29 +175,37 @@ function findMatches(snap: ViewportSnapshot, pattern: string): Match[] {
   return out;
 }
 
+function findMatches(views: SplitView[], pattern: string): Match[] {
+  const all: Match[] = [];
+  for (const v of views) {
+    for (const m of findMatchesInSplit(v, pattern)) {
+      all.push(m);
+    }
+  }
+  return all;
+}
+
 // =============================================================================
 // Labeler — port of flash.nvim labeler.lua
 // =============================================================================
 
-// Sort by byte distance from cursor (closest first).
-function sortByDistance(matches: Match[], cursor: number): Match[] {
-  return [...matches].sort(
-    (a, b) => Math.abs(a.start - cursor) - Math.abs(b.start - cursor),
-  );
-}
-
 // Build the set of label letters to skip: every char that appears
 // immediately after a visible match (and so could be a valid pattern
 // extension).  Pressing such a letter must be unambiguous; if it is
-// also a label, ambiguity.  Remove from the pool.
-function buildSkipSet(matches: Match[], text: string): Set<string> {
+// also a label, ambiguity.  Remove from the pool.  Walks every split's
+// snapshot.
+function buildSkipSet(matches: Match[], views: SplitView[]): Set<string> {
+  const byBufferToText = new Map<number, string>();
+  for (const v of views) byBufferToText.set(v.bufferId, v.snap.text);
   const skip = new Set<string>();
   for (const m of matches) {
+    const text = byBufferToText.get(m.bufferId);
+    if (!text) continue;
     if (m.charEnd < text.length) {
       const next = text.charAt(m.charEnd);
       // Pool is lowercase only.  Skip the next-char and its lower-case
-      // form; this is the conservative "case-sensitive labels never
-      // collide with case-insensitive pattern extension" rule.
+      // form; the conservative "case-sensitive labels never collide
+      // with case-insensitive pattern extension" rule.
       skip.add(next);
       skip.add(next.toLowerCase());
     }
@@ -170,17 +213,42 @@ function buildSkipSet(matches: Match[], text: string): Set<string> {
   return skip;
 }
 
+// Sort matches with active-split-first ordering.  Within the active
+// split, sort by byte distance from the start cursor (mimics
+// flash.nvim's `distance = true`).  Other splits go after, ordered by
+// byte position.  Ties are broken by start byte for determinism.
+function sortMatches(
+  matches: Match[],
+  activeSplitId: number,
+  startCursor: number,
+): Match[] {
+  return [...matches].sort((a, b) => {
+    const aActive = a.splitId === activeSplitId ? 0 : 1;
+    const bActive = b.splitId === activeSplitId ? 0 : 1;
+    if (aActive !== bActive) return aActive - bActive;
+    if (aActive === 0) {
+      const da = Math.abs(a.start - startCursor);
+      const db = Math.abs(b.start - startCursor);
+      if (da !== db) return da - db;
+    } else {
+      if (a.splitId !== b.splitId) return a.splitId - b.splitId;
+    }
+    return a.start - b.start;
+  });
+}
+
 function assignLabels(
   matches: Match[],
-  snap: ViewportSnapshot,
-  cursor: number,
+  views: SplitView[],
+  startCursor: number,
+  startSplitId: number,
 ): Match[] {
   if (matches.length === 0) return matches;
-  const skip = buildSkipSet(matches, snap.text);
+  const skip = buildSkipSet(matches, views);
   const pool: string[] = [];
   for (const c of LABEL_POOL) if (!skip.has(c)) pool.push(c);
 
-  const sorted = sortByDistance(matches, cursor);
+  const sorted = sortMatches(matches, startSplitId, startCursor);
   for (let i = 0; i < sorted.length && i < pool.length; i++) {
     sorted[i].label = pool[i];
   }
@@ -191,15 +259,21 @@ function assignLabels(
 // Render
 // =============================================================================
 
-function clearAll(bufferId: number): void {
-  editor.clearNamespace(bufferId, NS_MATCH);
-  editor.removeVirtualTextsByPrefix(bufferId, VTEXT_PREFIX);
+function clearTouched(): void {
+  for (const buf of state.touchedBuffers) {
+    editor.clearNamespace(buf, NS_MATCH);
+    editor.removeVirtualTextsByPrefix(buf, VTEXT_PREFIX);
+  }
+  state.touchedBuffers.clear();
 }
 
-function redraw(bufferId: number, matches: Match[]): void {
-  clearAll(bufferId);
+function redraw(matches: Match[]): void {
+  // Clear last frame's decorations on every buffer we touched, then
+  // repaint.  Flash never accumulates state across iterations.
+  clearTouched();
   for (const m of matches) {
-    editor.addOverlay(bufferId, NS_MATCH, m.start, m.end, {
+    state.touchedBuffers.add(m.bufferId);
+    editor.addOverlay(m.bufferId, NS_MATCH, m.start, m.end, {
       bg: "search.match_bg",
       fg: "search.match_fg",
       bold: true,
@@ -209,13 +283,12 @@ function redraw(bufferId: number, matches: Match[]): void {
       // Gold-on-dark is legible against typical themes.
       //
       // Anchor the label at `position = m.end` with `before = true`.
-      // That renders in the gap immediately after the match (i.e.
-      // BeforeChar of the first char past the match).  Using
-      // `before = false` here would render *after* that next char,
-      // off-by-one.
+      // Renders in the gap immediately after the match (BeforeChar of
+      // the first char past the match).  `before = false` would
+      // render *after* that next char, off-by-one.
       editor.addVirtualText(
-        bufferId,
-        VTEXT_PREFIX + String(m.start),
+        m.bufferId,
+        VTEXT_PREFIX + String(m.bufferId) + ":" + String(m.start),
         m.end,
         m.label,
         255, 215, 0,
@@ -227,29 +300,42 @@ function redraw(bufferId: number, matches: Match[]): void {
 }
 
 // =============================================================================
+// Jump
+// =============================================================================
+
+function jumpTo(m: Match): void {
+  if (m.splitId !== state.startSplitId) {
+    editor.focusSplit(m.splitId);
+  }
+  editor.setBufferCursor(m.bufferId, m.start);
+}
+
+// =============================================================================
 // Main loop
 // =============================================================================
 
 async function flashJump(): Promise<void> {
   if (state.active) return;
 
-  const bufferId = editor.getActiveBufferId();
-  if (!bufferId) return;
+  const startBufferId = editor.getActiveBufferId();
+  if (!startBufferId) return;
   const startCursor = editor.getCursorPosition();
   if (startCursor === null) return;
+  const startSplitId = editor.getActiveSplitId();
 
   state.active = true;
-  state.bufferId = bufferId;
+  state.startBufferId = startBufferId;
+  state.startSplitId = startSplitId;
   state.startCursor = startCursor;
   state.pattern = "";
   state.matches = [];
+  state.touchedBuffers = new Set<number>();
   state.priorMode = editor.getEditorMode();
 
   editor.setEditorMode("flash");
-  // Begin lossless key capture: any keys typed between two
-  // `getNextKey()` iterations (e.g. fast typing, paste-bursts, or
-  // held-key auto-repeat) are buffered in-order rather than falling
-  // through to the buffer.  Released in the `finally` below.
+  // Begin lossless key capture — keys typed between two `getNextKey()`
+  // iterations are buffered and replayed in order.  Released in the
+  // `finally` below.
   editor.beginKeyCapture();
   // Short status string — long enough to be informative, short
   // enough to survive status-bar truncation.  Includes the current
@@ -262,22 +348,25 @@ async function flashJump(): Promise<void> {
 
   try {
     while (true) {
-      const snap = await readViewport(bufferId);
-      if (!snap) break;
-
+      const views = await readAllSplits();
       state.matches = state.pattern
-        ? assignLabels(findMatches(snap, state.pattern), snap, state.startCursor)
+        ? assignLabels(
+            findMatches(views, state.pattern),
+            views,
+            state.startCursor,
+            state.startSplitId,
+          )
         : [];
-      redraw(bufferId, state.matches);
+      redraw(state.matches);
 
       const ev = await editor.getNextKey();
 
       if (ev.key === "escape") break;
 
       if (ev.key === "enter") {
-        // Jump to the closest (first) match if any.
+        // Jump to the first (closest, active-split-preferred) match.
         const target = state.matches[0];
-        if (target) editor.setBufferCursor(bufferId, target.start);
+        if (target) jumpTo(target);
         break;
       }
 
@@ -294,7 +383,7 @@ async function flashJump(): Promise<void> {
       if (ev.key.length === 1 && !ev.ctrl && !ev.alt && !ev.meta) {
         const hit = state.matches.find((m) => m.label === ev.key);
         if (hit) {
-          editor.setBufferCursor(bufferId, hit.start);
+          jumpTo(hit);
           break;
         }
         state.pattern += ev.key;
@@ -302,13 +391,13 @@ async function flashJump(): Promise<void> {
         continue;
       }
 
-      // Anything else (arrow keys, function keys, modified keys) ends the
-      // session without jumping — keeps the cursor at startCursor.
+      // Anything else (arrow keys, function keys, modified keys) ends
+      // the session without jumping — keeps the cursor at startCursor.
       break;
     }
   } finally {
     editor.endKeyCapture();
-    clearAll(bufferId);
+    clearTouched();
     editor.setEditorMode(state.priorMode);
     editor.setStatus("");
     state.active = false;
@@ -318,7 +407,7 @@ async function flashJump(): Promise<void> {
 registerHandler("flash_jump", flashJump);
 editor.registerCommand(
   "Flash: Jump",
-  "Jump to any visible match in the active buffer",
+  "Jump to any visible match across every split",
   "flash_jump",
   null,
 );

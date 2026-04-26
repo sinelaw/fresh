@@ -1228,6 +1228,23 @@ impl JsEditorApi {
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
+    /// List every split with its active buffer and viewport.
+    ///
+    /// Plugins that need to operate on every visible buffer
+    /// simultaneously (multi-split flash labels, syncing decorations
+    /// across panes, …) iterate this list rather than only seeing
+    /// `getViewport()`'s active-split data.  Order is unspecified.
+    #[plugin_api(ts_return = "SplitSnapshot[]")]
+    pub fn list_splits<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let splits = if let Ok(s) = self.state_snapshot.read() {
+            s.splits.clone()
+        } else {
+            Vec::new()
+        };
+        rquickjs_serde::to_value(ctx, &splits)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     /// Get the line number (0-indexed) of the primary cursor
     pub fn get_cursor_line(&self) -> u32 {
         // This would require line counting from the buffer

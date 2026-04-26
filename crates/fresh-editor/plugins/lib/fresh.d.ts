@@ -263,6 +263,21 @@ type KeyEventPayload = {
 	*/
 	meta: boolean;
 };
+type SplitSnapshot = {
+	/**
+	* Stable split identifier; matches the values used by
+	* `setSplitBuffer`, `focusSplit`, `getSplitByLabel`, etc.
+	*/
+	splitId: number;
+	/**
+	* Buffer currently shown in this split.
+	*/
+	bufferId: BufferId;
+	/**
+	* Viewport (top byte / dimensions) for this split's active buffer.
+	*/
+	viewport: ViewportInfo;
+};
 type LayoutHints = {
 	/**
 	* Optional compose width for centering/wrapping
@@ -1103,6 +1118,15 @@ interface EditorAPI {
 	* Get viewport info for active buffer
 	*/
 	getViewport(): ViewportInfo | null;
+	/**
+	* List every split with its active buffer and viewport.
+	* 
+	* Plugins that need to operate on every visible buffer
+	* simultaneously (multi-split flash labels, syncing decorations
+	* across panes, …) iterate this list rather than only seeing
+	* `getViewport()`'s active-split data.  Order is unspecified.
+	*/
+	listSplits(): SplitSnapshot[];
 	/**
 	* Get the line number (0-indexed) of the primary cursor
 	*/
