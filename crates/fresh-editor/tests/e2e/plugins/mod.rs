@@ -6,6 +6,7 @@ pub mod authority_snapshot;
 pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
 pub mod dashboard;
+pub mod devcontainer_attach_e2e;
 pub mod devcontainer_failed_attach_popup;
 pub mod devcontainer_ports_panel;
 pub mod devcontainer_run_lifecycle;

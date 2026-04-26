@@ -166,6 +166,9 @@ pub struct HarnessOptions {
     /// Defaults to false (uses empty registry for fast test startup).
     /// Set to true only for tests that need syntax highlighting or shebang detection.
     pub use_full_grammar_registry: bool,
+    /// Per-test fake-devcontainer state. Set by [`HarnessOptions::with_fake_devcontainer`];
+    /// moved into the harness on `create()` so the lock + tempdir live as long as the test.
+    pub fake_devcontainer: Option<FakeDevcontainerHandle>,
 }
 
 impl HarnessOptions {
@@ -183,6 +186,7 @@ impl HarnessOptions {
             filesystem: None,
             preserve_keybinding_map: false,
             use_full_grammar_registry: false,
+            fake_devcontainer: None,
         }
     }
 
@@ -256,6 +260,82 @@ impl HarnessOptions {
         self.use_full_grammar_registry = true;
         self
     }
+
+    /// Wire the test process so that `devcontainer` and `docker` resolve
+    /// to the in-tree fake CLIs at `scripts/fake-devcontainer/bin`. The
+    /// returned `HarnessOptions` carries a per-test state directory and
+    /// a process-global mutex guard so concurrent harness instances
+    /// don't clobber each other's `FAKE_DEVCONTAINER_STATE`.
+    ///
+    /// The fake state path is reachable via
+    /// [`EditorTestHarness::fake_devcontainer_state`].
+    ///
+    /// Sets `FAKE_DC_UP_DELAY_MS=0` so build-progress lines are emitted
+    /// without sleeps; tests that want to exercise streaming should
+    /// override the env var explicitly after this call.
+    pub fn with_fake_devcontainer(mut self) -> Self {
+        let fake_bin =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../scripts/fake-devcontainer/bin")
+                .canonicalize()
+                .expect(
+                    "scripts/fake-devcontainer/bin must exist relative to CARGO_MANIFEST_DIR",
+                );
+
+        let temp = TempDir::new().expect("tempdir for fake-devcontainer state");
+        let state_path = temp.path().to_path_buf();
+
+        // Serialize against other harness instances using the fake CLI:
+        // FAKE_DEVCONTAINER_STATE is process-global env, so a parallel
+        // test setting its own state would steal ours mid-run.
+        let guard = fake_devcontainer_lock()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+
+        // PATH prepend is idempotent — every harness call points at the
+        // same in-tree fake bin dir, so racing threads only ever
+        // converge on the same prefix.
+        let path = std::env::var("PATH").unwrap_or_default();
+        let already_on_path = path
+            .split(':')
+            .any(|p| std::path::Path::new(p) == fake_bin);
+        if !already_on_path {
+            std::env::set_var(
+                "PATH",
+                format!("{}:{}", fake_bin.display(), path),
+            );
+        }
+        std::env::set_var("FAKE_DEVCONTAINER_STATE", &state_path);
+        std::env::set_var("FAKE_DC_UP_DELAY_MS", "0");
+
+        self.fake_devcontainer = Some(FakeDevcontainerHandle {
+            _guard: guard,
+            _temp: temp,
+            state_path,
+        });
+        self
+    }
+}
+
+/// Lock that serializes harness instances using the fake devcontainer CLI.
+/// Held in `FakeDevcontainerHandle::_guard` for the lifetime of the test.
+fn fake_devcontainer_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+/// State directory + lock guard for a single harness's fake-devcontainer
+/// session. Kept inside `EditorTestHarness` so dropping the harness
+/// drops the guard (releasing the lock for the next test) and the
+/// tempdir (cleaning up state files).
+pub struct FakeDevcontainerHandle {
+    /// Held for the harness's lifetime so concurrent tests can't race
+    /// on the global `FAKE_DEVCONTAINER_STATE` env var.
+    _guard: std::sync::MutexGuard<'static, ()>,
+    /// Tempdir kept alive for the harness's lifetime.
+    _temp: TempDir,
+    /// Path to the fake's state directory (`<temp>/`).
+    pub state_path: PathBuf,
 }
 
 /// A wrapper that captures CrosstermBackend output for vt100 parsing
@@ -334,6 +414,11 @@ pub struct EditorTestHarness {
 
     /// Optional temp directory (kept alive for the duration of the test)
     _temp_dir: Option<TempDir>,
+
+    /// Optional fake-devcontainer state (kept alive for the duration
+    /// of the test). The `Drop` of this field releases the global lock
+    /// so the next test can claim it.
+    fake_devcontainer: Option<FakeDevcontainerHandle>,
 
     /// Optional metrics for slow filesystem backend
     fs_metrics: Option<Arc<BackendMetrics>>,
@@ -529,6 +614,7 @@ impl EditorTestHarness {
             editor,
             terminal,
             _temp_dir: temp_dir,
+            fake_devcontainer: options.fake_devcontainer,
             fs_metrics,
             _tokio_runtime: None,
             time_source: test_time_source,
@@ -690,6 +776,16 @@ impl EditorTestHarness {
         self._temp_dir
             .as_ref()
             .map(|d| d.path().join("project_root"))
+    }
+
+    /// Path to the per-test fake-devcontainer state directory, set up
+    /// by [`HarnessOptions::with_fake_devcontainer`]. Returns `None`
+    /// for harnesses that didn't opt into the fake CLI. Tests use this
+    /// to read `last_id`, container `logs` files, etc.
+    pub fn fake_devcontainer_state(&self) -> Option<&Path> {
+        self.fake_devcontainer
+            .as_ref()
+            .map(|h| h.state_path.as_path())
     }
 
     /// Get the recovery directory path for this test harness
