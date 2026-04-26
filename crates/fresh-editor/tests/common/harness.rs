@@ -168,6 +168,8 @@ pub struct HarnessOptions {
     pub use_full_grammar_registry: bool,
     /// Per-test fake-devcontainer state. Set by [`HarnessOptions::with_fake_devcontainer`];
     /// moved into the harness on `create()` so the lock + tempdir live as long as the test.
+    /// Unix-only: the fake CLI is a bash script that doesn't run on Windows.
+    #[cfg(unix)]
     pub fake_devcontainer: Option<FakeDevcontainerHandle>,
 }
 
@@ -186,6 +188,7 @@ impl HarnessOptions {
             filesystem: None,
             preserve_keybinding_map: false,
             use_full_grammar_registry: false,
+            #[cfg(unix)]
             fake_devcontainer: None,
         }
     }
@@ -273,6 +276,15 @@ impl HarnessOptions {
     /// Sets `FAKE_DC_UP_DELAY_MS=0` so build-progress lines are emitted
     /// without sleeps; tests that want to exercise streaming should
     /// override the env var explicitly after this call.
+    ///
+    /// Unix-only: the fake CLI is a bash script (`#!/usr/bin/env bash`)
+    /// that doesn't run on native Windows, and the PATH manipulation
+    /// below uses `:` as the separator. The test files that opt in
+    /// (`devcontainer_attach_e2e`, `devcontainer_spec_repros`,
+    /// `devcontainer_spec_conformance`) are gated to `cfg(unix)` in
+    /// `tests/e2e/plugins/mod.rs`, so this stays available everywhere
+    /// they compile.
+    #[cfg(unix)]
     pub fn with_fake_devcontainer(mut self) -> Self {
         let fake_bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../scripts/fake-devcontainer/bin")
@@ -311,6 +323,7 @@ impl HarnessOptions {
 
 /// Lock that serializes harness instances using the fake devcontainer CLI.
 /// Held in `FakeDevcontainerHandle::_guard` for the lifetime of the test.
+#[cfg(unix)]
 fn fake_devcontainer_lock() -> &'static std::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
@@ -320,6 +333,7 @@ fn fake_devcontainer_lock() -> &'static std::sync::Mutex<()> {
 /// session. Kept inside `EditorTestHarness` so dropping the harness
 /// drops the guard (releasing the lock for the next test) and the
 /// tempdir (cleaning up state files).
+#[cfg(unix)]
 pub struct FakeDevcontainerHandle {
     /// Held for the harness's lifetime so concurrent tests can't race
     /// on the global `FAKE_DEVCONTAINER_STATE` env var.
@@ -410,6 +424,8 @@ pub struct EditorTestHarness {
     /// Optional fake-devcontainer state (kept alive for the duration
     /// of the test). The `Drop` of this field releases the global lock
     /// so the next test can claim it.
+    /// Unix-only: see [`HarnessOptions::with_fake_devcontainer`].
+    #[cfg(unix)]
     fake_devcontainer: Option<FakeDevcontainerHandle>,
 
     /// Optional metrics for slow filesystem backend
@@ -606,6 +622,7 @@ impl EditorTestHarness {
             editor,
             terminal,
             _temp_dir: temp_dir,
+            #[cfg(unix)]
             fake_devcontainer: options.fake_devcontainer,
             fs_metrics,
             _tokio_runtime: None,
@@ -774,6 +791,8 @@ impl EditorTestHarness {
     /// by [`HarnessOptions::with_fake_devcontainer`]. Returns `None`
     /// for harnesses that didn't opt into the fake CLI. Tests use this
     /// to read `last_id`, container `logs` files, etc.
+    /// Unix-only: see [`HarnessOptions::with_fake_devcontainer`].
+    #[cfg(unix)]
     pub fn fake_devcontainer_state(&self) -> Option<&Path> {
         self.fake_devcontainer
             .as_ref()

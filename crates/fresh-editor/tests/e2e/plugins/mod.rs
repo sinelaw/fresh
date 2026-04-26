@@ -6,11 +6,21 @@ pub mod authority_snapshot;
 pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
 pub mod dashboard;
+// The three modules below drive the in-tree fake-devcontainer
+// CLI (a bash script under `scripts/fake-devcontainer/bin/`).
+// Native Windows can't execute `#!/usr/bin/env bash` shebangs
+// and the harness helper (`HarnessOptions::with_fake_devcontainer`)
+// uses POSIX PATH separators. The other devcontainer test files
+// stay on every OS — they exercise plugin wiring through the
+// editor's command channel and don't shell out.
+#[cfg(unix)]
 pub mod devcontainer_attach_e2e;
 pub mod devcontainer_failed_attach_popup;
 pub mod devcontainer_ports_panel;
 pub mod devcontainer_run_lifecycle;
+#[cfg(unix)]
 pub mod devcontainer_spec_conformance;
+#[cfg(unix)]
 pub mod devcontainer_spec_repros;
 pub mod diagnostics_panel_bugs;
 pub mod diagnostics_panel_jump;
