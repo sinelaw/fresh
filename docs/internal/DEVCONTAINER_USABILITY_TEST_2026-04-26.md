@@ -82,26 +82,77 @@
 
 ## Bug / Gap Summary by Severity
 
-| Severity | Bug / Gap | Reference |
-| --- | --- | --- |
-| **Critical** | After a `devcontainer.json` syntax error, all `Dev Container:` palette commands disappear and **do not return after the JSON is fixed** — only an editor restart recovers. | Task 4 |
-| **High** | Auto port-forwarding doesn't publish ports declared in `portsAttributes` / `forwardPorts`; no host mapping, no `onAutoForward: notify` toast. | Task 3 |
-| **High** | `devcontainer.json` syntax errors fail silently — no toast, no file-explorer badge, no inline marker. | Task 4 |
-| **High** | Palette filter ranking is unpredictable: same query yields different results across invocations, and natural keywords don't surface obvious commands. | Task 3, Task 4, Cross-cutting #1 |
-| **High** | Port-related commands (`Show Ports`, `Show Forwarded Ports`) cannot be located by typing `port`/`forward`/`forwarded`. | Task 3 |
-| Medium | Build-log buffer doesn't tail live; lags the on-disk file by tens of seconds. | Logs |
-| Medium | `\r`-only output (apt progress) collapses to one ~2 KB line and renders nearly blank in the buffer. | Task 2, Logs |
-| Medium | `Attach Failed` modal body shows a JS stack trace from `devContainersSpecCLI.js` instead of the root cause. Status bar truncates to `at async uG (...`. | Task 2 |
-| Medium | Externally edited buffers (`devcontainer.json` modified on disk) don't reload until a side effect (rebuild) reopens them. | Cross-cutting #2 |
-| Medium | `Dev Container: Show Ports` / `Show Forwarded Ports` produce no visible pane, and no status confirmation. | Panes |
-| Medium | Rebuild silently terminates open terminal tabs (`*Terminal 0*` disappears). | Task 2 |
-| Low | Build-log files accumulate in `.fresh-cache/devcontainer-logs/` with no rotation/cleanup. | Logs |
-| Low | Stale build-log tabs stay open after subsequent rebuilds. | Logs |
-| Low | Same buffer (`devcontainer.json`) gets duplicated across two splits after rebuild. | Panes |
-| Low | New splits don't compact existing ones or shrink the sidebar; bottom panes shrink to ~5 lines. | Panes |
-| Low | No per-pane "split N of M" indicator; cycle order isn't discoverable. | Navigation |
-| Low | Terminal pane traps `Ctrl+P`; the `Ctrl+Space` exit hint shows once on terminal open then disappears. | Cross-cutting #3, Navigation |
-| Low | LSP install prompt and `Dev Container Detected` prompt overlap with ambiguous z-order. | Navigation |
-| Low | Reuse-existing-container path produces a build log containing only the CLI version line — user can't tell whether it built, attached, or skipped. | Task 1 |
-| Low | `Dev Container: Rebuild` sorts alphabetically after every `Show *` command in the palette. | Task 2 |
-| Low | Palette doesn't gate commands by state: `Attach` and `Cancel Startup` remain offered while already attached, alongside `Detach`. | Task 2 |
+Status legend (added after the 2026-04-26 retest below):
+- **Confirmed** — reproduced in both interactive tmux and the harness, or in tmux alone with a clear repro recipe
+- **Disconfirmed** — could not reproduce in retest; original observation appears to have been a transient artifact (focus capture, stale tmux capture, palette in flight)
+- **Conditional** — real, but only triggers under specific environmental conditions (many commands loaded, crowded layout, restart cycle)
+- **Untested** — not re-driven in the retest
+
+| Severity | Bug / Gap | Reference | Status (2026-04-26) |
+| --- | --- | --- | --- |
+| **Critical** | After a `devcontainer.json` syntax error and a Rebuild, all `Dev Container:` palette commands disappear and **do not return after the JSON is fixed** — only an editor restart recovers. | Task 4 | Confirmed (post-rebuild restart cycle re-runs plugin load against broken JSON; harness can't reproduce because it shortcuts the restart) |
+| **High** | Auto port-forwarding doesn't publish ports declared in `portsAttributes` / `forwardPorts`; no host mapping, no `onAutoForward: notify` toast. | Task 3 | Confirmed |
+| **High** | `devcontainer.json` syntax errors fail silently — no toast, no file-explorer badge, no inline marker. | Task 4 | Confirmed |
+| **High** | Palette filter ranking is unpredictable: same query yields different results across invocations, and natural keywords don't surface obvious commands. | Task 3, Task 4, Cross-cutting #1 | Conditional — fuzzy ranking degenerates only with many commands loaded; harness has too few to reproduce |
+| ~~**High**~~ | ~~Port-related commands (`Show Ports`, `Show Forwarded Ports`) cannot be located by typing `port`/`forward`/`forwarded`.~~ | Task 3 | Disconfirmed — retest in fresh tmux session found these instantly via `port` and via `Show Forwarded`; original symptom was the cramped-layout / popup-invisible bug below |
+| Medium | Palette popup renders nothing when the layout has many horizontal splits — the prompt shows the filter but no result list appears, and `Enter` reports `No selection`. | Panes (added) | Confirmed |
+| Medium | Build-log buffer doesn't tail live; lags the on-disk file by tens of seconds. | Logs | Untested |
+| Medium | `\r`-only output (apt progress) collapses to one ~2 KB line and renders nearly blank in the buffer. | Task 2, Logs | Disconfirmed — real logs are mixed `\r` + `\n` (each progress line ends in `\n`), and the editor renders them fine. The original status-bar reading of `Col 2088` was likely a misread |
+| ~~Medium~~ | ~~`Attach Failed` modal body shows a JS stack trace from `devContainersSpecCLI.js` instead of the root cause.~~ | Task 2 | Disconfirmed — harness `failed_attach_popup_includes_actual_failure_reason` shows the modal does include `FAKE_DC_UP_FAIL_REASON` text. Stack trace seen interactively was likely from an earlier failed-state buffer in the same session |
+| ~~Medium~~ | ~~Externally edited buffers (`devcontainer.json` modified on disk) don't reload until a side effect (rebuild) reopens them.~~ | Cross-cutting #2 | Disconfirmed — harness `externally_modified_buffer_reloads_on_disk_change` shows the buffer reloads from disk |
+| ~~Medium~~ | ~~`Dev Container: Show Ports` / `Show Forwarded Ports` produce no visible pane, and no status confirmation.~~ | Panes | Disconfirmed — same root cause as palette popup invisibility (above); the panel does open, the cramped layout hid it |
+| Medium | Rebuild silently terminates open terminal tabs (`*Terminal 0*` disappears). | Task 2 | Untested |
+| Low | Build-log files accumulate in `.fresh-cache/devcontainer-logs/` with no rotation/cleanup. | Logs | Confirmed |
+| Low | Stale build-log tabs stay open after subsequent rebuilds. | Logs | Confirmed |
+| Low | Same buffer (`devcontainer.json`) gets duplicated across two splits after rebuild. | Panes | Confirmed |
+| Low | New splits don't compact existing ones or shrink the sidebar; bottom panes shrink to ~5 lines. | Panes | Confirmed |
+| Low | No per-pane "split N of M" indicator; cycle order isn't discoverable. | Navigation | Confirmed (UX gap, not a bug) |
+| Low | Terminal pane traps `Ctrl+P`; the `Ctrl+Space` exit hint shows once on terminal open then disappears. | Cross-cutting #3, Navigation | Confirmed |
+| Low | LSP install prompt and `Dev Container Detected` prompt overlap with ambiguous z-order. | Navigation | Confirmed |
+| Low | Reuse-existing-container path produces a build log containing only the CLI version line — user can't tell whether it built, attached, or skipped. | Task 1 | Confirmed |
+| Low | `Dev Container: Rebuild` sorts alphabetically after every `Show *` command in the palette. | Task 2 | Confirmed (consequence of alphabetical sort + naming) |
+| Low | Palette doesn't gate commands by state: `Attach` and `Cancel Startup` remain offered while already attached, alongside `Detach`. | Task 2 | **Confirmed** — covered by failing test `palette_attach_command_hidden_when_already_attached` |
+
+## 2026-04-26 Retest Notes
+
+A follow-up retest revisited each finding via the in-tree fake
+`devcontainer` CLI harness (E2E tests under
+`crates/fresh-editor/tests/e2e/plugins/devcontainer_usability_repros.rs`)
+and a fresh interactive tmux run. Three substantive corrections to
+the original report:
+
+1. **Palette filter problems are conditional, not universal.** In a
+   fresh tmux session the filter found `Dev Container: Show Forwarded
+   Ports` instantly via `port` and `Show Forwarded`. The unreliable
+   ranking *did* reappear later in the same session once many splits
+   accumulated and a broken-JSON rebuild had been triggered, so the
+   filter degeneracy is a real bug — but it manifests only under load
+   (many commands registered) and/or in pathological session state,
+   not on every keystroke. The harness can't reproduce it because it
+   loads ~10× fewer commands than a real install.
+
+2. **The "popup invisible" symptom is its own bug, distinct from the
+   filter.** With 5+ horizontal splits stacked in the right column,
+   the palette accepts the filter text (`>Dev` shows in the prompt)
+   but no result list is drawn anywhere on screen, and `Enter`
+   reports `No selection`. This explains the original "Show
+   Forwarded Ports / Show Ports produce no visible pane" symptom in
+   Task 3 and several of the "filter returns nothing" symptoms in
+   Tasks 3 and 4.
+
+3. **Several medium-severity items were observation artifacts, not
+   real bugs.** The `\r`-rendering, external-buffer-reload, and
+   failed-attach-modal-text claims all fail to reproduce when driven
+   programmatically through the fake-CLI harness, and could not be
+   re-triggered interactively. Most likely cause for the original
+   reports: stale tmux captures, popup focus capture by the terminal
+   pane, or a prior failed-attach buffer still being visible from
+   an earlier rebuild attempt. Those rows have been struck through
+   above.
+
+The repro tests live in `devcontainer_usability_repros.rs`. One is
+a `#[test]` that fails on master (`palette_attach_command_hidden_when_already_attached`).
+The other two — for the post-rebuild command-disappearance bug and
+the popup-invisible-with-many-splits bug — are `#[ignore]`'d with
+notes explaining the harness limitations that prevent CI repro
+(no editor-restart hook; PTY too tall to crowd the popup off-screen).
