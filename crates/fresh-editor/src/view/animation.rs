@@ -466,13 +466,7 @@ impl AnimationRunner {
                     cursor_color,
                     bg_color,
                 } => (
-                    Box::new(CursorJump::new(
-                        from,
-                        to,
-                        duration,
-                        cursor_color,
-                        bg_color,
-                    )),
+                    Box::new(CursorJump::new(from, to, duration, cursor_color, bg_color)),
                     Duration::ZERO,
                     duration,
                 ),
