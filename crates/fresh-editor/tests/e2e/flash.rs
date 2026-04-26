@@ -12,7 +12,6 @@ use crate::common::fixtures::TestFixture;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::input::keybindings::Action::PluginAction;
 use std::fs;
 
 /// Build a harness with the `flash` plugin loaded into an isolated
@@ -39,19 +38,12 @@ fn flash_harness(width: u16, height: u16) -> (EditorTestHarness, tempfile::TempD
 }
 
 /// Open the command palette, type `Flash: Jump`, press Enter, and
-/// wait for the plugin's mode + status to be set.  Mirrors
-/// `enable_vi_mode` in vi_mode tests.
+/// wait for the plugin's status banner (`Flash[]`) to appear on
+/// screen.  CONTRIBUTING rule #2 — observe only rendered output —
+/// so we don't peek at `editor_mode()` or the command registry;
+/// the visible `Flash[]` banner is the single signal that the
+/// plugin is in flash mode AND has armed its first `getNextKey`.
 fn arm_flash(harness: &mut EditorTestHarness) {
-    // Wait for the plugin's command to be registered.
-    harness
-        .wait_until(|h| {
-            let commands = h.editor().command_registry().read().unwrap().get_all();
-            commands
-                .iter()
-                .any(|c| c.action == PluginAction("flash_jump".to_string()))
-        })
-        .unwrap();
-
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -63,15 +55,12 @@ fn arm_flash(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for the plugin to enter flash mode AND post its initial
-    // empty-pattern status.  Both signals together prove the plugin
-    // has armed its first `getNextKey` and is ready for the next key.
-    harness
-        .wait_until(|h| {
-            h.editor().editor_mode() == Some("flash".to_string())
-                && h.screen_to_string().contains("Flash[]")
-        })
-        .unwrap();
+    // The empty-pattern status banner is the readiness signal.  It
+    // is set inside the plugin's main loop AFTER `setEditorMode` and
+    // `beginKeyCapture` have been queued, so seeing it on screen
+    // proves the editor has processed all three.  No model peek
+    // required.
+    harness.wait_for_screen_contains("Flash[]").unwrap();
 }
 
 /// Type a pattern one character at a time, waiting after each char
@@ -96,15 +85,17 @@ fn type_pattern(harness: &mut EditorTestHarness, pattern: &str) {
 
 #[test]
 fn flash_jumps_to_label() {
-    // Three "hello" lines; cursor at byte 0.  Distances 0/12/24
-    // → labels a/s/d in distance order.  Pressing 's' jumps to
-    // byte 12 (start of "hello there").
+    // Three "hello" lines.  After arming flash and typing pattern
+    // "hello", labels are assigned in distance order from the
+    // cursor (currently at line 1 col 1).  We press 's' (the second
+    // pool letter after the labeler's skip rule) to jump.  To keep
+    // the assertion screen-only (CONTRIBUTING rule #2), we then
+    // insert a marker character and observe where it lands in the
+    // rendered buffer.
     let (mut harness, _temp) = flash_harness(120, 24);
     let fixture = TestFixture::new("test.txt", "hello world\nhello there\nhello again\n").unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
-
-    let initial = harness.cursor_position();
 
     arm_flash(&mut harness);
     type_pattern(&mut harness, "hello");
@@ -113,18 +104,21 @@ fn flash_jumps_to_label() {
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
-
     harness
-        .wait_until(|h| h.editor().editor_mode() != Some("flash".to_string()))
+        .wait_until(|h| !h.screen_to_string().contains("Flash["))
         .unwrap();
 
-    let landed = harness.cursor_position();
-    assert_ne!(landed, initial, "cursor should have moved");
-    assert_eq!(
-        landed, 12,
-        "expected cursor at start of second match (byte 12), got {}",
-        landed,
-    );
+    // Insert a marker so we can observe where the cursor landed.
+    harness
+        .send_key(KeyCode::Char('@'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("@hello there"))
+        .unwrap();
+    // Negative check: the `@` did NOT land on line 1 or line 3.
+    let screen = harness.screen_to_string();
+    assert!(!screen.contains("@hello world"), "screen:\n{}", screen);
+    assert!(!screen.contains("@hello again"), "screen:\n{}", screen);
 }
 
 #[test]
@@ -134,23 +128,23 @@ fn flash_escape_cancels_no_movement() {
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
-    let initial = harness.cursor_position();
-
     arm_flash(&mut harness);
     type_pattern(&mut harness, "hello");
     harness.render().unwrap();
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-
     harness
-        .wait_until(|h| h.editor().editor_mode() != Some("flash".to_string()))
+        .wait_until(|h| !h.screen_to_string().contains("Flash["))
         .unwrap();
 
-    assert_eq!(
-        harness.cursor_position(),
-        initial,
-        "Escape must not move the cursor",
-    );
+    // Cursor must still be at the start of line 1.  Insert a marker
+    // and observe the rendered text.
+    harness
+        .send_key(KeyCode::Char('@'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("@hello world"))
+        .unwrap();
 }
 
 #[test]
@@ -181,16 +175,17 @@ fn flash_backspace_shrinks_pattern() {
     harness
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
-
     harness
-        .wait_until(|h| h.editor().editor_mode() != Some("flash".to_string()))
+        .wait_until(|h| !h.screen_to_string().contains("Flash["))
         .unwrap();
 
-    assert_eq!(
-        harness.cursor_position(),
-        24,
-        "after backspace+retype, label 'd' must reach line 3 (byte 24)",
-    );
+    // Marker assertion: cursor landed at start of line 3.
+    harness
+        .send_key(KeyCode::Char('@'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("@hello again"))
+        .unwrap();
 }
 
 /// Regression for the silent-conceal bug, 2026-04: flash relies on
@@ -321,33 +316,31 @@ fn flash_jumps_across_splits() {
         .unwrap();
 
     harness
-        .wait_until(|h| h.editor().editor_mode() != Some("flash".to_string()))
+        .wait_until(|h| !h.screen_to_string().contains("Flash["))
         .unwrap();
 
-    // The left split should now be active, and its cursor should be at
-    // byte 0 (start of "alpha left side").
-    let active_buf = harness.editor().active_buffer();
-    let cursor = harness.cursor_position();
-    assert_eq!(
-        cursor, 0,
-        "expected cursor at byte 0 of left split's buffer, got {}",
-        cursor,
-    );
-    // And the active buffer should be the LEFT one — verify by reading
-    // its file path through the public buffer info on screen.
+    // Insert a marker — it should land at the start of the LEFT
+    // split's "alpha left side", i.e. on the same line as that text
+    // in the left split.  Screen-only assertion (CONTRIBUTING #2).
+    harness
+        .send_key(KeyCode::Char('@'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("@alpha left side"))
+        .unwrap();
+    // Negative check: the right split's `alpha right side` is still
+    // there but unmarked.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("left.txt"),
-        "left.txt should still be visible; screen:\n{}",
+        screen.contains("alpha right side"),
+        "right split's content should remain visible; screen:\n{}",
         screen,
     );
-    // Defensive: ensure we didn't somehow stay in the right split.
-    // (We don't have a single accessor for "active buffer path" in the
-    // harness, but we can check the buffer id is not the right one's.
-    // The simplest reliable cross-check is that the cursor moved; in a
-    // single-split run it would still be at the original right-side
-    // byte.)
-    let _ = active_buf;
+    assert!(
+        !screen.contains("@alpha right side"),
+        "marker should NOT have landed in the right split; screen:\n{}",
+        screen,
+    );
 }
 
 #[test]
@@ -368,8 +361,15 @@ fn flash_enter_jumps_to_closest() {
         .unwrap();
 
     harness
-        .wait_until(|h| h.editor().editor_mode() != Some("flash".to_string()))
+        .wait_until(|h| !h.screen_to_string().contains("Flash["))
         .unwrap();
 
-    assert_eq!(harness.cursor_position(), 0);
+    // Marker assertion — should land before the very first char of
+    // line 1.  (CONTRIBUTING #2: screen-only.)
+    harness
+        .send_key(KeyCode::Char('@'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("@hello world"))
+        .unwrap();
 }
