@@ -476,32 +476,42 @@ fn blog_showcase_productivity_flash_jump() {
     )
     .unwrap();
 
-    // Hand-picked sparse content for the showcase: every other line
-    // is blank, and content lines repeat the same handful of first
-    // letters (`zzz`).  Result: the labeler's skip rule removes only
-    // one letter from the pool, leaving ~25 labels available for ~10
-    // visible word starts — every word gets a label and they spread
-    // top-to-bottom, so any choice produces a visible cross-screen
-    // jump.
-    let sample = r#"zzz one
+    // Real Rust code for the showcase.  The file is a stripped-down
+    // text-buffer impl — one method per visible line, snake_case
+    // throughout, with blank lines between methods.  The labeler's
+    // skip rule removes the first letter of each unique word from
+    // the pool; snake_case + repeated `pub fn` / `self` keeps the
+    // skip set small (~14 letters), leaving roughly a dozen pool
+    // letters to assign across ~30 visible word starts.  Distance-
+    // sorting from the top-of-file cursor pushes the last few labels
+    // down to the bottom methods, so picking a late-pool letter
+    // teleports the cursor across most of the screen.
+    let sample = r#"impl Buffer {
+    pub fn new() -> Self {
+        Self { rope: Rope::new(), dirty: false }
+    }
 
-zzz two
+    pub fn from_file(path: &Path) -> io::Result<Self> {
+        let text = fs::read_to_string(path)?;
+        Ok(Self { rope: Rope::from(text), dirty: false })
+    }
 
-zzz three
+    pub fn insert(&mut self, offset: usize, text: &str) {
+        self.rope.insert(offset, text);
+        self.dirty = true;
+    }
 
-zzz four
+    pub fn delete(&mut self, range: Range<usize>) {
+        self.rope.remove(range);
+        self.dirty = true;
+    }
 
-zzz five
-
-zzz six
-
-zzz seven
-
-zzz eight
-
-zzz nine
-
-zzz ten
+    pub fn save(&mut self, path: &Path) -> io::Result<()> {
+        fs::write(path, self.rope.to_string())?;
+        self.dirty = false;
+        Ok(())
+    }
+}
 "#;
     let sample_path = project_root.join("sample.rs");
     fs::write(&sample_path, sample).unwrap();
@@ -526,14 +536,14 @@ zzz ten
     let mut s = BlogShowcase::new(
         "productivity/flash-jump",
         "Flash Jump",
-        "Press a single key. Teleport the cursor anywhere visible.",
+        "Type one letter, press a label, teleport across the file.",
     );
 
-    // Pacing notes: 2026-04 round of feedback was that the previous
-    // showcase felt too fast and was dominated by typing.  This pass
-    // bumps every duration ~2× and replaces the "type a search
-    // pattern" middle act with a single hero hold on the labelled
-    // viewport — empty-pattern mode shows every jump target at once.
+    // Pacing: previous version was too fast and dominated by typing.
+    // This pass bumps each frame ~2× and pares the typed pattern
+    // down to a single character — enough to spread labels across
+    // every visible line of real code, but the demo still reads as
+    // "press a key, jump", not "type a query then jump".
 
     // ---- Opening: settle on the file ----
     hold(&mut h, &mut s, 12, 120);
@@ -552,43 +562,45 @@ zzz ten
     h.wait_for_screen_contains("Flash: Jump").unwrap();
     snap(&mut h, &mut s, None, 800);
 
-    // ---- Hero moment: press Enter, labels appear immediately ----
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    // Wait for flash to set its mode AND post the empty-pattern
-    // status — both signals together prove the first `getNextKey` is
-    // armed and the labels were rendered.
     h.wait_until(|h| {
         h.editor().editor_mode() == Some("flash".to_string())
             && h.screen_to_string().contains("Flash[]")
     })
     .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 600);
+    snap(&mut h, &mut s, Some("Enter"), 500);
+    hold(&mut h, &mut s, 4, 150);
 
-    // Long, deliberate hold on the labelled viewport.  This is the
-    // single most important frame in the GIF — the user has to be
-    // able to read each label and pick one mentally.
-    hold(&mut h, &mut s, 18, 150);
+    // ---- Hero moment: type a single letter, labels everywhere ----
+    // `s` matches almost every line of real code (`Self`, `self`,
+    // `string`, `&str`, …) — far more spots than the empty-pattern
+    // word-start mode could cover, since the labeler's skip rule no
+    // longer eats most of the pool.
+    h.send_key(KeyCode::Char('s'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Flash[s]"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("s"), 600);
+
+    // Long, deliberate hold on the labelled viewport — the single
+    // most important frame in the GIF.  The viewer needs to be able
+    // to read each label and pick one mentally.
+    hold(&mut h, &mut s, 20, 160);
 
     // ---- The jump ----
-    // With cursor at byte 0 and the sparse sample above, label `m`
-    // is reliably assigned to the last `zzz` on line 19 — a near
-    // 19-line cross-screen jump, the most visually obvious teleport
-    // a single keypress can produce.
+    // With cursor at byte 0, label `m` is reliably assigned to the
+    // `s` inside `io::Result` on line 21 — a near 20-line teleport
+    // across the whole visible file.
     let initial_cursor = h.cursor_position();
     h.send_key(KeyCode::Char('m'), KeyModifiers::NONE).unwrap();
-    // Wait for both the mode to clear AND the cursor to settle at the
-    // jump target — the status bar reads cursor position via the
-    // post-render snapshot, so the second wait keeps the captured
-    // frames from showing a stale `Ln 1, Col 1`.
     h.wait_until(|h| {
         h.editor().editor_mode() != Some("flash".to_string())
             && h.cursor_position() != initial_cursor
     })
     .unwrap();
-    // Force two extra renders so the status bar's snapshot of cursor
-    // position catches up before we capture.  One render isn't always
-    // enough — the status text comes from a snapshot updated on the
-    // tick AFTER setBufferCursor was applied.
+    // Two extra renders so the status bar's cursor snapshot catches
+    // up before capture.  (Pre-existing Fresh quirk: the status's
+    // `Ln` value reads from a cached `primary_cursor_line_number`
+    // that lags one tick behind `setBufferCursor`.)
     h.render().unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("m"), 700);
