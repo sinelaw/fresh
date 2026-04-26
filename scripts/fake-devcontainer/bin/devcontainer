@@ -195,8 +195,45 @@ cmd_up() {
 
   emit_progress "[+] Starting container $container_id"
   fake_sleep_ms "$delay_ms"
-  emit_progress "[+] Running postCreateCommand"
-  fake_sleep_ms "$delay_ms"
+
+  # Run the post-attach lifecycle hooks in spec order, mirroring
+  # what `@devcontainers/cli up` does inside the container. The
+  # plugin only runs `initializeCommand` itself (host-side, before
+  # invoking us); everything from `onCreateCommand` through
+  # `postAttachCommand` is the CLI's job. Each hook runs as
+  # `sh -c "<value>"` from the workspace cwd, with the recorded
+  # containerEnv exported. Output is folded into the build log
+  # via `emit_progress`.
+  #
+  # Limitations of the fake parser: only the string form is
+  # supported here. Object form (parallel) and array form (exec)
+  # are out of scope — the plugin's `devcontainer_on_lifecycle_confirmed`
+  # is what tests like R1/R2 cover for those, not this codepath.
+  if [ -n "$dc_cfg" ] && [ "${FAKE_DC_UP_FAIL:-0}" != "1" ]; then
+    # Re-export containerEnv so hooks see it (matches real
+    # docker exec semantics; the plugin's `containerEnv` test
+    # depends on this in the post-attach lifecycle picker too).
+    if [ -f "$cdir/container_env" ]; then
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        export "$line"
+      done < "$cdir/container_env"
+    fi
+    for hook in onCreateCommand updateContentCommand postCreateCommand postStartCommand postAttachCommand; do
+      raw="$(extract_string_field "$hook" "$dc_cfg")"
+      if [ -n "$raw" ]; then
+        emit_progress "[+] Running $hook"
+        # Run from the workspace dir so $PWD matches the host
+        # workspace path the user expects.
+        if ! ( cd "$workspace" && sh -c "$raw" ) >&2; then
+          emit_progress "error: $hook exited non-zero"
+          printf 'stopped\n' > "$cdir/status"
+          exit 1
+        fi
+        fake_sleep_ms "$delay_ms"
+      fi
+    done
+  fi
 
   # Final JSON outcome on stdout. Plugin scans stdout backwards for the
   # last line that parses as JSON, so trailing newline placement is fine.

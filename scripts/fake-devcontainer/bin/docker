@@ -148,6 +148,35 @@ cmd_ps() {
   done
 }
 
+# `docker stop <id>` flips the recorded status to "stopped". Real
+# `docker stop` sends SIGTERM then SIGKILL; the fake doesn't run a
+# real container, so all we need to record is the lifecycle bit
+# tests assert against (e.g. "shutdownAction=stopContainer must
+# stop the container on Detach").
+cmd_stop() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -t|--time) shift 2 ;;
+      -*) shift ;;
+      *) break ;;
+    esac
+  done
+  [ $# -ge 1 ] || { echo "fake-docker stop: missing container id" >&2; exit 64; }
+  state="$(fake_state_dir)"
+  exit_code=0
+  for id in "$@"; do
+    cdir="$state/containers/$id"
+    if [ ! -d "$cdir" ]; then
+      echo "fake-docker stop: no such container $id" >&2
+      exit_code=1
+      continue
+    fi
+    printf 'stopped\n' > "$cdir/status"
+    printf '%s\n' "$id"
+  done
+  return $exit_code
+}
+
 main() {
   [ $# -gt 0 ] || { usage; exit 64; }
   sub="$1"; shift
@@ -158,6 +187,7 @@ main() {
     info)              cmd_info "$@" ;;
     version|--version) cmd_version "$@" ;;
     ps)                cmd_ps "$@" ;;
+    stop)              cmd_stop "$@" ;;
     --help|-h|help)    usage; exit 0 ;;
     *)
       echo "fake-docker: unsupported subcommand: $sub" >&2
