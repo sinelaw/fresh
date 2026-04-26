@@ -679,11 +679,11 @@ registerHandler("devcontainer_run_lifecycle", devcontainer_run_lifecycle);
 
 async function devcontainer_on_lifecycle_confirmed(data: {
   prompt_type: string;
-  value: string;
+  input: string;
 }): Promise<void> {
   if (data.prompt_type !== "devcontainer-lifecycle") return;
 
-  const cmdName = data.value;
+  const cmdName = data.input;
   if (!config || !cmdName) return;
 
   const cmd = (config as Record<string, unknown>)[cmdName] as LifecycleCommand | undefined;
