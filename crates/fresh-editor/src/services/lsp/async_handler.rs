@@ -4075,6 +4075,38 @@ impl LspHandle {
                 Err(e) => {
                     tracing::error!("Failed to spawn LSP task: {}", e);
 
+                    // Bug from interactive walkthrough (Critical 3):
+                    // when an LSP fails to spawn (binary missing,
+                    // permission error, etc.), the per-language log
+                    // file at `lsp_log_path(language)` is never
+                    // created — so the LSP popup's "View Log" item
+                    // takes the `disabled()` branch and clicking it
+                    // does nothing. Write a stub log here in the
+                    // failure path with the configured command + the
+                    // spawn error, so the popup item registers as
+                    // enabled and opens something readable.
+                    //
+                    // The stub gets overwritten the moment a later
+                    // successful spawn opens its own log at the same
+                    // path, so it doesn't linger past recovery.
+                    let stub = format!(
+                        "[fresh] LSP server '{}' for {} failed to spawn:\n  {}\n\n\
+                         Configured command: {} {}\n",
+                        server_name_clone,
+                        language_clone,
+                        e,
+                        command,
+                        args.join(" "),
+                    );
+                    if let Err(write_err) = std::fs::write(&stderr_log_path_clone, stub.as_bytes())
+                    {
+                        tracing::warn!(
+                            "Failed to write LSP failure-stub log for {}: {}",
+                            language_clone,
+                            write_err,
+                        );
+                    }
+
                     // Transition to error state
                     if let Ok(mut s) = state_clone.lock() {
                         let _ = s.transition_to(LspClientState::Error);

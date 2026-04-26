@@ -9627,3 +9627,102 @@ fn test_stop_lsp_via_prompt_no_warning() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Bug from interactive walkthrough (Critical #3): when an LSP
+/// server fails to spawn (e.g. binary missing inside the
+/// container), the per-language log file at
+/// `{log_dir}/lsp/{language}-{PID}.log` was never created, so
+/// the LSP popup's "View Log" item went down the `disabled()`
+/// branch and clicking it did nothing. Users had no path to
+/// the actual spawn error.
+///
+/// Fix: in `LspManager::force_spawn`'s `Err` branch, write a
+/// stub log with the failure reason so View Log opens
+/// something readable.
+///
+/// Regression guard: configure an LSP server pointing at a
+/// non-existent binary, open a file that triggers auto-spawn,
+/// wait for the stub log to materialize, assert it contains
+/// the failure marker.
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "spawn-failure stub uses unix-style path; the underlying
+              behavior is platform-agnostic but the test setup is unix-only"
+)]
+#[test]
+fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn main() {}\n")?;
+
+    // Configure LSP for `rust` with a command that definitely
+    // does not exist on PATH or anywhere on disk. The spawn
+    // attempt must fail synchronously inside `LspHandle::spawn`,
+    // which routes through the `Err(e)` branch we patched.
+    let bogus = temp_dir
+        .path()
+        .join("definitely-not-an-lsp-server-fresh-test")
+        .to_string_lossy()
+        .to_string();
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: bogus.clone(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    // Snapshot any pre-existing log to detect the stub overwrite.
+    let log_path = fresh::services::log_dirs::lsp_log_path("rust");
+    let _ = std::fs::remove_file(&log_path);
+
+    // Open the file: triggers auto-spawn → spawn fails →
+    // stub log is written.
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // The spawn failure path runs synchronously inside the
+    // open_file → try_spawn flow, but we tick a few times in
+    // case the runtime defers the write. The stub is a single
+    // `fs::write` call right after the `tracing::error!`, so
+    // it should land within the first tick.
+    harness
+        .wait_until(|_| log_path.exists())
+        .expect("LSP spawn-failure stub log should be written when spawn fails");
+
+    let contents = std::fs::read_to_string(&log_path)?;
+    assert!(
+        contents.contains("failed to spawn"),
+        "stub log should explain the spawn failure; got:\n{contents}"
+    );
+    assert!(
+        contents.contains("Configured command:"),
+        "stub log should include the configured command for diagnosis; got:\n{contents}"
+    );
+    assert!(
+        contents.contains(&bogus),
+        "stub log should mention the actual configured binary path so the user can spot \
+         typos / missing installs. got:\n{contents}"
+    );
+
+    Ok(())
+}

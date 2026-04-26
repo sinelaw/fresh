@@ -1070,30 +1070,6 @@ impl LspManager {
                         server_name,
                         e
                     );
-                    // Bug from interactive walkthrough: when a server fails
-                    // to spawn (e.g. binary missing inside the container),
-                    // the per-language log file is never created — so
-                    // "View Log" in the LSP popup is `disabled` and
-                    // clicking it does nothing. Write a stub log with the
-                    // failure reason so the popup item becomes clickable
-                    // and the user has a path to the actual error.
-                    let log_path = crate::services::log_dirs::lsp_log_path(language);
-                    let header = format!(
-                        "[fresh] LSP server '{}' for {} failed to spawn:\n  {}\n\n\
-                         Configured command: {} {}\n",
-                        server_name,
-                        language,
-                        e,
-                        config.command,
-                        config.args.join(" "),
-                    );
-                    if let Err(write_err) = std::fs::write(&log_path, header.as_bytes()) {
-                        tracing::warn!(
-                            "Failed to write LSP failure-stub log for {}: {}",
-                            language,
-                            write_err
-                        );
-                    }
                 }
             }
         }
