@@ -292,9 +292,7 @@ fn lifecycle_command_must_see_remote_env() {
     // Picker-run line scan; see S1 for why the probe has both
     // a picker contribution and a fake-`up`-bg contribution.
     assert!(
-        probe_text
-            .lines()
-            .any(|l| l == "RE_TEST=from-remoteEnv"),
+        probe_text.lines().any(|l| l == "RE_TEST=from-remoteEnv"),
         "S2 (failing on master): lifecycle commands should inherit \
          `remoteEnv` per the spec; today the plugin never propagates it. \
          Probe:\n{probe_text}"
@@ -336,9 +334,7 @@ fn lifecycle_command_must_see_container_env() {
     // Picker-run line scan; see S1 for why the probe has both
     // a picker contribution and a fake-`up`-bg contribution.
     assert!(
-        probe_text
-            .lines()
-            .any(|l| l == "CE_TEST=from-containerEnv"),
+        probe_text.lines().any(|l| l == "CE_TEST=from-containerEnv"),
         "S3 regression guard: fake docker exec replays containerEnv from \
          `<state>/containers/<id>/container_env`. Probe:\n{probe_text}"
     );
