@@ -1430,25 +1430,52 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
         .unwrap();
 
     // Focus the detail panel (Tab from log) and land on a diff line.
+    //
+    // Detail-buffer line layout for a single-file two-commit show with
+    // `--stat --patch` (the `---` after the commit message is a stat
+    // separator emitted by git, not a diff header):
+    //
+    //   Ln 1   <short>  <subject>      (detail-title;       no `file` prop)
+    //   Ln 2   commit <hash>           (detail-commit-line; no `file` prop)
+    //   Ln 3   Author: …               (detail-meta;        no `file` prop)
+    //   Ln 4   Date:   …               (detail-meta;        no `file` prop)
+    //   Ln 5   <blank>
+    //   Ln 6       <commit message>
+    //   Ln 7   ---                     (git stat separator)
+    //   Ln 8    src/main.rs | 2 +-     (stat)
+    //   Ln 9    1 file changed, …      (stat)
+    //   Ln 10  <blank>
+    //   Ln 11  diff --git a/…  b/…     (detail-diff-header; HAS `file`)
+    //   Ln 12  index …                 (detail-diff-header; no `file`)
+    //   Ln 13  --- a/src/main.rs       (detail-diff-header; no `file`)
+    //   Ln 14  +++ b/src/main.rs       (detail-diff-header; HAS `file`)
+    //   Ln 15  @@ -1,3 +1,3 @@         (detail-hunk-header; HAS `file`)
+    //   Ln 16   fn main() {            (detail-context;     HAS `file`)
+    //
+    // Ln 11 is the first content-bearing diff line; Lns 12–13 lack the
+    // `file` property and would silently trigger the move-to-diff-with-context
+    // fallback in the plugin. So the test must land *exactly* on Ln 11 (and
+    // later Ln 16) before pressing Enter.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    // Move down enough to be on an actual diff line (past the commit header).
     for _ in 0..10 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
+    // Semantic anchor: the focused-panel chrome prints `Ln N, Col M`, so
+    // wait for the cursor to actually land at Ln 11 before Enter rather
+    // than relying on the move pipeline being fully drained per-keypress.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 11, Col 1"))
+        .unwrap();
     // First Enter: open file-view of src/main.rs @ HEAD.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Wait for the file-view virtual buffer to actually open. The earlier
-    // `contains("println!(\"second\");")` condition was racy: the detail
-    // panel already contains `+    println!("second");` from the diff, so
-    // the wait returned before `createVirtualBuffer` finished and before
-    // focus moved into the file-view mode. The subsequent `q` then hit
-    // the detail panel's `git-log` mode, which binds `q` to `git_log_q`
-    // (closes the whole buffer group), wrecking the rest of the test.
-    // The `*<hash>:src/main.rs*` tab title is only produced by
+    // Wait for the file-view virtual buffer to actually open. The
+    // `*<hash>:src/main.rs*` tab title is only produced by
     // `createVirtualBuffer` in git_log.ts and cannot be matched by the
-    // diff, so it's the safe completion signal.
+    // diff, so it's the safe completion signal. The move-cursor status
+    // is also accepted so the assertion below can fail loudly if Enter
+    // somehow misses the file-bearing line despite the pre-Enter wait.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
@@ -1456,6 +1483,13 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
                 || s.contains("Move cursor to a diff line with file context")
         })
         .unwrap();
+    {
+        let s = harness.screen_to_string();
+        assert!(
+            !s.contains("Move cursor to a diff line with file context"),
+            "BUG: first Enter at Ln 11 fell back to move-cursor status:\n{s}",
+        );
+    }
 
     // Close the file-view (q) and go back to the detail panel.
     harness
@@ -1465,24 +1499,21 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
         .wait_until(|h| h.screen_to_string().contains("+    println!(\"second\");"))
         .unwrap();
 
-    // Nudge the detail cursor and press Enter again. Before the fix,
-    // the second Enter reported "Move cursor to a diff line with file context".
+    // Nudge the detail cursor down to Ln 16 (` fn main() {`, a context
+    // diff line that has `file` set) and press Enter again. Before the
+    // fix the second Enter reported "Move cursor to a diff line with
+    // file context".
     for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 16, Col 1"))
+        .unwrap();
+    harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Semantic wait: the second Enter either succeeds (a fresh file-view
-    // virtual buffer `*<hash>:src/main.rs*` appears as a tab — that name is
-    // only produced by `createVirtualBuffer` in git_log.ts, so it cannot be
-    // matched by the still-visible detail panel) or the plugin falls back
-    // to the move-cursor status (the bug we're guarding against). The
-    // assert below distinguishes the two. Using `wait_until_stable` here
-    // was racy: the detail panel already contains "+    println!(\"second\")",
-    // so the condition matched before the Enter was processed, and the
-    // stability phase looped forever on an oscillating status-bar cell.
+    // Same accept-and-assert pattern as the first Enter.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
