@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# fake `docker` CLI — see docs/internal/FAKE_DEVCONTAINER_CLI.md
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/fake-state.sh
+. "$SCRIPT_DIR/../lib/fake-state.sh"
+
+usage() {
+  cat <<'EOF' >&2
+fake docker CLI (only the surfaces Fresh's devcontainer plugin uses)
+usage:
+  docker exec [-i|-t|-it] [-u <user>] [-w <dir>] <id> <cmd> [args...]
+  docker logs [--tail <n>] <id>
+  docker port <id>
+  docker info | version | ps   (stubs)
+EOF
+}
+
+cmd_exec() {
+  user=""
+  workdir=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -i|-t|-it|-ti) shift ;;
+      -u) user="${2:-}"; shift 2 ;;
+      -w) workdir="${2:-}"; shift 2 ;;
+      --) shift; break ;;
+      -*)
+        # Unknown flag — pass through to the child by stopping flag parsing.
+        break ;;
+      *)
+        break ;;
+    esac
+  done
+
+  if [ $# -lt 1 ]; then
+    echo "fake-docker exec: missing container id" >&2
+    exit 64
+  fi
+  container_id="$1"; shift
+  if [ $# -lt 1 ]; then
+    echo "fake-docker exec: missing command" >&2
+    exit 64
+  fi
+
+  state="$(fake_state_dir)"
+  cdir="$state/containers/$container_id"
+
+  if [ -z "$workdir" ] && [ -f "$cdir/workspace" ]; then
+    # Treat the recorded host workspace path as the cwd. In real
+    # devcontainers the workspace is bind-mounted to remoteWorkspaceFolder
+    # 1:1, so cd-ing into the host path is a faithful enough fake.
+    workdir="$(cat "$cdir/workspace")"
+  fi
+
+  if [ -n "$workdir" ] && [ -d "$workdir" ]; then
+    cd "$workdir" || exit 1
+  fi
+
+  # Surface "who" we'd have been so child scripts can assert on it.
+  export FAKE_DC_USER="$user"
+  export FAKE_DC_CONTAINER_ID="$container_id"
+
+  exec "$@"
+}
+
+cmd_logs() {
+  tail_n=1000
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tail) tail_n="${2:-1000}"; shift 2 ;;
+      --tail=*) tail_n="${1#*=}"; shift ;;
+      -f|--follow) shift ;;
+      *) break ;;
+    esac
+  done
+  [ $# -ge 1 ] || { echo "fake-docker logs: missing container id" >&2; exit 64; }
+  id="$1"
+  state="$(fake_state_dir)"
+  log="$state/containers/$id/logs"
+  if [ -f "$log" ]; then
+    if [ "$tail_n" = "all" ]; then
+      cat "$log"
+    else
+      tail -n "$tail_n" "$log"
+    fi
+  else
+    echo "(fake-docker) no logs recorded for $id"
+  fi
+}
+
+cmd_port() {
+  [ $# -ge 1 ] || { echo "fake-docker port: missing container id" >&2; exit 64; }
+  id="$1"
+  state="$(fake_state_dir)"
+  ports="$state/containers/$id/ports"
+  [ -f "$ports" ] && cat "$ports"
+}
+
+cmd_info() {
+  cat <<'EOF'
+Client: fake-docker
+ Version: 0.0.0
+Server: fake-docker
+ (no real daemon — see docs/internal/FAKE_DEVCONTAINER_CLI.md)
+EOF
+}
+
+cmd_version() { echo "fake-docker 0.0.0"; }
+
+cmd_ps() {
+  state="$(fake_state_dir)"
+  printf 'CONTAINER ID  STATUS   WORKSPACE\n'
+  for d in "$state"/containers/*/; do
+    [ -d "$d" ] || continue
+    id="$(basename "$d")"
+    status="$(cat "$d/status" 2>/dev/null || echo ?)"
+    workspace="$(cat "$d/workspace" 2>/dev/null || echo ?)"
+    printf '%s  %s  %s\n' "$id" "$status" "$workspace"
+  done
+}
+
+main() {
+  [ $# -gt 0 ] || { usage; exit 64; }
+  sub="$1"; shift
+  case "$sub" in
+    exec)              cmd_exec "$@" ;;
+    logs)              cmd_logs "$@" ;;
+    port)              cmd_port "$@" ;;
+    info)              cmd_info "$@" ;;
+    version|--version) cmd_version "$@" ;;
+    ps)                cmd_ps "$@" ;;
+    --help|-h|help)    usage; exit 0 ;;
+    *)
+      echo "fake-docker: unsupported subcommand: $sub" >&2
+      exit 64
+      ;;
+  esac
+}
+
+main "$@"

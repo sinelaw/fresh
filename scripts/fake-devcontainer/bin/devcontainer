@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# fake `devcontainer` CLI — see docs/internal/FAKE_DEVCONTAINER_CLI.md
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/fake-state.sh
+. "$SCRIPT_DIR/../lib/fake-state.sh"
+
+usage() {
+  cat <<'EOF' >&2
+fake devcontainer CLI
+usage:
+  devcontainer up --workspace-folder <path> [--remove-existing-container] [--id-label k=v ...]
+  devcontainer read-configuration --workspace-folder <path>
+  devcontainer reset                # fake-only: wipe all container state
+EOF
+}
+
+cmd_up() {
+  workspace=""
+  remove_existing=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --workspace-folder)
+        workspace="${2:-}"; shift 2 ;;
+      --workspace-folder=*)
+        workspace="${1#*=}"; shift ;;
+      --remove-existing-container)
+        remove_existing=1; shift ;;
+      --id-label|--mount-workspace-git-root|--config|--override-config)
+        # value-taking flags we don't act on
+        shift 2 ;;
+      --skip-non-blocking-commands|--update-remote-user-uid-default=*|--user-data-folder=*)
+        shift ;;
+      *)
+        # Unknown flag/value — ignore so we stay forgiving.
+        shift ;;
+    esac
+  done
+
+  if [ -z "$workspace" ]; then
+    echo "fake-devcontainer: --workspace-folder is required" >&2
+    exit 64
+  fi
+
+  state="$(fake_state_init)"
+
+  delay_ms="${FAKE_DC_UP_DELAY_MS:-150}"
+  lines="${FAKE_DC_UP_LINES:-6}"
+
+  # If asked to remove existing, mark any running container for this
+  # workspace stopped before allocating a new id.
+  if [ "$remove_existing" = "1" ]; then
+    existing="$(fake_find_container_for_workspace "$workspace" || true)"
+    if [ -n "$existing" ]; then
+      echo "stopped" > "$state/containers/$existing/status"
+      printf '[%s] stopping existing container %s\n' "$(date +%T)" "$existing" >&2
+      fake_sleep_ms "$delay_ms"
+    fi
+  fi
+
+  # Reuse a running container for this workspace unless we just removed.
+  reuse=""
+  if [ "$remove_existing" != "1" ]; then
+    reuse="$(fake_find_container_for_workspace "$workspace" || true)"
+  fi
+
+  if [ -n "$reuse" ]; then
+    container_id="$reuse"
+    printf '[%s] reusing container %s\n' "$(date +%T)" "$container_id" >&2
+    fake_sleep_ms "$delay_ms"
+  else
+    container_id="$(fake_alloc_id "$workspace")"
+  fi
+
+  cdir="$state/containers/$container_id"
+  mkdir -p "$cdir"
+  printf '%s\n' "$workspace" > "$cdir/workspace"
+  date +%s > "$cdir/created_at"
+  printf 'running\n' > "$cdir/status"
+  printf '%s\n' "${FAKE_DC_REMOTE_USER:-vscode}" > "$cdir/remote_user"
+  remote_workspace="${FAKE_DC_REMOTE_WORKSPACE:-/workspaces/$(basename "$workspace")}"
+  printf '%s\n' "$remote_workspace" > "$cdir/remote_workspace"
+
+  # Default port mappings if a forwardPorts mock isn't supplied.
+  : > "$cdir/ports"
+  if [ -n "${FAKE_DC_PORTS:-}" ]; then
+    # Comma-separated list like "8080,5432"
+    next=32768
+    IFS=',' read -r -a _p <<<"$FAKE_DC_PORTS"
+    for p in "${_p[@]}"; do
+      printf '%s/tcp -> 0.0.0.0:%s\n' "$p" "$next" >> "$cdir/ports"
+      next=$((next+1))
+    done
+  fi
+
+  # Stream phase lines on stderr with sleeps so the build-log split has
+  # something to scroll. The leading `[+] Building` mirrors the look of
+  # the real devcontainer/docker buildx output.
+  : > "$cdir/logs"
+  emit_progress() {
+    line="$1"
+    printf '%s\n' "$line" >&2
+    printf '%s\n' "$line" >> "$cdir/logs"
+  }
+
+  emit_progress "[+] Building 0.0s ..."
+  fake_sleep_ms "$delay_ms"
+  emit_progress "[+] Building 0.5s ...   resolving image"
+  fake_sleep_ms "$delay_ms"
+
+  if [ "${FAKE_DC_UP_HANG:-0}" = "1" ]; then
+    emit_progress "[+] Hanging on purpose for cancel test (FAKE_DC_UP_HANG=1)"
+    # Sleep forever; cancel-attach should kill us.
+    while true; do sleep 30; done
+  fi
+
+  i=1
+  while [ "$i" -le "$lines" ]; do
+    emit_progress "[+] Building $(awk -v i="$i" 'BEGIN { printf "%.1f", i*0.7 + 1 }')s ...   pulling layers ($i/$lines)"
+    fake_sleep_ms "$delay_ms"
+    i=$((i+1))
+  done
+
+  if [ "${FAKE_DC_UP_FAIL:-0}" = "1" ]; then
+    reason="${FAKE_DC_UP_FAIL_REASON:-image not found: ubuntu:bogus}"
+    emit_progress "error: $reason"
+    printf 'stopped\n' > "$cdir/status"
+    exit 1
+  fi
+
+  emit_progress "[+] Starting container $container_id"
+  fake_sleep_ms "$delay_ms"
+  emit_progress "[+] Running postCreateCommand"
+  fake_sleep_ms "$delay_ms"
+
+  # Final JSON outcome on stdout. Plugin scans stdout backwards for the
+  # last line that parses as JSON, so trailing newline placement is fine.
+  printf '%s\n' "$container_id" > "$state/last_id"
+
+  if [ "${FAKE_DC_UP_BAD_JSON:-0}" = "1" ]; then
+    echo "{ this is not valid json"
+  elif [ "${FAKE_DC_UP_NO_CONTAINER_ID:-0}" = "1" ]; then
+    printf '{"outcome":"success","remoteUser":"%s","remoteWorkspaceFolder":"%s"}\n' \
+      "$(cat "$cdir/remote_user")" "$(cat "$cdir/remote_workspace")"
+  else
+    printf '{"outcome":"success","containerId":"%s","remoteUser":"%s","remoteWorkspaceFolder":"%s"}\n' \
+      "$container_id" \
+      "$(cat "$cdir/remote_user")" \
+      "$(cat "$cdir/remote_workspace")"
+  fi
+}
+
+cmd_read_configuration() {
+  # Stub — Fresh doesn't currently call this, but we accept it so we don't
+  # explode if someone wires it up.
+  printf '{"configuration":{},"workspace":{}}\n'
+}
+
+cmd_reset() {
+  state="$(fake_state_init)"
+  rm -rf "$state/containers" "$state/last_id"
+  mkdir -p "$state/containers"
+  echo "fake-devcontainer: reset $state" >&2
+}
+
+main() {
+  if [ $# -eq 0 ]; then usage; exit 64; fi
+  sub="$1"; shift
+  case "$sub" in
+    up)                 cmd_up "$@" ;;
+    read-configuration) cmd_read_configuration "$@" ;;
+    reset)              cmd_reset "$@" ;;
+    --help|-h|help)     usage; exit 0 ;;
+    *)
+      echo "fake-devcontainer: unsupported subcommand: $sub" >&2
+      exit 64
+      ;;
+  esac
+}
+
+main "$@"
