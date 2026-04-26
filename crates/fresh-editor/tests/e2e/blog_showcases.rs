@@ -443,8 +443,14 @@ fn blog_showcase_productivity_command_palette() {
     s.finalize().unwrap();
 }
 
-/// Flash Jump: type any pattern, press a single-letter label to teleport
-/// the cursor to any visible match — including matches in other splits.
+/// Flash Jump: type nothing, press a single-letter label, teleport.
+///
+/// The "ultimate jump" demo — empty-pattern mode labels every visible
+/// word start as soon as flash activates, so the user goes from
+/// "where do I want to be?" to "I am there" in a single keypress.
+/// Filtering by typing is also supported (any non-label letter
+/// switches the labels to a substring search) but is intentionally
+/// not shown here — that's a secondary mode and would muddy the demo.
 #[test]
 #[ignore]
 fn blog_showcase_productivity_flash_jump() {
@@ -460,8 +466,8 @@ fn blog_showcase_productivity_flash_jump() {
     copy_plugin(&plugins_dir, "flash");
     copy_plugin_lib(&plugins_dir);
 
-    // Wider terminal so the flash status banner (`Flash[<pattern>]`)
-    // survives status-bar truncation — same width the e2e tests use.
+    // Wider terminal so the flash status banner (`Flash[]`) survives
+    // status-bar truncation — same width the e2e tests use.
     let mut h = EditorTestHarness::with_config_and_working_dir(
         120,
         30,
@@ -470,34 +476,42 @@ fn blog_showcase_productivity_flash_jump() {
     )
     .unwrap();
 
-    // Sample buffer with multiple natural match clusters: pattern
-    // "render" hits 6 occurrences across a viewport, "state" hits 7,
-    // and most lines fit on screen at width 120.
-    let sample = r#"fn render_view_lines(state: &State, viewport: &Viewport) -> Vec<Line> {
-    let mut lines = Vec::new();
-    for line in viewport.visible_lines(state) {
-        let rendered = render_line(state, line);
-        lines.push(rendered);
-    }
-    lines
-}
+    // Hand-picked sparse content for the showcase: every other line
+    // is blank, and content lines repeat the same handful of first
+    // letters (`zzz`).  Result: the labeler's skip rule removes only
+    // one letter from the pool, leaving ~25 labels available for ~10
+    // visible word starts — every word gets a label and they spread
+    // top-to-bottom, so any choice produces a visible cross-screen
+    // jump.
+    let sample = r#"zzz one
 
-fn render_line(state: &State, line: usize) -> Line {
-    let segments = state.line_segments(line);
-    Line::new(segments)
-}
+zzz two
 
-impl Viewport {
-    pub fn visible_lines(&self, state: &State) -> impl Iterator<Item = usize> {
-        let top = self.top_line;
-        let bottom = top + self.height as usize;
-        (top..bottom).filter(|i| state.is_valid_line(*i))
-    }
-}
+zzz three
+
+zzz four
+
+zzz five
+
+zzz six
+
+zzz seven
+
+zzz eight
+
+zzz nine
+
+zzz ten
 "#;
     let sample_path = project_root.join("sample.rs");
     fs::write(&sample_path, sample).unwrap();
     h.open_file(&sample_path).unwrap();
+
+    // Cursor stays at byte 0 (line 1, col 0).  Distance-sort then
+    // assigns the first labels to nearby words at the top of the
+    // file and the last available labels to the farthest visible
+    // words near the bottom — so picking a late-pool label lets the
+    // jump cross many lines and reads as a clear teleport.
 
     // Wait for the flash plugin's command to be registered before we
     // try to invoke it via the palette.
@@ -512,58 +526,76 @@ impl Viewport {
     let mut s = BlogShowcase::new(
         "productivity/flash-jump",
         "Flash Jump",
-        "Type a pattern, press a label, jump anywhere visible.",
+        "Press a single key. Teleport the cursor anywhere visible.",
     );
 
-    hold(&mut h, &mut s, 5, 100);
+    // Pacing notes: 2026-04 round of feedback was that the previous
+    // showcase felt too fast and was dominated by typing.  This pass
+    // bumps every duration ~2× and replaces the "type a search
+    // pattern" middle act with a single hero hold on the labelled
+    // viewport — empty-pattern mode shows every jump target at once.
+
+    // ---- Opening: settle on the file ----
+    hold(&mut h, &mut s, 12, 120);
 
     // ---- Activate flash via the command palette ----
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Ctrl+P"), 180);
+    snap(&mut h, &mut s, Some("Ctrl+P"), 600);
+    hold(&mut h, &mut s, 3, 200);
 
     for ch in "Flash: Jump".chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
         h.render().unwrap();
     }
     h.wait_for_screen_contains("Flash: Jump").unwrap();
-    snap(&mut h, &mut s, None, 150);
-    hold(&mut h, &mut s, 2, 100);
+    snap(&mut h, &mut s, None, 800);
 
+    // ---- Hero moment: press Enter, labels appear immediately ----
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    // Wait for flash to set its mode + initial empty-pattern status —
-    // both signals together prove the first `getNextKey` is armed.
+    // Wait for flash to set its mode AND post the empty-pattern
+    // status — both signals together prove the first `getNextKey` is
+    // armed and the labels were rendered.
     h.wait_until(|h| {
         h.editor().editor_mode() == Some("flash".to_string())
             && h.screen_to_string().contains("Flash[]")
     })
     .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 250);
-    hold(&mut h, &mut s, 4, 100);
+    snap(&mut h, &mut s, Some("Enter"), 600);
 
-    // ---- Type the pattern; semantic wait per-char ----
-    let mut so_far = String::new();
-    for ch in "render".chars() {
-        so_far.push(ch);
-        let needle = format!("Flash[{}]", so_far);
-        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
-        h.wait_until(|h| h.screen_to_string().contains(&needle))
-            .unwrap();
-        snap(&mut h, &mut s, Some(&ch.to_string()), 110);
-    }
-    hold(&mut h, &mut s, 6, 110);
+    // Long, deliberate hold on the labelled viewport.  This is the
+    // single most important frame in the GIF — the user has to be
+    // able to read each label and pick one mentally.
+    hold(&mut h, &mut s, 18, 150);
 
-    // ---- Press a label that jumps to a non-trivial spot ----
-    // With cursor at byte 0, labels are assigned in distance order
-    // from "asdfghjkl..." (skipping any next-char letter).  Label 'g'
-    // typically lands on a `render`-prefixed match further down the
-    // file, which makes for an obvious cursor jump in the GIF.
-    h.send_key(KeyCode::Char('g'), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.editor().editor_mode() != Some("flash".to_string()))
-        .unwrap();
-    snap(&mut h, &mut s, Some("g"), 250);
-    hold(&mut h, &mut s, 6, 110);
+    // ---- The jump ----
+    // With cursor at byte 0 and the sparse sample above, label `m`
+    // is reliably assigned to the last `zzz` on line 19 — a near
+    // 19-line cross-screen jump, the most visually obvious teleport
+    // a single keypress can produce.
+    let initial_cursor = h.cursor_position();
+    h.send_key(KeyCode::Char('m'), KeyModifiers::NONE).unwrap();
+    // Wait for both the mode to clear AND the cursor to settle at the
+    // jump target — the status bar reads cursor position via the
+    // post-render snapshot, so the second wait keeps the captured
+    // frames from showing a stale `Ln 1, Col 1`.
+    h.wait_until(|h| {
+        h.editor().editor_mode() != Some("flash".to_string())
+            && h.cursor_position() != initial_cursor
+    })
+    .unwrap();
+    // Force two extra renders so the status bar's snapshot of cursor
+    // position catches up before we capture.  One render isn't always
+    // enough — the status text comes from a snapshot updated on the
+    // tick AFTER setBufferCursor was applied.
+    h.render().unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("m"), 700);
+
+    // Closing: settle on the new cursor position so the viewer can
+    // see where the jump landed.
+    hold(&mut h, &mut s, 16, 150);
 
     s.finalize().unwrap();
 }

@@ -185,29 +185,90 @@ function findMatches(views: SplitView[], pattern: string): Match[] {
   return all;
 }
 
+// Empty-pattern mode: label every visible word start.
+//
+// A "word start" is any alphanumeric / `_` char preceded by a non-word
+// character (or sitting at the start of the viewport snapshot).  Each
+// becomes a 1-char synthetic match anchored at the word's first letter
+// — pressing the assigned label teleports the cursor to that word.
+// This is the "no-filter, jump anywhere visible" mode that flash.nvim
+// ships with `min_pattern_length = 0`.
+function isWordChar(ch: number): boolean {
+  return (
+    (ch >= 0x30 && ch <= 0x39) || // 0-9
+    (ch >= 0x41 && ch <= 0x5a) || // A-Z
+    (ch >= 0x61 && ch <= 0x7a) || // a-z
+    ch === 0x5f                   // _
+  );
+}
+
+function findWordStartMatchesInSplit(view: SplitView): Match[] {
+  const out: Match[] = [];
+  const text = view.snap.text;
+  let prevWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const cur = isWordChar(text.charCodeAt(i));
+    if (cur && !prevWord) {
+      out.push({
+        start: view.snap.topByte + view.snap.byteAt[i],
+        end: view.snap.topByte + view.snap.byteAt[i + 1],
+        charIdx: i,
+        charEnd: i + 1,
+        bufferId: view.bufferId,
+        splitId: view.splitId,
+      });
+    }
+    prevWord = cur;
+  }
+  return out;
+}
+
+function findWordStartMatches(views: SplitView[]): Match[] {
+  const all: Match[] = [];
+  for (const v of views) {
+    for (const m of findWordStartMatchesInSplit(v)) {
+      all.push(m);
+    }
+  }
+  return all;
+}
+
 // =============================================================================
 // Labeler — port of flash.nvim labeler.lua
 // =============================================================================
 
-// Build the set of label letters to skip: every char that appears
-// immediately after a visible match (and so could be a valid pattern
-// extension).  Pressing such a letter must be unambiguous; if it is
-// also a label, ambiguity.  Remove from the pool.  Walks every split's
-// snapshot.
-function buildSkipSet(matches: Match[], views: SplitView[]): Set<string> {
+// Build the set of label letters to skip:
+//
+//   - In **search mode** (non-empty pattern): every char that appears
+//     immediately AFTER a visible match could be a valid pattern
+//     continuation.  Pressing it must extend the pattern unambiguously,
+//     so it can't also be a label.  Skip those letters.
+//
+//   - In **word-start mode** (empty pattern): every char that is the
+//     FIRST letter of a visible word is reserved for "start a search
+//     with this letter".  Pressing it must enter search mode, not jump.
+//     Skip those.
+//
+// Returns the set of letters to remove from the label pool.
+function buildSkipSet(
+  matches: Match[],
+  views: SplitView[],
+  emptyPattern: boolean,
+): Set<string> {
   const byBufferToText = new Map<number, string>();
   for (const v of views) byBufferToText.set(v.bufferId, v.snap.text);
   const skip = new Set<string>();
   for (const m of matches) {
     const text = byBufferToText.get(m.bufferId);
     if (!text) continue;
-    if (m.charEnd < text.length) {
-      const next = text.charAt(m.charEnd);
-      // Pool is lowercase only.  Skip the next-char and its lower-case
-      // form; the conservative "case-sensitive labels never collide
-      // with case-insensitive pattern extension" rule.
-      skip.add(next);
-      skip.add(next.toLowerCase());
+    const idx = emptyPattern ? m.charIdx : m.charEnd;
+    if (idx < text.length) {
+      const ch = text.charAt(idx);
+      // Pool is lowercase only.  Skip the char and its lower-case form
+      // — the conservative "case-sensitive labels never collide with
+      // case-insensitive continuation" rule.
+      skip.add(ch);
+      skip.add(ch.toLowerCase());
     }
   }
   return skip;
@@ -242,9 +303,10 @@ function assignLabels(
   views: SplitView[],
   startCursor: number,
   startSplitId: number,
+  emptyPattern: boolean,
 ): Match[] {
   if (matches.length === 0) return matches;
-  const skip = buildSkipSet(matches, views);
+  const skip = buildSkipSet(matches, views, emptyPattern);
   const pool: string[] = [];
   for (const c of LABEL_POOL) if (!skip.has(c)) pool.push(c);
 
@@ -353,14 +415,20 @@ async function flashJump(): Promise<void> {
   try {
     while (true) {
       const views = await readAllSplits();
-      state.matches = state.pattern
-        ? assignLabels(
-            findMatches(views, state.pattern),
-            views,
-            state.startCursor,
-            state.startSplitId,
-          )
-        : [];
+      // Empty pattern → label every visible word start ("jump
+      // anywhere" mode).  Non-empty pattern → label every literal
+      // substring match.
+      const emptyPattern = state.pattern.length === 0;
+      const rawMatches = emptyPattern
+        ? findWordStartMatches(views)
+        : findMatches(views, state.pattern);
+      state.matches = assignLabels(
+        rawMatches,
+        views,
+        state.startCursor,
+        state.startSplitId,
+        emptyPattern,
+      );
       redraw(state.matches);
 
       const ev = await editor.getNextKey();
