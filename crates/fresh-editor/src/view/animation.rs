@@ -10,6 +10,7 @@
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +33,15 @@ pub enum AnimationKind {
         from: Edge,
         duration: Duration,
         delay: Duration,
+    },
+    /// Animate the cursor moving from one screen cell to another. Paints an
+    /// inverted-color "head" cell at the interpolated position with a short
+    /// fading trail along the line from `from` to `to`. `from`/`to` are
+    /// absolute screen coordinates (col, row).
+    CursorJump {
+        from: (u16, u16),
+        to: (u16, u16),
+        duration: Duration,
     },
 }
 
@@ -226,6 +236,85 @@ impl FrameEffect for SlideIn {
     }
 }
 
+/// Cursor-jump effect. Paints a moving "head" cell along the straight line
+/// from `from` to `to` with a short fading trail. Both endpoints are in
+/// absolute screen coordinates (col, row). The effect operates outside the
+/// `area` snapshot model used by `SlideIn`: it directly mutates cells along
+/// the interpolated path and never reads/snapshots an area, so the `area`
+/// passed to the runner is only used for dedupe/replacement bookkeeping.
+pub struct CursorJump {
+    from: (i32, i32),
+    to: (i32, i32),
+    duration: Duration,
+}
+
+impl CursorJump {
+    pub fn new(from: (u16, u16), to: (u16, u16), duration: Duration) -> Self {
+        Self {
+            from: (from.0 as i32, from.1 as i32),
+            to: (to.0 as i32, to.1 as i32),
+            duration,
+        }
+    }
+
+    fn highlight_cell(buf: &mut Buffer, col: i32, row: i32) {
+        if col < 0 || row < 0 {
+            return;
+        }
+        let buf_area = buf.area;
+        let c = col as u16;
+        let r = row as u16;
+        if c < buf_area.x
+            || c >= buf_area.x.saturating_add(buf_area.width)
+            || r < buf_area.y
+            || r >= buf_area.y.saturating_add(buf_area.height)
+        {
+            return;
+        }
+        if let Some(cell) = buf.cell_mut((c, r)) {
+            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+        }
+    }
+}
+
+impl FrameEffect for CursorJump {
+    fn apply(&mut self, buf: &mut Buffer, _area: Rect, elapsed: Duration) -> EffectStatus {
+        let t = if self.duration.is_zero() {
+            1.0
+        } else {
+            (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
+        };
+        let eased = ease_out_cubic(t);
+
+        let (fx, fy) = (self.from.0 as f32, self.from.1 as f32);
+        let (tx, ty) = (self.to.0 as f32, self.to.1 as f32);
+        let dx = tx - fx;
+        let dy = ty - fy;
+
+        // Trail length scales with how much of the jump has been completed,
+        // so the early frames have a short tail and later frames a longer
+        // one — gives a sense of acceleration.
+        let path_cells = dx.abs().max(dy.abs()).round() as i32;
+        let trail_len = (path_cells.min(8).max(2)) as usize;
+
+        for i in 0..trail_len {
+            // Trail samples behind the head: i=0 is the head, larger i is
+            // further back along the path.
+            let back = (i as f32) / (trail_len as f32);
+            let sample = (eased - back * 0.12).max(0.0);
+            let col = (fx + dx * sample).round() as i32;
+            let row = (fy + dy * sample).round() as i32;
+            Self::highlight_cell(buf, col, row);
+        }
+
+        if t >= 1.0 {
+            EffectStatus::Done
+        } else {
+            EffectStatus::Running
+        }
+    }
+}
+
 struct ActiveEffect {
     id: AnimationId,
     area: Rect,
@@ -302,6 +391,15 @@ impl AnimationRunner {
                     duration,
                     delay,
                 } => (Box::new(SlideIn::new(from, duration)), delay, duration),
+                AnimationKind::CursorJump {
+                    from,
+                    to,
+                    duration,
+                } => (
+                    Box::new(CursorJump::new(from, to, duration)),
+                    Duration::ZERO,
+                    duration,
+                ),
             };
         self.total_started += 1;
         self.active.push(ActiveEffect {
@@ -698,6 +796,69 @@ mod tests {
         assert_eq!(runner.active.len(), 1);
         assert_eq!(runner.active[0].id, second);
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn cursor_jump_at_t1_highlights_target() {
+        // Background painted with '.', cursor jumps from (0,0) to (4,2).
+        let area = Rect::new(0, 0, 6, 4);
+        let mut buf = make_buf(6, 4);
+        paint(&mut buf, area, '.', Color::White);
+
+        let mut effect = CursorJump::new((0, 0), (4, 2), Duration::from_millis(100));
+        // Drive past the duration so the head lands exactly on the target.
+        let status = effect.apply(&mut buf, area, Duration::from_millis(100));
+        assert_eq!(status, EffectStatus::Done);
+
+        let head = buf.cell((4, 2)).unwrap();
+        assert!(
+            head.style().add_modifier.contains(Modifier::REVERSED),
+            "head cell at target should be REVERSED"
+        );
+    }
+
+    #[test]
+    fn cursor_jump_at_t0_highlights_source() {
+        let area = Rect::new(0, 0, 6, 4);
+        let mut buf = make_buf(6, 4);
+        paint(&mut buf, area, '.', Color::White);
+
+        let mut effect = CursorJump::new((0, 0), (4, 2), Duration::from_millis(100));
+        let status = effect.apply(&mut buf, area, Duration::ZERO);
+        assert_eq!(status, EffectStatus::Running);
+
+        let head = buf.cell((0, 0)).unwrap();
+        assert!(
+            head.style().add_modifier.contains(Modifier::REVERSED),
+            "head cell at source should be REVERSED at t=0"
+        );
+    }
+
+    #[test]
+    fn cursor_jump_through_runner() {
+        let mut runner = AnimationRunner::new();
+        let area = Rect::new(0, 0, 10, 5);
+        let id = runner.start(
+            area,
+            AnimationKind::CursorJump {
+                from: (1, 1),
+                to: (8, 4),
+                duration: Duration::from_millis(50),
+            },
+        );
+        assert!(runner.is_active());
+        let mut buf = make_buf(10, 5);
+        paint(&mut buf, area, ' ', Color::Reset);
+        runner.apply_all(&mut buf);
+        // Should still be running right after start.
+        assert!(runner.is_active());
+        std::thread::sleep(Duration::from_millis(80));
+        runner.apply_all(&mut buf);
+        assert!(
+            !runner.is_active(),
+            "cursor jump should complete after duration"
+        );
+        let _ = id;
     }
 
     #[test]

@@ -773,6 +773,8 @@ impl Editor {
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
             animations: crate::view::animation::AnimationRunner::new(),
+            previous_cursor_screen_pos: None,
+            cursor_jump_animation: None,
             pending_vb_animations: Vec::new(),
         };
 

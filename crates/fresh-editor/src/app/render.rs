@@ -492,6 +492,15 @@ impl Editor {
 
         drop(_content_span);
 
+        // Cursor-jump animation: compare the cursor's screen position to
+        // the prior frame and, if the user moved it non-incrementally
+        // (search match, goto-line, click, goto-definition, focus change
+        // between split panes, tab switch, etc.), kick off a short trail
+        // effect from the old to the new screen cell. The trail crosses
+        // pane separators when the jump is across splits — that's the
+        // intended "follow the focus" cue.
+        self.maybe_start_cursor_jump_animation(pending_hardware_cursor);
+
         // Detect viewport changes and fire hooks
         // Compare against previous frame's viewport state (stored in self.previous_viewports)
         // This correctly detects changes from scroll events that happen before render()
@@ -1211,6 +1220,74 @@ impl Editor {
 
         // Frame-buffer animations run last so they mutate the final paint.
         self.animations.apply_all(frame.buffer_mut());
+    }
+
+    /// Compare the hardware cursor's screen position to the previous frame's
+    /// and, if it moved by more than the "jump" threshold, start a
+    /// `CursorJump` animation from the old to the new on-screen position.
+    /// Successive jumps cancel the prior animation so trail effects don't
+    /// pile up.
+    ///
+    /// Cross-split and cross-buffer transitions (focus change, tab switch)
+    /// are also animated — the trail crosses pane separators on its way
+    /// from one buffer's cursor cell to another's.
+    ///
+    /// The threshold is intentionally generous: arrow-key/typing moves
+    /// (small `dx`/`dy`) must NOT trigger the animation, but search jumps,
+    /// goto-line/definition, and pane switches (which always cross several
+    /// rows or many columns) must.
+    fn maybe_start_cursor_jump_animation(&mut self, current_pos: Option<(u16, u16)>) {
+        let Some(current) = current_pos else {
+            // Cursor is hidden this frame (e.g. prompt has focus). Reset the
+            // tracker so the re-emerging cursor doesn't animate from a stale
+            // spot when focus returns to a buffer.
+            self.previous_cursor_screen_pos = None;
+            return;
+        };
+
+        let prev_pos = self.previous_cursor_screen_pos;
+        // Update tracking unconditionally for the next frame.
+        self.previous_cursor_screen_pos = Some(current);
+
+        let Some(prev) = prev_pos else {
+            return;
+        };
+        if prev == current {
+            return;
+        }
+
+        let dx = (current.0 as i32 - prev.0 as i32).abs();
+        let dy = (current.1 as i32 - prev.1 as i32).abs();
+        // Heuristic: animate only when the move is clearly non-incremental.
+        // Typing / arrow keys produce |dx|<=1 and |dy|<=1; word-jump and
+        // home/end on short lines produce small dx; we want to skip those
+        // and animate jumps that visibly cross the screen.
+        let is_jump = dy >= 3 || dx >= 10;
+        if !is_jump {
+            return;
+        }
+
+        // Cancel any prior cursor-jump animation so trails don't stack.
+        if let Some(prev_anim) = self.cursor_jump_animation.take() {
+            self.animations.cancel(prev_anim);
+        }
+
+        let id = self.animations.start(
+            // The bounding box is for runner bookkeeping only — CursorJump
+            // paints at absolute screen coords and ignores `area`.
+            ratatui::layout::Rect {
+                x: prev.0.min(current.0),
+                y: prev.1.min(current.1),
+                width: dx as u16 + 1,
+                height: dy as u16 + 1,
+            },
+            crate::view::animation::AnimationKind::CursorJump {
+                from: prev,
+                to: current,
+                duration: std::time::Duration::from_millis(140),
+            },
+        );
+        self.cursor_jump_animation = Some(id);
     }
 
     /// Returns true if `(x, y)` falls inside any popup-style overlay that
