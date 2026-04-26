@@ -631,8 +631,43 @@ pub(super) fn apply_conceal_ranges(
                 }
             }
             ViewTokenWireKind::Space | ViewTokenWireKind::Newline | ViewTokenWireKind::Break => {
-                if is_concealed(conceal_ranges, &sorted, &mut conceal_cursor, offset).is_some() {
-                    // Skip concealed single-byte tokens
+                if let Some(cidx) =
+                    is_concealed(conceal_ranges, &sorted, &mut conceal_cursor, offset)
+                {
+                    // Concealed single-byte token.  If the conceal
+                    // range carries a `replacement`, we still need
+                    // to emit it — the Text branch above does this
+                    // via `emitted_replacements`, and dropping the
+                    // token here without doing the same was a real
+                    // bug: e.g. flash plugin labels overlay the
+                    // next char after each match, and when that
+                    // next char is a space the renderer used to
+                    // eat the cell entirely (label letter never
+                    // shown, surrounding text shifted left).
+                    if let Some(repl) = conceal_ranges[cidx].1 {
+                        if !emitted_replacements.contains(&cidx) {
+                            emitted_replacements.insert(cidx);
+                            if !repl.is_empty() {
+                                let mut chars = repl.chars();
+                                if let Some(first_ch) = chars.next() {
+                                    output.push(ViewTokenWire {
+                                        source_offset: Some(conceal_ranges[cidx].0.start),
+                                        kind: ViewTokenWireKind::Text(first_ch.to_string()),
+                                        style: None,
+                                    });
+                                    let rest: String = chars.collect();
+                                    if !rest.is_empty() {
+                                        output.push(ViewTokenWire {
+                                            source_offset: None,
+                                            kind: ViewTokenWireKind::Text(rest),
+                                            style: None,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // null replacement = hide the byte range; nothing to emit.
                 } else {
                     output.push(token);
                 }

@@ -299,6 +299,88 @@ fn flash_label_substitutes_rendered_glyph() {
     );
 }
 
+/// Regression for the conceal-eats-space bug, 2026-04: when the
+/// next char after a flash match is a Space (or Newline / Break)
+/// token, the renderer's `apply_conceal_ranges` used to drop the
+/// token without emitting the conceal-range's replacement text.
+/// Effect: the label letter never appeared and the surrounding
+/// text shifted left by one cell.
+///
+/// User-visible reproducer: type `PID` against a buffer containing
+/// `PID file lockup`.  The space between `PID` and `file` was
+/// consumed by the bug, rendering `PIDfile lockup`.  With the fix
+/// the conceal range emits its label letter (e.g. `a`) into the
+/// space's cell, producing `PIDafile lockup` (label letter painted
+/// magenta on top of where the space was) — same column count,
+/// no layout shift.
+#[test]
+fn flash_label_does_not_eat_space_after_match() {
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "PID file lockup\nthe PID for that\nsome other PID line\n",
+    );
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    arm_flash(&mut harness);
+    type_pattern(&mut harness, "PID");
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // The bug: with pattern "PID" the next char of every match is a
+    // space, and the buggy renderer dropped the space without
+    // emitting the conceal replacement, producing `PIDfile`,
+    // `PIDfor`, `PIDline`.  None of those should appear after the
+    // fix.
+    assert!(
+        !screen.contains("PIDfile"),
+        "rendered output collapsed `PID file` into `PIDfile` — \
+         conceal range was applied but its label-letter replacement \
+         was dropped.  Screen:\n{}",
+        screen,
+    );
+    assert!(
+        !screen.contains("PIDfor"),
+        "rendered output collapsed `PID for` into `PIDfor`.  Screen:\n{}",
+        screen,
+    );
+    assert!(
+        !screen.contains("PIDline"),
+        "rendered output collapsed `PID line` into `PIDline`.  Screen:\n{}",
+        screen,
+    );
+
+    // Positive check: at least one of the three matches MUST have a
+    // label letter rendered between `PID` and the following word.
+    // Iterate the pool and match via concatenation — we don't care
+    // which specific letter the labeler picked, only that *some*
+    // pool character occupies the space's cell.
+    let pool: &[char] = &[
+        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'q', 'w', 'r', 't', 'y', 'u', 'i', 'o', 'p',
+        'z', 'x', 'c', 'v', 'b', 'n', 'm',
+    ];
+    let mut substituted_count = 0usize;
+    for c in pool {
+        let needle_file = format!("PID{}file", c);
+        let needle_for = format!("PID{}for", c);
+        let needle_line = format!("PID{}line", c);
+        substituted_count += screen.matches(&needle_file).count()
+            + screen.matches(&needle_for).count()
+            + screen.matches(&needle_line).count();
+    }
+    assert!(
+        substituted_count >= 1,
+        "expected at least one match to render with a label letter \
+         occupying the cell that was the space (e.g. `PIDafile`).  \
+         Without the fix, that cell is empty and the next word \
+         shifts left.  Screen:\n{}",
+        screen,
+    );
+}
+
 #[test]
 fn flash_jumps_across_splits() {
     // Two vertical splits, each with a different buffer that contains
