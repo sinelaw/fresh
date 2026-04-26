@@ -61,16 +61,24 @@ enough primitives to implement flash entirely in TypeScript —
 are strictly required for v1.
 
 The catch: with today's plugin API this comes out clunky in the
-same ways vi_mode is clunky. The plan is therefore in two phases:
+same ways vi_mode is clunky. The plan is therefore phased:
 
 1. **Phase 1: API improvements** that simplify both flash and
    vi_mode. Most are small.
 2. **Phase 2: ship `flash.ts`** as a bundled plugin, ~200–300
-   lines.
+   lines. Active-split buffer only.
+3. **Phase 3 (multi-split):** add per-split viewport read; flash
+   labels appear in every visible buffer at once.
+4. **Phase 4 (chrome flash / "hint mode"):** add a screen-cell
+   overlay primitive + a chrome-target enumerator, then labels
+   work on file explorer entries, tabs, status bar widgets,
+   split-focus targets, popups. This is the editor-wide
+   Vimium-style variant; meaningfully different scope than
+   flash.nvim, which is buffer-only.
 
 If Phase 1 gets blocked or scoped down, flash can still ship as a
 ~500-line plugin against the current API — same shape vi_mode uses
-today.
+today. Phases 3 and 4 are independent and can land in any order.
 
 ## Plugin API improvements
 
@@ -92,10 +100,14 @@ actually use it. Numbered for reference, not priority.
 | 10 | High-level `editor.modal({ bindings, onChar, render })` helper | Wraps mode entry + key loop + render + cleanup in one call | Low (mostly subsumed by #1+#2) | Medium |
 | 11 | Reconcile vi_mode.ts:17 TODO about `getLineStartPosition` with the API surface | TODO says it doesn't exist; `fresh.d.ts:1091` says it does. Stale doc or recent addition | Low — cleanup | Trivial |
 | 12 | Document/expose the "single global mode" constraint | Fresh has one `editor_mode: Option<String>`, no stack. Plugins entering a mode must save & restore the prior mode themselves; Escape doesn't auto-pop. | Low — docs / convenience helper | Trivial–Small |
+| 13 | `editor.getViewportForSplit(splitId): ViewportInfo` (or `editor.listSplits(): { splitId, bufferId, viewport }[]`) | Today `getViewport()` only returns the active split. Multi-split flash needs per-split viewport reads to know what to label. | Medium — unlocks Phase 3 | Small (state already there, just expose) |
+| 14 | `editor.addScreenOverlay(x, y, text, style): handle` — absolute screen-coordinate label | All chrome (file explorer, tabs, status bar, popups, split separators) is drawn outside any buffer. Today there's no plugin-visible way to draw a glyph at `(x, y)`. The infrastructure half-exists in `view/animation.rs:104-115` (post-render cell mutation for slide-ins) — promote it to a plugin-visible API. | High — unlocks Phase 4 + many other plugin use cases (toasts, HUDs, custom overlays) | Medium |
+| 15 | `editor.listVisibleHintTargets(): HintTarget[]` — enumerate visible interactive elements with screen coords + activation handle | Each chrome element already has its own hit-test logic (`TabLayout::hit_test`, `MenuLayout::hit_test`, status bar `ElementKind` regions, file tree). Surface them as a unified plugin-visible list so chrome-flash can paint labels and dispatch click-equivalent actions. | High — required for Phase 4 | Medium |
 
-Suggested landing order: **#1 → #2 → #5 → #6 → #7**. With just
-#1 and #2 in hand, flash becomes a ~200-line plugin and vi_mode
-sheds roughly 300 lines.
+Suggested landing order: **#1 → #2 → #5 → #6 → #7 → #13 → #14 → #15**.
+With just #1 and #2 in hand, flash becomes a ~200-line plugin and
+vi_mode sheds roughly 300 lines. #13 unlocks multi-split (Phase 3).
+#14+#15 unlock chrome flash / hint mode (Phase 4).
 
 ## Phase 2: the flash plugin
 
@@ -150,10 +162,25 @@ Sub-pieces (~200 lines total):
   calls are fine for v1; switch to `setNamespaceOverlays` (API #5)
   if profiling shows the per-call re-sort hurts.
 
-Optional v1+ features (skip for first cut):
+Optional v1+ features (deferred to later phases):
 
-- Multi-window jumping (Fresh has splits — one buffer per pass for
-  v1).
+- **Multi-split jumping (Phase 3):** label matches in every
+  visible split simultaneously. Mechanically the same — overlays
+  are buffer-anchored, so `addOverlay(otherBufId, ...)` already
+  paints in whichever split is showing that buffer. Blocked
+  only on per-split viewport read (API #13). flash.nvim's
+  `multi_window: true` mode is exactly this.
+- **Chrome flash / hint mode (Phase 4):** label visible file
+  explorer entries, tabs, status bar widgets, split-focus
+  targets, popup items. The agent confirmed all of these are
+  drawn directly by Rust UI code — *not* buffers — so today's
+  buffer-anchored `addOverlay`/`addVirtualText` cannot reach
+  them. Blocked on a screen-cell overlay API (#14) plus a
+  chrome-target enumerator (#15). On label press, dispatch the
+  equivalent click action via existing per-element handlers
+  (`TabLayout::hit_test → click`, file explorer click handler,
+  etc.). This is meaningfully more powerful than flash.nvim and
+  is the path to a Vimium-style editor-wide hint UI.
 - `t`/`T`/`f`/`F` enhanced char motions (vi_mode already does this;
   reuse rather than reimplement unless the bindings make sense
   outside vi).
@@ -161,6 +188,26 @@ Optional v1+ features (skip for first cut):
   separate design).
 - Dot-repeat — needs a hook flash.nvim has via `repeat.lua` and
   Vim's `'.'`. Out of scope for v1.
+
+## What counts as "jumpable"?
+
+Visible elements in Fresh fall into three classes that need
+different machinery (validated against the source by the chrome
+audit pass):
+
+| Class | Examples | Mechanism | Phase |
+|---|---|---|---|
+| **Active-buffer content** | Text in the focused split | `addOverlay` + `addVirtualText` on `bufferId` | 2 (v1) |
+| **Other-split content** | Text in non-focused splits | Same buffer-anchored overlays — overlays paint wherever the buffer is shown. Needs **API #13** to enumerate per-split viewports. | 3 |
+| **Virtual-buffer content** | Diagnostics panel, search results, git log panels | Same as above — these *are* buffers (`createVirtualBufferInSplit`). No new API needed; just falls out of Phase 3. | 3 |
+| **Chrome** | File explorer entries, tabs, status bar widgets, menu items, command-palette suggestions, popup items, split separators | Drawn directly by Rust UI code; no buffer addressability. Each element already has its own hit-test (`TabLayout::hit_test`, `MenuLayout::hit_test`, status bar regions, file tree click handler). Needs **API #14** (screen-cell overlay) + **API #15** (chrome target enumerator). | 4 |
+
+The clean cut is: anything that's a buffer is reachable now;
+anything that's chrome needs the new screen-overlay primitive.
+Phase 4 is the most exciting feature but also the biggest design
+piece, and #14 has high leverage beyond flash (toasts,
+notifications, picture-in-picture HUDs, animated transitions
+beyond slide-in).
 
 ## Validation pass results
 
