@@ -1791,10 +1791,28 @@ function openBuildLogInSplit(path: string): void {
     editor.focusSplit(existing.splits[0]);
     return;
   }
-  // Not visible anywhere → create a new split and open the log
-  // there. openFile reuses the buffer when the path is already
-  // loaded (e.g. open but not in any split), so no duplicate
-  // buffers either way.
+  // Bug #6: "always-split, never-close" used to stack a new
+  // horizontal split per rebuild because each rebuild produces a
+  // log file with a fresh timestamp. Reuse the previous build
+  // log's split if it's still on screen — drop in the new log,
+  // no extra split. The user keeps a single "build log" pane.
+  const cwd = editor.getCwd();
+  const logsPrefix = editor.pathJoin(cwd, ".fresh-cache", "devcontainer-logs");
+  const reusableSplit = buffers.find(
+    (b) => b.path && b.path.startsWith(logsPrefix) && b.splits.length > 0,
+  );
+  if (reusableSplit && reusableSplit.splits.length > 0) {
+    editor.focusSplit(reusableSplit.splits[0]);
+    editor.openFile(path, null, null);
+    // Drop the now-stale buffer to keep the tab list / buffer
+    // map from accumulating one entry per rebuild.
+    if (reusableSplit.path !== path) {
+      editor.closeBuffer(reusableSplit.id);
+    }
+    return;
+  }
+  // No prior log split visible → create a new one. openFile
+  // reuses the buffer when the path is already loaded.
   editor.executeAction("split_horizontal");
   editor.openFile(path, null, null);
 }

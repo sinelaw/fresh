@@ -654,3 +654,77 @@ fn rebuild_does_not_kill_open_terminal_buffer() {
          (the rebuild flow uses the same setAuthority path)"
     );
 }
+
+/// **Bug #6 (L169, Critical).** "Always-split, never-close" pane
+/// strategy: every rebuild used to add a fresh horizontal split
+/// for its own (timestamped) build log without closing or
+/// reusing the previous build log's split. After 3-4 rebuilds
+/// the right column was 5+ splits stacked vertically.
+///
+/// Fix: `openBuildLogInSplit` now finds any existing build-log
+/// split (any path under `<cwd>/.fresh-cache/devcontainer-logs/`)
+/// and reuses it — focuses the split, swaps the buffer to the
+/// new log, closes the stale buffer.
+///
+/// Regression guard: drive attach (which opens log #1 in a new
+/// split) and then trigger the `Rebuild` command (which produces
+/// log #2 with a different timestamp). Assert the split count
+/// after rebuild equals the split count after attach — i.e. the
+/// new log reused the existing split rather than stacking.
+#[cfg(unix)]
+#[test]
+fn rebuild_reuses_build_log_split_instead_of_stacking() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+
+    // 1. Attach — opens build log #1 in a new horizontal split.
+    attach_via_fake(&mut harness);
+    // Wait for the build log to actually land in a split (the
+    // log spawn is async).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
+        .unwrap();
+    let splits_after_attach = harness.editor().get_split_count();
+
+    // 2. Trigger Rebuild via the palette — produces a new
+    // log file with a different timestamp.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Dev Container: Rebuild").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Dev Container: Rebuild"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Pump until the rebuild settles. The fake `up` produces a
+    // new build log buffer; without the fix this lands in a
+    // *new* split.
+    for _ in 0..200 {
+        harness.tick_and_render().unwrap();
+        if let Some(auth) = harness.editor_mut().take_pending_authority() {
+            harness.editor_mut().set_boot_authority(auth);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+
+    let splits_after_rebuild = harness.editor().get_split_count();
+    assert_eq!(
+        splits_after_rebuild, splits_after_attach,
+        "Rebuild must reuse the build-log split, not stack a new one. \
+         splits after attach: {splits_after_attach}, \
+         splits after rebuild: {splits_after_rebuild}"
+    );
+}
