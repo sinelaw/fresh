@@ -1,0 +1,106 @@
+# Usability Test Report — Devcontainer in Fresh TUI
+
+**Date:** 2026-04-26
+**Method:** Moderated think-aloud, single participant (TUI-savvy developer profile), executed via tmux against `target/debug/fresh`.
+**Project under test:** `vscode-remote-try-python` (Flask app + `mcr.microsoft.com/devcontainers/python:1-3.12`)
+**Container runtime:** Docker, healthy.
+
+## Task-by-Task Findings & SEQ
+
+### Task 1 — Environment Bootstrapping  ★ SEQ 7/7
+- **Discoverability: excellent.** A `Dev Container Detected` modal appeared on launch with `Reopen in Container` / `Ignore`. Zero hunting required.
+- **Affordance: strong.** After accepting, the file-explorer header flipped from `File Explorer` to `[Container]`, and the status bar replaced `Local` with `Container:1110a8fa510a`. Two persistent signals.
+- **Build feedback: weak when reusing.** The container was actually reused (`Up 21 hours`), but the auto-opened build log only contained the CLI version line. As a first-time user I'd be unsure whether it just attached, just built, or skipped.
+
+### Task 2 — Add `curl`, Rebuild  ★ SEQ 5/7
+- **Rebuild discovery: medium.** The palette contains `Dev Container: Rebuild`, but in alphabetical order it sorts after every `Show *` command. Searching by "rebuild" finds it instantly; searching by "container" makes you scroll.
+- **Buffer staleness:** the on-disk `devcontainer.json` was edited but the open buffer didn't refresh until a rebuild ran. A user editing the file from a sibling buffer wouldn't see their own change reflected.
+- **Build progress feedback: good.** Status bar shows `⠿ Building` spinner; a fresh `build-<timestamp>.log` is auto-opened in a split.
+- **Build log readability: poor for `apt`.** The log uses `\r` (CR-only) line endings, so apt's progress bars compress into one ~2 KB-long line. The buffer looks empty even while the file grows.
+- **Failure UX: mixed.** The post-create script failed (`exit code 100`, yarn `NO_PUBKEY`). Modal: `Dev Container Attach Failed` with **good** affordances (`Retry`, `Show Build Logs`, `Reopen Locally`, `Dismiss`) — but the modal body is a JS stack trace from `devContainersSpecCLI.js`, not the underlying apt failure. Status bar truncates to `Attach failed: at async uG (...`. Have to dig into the log file to find the real cause.
+- **Side effect:** rebuild kills the existing terminal tab (`*Terminal 0*` disappeared). Friction for users with long-running shells.
+
+### Task 3 — Port Mapping & Verification  ★ SEQ 2/7
+- **Auto-forwarding: doesn't appear to work.** Flask bound to `0.0.0.0:9000` inside the container, but `docker ps` showed empty `PORTS`. No host mapping, no notification fired despite `portsAttributes.9000.onAutoForward: notify`.
+- **Discoverability of port commands: broken.** Searching the palette for `port`, `Ports`, `Forward`, `Forwarded` returned either zero matches or unrelated commands (Suspend Process, Mouse Support, etc.). The commands `Dev Container: Show Ports` and `Show Forwarded Ports` exist (visible when filtering by `container`) but cannot be located by their natural keywords.
+- **Workaround: docker bridge IP works.** `curl http://172.17.0.2:9000/` from the host returned the page. Only an option for docker-savvy users.
+
+### Task 4 — Error Recovery  ★ SEQ 1/7
+- **Failure visibility: nearly invisible.** Injected a missing-comma + invalid key/value pair into `devcontainer.json`. No toast, no file-explorer badge, no obvious indicator on the buffer. Existing container kept running so status bar still showed `Container:e794813713ef`.
+- **Severe recovery bug:** **all `Dev Container:` palette commands disappeared.** Verified by scrolling alphabetically through the D section — only `Debug…`, `Decrease Split Size`, `Dedent…`, `Delete…`, `Dump Config`, `Duplicate Line`. Rebuild, Detach, Open Config, Show Build Logs — all gone.
+- **Fix doesn't restore commands.** Corrected the JSON; the `Dev Container:` commands did not return to the palette. The participant has no in-editor path back; an editor restart is the only recovery.
+- **Could not trace error → line:** the JSONC LSP popup earlier offered an in-container install, but no inline error markers ever appeared on the broken lines.
+
+## Cross-cutting Issues
+
+1. **Palette filter is unreliable.** Same query produces different results across invocations; whole-word vs substring vs fuzzy ranking is inconsistent. This dominated frustration in Tasks 3 and 4.
+2. **Buffer ↔ disk sync is one-way at best.** External edits don't reflow until a side-effect (rebuild) reopens the buffer.
+3. **Terminal mode capture confusion.** `Ctrl+P` sometimes goes to terminal, sometimes opens palette, depending on focus. The status hint `Ctrl+Space to exit terminal mode` exists but is easy to miss.
+4. **Failure modes show implementation guts.** Stack traces and CLI internals leak into modal bodies and the status bar.
+
+## Logs, Pane Arrangement & Navigation
+
+### Log display
+
+- **One file per rebuild.** Each rebuild creates a new `.fresh-cache/devcontainer-logs/build-<UTC-timestamp>.log` (e.g. `build-2026-04-26_19-12-05.log`, then `_19-16-40`, then `_19-18-36`). 6 files had stacked up from prior sessions during this run. No rotation/cleanup observed.
+- **Auto-open is the right default.** Triggering Rebuild opened the new log file in a fresh buffer in a horizontal split below the editor — without being asked. Status bar showed `⠿ Building` while it ran.
+- **No live tail.** The log file on disk grew steadily (kilobytes per second during pip install) but the buffer text stayed at line 1 for tens of seconds. The buffer flushes content periodically, not as lines arrive. `tail` from the shell showed real progress while the in-editor buffer didn't.
+- **`\r` ruins apt output.** Status bar reported `CR` line endings and the cursor sat at `Ln 1, Col 2088`. apt's progress bars write `\r` between updates, so the entire 2 KB+ apt section is one logical line that renders nearly blank. A user watching the build screen would think nothing was happening.
+- **Logs as regular buffers — actually nice.** Once stable, the build log behaves like any text file: searchable with `/`, scrollable, copyable. For a TUI/vim user this is the right model. `grep`'ing the file from outside found `exit code 100` and the GPG error in seconds.
+- **Stale log buffers don't auto-close.** After the second rebuild, the previous build log buffer (`_19-12-05.log`) was still in a tab; rebuild #2's log opened as a separate tab. Tabs accumulate.
+
+### Pane arrangement
+
+- **Initial layout is clean.** File explorer fixed-width on the left; one editor pane on the right with tabs across the top.
+- **Rebuilds add horizontal splits without removing old ones.** Each rebuild appended a new split below — the right side grew to 3 stacked splits showing: top = `app.py`, middle = `devcontainer.json`, bottom = build-log + terminal. By the end of Task 2 the bottom panes were ~5 lines tall each.
+- **Duplicate buffers across splits.** At one point `devcontainer.json` was open in two adjacent splits simultaneously (lines 33–36 visible in both). Looked like the rebuild auto-opened the config in a new split rather than focusing the existing one.
+- **No automatic compacting.** The middle/bottom splits got increasingly cramped. Comment text in `devcontainer.json` wrapped aggressively (`# License…\ninformation.` across two visual lines) just because the split was narrow.
+- **Sidebar doesn't yield space.** The file explorer column kept its width while the right side was divided 3 ways. Manual `Decrease Split Size` exists in the palette but I didn't trigger it.
+- **Some commands seemed to no-op visually.** `Dev Container: Show Forwarded Ports` and `Show Ports` produced no visible pane — possibly the panel did open but couldn't be rendered in the crowded layout, or it opened off-screen. No status confirmation either way.
+
+### Navigating between panes
+
+- **Tab bars are clear.** Each split has its own row of `name × name × name ×` tabs at the top with `□ ×` controls, making it obvious which buffers belong where.
+- **Status bar identifies the focused buffer.** Always shows the current buffer + line/col + container/local prefix. This was the main way I tracked focus during the session.
+- **Terminal focus traps `Ctrl+P`.** When focus was inside the terminal pane, `Ctrl+P` keystrokes were eaten by the shell instead of opening the palette. Required `Ctrl+Space` first ("Exit Terminal Mode") to free the editor's bindings. The status hint `Terminal 0 opened (Ctrl+Space to ...` shows once when the terminal opens, then disappears — easy to miss.
+- **The `#buffer` palette mode is advertised but unreliable in this session.** Bottom of the palette shows `file | >command | :line | #buffer` mode hints. Trying `#devcontainer` to switch buffers landed in terminal-mode (because focus was on the terminal pane) instead of routing through the palette. Discoverability of "you must be focused outside the terminal first" is poor.
+- **Bindings exist but no in-pane indicator.** `Alt+]` Next Split / `Alt+W` Close Tab / `Ctrl+E` Focus File Explorer all show as bound shortcuts in the palette. Reasonable, but I never naturally discovered the cycle order between the 3 horizontal splits — there's no visible "split N of 3" indicator on each pane.
+- **Modal dialogs land in their own corner.** The "Dev Container Detected" prompt appeared bottom-right; the "Attach Failed" modal appeared in roughly the same area. Both stacked behind/beside other notifications (the LSP install prompt overlapped the dev-container prompt at one point), making it slightly ambiguous which was foreground.
+
+## Magic Wand Asks (synthesized)
+
+- A toast / sticky banner when `devcontainer.json` parsing fails — never silently disable commands.
+- Live tail of build logs that handles `\r` properly (or render in a dedicated panel with progress bars).
+- Auto-publish ports declared in `forwardPorts` / detected at runtime, plus a port-forward toast on bind.
+- Make the palette filter behave as a predictable substring/fuzzy search, with consistent ranking.
+
+## Test Artifacts / End State
+
+- All 4 protocol tasks executed; container left in a working state on `e794813713ef`.
+- `devcontainer.json` restored to valid JSON; the `postCreateCommand` was hardened to be GPG-failure-tolerant (skips broken yarn apt source if `curl` is missing) — kept for future test runs.
+- Build logs collected under `vscode-remote-try-python/.fresh-cache/devcontainer-logs/build-2026-04-26_19-*.log`.
+
+## Bug / Gap Summary by Severity
+
+| Severity | Bug / Gap | Reference |
+| --- | --- | --- |
+| **Critical** | After a `devcontainer.json` syntax error, all `Dev Container:` palette commands disappear and **do not return after the JSON is fixed** — only an editor restart recovers. | Task 4 |
+| **High** | Auto port-forwarding doesn't publish ports declared in `portsAttributes` / `forwardPorts`; no host mapping, no `onAutoForward: notify` toast. | Task 3 |
+| **High** | `devcontainer.json` syntax errors fail silently — no toast, no file-explorer badge, no inline marker. | Task 4 |
+| **High** | Palette filter ranking is unpredictable: same query yields different results across invocations, and natural keywords don't surface obvious commands. | Task 3, Task 4, Cross-cutting #1 |
+| **High** | Port-related commands (`Show Ports`, `Show Forwarded Ports`) cannot be located by typing `port`/`forward`/`forwarded`. | Task 3 |
+| Medium | Build-log buffer doesn't tail live; lags the on-disk file by tens of seconds. | Logs |
+| Medium | `\r`-only output (apt progress) collapses to one ~2 KB line and renders nearly blank in the buffer. | Task 2, Logs |
+| Medium | `Attach Failed` modal body shows a JS stack trace from `devContainersSpecCLI.js` instead of the root cause. Status bar truncates to `at async uG (...`. | Task 2 |
+| Medium | Externally edited buffers (`devcontainer.json` modified on disk) don't reload until a side effect (rebuild) reopens them. | Cross-cutting #2 |
+| Medium | `Dev Container: Show Ports` / `Show Forwarded Ports` produce no visible pane, and no status confirmation. | Panes |
+| Medium | Rebuild silently terminates open terminal tabs (`*Terminal 0*` disappears). | Task 2 |
+| Low | Build-log files accumulate in `.fresh-cache/devcontainer-logs/` with no rotation/cleanup. | Logs |
+| Low | Stale build-log tabs stay open after subsequent rebuilds. | Logs |
+| Low | Same buffer (`devcontainer.json`) gets duplicated across two splits after rebuild. | Panes |
+| Low | New splits don't compact existing ones or shrink the sidebar; bottom panes shrink to ~5 lines. | Panes |
+| Low | No per-pane "split N of M" indicator; cycle order isn't discoverable. | Navigation |
+| Low | Terminal pane traps `Ctrl+P`; the `Ctrl+Space` exit hint shows once on terminal open then disappears. | Cross-cutting #3, Navigation |
+| Low | LSP install prompt and `Dev Container Detected` prompt overlap with ambiguous z-order. | Navigation |
+| Low | Reuse-existing-container path produces a build log containing only the CLI version line — user can't tell whether it built, attached, or skipped. | Task 1 |
+| Low | `Dev Container: Rebuild` sorts alphabetically after every `Show *` command in the palette. | Task 2 |
