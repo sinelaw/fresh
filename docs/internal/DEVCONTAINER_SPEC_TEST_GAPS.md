@@ -37,14 +37,16 @@ turn each spec gap into a concrete reproducer.
   - **G5** (passing) subfolder `.devcontainer/<sub>/devcontainer.json`
   - **G6** (passing) `forwardPorts` host:port string renders
   - **G7** (passing) `portsAttributes.onAutoForward` renders
+  - **B1a** (passing) default `waitFor=updateContentCommand` blocks `up` at the right point; post-waitFor hooks run in background
+  - **B1b** (passing) explicit `waitFor` changes the cutoff
   - **B2** (failing) `shutdownAction: stopContainer` must stop on Detach
   - **B3** (failing) `userEnvProbe` must apply captured env
 - `remote_indicator_popup.rs` — Local-with-config and
   Container-state branches of the F6 menu.
 
-Status summary: **8 failing reproducers** pinning real spec violations
-or unimplemented features (S1, S2, R1, R2, B2, B3 — six bug pins),
-**13 passing regression guards** (everything else), zero ignored.
+Status summary: **6 failing reproducers** pinning real spec violations
+or unimplemented features (S1, S2, R1, R2, B2, B3), **15 passing
+regression guards** (everything else), zero ignored.
 
 ---
 
@@ -431,7 +433,7 @@ that lane these tests live with the upstream CLI, not us.
 | F-1 | `docker exec -w <path>` errors when path doesn't exist on host (today: silent skip; `FAKE_DC_STRICT_CWD=1` opts in) | S1 | **landed** |
 | F-2 | Read `containerEnv` from `<state>/containers/<id>/container_env` and export it before exec | S3 | **landed** |
 | F-3 | Honor `remoteEnv` similarly via a separate file written by `up` (the plugin would write it) | S2 | open — needs plugin-side `remoteEnv` plumbing too |
-| F-4 | Fake `up` parses + runs `onCreate` → `postAttach` lifecycle hooks in spec order | R3 | **landed** |
+| F-4 | Fake `up` parses + runs `onCreate` → `postAttach` lifecycle hooks in spec order; `waitFor` cuts the timeline so post-waitFor hooks run in the background | R3, B1a, B1b | **landed** |
 | F-5 | `docker stop <id>` subcommand (records status="stopped") | B2 | **landed** |
 | F-6 | Add `docker rm <id>` for `shutdownAction: none` cleanup | M10 (variant) | open |
 | F-7 | `up --config <path>` accepting a custom devcontainer.json location | M7 (variant) | open — `M7`'s subfolder branch is already covered by G5 |
@@ -469,7 +471,6 @@ or larger plumbing before a test would mean anything):
 
 | Gap | Why deferred |
 |---|---|
-| **B1 waitFor** | The plugin reaches "ready" only after `up` returns; today the fake runs all hooks synchronously inside `up`, so there's nothing for `waitFor` to gate against. Meaningful test requires the plugin to either (a) run hooks itself in stages, or (b) drive a "phased" `up` with a polling contract. |
 | **M5 features ordering** (`installsAfter`, `dependsOn`, `overrideFeatureInstallOrder`) | Features installation is `@devcontainers/cli`'s build-time job, not the attaching tool's. Fresh is the attaching tool. Tests live with the upstream CLI. |
 | **L1-L5** | "Show Info" panel rendering for various config sections (build directives, features, customizations, hostRequirements, runArgs/init/privileged). Pure UI verification — useful but lower-priority than spec-correctness work. |
 

@@ -933,3 +933,210 @@ fn user_env_probe_must_apply_captured_env_to_lifecycle_commands() {
          Probe: {content:?}"
     );
 }
+
+// ============================================================================
+// B1 — passing guards: waitFor cuts the timeline.
+// ============================================================================
+
+/// Wait until `path` exists, polling at 25ms with a deadline.
+/// Doesn't tick the harness — the bg hooks run as detached host
+/// subshells so harness ticks don't matter for their progress.
+fn wait_for_file_path(path: &Path, deadline: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < deadline {
+        if path.exists() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    false
+}
+
+/// Read `order.log` (if present) into a Vec<String> of trimmed
+/// non-empty lines.
+fn read_order_log(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .map(|s| {
+            s.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// **B1a — default waitFor.** Spec: `waitFor` defaults to
+/// `updateContentCommand`; pre-waitFor hooks (init, onCreate,
+/// updateContent) block `up`'s return; post-waitFor hooks
+/// (postCreate, postStart, postAttach) run in the background so
+/// the editor reaches "ready" without waiting for slow setup.
+///
+/// Test definition: each post-waitFor hook sleeps then writes
+/// its name to `order.log`. After the harness sees the container
+/// authority land, `order.log` must contain only the pre-waitFor
+/// names and NONE of the post-waitFor names. Eventually (a few
+/// seconds later) all six lines must materialize.
+///
+/// This is a regression guard for fake-CLI fidelity: if the fake
+/// stops backgrounding post-waitFor hooks (e.g. someone reverts
+/// the `&` in `bin/devcontainer`), the immediate-state assertion
+/// flips red. Also detects a future plugin change that gates
+/// "ready" on something other than `up` returning.
+#[test]
+fn wait_for_default_blocks_up_at_update_content_command() {
+    let probe_temp = tempfile::tempdir().unwrap();
+    let order = probe_temp.path().join("order.log");
+
+    // Pre-waitFor hooks are instant. Post-waitFor hooks sleep
+    // long enough that the test reliably observes the gap (the
+    // harness needs ~hundreds of ms to attach + take the staged
+    // authority + run the assertion before the bg sleeps end).
+    let dc_json = format!(
+        r#"{{
+  "name": "b1a-default-waitfor",
+  "image": "ubuntu:22.04",
+  "remoteUser": "vscode",
+  "initializeCommand":   "echo init >> {p}",
+  "onCreateCommand":     "echo onCreate >> {p}",
+  "updateContentCommand":"echo updateContent >> {p}",
+  "postCreateCommand":   "sleep 1 && echo postCreate >> {p}",
+  "postStartCommand":    "sleep 1.2 && echo postStart >> {p}",
+  "postAttachCommand":   "sleep 1.4 && echo postAttach >> {p}"
+}}
+"#,
+        p = order.display(),
+    );
+    let (_w_temp, workspace) = workspace_with_devcontainer(&dc_json);
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    attach(&mut harness);
+
+    // The order log must exist by now (pre-waitFor hooks ran
+    // synchronously during `up`). Read it immediately so we
+    // catch the pre-only window before the bg sleeps finish.
+    assert!(
+        wait_for_file_path(&order, std::time::Duration::from_secs(3)),
+        "order.log should exist after attach (pre-waitFor hooks ran synchronously)"
+    );
+    let immediate = read_order_log(&order);
+    let expected_pre: Vec<String> = ["init", "onCreate", "updateContent"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        immediate, expected_pre,
+        "B1a: with default waitFor=updateContentCommand, only \
+         pre-waitFor hooks should have run by the time `up` returns. \
+         Got: {immediate:?}"
+    );
+
+    // Now wait for all bg hooks to drain. `postAttach` is the
+    // slowest at sleep 1.4s; give a generous deadline.
+    let final_done_deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < final_done_deadline {
+        let lines = read_order_log(&order);
+        if lines.len() >= 6 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let final_lines = read_order_log(&order);
+    assert_eq!(
+        final_lines,
+        vec![
+            "init".to_string(),
+            "onCreate".to_string(),
+            "updateContent".to_string(),
+            "postCreate".to_string(),
+            "postStart".to_string(),
+            "postAttach".to_string(),
+        ],
+        "B1a: bg hooks must eventually all run, in spec order. Got: \
+         {final_lines:?}"
+    );
+}
+
+/// **B1b — explicit waitFor.** Spec allows `waitFor` to name any
+/// hook earlier or later than the default. With
+/// `waitFor: "onCreateCommand"`, only `onCreateCommand` blocks
+/// `up`'s return; `updateContentCommand`, `postCreateCommand`,
+/// etc. all run in the background.
+///
+/// This proves the fake honors any value of `waitFor`, not just
+/// the default. Together with B1a it locks in the spec's
+/// "block until X has executed" contract.
+#[test]
+fn wait_for_explicit_value_changes_the_cutoff() {
+    let probe_temp = tempfile::tempdir().unwrap();
+    let order = probe_temp.path().join("order.log");
+
+    let dc_json = format!(
+        r#"{{
+  "name": "b1b-explicit-waitfor",
+  "image": "ubuntu:22.04",
+  "remoteUser": "vscode",
+  "waitFor": "onCreateCommand",
+  "initializeCommand":   "echo init >> {p}",
+  "onCreateCommand":     "echo onCreate >> {p}",
+  "updateContentCommand":"sleep 1 && echo updateContent >> {p}",
+  "postCreateCommand":   "sleep 1.2 && echo postCreate >> {p}"
+}}
+"#,
+        p = order.display(),
+    );
+    let (_w_temp, workspace) = workspace_with_devcontainer(&dc_json);
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    attach(&mut harness);
+
+    assert!(
+        wait_for_file_path(&order, std::time::Duration::from_secs(3)),
+        "order.log should exist after attach"
+    );
+    let immediate = read_order_log(&order);
+    assert_eq!(
+        immediate,
+        vec!["init".to_string(), "onCreate".to_string()],
+        "B1b: with waitFor=onCreateCommand, `updateContentCommand` and \
+         later must NOT have run when `up` returned. Got: {immediate:?}"
+    );
+
+    let final_done_deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < final_done_deadline {
+        let lines = read_order_log(&order);
+        if lines.len() >= 4 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let final_lines = read_order_log(&order);
+    assert_eq!(
+        final_lines,
+        vec![
+            "init".to_string(),
+            "onCreate".to_string(),
+            "updateContent".to_string(),
+            "postCreate".to_string(),
+        ],
+        "B1b: bg hooks must eventually all run, in spec order. Got: \
+         {final_lines:?}"
+    );
+}
