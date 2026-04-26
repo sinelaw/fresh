@@ -10,7 +10,7 @@ The "interactive walk found this" notes describe what fell out of the
 tmux probe in this branch (see `FAKE_DEVCONTAINER_TEST_PLAN.md`); they
 turn each spec gap into a concrete reproducer.
 
-## What we already cover
+## What we cover today
 
 `crates/fresh-editor/tests/e2e/plugins/`:
 
@@ -22,11 +22,29 @@ turn each spec gap into a concrete reproducer.
   `portsAttributes`.
 - `devcontainer_failed_attach_popup.rs` — popup shape + action
   routing.
+- `devcontainer_spec_repros.rs` — spec-bug reproducers:
+  - **S1** (failing) lifecycle command cwd vs. `remoteWorkspaceFolder`
+  - **S2** (failing) `remoteEnv` not propagated
+  - **S3** (passing) `containerEnv` replay regression guard
+- `devcontainer_spec_conformance.rs` — broader spec coverage:
+  - **R1** (failing) object-form lifecycle must run in parallel
+  - **R2** (failing) object-form must run all entries even on failure
+  - **R3** (passing) lifecycle hooks fire in spec order during `up`
+  - **G1** (passing) lifecycle array form executes verbatim
+  - **G2** (passing) no `remoteUser`/`containerUser` → no `-u` flag
+  - **G3** (passing) `remoteUser` falls back to `containerUser`
+  - **G4** (passing) JSONC config (`//`, `/* */`, trailing commas)
+  - **G5** (passing) subfolder `.devcontainer/<sub>/devcontainer.json`
+  - **G6** (passing) `forwardPorts` host:port string renders
+  - **G7** (passing) `portsAttributes.onAutoForward` renders
+  - **B2** (failing) `shutdownAction: stopContainer` must stop on Detach
+  - **B3** (failing) `userEnvProbe` must apply captured env
 - `remote_indicator_popup.rs` — Local-with-config and
   Container-state branches of the F6 menu.
 
-What this leaves untested is most of the spec surface. The list below
-fills it in.
+Status summary: **8 failing reproducers** pinning real spec violations
+or unimplemented features (S1, S2, R1, R2, B2, B3 — six bug pins),
+**13 passing regression guards** (everything else), zero ignored.
 
 ---
 
@@ -408,43 +426,52 @@ that lane these tests live with the upstream CLI, not us.
 
 ## Fake-CLI improvements that unlock the tests above
 
-| ID | Change | Tests it unlocks |
-|---|---|---|
-| F-1 | `docker exec -w <path>` errors when path doesn't exist on host (today: silent skip) | S1 |
-| F-2 | Read `containerEnv` from `<state>/containers/<id>/env` and export it before exec | S3, M5 (partially) |
-| F-3 | Honor `remoteEnv` similarly via a separate file written by `up` (the plugin would write it) | S2 |
-| F-4 | `up` records the full lifecycle hook map and a "phase" file the test can poll for waitFor semantics | M1 |
-| F-5 | `docker stop <id>` subcommand (records status="stopped"); `up` checks it before `cd` | M10 |
-| F-6 | `--remove-existing-container` already supported; add `docker rm <id>` for shutdownAction=none + manual cleanup | M10 |
-| F-7 | `up --config <path>` accepting a custom devcontainer.json location (already discovered configs go to plugin, but ad-hoc tests need this) | M7 |
+| ID | Change | Tests it unlocks | Status |
+|---|---|---|---|
+| F-1 | `docker exec -w <path>` errors when path doesn't exist on host (today: silent skip; `FAKE_DC_STRICT_CWD=1` opts in) | S1 | **landed** |
+| F-2 | Read `containerEnv` from `<state>/containers/<id>/container_env` and export it before exec | S3 | **landed** |
+| F-3 | Honor `remoteEnv` similarly via a separate file written by `up` (the plugin would write it) | S2 | open — needs plugin-side `remoteEnv` plumbing too |
+| F-4 | Fake `up` parses + runs `onCreate` → `postAttach` lifecycle hooks in spec order | R3 | **landed** |
+| F-5 | `docker stop <id>` subcommand (records status="stopped") | B2 | **landed** |
+| F-6 | Add `docker rm <id>` for `shutdownAction: none` cleanup | M10 (variant) | open |
+| F-7 | `up --config <path>` accepting a custom devcontainer.json location | M7 (variant) | open — `M7`'s subfolder branch is already covered by G5 |
+| F-8 | Fake `up` resolves `remoteUser` per spec fallback (`remoteUser` > `containerUser` > unset); reports the resolved value (or omits the field) in success JSON | G2, G3 | **landed** |
+| F-9 | Fake docker exec exports `FAKE_DC_REQUESTED_CWD` so tests can assert what `-w` the editor actually passed regardless of host fs | S1 | **landed** |
 
-Each of F-1 through F-7 is an additive change to
-`scripts/fake-devcontainer/bin/{devcontainer,docker}`; none is
-load-bearing until a test exercises it.
+Each F-X is an additive change to
+`scripts/fake-devcontainer/bin/{devcontainer,docker}` and
+`lib/fake-state.sh`; "landed" entries already ship on this branch.
 
 ---
 
-## Suggested order
+## Status / open work
 
-1. **F-1** (cwd error) + **S1 test** + plugin fix (or formal
-   decision: "we always pass host path, document it") — biggest
-   real-world-correctness win.
-2. **F-2 + F-3** + **S2/S3 tests** + plugin fix for `remoteEnv` —
-   the spec's most visible "applied to all created processes"
-   contract is currently silently ignored.
-3. **M1 (lifecycle order + waitFor)** — biggest spec-conformance
-   surface; unlocks Feat-4 too.
-4. **M2 / M3** (object + array forms) — code already exists, just
-   needs tests.
-5. **M6 / M7 / M8 / M9** (JSONC, subfolder discovery, ports edge
-   cases) — pure additions, no plugin changes.
-6. **M4** (user fallback) — small change, locks in spec contract.
-7. **M10 (shutdownAction)** + **F-5 / F-6** — needs plugin work to
-   emit `docker stop` on detach/quit; the test framework comes for
-   free.
-8. **M5 (userEnvProbe)** — needs new plugin behavior; blocked on
-   product decision.
-9. **L-series and Feat-series** as time permits.
+What's landed on this branch (test layer):
+
+- ✓ **All five S/G groups + R1-R3 + B2-B3** as described in
+  "What we cover today." Six failing reproducers (S1, S2, R1, R2,
+  B2, B3) + thirteen passing guards.
+- ✓ Fake-CLI changes F-1, F-2, F-4, F-5, F-8, F-9.
+
+What's still open (plugin work needed before a test could pass):
+
+| Spec gap | What's needed |
+|---|---|
+| **S1 cwd** | Plugin: pass `remoteWorkspaceFolder` (not host cwd) as `-w` for lifecycle commands, OR formally document "host path always wins" and update the test's expected value. |
+| **S2 remoteEnv** | Plugin: parse `config.remoteEnv` + plumb through DockerExecSpawner via env injection (`-e KEY=VALUE` per pair, or `--env-file`). |
+| **R1 parallelism** | Plugin: rewrite `devcontainer_on_lifecycle_confirmed`'s object branch to use `Promise.all`, collect results, and report aggregate failure. |
+| **R2 fail-fast** | Plugin: same rewrite as R1 (parallel implies all run). |
+| **B2 shutdownAction** | Plugin: read `config.shutdownAction`; on `Detach` (and on quit for `stopContainer` default), spawn `docker stop <id>` via `spawnHostProcess`. |
+| **B3 userEnvProbe** | Plugin: read `config.userEnvProbe`; spawn the probe shell once at attach, capture env, propagate to spawner. Cross-cuts S2 (the propagation mechanism). |
+
+Spec gaps explicitly NOT testable today (need product decisions
+or larger plumbing before a test would mean anything):
+
+| Gap | Why deferred |
+|---|---|
+| **B1 waitFor** | The plugin reaches "ready" only after `up` returns; today the fake runs all hooks synchronously inside `up`, so there's nothing for `waitFor` to gate against. Meaningful test requires the plugin to either (a) run hooks itself in stages, or (b) drive a "phased" `up` with a polling contract. |
+| **M5 features ordering** (`installsAfter`, `dependsOn`, `overrideFeatureInstallOrder`) | Features installation is `@devcontainers/cli`'s build-time job, not the attaching tool's. Fresh is the attaching tool. Tests live with the upstream CLI. |
+| **L1-L5** | "Show Info" panel rendering for various config sections (build directives, features, customizations, hostRequirements, runArgs/init/privileged). Pure UI verification — useful but lower-priority than spec-correctness work. |
 
 ---
 
