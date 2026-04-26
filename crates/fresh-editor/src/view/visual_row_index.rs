@@ -37,9 +37,8 @@
 
 use crate::state::EditorState;
 use crate::view::line_wrap_cache::{
-    layout_for_plain_text, pipeline_inputs_version, CacheViewMode, LineWrapKey, WrapGeometry,
+    count_visual_rows_for_text, pipeline_inputs_version, CacheViewMode, LineWrapKey, WrapGeometry,
 };
-use std::sync::Arc;
 
 /// All inputs that determine the per-line visual row counts a buffer
 /// produces.  Identical to `LineWrapKey`'s geometry-related fields
@@ -179,9 +178,20 @@ impl VisualRowIndex {
 }
 
 /// Ensure `state.visual_row_index` is built for `key`.  Cheap if it
-/// already matches; otherwise re-walks all lines, populating
-/// `LineWrapCache` on miss as a side effect (so subsequent renders that
-/// reference these lines hit the per-line cache too).
+/// already matches; otherwise re-walks all lines to compute per-line
+/// visual-row counts.
+///
+/// On hit in `LineWrapCache` (renderer-populated entries for visible
+/// lines), reads `entry.len()` for free.  On miss, runs the cheap
+/// count-only path (`count_visual_rows_for_text` — wrap + tally,
+/// skipping `ViewLineIterator` materialization and per-char `Vec<ViewLine>`
+/// allocation).  Does **not** write back into `LineWrapCache` on miss:
+/// the index has its own `prefix_sums` storage and doesn't need the
+/// cache for its own answers, and skipping the put avoids the per-char
+/// allocation churn the profile flagged (`ViewLineIterator::next` 7.4%,
+/// `Vec<ViewLine>` growth ~10–15%).  Off-screen lines that are needed
+/// by other consumers later will be filled by the renderer's writeback
+/// when they become visible.
 ///
 /// Skips the build entirely when the buffer is empty or `line_count()`
 /// is unavailable.  Callers that need a guaranteed-built index should
@@ -207,8 +217,6 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
         return;
     }
 
-    let _ = key.geom(); // reserved for future cache-key construction
-    let tab_size = state.buffer_settings.tab_size;
     let effective_width = key.effective_width as usize;
     let gutter_width = key.gutter_width as usize;
     let hanging_indent = key.hanging_indent;
@@ -229,40 +237,33 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
 
         let line_key = key.line_key(line_start);
         let rows: u32 = if let Some(cached) = state.line_wrap_cache.get(&line_key) {
-            cached.len().max(1) as u32
+            // Renderer (or a previous full-fidelity miss handler) put
+            // a real layout here — read its row count for free.
+            (cached.len() as u32).max(1)
         } else if !key.line_wrap_enabled {
             // Without wrap, every logical line is exactly one visual row.
             // Don't bother running the pipeline.
             1
         } else {
-            // Cache miss: compute the row count via `layout_for_plain_text`
-            // — text-only wrap, no `build_base_tokens` chunked buffer
-            // reads.  Cheaper than `compute_line_layout` and matches
-            // the row count `apply_wrapping_transform` produces for
-            // the line text alone, which is what scrollbar / scroll
-            // math care about.  Soft-break / conceal interactions
-            // affect renderer-stored entries (which we'd hit above);
-            // they don't affect the cold-build approximation here.
+            // Cache miss: compute the row count via the cheapest
+            // pipeline tap — wrap-only, no ViewLine materialization.
+            // We deliberately skip `LineWrapCache.put()` here: the
+            // index stores `prefix_sums` standalone, and writing back
+            // would cost the per-char `Vec<ViewLine>` allocation the
+            // profile flagged.  When the line later becomes visible,
+            // the renderer's writeback will fill the cache with the
+            // full-fidelity layout.
             let Some(bytes) = state.buffer.get_line(line_idx) else {
-                // Best-effort: empty layout still counts as 1 row.
+                // Best-effort: missing line still counts as 1 row.
                 running = running.saturating_add(1);
                 prefix_sums.push(running);
                 continue;
             };
-            let line_content = String::from_utf8_lossy(&bytes)
+            let line_content = String::from_utf8_lossy(&bytes);
+            let trimmed = line_content
                 .trim_end_matches('\n')
-                .trim_end_matches('\r')
-                .to_string();
-            let layout = layout_for_plain_text(
-                &line_content,
-                effective_width,
-                gutter_width,
-                hanging_indent,
-                tab_size,
-            );
-            let n = layout.len().max(1) as u32;
-            state.line_wrap_cache.put(line_key, Arc::new(layout));
-            n
+                .trim_end_matches('\r');
+            count_visual_rows_for_text(trimmed, effective_width, gutter_width, hanging_indent)
         };
 
         running = running.saturating_add(rows);
