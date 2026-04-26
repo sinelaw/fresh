@@ -1425,6 +1425,11 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
     return;
   }
   rememberLastBuildLogPath(logPath);
+  // Drop any session-restored build logs from previous runs before
+  // opening the fresh one. Without this, `Show Build Logs` after a
+  // cold restart would race the freshly-minted timestamp file against
+  // a stale one in another split, with no visual cue which is which.
+  closeStaleBuildLogBuffers(cwd);
   // Open the log in a split below so the user sees lines stream in
   // (auto-revert polls every 2s) without losing the buffer they were
   // editing. `split_horizontal` duplicates the current buffer into a
@@ -1565,6 +1570,27 @@ function openBuildLogInSplit(path: string): void {
   // buffers either way.
   editor.executeAction("split_horizontal");
   editor.openFile(path, null, null);
+}
+
+/// Close every open build-log buffer for this workspace before the new
+/// attach mints its own log. Without this, a session-restored buffer
+/// (whose contents are stale from the previous run) sits next to the
+/// fresh streaming log and the user has to guess which one is live.
+///
+/// Pure heuristic: any buffer whose path lives under
+/// `<cwd>/.fresh-cache/devcontainer-logs/` is a build log. The
+/// directory is plugin-owned (see `prepareBuildLogFile`), so the
+/// false-positive surface is empty unless a user puts arbitrary files
+/// there themselves — at which point closing them on attach is also
+/// the right call.
+function closeStaleBuildLogBuffers(cwd: string): void {
+  const prefix = editor.pathJoin(cwd, ".fresh-cache", "devcontainer-logs");
+  const buffers = editor.listBuffers();
+  for (const b of buffers) {
+    if (b.path && b.path.startsWith(prefix)) {
+      editor.closeBuffer(b.id);
+    }
+  }
 }
 
 function rememberLastBuildLogPath(path: string): void {
