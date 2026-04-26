@@ -1237,6 +1237,15 @@ impl Editor {
     /// goto-line/definition, and pane switches (which always cross several
     /// rows or many columns) must.
     fn maybe_start_cursor_jump_animation(&mut self, current_pos: Option<(u16, u16)>) {
+        // Honour the global animations toggle. Tests default to
+        // `animations = false` so single-tick `render()` calls observe the
+        // settled buffer instead of a mid-flight trail; users can also
+        // disable animations entirely from config.
+        if !self.config.editor.animations {
+            self.previous_cursor_screen_pos = current_pos;
+            return;
+        }
+
         let Some(current) = current_pos else {
             // Cursor is hidden this frame (e.g. prompt has focus). Reset the
             // tracker so the re-emerging cursor doesn't animate from a stale
