@@ -52,6 +52,23 @@ fake_find_container_for_workspace() {
   [ -n "$best_id" ] && printf '%s\n' "$best_id"
 }
 
+# Extract a top-level scalar string field from a (JSONC-flavoured)
+# devcontainer.json. Strips `// ...` comments (rest-of-line) before
+# matching. Returns the first match's value, empty if no match.
+# Limitations: matches a `"field": "value"` line; does not handle
+# multi-line strings, embedded quotes, or values that aren't simple
+# strings. Good enough for `remoteUser`, `containerUser`, `name`,
+# etc. Block `/* ... */` comments are NOT stripped — adding that
+# safely needs a real parser.
+extract_string_field() {
+  field="$1"
+  cfg="$2"
+  [ -f "$cfg" ] || return 0
+  sed 's|//.*$||' "$cfg" \
+    | sed -nE "s/^[[:space:]]*\"$field\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"[[:space:]]*,?[[:space:]]*$/\1/p" \
+    | head -n 1
+}
+
 # Sleep for milliseconds. Honours sub-second sleeps where supported.
 fake_sleep_ms() {
   ms="$1"

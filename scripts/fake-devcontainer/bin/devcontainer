@@ -78,7 +78,39 @@ cmd_up() {
   printf '%s\n' "$workspace" > "$cdir/workspace"
   date +%s > "$cdir/created_at"
   printf 'running\n' > "$cdir/status"
-  printf '%s\n' "${FAKE_DC_REMOTE_USER:-vscode}" > "$cdir/remote_user"
+
+  # Locate the devcontainer.json — used by the user-fallback parsing
+  # below and by the containerEnv extractor further down.
+  dc_cfg=""
+  for cfg in \
+    "$workspace/.devcontainer/devcontainer.json" \
+    "$workspace/.devcontainer.json"; do
+    if [ -f "$cfg" ]; then dc_cfg="$cfg"; break; fi
+  done
+
+  # Resolve `remoteUser` per spec: explicit `remoteUser` wins, else
+  # fall back to `containerUser`, else leave the field unset. Tests
+  # can override either via env. Real `@devcontainers/cli` does the
+  # same precedence; the plugin's authority builder reads back
+  # whatever JSON we emit and uses `null` when the key is missing.
+  config_remote_user=""
+  config_container_user=""
+  if [ -n "$dc_cfg" ]; then
+    config_remote_user="$(extract_string_field "remoteUser" "$dc_cfg")"
+    config_container_user="$(extract_string_field "containerUser" "$dc_cfg")"
+  fi
+  if [ -n "${FAKE_DC_REMOTE_USER+set}" ]; then
+    # Explicit env override (allow empty string to mean "unset").
+    resolved_remote_user="$FAKE_DC_REMOTE_USER"
+  elif [ -n "$config_remote_user" ]; then
+    resolved_remote_user="$config_remote_user"
+  elif [ -n "$config_container_user" ]; then
+    resolved_remote_user="$config_container_user"
+  else
+    resolved_remote_user=""
+  fi
+  printf '%s\n' "$resolved_remote_user" > "$cdir/remote_user"
+
   remote_workspace="${FAKE_DC_REMOTE_WORKSPACE:-/workspaces/$(basename "$workspace")}"
   printf '%s\n' "$remote_workspace" > "$cdir/remote_workspace"
 
@@ -90,10 +122,8 @@ cmd_up() {
   # line `"key": "value"` entries only — to avoid pulling in `jq` or
   # python.
   : > "$cdir/container_env"
-  for cfg in \
-    "$workspace/.devcontainer/devcontainer.json" \
-    "$workspace/.devcontainer.json"; do
-    [ -f "$cfg" ] || continue
+  if [ -n "$dc_cfg" ]; then
+    cfg="$dc_cfg"
     # Slice out the line range starting at the `"containerEnv": {`
     # opener through the next `}` (inclusive). Both the multi-line
     # block form and the inline `{ "K": "V" }` form are covered:
@@ -107,8 +137,7 @@ cmd_up() {
       | grep -v '^"containerEnv"' \
       | sed -E 's/^"([^"]+)"[[:space:]]*:[[:space:]]*"([^"]*)"$/\1=\2/' \
       >> "$cdir/container_env"
-    break
-  done
+  fi
   # Allow tests to override / add via env. Format: `K=V;K=V;...`.
   if [ -n "${FAKE_DC_CONTAINER_ENV:-}" ]; then
     IFS=';' read -r -a _envs <<<"$FAKE_DC_CONTAINER_ENV"
@@ -173,15 +202,27 @@ cmd_up() {
   # last line that parses as JSON, so trailing newline placement is fine.
   printf '%s\n' "$container_id" > "$state/last_id"
 
+  # Build the optional `remoteUser` JSON fragment so an unset user
+  # yields `{...,"remoteWorkspaceFolder":"..."}` (no remoteUser key).
+  # The plugin's authority builder treats `null`/missing the same —
+  # both result in no `-u` flag passed to `docker exec`.
+  resolved_user_value="$(cat "$cdir/remote_user")"
+  if [ -n "$resolved_user_value" ]; then
+    remote_user_frag="\"remoteUser\":\"$resolved_user_value\","
+  else
+    remote_user_frag=""
+  fi
+
   if [ "${FAKE_DC_UP_BAD_JSON:-0}" = "1" ]; then
     echo "{ this is not valid json"
   elif [ "${FAKE_DC_UP_NO_CONTAINER_ID:-0}" = "1" ]; then
-    printf '{"outcome":"success","remoteUser":"%s","remoteWorkspaceFolder":"%s"}\n' \
-      "$(cat "$cdir/remote_user")" "$(cat "$cdir/remote_workspace")"
+    printf '{"outcome":"success",%s"remoteWorkspaceFolder":"%s"}\n' \
+      "$remote_user_frag" \
+      "$(cat "$cdir/remote_workspace")"
   else
-    printf '{"outcome":"success","containerId":"%s","remoteUser":"%s","remoteWorkspaceFolder":"%s"}\n' \
+    printf '{"outcome":"success","containerId":"%s",%s"remoteWorkspaceFolder":"%s"}\n' \
       "$container_id" \
-      "$(cat "$cdir/remote_user")" \
+      "$remote_user_frag" \
       "$(cat "$cdir/remote_workspace")"
   fi
 }
