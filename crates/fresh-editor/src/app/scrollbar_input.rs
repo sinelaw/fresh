@@ -275,11 +275,15 @@ impl Editor {
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
-        let viewport_width = self
+        // Effective wrap width / gutter for scroll math.  Must match
+        // what the renderer uses or `max_scroll_row` ends up wrong on
+        // wide terminals with `composeWidth` set (mouse-wheel /
+        // scrollbar-drag stop short of the buffer's tail).
+        let (wrap_width, show_line_numbers) = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.viewport.width as usize)
-            .unwrap_or(80);
+            .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
+            .unwrap_or((80, true));
 
         // Get the buffer state and calculate target position using RELATIVE movement
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
@@ -311,7 +315,8 @@ impl Editor {
                         drag_start_top_byte,
                         drag_start_view_line_offset,
                         viewport_height,
-                        viewport_width,
+                        wrap_width,
+                        show_line_numbers,
                         pipeline_inputs_ver,
                     )
                 } else {
@@ -465,11 +470,11 @@ impl Editor {
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
-        let viewport_width = self
+        let (wrap_width, show_line_numbers) = self
             .split_view_states
             .get(&split_id)
-            .map(|vs| vs.viewport.width as usize)
-            .unwrap_or(80);
+            .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
+            .unwrap_or((80, true));
 
         // Get the buffer state and calculate scroll position
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
@@ -494,7 +499,8 @@ impl Editor {
                         state,
                         ratio,
                         viewport_height,
-                        viewport_width,
+                        wrap_width,
+                        show_line_numbers,
                         pipeline_inputs_ver,
                     )
                 } else {

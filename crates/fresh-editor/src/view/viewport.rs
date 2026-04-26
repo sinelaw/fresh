@@ -41,6 +41,30 @@ pub struct Viewport {
     /// Column at which to wrap lines (None = viewport width)
     pub wrap_column: Option<usize>,
 
+    /// Compose-mode page width override.  When `Some(cw)` and the
+    /// viewport is wider than `cw`, the renderer wraps content at
+    /// `cw` columns and centers it inside the split.  Mirrors
+    /// `SplitViewState::compose_width`.
+    ///
+    /// Scroll math (`Viewport::scroll_*`,
+    /// `scrollbar_math::ensure_index`) reads this so per-line visual
+    /// row counts are computed at the renderer's effective wrap
+    /// width, not the raw split width.  Without that, on a wide
+    /// terminal with `compose_width` set, mouse wheel and scrollbar
+    /// drag stop short of the buffer's tail because each long
+    /// paragraph is counted as 1–2 rows by scroll math but drawn as
+    /// 3–4 rows by the renderer.
+    pub compose_width: Option<u16>,
+
+    /// Whether line numbers are visible in this viewport.  When
+    /// hidden (typical in compose mode), `gutter_width` returns 0
+    /// instead of `digits + 4` — keeping scroll math's wrap budget
+    /// in sync with the renderer's, which uses
+    /// `state.margins.left_total_width()` and gives 0 when the line
+    /// number column is suppressed.  Mirrors
+    /// `SplitViewState::show_line_numbers`.
+    pub show_line_numbers: bool,
+
     /// Whether viewport needs synchronization with cursor positions
     /// When true, ensure_visible needs to be called before rendering
     /// This allows batching multiple cursor movements into a single viewport update
@@ -110,6 +134,8 @@ impl Viewport {
             line_wrap_enabled: false,
             wrap_indent: true,
             wrap_column: None,
+            compose_width: None,
+            show_line_numbers: true,
             needs_sync: false,
             skip_resize_sync: false,
             skip_ensure_visible: false,
@@ -177,6 +203,19 @@ impl Viewport {
     pub fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
+    }
+
+    /// Effective wrap width for compose-aware scroll math.  Returns
+    /// the viewport width clamped to `compose_width` when set.  The
+    /// renderer wraps at this width; scroll math must match or
+    /// `max_scroll_row` ends up wrong on wide viewports with a narrow
+    /// page width.
+    #[inline]
+    pub fn effective_width(&self) -> u16 {
+        match self.compose_width {
+            Some(cw) => cw.min(self.width).max(1),
+            None => self.width,
+        }
     }
 
     /// Get the number of visible lines
@@ -445,8 +484,12 @@ impl Viewport {
 
         let buffer_version = buffer.version();
         let gutter_width = self.gutter_width(buffer);
-        let wrap_config =
-            WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
+        let wrap_config = WrapConfig::new(
+            self.effective_width() as usize,
+            gutter_width,
+            true,
+            self.wrap_indent,
+        );
 
         // We need to move backwards through visual rows
         // Start from current top_byte and count backwards
@@ -529,8 +572,12 @@ impl Viewport {
 
         let buffer_version = buffer.version();
         let gutter_width = self.gutter_width(buffer);
-        let wrap_config =
-            WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
+        let wrap_config = WrapConfig::new(
+            self.effective_width() as usize,
+            gutter_width,
+            true,
+            self.wrap_indent,
+        );
         let buffer_len = buffer.len();
 
         let mut rows_remaining = visual_rows;
@@ -1316,8 +1363,12 @@ impl Viewport {
             // viewport can be filled from proposed_top_byte.
             let buffer_version = buffer.version();
             let gutter_width = self.gutter_width(buffer);
-            let wrap_config =
-                WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
+            let wrap_config = WrapConfig::new(
+                self.effective_width() as usize,
+                gutter_width,
+                true,
+                self.wrap_indent,
+            );
 
             let mut iter = buffer.line_iterator(proposed_top_byte, 80);
             let mut visual_rows = 0;
@@ -1634,8 +1685,12 @@ impl Viewport {
         } else if self.line_wrap_enabled {
             // With line wrapping: count VISUAL ROWS (wrapped segments), not logical lines
             let gutter_width = self.gutter_width(buffer);
-            let wrap_config =
-                WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
+            let wrap_config = WrapConfig::new(
+                self.effective_width() as usize,
+                gutter_width,
+                true,
+                self.wrap_indent,
+            );
 
             let mut iter = buffer.line_iterator(self.top_byte, 80);
             let mut visual_rows = 0;
@@ -1820,8 +1875,12 @@ impl Viewport {
                 };
 
                 let gutter_width = self.gutter_width(buffer);
-                let wrap_config =
-                    WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
+                let wrap_config = WrapConfig::new(
+                    self.effective_width() as usize,
+                    gutter_width,
+                    true,
+                    self.wrap_indent,
+                );
 
                 let mut iter = buffer.line_iterator(cursor_line_start, 80);
                 let mut visual_rows_counted = 0;
@@ -2216,7 +2275,12 @@ impl Viewport {
         let (screen_col, additional_rows) = if self.line_wrap_enabled {
             // Use new clean wrapping implementation
             let gutter_width = self.gutter_width(buffer);
-            let config = WrapConfig::new(self.width as usize, gutter_width, true, self.wrap_indent);
+            let config = WrapConfig::new(
+                self.effective_width() as usize,
+                gutter_width,
+                true,
+                self.wrap_indent,
+            );
 
             // Get the line text for wrapping
             let mut line_iter = buffer.line_iterator(line_start, 80);

@@ -521,12 +521,19 @@ pub(crate) fn render_content(
 
             {
                 let _span = tracing::trace_span!("sync_viewport_to_content").entered();
+                let (split_compose_width, split_show_line_numbers) = split_view_states
+                    .as_deref()
+                    .and_then(|vs| vs.get(&split_id))
+                    .map(|vs| (vs.compose_width, vs.show_line_numbers))
+                    .unwrap_or((None, true));
                 sync_viewport_to_content(
                     &mut viewport,
                     &mut state.buffer,
                     &split_cursors,
                     layout.content_rect,
                     &hidden_ranges,
+                    split_compose_width,
+                    split_show_line_numbers,
                 );
             }
             let view_prefs =
@@ -819,12 +826,18 @@ pub(crate) fn compute_content_layout(
             })
             .unwrap_or_default();
 
+        let (split_compose_width, split_show_line_numbers) = split_view_states
+            .get(&split_id)
+            .map(|vs| (vs.compose_width, vs.show_line_numbers))
+            .unwrap_or((None, true));
         sync_viewport_to_content(
             &mut viewport,
             &mut state.buffer,
             &split_cursors,
             layout.content_rect,
             &hidden_ranges,
+            split_compose_width,
+            split_show_line_numbers,
         );
         let view_prefs = resolve_view_preferences(state, Some(&*split_view_states), split_id);
 

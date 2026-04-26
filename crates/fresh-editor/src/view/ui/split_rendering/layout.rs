@@ -130,6 +130,8 @@ pub(super) fn sync_viewport_to_content(
     cursors: &Cursors,
     content_rect: Rect,
     hidden_ranges: &[(usize, usize)],
+    compose_width: Option<u16>,
+    show_line_numbers: bool,
 ) {
     let size_changed =
         viewport.width != content_rect.width || viewport.height != content_rect.height;
@@ -137,6 +139,15 @@ pub(super) fn sync_viewport_to_content(
     if size_changed {
         viewport.resize(content_rect.width, content_rect.height);
     }
+
+    // Mirror per-split state into the viewport so its scroll math
+    // sees the renderer's effective wrap width / gutter.  Without
+    // this, on a wide terminal with `compose_width` set, scroll math
+    // counts visual rows at the raw split width while the renderer
+    // wraps at the compose-clamped width — `max_scroll_row` ends up
+    // too small and the user can't reach the buffer's tail.
+    viewport.compose_width = compose_width;
+    viewport.show_line_numbers = show_line_numbers;
 
     let primary = *cursors.primary();
     viewport.ensure_visible(buffer, &primary, hidden_ranges);

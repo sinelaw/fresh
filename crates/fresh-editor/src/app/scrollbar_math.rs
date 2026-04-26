@@ -25,12 +25,12 @@ use crate::view::visual_row_index::{ensure_built, VisualRowIndexKey};
 /// Width estimate of the gutter, used to build the wrap config. Kept in
 /// sync with the real gutter sizing in the render path (indicator + digits
 /// + separator) — see `Viewport::gutter_width`, which uses the same
-/// formula with `MIN_LINE_NUMBER_DIGITS` as the floor. If this diverges
-/// from the renderer's gutter width, scroll math counts visual rows at a
-/// different text-area width than the renderer actually uses, so
-/// `max_scroll_row` ends up too high or too low and the scroll stops
-/// short of the bottom (or past it) when line wrap is enabled.
-fn estimated_gutter_width(buffer: &Buffer) -> usize {
+/// formula with `MIN_LINE_NUMBER_DIGITS` as the floor.  Returns 0 when
+/// `show_line_numbers` is false (compose mode etc.) — the renderer's
+/// `state.margins.left_total_width()` returns 0 there too, and any
+/// divergence makes scroll math wrap at a different column than the
+/// renderer.
+fn estimated_gutter_width(buffer: &Buffer, _show_line_numbers: bool) -> usize {
     let line_count = buffer.line_count().unwrap_or(1);
     let digits = (line_count as f64).log10().floor() as usize + 1;
     1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
@@ -40,9 +40,22 @@ fn estimated_gutter_width(buffer: &Buffer) -> usize {
 /// dimensions, then ensure the per-state index is populated for it.
 /// Subsequent calls during the same drag with unchanged geometry are
 /// O(1) — the matching key is detected and the build is skipped.
-fn ensure_index(state: &mut EditorState, viewport_width: usize, pipeline_inputs_ver: u64) {
-    let gutter_width = estimated_gutter_width(&state.buffer);
-    let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
+///
+/// `wrap_width` is the renderer's effective wrap width — the
+/// compose-clamped width when `composeWidth` is set, otherwise the
+/// raw viewport width.  Without this, on a wide terminal with
+/// `composeWidth` set, the index is built at the raw split width
+/// while the renderer wraps at the compose-clamped width and
+/// `max_scroll_row` undershoots the buffer's tail (mouse-wheel /
+/// scrollbar-drag stop short).
+fn ensure_index(
+    state: &mut EditorState,
+    wrap_width: usize,
+    show_line_numbers: bool,
+    pipeline_inputs_ver: u64,
+) {
+    let gutter_width = estimated_gutter_width(&state.buffer, show_line_numbers);
+    let wrap_config = WrapConfig::new(wrap_width, gutter_width, true, true);
     let effective_width = wrap_config
         .first_line_width
         .saturating_add(gutter_width)
@@ -72,14 +85,15 @@ pub(crate) fn scrollbar_jump_visual(
     state: &mut EditorState,
     ratio: f64,
     viewport_height: usize,
-    viewport_width: usize,
+    wrap_width: usize,
+    show_line_numbers: bool,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 {
         return (0, 0);
     }
 
-    ensure_index(state, viewport_width, pipeline_inputs_ver);
+    ensure_index(state, wrap_width, show_line_numbers, pipeline_inputs_ver);
     let total_visual_rows = state.visual_row_index.total_rows() as usize;
     if total_visual_rows == 0 {
         return (0, 0);
@@ -112,14 +126,15 @@ pub(crate) fn scrollbar_drag_relative_visual(
     drag_start_top_byte: usize,
     drag_start_view_line_offset: usize,
     viewport_height: usize,
-    viewport_width: usize,
+    wrap_width: usize,
+    show_line_numbers: bool,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 || scrollbar_height <= 1 {
         return (0, 0);
     }
 
-    ensure_index(state, viewport_width, pipeline_inputs_ver);
+    ensure_index(state, wrap_width, show_line_numbers, pipeline_inputs_ver);
     let total_visual_rows = state.visual_row_index.total_rows() as usize;
     if total_visual_rows == 0 {
         return (0, 0);
