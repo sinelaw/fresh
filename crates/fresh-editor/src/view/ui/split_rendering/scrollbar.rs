@@ -49,43 +49,24 @@ pub(super) fn scrollbar_line_counts(
 /// Calculate scrollbar position based on visual rows (for line-wrapped content).
 /// Returns `(total_visual_rows, top_visual_row)`.
 ///
-/// Uses a cache to avoid re-wrapping every line on each frame. The cache is
-/// invalidated when the buffer version, viewport width, or wrap settings
-/// change. When only top_byte changes (scrolling), the cached
-/// `total_visual_rows` is reused and only the `top_visual_row` is recomputed.
+/// Both numbers come from the per-state [`VisualRowIndex`] in O(log N_lines).
+/// The index is built lazily and reused across frames whenever its key
+/// (pipeline-input version + geometry) is unchanged — so a steady-state
+/// scroll where only `top_byte` moves never re-walks the buffer.
+///
+/// [`VisualRowIndex`]: crate::view::visual_row_index::VisualRowIndex
 pub(super) fn scrollbar_visual_row_counts(
     state: &mut EditorState,
     viewport: &Viewport,
     buffer_len: usize,
 ) -> (usize, usize) {
     use crate::primitives::line_wrapping::WrapConfig;
-    use crate::view::line_wrap_cache::{
-        layout_for_plain_text, pipeline_inputs_version, CacheViewMode, LineWrapKey,
-    };
-    use std::sync::Arc;
+    use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode};
+    use crate::view::visual_row_index::{ensure_built, VisualRowIndexKey};
 
     if buffer_len == 0 {
         return (1, 0);
     }
-
-    let buf_version = state.buffer.version();
-    let cache = &state.scrollbar_row_cache;
-
-    let cache_fully_valid = cache.valid
-        && cache.buffer_version == buf_version
-        && cache.viewport_width == viewport.width
-        && cache.wrap_indent == viewport.wrap_indent
-        && cache.top_byte == viewport.top_byte
-        && cache.top_view_line_offset == viewport.top_view_line_offset;
-
-    if cache_fully_valid {
-        return (cache.total_visual_rows, cache.top_visual_row);
-    }
-
-    let total_rows_valid = cache.valid
-        && cache.buffer_version == buf_version
-        && cache.viewport_width == viewport.width
-        && cache.wrap_indent == viewport.wrap_indent;
 
     let gutter_width = viewport.gutter_width(&state.buffer);
     let wrap_config = WrapConfig::new(
@@ -99,144 +80,32 @@ pub(super) fn scrollbar_visual_row_counts(
         .saturating_add(gutter_width)
         .max(2);
     let hanging_indent = wrap_config.hanging_indent;
-    let tab_size = state.buffer_settings.tab_size;
     let pipeline_inputs_ver = pipeline_inputs_version(
         state.buffer.version(),
         state.soft_breaks.version(),
         state.conceals.version(),
     );
-    // Build the LineWrapKey template used for each line — only
-    // `line_start` varies across lines.
-    let make_key = |line_start: usize| LineWrapKey {
+
+    let key = VisualRowIndexKey {
         pipeline_inputs_version: pipeline_inputs_ver,
         view_mode: CacheViewMode::Source,
-        line_start,
         effective_width: effective_width as u32,
         gutter_width: gutter_width as u16,
         wrap_column: None,
         hanging_indent,
         line_wrap_enabled: viewport.line_wrap_enabled,
     };
+    ensure_built(state, &key);
 
-    let line_count = state
-        .buffer
-        .line_count()
-        .unwrap_or_else(|| (buffer_len / state.buffer.estimated_line_length()).max(1));
+    let total_visual_rows = state.visual_row_index.total_rows() as usize;
+    let total_visual_rows = total_visual_rows.max(1);
 
-    // Helper: per-line row count.  Goes through the shared
-    // LineWrapCache so the result matches the renderer's word-boundary
-    // wrap.  On miss, runs layout_for_plain_text (no soft-breaks /
-    // conceals — matching the OLD wrap_line behavior here; we keep
-    // that gap documented rather than quietly widening it).
-    fn row_count_for_line(
-        state: &mut EditorState,
-        line_idx: usize,
-        buffer_len: usize,
-        effective_width: usize,
-        gutter_width: usize,
-        hanging_indent: bool,
-        tab_size: usize,
-        make_key: &impl Fn(usize) -> LineWrapKey,
-    ) -> (usize, usize) {
-        // Returns (line_start, row_count).
-        let line_start = state
-            .buffer
-            .line_start_offset(line_idx)
-            .unwrap_or(buffer_len);
-        let key = make_key(line_start);
-        if let Some(cached) = state.line_wrap_cache.get(&key) {
-            return (line_start, cached.len().max(1));
-        }
-        let Some(bytes) = state.buffer.get_line(line_idx) else {
-            return (line_start, 0);
-        };
-        let line_content = String::from_utf8_lossy(&bytes)
-            .trim_end_matches('\n')
-            .trim_end_matches('\r')
-            .to_string();
-        let layout = layout_for_plain_text(
-            &line_content,
-            effective_width,
-            gutter_width,
-            hanging_indent,
-            tab_size,
-        );
-        let rows = layout.len().max(1);
-        state.line_wrap_cache.put(key, Arc::new(layout));
-        (line_start, rows)
-    }
-
-    let mut total_visual_rows = 0;
-    let mut top_visual_row = 0;
-    let mut found_top = false;
-
-    if total_rows_valid {
-        total_visual_rows = cache.total_visual_rows;
-        let mut rows_before_top = 0;
-        for line_idx in 0..line_count {
-            let (line_start, rows) = row_count_for_line(
-                state,
-                line_idx,
-                buffer_len,
-                effective_width,
-                gutter_width,
-                hanging_indent,
-                tab_size,
-                &make_key,
-            );
-            if line_start >= viewport.top_byte {
-                top_visual_row = rows_before_top + viewport.top_view_line_offset;
-                found_top = true;
-                break;
-            }
-            if rows == 0 {
-                break;
-            }
-            rows_before_top += rows;
-        }
-
-        if !found_top {
-            top_visual_row = total_visual_rows.saturating_sub(1);
-        }
-    } else {
-        for line_idx in 0..line_count {
-            let (line_start, rows) = row_count_for_line(
-                state,
-                line_idx,
-                buffer_len,
-                effective_width,
-                gutter_width,
-                hanging_indent,
-                tab_size,
-                &make_key,
-            );
-            if !found_top && line_start >= viewport.top_byte {
-                top_visual_row = total_visual_rows + viewport.top_view_line_offset;
-                found_top = true;
-            }
-            if rows == 0 {
-                break;
-            }
-            total_visual_rows += rows;
-        }
-
-        if !found_top {
-            top_visual_row = total_visual_rows.saturating_sub(1);
-        }
-
-        total_visual_rows = total_visual_rows.max(1);
-    }
-
-    state.scrollbar_row_cache = crate::state::ScrollbarRowCache {
-        buffer_version: buf_version,
-        viewport_width: viewport.width,
-        wrap_indent: viewport.wrap_indent,
-        total_visual_rows,
-        top_byte: viewport.top_byte,
-        top_visual_row,
-        top_view_line_offset: viewport.top_view_line_offset,
-        valid: true,
-    };
+    // Top visual row: first row of the line containing `top_byte`,
+    // plus the wrap-segment offset within that line.
+    let (line_idx, _) = state.visual_row_index.line_for_byte(viewport.top_byte);
+    let top_first_row = state.visual_row_index.line_first_row(line_idx) as usize;
+    let top_visual_row = (top_first_row + viewport.top_view_line_offset)
+        .min(total_visual_rows.saturating_sub(1));
 
     (total_visual_rows, top_visual_row)
 }

@@ -1749,6 +1749,15 @@ impl Viewport {
                 // When wrapping is enabled, count visual rows (wrapped segments) not logical lines.
                 // The wrapped backward scan starts visual_rows_counted at 1+ (cursor's line),
                 // so the target must be 1 more than for the non-wrapped case.
+                //
+                // TODO: this backward walk recomputes per-line layouts via
+                // `layout_for_plain_text`, bypassing both `LineWrapCache` and
+                // the `VisualRowIndex` tier-2 cache.  Migrating it requires
+                // threading `&mut EditorState` (or splitting borrows) through
+                // `ensure_visible` + 6 call sites — left as a follow-up since
+                // folds force a fallback path here regardless and the
+                // dominant scrollbar-drag bottleneck is already fixed by the
+                // tier-2 migration of `scrollbar_math` and `scrollbar.rs`.
                 let target_visual_rows = if cursor_near_top {
                     effective_offset + 1
                 } else {

@@ -8,13 +8,19 @@
 //!   as the user drags, preserving the click offset on the thumb so the
 //!   cursor stays pinned to the same spot on the thumb.
 //!
-//! Both take a `&mut Buffer` only because `Buffer::line_iterator` requires
-//! mutable access for lazy-load internals; neither touches `Editor`.
+//! Both run in O(log N_lines) per call by reading from
+//! [`VisualRowIndex`](crate::view::visual_row_index::VisualRowIndex) —
+//! the whole-buffer prefix-sum index over per-line visual row counts.
+//! No per-event O(N_lines) walk, no per-event flat row→byte vector.
+//! On a cold index the first call walks the buffer once to build the
+//! index; subsequent calls (the steady state during a drag) are pure
+//! lookups.
 
 use crate::model::buffer::Buffer;
 use crate::primitives::line_wrapping::WrapConfig;
 use crate::state::EditorState;
-use crate::view::line_wrap_cache::{compute_line_layout, CacheViewMode, WrapGeometry};
+use crate::view::line_wrap_cache::CacheViewMode;
+use crate::view::visual_row_index::{ensure_built, VisualRowIndexKey};
 
 /// Width estimate of the gutter, used to build the wrap config. Kept in
 /// sync with the real gutter sizing in the render path (indicator + digits
@@ -30,89 +36,31 @@ fn estimated_gutter_width(buffer: &Buffer) -> usize {
     1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
 }
 
-/// Build a map of `(line_start_byte, visual_row_offset_within_line)` for
-/// every visual row in the buffer, and the total row count.
-///
-/// Per-line row count goes through `LineWrapCache`:
-///   - cache hit → O(1) `Arc` clone;
-///   - cache miss → `compute_line_layout` runs the full per-line
-///     pipeline (same as the renderer) and stores the result for future
-///     drag/jump events.
-///
-/// Scroll math only needs the row count (`entry.len()`), but the cache
-/// holds the full `Vec<ViewLine>` so any other consumer that queries
-/// the same key (e.g. future cursor-nav migration) gets a consistent
-/// value — see `docs/internal/line-wrap-cache-plan.md`.
-fn build_visual_row_map(
-    state: &mut EditorState,
-    viewport_width: usize,
-    pipeline_inputs_ver: u64,
-) -> (Vec<(usize, usize)>, usize) {
+/// Build the `VisualRowIndexKey` scroll math uses for these viewport
+/// dimensions, then ensure the per-state index is populated for it.
+/// Subsequent calls during the same drag with unchanged geometry are
+/// O(1) — the matching key is detected and the build is skipped.
+fn ensure_index(state: &mut EditorState, viewport_width: usize, pipeline_inputs_ver: u64) {
     let gutter_width = estimated_gutter_width(&state.buffer);
     let wrap_config = WrapConfig::new(viewport_width, gutter_width, true, true);
     let effective_width = wrap_config
         .first_line_width
         .saturating_add(gutter_width)
         .max(2);
-    let geom = WrapGeometry {
-        effective_width,
-        gutter_width,
-        hanging_indent: wrap_config.hanging_indent,
-        wrap_column: None,
-        line_wrap_enabled: true,
+    let key = VisualRowIndexKey {
+        pipeline_inputs_version: pipeline_inputs_ver,
         // Scrollbar-math runs without access to the view mode. The
         // renderer's writeback populates keys under the active mode;
         // here we use Source as a fixed convention and cache hits pick
         // up entries the renderer wrote under the same convention.
         view_mode: CacheViewMode::Source,
+        effective_width: effective_width as u32,
+        gutter_width: gutter_width as u16,
+        wrap_column: None,
+        hanging_indent: wrap_config.hanging_indent,
+        line_wrap_enabled: true,
     };
-
-    // First pass: collect line boundaries while the buffer iterator
-    // holds a mutable borrow. We release the borrow before the second
-    // pass so `compute_line_layout` can re-borrow `&mut state`.
-    let line_ranges: Vec<(usize, usize)> = {
-        let mut iter = state.buffer.line_iterator(0, 80);
-        let mut out = Vec::new();
-        while let Some((line_start, _content)) = iter.next_line() {
-            let end = iter.current_position();
-            out.push((line_start, end));
-        }
-        out
-    };
-
-    // Second pass: query cache per line, filling on miss via the
-    // per-line mini-pipeline. Both borrows of `state` are disjoint from
-    // the iterator borrow above (which has been dropped).
-    let mut total_visual_rows = 0;
-    let mut visual_row_positions: Vec<(usize, usize)> = Vec::new();
-    for (line_start, line_end) in line_ranges {
-        let key = geom.key(line_start, pipeline_inputs_ver);
-        let entry = if let Some(cached) = state.line_wrap_cache.get(&key) {
-            cached
-        } else {
-            let layout = compute_line_layout(state, line_start, line_end, &geom);
-            let arc = std::sync::Arc::new(layout);
-            state.line_wrap_cache.put(key, arc.clone());
-            arc
-        };
-        let rows = entry.len();
-        for offset in 0..rows {
-            visual_row_positions.push((line_start, offset));
-        }
-        total_visual_rows += rows;
-    }
-
-    (visual_row_positions, total_visual_rows)
-}
-
-/// Pick the `(byte, offset)` at `target_row`, falling back to the last
-/// valid row if the index is out of range.
-fn position_at(visual_row_positions: &[(usize, usize)], target_row: usize) -> (usize, usize) {
-    if target_row < visual_row_positions.len() {
-        visual_row_positions[target_row]
-    } else {
-        visual_row_positions.last().copied().unwrap_or((0, 0))
-    }
+    ensure_built(state, &key);
 }
 
 /// Calculate scroll position for a visual-row-aware scrollbar *jump*.
@@ -131,8 +79,8 @@ pub(crate) fn scrollbar_jump_visual(
         return (0, 0);
     }
 
-    let (visual_row_positions, total_visual_rows) =
-        build_visual_row_map(state, viewport_width, pipeline_inputs_ver);
+    ensure_index(state, viewport_width, pipeline_inputs_ver);
+    let total_visual_rows = state.visual_row_index.total_rows() as usize;
     if total_visual_rows == 0 {
         return (0, 0);
     }
@@ -146,7 +94,10 @@ pub(crate) fn scrollbar_jump_visual(
     let target_row = (ratio * max_scroll_row as f64).round() as usize;
     let target_row = target_row.min(max_scroll_row);
 
-    position_at(&visual_row_positions, target_row)
+    let (_line_idx, line_start, offset) = state
+        .visual_row_index
+        .position_at_row(target_row as u32);
+    (line_start, offset)
 }
 
 /// Calculate scroll position for a visual-row-aware scrollbar *drag*.
@@ -170,8 +121,8 @@ pub(crate) fn scrollbar_drag_relative_visual(
         return (0, 0);
     }
 
-    let (visual_row_positions, total_visual_rows) =
-        build_visual_row_map(state, viewport_width, pipeline_inputs_ver);
+    ensure_index(state, viewport_width, pipeline_inputs_ver);
+    let total_visual_rows = state.visual_row_index.total_rows() as usize;
     if total_visual_rows == 0 {
         return (0, 0);
     }
@@ -181,14 +132,11 @@ pub(crate) fn scrollbar_drag_relative_visual(
         return (0, 0);
     }
 
-    // Find the visual row corresponding to drag_start_top_byte + view_line_offset.
-    // First find the line start, then add the offset for wrapped lines.
-    let line_start_visual_row = visual_row_positions
-        .iter()
-        .position(|(byte, _)| *byte >= drag_start_top_byte)
-        .unwrap_or(0);
-    let start_visual_row =
-        (line_start_visual_row + drag_start_view_line_offset).min(max_scroll_row);
+    // Visual row of the drag start: first row of the line containing
+    // `drag_start_top_byte`, plus the wrap-segment offset within that line.
+    let (drag_line_idx, _) = state.visual_row_index.line_for_byte(drag_start_top_byte);
+    let line_first_row = state.visual_row_index.line_first_row(drag_line_idx) as usize;
+    let start_visual_row = (line_first_row + drag_start_view_line_offset).min(max_scroll_row);
 
     // Thumb size — same formula as the scrollbar renderer.
     let thumb_size_raw = (viewport_height as f64 / total_visual_rows as f64
@@ -222,5 +170,8 @@ pub(crate) fn scrollbar_drag_relative_visual(
     let target_row = (target_scroll_ratio * max_scroll_row as f64).round() as usize;
     let target_row = target_row.min(max_scroll_row);
 
-    position_at(&visual_row_positions, target_row)
+    let (_line_idx, line_start, offset) = state
+        .visual_row_index
+        .position_at_row(target_row as u32);
+    (line_start, offset)
 }

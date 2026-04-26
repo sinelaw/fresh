@@ -227,10 +227,6 @@ pub struct EditorState {
     // instead of copying its fields, to avoid duplication between the two structs.
     pub display_name: String,
 
-    /// Cached scrollbar visual row counts to avoid O(n) recomputation per frame.
-    /// Invalidated when buffer version, viewport width, or top_byte changes.
-    pub scrollbar_row_cache: ScrollbarRowCache,
-
     /// Per-logical-line visual-row-count cache (pipeline-output).
     /// Populated by both the renderer (as a side effect of rendering a
     /// visible frame) and the scroll-math miss handler.  Entries are
@@ -238,28 +234,16 @@ pub struct EditorState {
     /// different key so stale entries are never returned — see
     /// `docs/internal/line-wrap-cache-plan.md`.
     pub line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache,
-}
 
-/// Cache for scrollbar visual row counts.
-/// Avoids re-wrapping every line in the file on each render frame.
-#[derive(Debug, Clone, Default)]
-pub struct ScrollbarRowCache {
-    /// Buffer version when this cache was computed
-    pub buffer_version: u64,
-    /// Viewport width used for wrapping
-    pub viewport_width: u16,
-    /// Whether wrap indent was enabled
-    pub wrap_indent: bool,
-    /// Cached total visual rows
-    pub total_visual_rows: usize,
-    /// top_byte → top_visual_row mapping from last computation
-    pub top_byte: usize,
-    /// Cached top visual row
-    pub top_visual_row: usize,
-    /// top_view_line_offset used in the computation
-    pub top_view_line_offset: usize,
-    /// Whether the cache has been populated at least once
-    pub valid: bool,
+    /// Whole-buffer prefix-sum index over per-line visual row counts.
+    /// Sits one tier above `line_wrap_cache`: answers
+    /// "what visual row contains byte B?" / "what byte sits at row R?"
+    /// in O(log N_lines) for scrollbar drag, scrollbar render, and
+    /// `ensure_visible` wrapped scrolling.  Built lazily from
+    /// `line_wrap_cache`; same invalidation source (pipeline-input
+    /// version + geometry).  See
+    /// `crate::view::visual_row_index` for invariants.
+    pub visual_row_index: crate::view::visual_row_index::VisualRowIndex,
 }
 
 impl EditorState {
@@ -313,8 +297,8 @@ impl EditorState {
             folding_ranges: LspFoldRanges::new(),
             language: "text".to_string(),
             display_name: "Text".to_string(),
-            scrollbar_row_cache: ScrollbarRowCache::default(),
             line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
+            visual_row_index: crate::view::visual_row_index::VisualRowIndex::default(),
         }
     }
 
