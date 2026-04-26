@@ -320,7 +320,11 @@
     "field.file_status_untracked_fg": "Stav souboru: Nesledováno",
     "field.file_status_untracked_fg_desc": "Barva nesledovaných souborů v průzkumníku",
     "field.file_status_conflicted_fg": "Stav souboru: Konflikt",
-    "field.file_status_conflicted_fg_desc": "Barva konfliktních souborů v průzkumníku"
+    "field.file_status_conflicted_fg_desc": "Barva konfliktních souborů v průzkumníku",
+    "field.label_bg": "štítek pozadí",
+    "field.label_bg_desc": "skok štítek pozadí barva",
+    "field.label_fg": "štítek popředí",
+    "field.label_fg_desc": "skok štítek text barva"
   },
   "de": {
     "cmd.edit_theme": "Theme bearbeiten",
@@ -643,7 +647,11 @@
     "field.file_status_untracked_fg": "Dateistatus: Nicht verfolgt",
     "field.file_status_untracked_fg_desc": "Farbe für nicht verfolgte Dateien im Datei-Explorer",
     "field.file_status_conflicted_fg": "Dateistatus: Konflikt",
-    "field.file_status_conflicted_fg_desc": "Farbe für Dateien mit Konflikten im Datei-Explorer"
+    "field.file_status_conflicted_fg_desc": "Farbe für Dateien mit Konflikten im Datei-Explorer",
+    "field.label_bg": "Sprungmarke Hintergrund",
+    "field.label_bg_desc": "Hintergrundfarbe der Sprungmarke",
+    "field.label_fg": "Sprungmarke Vordergrund",
+    "field.label_fg_desc": "Textfarbe der Sprungmarke"
   },
   "en": {
     "cmd.edit_theme": "Edit Theme",
@@ -966,7 +974,11 @@
     "field.file_status_untracked_fg": "File Status: Untracked",
     "field.file_status_untracked_fg_desc": "Color for untracked files in file explorer",
     "field.file_status_conflicted_fg": "File Status: Conflicted",
-    "field.file_status_conflicted_fg_desc": "Color for conflicted files in file explorer"
+    "field.file_status_conflicted_fg_desc": "Color for conflicted files in file explorer",
+    "field.label_bg": "Label Background",
+    "field.label_bg_desc": "Jump label background color",
+    "field.label_fg": "Label Foreground",
+    "field.label_fg_desc": "Jump label text color"
   },
   "es": {
     "cmd.edit_theme": "Editar tema",
@@ -1289,7 +1301,11 @@
     "field.file_status_untracked_fg": "Estado del archivo: Sin seguimiento",
     "field.file_status_untracked_fg_desc": "Color de archivos sin seguimiento en el explorador",
     "field.file_status_conflicted_fg": "Estado del archivo: En conflicto",
-    "field.file_status_conflicted_fg_desc": "Color de archivos en conflicto en el explorador"
+    "field.file_status_conflicted_fg_desc": "Color de archivos en conflicto en el explorador",
+    "field.label_bg": "Fondo de etiqueta",
+    "field.label_bg_desc": "Color de fondo de etiqueta de salto",
+    "field.label_fg": "Primer plano de etiqueta",
+    "field.label_fg_desc": "Color de texto de etiqueta de salto"
   },
   "fr": {
     "cmd.edit_theme": "Modifier le theme",
@@ -1612,7 +1628,11 @@
     "field.file_status_untracked_fg": "Statut du fichier : Non suivi",
     "field.file_status_untracked_fg_desc": "Couleur des fichiers non suivis dans l'explorateur",
     "field.file_status_conflicted_fg": "Statut du fichier : En conflit",
-    "field.file_status_conflicted_fg_desc": "Couleur des fichiers en conflit dans l'explorateur"
+    "field.file_status_conflicted_fg_desc": "Couleur des fichiers en conflit dans l'explorateur",
+    "field.label_bg": "Arriere-plan etiquette",
+    "field.label_bg_desc": "Couleur d'arriere-plan de l'etiquette de saut",
+    "field.label_fg": "Premier plan etiquette",
+    "field.label_fg_desc": "Couleur du texte de l'etiquette de saut"
   },
   "ja": {
     "cmd.edit_theme": "テーマを編集",
@@ -1935,7 +1955,11 @@
     "field.file_status_untracked_fg": "ファイル状態: 未追跡",
     "field.file_status_untracked_fg_desc": "ファイルエクスプローラーの未追跡ファイルの色",
     "field.file_status_conflicted_fg": "ファイル状態: 競合",
-    "field.file_status_conflicted_fg_desc": "ファイルエクスプローラーの競合ファイルの色"
+    "field.file_status_conflicted_fg_desc": "ファイルエクスプローラーの競合ファイルの色",
+    "field.label_bg": "ラベル背景",
+    "field.label_bg_desc": "ジャンプラベルの背景色",
+    "field.label_fg": "ラベル前景",
+    "field.label_fg_desc": "ジャンプラベルのテキスト色"
   },
   "ko": {
     "cmd.edit_theme": "편집 Theme",
@@ -2258,7 +2282,11 @@
     "field.file_status_untracked_fg": "파일 상태: 추적되지 않음",
     "field.file_status_untracked_fg_desc": "파일 탐색기에서 추적되지 않은 파일 색상",
     "field.file_status_conflicted_fg": "파일 상태: 충돌",
-    "field.file_status_conflicted_fg_desc": "파일 탐색기에서 충돌 파일 색상"
+    "field.file_status_conflicted_fg_desc": "파일 탐색기에서 충돌 파일 색상",
+    "field.label_bg": "라벨 배경",
+    "field.label_bg_desc": "점프 라벨 배경 색상",
+    "field.label_fg": "라벨 전경",
+    "field.label_fg_desc": "점프 라벨 텍스트 색상"
   },
   "pt-BR": {
     "cmd.edit_theme": "editar Theme",
@@ -2581,7 +2609,11 @@
     "field.file_status_untracked_fg": "Status do arquivo: Não rastreado",
     "field.file_status_untracked_fg_desc": "Cor dos arquivos não rastreados no explorador",
     "field.file_status_conflicted_fg": "Status do arquivo: Em conflito",
-    "field.file_status_conflicted_fg_desc": "Cor dos arquivos em conflito no explorador"
+    "field.file_status_conflicted_fg_desc": "Cor dos arquivos em conflito no explorador",
+    "field.label_bg": "rótulo fundo",
+    "field.label_bg_desc": "salto rótulo fundo cor",
+    "field.label_fg": "rótulo primeiro plano",
+    "field.label_fg_desc": "salto rótulo texto cor"
   },
   "ru": {
     "cmd.edit_theme": "редактировать Theme",
@@ -2904,7 +2936,11 @@
     "field.file_status_untracked_fg": "Статус файла: Неотслеживаемый",
     "field.file_status_untracked_fg_desc": "Цвет неотслеживаемых файлов в проводнике",
     "field.file_status_conflicted_fg": "Статус файла: Конфликт",
-    "field.file_status_conflicted_fg_desc": "Цвет конфликтующих файлов в проводнике"
+    "field.file_status_conflicted_fg_desc": "Цвет конфликтующих файлов в проводнике",
+    "field.label_bg": "метка фон",
+    "field.label_bg_desc": "переход метка фон цвет",
+    "field.label_fg": "метка передний план",
+    "field.label_fg_desc": "переход метка текст цвет"
   },
   "th": {
     "cmd.edit_theme": "แก้ไข Theme",
@@ -3227,7 +3263,11 @@
     "field.file_status_untracked_fg": "สถานะไฟล์: ไม่ได้ติดตาม",
     "field.file_status_untracked_fg_desc": "สีไฟล์ที่ไม่ได้ติดตามในตัวสำรวจไฟล์",
     "field.file_status_conflicted_fg": "สถานะไฟล์: ขัดแย้ง",
-    "field.file_status_conflicted_fg_desc": "สีไฟล์ที่ขัดแย้งในตัวสำรวจไฟล์"
+    "field.file_status_conflicted_fg_desc": "สีไฟล์ที่ขัดแย้งในตัวสำรวจไฟล์",
+    "field.label_bg": "ป้าย พื้นหลัง",
+    "field.label_bg_desc": "กระโดด ป้าย พื้นหลัง สี",
+    "field.label_fg": "ป้าย พื้นหน้า",
+    "field.label_fg_desc": "กระโดด ป้าย ข้อความ สี"
   },
   "uk": {
     "cmd.edit_theme": "редагувати Theme",
@@ -3550,7 +3590,11 @@
     "field.file_status_untracked_fg": "Статус файлу: Не відстежується",
     "field.file_status_untracked_fg_desc": "Колір невідстежуваних файлів у провіднику",
     "field.file_status_conflicted_fg": "Статус файлу: Конфлікт",
-    "field.file_status_conflicted_fg_desc": "Колір конфліктних файлів у провіднику"
+    "field.file_status_conflicted_fg_desc": "Колір конфліктних файлів у провіднику",
+    "field.label_bg": "мітка фон",
+    "field.label_bg_desc": "стрибок мітка фон колір",
+    "field.label_fg": "мітка передній план",
+    "field.label_fg_desc": "стрибок мітка текст колір"
   },
   "vi": {
     "cmd.edit_theme": "Chỉnh sửa giao diện",
@@ -3873,7 +3917,11 @@
     "field.file_status_untracked_fg": "Trạng thái tệp: Chưa theo dõi",
     "field.file_status_untracked_fg_desc": "Màu tệp chưa theo dõi trong trình duyệt tệp",
     "field.file_status_conflicted_fg": "Trạng thái tệp: Xung đột",
-    "field.file_status_conflicted_fg_desc": "Màu tệp xung đột trong trình duyệt tệp"
+    "field.file_status_conflicted_fg_desc": "Màu tệp xung đột trong trình duyệt tệp",
+    "field.label_bg": "Nền nhãn",
+    "field.label_bg_desc": "Màu nền nhãn nhảy",
+    "field.label_fg": "Tiền cảnh nhãn",
+    "field.label_fg_desc": "Màu văn bản nhãn nhảy"
   },
   "zh-CN": {
     "cmd.edit_theme": "编辑主题",
@@ -4196,7 +4244,11 @@
     "field.file_status_untracked_fg": "文件状态: 未跟踪",
     "field.file_status_untracked_fg_desc": "文件浏览器中未跟踪文件的颜色",
     "field.file_status_conflicted_fg": "文件状态: 冲突",
-    "field.file_status_conflicted_fg_desc": "文件浏览器中冲突文件的颜色"
+    "field.file_status_conflicted_fg_desc": "文件浏览器中冲突文件的颜色",
+    "field.label_bg": "标签背景",
+    "field.label_bg_desc": "跳转标签背景颜色",
+    "field.label_fg": "标签前景",
+    "field.label_fg_desc": "跳转标签文本颜色"
   },
   "it": {
     "cmd.edit_theme": "Modifica tema",
@@ -4519,6 +4571,10 @@
     "field.file_status_untracked_fg": "Stato file: Non tracciato",
     "field.file_status_untracked_fg_desc": "Colore dei file non tracciati nell'esplora file",
     "field.file_status_conflicted_fg": "Stato file: In conflitto",
-    "field.file_status_conflicted_fg_desc": "Colore dei file in conflitto nell'esplora file"
+    "field.file_status_conflicted_fg_desc": "Colore dei file in conflitto nell'esplora file",
+    "field.label_bg": "Sfondo etichetta",
+    "field.label_bg_desc": "Colore di sfondo dell'etichetta di salto",
+    "field.label_fg": "Primo piano etichetta",
+    "field.label_fg_desc": "Colore del testo dell'etichetta di salto"
   }
 }
