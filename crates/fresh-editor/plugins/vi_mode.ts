@@ -586,27 +586,32 @@ function vi_delete_char_before() : void {
 }
 registerHandler("vi_delete_char_before", vi_delete_char_before);
 
-function vi_replace_char() : void {
-  // Enter replace-char mode to read the replacement character
-  state.mode = "find-char"; // Reuse find-char mode mechanism
+// Replace-char (`r<char>`): wait for one keypress and replace the
+// character(s) under the cursor with it.  Uses `editor.getNextKey()`
+// (plugin API #1) — same pattern as find-char above.
+async function vi_replace_char(): Promise<void> {
+  state.mode = "find-char"; // reuse find-char state slot for status
   editor.setEditorMode("vi-replace-char");
   editor.setStatus("-- REPLACE CHAR --");
-}
-registerHandler("vi_replace_char", vi_replace_char);
 
-// Handler for replacement character input
-async function vi_replace_char_handler(char: string): Promise<void> {
+  const ev = await editor.getNextKey();
+
+  // Escape / non-character keys cancel the replacement.
+  if (ev.key.length !== 1) {
+    switchMode("normal");
+    return;
+  }
+
   const count = consumeCount();
-  // Replace character(s) under cursor without moving
   for (let i = 0; i < count; i++) {
     editor.executeAction("delete_forward");
-    editor.insertAtCursor(char);
+    editor.insertAtCursor(ev.key);
   }
-  // Move cursor back to stay on the replaced char (vim behavior)
+  // Move cursor back to stay on the replaced char (vim behavior).
   editor.executeAction("move_left");
   switchMode("normal");
 }
-registerHandler("vi_replace_char_handler", vi_replace_char_handler);
+registerHandler("vi_replace_char", vi_replace_char);
 
 // Substitute (delete char and enter insert mode)
 function vi_substitute() : void {
@@ -1442,12 +1447,27 @@ registerHandler("vi_to_cancel", vi_to_cancel);
 // Find Character Motions (f/t/F/T)
 // ============================================================================
 
-// Enter find-char mode waiting for the target character
-function enterFindCharMode(findType: FindCharType): void {
+// Enter find-char mode, await one keypress, then dispatch.
+//
+// Implemented via `editor.getNextKey()` (plugin API #1) — the editor
+// hands the next keypress to this awaiting handler before any other
+// dispatch, which means the mode itself does not need any per-key
+// bindings.  Keeps `setEditorMode("vi-find-char")` set across the
+// await purely for the status-bar indicator.
+async function enterFindCharMode(findType: FindCharType): Promise<void> {
   state.pendingFindChar = findType;
   state.mode = "find-char";
   editor.setEditorMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
+
+  const ev = await editor.getNextKey();
+  state.pendingFindChar = null;
+
+  // Escape (or any non-character key) cancels the motion.
+  if (ev.key.length === 1) {
+    await executeFindChar(findType, ev.key);
+  }
+  switchMode("normal");
 }
 
 // Execute find char motion (async because getBufferText is async)
@@ -1530,36 +1550,17 @@ async function executeFindChar(findType: FindCharType, char: string): Promise<vo
   }
 }
 
-// Handler for when a character is typed in find-char mode (async)
-async function vi_find_char_handler(char: string): Promise<void> {
-  if (state.pendingFindChar) {
-    await executeFindChar(state.pendingFindChar, char);
-  }
-  // Return to normal mode
-  state.pendingFindChar = null;
-  switchMode("normal");
-}
-registerHandler("vi_find_char_handler", vi_find_char_handler);
-
-// Commands to enter find-char mode
-function vi_find_char_f(): void {
-  enterFindCharMode("f");
-}
+// Commands to enter find-char mode (async; await getNextKey internally)
+async function vi_find_char_f(): Promise<void> { return enterFindCharMode("f"); }
 registerHandler("vi_find_char_f", vi_find_char_f);
 
-function vi_find_char_t(): void {
-  enterFindCharMode("t");
-}
+async function vi_find_char_t(): Promise<void> { return enterFindCharMode("t"); }
 registerHandler("vi_find_char_t", vi_find_char_t);
 
-function vi_find_char_F(): void {
-  enterFindCharMode("F");
-}
+async function vi_find_char_F(): Promise<void> { return enterFindCharMode("F"); }
 registerHandler("vi_find_char_F", vi_find_char_F);
 
-function vi_find_char_T(): void {
-  enterFindCharMode("T");
-}
+async function vi_find_char_T(): Promise<void> { return enterFindCharMode("T"); }
 registerHandler("vi_find_char_T", vi_find_char_T);
 
 // Repeat last find char (async)
@@ -1581,13 +1582,6 @@ async function vi_find_char_repeat_reverse(): Promise<void> {
   }
 }
 registerHandler("vi_find_char_repeat_reverse", vi_find_char_repeat_reverse);
-
-// Cancel find-char mode
-function vi_find_char_cancel(): void {
-  state.pendingFindChar = null;
-  switchMode("normal");
-}
-registerHandler("vi_find_char_cancel", vi_find_char_cancel);
 
 // ============================================================================
 // Operator-Pending Mode Commands
@@ -1771,229 +1765,10 @@ editor.defineMode("vi-insert", [
   ["C-q", "quit"],
 ], false); // read_only = false to allow normal typing
 
-// Define vi-find-char mode - binds all printable chars to the handler
-// This mode waits for a single character input for f/t/F/T motions
-
-// Explicitly define handlers for each character to ensure they're accessible
-// These return Promises so the runtime can await them
-async function vi_fc_a(): Promise<void> { return vi_find_char_handler("a"); }
-registerHandler("vi_fc_a", vi_fc_a);
-async function vi_fc_b(): Promise<void> { return vi_find_char_handler("b"); }
-registerHandler("vi_fc_b", vi_fc_b);
-async function vi_fc_c(): Promise<void> { return vi_find_char_handler("c"); }
-registerHandler("vi_fc_c", vi_fc_c);
-async function vi_fc_d(): Promise<void> { return vi_find_char_handler("d"); }
-registerHandler("vi_fc_d", vi_fc_d);
-async function vi_fc_e(): Promise<void> { return vi_find_char_handler("e"); }
-registerHandler("vi_fc_e", vi_fc_e);
-async function vi_fc_f(): Promise<void> { return vi_find_char_handler("f"); }
-registerHandler("vi_fc_f", vi_fc_f);
-async function vi_fc_g(): Promise<void> { return vi_find_char_handler("g"); }
-registerHandler("vi_fc_g", vi_fc_g);
-async function vi_fc_h(): Promise<void> { return vi_find_char_handler("h"); }
-registerHandler("vi_fc_h", vi_fc_h);
-async function vi_fc_i(): Promise<void> { return vi_find_char_handler("i"); }
-registerHandler("vi_fc_i", vi_fc_i);
-async function vi_fc_j(): Promise<void> { return vi_find_char_handler("j"); }
-registerHandler("vi_fc_j", vi_fc_j);
-async function vi_fc_k(): Promise<void> { return vi_find_char_handler("k"); }
-registerHandler("vi_fc_k", vi_fc_k);
-async function vi_fc_l(): Promise<void> { return vi_find_char_handler("l"); }
-registerHandler("vi_fc_l", vi_fc_l);
-async function vi_fc_m(): Promise<void> { return vi_find_char_handler("m"); }
-registerHandler("vi_fc_m", vi_fc_m);
-async function vi_fc_n(): Promise<void> { return vi_find_char_handler("n"); }
-registerHandler("vi_fc_n", vi_fc_n);
-async function vi_fc_o(): Promise<void> { return vi_find_char_handler("o"); }
-registerHandler("vi_fc_o", vi_fc_o);
-async function vi_fc_p(): Promise<void> { return vi_find_char_handler("p"); }
-registerHandler("vi_fc_p", vi_fc_p);
-async function vi_fc_q(): Promise<void> { return vi_find_char_handler("q"); }
-registerHandler("vi_fc_q", vi_fc_q);
-async function vi_fc_r(): Promise<void> { return vi_find_char_handler("r"); }
-registerHandler("vi_fc_r", vi_fc_r);
-async function vi_fc_s(): Promise<void> { return vi_find_char_handler("s"); }
-registerHandler("vi_fc_s", vi_fc_s);
-async function vi_fc_t(): Promise<void> { return vi_find_char_handler("t"); }
-registerHandler("vi_fc_t", vi_fc_t);
-async function vi_fc_u(): Promise<void> { return vi_find_char_handler("u"); }
-registerHandler("vi_fc_u", vi_fc_u);
-async function vi_fc_v(): Promise<void> { return vi_find_char_handler("v"); }
-registerHandler("vi_fc_v", vi_fc_v);
-async function vi_fc_w(): Promise<void> { return vi_find_char_handler("w"); }
-registerHandler("vi_fc_w", vi_fc_w);
-async function vi_fc_x(): Promise<void> { return vi_find_char_handler("x"); }
-registerHandler("vi_fc_x", vi_fc_x);
-async function vi_fc_y(): Promise<void> { return vi_find_char_handler("y"); }
-registerHandler("vi_fc_y", vi_fc_y);
-async function vi_fc_z(): Promise<void> { return vi_find_char_handler("z"); }
-registerHandler("vi_fc_z", vi_fc_z);
-async function vi_fc_A(): Promise<void> { return vi_find_char_handler("A"); }
-registerHandler("vi_fc_A", vi_fc_A);
-async function vi_fc_B(): Promise<void> { return vi_find_char_handler("B"); }
-registerHandler("vi_fc_B", vi_fc_B);
-async function vi_fc_C(): Promise<void> { return vi_find_char_handler("C"); }
-registerHandler("vi_fc_C", vi_fc_C);
-async function vi_fc_D(): Promise<void> { return vi_find_char_handler("D"); }
-registerHandler("vi_fc_D", vi_fc_D);
-async function vi_fc_E(): Promise<void> { return vi_find_char_handler("E"); }
-registerHandler("vi_fc_E", vi_fc_E);
-async function vi_fc_F(): Promise<void> { return vi_find_char_handler("F"); }
-registerHandler("vi_fc_F", vi_fc_F);
-async function vi_fc_G(): Promise<void> { return vi_find_char_handler("G"); }
-registerHandler("vi_fc_G", vi_fc_G);
-async function vi_fc_H(): Promise<void> { return vi_find_char_handler("H"); }
-registerHandler("vi_fc_H", vi_fc_H);
-async function vi_fc_I(): Promise<void> { return vi_find_char_handler("I"); }
-registerHandler("vi_fc_I", vi_fc_I);
-async function vi_fc_J(): Promise<void> { return vi_find_char_handler("J"); }
-registerHandler("vi_fc_J", vi_fc_J);
-async function vi_fc_K(): Promise<void> { return vi_find_char_handler("K"); }
-registerHandler("vi_fc_K", vi_fc_K);
-async function vi_fc_L(): Promise<void> { return vi_find_char_handler("L"); }
-registerHandler("vi_fc_L", vi_fc_L);
-async function vi_fc_M(): Promise<void> { return vi_find_char_handler("M"); }
-registerHandler("vi_fc_M", vi_fc_M);
-async function vi_fc_N(): Promise<void> { return vi_find_char_handler("N"); }
-registerHandler("vi_fc_N", vi_fc_N);
-async function vi_fc_O(): Promise<void> { return vi_find_char_handler("O"); }
-registerHandler("vi_fc_O", vi_fc_O);
-async function vi_fc_P(): Promise<void> { return vi_find_char_handler("P"); }
-registerHandler("vi_fc_P", vi_fc_P);
-async function vi_fc_Q(): Promise<void> { return vi_find_char_handler("Q"); }
-registerHandler("vi_fc_Q", vi_fc_Q);
-async function vi_fc_R(): Promise<void> { return vi_find_char_handler("R"); }
-registerHandler("vi_fc_R", vi_fc_R);
-async function vi_fc_S(): Promise<void> { return vi_find_char_handler("S"); }
-registerHandler("vi_fc_S", vi_fc_S);
-async function vi_fc_T(): Promise<void> { return vi_find_char_handler("T"); }
-registerHandler("vi_fc_T", vi_fc_T);
-async function vi_fc_U(): Promise<void> { return vi_find_char_handler("U"); }
-registerHandler("vi_fc_U", vi_fc_U);
-async function vi_fc_V(): Promise<void> { return vi_find_char_handler("V"); }
-registerHandler("vi_fc_V", vi_fc_V);
-async function vi_fc_W(): Promise<void> { return vi_find_char_handler("W"); }
-registerHandler("vi_fc_W", vi_fc_W);
-async function vi_fc_X(): Promise<void> { return vi_find_char_handler("X"); }
-registerHandler("vi_fc_X", vi_fc_X);
-async function vi_fc_Y(): Promise<void> { return vi_find_char_handler("Y"); }
-registerHandler("vi_fc_Y", vi_fc_Y);
-async function vi_fc_Z(): Promise<void> { return vi_find_char_handler("Z"); }
-registerHandler("vi_fc_Z", vi_fc_Z);
-async function vi_fc_0(): Promise<void> { return vi_find_char_handler("0"); }
-registerHandler("vi_fc_0", vi_fc_0);
-async function vi_fc_1(): Promise<void> { return vi_find_char_handler("1"); }
-registerHandler("vi_fc_1", vi_fc_1);
-async function vi_fc_2(): Promise<void> { return vi_find_char_handler("2"); }
-registerHandler("vi_fc_2", vi_fc_2);
-async function vi_fc_3(): Promise<void> { return vi_find_char_handler("3"); }
-registerHandler("vi_fc_3", vi_fc_3);
-async function vi_fc_4(): Promise<void> { return vi_find_char_handler("4"); }
-registerHandler("vi_fc_4", vi_fc_4);
-async function vi_fc_5(): Promise<void> { return vi_find_char_handler("5"); }
-registerHandler("vi_fc_5", vi_fc_5);
-async function vi_fc_6(): Promise<void> { return vi_find_char_handler("6"); }
-registerHandler("vi_fc_6", vi_fc_6);
-async function vi_fc_7(): Promise<void> { return vi_find_char_handler("7"); }
-registerHandler("vi_fc_7", vi_fc_7);
-async function vi_fc_8(): Promise<void> { return vi_find_char_handler("8"); }
-registerHandler("vi_fc_8", vi_fc_8);
-async function vi_fc_9(): Promise<void> { return vi_find_char_handler("9"); }
-registerHandler("vi_fc_9", vi_fc_9);
-async function vi_fc_space(): Promise<void> { return vi_find_char_handler(" "); }
-registerHandler("vi_fc_space", vi_fc_space);
-
-// Punctuation character handlers for find-char mode
-const punctuationChars: [string, string][] = [
-  ["!", "excl"], ["@", "at"], ["#", "hash"], ["$", "dollar"], ["%", "percent"],
-  ["^", "caret"], ["&", "amp"], ["*", "star"], ["(", "lparen"], [")", "rparen"],
-  ["-", "minus"], ["_", "underscore"], ["=", "equals"], ["+", "plus"],
-  ["[", "lbracket"], ["]", "rbracket"], ["{", "lbrace"], ["}", "rbrace"],
-  ["\\", "backslash"], ["|", "pipe"], [";", "semi"], [":", "colon"],
-  ["'", "squote"], ["\"", "dquote"], [",", "comma"], [".", "dot"],
-  ["<", "lt"], [">", "gt"], ["/", "slash"], ["?", "question"], ["`", "backtick"],
-  ["~", "tilde"],
-];
-
-for (const [char, name] of punctuationChars) {
-  const handlerName = `vi_fc_p_${name}`;
-  const handler = async (): Promise<void> => { return vi_find_char_handler(char); };
-  registerHandler(handlerName, handler);
-}
-
-// Define vi-find-char mode with all the character bindings
-editor.defineMode("vi-find-char", [
-  ["Escape", "vi_find_char_cancel"],
-  // Letters
-  ["a", "vi_fc_a"], ["b", "vi_fc_b"], ["c", "vi_fc_c"], ["d", "vi_fc_d"],
-  ["e", "vi_fc_e"], ["f", "vi_fc_f"], ["g", "vi_fc_g"], ["h", "vi_fc_h"],
-  ["i", "vi_fc_i"], ["j", "vi_fc_j"], ["k", "vi_fc_k"], ["l", "vi_fc_l"],
-  ["m", "vi_fc_m"], ["n", "vi_fc_n"], ["o", "vi_fc_o"], ["p", "vi_fc_p"],
-  ["q", "vi_fc_q"], ["r", "vi_fc_r"], ["s", "vi_fc_s"], ["t", "vi_fc_t"],
-  ["u", "vi_fc_u"], ["v", "vi_fc_v"], ["w", "vi_fc_w"], ["x", "vi_fc_x"],
-  ["y", "vi_fc_y"], ["z", "vi_fc_z"],
-  ["A", "vi_fc_A"], ["B", "vi_fc_B"], ["C", "vi_fc_C"], ["D", "vi_fc_D"],
-  ["E", "vi_fc_E"], ["F", "vi_fc_F"], ["G", "vi_fc_G"], ["H", "vi_fc_H"],
-  ["I", "vi_fc_I"], ["J", "vi_fc_J"], ["K", "vi_fc_K"], ["L", "vi_fc_L"],
-  ["M", "vi_fc_M"], ["N", "vi_fc_N"], ["O", "vi_fc_O"], ["P", "vi_fc_P"],
-  ["Q", "vi_fc_Q"], ["R", "vi_fc_R"], ["S", "vi_fc_S"], ["T", "vi_fc_T"],
-  ["U", "vi_fc_U"], ["V", "vi_fc_V"], ["W", "vi_fc_W"], ["X", "vi_fc_X"],
-  ["Y", "vi_fc_Y"], ["Z", "vi_fc_Z"],
-  // Digits
-  ["0", "vi_fc_0"], ["1", "vi_fc_1"], ["2", "vi_fc_2"], ["3", "vi_fc_3"],
-  ["4", "vi_fc_4"], ["5", "vi_fc_5"], ["6", "vi_fc_6"], ["7", "vi_fc_7"],
-  ["8", "vi_fc_8"], ["9", "vi_fc_9"],
-  // Space and punctuation
-  ["Space", "vi_fc_space"],
-  ["!", "vi_fc_p_excl"], ["@", "vi_fc_p_at"], ["#", "vi_fc_p_hash"],
-  ["$", "vi_fc_p_dollar"], ["%", "vi_fc_p_percent"], ["^", "vi_fc_p_caret"],
-  ["&", "vi_fc_p_amp"], ["*", "vi_fc_p_star"], ["(", "vi_fc_p_lparen"],
-  [")", "vi_fc_p_rparen"], ["-", "vi_fc_p_minus"], ["_", "vi_fc_p_underscore"],
-  ["=", "vi_fc_p_equals"], ["+", "vi_fc_p_plus"], ["[", "vi_fc_p_lbracket"],
-  ["]", "vi_fc_p_rbracket"], ["{", "vi_fc_p_lbrace"], ["}", "vi_fc_p_rbrace"],
-  ["\\", "vi_fc_p_backslash"], ["|", "vi_fc_p_pipe"], [";", "vi_fc_p_semi"],
-  [":", "vi_fc_p_colon"], ["'", "vi_fc_p_squote"], ["\"", "vi_fc_p_dquote"],
-  [",", "vi_fc_p_comma"], [".", "vi_fc_p_dot"], ["<", "vi_fc_p_lt"],
-  [">", "vi_fc_p_gt"], ["/", "vi_fc_p_slash"], ["?", "vi_fc_p_question"],
-  ["`", "vi_fc_p_backtick"], ["~", "vi_fc_p_tilde"],
-], true);
-
-// Define vi-replace-char mode — reuses find-char handlers but calls vi_replace_char_handler
-// We create replace-char specific handlers that delegate to the replace handler
-const rcHandlers: [string, string][] = [];
-for (const c of "abcdefghijklmnopqrstuvwxyz") {
-  const name = `vi_rc_${c}`;
-  const handler = async (): Promise<void> => { return vi_replace_char_handler(c); };
-  registerHandler(name, handler);
-  rcHandlers.push([c, name]);
-}
-for (const c of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-  const name = `vi_rc_${c}`;
-  const handler = async (): Promise<void> => { return vi_replace_char_handler(c); };
-  registerHandler(name, handler);
-  rcHandlers.push([c, name]);
-}
-for (const c of "0123456789") {
-  const name = `vi_rc_d${c}`;
-  const handler = async (): Promise<void> => { return vi_replace_char_handler(c); };
-  registerHandler(name, handler);
-  rcHandlers.push([c, name]);
-}
-// Space and common punctuation for replace-char mode
-const rcSpaceHandler = async (): Promise<void> => { return vi_replace_char_handler(" "); };
-registerHandler("vi_rc_space", rcSpaceHandler);
-for (const [char, pname] of punctuationChars) {
-  const name = `vi_rc_p_${pname}`;
-  const handler = async (): Promise<void> => { return vi_replace_char_handler(char); };
-  registerHandler(name, handler);
-}
-
-editor.defineMode("vi-replace-char", [
-  ["Escape", "vi_find_char_cancel"],
-  ...rcHandlers.map(([key, name]): [string, string] => [key, name]),
-  ["Space", "vi_rc_space"],
-  ...punctuationChars.map(([char, pname]): [string, string] => [char, `vi_rc_p_${pname}`]),
-], true);
+// vi-find-char and vi-replace-char modes do not need bindings:
+// their entry-point handlers (vi_find_char_f/t/F/T, vi_replace_char) call
+// editor.getNextKey() to read the next character.  setEditorMode(...) is
+// still set across the await purely so the status bar shows the mode.
 
 // Define vi-operator-pending mode
 editor.defineMode("vi-operator-pending", [

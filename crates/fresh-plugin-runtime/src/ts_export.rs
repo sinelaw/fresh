@@ -20,11 +20,11 @@ use fresh_core::api::{
     CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
-    GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, LanguagePackConfig,
-    LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
-    PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SpawnResult, TerminalResult,
-    TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
-    ViewportInfo, VirtualBufferResult,
+    GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
+    LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
+    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SpawnResult,
+    TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
+    ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -48,6 +48,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "BufferInfo" => Some(BufferInfo::decl(&cfg)),
         "CursorInfo" => Some(CursorInfo::decl(&cfg)),
         "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
+        "KeyEventPayload" => Some(KeyEventPayload::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
         "BufferSavedDiff" => Some(BufferSavedDiff::decl(&cfg)),
         "LayoutHints" => Some(LayoutHints::decl(&cfg)),
@@ -196,6 +197,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCompositeHunk",                // Used in createCompositeBuffer opts.hunks
     "TsCreateCompositeBufferOptions", // Options for createCompositeBuffer
     "ViewportInfo",                   // Used by plugins for viewport queries
+    "KeyEventPayload",                // Used by editor.getNextKey()
     "LayoutHints",                    // Used by plugins for view transforms
     "ViewTokenWire",                  // Used by plugins for view transforms
     "ViewTokenWireKind",              // Used by ViewTokenWire
@@ -448,6 +450,7 @@ mod tests {
             "BufferInfo",
             "CursorInfo",
             "ViewportInfo",
+            "KeyEventPayload",
             "ActionSpec",
             "BufferSavedDiff",
             "LayoutHints",

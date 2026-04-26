@@ -240,6 +240,29 @@ type ViewportInfo = {
 	*/
 	height: number;
 };
+type KeyEventPayload = {
+	/**
+	* Key name (e.g. `"a"`, `"escape"`, `"f1"`).
+	*/
+	key: string;
+	/**
+	* Ctrl held.
+	*/
+	ctrl: boolean;
+	/**
+	* Alt held.
+	*/
+	alt: boolean;
+	/**
+	* Shift held (only meaningful for non-character keys; for
+	* printable characters the case is already encoded in `key`).
+	*/
+	shift: boolean;
+	/**
+	* Super / Cmd / Meta held.
+	*/
+	meta: boolean;
+};
 type LayoutHints = {
 	/**
 	* Optional compose width for centering/wrapping
@@ -1604,6 +1627,17 @@ interface EditorAPI {
 	* Start an interactive prompt
 	*/
 	startPrompt(label: string, promptType: string): boolean;
+	/**
+	* Wait for the next keypress and resolve with a `KeyEventPayload`.
+	* 
+	* While the returned promise is pending the editor consumes the
+	* next key and resolves it; the key does not propagate to mode
+	* bindings or other dispatch. Multiple in-flight requests across
+	* plugins are FIFO. Designed for short input loops (flash labels,
+	* vi find-char, replace-char) that would otherwise need to bind
+	* every printable key in `defineMode`.
+	*/
+	getNextKey(): Promise<KeyEventPayload>;
 	/**
 	* Start a prompt with initial value
 	*/

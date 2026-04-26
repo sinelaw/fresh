@@ -3029,6 +3029,32 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Wait for the next keypress and resolve with a `KeyEventPayload`.
+    ///
+    /// While the returned promise is pending the editor consumes the
+    /// next key and resolves it; the key does not propagate to mode
+    /// bindings or other dispatch. Multiple in-flight requests across
+    /// plugins are FIFO. Designed for short input loops (flash labels,
+    /// vi find-char, replace-char) that would otherwise need to bind
+    /// every printable key in `defineMode`.
+    #[plugin_api(async_promise, js_name = "getNextKey", ts_return = "KeyEventPayload")]
+    #[qjs(rename = "_getNextKeyStart")]
+    pub fn get_next_key_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = {
+            let mut id_ref = self.next_request_id.borrow_mut();
+            let id = *id_ref;
+            *id_ref += 1;
+            self.callback_contexts
+                .borrow_mut()
+                .insert(id, self.plugin_name.clone());
+            id
+        };
+        let _ = self.command_sender.send(PluginCommand::AwaitNextKey {
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
     /// Start a prompt with initial value
     pub fn start_prompt_with_initial(
         &self,
@@ -5169,6 +5195,7 @@ impl QuickJsBackend {
                 editor.reloadPlugin = _wrapAsync("_reloadPluginStart", "reloadPlugin");
                 editor.listPlugins = _wrapAsync("_listPluginsStart", "listPlugins");
                 editor.prompt = _wrapAsync("_promptStart", "prompt");
+                editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");

@@ -803,6 +803,12 @@ pub struct Editor {
     /// When cancelled, the callback is resolved with null.
     pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
 
+    /// FIFO queue of plugin `editor.getNextKey()` callbacks awaiting a
+    /// keypress. While non-empty, the next key arriving in
+    /// `handle_key` is consumed by resolving the front-most callback
+    /// rather than dispatching to mode bindings or other handlers.
+    pending_next_key_callbacks: std::collections::VecDeque<fresh_core::api::JsCallbackId>,
+
     /// Snapshot of cursor/viewport state saved when a goto-line preview jump
     /// moves the cursor live as the user types a target line. Used by both the
     /// Quick Open `:N` syntax and the standalone `Goto Line` prompt. Restored

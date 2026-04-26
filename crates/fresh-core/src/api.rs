@@ -465,6 +465,31 @@ pub struct ViewportInfo {
     pub height: u16,
 }
 
+/// Payload delivered to a plugin's `editor.getNextKey()` Promise when
+/// the next keypress arrives in the editor's input dispatch.
+///
+/// `key` uses the same naming as `defineMode` bindings: lowercase
+/// names like `"escape"`, `"enter"`, `"tab"`, `"space"`, `"left"`,
+/// `"f1"`–`"f12"`, or a single character (e.g. `"a"`, `"!"`).
+/// Modifier flags are reported separately so plugins can recognise
+/// chord variants without parsing.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct KeyEventPayload {
+    /// Key name (e.g. `"a"`, `"escape"`, `"f1"`).
+    pub key: String,
+    /// Ctrl held.
+    pub ctrl: bool,
+    /// Alt held.
+    pub alt: bool,
+    /// Shift held (only meaningful for non-character keys; for
+    /// printable characters the case is already encoded in `key`).
+    pub shift: bool,
+    /// Super / Cmd / Meta held.
+    pub meta: bool,
+}
+
 /// Layout hints supplied by plugins (e.g., Compose mode)
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1365,6 +1390,18 @@ pub enum PluginCommand {
         initial_value: String,
         callback_id: JsCallbackId,
     },
+
+    /// Request the next keypress for the calling plugin.
+    ///
+    /// The editor enqueues `callback_id` and resolves it with a
+    /// `KeyEventPayload` JSON value the next time a key arrives in
+    /// `Editor::handle_key`. Multiple pending requests are FIFO.
+    /// While at least one request is pending, the next key is consumed
+    /// by the resolution and does not propagate to mode bindings or
+    /// other dispatch — this is the primitive that lets a plugin run a
+    /// short input loop (flash labels, vi find-char, replace-char,
+    /// etc.) without binding every printable key in `defineMode`.
+    AwaitNextKey { callback_id: JsCallbackId },
 
     /// Update the suggestions list for the current prompt
     /// Uses the editor's Suggestion type

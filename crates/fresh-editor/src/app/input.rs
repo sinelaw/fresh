@@ -1,6 +1,63 @@
 use super::*;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
+
+/// Convert a crossterm `KeyEvent` into the `KeyEventPayload` shape
+/// delivered to plugin `editor.getNextKey()` callers.
+///
+/// `key` matches the naming used by `defineMode` bindings:
+///   - named keys are lowercase (`"escape"`, `"enter"`, `"tab"`,
+///     `"space"`, `"backspace"`, arrows, `"f1"`–`"f12"`, …)
+///   - printable characters are returned as-is (`"a"`, `"!"`, `" "`)
+///   - unsupported / unknown keys yield an empty `key` string
+fn key_event_to_payload(ev: &crossterm::event::KeyEvent) -> fresh_core::api::KeyEventPayload {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let key = match ev.code {
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Esc => "escape".to_string(),
+        KeyCode::Enter => "enter".to_string(),
+        KeyCode::Tab => "tab".to_string(),
+        KeyCode::BackTab => "backtab".to_string(),
+        KeyCode::Backspace => "backspace".to_string(),
+        KeyCode::Delete => "delete".to_string(),
+        KeyCode::Left => "left".to_string(),
+        KeyCode::Right => "right".to_string(),
+        KeyCode::Up => "up".to_string(),
+        KeyCode::Down => "down".to_string(),
+        KeyCode::Home => "home".to_string(),
+        KeyCode::End => "end".to_string(),
+        KeyCode::PageUp => "pageup".to_string(),
+        KeyCode::PageDown => "pagedown".to_string(),
+        KeyCode::Insert => "insert".to_string(),
+        KeyCode::F(n) => format!("f{}", n),
+        _ => String::new(),
+    };
+    fresh_core::api::KeyEventPayload {
+        key,
+        ctrl: ev.modifiers.contains(KeyModifiers::CONTROL),
+        alt: ev.modifiers.contains(KeyModifiers::ALT),
+        shift: ev.modifiers.contains(KeyModifiers::SHIFT),
+        meta: ev.modifiers.contains(KeyModifiers::SUPER),
+    }
+}
+
+impl Editor {
+    /// If a plugin is awaiting the next keypress (via
+    /// `editor.getNextKey()`), resolve the front-most pending
+    /// callback with this key and return `true` so the caller can
+    /// short-circuit further dispatch. The key is consumed by the
+    /// resolution; mode bindings and editor actions do not see it.
+    fn try_resolve_next_key_callback(&mut self, key_event: &crossterm::event::KeyEvent) -> bool {
+        let Some(callback_id) = self.pending_next_key_callbacks.pop_front() else {
+            return false;
+        };
+        let payload = key_event_to_payload(key_event);
+        let json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
+        true
+    }
+}
+
 impl Editor {
     /// Determine the current keybinding context based on UI state
     pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
@@ -53,6 +110,16 @@ impl Editor {
 
         // Try terminal input dispatch first (handles terminal mode and re-entry)
         if self.dispatch_terminal_input(&key_event).is_some() {
+            return Ok(());
+        }
+
+        // If a plugin is awaiting the next keypress (`editor.getNextKey()`),
+        // hand this key to the front-most pending callback and consume it.
+        // This must run before any other dispatch so the awaiting plugin —
+        // typically running a short input loop (flash labels, vi
+        // find-char/replace-char) — can drive its own state machine
+        // without binding every printable key in `defineMode`.
+        if self.try_resolve_next_key_callback(&key_event) {
             return Ok(());
         }
 

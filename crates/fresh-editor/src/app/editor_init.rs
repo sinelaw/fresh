@@ -678,6 +678,7 @@ impl Editor {
                 histories
             },
             pending_async_prompt_callback: None,
+            pending_next_key_callbacks: std::collections::VecDeque::new(),
             goto_line_preview: None,
             lsp_progress: std::collections::HashMap::new(),
             lsp_server_statuses: std::collections::HashMap::new(),

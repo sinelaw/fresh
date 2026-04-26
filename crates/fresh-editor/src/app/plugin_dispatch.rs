@@ -704,6 +704,9 @@ impl Editor {
             } => {
                 self.handle_start_prompt_async(label, initial_value, callback_id);
             }
+            PluginCommand::AwaitNextKey { callback_id } => {
+                self.pending_next_key_callbacks.push_back(callback_id);
+            }
             PluginCommand::SetPromptSuggestions { suggestions } => {
                 self.handle_set_prompt_suggestions(suggestions);
             }
