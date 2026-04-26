@@ -603,3 +603,54 @@ fn auto_forward_notify_fires_for_configured_port() {
          emit a toast when the port is bound; screen:\n{screen}"
     );
 }
+
+/// **Bug #5 (L181, Medium, was Untested).** The usability report
+/// observed that triggering `Dev Container: Rebuild` killed any
+/// open `*Terminal N*` tab — destructive because users often
+/// keep long-running shells in those tabs.
+///
+/// This test pins the *expected* behavior (terminal buffer
+/// survives the attach round-trip). If it passes on master, the
+/// bug as observed was a real-tmux/PTY teardown artifact and
+/// not present in the harness flow. If it fails, we'll see the
+/// concrete teardown path and can fix it.
+#[cfg(unix)]
+#[test]
+fn rebuild_does_not_kill_open_terminal_buffer() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+
+    // 1. Open a terminal so we have a long-lived buffer to lose.
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    // 2. Snapshot the terminal-backed buffer id via the editor's
+    // own predicate so we don't have to guess at file paths.
+    let pre_terminal = harness.editor().active_buffer();
+    assert!(
+        harness.editor().is_terminal_buffer(pre_terminal),
+        "open_terminal must produce an active terminal buffer"
+    );
+
+    // 3. Drive the attach popup → setAuthority (the same flow
+    // Rebuild ultimately exercises — both transition the
+    // authority via setAuthority + boot-authority swap).
+    attach_via_fake(&mut harness);
+
+    // 4. The terminal buffer must still be a known terminal
+    // buffer after the attach round-trip. Losing either the
+    // buffer entry or its terminal status is the bug.
+    assert!(
+        harness.editor().is_terminal_buffer(pre_terminal),
+        "terminal buffer {pre_terminal:?} must survive the attach round-trip \
+         (the rebuild flow uses the same setAuthority path)"
+    );
+}
