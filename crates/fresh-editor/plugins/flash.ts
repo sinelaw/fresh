@@ -22,11 +22,17 @@ const editor = getEditor();
  */
 
 const NS_MATCH = "flash";
+const NS_LABEL = "flash-label";
 const VTEXT_PREFIX = "flash-";
 
-// Same pool flash.nvim uses by default — home-row first, ranked by
-// reachability.  All lowercase: case-sensitive matching keeps the
-// label letter from also being a valid pattern continuation.
+// Pool ordered by keyboard comfort, like flash.nvim:
+//   1. home row     (asdfghjkl)
+//   2. upper row    (qwertyuiop) — minus 'e' (vowel; common search char)
+//   3. lower row    (zxcvbnm)
+// Distance-sort then assigns the first labels to nearest matches, so
+// the closest jump targets get the most comfortable keys.  All
+// lowercase: case-sensitive matching keeps the label letter from also
+// being a valid pattern continuation, which matters for the skip rule.
 const LABEL_POOL = "asdfghjklqwertyuiopzxcvbnm";
 
 interface Match {
@@ -58,6 +64,11 @@ interface FlashState {
   matches: Match[];
   /** Buffers we've drawn decorations on — track for cleanup. */
   touchedBuffers: Set<number>;
+  /** Map from matchKey (`bufferId:start:end`) to last-frame's label.
+   *  Used by `assignLabels` to reuse the same letter for matches
+   *  that survive a pattern change — flash.nvim's "stability" rule.
+   *  Cleared on each fresh activation. */
+  prevLabelByKey: Map<string, string>;
   /** Active-split's primary cursor at activation, used as distance origin. */
   startCursor: number;
   startBufferId: number;
@@ -70,11 +81,16 @@ const state: FlashState = {
   pattern: "",
   matches: [],
   touchedBuffers: new Set<number>(),
+  prevLabelByKey: new Map<string, string>(),
   startCursor: 0,
   startBufferId: 0,
   startSplitId: 0,
   priorMode: null,
 };
+
+function matchKey(m: Match): string {
+  return m.bufferId + ":" + m.start + ":" + m.end;
+}
 
 // =============================================================================
 // Byte-offset bookkeeping
@@ -298,21 +314,51 @@ function sortMatches(
   });
 }
 
+// Two-pass label assignment, mirroring flash.nvim's labeler:
+//
+//   Pass 1 (stability): for each match that already had a label in
+//   the previous frame AND whose label is still in the pool, reuse it.
+//   This keeps a label visually anchored to the same target while the
+//   user types more characters to filter — typing extra chars only
+//   removes other labels, never re-shuffles the surviving ones.
+//
+//   Pass 2 (proximity): walk the remaining matches in distance order
+//   from the cursor (active split first) and consume the rest of the
+//   pool.  Closest unlabelled match → most comfortable remaining key.
 function assignLabels(
   matches: Match[],
   views: SplitView[],
   startCursor: number,
   startSplitId: number,
   emptyPattern: boolean,
+  prevLabelByKey: Map<string, string>,
 ): Match[] {
   if (matches.length === 0) return matches;
   const skip = buildSkipSet(matches, views, emptyPattern);
-  const pool: string[] = [];
-  for (const c of LABEL_POOL) if (!skip.has(c)) pool.push(c);
+  const remaining = new Set<string>();
+  for (const c of LABEL_POOL) if (!skip.has(c)) remaining.add(c);
 
   const sorted = sortMatches(matches, startSplitId, startCursor);
-  for (let i = 0; i < sorted.length && i < pool.length; i++) {
-    sorted[i].label = pool[i];
+
+  // Pass 1: stability — reuse labels for matches that survived.
+  for (const m of sorted) {
+    const prev = prevLabelByKey.get(matchKey(m));
+    if (prev && remaining.has(prev)) {
+      m.label = prev;
+      remaining.delete(prev);
+    }
+  }
+
+  // Pass 2: proximity — assign remaining pool letters to unlabelled
+  // matches in distance order.  Iterate the pool in its native
+  // (comfort-ranked) order so home-row letters go to nearest matches.
+  const orderedRemaining: string[] = [];
+  for (const c of LABEL_POOL) if (remaining.has(c)) orderedRemaining.push(c);
+  let next = 0;
+  for (const m of sorted) {
+    if (m.label) continue;
+    if (next >= orderedRemaining.length) break;
+    m.label = orderedRemaining[next++];
   }
   return sorted;
 }
@@ -324,12 +370,33 @@ function assignLabels(
 function clearTouched(): void {
   for (const buf of state.touchedBuffers) {
     editor.clearNamespace(buf, NS_MATCH);
+    editor.clearNamespace(buf, NS_LABEL);
+    editor.clearConcealNamespace(buf, NS_LABEL);
+    // Legacy: pre-conceal versions of flash painted labels with
+    // virtual text.  Sweep the namespace so a stale frame from an
+    // older plugin install doesn't leak across an upgrade.
     editor.removeVirtualTextsByPrefix(buf, VTEXT_PREFIX);
   }
   state.touchedBuffers.clear();
 }
 
-function redraw(matches: Match[]): void {
+// Compute the byte length of the char at `viewportText[charIdx]`
+// using the snapshot's byteAt table.  Returns 0 if `charIdx` is
+// past the end of the snapshot — caller falls back to alternate
+// label placement.
+function nextCharByteLen(views: SplitView[], m: Match): number {
+  const v = views.find((sv) => sv.bufferId === m.bufferId);
+  if (!v) return 0;
+  const text = v.snap.text;
+  if (m.charEnd >= text.length) return 0;
+  // Skip newlines: overlaying a label on `\n` would corrupt line
+  // layout (the renderer can't substitute a non-newline glyph for
+  // a newline byte).  flash.nvim does the same fallback.
+  if (text.charCodeAt(m.charEnd) === 0x0a /* \n */) return 0;
+  return v.snap.byteAt[m.charEnd + 1] - v.snap.byteAt[m.charEnd];
+}
+
+function redraw(matches: Match[], views: SplitView[]): void {
   // Clear last frame's decorations on every buffer we touched, then
   // repaint.  Flash never accumulates state across iterations.
   clearTouched();
@@ -340,15 +407,33 @@ function redraw(matches: Match[]): void {
       fg: "search.match_fg",
       bold: true,
     });
-    if (m.label) {
-      // Anchor the label at `position = m.end` with `before = true`
-      // — renders in the gap right after the match (BeforeChar of
-      // the first char past the match).  `before = false` would
-      // render *after* that next char, off-by-one.
-      //
-      // Colours come from the theme via `search.label_bg` /
-      // `search.label_fg` so the label automatically follows theme
-      // changes and is high-contrast against the match's own bg.
+    if (!m.label) continue;
+
+    // Label rendering — overlay-style, no layout shift.
+    //
+    // flash.nvim's "overlay" placement paints the label letter ON
+    // TOP of the character right after the match, replacing it
+    // visually but leaving the buffer untouched.  Two pieces:
+    //
+    //   1. addConceal(...) substitutes the next-char glyph with the
+    //      label letter — same cell width, no text pushed sideways.
+    //   2. addOverlay(...) paints the magenta search.label_* style
+    //      on the same cell so the substituted letter pops.
+    //
+    // When there's no usable next-char (end-of-viewport or the next
+    // char is a newline), fall back to inline virtual text.  That
+    // edge case is rare and pushes only the line-end whitespace.
+    const nextLen = nextCharByteLen(views, m);
+    if (nextLen > 0) {
+      const labelStart = m.end;
+      const labelEnd = m.end + nextLen;
+      editor.addConceal(m.bufferId, NS_LABEL, labelStart, labelEnd, m.label);
+      editor.addOverlay(m.bufferId, NS_LABEL, labelStart, labelEnd, {
+        fg: "search.label_fg",
+        bg: "search.label_bg",
+        bold: true,
+      });
+    } else {
       editor.addVirtualTextStyled(
         m.bufferId,
         VTEXT_PREFIX + String(m.bufferId) + ":" + String(m.start),
@@ -396,6 +481,7 @@ async function flashJump(): Promise<void> {
   state.pattern = "";
   state.matches = [];
   state.touchedBuffers = new Set<number>();
+  state.prevLabelByKey = new Map<string, string>();
   state.priorMode = editor.getEditorMode();
 
   editor.setEditorMode("flash");
@@ -428,8 +514,14 @@ async function flashJump(): Promise<void> {
         state.startCursor,
         state.startSplitId,
         emptyPattern,
+        state.prevLabelByKey,
       );
-      redraw(state.matches);
+      // Snapshot the labels for next iteration's stability pass.
+      state.prevLabelByKey.clear();
+      for (const m of state.matches) {
+        if (m.label) state.prevLabelByKey.set(matchKey(m), m.label);
+      }
+      redraw(state.matches, views);
 
       const ev = await editor.getNextKey();
 
