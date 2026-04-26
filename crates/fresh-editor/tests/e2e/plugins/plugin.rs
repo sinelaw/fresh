@@ -1380,8 +1380,13 @@ editor.setStatus("Uppercase plugin loaded");
     let test_file_path = project_root.join("test_upper.txt");
     fs::write(&test_file_path, "hello world\n").unwrap();
 
+    // 160×30 instead of 120×30: with `{remote}` on the default
+    // status bar the composed Messages line ("Opened
+    // test_upper.txt | Uppercase plugin loaded") gets truncated
+    // to "Uppercase plugin ..." at 120 cols. The wait_until
+    // below looks for the literal "Uppercase plugin loaded".
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+        EditorTestHarness::with_config_and_working_dir(160, 30, Default::default(), project_root)
             .unwrap();
 
     harness.open_file(&test_file_path).unwrap();

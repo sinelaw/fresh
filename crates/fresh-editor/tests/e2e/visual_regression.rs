@@ -3,6 +3,7 @@
 // Additional functional tests preserve important assertions from original tests
 
 use crate::common::harness::EditorTestHarness;
+use crate::common::tracing::init_tracing_from_env;
 use crate::common::visual_testing::VisualFlow;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::model::event::{Event, OverlayFace};
@@ -21,6 +22,7 @@ use std::fs;
 #[test]
 #[cfg_attr(windows, ignore)] // Visual regression tests require consistent terminal rendering
 fn visual_comprehensive_a() {
+    init_tracing_from_env();
     let mut harness = EditorTestHarness::with_temp_project(100, 30).unwrap();
     let project_dir = harness.project_dir().unwrap();
 
@@ -83,10 +85,16 @@ fn long_function() {
 
     // Wait for file explorer to load and auto-expand to show the current
     // file (issue #1569): `src/` is expanded automatically, no manual
-    // navigation required.
+    // navigation required. The presence of `main.rs` (the active file)
+    // in the explorer pane is the persistent proof the auto-expand
+    // happened. Originally also matched the transient
+    // "File explorer ready" status message, but at 100×30 — the
+    // canonical visual-regression terminal size — that message is
+    // truncated to "File explor..." when the `{remote}` indicator
+    // is on the bar, leaving the wait blocked forever.
     let _ = harness.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("File explorer ready") && s.contains("main.rs")
+        s.contains("main.rs")
     });
     harness.render().unwrap();
 
