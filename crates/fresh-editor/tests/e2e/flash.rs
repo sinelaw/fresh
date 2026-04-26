@@ -193,6 +193,84 @@ fn flash_backspace_shrinks_pattern() {
     );
 }
 
+/// Regression for the silent-conceal bug, 2026-04: flash relies on
+/// `addConceal` to substitute the next-char glyph with the label
+/// letter (overlay-style rendering, no layout shift).  An earlier
+/// version of fresh's renderer gated `apply_conceal_ranges` on
+/// Compose mode only, so flash's conceal calls landed in state but
+/// never reached the rendered buffer — labels appeared on screen as
+/// the original character with the magenta style applied, not as
+/// the assigned label letter.  Cursor-position assertions still
+/// passed (the labeler logic was correct), so no existing test
+/// caught it.
+///
+/// This test asserts the rendered glyph itself: at the screen
+/// position right after the first `s` match in the buffer, the
+/// rendered cell must contain the label letter `a`, not the
+/// original `e`.
+#[test]
+fn flash_label_substitutes_rendered_glyph() {
+    // Same buffer shape as `flash_jumps_to_label` so the harness
+    // setup that's already known to work doesn't surprise us.
+    let (mut harness, _temp) = flash_harness(120, 24);
+    let fixture = TestFixture::new("test.txt", "hello world\nhello there\nhello again\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    arm_flash(&mut harness);
+    // Pattern `h` — three matches at the start of each line.  With
+    // cursor at byte 0, the labeler assigns labels in distance order
+    // from "asdfghjkl..." minus the next-char skip set.  The next
+    // char after each `h` is `e` (in "hello"), so the skip set is
+    // {e}.  Available pool: a, s, d, f, g, h, j, k, l, ...
+    // Three matches → labels a, s, d.
+    type_pattern(&mut harness, "h");
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // The labels overlay-substitute the next-char glyph (the `e`
+    // after each `h`).  The literal label letters depend on the
+    // labeler's stability rule (which carries empty-pattern mode's
+    // labels through the first-character transition), so we don't
+    // hard-code which letter lands where.  What we assert is the
+    // *substitution itself*: at every "hello" occurrence the `e`
+    // immediately after the matched `h` must be replaced by SOME
+    // label letter from the pool.  If conceal isn't applied, the
+    // original `hello` text comes through unchanged.
+    let pool: &[char] = &[
+        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'q', 'w', 'r', 't', 'y', 'u', 'i', 'o', 'p',
+        'z', 'x', 'c', 'v', 'b', 'n', 'm',
+    ];
+    let mut substituted_count = 0;
+    for c in pool {
+        let needle: String = format!("h{}llo", c);
+        if screen.contains(&needle) {
+            substituted_count += screen.matches(&needle).count();
+        }
+    }
+    assert!(
+        substituted_count >= 1,
+        "expected at least one match to render with the next-char \
+         `e` replaced by a pool label letter (e.g. `hsllo`, `hallo`, …) \
+         — that's flash's overlay-style cell substitution.  None \
+         seen, so addConceal didn't paint.  Screen:\n{}",
+        screen,
+    );
+    // The original glyph `hello` must NOT survive at the labelled
+    // positions.  We can't easily count "labelled occurrences" from
+    // the screen alone, but we can check there are FEWER plain
+    // `hello`s than there are matches (3): if none were
+    // substituted, all three would still read `hello`.
+    let plain_hello = screen.matches("hello").count();
+    assert!(
+        plain_hello < 3,
+        "expected the substitution to remove at least one plain \
+         `hello`, but {} remain — conceal didn't apply.  Screen:\n{}",
+        plain_hello,
+        screen,
+    );
+}
+
 #[test]
 fn flash_jumps_across_splits() {
     // Two vertical splits, each with a different buffer that contains

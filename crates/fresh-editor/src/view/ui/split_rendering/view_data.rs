@@ -94,10 +94,16 @@ pub(super) fn build_view_data(
         }
     }
 
-    // Apply conceal ranges - filter/replace tokens that fall within concealed
-    // byte ranges. Only apply in Compose mode; Source mode shows the raw
-    // markdown syntax.
-    if is_compose && !state.conceals.is_empty() {
+    // Apply conceal ranges — filter or replace tokens that fall
+    // within concealed byte ranges.  This used to be gated on
+    // `is_compose` so markdown source mode would always show raw
+    // syntax, but the gate was redundant: every plugin that adds
+    // source-mode conceals already self-checks the buffer's view
+    // mode (see e.g. `markdown_compose.ts`'s `isComposing`).  Other
+    // plugins (flash) legitimately want overlay-style cell
+    // substitution in source mode and were broken by the gate —
+    // their `addConceal` calls landed in state but never rendered.
+    if !state.conceals.is_empty() {
         let viewport_end = tokens
             .iter()
             .filter_map(|t| t.source_offset)
