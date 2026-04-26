@@ -332,3 +332,236 @@ blockers found.
    cursor only (matches flash.nvim) or add cursors at the label
    target (a "scatter" mode unique to Fresh)? Default to primary;
    leave scatter as a follow-up.
+
+## Testing strategy
+
+`CONTRIBUTING.md` lays down five rules that shape the test plan:
+
+1. **"Reproduce before claiming"** — every behavioural claim
+   needs a test that fails without the change.
+2. **"E2E observe, not inspect"** — drive keys/mouse, assert on
+   rendered screen text, not on accessor calls into model state.
+3. **No timeouts** — use `harness.wait_until(predicate)` for
+   semantic waiting.
+4. **Test isolation** — per-test temp dirs, internal clipboard
+   mode, parallel-safe.
+5. **"Enumerate cross-cutting state"** — list every subsystem
+   the change touches and write an interaction test for each.
+
+Flash is a feature that *touches everything visible* — overlays,
+virtual text, modes, cursors, splits, themes, render cadence —
+which makes rule 5 the binding constraint. Most of the testing
+budget should go to interaction tests.
+
+### Test layers
+
+| Layer | Tool | What it covers |
+|---|---|---|
+| **Unit** | plain `#[test]` on pure helpers | Label-assignment algorithm, distance sort, regex pattern compilation, next-char skip. No editor required. |
+| **Property** | `proptest` (already in use at `tests/property_tests.rs`) | Labeler invariants — generate buffer + cursor + pattern, assert no label collides with any match's next-char. |
+| **Integration / plugin loading** | `EditorTestHarness` + `copy_plugin("flash")` | Plugin loads, command appears in palette, mode bindings register. |
+| **E2E (rendered output)** | harness `send_key`/`type_text` + `screen_to_string`/`assert_screen_contains` | Activation, label rendering, jump, cancel — all observed via screen text. |
+| **Cross-feature interaction** | E2E with concurrent feature active (vi_mode, multi-cursor, search, splits, theme, plugins) | Interaction matrix; see below. |
+| **Performance / scale** | bench-style test with large file, viewport-localized assertion | Per-keystroke redraw stays viewport-bounded; `O(visible)` not `O(buffer)`. |
+| **Snapshot** | insta snapshots of label assignments | Regression guard against silent label-pool changes. |
+
+### Pure-logic tests (unit + property)
+
+These can ship in `crates/fresh-editor/tests/flash_label_tests.rs`
+even though the feature is plugin-side, because the labeler is
+worth porting to a testable Rust module *or* tested inside the
+plugin runtime via a small QuickJS harness — pick one based on
+where the labeler ends up living.
+
+**Property: no-collision invariant.** *The* core flash invariant.
+
+```rust
+proptest! {
+    #[test]
+    fn prop_assigned_labels_never_collide_with_next_char(
+        text in "[a-zA-Z0-9 ]{0,500}",
+        pattern in "[a-zA-Z]{1,3}",
+        cursor in 0usize..500,
+    ) {
+        let matches = find_matches(&text, &pattern);
+        let labelled = assign_labels(&text, &matches, cursor, LABEL_POOL);
+        for m in &labelled {
+            if let Some(label) = m.label {
+                let next = text.as_bytes().get(m.end).copied();
+                prop_assert_ne!(Some(label as u8), next);
+            }
+        }
+    }
+}
+```
+
+**Property: label stability across pattern extension.** Typing
+one more character that *narrows* the match set should keep
+labels on surviving matches stable (lowercase reuse policy from
+flash.nvim).
+
+**Property: distance ordering.** First N matches sorted by byte
+distance from cursor receive the first N letters of the pool.
+
+**Property: determinism.** Same buffer + same cursor + same
+pattern → identical label assignment.
+
+**Unit: edge cases.**
+
+- Empty pattern → no matches, no labels.
+- Pattern with zero matches → no labels, no panic.
+- Match at end-of-buffer (no next char) → label may use any pool letter.
+- Multi-byte UTF-8 inside match / next-char.
+- Pattern that matches at cursor position (current-match handling).
+- Pool exhaustion: more matches than label letters → first N labelled, rest skipped (matches flash.nvim).
+
+### E2E tests (driven through the plugin)
+
+Pattern matches existing plugin tests (`tests/e2e/live_grep.rs`,
+`tests/e2e/search_replace.rs`):
+
+```rust
+fn flash_jumps_to_label() {
+    let project = TestFixture::project_with_plugins(&["flash"]);
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100, 30, Default::default(), project.root.clone()).unwrap();
+    let file = TestFixture::file("buf.txt", "hello world hello there hello\n");
+    harness.open_file(&file.path).unwrap();
+    harness.render().unwrap();
+
+    // Trigger flash via command palette
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.type_text("Flash Jump").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Type pattern; wait for labels to appear (semantic wait)
+    harness.type_text("hello").unwrap();
+    harness.wait_until(|h| h.screen_to_string().contains("a")  // first label
+                          && h.screen_to_string().contains("s")) // second label
+           .unwrap();
+
+    // Press a label → cursor jumps; mode exits; backdrop clears
+    harness.send_key(KeyCode::Char('s'), KeyModifiers::NONE).unwrap();
+    harness.wait_until(|h| !h.screen_to_string().contains("flash backdrop marker"))
+           .unwrap();
+    // Assert cursor is at the second "hello" via rendered cursor cell
+    // (NOT via accessor — observe on screen)
+}
+```
+
+**E2E coverage list (each is one test):**
+
+- Activate flash; backdrop visible, no labels yet (empty pattern).
+- Type pattern, ≥1 match → labels render adjacent to matches.
+- Press valid label → cursor at match start, decorations gone, mode restored.
+- Press Escape → cursor unchanged, decorations gone.
+- Press Backspace → pattern shrinks, label set re-renders.
+- Pattern with zero matches → no labels, friendly state (per flash.nvim, mode stays open).
+- Single match + autojump enabled → cursor jumps without label press.
+- Pattern continues past max length → behaviour matches the
+  `max_length` config (jump on overflow vs cancel).
+- Label letter typed when no matches yet → treated as pattern char,
+  not a (nonexistent) label.
+- Two label-races: typing more characters that would collide with
+  an existing label letter — verify the next-char skip kept that
+  letter out of the pool.
+
+### Cross-feature interaction matrix
+
+This is the rule-#8 list. Each row is one E2E test; the assertion
+is *on rendered output and surviving cross-cutting state*. Pre-
+existing plugins/features in the column header are active *while*
+flash runs.
+
+| Concurrent feature | Test |
+|---|---|
+| **Multi-cursor** | Two cursors active before flash; flash jumps primary; secondary cursors still rendered at their original positions. |
+| **Visual / block selection** | Selection active; flash cancelled (or extends selection — pick one and test it). |
+| **Existing search highlights** | `Ctrl+F` highlights present in their own namespace; flash backdrop + labels render *over* them; on flash exit, search highlights remain. |
+| **vi_mode (when both loaded)** | vi-normal active when flash triggered. After flash exits, `editor_mode` is back to `vi-normal` — observed by typing `j` and seeing cursor move down. |
+| **LSP diagnostics** | Diagnostic underlines on a line; flash overlays don't replace them (different namespace); after flash, underlines still present. |
+| **Splits (Phase 3)** | Two splits open; flash labels in both; press a label in non-active split → focus *and* cursor move to that split. |
+| **Folds** | Folded range contains a match; label appears on fold header (or match is skipped — pick the flash.nvim semantic and test it). No panic either way. |
+| **Soft-wrapped lines** | Long line wrapped onto 3 visual rows; match in the middle visual row → label renders at the right cell. |
+| **CRLF buffer** | Match spans across `\r\n` neighbour bytes correctly; jump lands on the right byte. |
+| **Theme switch mid-flash** | Apply theme via `editor.applyTheme` while flash is active → next render uses new theme keys for backdrop/label colours. |
+| **Resize during flash** | Terminal resize event mid-flash → viewport changes → matches re-computed for the new visible range. |
+| **Buffer switch / close mid-flash** | User triggers buffer change while flash open → flash cancels, no orphan overlays in the new buffer. |
+| **Modal opens (prompt, popup)** | Command palette opened mid-flash → flash mode yields, prior state restored on palette close. |
+| **Concurrent plugin overlays** | `git_gutter` / `todo_highlighter` overlays present in their own namespaces → flash's `clearNamespace("flash")` doesn't touch them. |
+| **Multi-cursor "scatter" mode (if implemented)** | Press all visible labels (or `<C-a>`) → cursor added at every match. |
+| **Read-only buffer** | Flash works (it's read-only too — only moves cursor). |
+| **Empty buffer** | Activate flash on empty buffer → no matches, friendly state, Escape exits cleanly. |
+| **Huge file** (≥10 MB) | Activate flash → only viewport scanned (assert via timing or by instrumenting the test plugin). |
+
+### "Reproduce before claiming" tests for each API addition
+
+Each numbered API improvement (#1–#15) needs at least one test
+that fails before the change and passes after. The minimum
+shape: a tiny test plugin lives in `tests/fixtures/test_plugins/`
+that uses the new API; the test asserts the outcome on screen.
+
+| API | Failing-without-fix test |
+|---|---|
+| #1 `getNextKey` | Plugin awaits `getNextKey()`, harness sends a key, plugin renders the received char; assert on screen. Without #1, plugin can't compile / API doesn't exist. |
+| #2 wildcard binding | Plugin defines mode with `["*", "h"]`, harness sends 5 different keys, plugin counts via virtual text. Without #2, only explicitly-bound keys reach the handler. |
+| #3 binding arg | Plugin defines `["a", { handler: "h", arg: "A" }]` and `["b", { handler: "h", arg: "B" }]`, presses each, asserts arg captured. Without #3, plugin needs two handlers. |
+| #4 mode parent | Mode `M2` declares parent `M1`, `M1` binds `q` → action; in `M2`, press `q` → action runs. Without #4, fall-through doesn't reach `M1`. |
+| #5 `setNamespaceOverlays` | Plugin replaces 100 overlays via the new call vs 100 individual `addOverlay` calls; assert single-pass sort cost via instrumented test counter. |
+| #6 theme-key virtual text | Plugin sets virtual text with theme key, assert rendered cell uses theme-resolved colour after `applyTheme`. |
+| #7 `getViewportText` | Plugin makes one call vs three; harness counts plugin↔editor round-trips via instrumented channel. |
+| #8 frame hook | Plugin subscribes to `"frame"`, harness forces N renders, assert handler called ≥ N times. |
+| #13 `getViewportForSplit` | Two splits open; plugin queries non-active split's viewport; assert returned `topByte` matches what the renderer used. |
+| #14 `addScreenOverlay` | Plugin draws label `"X"` at `(10, 5)`; assert `harness.get_cell(10, 5)` shows `X`. |
+| #15 `listVisibleHintTargets` | Plugin lists targets, asserts tab labels and file-explorer entries appear in the list with screen coords matching what mouse-click hit-testing would resolve to. |
+
+### Performance assertions
+
+CONTRIBUTING.md rule #2 forbids full-buffer scans. Two tests
+guard this:
+
+- **Viewport-bounded match collection.** Open a 10 MB synthetic
+  buffer where line N contains the unique pattern only at line
+  500. Activate flash with the pattern; assert the matches the
+  plugin computed include only viewport lines, not line 500.
+  Implementation: instrument the test plugin to log how many
+  lines it scanned, and assert `≤ viewport.height + 2`.
+- **Per-keystroke redraw budget.** With 100 visible matches,
+  measure `harness.render()` time on a synthetic deterministic
+  setup. Compare against a baseline; alert (don't fail) on
+  regression. Use the test-time clock (`advance_time`) where
+  applicable.
+
+### Snapshot tests
+
+Use `insta` (already a dep based on `tests/common/snapshots/`):
+fix a buffer + pattern + cursor, snapshot the assigned labels.
+A refactor that quietly changes the label pool ordering or
+distance metric will diff visibly. Snapshot the plain
+`assignLabels` output, not the rendered screen — small,
+readable, deterministic.
+
+### Test infrastructure additions needed
+
+- **A flash-test plugin fixture** (`tests/fixtures/test_plugins/flash_test/`):
+  exposes commands that reach into flash internals enough for
+  assertion (e.g., "log current label assignment to a virtual
+  buffer", "report viewport scan count"). Lives only in tests;
+  not a real distributed plugin. Mirrors the pattern other
+  plugin-feature tests use.
+- **`harness.wait_until_screen_matches(regex)`** convenience —
+  if it doesn't already exist, adds it; current tests open-code
+  the predicate.
+- **A "no overlay leak" assertion**: extend the harness with a
+  `harness.assert_no_orphan_overlays_in_namespace(ns)` that
+  verifies the editor state has no overlays for a namespace
+  *after* flash should have cleaned up. This is the cleanup
+  invariant test rule #5 needs.
+
+### Tests that should *not* be written
+
+- Anything that asserts on internal flash state via accessors
+  (rule #2). Always go through screen output.
+- Time-based waits (rule #3). `wait_until` only.
+- Tests that only run when a real terminal is attached. Use the
+  fake terminal harness.
