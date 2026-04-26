@@ -10,6 +10,7 @@ pub mod devcontainer_attach_e2e;
 pub mod devcontainer_failed_attach_popup;
 pub mod devcontainer_ports_panel;
 pub mod devcontainer_run_lifecycle;
+pub mod devcontainer_spec_repros;
 pub mod diagnostics_panel_bugs;
 pub mod diagnostics_panel_jump;
 pub mod diff_cursor;
