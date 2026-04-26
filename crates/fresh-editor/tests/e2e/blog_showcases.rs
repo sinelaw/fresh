@@ -443,6 +443,131 @@ fn blog_showcase_productivity_command_palette() {
     s.finalize().unwrap();
 }
 
+/// Flash Jump: type any pattern, press a single-letter label to teleport
+/// the cursor to any visible match — including matches in other splits.
+#[test]
+#[ignore]
+fn blog_showcase_productivity_flash_jump() {
+    use fresh::input::keybindings::Action::PluginAction;
+
+    // Per-test isolated project root so the flash plugin is loaded
+    // alongside the editor (same pattern as `flash` e2e tests).
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "flash");
+    copy_plugin_lib(&plugins_dir);
+
+    // Wider terminal so the flash status banner (`Flash[<pattern>]`)
+    // survives status-bar truncation — same width the e2e tests use.
+    let mut h = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    // Sample buffer with multiple natural match clusters: pattern
+    // "render" hits 6 occurrences across a viewport, "state" hits 7,
+    // and most lines fit on screen at width 120.
+    let sample = r#"fn render_view_lines(state: &State, viewport: &Viewport) -> Vec<Line> {
+    let mut lines = Vec::new();
+    for line in viewport.visible_lines(state) {
+        let rendered = render_line(state, line);
+        lines.push(rendered);
+    }
+    lines
+}
+
+fn render_line(state: &State, line: usize) -> Line {
+    let segments = state.line_segments(line);
+    Line::new(segments)
+}
+
+impl Viewport {
+    pub fn visible_lines(&self, state: &State) -> impl Iterator<Item = usize> {
+        let top = self.top_line;
+        let bottom = top + self.height as usize;
+        (top..bottom).filter(|i| state.is_valid_line(*i))
+    }
+}
+"#;
+    let sample_path = project_root.join("sample.rs");
+    fs::write(&sample_path, sample).unwrap();
+    h.open_file(&sample_path).unwrap();
+
+    // Wait for the flash plugin's command to be registered before we
+    // try to invoke it via the palette.
+    h.wait_until(|h| {
+        let commands = h.editor().command_registry().read().unwrap().get_all();
+        commands
+            .iter()
+            .any(|c| c.action == PluginAction("flash_jump".to_string()))
+    })
+    .unwrap();
+
+    let mut s = BlogShowcase::new(
+        "productivity/flash-jump",
+        "Flash Jump",
+        "Type a pattern, press a label, jump anywhere visible.",
+    );
+
+    hold(&mut h, &mut s, 5, 100);
+
+    // ---- Activate flash via the command palette ----
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 180);
+
+    for ch in "Flash: Jump".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    h.wait_for_screen_contains("Flash: Jump").unwrap();
+    snap(&mut h, &mut s, None, 150);
+    hold(&mut h, &mut s, 2, 100);
+
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Wait for flash to set its mode + initial empty-pattern status —
+    // both signals together prove the first `getNextKey` is armed.
+    h.wait_until(|h| {
+        h.editor().editor_mode() == Some("flash".to_string())
+            && h.screen_to_string().contains("Flash[]")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 250);
+    hold(&mut h, &mut s, 4, 100);
+
+    // ---- Type the pattern; semantic wait per-char ----
+    let mut so_far = String::new();
+    for ch in "render".chars() {
+        so_far.push(ch);
+        let needle = format!("Flash[{}]", so_far);
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| h.screen_to_string().contains(&needle))
+            .unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 110);
+    }
+    hold(&mut h, &mut s, 6, 110);
+
+    // ---- Press a label that jumps to a non-trivial spot ----
+    // With cursor at byte 0, labels are assigned in distance order
+    // from "asdfghjkl..." (skipping any next-char letter).  Label 'g'
+    // typically lands on a `render`-prefixed match further down the
+    // file, which makes for an obvious cursor jump in the GIF.
+    h.send_key(KeyCode::Char('g'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.editor().editor_mode() != Some("flash".to_string()))
+        .unwrap();
+    snap(&mut h, &mut s, Some("g"), 250);
+    hold(&mut h, &mut s, 6, 110);
+
+    s.finalize().unwrap();
+}
+
 /// Split View: horizontal and vertical splits with independent panes
 #[test]
 #[ignore]
