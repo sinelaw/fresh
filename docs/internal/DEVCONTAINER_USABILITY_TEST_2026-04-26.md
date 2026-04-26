@@ -67,12 +67,88 @@
 - **Bindings exist but no in-pane indicator.** `Alt+]` Next Split / `Alt+W` Close Tab / `Ctrl+E` Focus File Explorer all show as bound shortcuts in the palette. Reasonable, but I never naturally discovered the cycle order between the 3 horizontal splits — there's no visible "split N of 3" indicator on each pane.
 - **Modal dialogs land in their own corner.** The "Dev Container Detected" prompt appeared bottom-right; the "Attach Failed" modal appeared in roughly the same area. Both stacked behind/beside other notifications (the LSP install prompt overlapped the dev-container prompt at one point), making it slightly ambiguous which was foreground.
 
+## Pane Splitting: The Highest-Impact UX Decision
+
+The single design choice that turns the rest of the devcontainer UX
+from "good" to "actively unusable by the third rebuild" is the
+**always-split, never-close** pane strategy. Calling it out as its
+own section because most of the Medium-severity items in the bug
+table are downstream of it.
+
+### What the feature does today
+
+Every meaningful devcontainer event opens a *new horizontal split
+below the existing splits* and shows the relevant buffer there:
+
+- Accepting "Reopen in Container" → opens the build log in a new split
+- Triggering Rebuild → opens the *new* build log in a new split (the
+  previous one stays open in its own split)
+- Opening a terminal → adds it as a tab in the bottom-most split
+- `Show Forwarded Ports` / `Show Container Logs` → also wants its own
+  pane
+
+After 3–4 lifecycle events the right column is 5+ splits stacked
+vertically, each ~5–7 rows tall. Buffer text wraps aggressively,
+status-bar messages get truncated, and **the command palette popup
+itself stops rendering** because there's nowhere to put it (this is
+the popup-invisibility bug above).
+
+### Why "always split" is the wrong default
+
+1. **Splits are forever.** Nothing in the lifecycle ever closes one.
+   The user pays the layout cost permanently for an event that
+   mattered for 30 seconds (a build log they read once).
+2. **Build logs from dead builds shouldn't compete with live ones.**
+   After 3 rebuilds you have 3 build-log buffers fighting for screen
+   space; only the latest is interesting.
+3. **The bottom split is uninhabitable.** A 5-row pane can't show
+   source code, can't show a real terminal session, can't show a
+   build log in a useful way.
+4. **It cascades into other bugs that would otherwise be minor.**
+   The "popup invisible", "Show Ports produces no visible pane",
+   "duplicate `devcontainer.json` across two splits", "splits don't
+   compact", and "stale build-log tabs accumulate" rows in the bug
+   table all collapse into "the layout strategy is wrong" once you
+   look at them together.
+
+### What good UX would look like
+
+- **One persistent "devcontainer" panel** (status-panel pattern),
+  reused across events. Keystroke to expand, collapse, or cycle
+  which buffer it's showing (latest log / older log / forwarded
+  ports / etc.).
+- **Or: a one-row-tall bottom strip by default**, expandable on
+  demand. Same pattern as VS Code's Problems / Output / Terminal
+  panel — one slot, multiple tabs, user controls when it grows.
+- **Auto-close the previous build log when a new one opens.** The
+  plugin already has the primitive — `closeStaleBuildLogBuffers` is
+  the source of the existing
+  `attach_closes_stale_build_log_buffer_from_previous_run`
+  regression test — but it only fires on cold-start, not on
+  in-session rebuilds. Extending that to in-session would close one
+  of the loops driving the layout pressure.
+- **Don't open a new split for transient "info" panels.** Show Ports,
+  Show Features, Show Info should be ephemeral popups or panel tabs,
+  not splits.
+
+### Net assessment
+
+Of all the things the devcontainer feature does well (auto-detect
+prompt, status-bar attach indicator, build logs as inspectable
+buffers, JSONC LSP install offer), the pane proliferation is the
+single decision that turns those wins into liabilities. **Worth
+fixing before any of the smaller items in the bug table** — most of
+those will become non-issues once the panel strategy changes.
+
 ## Magic Wand Asks (synthesized)
 
+- **Replace always-split with a persistent panel slot** for build
+  logs / ports / container logs (see "Pane Splitting" above) — the
+  single-highest-impact change in this report.
 - A toast / sticky banner when `devcontainer.json` parsing fails — never silently disable commands.
 - Live tail of build logs that handles `\r` properly (or render in a dedicated panel with progress bars).
 - Auto-publish ports declared in `forwardPorts` / detected at runtime, plus a port-forward toast on bind.
-- Make the palette filter behave as a predictable substring/fuzzy search, with consistent ranking.
+- Make the palette filter behave as a predictable substring/fuzzy search, with consistent ranking under load.
 
 ## Test Artifacts / End State
 
