@@ -55,30 +55,107 @@ fn set_up_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
     (temp, workspace)
 }
 
-/// Wait until the devcontainer plugin's `Reopen in Container?` action
-/// popup has rendered. The plugin defers the prompt to the
-/// `plugins_loaded` hook, so this races plugin init. We assert via
-/// screen text (rather than internal popup state) per CONTRIBUTING
-/// §2.
+/// Wait for the devcontainer plugin to register its commands, then
+/// fire `plugins_loaded` (mirroring `main.rs`) so the plugin's
+/// `devcontainer_maybe_show_attach_prompt` handler runs and the
+/// "Reopen in Container?" popup is shown. The harness doesn't fire
+/// the lifecycle hook on its own — production paths
+/// (`main.rs`, `gui/mod.rs`) call `fire_plugins_loaded_hook()` after
+/// the registry settles, and tests that depend on the popup must do
+/// the same.
+///
+/// Asserts via rendered screen text per CONTRIBUTING §2.
 fn wait_for_attach_popup(harness: &mut EditorTestHarness) {
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("Dev Container Detected")
-                && screen.contains("Reopen in Container")
-        })
-        .unwrap();
+    bounded_wait(harness, "devcontainer plugin command registration", |h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all().iter().any(|c| c.name == "%cmd.run_lifecycle")
+    });
+    harness.editor().fire_plugins_loaded_hook();
+    bounded_wait(harness, "Reopen in Container popup", |h| {
+        let screen = h.screen_to_string();
+        screen.contains("Dev Container Detected") && screen.contains("Reopen in Container")
+    });
 }
 
-/// Wait until the active authority advertises a `Container:<id>`
-/// display label. This is the post-`setAuthority`-restart steady
-/// state: plugin parsed the success JSON, built the payload, set the
-/// authority, the editor rebuilt with it.
+/// Bounded poll loop: ticks the harness until `cond` returns true or
+/// `max_iters * 50ms` elapses, panicking with the screen + plugin
+/// list on timeout. Replaces `wait_until` for steps where we want
+/// targeted diagnostics rather than the test-runner's external
+/// timeout firing minutes later with no context.
+fn bounded_wait<F>(harness: &mut EditorTestHarness, what: &str, mut cond: F)
+where
+    F: FnMut(&EditorTestHarness) -> bool,
+{
+    let max_iters = 200;
+    for _ in 0..max_iters {
+        harness.tick_and_render().unwrap();
+        if cond(harness) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+    let plugin_names: Vec<_> = harness
+        .editor()
+        .plugin_manager()
+        .list_plugins()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    panic!(
+        "bounded_wait timed out: {what} not satisfied in {max_iters} ticks (~10s).\n\
+         plugins loaded: {plugin_names:?}\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Wait until the plugin stages a new authority via `setAuthority`,
+/// then promote it to the active authority — the production
+/// equivalent is `main.rs` `take_pending_authority` →
+/// `set_boot_authority` after the editor restart drops the old
+/// process. The harness has no main loop, so the test does that
+/// step itself.
 fn wait_for_container_authority(harness: &mut EditorTestHarness) -> String {
-    harness
-        .wait_until(|h| h.editor().authority().display_label.starts_with("Container:"))
-        .unwrap();
-    harness.editor().authority().display_label.clone()
+    let max_iters = 200; // ~10s at 50ms per tick
+    for _ in 0..max_iters {
+        harness.tick_and_render().unwrap();
+        // The plugin stages the new authority via
+        // `editor.setAuthority(payload)`, which `install_authority`
+        // turns into a `pending_authority` slot plus a restart
+        // request. Production's `main.rs` consumes both: it drops the
+        // old editor and builds a fresh one with `set_boot_authority`.
+        // The harness has no such loop, so we do the swap inline.
+        if let Some(auth) = harness.editor_mut().take_pending_authority() {
+            harness.editor_mut().set_boot_authority(auth);
+            return harness.editor().authority().display_label.clone();
+        }
+        if harness
+            .editor()
+            .authority()
+            .display_label
+            .starts_with("Container:")
+        {
+            return harness.editor().authority().display_label.clone();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+    let plugin_names: Vec<_> = harness
+        .editor()
+        .plugin_manager()
+        .list_plugins()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    panic!(
+        "container authority never staged after {max_iters} ticks (~10s).\n\
+         current display_label: {:?}\n\
+         plugins loaded: {plugin_names:?}\n\
+         Screen:\n{}",
+        harness.editor().authority().display_label,
+        harness.screen_to_string()
+    );
 }
 
 /// Happy-path attach: popup → Reopen → setAuthority → display label.
@@ -111,14 +188,12 @@ fn attach_via_fake_devcontainer_lands_container_authority() {
 
     wait_for_attach_popup(&mut harness);
 
-    // The popup is global; accept "Reopen in Container" by pressing
-    // Enter on the default selection. (The first row is the
-    // "attach" action — Esc would dismiss instead.) Send Escape
-    // first to release any default file-explorer focus, matching the
-    // interactive walk in the test plan.
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
+    // The popup is on the global stack; the first action row is
+    // "Reopen in Container" so a bare Enter confirms. The harness
+    // doesn't simulate the default file-explorer focus that the
+    // production launch path has, so we don't need an Esc to
+    // release explorer focus first — sending Esc here would
+    // dismiss the popup instead.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -182,9 +257,6 @@ fn wait_for_failed_attach_popup(harness: &mut EditorTestHarness) {
 /// Drive the attach popup from the post-`set_up_workspace` state.
 fn accept_attach(harness: &mut EditorTestHarness) {
     wait_for_attach_popup(harness);
-    harness
-        .send_key(KeyCode::Esc, KeyModifiers::NONE)
-        .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -268,6 +340,157 @@ fn attach_bad_json_surfaces_failed_attach_popup() {
 
     std::env::remove_var("FAKE_DC_UP_BAD_JSON");
     drop_workspace_temp(&workspace);
+}
+
+/// F1 regression: a build-log buffer left over from a previous attach
+/// (the kind workspace restore brings back on cold start) must NOT
+/// survive the next attach. Pre-create a stale log file under
+/// `.fresh-cache/devcontainer-logs/`, open it as a buffer, then drive
+/// a fresh attach. The plugin's `closeStaleBuildLogBuffers` must drop
+/// the stale buffer before opening the new live log.
+///
+/// Asserts via `plugin_manager().state_snapshot_handle()` — the same
+/// `BufferInfo` snapshot plugins read via `editor.listBuffers()` — so
+/// the test exercises the plugin-facing buffer surface, not internal
+/// editor state.
+#[test]
+fn attach_closes_stale_build_log_buffer_from_previous_run() {
+    let (_workspace_temp, workspace) = set_up_workspace();
+
+    // Pre-create the stale log: workspace-restore-style. Real
+    // restores would ALSO bring the log back as an open buffer; we
+    // simulate that with `harness.open_file` right after the harness
+    // is built.
+    let stale_dir = workspace.join(".fresh-cache").join("devcontainer-logs");
+    std::fs::create_dir_all(&stale_dir).unwrap();
+    let stale_log = stale_dir.join("build-2026-01-01_00-00-00.log");
+    std::fs::write(
+        &stale_log,
+        "[+] Building 0.0s ... (from a previous attach, restored on cold start)\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.open_file(&stale_log).unwrap();
+
+    // Sanity: the stale log is open as a buffer before the attach.
+    assert!(
+        snapshot_has_buffer_at(&harness, &stale_log),
+        "test setup: stale log must be open as a buffer before attach.\n\
+         buffers: {:?}",
+        snapshot_buffer_paths(&harness)
+    );
+
+    accept_attach(&mut harness);
+    let _ = wait_for_container_authority(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let paths_after = snapshot_buffer_paths(&harness);
+    assert!(
+        !paths_after.iter().any(|p| p == &stale_log),
+        "F1 regression: stale build-log buffer at {stale_log:?} must be \
+         closed when a new attach starts. Buffers after attach: {paths_after:?}"
+    );
+
+    // The fresh build log should be open under the same dir, but at
+    // a *different* path (timestamp differs from the stale one).
+    let fresh = paths_after
+        .iter()
+        .find(|p| p.starts_with(&stale_dir) && **p != stale_log);
+    assert!(
+        fresh.is_some(),
+        "expected at least one fresh build-log buffer under {stale_dir:?} \
+         (different from {stale_log:?}). Buffers: {paths_after:?}"
+    );
+}
+
+/// Read every buffer's `path` from the plugin-state snapshot — same
+/// surface plugins see via `editor.listBuffers()`. Only paths that
+/// resolve to a `Some(PathBuf)` are returned (unnamed buffers
+/// dropped).
+fn snapshot_buffer_paths(harness: &EditorTestHarness) -> Vec<std::path::PathBuf> {
+    let handle = harness
+        .editor()
+        .plugin_manager()
+        .state_snapshot_handle()
+        .expect("plugin manager must have a state snapshot in plugins-feature builds");
+    let snap = handle.read().unwrap();
+    snap.buffers
+        .values()
+        .filter_map(|b| b.path.clone())
+        .collect()
+}
+
+fn snapshot_has_buffer_at(harness: &EditorTestHarness, path: &Path) -> bool {
+    snapshot_buffer_paths(harness).iter().any(|p| p == path)
+}
+
+/// F2 reproducer: a successful attach must persist the
+/// `attach:<cwd> = "attached"` per-workspace decision so the
+/// "Reopen in Container?" popup doesn't re-fire on the next cold
+/// start. We assert via `Editor::capture_workspace()` — the same
+/// `plugin_global_state` blob that the workspace serializer writes
+/// to disk on quit and reads back on relaunch.
+///
+/// The plugin writes the decision in `devcontainer_on_attach_popup`
+/// before kicking off `runDevcontainerUp`, so by the time the
+/// container authority lands the key must be visible in the
+/// captured state. If this test ever starts failing, the regression
+/// is in either the plugin's call ordering (pre-`setAuthority`) or
+/// in how `capture_workspace` snapshots `plugin_global_state` — the
+/// production cold-restart bug from the test plan would surface
+/// here first.
+#[test]
+fn attach_decision_persists_in_plugin_global_state() {
+    let (_workspace_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+
+    accept_attach(&mut harness);
+    let _ = wait_for_container_authority(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let workspace_state = harness.editor().capture_workspace();
+    let dc_state = workspace_state
+        .plugin_global_state
+        .get("devcontainer")
+        .unwrap_or_else(|| {
+            panic!(
+                "expected `devcontainer` plugin to have written global state. \
+                 Plugin map: {:?}",
+                workspace_state.plugin_global_state.keys().collect::<Vec<_>>()
+            )
+        });
+
+    let key = format!("attach:{}", workspace.display());
+    let value = dc_state.get(&key).unwrap_or_else(|| {
+        panic!(
+            "expected key {key:?} in devcontainer plugin state. \
+             Keys present: {:?}",
+            dc_state.keys().collect::<Vec<_>>()
+        )
+    });
+    assert_eq!(
+        value.as_str(),
+        Some("attached"),
+        "attach decision must be \"attached\" after a successful \
+         Reopen-in-Container; got {value:?}"
+    );
 }
 
 /// `FAKE_DC_UP_NO_CONTAINER_ID=1` → fake emits `outcome:success` JSON
