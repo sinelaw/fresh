@@ -166,6 +166,7 @@ Status legend (added after the 2026-04-26 retest below):
 
 | Severity | Bug / Gap | Reference | Status (2026-04-26) |
 | --- | --- | --- | --- |
+| **Critical** | Pane-splitting strategy is "always-split, never-close": every lifecycle event (attach, rebuild, Show Ports, terminal open) adds a new horizontal split, nothing ever closes one. By the third rebuild the right column is 5+ splits ~5 rows tall, and the layout becomes the root cause of several Medium rows below (popup invisible, Show Ports no visible pane, splits don't compact, duplicate `devcontainer.json` across splits, stale build-log tabs). | "Pane Splitting" section | Confirmed — root cause; fixing this collapses ~5 downstream rows |
 | **Critical** | After a `devcontainer.json` syntax error and a Rebuild, all `Dev Container:` palette commands disappear and **do not return after the JSON is fixed** — only an editor restart recovers. | Task 4 | Confirmed (post-rebuild restart cycle re-runs plugin load against broken JSON; harness can't reproduce because it shortcuts the restart) |
 | **High** | Auto port-forwarding doesn't publish ports declared in `portsAttributes` / `forwardPorts`; no host mapping, no `onAutoForward: notify` toast. | Task 3 | Confirmed |
 | **High** | `devcontainer.json` syntax errors fail silently — no toast, no file-explorer badge, no inline marker. | Task 4 | Confirmed |
