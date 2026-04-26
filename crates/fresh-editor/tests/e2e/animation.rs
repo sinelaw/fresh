@@ -13,10 +13,12 @@ use std::fs;
 /// Cycling to the next tab fires a slide-in effect over the active
 /// split's content area. We don't assert the direction of the slide
 /// from the rendered frame (direction is a runner-internal decision
-/// encoded in the effect's `from` edge); instead we wait for
-/// `animations.is_active()` to flip true, which proves the Editor
-/// actually kicked the animation off. Then we wait for it to settle
-/// and verify the post-animation frame shows the new active buffer.
+/// encoded in the effect's `from` edge); instead we sample the
+/// monotonic `total_started()` counter before/after the action, which
+/// proves the Editor actually kicked the animation off without
+/// requiring the polling loop to catch the transient `is_active()`
+/// window — under heavy CI load a single 50 ms `wait_until` tick can
+/// straddle the entire 260 ms animation, missing the flip.
 ///
 /// Animations are off by default in the test harness (see the comment
 /// in common/harness.rs); this test opts them back on via an explicit
@@ -40,18 +42,21 @@ fn next_buffer_kicks_off_a_slide_animation() {
     harness
         .wait_until(|h| h.screen_to_string().contains("BRAVO_BUFFER_CONTENT"))
         .unwrap();
-
-    // Baseline: no animation in flight at steady state.
-    assert!(!harness.editor().animations.is_active());
+    // Baseline: any open-time animation has settled.
+    harness
+        .wait_until(|h| !h.editor().animations.is_active())
+        .unwrap();
+    let baseline = harness.editor().animations.total_started();
 
     // Switch to the previous tab. The Editor should start a
     // horizontal slide (prev → from the left).
     harness.editor_mut().prev_buffer();
 
-    // is_active flips true within a couple of ticks; wait for it
-    // semantically rather than polling on a timer.
+    // The runner increments `total_started` on `start()`; the count is
+    // monotonic so this catches the kick-off even if the animation has
+    // already finished by the time we poll.
     harness
-        .wait_until(|h| h.editor().animations.is_active())
+        .wait_until(|h| h.editor().animations.total_started() > baseline)
         .unwrap();
 
     // Settle, then confirm the alpha buffer is now the active one.
@@ -138,12 +143,16 @@ fn tab_switch_from_group_to_file_animates() {
     harness
         .wait_until(|h| !h.editor().animations.is_active())
         .unwrap();
+    let baseline = harness.editor().animations.total_started();
 
     // Cycle to the previous tab: group → file. Before the fix,
-    // is_active stayed false forever and this wait never returned.
+    // total_started never incremented and the wait never returned.
+    // We use the monotonic counter rather than `is_active()` so a
+    // single delayed wait_until tick under load can't straddle the
+    // 260 ms animation and miss its `true` window entirely.
     harness.editor_mut().prev_buffer();
     harness
-        .wait_until(|h| h.editor().animations.is_active())
+        .wait_until(|h| h.editor().animations.total_started() > baseline)
         .unwrap();
 
     harness

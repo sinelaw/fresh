@@ -239,6 +239,13 @@ struct ActiveEffect {
 pub struct AnimationRunner {
     next_id: u64,
     active: Vec<ActiveEffect>,
+    /// Cumulative count of effects accepted by either `start` or
+    /// `start_with_id`. Monotonic; increments before the effect is
+    /// pushed so a sample taken any time after the call sees the
+    /// post-increment value. Tests sample this around the action under
+    /// test to detect that an effect was kicked off without having to
+    /// catch the transient `is_active()` window between polling ticks.
+    total_started: u64,
     /// Full snapshot of the buffer at the end of the previous render
     /// pass. Ratatui's swap_buffers resets the "current" buffer, so at
     /// the start of the next draw `frame.buffer_mut()` is blank — not
@@ -258,6 +265,7 @@ impl AnimationRunner {
         Self {
             next_id: 1,
             active: Vec::new(),
+            total_started: 0,
             last_frame: None,
         }
     }
@@ -295,6 +303,7 @@ impl AnimationRunner {
                     delay,
                 } => (Box::new(SlideIn::new(from, duration)), delay, duration),
             };
+        self.total_started += 1;
         self.active.push(ActiveEffect {
             id,
             area,
@@ -360,6 +369,15 @@ impl AnimationRunner {
         self.active
             .iter()
             .any(|e| e.status == EffectStatus::Running)
+    }
+
+    /// Cumulative number of effects accepted by either `start` or
+    /// `start_with_id`, since this runner was constructed. Monotonic —
+    /// never decreases. Tests use this to detect that an effect was
+    /// kicked off without having to catch the transient `is_active()`
+    /// window between two polling ticks.
+    pub fn total_started(&self) -> u64 {
+        self.total_started
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {

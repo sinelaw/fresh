@@ -131,9 +131,11 @@ fn dashboard_bringup_animation_settles_and_renders() {
     // animate_virtual_buffer (e.g. if the viewport_changed trigger
     // silently breaks) — the test would otherwise pass trivially
     // because a never-started animation looks identical to a
-    // finished one.
+    // finished one. Sample the monotonic counter rather than the
+    // transient `is_active()` so a slow-polling iteration on a busy
+    // CI box can't straddle the entire animation window.
     harness
-        .wait_until(|h| h.editor().animations.is_active())
+        .wait_until(|h| h.editor().animations.total_started() > 0)
         .unwrap();
 
     // Now settle the bringup animation: the runner flips is_active to
