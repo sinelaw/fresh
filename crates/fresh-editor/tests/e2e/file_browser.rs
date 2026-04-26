@@ -340,8 +340,10 @@ fn test_file_browser_cancel() {
 
     fs::write(project_root.join("test.txt"), "test").unwrap();
 
+    // 120×24: with `{remote}` on the default status bar the
+    // file-browser's status messages are truncated at 80 cols.
     let mut harness = EditorTestHarness::with_config_and_working_dir(
-        80,
+        120,
         24,
         Default::default(),
         project_root.clone(),

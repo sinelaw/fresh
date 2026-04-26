@@ -578,7 +578,11 @@ fn test_undo_beyond_cursor_add() {
 #[test]
 fn test_multi_cursor_status_bar_indicator() {
     use crossterm::event::{KeyCode, KeyModifiers};
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // 120×24 instead of 80×24: with the {{remote}} indicator on the
+    // default status bar, the trailing Messages element is
+    // ellipsis-truncated at 80 cols. The widening keeps the
+    // assertions below readable.
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
 
     // Create three lines
     harness.type_text("Line 1\nLine 2\nLine 3").unwrap();

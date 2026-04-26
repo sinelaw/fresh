@@ -668,19 +668,19 @@ impl schemars::JsonSchema for StatusBarElement {
 }
 
 fn default_status_bar_left() -> Vec<StatusBarElement> {
-    // Keep this list tight enough to fit comfortably on 80-col
-    // terminals — several e2e tests pin that width and depend on
-    // specific element contents (filename, cursor position,
-    // diagnostics badge, status messages) not getting
-    // ellipsis-truncated.
+    // `{remote}` leads so the clickable Remote Indicator is the
+    // first thing on the bottom-left, matching the spec's
+    // "persistent control" requirement and where users learn to
+    // look for it from VS Code. Mouse-clickable, F6-bindable.
     //
-    // Users who want the Remote Indicator at the far left either
-    // add `"{remote}"` manually or get it injected by the v1→v2
-    // config migration when they upgrade from an older Fresh with
-    // a customized `status_bar.left`. The palette command
-    // `Show Remote Indicator Menu` (and the F6 keybinding) reach
-    // the same popup without needing the bar element.
+    // Note: the `Filename` element historically also prepended
+    // `[Container:<id>] ` / `<SSH_PREFIX>conn<TERMINATOR>` to its
+    // text. That's redundant with this indicator — see the
+    // matching change in `view::ui::status_bar::render_element`'s
+    // Filename branch, which now skips the prefix when the
+    // indicator is on the bar.
     vec![
+        StatusBarElement::RemoteIndicator,
         StatusBarElement::Filename,
         StatusBarElement::Cursor,
         StatusBarElement::Diagnostics,

@@ -224,7 +224,12 @@ fn test_nested_splits() {
 /// Test split view with file operations
 #[test]
 fn test_split_with_file_operations() {
-    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    // 120×24 instead of 80×24: with the `{remote}` indicator on
+    // the default status bar, the trailing Messages element is
+    // ellipsis-truncated at 80 cols. The wider terminal also
+    // gives both split panes room to render their tab titles
+    // (file1.txt / file2.txt) without truncation.
+    let mut harness = EditorTestHarness::with_temp_project(120, 24).unwrap();
     let project_dir = harness.project_dir().unwrap();
     let file1 = project_dir.join("file1.txt");
     let file2 = project_dir.join("file2.txt");
@@ -236,12 +241,23 @@ fn test_split_with_file_operations() {
     harness.open_file(&file1).unwrap();
     harness.assert_buffer_content("File 1 content");
 
-    // Create a split
+    // Create a vertical split via the command palette. Alt+V was
+    // used originally but it's the View-menu shortcut globally
+    // (`menu_open name=View`), so it opens the menu rather than
+    // splitting. The palette path is what the matching tests in
+    // this file use (e.g. `test_toggle_maximize_split`) and
+    // matches the user-visible action name.
     harness
-        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split vert").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
 
-    // Open second file in the new split
+    // Open second file in the newly-focused split
     harness.open_file(&file2).unwrap();
     harness.assert_buffer_content("File 2 content");
 

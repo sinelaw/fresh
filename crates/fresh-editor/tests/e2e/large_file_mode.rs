@@ -930,7 +930,11 @@ fn test_edit_scan_edit_line_numbers_stay_exact() {
     fs::write(&file_path, &content).unwrap();
 
     let mut harness =
-        EditorTestHarness::with_working_dir(80, 24, temp_dir.path().to_path_buf()).unwrap();
+    // 120×24 instead of 80×24: with the {{remote}} indicator on the
+    // default status bar, the trailing Messages element is
+    // ellipsis-truncated at 80 cols. The widening keeps the
+    // assertions below readable.
+        EditorTestHarness::with_working_dir(120, 24, temp_dir.path().to_path_buf()).unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 

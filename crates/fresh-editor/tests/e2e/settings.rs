@@ -2946,7 +2946,11 @@ fn test_settings_edit_button_opens_config_file() {
 /// the Edit button should not open the config file and should show a warning.
 #[test]
 fn test_settings_edit_button_blocked_with_pending_changes() {
-    let mut harness = EditorTestHarness::new(100, 40).unwrap();
+    // 140×40 instead of 100×40: with `{remote}` on the default
+    // status bar at 100 cols the "Save or discard pending
+    // changes" message gets truncated. Other settings tests in
+    // this file also use 100×40 but don't read status messages.
+    let mut harness = EditorTestHarness::new(140, 40).unwrap();
 
     // Open settings
     harness.open_settings().unwrap();

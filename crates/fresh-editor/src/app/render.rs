@@ -741,6 +741,11 @@ impl Editor {
                 session_name: session_name.as_deref(),
                 read_only: is_read_only,
                 remote_state_override: self.remote_indicator_override.as_ref(),
+                // Filled in by `render_status` from the user's
+                // status_bar config; the value here is just a
+                // safe default for the rare path that builds the
+                // ctx but doesn't run `render_status`.
+                remote_indicator_on_bar: false,
             };
             let status_bar_layout = StatusBarRenderer::render_status_bar(
                 frame,

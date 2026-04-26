@@ -278,8 +278,10 @@ fn test_switch_project_cancel_preserves_directory() {
     let temp_dir = TempDir::new().unwrap();
     let project_root = temp_dir.path().to_path_buf();
 
+    // 120×24: with `{remote}` on the default status bar the
+    // "directory not changed" status message is truncated at 80 cols.
     let mut harness = EditorTestHarness::with_config_and_working_dir(
-        80,
+        120,
         24,
         Default::default(),
         project_root.clone(),

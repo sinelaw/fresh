@@ -943,8 +943,12 @@ fn test_shift_up_at_top_seeds_selection_before_escape_unfocuses() {
 #[test]
 fn test_cross_fs_cut_source_delete_failure_is_reported() {
     let fault_fs = Arc::new(FaultInjectingFileSystem::new(Arc::new(StdFileSystem)));
+    // 140×30 instead of 100×30: with `{remote}` on the default
+    // status bar the "could not remove source: stuck.txt" message
+    // is truncated at 100 cols (`Local | filename | Ln/Col |
+    // diagnostics | <message> | <right side>` overflows).
     let mut harness = EditorTestHarness::create(
-        100,
+        140,
         30,
         HarnessOptions::new()
             .with_project_root()

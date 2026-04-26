@@ -66,7 +66,10 @@ fn test_open_terminal() {
 /// Test closing a terminal
 #[test]
 fn test_close_terminal() {
-    let mut harness = harness_or_return!(80, 24);
+    // 120×24 instead of 80×24: with `{remote}` on the default
+    // status bar the trailing Messages element is truncated at
+    // 80 cols ("closed" wouldn't fit alongside ` Local | ...`).
+    let mut harness = harness_or_return!(120, 24);
 
     // Open a terminal
     harness.editor_mut().open_terminal();
@@ -152,7 +155,8 @@ fn test_terminal_buffer_identification() {
 /// Test closing terminal when not viewing one shows appropriate message
 #[test]
 fn test_close_terminal_not_viewing() {
-    let mut harness = harness_or_return!(80, 24);
+    // 120×24: see the comment on `test_close_terminal` above.
+    let mut harness = harness_or_return!(120, 24);
 
     // Try to close terminal when viewing regular buffer
     harness.editor_mut().close_terminal();

@@ -38,7 +38,12 @@ fn test_menu_bar_visible_by_default() {
 /// Test that toggling tab bar via command palette hides and shows it
 #[test]
 fn test_toggle_tab_bar_via_command_palette() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // 120×24 instead of 80×24: with `{remote}` on the
+    // default status bar, the trailing Messages element
+    // gets ellipsis-truncated at 80. The widening keeps
+    // 'Status bar shown' / 'Menu bar hidden' / etc.
+    // readable for the assertions below.
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
     harness.render().unwrap();
 
     // Verify tab bar is visible initially (shows "[No Name]" for new buffer)
@@ -84,7 +89,12 @@ fn test_toggle_tab_bar_via_command_palette() {
 /// Test that toggling menu bar via command palette hides and shows it
 #[test]
 fn test_toggle_menu_bar_via_command_palette() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // 120×24 instead of 80×24: with `{remote}` on the
+    // default status bar, the trailing Messages element
+    // gets ellipsis-truncated at 80. The widening keeps
+    // 'Status bar shown' / 'Menu bar hidden' / etc.
+    // readable for the assertions below.
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
     harness.render().unwrap();
 
     // Verify menu bar is visible initially
@@ -281,7 +291,12 @@ fn test_status_bar_visible_by_default() {
 /// Test that toggling status bar via command palette hides and shows it
 #[test]
 fn test_toggle_status_bar_via_command_palette() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // 120×24 instead of 80×24: with `{remote}` on the
+    // default status bar, the trailing Messages element
+    // gets ellipsis-truncated at 80. The widening keeps
+    // 'Status bar shown' / 'Menu bar hidden' / etc.
+    // readable for the assertions below.
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
     harness.render().unwrap();
 
     // Status bar should be visible initially
@@ -448,7 +463,12 @@ fn test_settings_show_prompt_line_applies_immediately() {
 /// Test that toggling prompt line via command palette hides and shows it
 #[test]
 fn test_toggle_prompt_line_via_command_palette() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // 120×24 instead of 80×24: with `{remote}` on the
+    // default status bar, the trailing Messages element
+    // gets ellipsis-truncated at 80. The widening keeps
+    // 'Status bar shown' / 'Menu bar hidden' / etc.
+    // readable for the assertions below.
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
     harness.render().unwrap();
 
     // Prompt line should be visible initially

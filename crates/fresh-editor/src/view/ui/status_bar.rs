@@ -225,6 +225,15 @@ pub struct StatusBarContext<'a> {
     /// `ClearRemoteIndicatorState` or by a `None` pass at the call
     /// site.
     pub remote_state_override: Option<&'a RemoteIndicatorOverride>,
+    /// True when the user's status-bar layout contains the
+    /// `RemoteIndicator` element. Set by the renderer after
+    /// inspecting `StatusBarConfig.left` / `.right`. Read by the
+    /// `Filename` element's branch to decide whether to emit the
+    /// legacy `[Container:<id>] ` / SSH prefix on the filename
+    /// — when the dedicated indicator is on the bar that prefix
+    /// is redundant; when it's not, the filename keeps the prefix
+    /// so users still see the connection at a glance.
+    pub remote_indicator_on_bar: bool,
 }
 
 /// Layout information returned from status bar rendering for mouse click detection
@@ -687,16 +696,25 @@ impl StatusBarRenderer {
                     .remote_connection
                     .map(|conn| conn.contains("(Disconnected)"))
                     .unwrap_or(false);
-                let remote_prefix = ctx
-                    .remote_connection
-                    .map(|conn| {
-                        if conn.starts_with("Container:") {
-                            format!("[{}] ", conn)
-                        } else {
-                            format!("{SSH_PREFIX}{conn}{SSH_PREFIX_TERMINATOR}")
-                        }
-                    })
-                    .unwrap_or_default();
+                // The `[Container:<id>] ` / `<SSH_PREFIX>conn<...>`
+                // prefix is redundant when the dedicated `{remote}`
+                // indicator is on the bar — same identity, two
+                // places. Skip it then. When `{remote}` is NOT on
+                // the bar, keep the prefix so users still see the
+                // connection at a glance from the filename.
+                let remote_prefix = if ctx.remote_indicator_on_bar {
+                    String::new()
+                } else {
+                    ctx.remote_connection
+                        .map(|conn| {
+                            if conn.starts_with("Container:") {
+                                format!("[{}] ", conn)
+                            } else {
+                                format!("{SSH_PREFIX}{conn}{SSH_PREFIX_TERMINATOR}")
+                            }
+                        })
+                        .unwrap_or_default()
+                };
                 let session_prefix = ctx
                     .session_name
                     .map(|name| format!("[{}] ", name))
@@ -1192,6 +1210,16 @@ impl StatusBarRenderer {
         if available_width == 0 || area.height == 0 {
             return layout;
         }
+
+        // Tell the per-element renderer whether the dedicated
+        // RemoteIndicator is on the bar so the Filename branch
+        // can drop its now-redundant `[Container:<id>] ` /
+        // SSH prefix.
+        ctx.remote_indicator_on_bar = config
+            .left
+            .iter()
+            .chain(config.right.iter())
+            .any(|e| matches!(e, StatusBarElement::RemoteIndicator));
 
         let left_items = Self::render_side(&config.left, ctx);
         let mut right_items = Self::render_side(&config.right, ctx);

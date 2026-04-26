@@ -259,7 +259,11 @@ fn test_lsp_diagnostics_status_bar() -> anyhow::Result<()> {
     use fresh::model::event::{Event, OverlayFace};
     use fresh::view::overlay::OverlayNamespace;
 
-    let mut harness = EditorTestHarness::new(80, 24)?;
+    // 120×24 instead of 80×24: with the {{remote}} indicator on the
+    // default status bar, the trailing Messages element is
+    // ellipsis-truncated at 80 cols. The widening keeps the
+    // assertions below readable.
+    let mut harness = EditorTestHarness::new(120, 24)?;
 
     // Type some text
     harness.type_text("let x = 5;\nlet y = 10;")?;

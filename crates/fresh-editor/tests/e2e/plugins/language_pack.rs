@@ -129,9 +129,11 @@ editor.setStatus(result ? "Config registered!" : "Config registration failed!");
     let test_plugin_path = plugins_dir.join("test_config.ts");
     fs::write(&test_plugin_path, test_plugin).unwrap();
 
-    // Create harness
+    // Create harness — 120×24: with `{remote}` on the default
+    // status bar the plugin-emitted "Config registered!" message
+    // is truncated at 80 cols.
     let mut harness = EditorTestHarness::with_config_and_working_dir(
-        80,
+        120,
         24,
         Default::default(),
         project_root.clone(),
