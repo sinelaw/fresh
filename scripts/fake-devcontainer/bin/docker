@@ -47,6 +47,13 @@ cmd_exec() {
   state="$(fake_state_dir)"
   cdir="$state/containers/$container_id"
 
+  # Always surface what the editor *requested* via -w, regardless of
+  # whether that path exists on the host. Lets tests assert against
+  # the in-container path the plugin would have sent (which is what
+  # real `docker exec -w` honors), without the fake silently masking
+  # a host-vs-container path mismatch.
+  export FAKE_DC_REQUESTED_CWD="$workdir"
+
   if [ -z "$workdir" ] && [ -f "$cdir/workspace" ]; then
     # Treat the recorded host workspace path as the cwd. In real
     # devcontainers the workspace is bind-mounted to remoteWorkspaceFolder
@@ -56,6 +63,26 @@ cmd_exec() {
 
   if [ -n "$workdir" ] && [ -d "$workdir" ]; then
     cd "$workdir" || exit 1
+  fi
+  # Note: when -w is non-empty but doesn't exist on the host, the cd
+  # is silently skipped. Real `docker exec -w <missing>` errors with
+  # "no such file or directory". Tests that need the strict behavior
+  # set FAKE_DC_STRICT_CWD=1 (handled below).
+  if [ -n "$workdir" ] && [ ! -d "$workdir" ] && [ "${FAKE_DC_STRICT_CWD:-0}" = "1" ]; then
+    echo "fake-docker exec: -w '$workdir' does not exist (FAKE_DC_STRICT_CWD=1)" >&2
+    exit 126
+  fi
+
+  # Apply containerEnv (set at container creation time in real
+  # devcontainers; here we replay the env file `up` recorded). This
+  # mirrors what a real `docker exec` would inherit from the
+  # container's image-level env.
+  if [ -f "$cdir/container_env" ]; then
+    # Each line: KEY=VALUE. Source via export so the child inherits.
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      export "$line"
+    done < "$cdir/container_env"
   fi
 
   # Surface "who" we'd have been so child scripts can assert on it.

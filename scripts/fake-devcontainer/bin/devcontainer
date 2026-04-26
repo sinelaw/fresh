@@ -82,6 +82,41 @@ cmd_up() {
   remote_workspace="${FAKE_DC_REMOTE_WORKSPACE:-/workspaces/$(basename "$workspace")}"
   printf '%s\n' "$remote_workspace" > "$cdir/remote_workspace"
 
+  # Record `containerEnv` from devcontainer.json (or the .devcontainer/
+  # subfolder variants) into a flat KEY=VALUE file so `docker exec`
+  # can replay it. Real devcontainers bake containerEnv into the
+  # container's runtime env at create time; this is the cheapest
+  # faithful simulation. The parser is deliberately small — single-
+  # line `"key": "value"` entries only — to avoid pulling in `jq` or
+  # python.
+  : > "$cdir/container_env"
+  for cfg in \
+    "$workspace/.devcontainer/devcontainer.json" \
+    "$workspace/.devcontainer.json"; do
+    [ -f "$cfg" ] || continue
+    # Slice out the line range starting at the `"containerEnv": {`
+    # opener through the next `}` (inclusive). Both the multi-line
+    # block form and the inline `{ "K": "V" }` form are covered:
+    # for inline, the opener and closer are on the same line, which
+    # `sed`'s `/A/,/B/p` collapses to just that line. Strip JSONC
+    # `//` comments, then pluck every `"K": "V"` pair on the
+    # selected lines except the outer `"containerEnv": ` itself.
+    sed -n '/"containerEnv"[[:space:]]*:[[:space:]]*{/,/}/p' "$cfg" \
+      | sed 's|//.*$||' \
+      | grep -oE '"[^"]+"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | grep -v '^"containerEnv"' \
+      | sed -E 's/^"([^"]+)"[[:space:]]*:[[:space:]]*"([^"]*)"$/\1=\2/' \
+      >> "$cdir/container_env"
+    break
+  done
+  # Allow tests to override / add via env. Format: `K=V;K=V;...`.
+  if [ -n "${FAKE_DC_CONTAINER_ENV:-}" ]; then
+    IFS=';' read -r -a _envs <<<"$FAKE_DC_CONTAINER_ENV"
+    for kv in "${_envs[@]}"; do
+      [ -n "$kv" ] && printf '%s\n' "$kv" >> "$cdir/container_env"
+    done
+  fi
+
   # Default port mappings if a forwardPorts mock isn't supplied.
   : > "$cdir/ports"
   if [ -n "${FAKE_DC_PORTS:-}" ]; then
