@@ -52,9 +52,9 @@
 
 #![cfg(feature = "plugins")]
 
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 #[cfg(unix)]
 use crate::common::harness::HarnessOptions;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use std::path::PathBuf;
@@ -252,10 +252,7 @@ fn dev_container_commands_persist_after_rebuild_with_broken_config() {
     harness.wait_for_prompt().unwrap();
     harness.type_text("Dev Container: Rebuild").unwrap();
     harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("Dev Container: Rebuild")
-        })
+        .wait_until(|h| h.screen_to_string().contains("Dev Container: Rebuild"))
         .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -342,10 +339,7 @@ fn palette_popup_renders_when_layout_has_many_splits() {
     harness.wait_for_prompt().unwrap();
     harness.type_text("Dev Container: Rebuild").unwrap();
     harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("Dev Container: Rebuild")
-        })
+        .wait_until(|h| h.screen_to_string().contains("Dev Container: Rebuild"))
         .unwrap();
 }
 
@@ -390,15 +384,70 @@ fn palette_attach_command_hidden_when_already_attached() {
         .unwrap();
 
     let reg = harness.editor().command_registry().read().unwrap();
-    let attach_visible = reg
-        .get_all()
-        .iter()
-        .any(|c| c.name == "%cmd.attach");
+    let attach_visible = reg.get_all().iter().any(|c| c.name == "%cmd.attach");
 
     assert!(
         !attach_visible,
         "`Dev Container: Attach` must not be offered while already attached \
          (display label: {:?}); only `Detach` should be state-relevant.",
         harness.editor().authority().display_label,
+    );
+}
+
+/// **Bug #2 (L172).** A `devcontainer.json` that exists but has a
+/// JSON syntax error currently fails silently — `findConfig`
+/// returns false, no commands register, no status message
+/// surfaces. The user has no signal that the feature broke. Fix
+/// is to surface the parse error via the status bar at plugin
+/// init.
+///
+/// Regression guard for that fix: drop a syntactically broken
+/// config in the workspace, boot the editor, assert that the
+/// status line contains the parse-failure marker. We also assert
+/// none of the `Dev Container:` commands registered — the parse
+/// failure must be the *only* reason `findConfig` returned false,
+/// and surfacing it in the status bar is the only feedback the
+/// user gets in that path.
+#[test]
+fn broken_devcontainer_json_surfaces_parse_error_in_status_bar() {
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().canonicalize().unwrap();
+
+    let dc = workspace.join(".devcontainer");
+    fs::create_dir_all(&dc).unwrap();
+    // Unclosed brace + invalid token — `jsonc_parser` accepts
+    // missing-comma JSON (it's a lenient dialect), but it
+    // rejects unclosed structures. We need a hard parse failure
+    // so the plugin's `tryParse` catch fires.
+    fs::write(
+        dc.join("devcontainer.json"),
+        r#"{
+  "name": broken,
+  "image": "ubuntu:22.04"
+"#,
+    )
+    .unwrap();
+
+    let plugins_dir = workspace.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "devcontainer");
+
+    let mut harness = EditorTestHarness::with_working_dir(160, 40, workspace).unwrap();
+
+    // Plugin loads on first tick; tick a few times to let
+    // setStatus land in the rendered screen.
+    for _ in 0..20 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("devcontainer.json parse error"),
+        "broken devcontainer.json must surface a parse error in the status bar; \
+         screen:\n{screen}"
     );
 }

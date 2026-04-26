@@ -18,6 +18,7 @@
     "cmd.detach_desc": "Stop routing through the dev container and go back to local editing",
     "status.detected": "Dev Container: %{name} (%{image}) - %{features} features, %{ports} ports",
     "status.no_config": "No devcontainer.json found",
+    "status.parse_failed": "devcontainer.json parse error in %{path}: %{message}",
     "status.panel_opened": "Dev Container info panel opened",
     "status.panel_closed": "Dev Container info panel closed",
     "status.no_lifecycle": "No lifecycle commands defined",

@@ -137,33 +137,42 @@ const colors = {
 // Config Discovery
 // =============================================================================
 
+/// Last parse failure observed by `findConfig` — surfaced via
+/// `setStatus` and an action popup at init / on file save so the
+/// user notices broken JSON instead of silently losing every
+/// `Dev Container:` command.
+let lastParseError: { path: string; message: string } | null = null;
+
+function tryParse(path: string, content: string): boolean {
+  try {
+    config = editor.parseJsonc(content) as DevContainerConfig;
+    configPath = path;
+    lastParseError = null;
+    return true;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    lastParseError = { path, message };
+    editor.debug(`devcontainer: failed to parse ${path}: ${message}`);
+    return false;
+  }
+}
+
 function findConfig(): boolean {
   const cwd = editor.getCwd();
+  lastParseError = null;
 
   // Priority 1: .devcontainer/devcontainer.json
   const primary = editor.pathJoin(cwd, ".devcontainer", "devcontainer.json");
   const primaryContent = editor.readFile(primary);
   if (primaryContent !== null) {
-    try {
-      config = editor.parseJsonc(primaryContent) as DevContainerConfig;
-      configPath = primary;
-      return true;
-    } catch {
-      editor.debug("devcontainer: failed to parse " + primary);
-    }
+    if (tryParse(primary, primaryContent)) return true;
   }
 
   // Priority 2: .devcontainer.json
   const secondary = editor.pathJoin(cwd, ".devcontainer.json");
   const secondaryContent = editor.readFile(secondary);
   if (secondaryContent !== null) {
-    try {
-      config = editor.parseJsonc(secondaryContent) as DevContainerConfig;
-      configPath = secondary;
-      return true;
-    } catch {
-      editor.debug("devcontainer: failed to parse " + secondary);
-    }
+    if (tryParse(secondary, secondaryContent)) return true;
   }
 
   // Priority 3: .devcontainer/<subfolder>/devcontainer.json
@@ -175,19 +184,28 @@ function findConfig(): boolean {
         const subConfig = editor.pathJoin(dcDir, entry.name, "devcontainer.json");
         const subContent = editor.readFile(subConfig);
         if (subContent !== null) {
-          try {
-            config = editor.parseJsonc(subContent) as DevContainerConfig;
-            configPath = subConfig;
-            return true;
-          } catch {
-            editor.debug("devcontainer: failed to parse " + subConfig);
-          }
+          if (tryParse(subConfig, subContent)) return true;
         }
       }
     }
   }
 
   return false;
+}
+
+/// Surface the last parse error (if any) to the user via the status
+/// bar. Idempotent — safe to call repeatedly. Bug #2 (silent JSON
+/// syntax errors): without this, a broken `devcontainer.json`
+/// causes `findConfig` to return false, no commands register,
+/// and the user has no clue why the feature stopped working.
+function showParseErrorIfAny(): void {
+  if (!lastParseError) return;
+  editor.setStatus(
+    editor.t("status.parse_failed", {
+      path: lastParseError.path,
+      message: lastParseError.message,
+    }),
+  );
 }
 
 // =============================================================================
@@ -2371,5 +2389,14 @@ if (findConfig()) {
   );
   editor.on("plugins_loaded", "devcontainer_maybe_show_attach_prompt");
 } else {
-  editor.debug("Dev Container plugin: no devcontainer.json found");
+  // Bug #2: a `devcontainer.json` that exists but fails to parse
+  // used to fail silently — `findConfig` returns false, no
+  // commands register, no status message. Surface the parse
+  // error so the user knows what to fix instead of just losing
+  // the entire `Dev Container:` palette.
+  if (lastParseError) {
+    showParseErrorIfAny();
+  } else {
+    editor.debug("Dev Container plugin: no devcontainer.json found");
+  }
 }
