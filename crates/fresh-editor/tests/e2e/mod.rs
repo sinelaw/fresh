@@ -177,6 +177,7 @@ pub mod split_view;
 pub mod split_view_expectations;
 pub mod split_view_markdown_compose;
 pub mod status_bar_config;
+pub mod status_bar_message_click;
 pub mod stdin_input;
 pub mod sudo_save_prompt;
 #[cfg(unix)]
