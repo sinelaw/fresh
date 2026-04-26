@@ -242,14 +242,22 @@ cmd_up() {
           fi
         else
           emit_progress "[+] Backgrounding $hook (waitFor=$wait_for)"
-          # Background subshells inherit the FDs they need — when
-          # `up` exits the captured pipes close, but the bg child
-          # detaches via `setsid` so it survives. Their output
-          # goes to /dev/null so the build log doesn't grow
-          # unbounded after `up` returns; tests assert via the
-          # hook's own side effects (sentinel files etc.), so the
-          # bg's missing output is fine.
-          ( cd "$workspace" && setsid sh -c "$raw" ) >/dev/null 2>&1 </dev/null &
+          # Background hook so `up` returns to the editor while
+          # slow setup keeps running. We avoid `setsid` because
+          # macOS doesn't ship it by default. The double-fork
+          # below detaches the inner shell from this script's
+          # process group: the outer subshell exits immediately
+          # after spawning the inner one (with `&`), which makes
+          # the inner shell's parent become PID 1 (init) — same
+          # effect as setsid for our purposes (survival across
+          # `up`'s exit + own session). Output goes to /dev/null
+          # because tests assert via the hook's own side effects
+          # (sentinel files, env probes), and the build log is
+          # closed by the time `up` returns anyway.
+          (
+            ( cd "$workspace" && sh -c "$raw" ) </dev/null >/dev/null 2>&1 &
+          ) </dev/null >/dev/null 2>&1
+          disown 2>/dev/null || true
         fi
         fake_sleep_ms "$delay_ms"
       fi

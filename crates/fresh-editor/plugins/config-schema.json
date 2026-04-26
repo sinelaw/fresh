@@ -46,6 +46,7 @@
         "show_status_bar": true,
         "status_bar": {
           "left": [
+            "{remote}",
             "{filename}",
             "{cursor}",
             "{diagnostics}",
@@ -368,6 +369,7 @@
           "$ref": "#/$defs/StatusBarConfig",
           "default": {
             "left": [
+              "{remote}",
               "{filename}",
               "{cursor}",
               "{diagnostics}",
@@ -758,6 +760,7 @@
             "$ref": "#/$defs/StatusBarElement"
           },
           "default": [
+            "{remote}",
             "{filename}",
             "{cursor}",
             "{diagnostics}",

@@ -508,10 +508,10 @@ fn test_status_bar_reflects_active_split() {
     // Status bar should show alpha.txt
     harness.assert_screen_contains("alpha.txt");
 
-    // Create split and open different file
-    harness
-        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
-        .unwrap();
+    // Create split via palette (Alt+V can collide with the View
+    // menu accelerator on some platforms — keyboard handling for
+    // Alt-modified keys differs between Linux and macOS terminals).
+    split_vertical(&mut harness);
     harness.open_file(&file2).unwrap();
     harness.render().unwrap();
 
