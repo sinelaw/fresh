@@ -594,7 +594,13 @@ async function vi_replace_char(): Promise<void> {
   editor.setEditorMode("vi-replace-char");
   editor.setStatus("-- REPLACE CHAR --");
 
-  const ev = await editor.getNextKey();
+  editor.beginKeyCapture();
+  let ev;
+  try {
+    ev = await editor.getNextKey();
+  } finally {
+    editor.endKeyCapture();
+  }
 
   // Escape / non-character keys cancel the replacement.
   if (ev.key.length !== 1) {
@@ -1460,12 +1466,19 @@ async function enterFindCharMode(findType: FindCharType): Promise<void> {
   editor.setEditorMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
 
-  const ev = await editor.getNextKey();
-  state.pendingFindChar = null;
-
-  // Escape (or any non-character key) cancels the motion.
-  if (ev.key.length === 1) {
-    await executeFindChar(findType, ev.key);
+  // Capture the key losslessly — without this, a user pressing the
+  // target character very quickly after `f`/`t`/`F`/`T` could see the
+  // key fall through to the buffer.
+  editor.beginKeyCapture();
+  try {
+    const ev = await editor.getNextKey();
+    state.pendingFindChar = null;
+    // Escape (or any non-character key) cancels the motion.
+    if (ev.key.length === 1) {
+      await executeFindChar(findType, ev.key);
+    }
+  } finally {
+    editor.endKeyCapture();
   }
   switchMode("normal");
 }

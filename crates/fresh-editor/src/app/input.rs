@@ -47,14 +47,25 @@ impl Editor {
     /// callback with this key and return `true` so the caller can
     /// short-circuit further dispatch. The key is consumed by the
     /// resolution; mode bindings and editor actions do not see it.
+    ///
+    /// If no callback is pending but the plugin has declared key
+    /// capture active (`editor.beginKeyCapture()`), buffer the key
+    /// instead of dispatching it. The next `AwaitNextKey` will pop
+    /// from the buffer immediately. This closes the race between
+    /// fast typing/paste and the plugin re-arming `getNextKey`
+    /// between iterations.
     fn try_resolve_next_key_callback(&mut self, key_event: &crossterm::event::KeyEvent) -> bool {
-        let Some(callback_id) = self.pending_next_key_callbacks.pop_front() else {
-            return false;
-        };
         let payload = key_event_to_payload(key_event);
-        let json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
-        self.plugin_manager.resolve_callback(callback_id, json);
-        true
+        if let Some(callback_id) = self.pending_next_key_callbacks.pop_front() {
+            let json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
+            self.plugin_manager.resolve_callback(callback_id, json);
+            return true;
+        }
+        if self.key_capture_active {
+            self.pending_key_capture_buffer.push_back(payload);
+            return true;
+        }
+        false
     }
 }
 

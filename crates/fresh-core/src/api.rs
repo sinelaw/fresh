@@ -1403,6 +1403,30 @@ pub enum PluginCommand {
     /// etc.) without binding every printable key in `defineMode`.
     AwaitNextKey { callback_id: JsCallbackId },
 
+    /// Begin or end "key capture" mode for the calling plugin.
+    ///
+    /// Without this, a plugin running a `getNextKey()` loop has a
+    /// race: keys typed by the user (or pasted, or auto-repeated)
+    /// can arrive between two consecutive `getNextKey()` calls while
+    /// the plugin is still mid-redraw, and would otherwise fall
+    /// through to the editor's normal dispatch (inserting into the
+    /// buffer, etc.).
+    ///
+    /// While capture is active, every key arriving in
+    /// `Editor::handle_key` (after terminal-input dispatch) is
+    /// either resolved against a pending `AwaitNextKey` callback
+    /// (existing behaviour) or, if no callback is pending, *buffered*
+    /// in a FIFO queue.  When the next `AwaitNextKey` is processed,
+    /// the queue is drained first.  This gives plugins lossless,
+    /// in-order delivery of every key the user typed regardless of
+    /// timing.
+    ///
+    /// `EndKeyCapture` clears any unconsumed buffered keys; they do
+    /// NOT replay into the editor's normal dispatch path (that would
+    /// be surprising — the user's intent was for the plugin to
+    /// consume them).
+    SetKeyCaptureActive { active: bool },
+
     /// Update the suggestions list for the current prompt
     /// Uses the editor's Suggestion type
     SetPromptSuggestions { suggestions: Vec<Suggestion> },

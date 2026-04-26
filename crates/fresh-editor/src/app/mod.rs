@@ -809,6 +809,20 @@ pub struct Editor {
     /// rather than dispatching to mode bindings or other handlers.
     pending_next_key_callbacks: std::collections::VecDeque<fresh_core::api::JsCallbackId>,
 
+    /// `true` while a plugin is in a `getNextKey()` loop and has
+    /// declared (via `editor.beginKeyCapture()`) that it wants every
+    /// key delivered, in order, regardless of timing.  Keys arriving
+    /// while no callback is pending are buffered in
+    /// `pending_key_capture_buffer` instead of dispatched.  Closes the
+    /// race where fast typing or paste outruns the plugin's re-arm.
+    key_capture_active: bool,
+
+    /// Keys that arrived while `key_capture_active` was set but no
+    /// `getNextKey()` callback was pending. Drained on the next
+    /// `AwaitNextKey` (resolved immediately, in order). Cleared when
+    /// the plugin ends capture.
+    pending_key_capture_buffer: std::collections::VecDeque<fresh_core::api::KeyEventPayload>,
+
     /// Snapshot of cursor/viewport state saved when a goto-line preview jump
     /// moves the cursor live as the user types a target line. Used by both the
     /// Quick Open `:N` syntax and the standalone `Goto Line` prompt. Restored

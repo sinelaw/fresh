@@ -705,7 +705,26 @@ impl Editor {
                 self.handle_start_prompt_async(label, initial_value, callback_id);
             }
             PluginCommand::AwaitNextKey { callback_id } => {
-                self.pending_next_key_callbacks.push_back(callback_id);
+                // If keys arrived during a key-capture window while no
+                // callback was pending, drain the front-most buffered
+                // key and resolve immediately. Otherwise enqueue the
+                // callback for the next live keypress.
+                if let Some(payload) = self.pending_key_capture_buffer.pop_front() {
+                    let json =
+                        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
+                    self.plugin_manager.resolve_callback(callback_id, json);
+                } else {
+                    self.pending_next_key_callbacks.push_back(callback_id);
+                }
+            }
+            PluginCommand::SetKeyCaptureActive { active } => {
+                self.key_capture_active = active;
+                if !active {
+                    // Capture window closed; any leftover queued keys
+                    // were intended for the plugin and should not now
+                    // leak into the editor's normal dispatch.
+                    self.pending_key_capture_buffer.clear();
+                }
             }
             PluginCommand::SetPromptSuggestions { suggestions } => {
                 self.handle_set_prompt_suggestions(suggestions);

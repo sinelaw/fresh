@@ -1628,6 +1628,24 @@ interface EditorAPI {
 	*/
 	startPrompt(label: string, promptType: string): boolean;
 	/**
+	* Begin a key-capture window for the calling plugin.
+	* 
+	* Pair with `endKeyCapture()` around any `getNextKey()` loop.
+	* While capture is active, keys arriving between two
+	* `getNextKey()` calls are buffered in-order rather than
+	* falling through to the buffer / mode bindings, so fast typing,
+	* pastes, or held-key auto-repeat are delivered losslessly.
+	* Without this, a plugin's input loop has a race where keys
+	* typed while the plugin is mid-redraw can leak into the editor.
+	*/
+	beginKeyCapture(): boolean;
+	/**
+	* End the key-capture window and discard any unconsumed buffered
+	* keys.  Call from a `finally` block so capture is released even
+	* if the plugin's loop throws.
+	*/
+	endKeyCapture(): boolean;
+	/**
 	* Wait for the next keypress and resolve with a `KeyEventPayload`.
 	* 
 	* While the returned promise is pending the editor consumes the
@@ -1636,6 +1654,9 @@ interface EditorAPI {
 	* plugins are FIFO. Designed for short input loops (flash labels,
 	* vi find-char, replace-char) that would otherwise need to bind
 	* every printable key in `defineMode`.
+	* 
+	* For lossless capture against fast typing or paste, wrap the
+	* loop with `beginKeyCapture()` / `endKeyCapture()`.
 	*/
 	getNextKey(): Promise<KeyEventPayload>;
 	/**
