@@ -37,7 +37,7 @@
 
 use crate::state::EditorState;
 use crate::view::line_wrap_cache::{
-    compute_line_layout, pipeline_inputs_version, CacheViewMode, LineWrapKey, WrapGeometry,
+    layout_for_plain_text, pipeline_inputs_version, CacheViewMode, LineWrapKey, WrapGeometry,
 };
 use std::sync::Arc;
 
@@ -207,10 +207,14 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
         return;
     }
 
-    let geom = key.geom();
+    let _ = key.geom(); // reserved for future cache-key construction
+    let tab_size = state.buffer_settings.tab_size;
+    let effective_width = key.effective_width as usize;
+    let gutter_width = key.gutter_width as usize;
+    let hanging_indent = key.hanging_indent;
 
     // Build into local Vecs first so we don't fight the borrow checker
-    // when calling compute_line_layout (which needs &mut state).
+    // when re-borrowing `state` per line.
     let mut prefix_sums: Vec<u32> = Vec::with_capacity(line_count + 1);
     let mut line_starts: Vec<usize> = Vec::with_capacity(line_count + 1);
     let mut running: u32 = 0;
@@ -231,17 +235,31 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
             // Don't bother running the pipeline.
             1
         } else {
-            // Cache miss: derive a layout (and store it for next time).
-            // For a cold buffer this is the expensive path; subsequent
-            // queries get all-cache-hits.  Prefer compute_line_layout
-            // (full pipeline incl. soft breaks / conceals) over
-            // layout_for_plain_text (text-only) so the count agrees with
-            // what the renderer eventually produces.
-            let line_end = state
-                .buffer
-                .line_start_offset(line_idx + 1)
-                .unwrap_or(buffer_len);
-            let layout = compute_line_layout(state, line_start, line_end, &geom);
+            // Cache miss: compute the row count via `layout_for_plain_text`
+            // — text-only wrap, no `build_base_tokens` chunked buffer
+            // reads.  Cheaper than `compute_line_layout` and matches
+            // the row count `apply_wrapping_transform` produces for
+            // the line text alone, which is what scrollbar / scroll
+            // math care about.  Soft-break / conceal interactions
+            // affect renderer-stored entries (which we'd hit above);
+            // they don't affect the cold-build approximation here.
+            let Some(bytes) = state.buffer.get_line(line_idx) else {
+                // Best-effort: empty layout still counts as 1 row.
+                running = running.saturating_add(1);
+                prefix_sums.push(running);
+                continue;
+            };
+            let line_content = String::from_utf8_lossy(&bytes)
+                .trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string();
+            let layout = layout_for_plain_text(
+                &line_content,
+                effective_width,
+                gutter_width,
+                hanging_indent,
+                tab_size,
+            );
             let n = layout.len().max(1) as u32;
             state.line_wrap_cache.put(line_key, Arc::new(layout));
             n
