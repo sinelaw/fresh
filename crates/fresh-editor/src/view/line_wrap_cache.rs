@@ -92,15 +92,24 @@ pub struct LineWrapKey {
 ///   edits are the most frequent source of change.
 /// * `soft_breaks_version` is shifted up 32 bits.
 /// * `conceal_version` is shifted up 48 bits.
+/// * `virtual_text_version` is shifted up 16 bits.  Folded so that
+///   adding / removing plugin virtual lines (e.g.
+///   markdown_compose's table borders, git blame headers)
+///   invalidates the same caches the other three sources do —
+///   `VisualRowIndex` adds virtual line counts to its prefix sums and
+///   would otherwise serve a stale total when the plugin re-tiles a
+///   table.
 #[inline]
 pub fn pipeline_inputs_version(
     buffer_version: u64,
     soft_breaks_version: u32,
     conceal_version: u32,
+    virtual_text_version: u32,
 ) -> u64 {
     (buffer_version & 0xFFFF_FFFF)
         ^ ((soft_breaks_version as u64) << 32)
         ^ ((conceal_version as u64) << 48)
+        ^ ((virtual_text_version as u64) << 16)
 }
 
 /// Estimate the in-memory size of a `Vec<ViewLine>` for byte-budget
@@ -321,6 +330,7 @@ pub fn layout_for_line(
         state.buffer.version(),
         state.soft_breaks.version(),
         state.conceals.version(),
+        state.virtual_texts.version(),
     );
     let key = geom.key(line_start, version);
     if let Some(cached) = state.line_wrap_cache.get(&key) {
@@ -559,6 +569,7 @@ pub fn state_pipeline_inputs_version(state: &EditorState) -> u64 {
         state.buffer.version(),
         state.soft_breaks.version(),
         state.conceals.version(),
+        state.virtual_texts.version(),
     )
 }
 
@@ -588,6 +599,122 @@ pub fn placeholder_layout_for_row_count(n: u32) -> Vec<ViewLine> {
             ends_with_newline: false,
         })
         .collect()
+}
+
+/// Count visual rows for a single line's text after applying the
+/// plugin's soft breaks AND the renderer's word-wrap.  Mirrors the
+/// renderer's full pipeline (`apply_soft_breaks` → `apply_wrapping_transform`)
+/// so the scroll math agrees row-for-row with the rendered output even
+/// when the plugin has injected breaks at narrower-than-viewport
+/// widths (e.g. markdown_compose's per-paragraph wrap).
+///
+/// `soft_breaks_in_line` is the slice of `(byte_position, indent)` pairs
+/// for breaks falling **inside** `[line_start, line_start + line_text.len())`.
+/// Callers should pre-filter from the buffer-wide list.
+///
+/// When `soft_breaks_in_line` is empty this is a thin wrapper over
+/// [`count_visual_rows_for_text`].
+pub fn count_visual_rows_for_text_with_soft_breaks(
+    line_text: &str,
+    line_start: usize,
+    soft_breaks_in_line: &[(usize, u16)],
+    effective_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+) -> u32 {
+    if soft_breaks_in_line.is_empty() {
+        return count_visual_rows_for_text(
+            line_text,
+            effective_width,
+            gutter_width,
+            hanging_indent,
+        );
+    }
+
+    let mut total: u32 = 0;
+    let mut prev_end: usize = 0; // byte offset within `line_text`
+    let mut prev_indent: u16 = 0;
+
+    for &(pos, indent) in soft_breaks_in_line {
+        // Defensive: callers pre-filter, but ignore anything out of
+        // range so a stale break list can't OOB-slice the line.
+        if pos < line_start {
+            continue;
+        }
+        let rel = pos - line_start;
+        if rel >= line_text.len() {
+            continue;
+        }
+        if rel < prev_end {
+            // Break list is sorted; this would only fire on a
+            // duplicate or a not-byte-aligned offset.  Skip rather
+            // than panic.
+            continue;
+        }
+        let segment = &line_text[prev_end..rel];
+        total = total
+            .saturating_add(count_segment_rows_with_indent(
+                segment,
+                prev_indent,
+                effective_width,
+                gutter_width,
+                hanging_indent,
+            ));
+        // The renderer's `apply_soft_breaks` consumes the Space token
+        // *at* the break position when one is present (see
+        // transforms.rs::apply_soft_breaks).  Skip exactly one
+        // character at `rel` to mirror that — UTF-8 safe.
+        let consumed = line_text[rel..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0);
+        prev_end = (rel + consumed).min(line_text.len());
+        prev_indent = indent;
+    }
+    let segment = &line_text[prev_end..];
+    total = total.saturating_add(count_segment_rows_with_indent(
+        segment,
+        prev_indent,
+        effective_width,
+        gutter_width,
+        hanging_indent,
+    ));
+    total.max(1)
+}
+
+/// Helper for [`count_visual_rows_for_text_with_soft_breaks`]:
+/// row count for one inter-break segment with `leading_indent`
+/// columns reserved at the front.  An empty segment still occupies
+/// one visual row (matches the renderer, which emits a trailing
+/// `Break` for the broken position).
+fn count_segment_rows_with_indent(
+    segment: &str,
+    leading_indent: u16,
+    effective_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+) -> u32 {
+    if segment.is_empty() && leading_indent == 0 {
+        return 1;
+    }
+    if leading_indent == 0 {
+        return count_visual_rows_for_text(
+            segment,
+            effective_width,
+            gutter_width,
+            hanging_indent,
+        );
+    }
+    // Prepend the indent columns; this lets the renderer's word-wrap
+    // see the same `current_line_width` it would after
+    // `apply_soft_breaks` injected indent Spaces.
+    let mut prefixed = String::with_capacity(leading_indent as usize + segment.len());
+    for _ in 0..leading_indent {
+        prefixed.push(' ');
+    }
+    prefixed.push_str(segment);
+    count_visual_rows_for_text(&prefixed, effective_width, gutter_width, hanging_indent)
 }
 
 /// Count visual rows for a single line's text under the renderer's
@@ -788,21 +915,26 @@ mod tests {
 
     #[test]
     fn pipeline_inputs_version_changes_when_any_source_changes() {
-        let a = pipeline_inputs_version(100, 5, 3);
+        let a = pipeline_inputs_version(100, 5, 3, 7);
         assert_ne!(
             a,
-            pipeline_inputs_version(101, 5, 3),
+            pipeline_inputs_version(101, 5, 3, 7),
             "buffer bump changes version"
         );
         assert_ne!(
             a,
-            pipeline_inputs_version(100, 6, 3),
+            pipeline_inputs_version(100, 6, 3, 7),
             "soft-break bump changes version"
         );
         assert_ne!(
             a,
-            pipeline_inputs_version(100, 5, 4),
+            pipeline_inputs_version(100, 5, 4, 7),
             "conceal bump changes version"
+        );
+        assert_ne!(
+            a,
+            pipeline_inputs_version(100, 5, 3, 8),
+            "virtual-text bump changes version"
         );
     }
 

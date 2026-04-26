@@ -213,34 +213,49 @@ impl Viewport {
     /// Count visual rows for a single logical line, accounting for plugin soft
     /// breaks (e.g. markdown_compose's hanging-indent wrapping).
     ///
-    /// `soft_breaks` is a sorted slice of byte positions where plugins have
-    /// injected line breaks. When any fall in `[line_start, line_end)`, those
-    /// breaks are authoritative for the visual row count (each soft break adds
-    /// one row). Otherwise we fall back to the width-based `wrap_line` count.
+    /// `soft_breaks` is a sorted slice of `(byte_position, indent)` pairs
+    /// describing plugin-injected line breaks.  When any fall in
+    /// `[line_start, line_end)` we run the renderer's full wrap pipeline
+    /// per soft-break-bounded segment (`apply_soft_breaks` →
+    /// `apply_wrapping_transform`) so the scroll math agrees row-for-row
+    /// with the rendered output even when individual segments still
+    /// need word-wrap (markdown_compose's wide tables, very long
+    /// paragraphs).  Without breaks we run word-wrap on the whole line.
     ///
-    /// This keeps the scroll math in lock-step with the renderer, which also
-    /// applies soft breaks before computing visual rows
-    /// (see split_rendering.rs: apply_soft_breaks).
+    /// Lock-step with the renderer (see `apply_soft_breaks` /
+    /// `apply_wrapping_transform` in `split_rendering::transforms`).
     fn count_visual_rows_for_line(
         line_start: usize,
         line_end: usize,
         line_text: &str,
         wrap_config: &WrapConfig,
-        soft_breaks: &[usize],
+        soft_breaks: &[(usize, u16)],
         cache: Option<(&mut crate::view::line_wrap_cache::LineWrapCache, u64)>,
     ) -> usize {
-        let lo = soft_breaks.partition_point(|&p| p < line_start);
-        let hi = soft_breaks.partition_point(|&p| p < line_end);
-        let break_count = hi.saturating_sub(lo);
-        if break_count > 0 {
-            // Plugin's soft breaks describe the actual on-screen wrapping;
-            // each break adds one visual row to the base row.
-            //
-            // Not cached: the soft-breaks array is already pre-computed
-            // and the count is a single subtraction — caching this would
-            // add a hash lookup to save nothing.
-            break_count + 1
-        } else {
+        let lo = soft_breaks.partition_point(|p| p.0 < line_start);
+        let hi = soft_breaks.partition_point(|p| p.0 < line_end);
+        let line_breaks = &soft_breaks[lo..hi];
+        if !line_breaks.is_empty() {
+            // Run the renderer's full pipeline per segment so segments
+            // that still need word-wrap (long paragraph text after a
+            // narrow soft-break wrap) are counted at their true row
+            // count, not assumed to be one row each.  Skips the cache
+            // (the count is already cheap and the soft-break-aware
+            // helper isn't keyed for the per-line cache).
+            let effective_width = wrap_config
+                .first_line_width
+                .saturating_add(wrap_config.gutter_width)
+                .max(2);
+            return crate::view::line_wrap_cache::count_visual_rows_for_text_with_soft_breaks(
+                line_text,
+                line_start,
+                line_breaks,
+                effective_width,
+                wrap_config.gutter_width,
+                wrap_config.hanging_indent,
+            ) as usize;
+        }
+        {
             // Run the renderer's wrap function on a single-Text-token view of
             // the line.  This matches `apply_wrapping_transform`'s word-
             // boundary semantics and uses the same effective width the
@@ -359,7 +374,7 @@ impl Viewport {
     ///
     /// `soft_breaks` is a sorted slice of plugin-injected break byte positions.
     /// Pass an empty slice when there are no plugin breaks (raw mode, etc.).
-    pub fn scroll_up(&mut self, buffer: &mut Buffer, soft_breaks: &[usize], lines: usize) {
+    pub fn scroll_up(&mut self, buffer: &mut Buffer, soft_breaks: &[(usize, u16)], lines: usize) {
         if self.line_wrap_enabled {
             self.scroll_up_visual(buffer, soft_breaks, lines);
         } else {
@@ -379,7 +394,7 @@ impl Viewport {
     ///
     /// `soft_breaks` is a sorted slice of plugin-injected break byte positions.
     /// Pass an empty slice when there are no plugin breaks (raw mode, etc.).
-    pub fn scroll_down(&mut self, buffer: &mut Buffer, soft_breaks: &[usize], lines: usize) {
+    pub fn scroll_down(&mut self, buffer: &mut Buffer, soft_breaks: &[(usize, u16)], lines: usize) {
         if self.line_wrap_enabled {
             self.scroll_down_visual(buffer, soft_breaks, lines);
         } else {
@@ -396,7 +411,7 @@ impl Viewport {
 
     /// Scroll up by N visual rows (for line-wrapped content)
     /// This counts wrapped segments, not logical lines
-    fn scroll_up_visual(&mut self, buffer: &mut Buffer, soft_breaks: &[usize], visual_rows: usize) {
+    fn scroll_up_visual(&mut self, buffer: &mut Buffer, soft_breaks: &[(usize, u16)], visual_rows: usize) {
         if visual_rows == 0 {
             return;
         }
@@ -476,7 +491,7 @@ impl Viewport {
     fn scroll_down_visual(
         &mut self,
         buffer: &mut Buffer,
-        soft_breaks: &[usize],
+        soft_breaks: &[(usize, u16)],
         visual_rows: usize,
     ) {
         if visual_rows == 0 {
@@ -595,7 +610,7 @@ impl Viewport {
     fn apply_visual_scroll_limit(
         &mut self,
         buffer: &mut Buffer,
-        soft_breaks: &[usize],
+        soft_breaks: &[(usize, u16)],
         wrap_config: &WrapConfig,
     ) {
         let viewport_height = self.visible_line_count();
@@ -662,7 +677,7 @@ impl Viewport {
     fn find_max_visual_scroll_position(
         &mut self,
         buffer: &mut Buffer,
-        soft_breaks: &[usize],
+        soft_breaks: &[(usize, u16)],
         wrap_config: &WrapConfig,
         viewport_height: usize,
     ) -> (usize, usize) {
@@ -1236,7 +1251,7 @@ impl Viewport {
     fn set_top_byte_with_limit(
         &mut self,
         buffer: &mut Buffer,
-        soft_breaks: &[usize],
+        soft_breaks: &[(usize, u16)],
         proposed_top_byte: usize,
     ) {
         tracing::trace!(

@@ -137,6 +137,12 @@ pub struct VirtualTextManager {
     texts: HashMap<VirtualTextId, VirtualText>,
     /// Next ID to assign
     next_id: u64,
+    /// Monotonic version, bumped on every mutation.  Folded into
+    /// `pipeline_inputs_version` so that adding / removing virtual
+    /// lines (e.g. markdown_compose's table borders) invalidates
+    /// `LineWrapCache` / `VisualRowIndex` entries — same mechanism
+    /// `SoftBreakManager` and `ConcealManager` use.
+    version: u32,
 }
 
 impl VirtualTextManager {
@@ -145,7 +151,21 @@ impl VirtualTextManager {
         Self {
             texts: HashMap::new(),
             next_id: 0,
+            version: 0,
         }
+    }
+
+    /// Monotonic version. Increments on every mutation to virtual text
+    /// state. Used by `pipeline_inputs_version` to invalidate scroll-math
+    /// caches keyed off `EditorState`.
+    #[inline]
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    #[inline]
+    fn bump_version(&mut self) {
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Add a virtual text entry
@@ -190,6 +210,7 @@ impl VirtualTextManager {
                 namespace: None,
             },
         );
+        self.bump_version();
 
         id
     }
@@ -237,6 +258,7 @@ impl VirtualTextManager {
                 namespace: None,
             },
         );
+        self.bump_version();
 
         id
     }
@@ -274,6 +296,7 @@ impl VirtualTextManager {
                 namespace: None,
             },
         );
+        self.bump_version();
 
         id
     }
@@ -401,6 +424,7 @@ impl VirtualTextManager {
                 namespace: Some(namespace),
             },
         );
+        self.bump_version();
 
         id
     }
@@ -427,6 +451,9 @@ impl VirtualTextManager {
                 removed = true;
             }
         }
+        if removed {
+            self.bump_version();
+        }
         removed
     }
 
@@ -447,9 +474,13 @@ impl VirtualTextManager {
             .collect();
 
         // Delete markers and remove entries
+        let removed = !markers_to_delete.is_empty();
         for (id, marker_id) in markers_to_delete {
             marker_list.delete(marker_id);
             self.texts.remove(&id);
+        }
+        if removed {
+            self.bump_version();
         }
     }
 
@@ -457,6 +488,7 @@ impl VirtualTextManager {
     pub fn remove(&mut self, marker_list: &mut MarkerList, id: VirtualTextId) -> bool {
         if let Some(vtext) = self.texts.remove(&id) {
             marker_list.delete(vtext.marker_id);
+            self.bump_version();
             true
         } else {
             false
@@ -465,10 +497,14 @@ impl VirtualTextManager {
 
     /// Clear all virtual text entries
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
+        let was_non_empty = !self.texts.is_empty();
         for vtext in self.texts.values() {
             marker_list.delete(vtext.marker_id);
         }
         self.texts.clear();
+        if was_non_empty {
+            self.bump_version();
+        }
     }
 
     /// Remove all virtual text entries whose marker position lies within the
@@ -510,6 +546,9 @@ impl VirtualTextManager {
             if let Some(vtext) = self.texts.remove(&id) {
                 marker_list.delete(vtext.marker_id);
             }
+        }
+        if count > 0 {
+            self.bump_version();
         }
         count
     }
@@ -607,10 +646,14 @@ impl VirtualTextManager {
             })
             .collect();
 
+        let removed = !to_remove.is_empty();
         for id in to_remove {
             if let Some(vtext) = self.texts.remove(&id) {
                 marker_list.delete(vtext.marker_id);
             }
+        }
+        if removed {
+            self.bump_version();
         }
     }
 

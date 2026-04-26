@@ -84,6 +84,7 @@ pub(super) fn scrollbar_visual_row_counts(
         state.buffer.version(),
         state.soft_breaks.version(),
         state.conceals.version(),
+        state.virtual_texts.version(),
     );
 
     let key = VisualRowIndexKey {

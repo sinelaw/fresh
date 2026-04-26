@@ -216,6 +216,7 @@ pub(super) fn build_view_data(
             state.buffer.version(),
             state.soft_breaks.version(),
             state.conceals.version(),
+            state.virtual_texts.version(),
         );
         let make_key = |line_start: usize, mode: CacheViewMode| LineWrapKey {
             pipeline_inputs_version: pipeline_inputs_ver,

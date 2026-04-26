@@ -293,6 +293,7 @@ impl Editor {
                         state.buffer.version(),
                         state.soft_breaks.version(),
                         state.conceals.version(),
+                        state.virtual_texts.version(),
                     );
                     super::scrollbar_math::scrollbar_drag_relative_visual(
                         state,
@@ -480,6 +481,7 @@ impl Editor {
                         state.buffer.version(),
                         state.soft_breaks.version(),
                         state.conceals.version(),
+                        state.virtual_texts.version(),
                     );
                     super::scrollbar_math::scrollbar_jump_visual(
                         state,

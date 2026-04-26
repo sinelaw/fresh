@@ -37,7 +37,8 @@
 
 use crate::state::EditorState;
 use crate::view::line_wrap_cache::{
-    count_visual_rows_for_text, pipeline_inputs_version, CacheViewMode, LineWrapKey, WrapGeometry,
+    count_visual_rows_for_text, count_visual_rows_for_text_with_soft_breaks,
+    pipeline_inputs_version, CacheViewMode, LineWrapKey, WrapGeometry,
 };
 
 /// All inputs that determine the per-line visual row counts a buffer
@@ -218,6 +219,37 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
     let gutter_width = key.gutter_width as usize;
     let hanging_indent = key.hanging_indent;
 
+    // Pre-fetch the buffer-wide soft breaks and virtual lines once,
+    // then per-line we slice into them with `partition_point`.  Each
+    // slice walk is O(N_breaks_in_line) which is tiny vs the per-line
+    // wrap work.  Without these the index undercounts:
+    //   * soft breaks: the renderer wraps each segment between breaks
+    //     independently and can produce more rows than the segments'
+    //     count + 1 (each segment may itself need word-wrap).
+    //   * virtual lines: plugin-injected `LineAbove` / `LineBelow`
+    //     entries (e.g. markdown_compose's table borders) draw real
+    //     rows that scrollbar / PageDown / mouse-wheel `max_scroll_row`
+    //     must include or the user can't reach the buffer's tail.
+    let soft_break_pairs: Vec<(usize, u16)> = if state.soft_breaks.is_empty() {
+        Vec::new()
+    } else {
+        state
+            .soft_breaks
+            .query_viewport(0, buffer_len + 1, &state.marker_list)
+    };
+    let virtual_line_positions: Vec<usize> = if state.virtual_texts.is_empty() {
+        Vec::new()
+    } else {
+        let mut v: Vec<usize> = state
+            .virtual_texts
+            .query_lines_in_range(&state.marker_list, 0, buffer_len + 1)
+            .into_iter()
+            .map(|(pos, _)| pos)
+            .collect();
+        v.sort_unstable();
+        v
+    };
+
     // Build into local Vecs first so we don't fight the borrow checker
     // when re-borrowing `state` per line.
     let mut prefix_sums: Vec<u32> = Vec::with_capacity(line_count + 1);
@@ -230,12 +262,26 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
             .buffer
             .line_start_offset(line_idx)
             .unwrap_or(buffer_len);
+        let line_end = if line_idx + 1 < line_count {
+            state
+                .buffer
+                .line_start_offset(line_idx + 1)
+                .unwrap_or(buffer_len)
+        } else {
+            buffer_len
+        };
         line_starts.push(line_start);
 
+        let line_breaks = slice_in_range(&soft_break_pairs, line_start, line_end);
+        let virtual_rows = count_in_range(&virtual_line_positions, line_start, line_end) as u32;
+
         let line_key = key.line_key(line_start);
-        let rows: u32 = if let Some(cached) = state.line_wrap_cache.get(&line_key) {
+        let wrap_rows: u32 = if let Some(cached) = state.line_wrap_cache.get(&line_key) {
             // Renderer (or a previous full-fidelity miss handler) put
             // a real layout here — read its row count for free.
+            // The cached layout already reflects soft breaks (the
+            // renderer applies them before wrapping); virtual lines
+            // are added separately below.
             (cached.len() as u32).max(1)
         } else if !key.line_wrap_enabled {
             // Without wrap, every logical line is exactly one visual row.
@@ -252,16 +298,27 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
             // full-fidelity layout.
             let Some(bytes) = state.buffer.get_line(line_idx) else {
                 // Best-effort: missing line still counts as 1 row.
-                running = running.saturating_add(1);
+                running = running.saturating_add(1 + virtual_rows);
                 prefix_sums.push(running);
                 continue;
             };
             let line_content = String::from_utf8_lossy(&bytes);
             let trimmed = line_content.trim_end_matches('\n').trim_end_matches('\r');
-            count_visual_rows_for_text(trimmed, effective_width, gutter_width, hanging_indent)
+            if line_breaks.is_empty() {
+                count_visual_rows_for_text(trimmed, effective_width, gutter_width, hanging_indent)
+            } else {
+                count_visual_rows_for_text_with_soft_breaks(
+                    trimmed,
+                    line_start,
+                    line_breaks,
+                    effective_width,
+                    gutter_width,
+                    hanging_indent,
+                )
+            }
         };
 
-        running = running.saturating_add(rows);
+        running = running.saturating_add(wrap_rows.saturating_add(virtual_rows));
         prefix_sums.push(running);
     }
     line_starts.push(buffer_len);
@@ -273,6 +330,21 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
     };
 }
 
+/// `partition_point`-based slice for a sorted `(byte_position, indent)`
+/// list, returning the entries with `byte_position` in `[start, end)`.
+fn slice_in_range(pairs: &[(usize, u16)], start: usize, end: usize) -> &[(usize, u16)] {
+    let lo = pairs.partition_point(|(p, _)| *p < start);
+    let hi = pairs.partition_point(|(p, _)| *p < end);
+    &pairs[lo..hi]
+}
+
+/// Count of entries in a sorted `usize` list with `value` in `[start, end)`.
+fn count_in_range(positions: &[usize], start: usize, end: usize) -> usize {
+    let lo = positions.partition_point(|p| *p < start);
+    let hi = positions.partition_point(|p| *p < end);
+    hi - lo
+}
+
 /// Convenience: build the index for `state` from a `WrapGeometry`,
 /// using the state's current pipeline-input versions.
 pub fn ensure_built_from_geom(state: &mut EditorState, geom: &WrapGeometry) {
@@ -281,6 +353,7 @@ pub fn ensure_built_from_geom(state: &mut EditorState, geom: &WrapGeometry) {
             state.buffer.version(),
             state.soft_breaks.version(),
             state.conceals.version(),
+            state.virtual_texts.version(),
         ),
         view_mode: geom.view_mode,
         effective_width: geom.effective_width as u32,

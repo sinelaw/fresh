@@ -110,6 +110,7 @@ pub mod lsp_unified_code_actions;
 pub mod macros;
 pub mod margin;
 pub mod markdown_compose;
+pub mod markdown_compose_scroll_reach;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;

@@ -92,6 +92,7 @@ fn current_keys(harness: &EditorTestHarness, line_start: usize) -> (LineWrapKey,
             state.buffer.version(),
             state.soft_breaks.version(),
             state.conceals.version(),
+            state.virtual_texts.version(),
         )
     };
     let compose = LineWrapKey {
