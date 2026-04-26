@@ -128,6 +128,8 @@
   "action.play_last_macro": "Play last recorded macro",
   "action.play_macro": "Play macro '%{key}'",
   "action.plugin_action": "Plugin action: %{name}",
+  "action.completion_accept": "Accept completion",
+  "action.completion_dismiss": "Dismiss completion popup",
   "action.popup_cancel": "Popup cancel",
   "action.popup_confirm": "Popup confirm",
   "action.popup_page_down": "Popup page down",

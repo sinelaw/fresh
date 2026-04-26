@@ -131,6 +131,8 @@
   "action.play_last_macro": "播放上次录制的宏",
   "action.play_macro": "播放宏 '%{key}'",
   "action.plugin_action": "插件操作：%{name}",
+  "action.completion_accept": "接受补全",
+  "action.completion_dismiss": "关闭补全弹窗",
   "action.popup_cancel": "弹窗取消",
   "action.popup_confirm": "弹窗确认",
   "action.popup_page_down": "弹窗向下翻页",

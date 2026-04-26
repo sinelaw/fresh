@@ -131,6 +131,8 @@
   "action.play_last_macro": "เล่นมาโครที่บันทึกไว้ล่าสุด",
   "action.play_macro": "เล่นมาโคร '%{key}'",
   "action.plugin_action": "การดำเนินการปลั๊กอิน: %{name}",
+  "action.completion_accept": "ยอมรับการเติมคำ",
+  "action.completion_dismiss": "ปิดป๊อปอัพการเติมคำ",
   "action.popup_cancel": "ยกเลิกป๊อปอัพ",
   "action.popup_confirm": "ยืนยันป๊อปอัพ",
   "action.popup_page_down": "ป๊อปอัพลงหนึ่งหน้า",

@@ -131,6 +131,8 @@
   "action.play_last_macro": "Přehrát poslední nahrané makro",
   "action.play_macro": "Přehrát makro '%{key}'",
   "action.plugin_action": "Akce pluginu: %{name}",
+  "action.completion_accept": "Přijmout dokončení",
+  "action.completion_dismiss": "Zavřít vyskakovací okno dokončení",
   "action.popup_cancel": "Zrušit vyskakovací okno",
   "action.popup_confirm": "Potvrdit vyskakovací okno",
   "action.popup_page_down": "Vyskakovací okno stránka dolů",

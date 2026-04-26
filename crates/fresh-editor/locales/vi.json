@@ -131,6 +131,8 @@
   "action.play_last_macro": "Phát macro đã ghi gần nhất",
   "action.play_macro": "Phát macro '%{key}'",
   "action.plugin_action": "Hành động plugin: %{name}",
+  "action.completion_accept": "Chấp nhận gợi ý hoàn thành",
+  "action.completion_dismiss": "Bỏ qua popup gợi ý hoàn thành",
   "action.popup_cancel": "Hủy popup",
   "action.popup_confirm": "Xác nhận popup",
   "action.popup_page_down": "Popup trang xuống",

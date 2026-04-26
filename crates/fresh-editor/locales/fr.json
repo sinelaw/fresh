@@ -131,6 +131,8 @@
   "action.play_last_macro": "Lire la dernière macro enregistrée",
   "action.play_macro": "Lire la macro '%{key}'",
   "action.plugin_action": "Action du plugin : %{name}",
+  "action.completion_accept": "Accepter la complétion",
+  "action.completion_dismiss": "Rejeter la fenêtre de complétion",
   "action.popup_cancel": "Annuler la fenêtre contextuelle",
   "action.popup_confirm": "Confirmer la fenêtre contextuelle",
   "action.popup_page_down": "Fenêtre contextuelle : page suivante",

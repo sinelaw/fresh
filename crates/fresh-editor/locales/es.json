@@ -131,6 +131,8 @@
   "action.play_last_macro": "Reproducir última macro grabada",
   "action.play_macro": "Reproducir macro '%{key}'",
   "action.plugin_action": "Acción de plugin: %{name}",
+  "action.completion_accept": "Aceptar completado",
+  "action.completion_dismiss": "Descartar popup de completado",
   "action.popup_cancel": "Cancelar popup",
   "action.popup_confirm": "Confirmar popup",
   "action.popup_page_down": "Popup página abajo",

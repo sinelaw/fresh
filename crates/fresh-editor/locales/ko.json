@@ -131,6 +131,8 @@
   "action.play_last_macro": "마지막으로 녹화한 매크로 재생",
   "action.play_macro": "매크로 '%{key}' 재생",
   "action.plugin_action": "플러그인 동작: %{name}",
+  "action.completion_accept": "자동 완성 수락",
+  "action.completion_dismiss": "자동 완성 팝업 해제",
   "action.popup_cancel": "팝업 취소",
   "action.popup_confirm": "팝업 확인",
   "action.popup_page_down": "팝업 페이지 아래로",

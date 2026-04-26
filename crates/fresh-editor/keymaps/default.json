@@ -1318,6 +1318,22 @@
       "when": "popup"
     },
     {
+      "comment": "Completion popup context - Tab accepts the selected completion",
+      "key": "Tab",
+      "modifiers": [],
+      "action": "completion_accept",
+      "args": {},
+      "when": "completion"
+    },
+    {
+      "comment": "Completion popup context - Esc dismisses the popup",
+      "key": "Escape",
+      "modifiers": [],
+      "action": "completion_dismiss",
+      "args": {},
+      "when": "completion"
+    },
+    {
       "comment": "Settings context - Navigation and actions",
       "key": "Escape",
       "modifiers": [],

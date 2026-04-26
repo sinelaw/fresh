@@ -131,6 +131,8 @@
   "action.play_last_macro": "Воспроизвести последний записанный макрос",
   "action.play_macro": "Воспроизвести макрос '%{key}'",
   "action.plugin_action": "Действие плагина: %{name}",
+  "action.completion_accept": "Принять автодополнение",
+  "action.completion_dismiss": "Закрыть окно автодополнения",
   "action.popup_cancel": "Отмена всплывающего окна",
   "action.popup_confirm": "Подтвердить всплывающее окно",
   "action.popup_page_down": "Всплывающее окно: страница вниз",

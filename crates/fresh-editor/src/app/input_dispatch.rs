@@ -179,6 +179,18 @@ impl Editor {
         // `popups_capture_keys()` predicate so the two paths cannot drift —
         // one source of truth for "is the popup eligible to eat this key?".
         if self.popups_capture_keys() {
+            // Completion popups consult the keybinding resolver in the
+            // `Completion` context first, so accept/dismiss can be remapped
+            // via the keybinding editor. Falls through to the popup's own
+            // handler for everything else (type-to-filter, navigation, etc.).
+            if let Some(action) = self.resolve_completion_popup_action(event) {
+                self.process_deferred_actions(ctx);
+                if let Err(e) = self.handle_action(action) {
+                    tracing::warn!("Completion popup action failed: {}", e);
+                }
+                return Some(InputResult::Consumed);
+            }
+
             // Editor-level (global) popups take precedence over buffer popups
             // so that plugin notifications stay focused even when the active
             // buffer owns its own popup stack.

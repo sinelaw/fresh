@@ -20,6 +20,41 @@ impl Editor {
         !matches!(self.key_context, KeyContext::FileExplorer)
     }
 
+    /// Resolve a key event against `KeyContext::Completion` when the topmost
+    /// visible popup is a completion popup. Only `CompletionAccept` and
+    /// `CompletionDismiss` are recognised here — every other key falls
+    /// through to the popup's own handler so type-to-filter, navigation, and
+    /// the "any other key dismisses + passthrough" behaviours stay intact.
+    pub(crate) fn resolve_completion_popup_action(
+        &self,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::keybindings::Action> {
+        use crate::input::keybindings::{Action, KeyContext};
+        use crate::view::popup::PopupKind;
+
+        let topmost_kind = if self.global_popups.is_visible() {
+            self.global_popups.top().map(|p| p.kind)
+        } else if self.active_state().popups.is_visible() {
+            self.active_state().popups.top().map(|p| p.kind)
+        } else {
+            None
+        };
+
+        if topmost_kind != Some(PopupKind::Completion) {
+            return None;
+        }
+
+        match self
+            .keybindings
+            .read()
+            .unwrap()
+            .resolve_in_context_only(event, KeyContext::Completion)
+        {
+            Some(action @ (Action::CompletionAccept | Action::CompletionDismiss)) => Some(action),
+            _ => None,
+        }
+    }
+
     /// Determine the current keybinding context based on UI state
     pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
         use crate::input::keybindings::KeyContext;
@@ -1511,6 +1546,15 @@ impl Editor {
                 }
             }
             Action::PopupCancel => {
+                self.handle_popup_cancel();
+            }
+            Action::CompletionAccept => {
+                use super::popup_actions::PopupConfirmResult;
+                if let PopupConfirmResult::EarlyReturn = self.handle_popup_confirm() {
+                    return Ok(());
+                }
+            }
+            Action::CompletionDismiss => {
                 self.handle_popup_cancel();
             }
             Action::InsertChar(c) => {

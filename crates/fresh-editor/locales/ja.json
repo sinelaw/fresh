@@ -131,6 +131,8 @@
   "action.play_last_macro": "最後に記録したマクロを再生",
   "action.play_macro": "マクロ '%{key}' を再生",
   "action.plugin_action": "プラグインアクション: %{name}",
+  "action.completion_accept": "補完を確定",
+  "action.completion_dismiss": "補完ポップアップを閉じる",
   "action.popup_cancel": "ポップアップをキャンセル",
   "action.popup_confirm": "ポップアップを確定",
   "action.popup_page_down": "ポップアップをページダウン",

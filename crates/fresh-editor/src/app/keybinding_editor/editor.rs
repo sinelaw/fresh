@@ -752,6 +752,7 @@ impl KeybindingEditor {
             ContextFilter::Specific("normal".to_string()),
             ContextFilter::Specific("prompt".to_string()),
             ContextFilter::Specific("popup".to_string()),
+            ContextFilter::Specific("completion".to_string()),
             ContextFilter::Specific("file_explorer".to_string()),
             ContextFilter::Specific("menu".to_string()),
             ContextFilter::Specific("terminal".to_string()),

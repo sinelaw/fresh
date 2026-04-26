@@ -131,6 +131,8 @@
   "action.play_last_macro": "Zuletzt aufgezeichnetes Makro abspielen",
   "action.play_macro": "Makro '%{key}' abspielen",
   "action.plugin_action": "Plugin-Aktion: %{name}",
+  "action.completion_accept": "Vervollständigung annehmen",
+  "action.completion_dismiss": "Vervollständigungs-Popup verwerfen",
   "action.popup_cancel": "Popup abbrechen",
   "action.popup_confirm": "Popup bestätigen",
   "action.popup_page_down": "Popup Seite nach unten",

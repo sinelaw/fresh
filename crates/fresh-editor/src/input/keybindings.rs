@@ -227,6 +227,10 @@ pub enum KeyContext {
     Prompt,
     /// Popup window is visible
     Popup,
+    /// Completion popup is visible (LSP or non-LSP). Takes precedence over `Popup`
+    /// for `PopupKind::Completion` so accept/dismiss can be bound independently
+    /// of the generic popup keys (Enter/Esc/Up/Down/PageUp/PageDown).
+    Completion,
     /// File explorer has focus
     FileExplorer,
     /// Menu bar is active
@@ -267,6 +271,7 @@ impl KeyContext {
             "global" => Self::Global,
             "prompt" => Self::Prompt,
             "popup" => Self::Popup,
+            "completion" => Self::Completion,
             "fileExplorer" | "file_explorer" => Self::FileExplorer,
             "normal" => Self::Normal,
             "menu" => Self::Menu,
@@ -284,6 +289,7 @@ impl KeyContext {
             Self::Normal => "normal".to_string(),
             Self::Prompt => "prompt".to_string(),
             Self::Popup => "popup".to_string(),
+            Self::Completion => "completion".to_string(),
             Self::FileExplorer => "fileExplorer".to_string(),
             Self::Menu => "menu".to_string(),
             Self::Terminal => "terminal".to_string(),
@@ -543,6 +549,10 @@ pub enum Action {
     PopupPageDown,
     PopupConfirm,
     PopupCancel,
+
+    // Completion popup actions (override generic Popup keys for PopupKind::Completion)
+    CompletionAccept,
+    CompletionDismiss,
 
     // File explorer operations
     ToggleFileExplorer,
@@ -980,6 +990,9 @@ impl Action {
             "popup_page_down" => PopupPageDown,
             "popup_confirm" => PopupConfirm,
             "popup_cancel" => PopupCancel,
+
+            "completion_accept" => CompletionAccept,
+            "completion_dismiss" => CompletionDismiss,
 
             "toggle_file_explorer" => ToggleFileExplorer,
             "toggle_menu_bar" => ToggleMenuBar,
@@ -2264,6 +2277,8 @@ impl KeybindingResolver {
             Action::PopupPageDown => t!("action.popup_page_down"),
             Action::PopupConfirm => t!("action.popup_confirm"),
             Action::PopupCancel => t!("action.popup_cancel"),
+            Action::CompletionAccept => t!("action.completion_accept"),
+            Action::CompletionDismiss => t!("action.completion_dismiss"),
             Action::ToggleFileExplorer => t!("action.toggle_file_explorer"),
             Action::ToggleMenuBar => t!("action.toggle_menu_bar"),
             Action::ToggleTabBar => t!("action.toggle_tab_bar"),

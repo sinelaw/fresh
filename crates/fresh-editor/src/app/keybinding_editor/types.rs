@@ -121,6 +121,7 @@ impl EditBindingState {
             "normal".to_string(),
             "prompt".to_string(),
             "popup".to_string(),
+            "completion".to_string(),
             "file_explorer".to_string(),
             "menu".to_string(),
             "terminal".to_string(),

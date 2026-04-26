@@ -1,9 +1,11 @@
 //! Input handling for completion popups.
 //!
-//! Completion popups support:
+//! Accept and dismiss are resolved upstream against `KeyContext::Completion`
+//! (default: Tab → `completion_accept`, Esc → `completion_dismiss`). The keys
+//! handled here cover the behaviours that do *not* go through the keybinding
+//! system:
 //! - Type-to-filter: typing characters filters the completion list
-//! - Tab: accept the selected completion
-//! - Enter: dismiss the popup and insert newline
+//! - Enter: dismiss the popup and insert newline (passthrough)
 //! - Ctrl+Space: toggle (dismiss) the popup
 //! - Backspace: remove last filter character
 //! - Arrow keys: navigate the list
@@ -19,7 +21,11 @@ pub fn handle_completion_input(
     popup: Option<&mut Popup>,
     ctx: &mut InputContext,
 ) -> InputResult {
-    // Try shared handling first (Esc, PageUp/Down, etc.)
+    // Accept (default: Tab) and dismiss (default: Esc) are resolved upstream
+    // against `KeyContext::Completion` before this handler runs, so we only
+    // see keys that the resolver did not claim.
+
+    // Try shared handling first (Esc fallback, PageUp/Down, etc.)
     match try_handle_shared(event, popup, ctx) {
         SharedHandleResult::Handled(result) => return result,
         SharedHandleResult::NotHandled => {}
@@ -39,12 +45,6 @@ pub fn handle_completion_input(
         KeyCode::Enter => {
             ctx.defer(DeferredAction::ClosePopup);
             InputResult::Ignored
-        }
-
-        // Tab accepts the completion
-        KeyCode::Tab if event.modifiers.is_empty() => {
-            ctx.defer(DeferredAction::ConfirmPopup);
-            InputResult::Consumed
         }
 
         // Arrow navigation (Up/Down navigate the list)
@@ -104,12 +104,6 @@ pub fn handle_completion_input_with_popup(
         KeyCode::Enter => {
             ctx.defer(DeferredAction::ClosePopup);
             InputResult::Ignored
-        }
-
-        // Tab accepts the completion
-        KeyCode::Tab if event.modifiers.is_empty() => {
-            ctx.defer(DeferredAction::ConfirmPopup);
-            InputResult::Consumed
         }
 
         // Arrow navigation (Up/Down navigate the list)
