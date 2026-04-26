@@ -700,3 +700,193 @@ fn compose_width80_long_lines_scrollbar_drag_reaches_marker() {
         Mechanism::ScrollbarDrag,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Wide-viewport + composeWidth=80 reproduction.
+//
+// The previous sweep tops out at viewport width 140, where mouse wheel
+// passes — the buffer is small enough that `apply_visual_scroll_limit`'s
+// per-step re-clamp can walk past the under-counted `max_scroll_row`.
+// On a real markdown document opened at viewport 200 with `Set Page
+// Width 80`, mouse wheel and scrollbar drag both stop short of the
+// buffer's tail (manually verified on
+// `docs/internal/DEVCONTAINER_SPEC_GAP_PLAN.md`).
+//
+// Root cause (see analysis on this branch): when the viewport is
+// substantially wider than the compose-clamped render area, the scroll
+// math computes per-line visual row counts at `viewport.width` while
+// the renderer wraps at `compose_width`.  Long paragraphs that take
+// 3–4 visual rows in the renderer get counted as 1 row by the scroll
+// math, and the resulting `max_scroll_row` undershoots by enough that
+// even a per-step re-clamp can't catch up on a large buffer.
+//
+// These reproducers exercise that path explicitly:
+//
+// * a "tall" buffer (200 paragraphs that wrap heavily at 80 cols)
+// * viewports 240 / 320 (≫ compose_width 80) so each paragraph is
+//   1–2 rows in the index but 4 rows in the renderer
+// * mouse wheel + scrollbar drag — the two paths the user reported.
+//
+// **Scrollbar-drag** fails deterministically here: a single mouse-up
+// event sets `top_byte` to the under-counted target row and never
+// re-clamps.
+//
+// **Mouse wheel** passes in this test even though it fails in
+// manual / interactive use on the same kind of buffer.  Reason: the
+// harness renders after every wheel event, so `Viewport::scroll_*`'s
+// per-step `apply_visual_scroll_limit` re-clamp uses the renderer's
+// just-updated row counts and walks one step past the wrong
+// `max_scroll_row` on each call, eventually reaching the tail.  In
+// real interactive use the renderer can't keep up with rapid wheel
+// events and the user sees the viewport getting stuck.  The
+// mouse-wheel cases here therefore serve as **guardrails** — they
+// must keep passing through the fix — rather than as failing
+// reproducers.  The scrollbar-drag failures are the genuine
+// regressions the fix needs to turn green.
+// ---------------------------------------------------------------------------
+
+/// Markdown document with many wrappable paragraphs.  At compose width
+/// 80 each paragraph wraps to several visual rows.  At viewport widths
+/// far above 80 (e.g. 200) the scroll math undercounts those rows;
+/// without the under-count fix the marker on the final paragraph
+/// becomes unreachable.
+fn build_tall_long_lines_buffer() -> String {
+    let mut s = String::from("# Tall Long Lines Test\n\n");
+    let para: String = (0..40)
+        .map(|i| format!("word{:02}", i % 100))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // 200 paragraphs ≈ 800+ visual rows at 80-col wrap.  Index counts
+    // ~200 rows at 200-col wrap, so the under-count gap is ~600 rows.
+    // Empirically a smaller buffer (60 paragraphs) lets mouse wheel's
+    // per-step `apply_visual_scroll_limit` walk past the wrong
+    // `max_scroll_row` because the gap is small enough; at this size
+    // the gap defeats the per-step recovery, matching the manual
+    // repro on `docs/internal/DEVCONTAINER_SPEC_GAP_PLAN.md`.
+    for i in 0..200 {
+        s.push_str(&format!("Para {i}: {para}\n\n"));
+    }
+    s.push_str(&format!("Tail: {para} {LAST_LINE_MARKER}\n"));
+    s
+}
+
+/// Same shape as `build_table_at_end_buffer` but with enough fillers
+/// above the table that the scroll math's row under-count exceeds what
+/// `apply_visual_scroll_limit` can walk through per step.
+fn build_tall_table_at_end_buffer() -> String {
+    let mut s = String::from("# Tall Table at End Test\n\n");
+    s.push_str("Some intro text to push the table off-screen.\n\n");
+    let para: String = (0..40)
+        .map(|i| format!("word{:02}", i % 100))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // See `build_tall_long_lines_buffer` for why this is 200 — at
+    // smaller sizes mouse wheel's per-step re-clamp masks the
+    // under-count.
+    for i in 0..200 {
+        s.push_str(&format!("Para {i}: {para}\n\n"));
+    }
+    s.push_str("| Col A | Col B | Col C |\n");
+    s.push_str("|-------|-------|-------|\n");
+    for i in 0..6 {
+        s.push_str(&format!("| row{i} a | row{i} b | row{i} c |\n"));
+    }
+    s.push_str(&format!("| last a | last b | {LAST_LINE_MARKER} |\n"));
+    s
+}
+
+/// Drive the wide-viewport sweep at `cw=Some(80)`.  Two widths well
+/// above 80 so the wrap-geometry mismatch is unambiguous; height stays
+/// at the same 22 the rest of the file uses for parity with the
+/// existing sweep.
+fn wide_viewport_sweep(
+    label: &'static str,
+    content: &str,
+    mechanism: Mechanism,
+) {
+    init_tracing_from_env();
+    let widths: [u16; 2] = [240, 320];
+    let heights: [u16; 1] = [22];
+    drive_width_sweep(label, &widths, &heights, |w, h| {
+        let (mut harness, _temp, _md_path) = match setup_compose_harness(w, h, Some(80), content) {
+            Ok(t) => t,
+            Err(e) => return Outcome::SetupSkipped(format!("setup failed: {e}")),
+        };
+        if let Err(e) = jump_to_top(&mut harness) {
+            return Outcome::SetupSkipped(format!("jump_to_top failed: {e}"));
+        }
+        if marker_visible(&harness) {
+            return Outcome::SetupSkipped(format!(
+                "marker already visible at top — buffer/viewport too small.\nContent:\n{}",
+                content_area_snapshot(&harness),
+            ));
+        }
+        let drive = match mechanism {
+            // Bigger budget than the standard sweep: this fixture has
+            // ~800 visual rows at compose width 80, so the wheel
+            // needs many more ticks to traverse the buffer than the
+            // existing 200-tick cap.  Cap is generous so a *correct*
+            // implementation easily reaches the tail; the bug we're
+            // catching is the wheel getting stuck mid-buffer regardless
+            // of how many ticks we send.
+            Mechanism::MouseWheel => drive_mouse_wheel(&mut harness, w, 4000),
+            Mechanism::ScrollbarDrag => drive_scrollbar_drag(&mut harness, w),
+            // Arrow / PageDown not part of the user-reported bug here;
+            // covered by the existing sweep.
+            other => return Outcome::SetupSkipped(format!(
+                "wide_viewport_sweep doesn't run mechanism {:?}",
+                other.label(),
+            )),
+        };
+        if let Err(e) = drive {
+            return Outcome::SetupSkipped(format!("driver failed: {e}"));
+        }
+        if marker_visible(&harness) {
+            Outcome::Ok
+        } else {
+            Outcome::Failure(format!(
+                "[wide-viewport/cw=80/{mech}] tail marker {marker:?} not visible after scroll.\n\
+                 Content area:\n{snap}",
+                mech = mechanism.label(),
+                marker = LAST_LINE_MARKER,
+                snap = content_area_snapshot(&harness),
+            ))
+        }
+    });
+}
+
+#[test]
+fn compose_cw80_wide_viewport_long_lines_mouse_wheel_reaches_marker() {
+    wide_viewport_sweep(
+        "cw80-wide/long-lines/mouse-wheel",
+        &build_tall_long_lines_buffer(),
+        Mechanism::MouseWheel,
+    );
+}
+
+#[test]
+fn compose_cw80_wide_viewport_long_lines_scrollbar_drag_reaches_marker() {
+    wide_viewport_sweep(
+        "cw80-wide/long-lines/scrollbar-drag",
+        &build_tall_long_lines_buffer(),
+        Mechanism::ScrollbarDrag,
+    );
+}
+
+#[test]
+fn compose_cw80_wide_viewport_table_mouse_wheel_reaches_marker() {
+    wide_viewport_sweep(
+        "cw80-wide/table/mouse-wheel",
+        &build_tall_table_at_end_buffer(),
+        Mechanism::MouseWheel,
+    );
+}
+
+#[test]
+fn compose_cw80_wide_viewport_table_scrollbar_drag_reaches_marker() {
+    wide_viewport_sweep(
+        "cw80-wide/table/scrollbar-drag",
+        &build_tall_table_at_end_buffer(),
+        Mechanism::ScrollbarDrag,
+    );
+}
