@@ -411,7 +411,12 @@ impl Viewport {
 
     /// Scroll up by N visual rows (for line-wrapped content)
     /// This counts wrapped segments, not logical lines
-    fn scroll_up_visual(&mut self, buffer: &mut Buffer, soft_breaks: &[(usize, u16)], visual_rows: usize) {
+    fn scroll_up_visual(
+        &mut self,
+        buffer: &mut Buffer,
+        soft_breaks: &[(usize, u16)],
+        visual_rows: usize,
+    ) {
         if visual_rows == 0 {
             return;
         }

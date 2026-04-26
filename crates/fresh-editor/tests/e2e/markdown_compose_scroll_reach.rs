@@ -82,9 +82,7 @@ fn drive_width_sweep(
         for &width in widths {
             match scenario(width, height) {
                 Outcome::Ok => ok_count += 1,
-                Outcome::SetupSkipped(msg) => {
-                    skipped.push(format!("w={width} h={height}: {msg}"))
-                }
+                Outcome::SetupSkipped(msg) => skipped.push(format!("w={width} h={height}: {msg}")),
                 Outcome::Failure(msg) => failures.push(format!("w={width} h={height}: {msg}")),
             }
         }
@@ -341,10 +339,7 @@ fn drive_mouse_wheel(
     Ok(())
 }
 
-fn drive_scrollbar_drag(
-    harness: &mut EditorTestHarness,
-    width: u16,
-) -> Result<(), String> {
+fn drive_scrollbar_drag(harness: &mut EditorTestHarness, width: u16) -> Result<(), String> {
     let scrollbar_col = width.saturating_sub(1);
     let (content_first_row, content_last_row) = harness.content_area_rows();
     harness
@@ -486,12 +481,7 @@ fn run_scenario(
 const SWEEP_WIDTHS: [u16; 3] = [60, 100, 140];
 const SWEEP_HEIGHTS: [u16; 1] = [22];
 
-fn sweep(
-    label: &'static str,
-    fixture: Fixture,
-    compose_width: Option<u16>,
-    mechanism: Mechanism,
-) {
+fn sweep(label: &'static str, fixture: Fixture, compose_width: Option<u16>, mechanism: Mechanism) {
     init_tracing_from_env();
     drive_width_sweep(label, &SWEEP_WIDTHS, &SWEEP_HEIGHTS, |w, h| {
         run_scenario(w, h, fixture, compose_width, mechanism)

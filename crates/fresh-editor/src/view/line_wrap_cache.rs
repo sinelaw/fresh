@@ -652,14 +652,13 @@ pub fn count_visual_rows_for_text_with_soft_breaks(
             continue;
         }
         let segment = &line_text[prev_end..rel];
-        total = total
-            .saturating_add(count_segment_rows_with_indent(
-                segment,
-                prev_indent,
-                effective_width,
-                gutter_width,
-                hanging_indent,
-            ));
+        total = total.saturating_add(count_segment_rows_with_indent(
+            segment,
+            prev_indent,
+            effective_width,
+            gutter_width,
+            hanging_indent,
+        ));
         // The renderer's `apply_soft_breaks` consumes the Space token
         // *at* the break position when one is present (see
         // transforms.rs::apply_soft_breaks).  Skip exactly one
@@ -699,12 +698,7 @@ fn count_segment_rows_with_indent(
         return 1;
     }
     if leading_indent == 0 {
-        return count_visual_rows_for_text(
-            segment,
-            effective_width,
-            gutter_width,
-            hanging_indent,
-        );
+        return count_visual_rows_for_text(segment, effective_width, gutter_width, hanging_indent);
     }
     // Prepend the indent columns; this lets the renderer's word-wrap
     // see the same `current_line_width` it would after
