@@ -381,6 +381,147 @@ fn flash_label_does_not_eat_space_after_match() {
     );
 }
 
+/// Edge: pattern matches right at end of line (next char is `\n`).
+/// My plugin falls back to inline virtual text in that case
+/// because conceal-substituting a newline would corrupt line
+/// layout.  Verify the line content remains visible and intact.
+#[test]
+fn flash_label_on_match_at_end_of_line() {
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "first line ends with x\nsecond line ends with y\nthird line\n",
+    );
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    arm_flash(&mut harness);
+    type_pattern(&mut harness, "x");
+    harness.render().unwrap();
+
+    // Pattern `x` matches `x` at end of line 1 (next char is `\n`).
+    // Conceal can't substitute `\n` — would break line layout.
+    // Plugin falls back to inline virtual text.  The match `x`
+    // must remain on screen, AND no part of the line content
+    // should be lost.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("first line ends with x"),
+        "line 1 content lost when match was at end of line.  Screen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("second line ends with y"),
+        "subsequent line corrupted.  Screen:\n{}",
+        screen,
+    );
+}
+
+/// Edge: pattern matches at end of buffer with no trailing
+/// newline.  `nextCharByteLen` returns 0 (charEnd >= text.length),
+/// plugin falls back to inline virtual text.
+#[test]
+fn flash_label_on_match_at_end_of_buffer() {
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    // No trailing newline.  Pattern matches the very last char.
+    let path = write_fixture(&project_root, "test.txt", "alpha bravo charlie");
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    arm_flash(&mut harness);
+    type_pattern(&mut harness, "ie");
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // Buffer content should still be visible — no crash, no
+    // missing chars at the end.
+    assert!(
+        screen.contains("alpha bravo charl"),
+        "buffer prefix lost after end-of-buffer match.  Screen:\n{}",
+        screen,
+    );
+}
+
+/// Edge: a token boundary issue — pattern that ends right before
+/// a Tab character.  Tabs are tokenized as Space-class tokens in
+/// fresh.  The conceal-replacement-on-Space-tokens fix should
+/// cover this too; verify by typing a pattern in a buffer that
+/// has tab-separated columns.
+#[test]
+fn flash_label_does_not_eat_tab_after_match() {
+    let (mut harness, _temp, project_root) = flash_harness(120, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "key\tvalue\nname\talice\nrole\tadmin\n",
+    );
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    arm_flash(&mut harness);
+    type_pattern(&mut harness, "key");
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // The cell after `key` would have rendered the tab indicator.
+    // After conceal substitution it should show a label letter,
+    // and `value` (the next column) should remain readable.
+    assert!(
+        screen.contains("value"),
+        "next column lost after tab.  Screen:\n{}",
+        screen,
+    );
+    assert!(
+        !screen.contains("keyvalue"),
+        "tab cell collapsed — `key value` rendered as `keyvalue`.  Screen:\n{}",
+        screen,
+    );
+}
+
+/// Edge: pattern at end of a soft-wrapped visual row — the cell
+/// that should receive the label is at the wrap point.  Documented
+/// limitation: the label letter ends up at the START of the next
+/// visual row instead of the end of the current one.  Test asserts
+/// content survives; the visual placement quirk is noted in the
+/// plugin's redraw comment.
+#[test]
+fn flash_label_at_wrap_boundary_does_not_corrupt_text() {
+    // Width 100 keeps status bar room for `Flash[w]` (without it
+    // type_pattern's screen-text wait would never converge), but
+    // the long line below still has to wrap because it's >100
+    // chars.
+    let (mut harness, _temp, project_root) = flash_harness(100, 24);
+    let path = write_fixture(
+        &project_root,
+        "test.txt",
+        "this is a very long first line that wraps around the viewport edge \
+         because it is too long to fit on a single visual row even at width \
+         one hundred which is what we are using here today\n",
+    );
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    arm_flash(&mut harness);
+    type_pattern(&mut harness, "wraps");
+    harness.render().unwrap();
+
+    // Whatever the visual placement of the label, the buffer text
+    // must be intact: every word from the long line should still
+    // appear on screen somewhere, in the right order.
+    let screen = harness.screen_to_string();
+    for word in [
+        "this", "very", "long", "first", "line", "that", "around", "because",
+    ] {
+        assert!(
+            screen.contains(word),
+            "word `{}` was eaten by the wrap-point label.  Screen:\n{}",
+            word,
+            screen,
+        );
+    }
+}
+
 #[test]
 fn flash_jumps_across_splits() {
     // Two vertical splits, each with a different buffer that contains
