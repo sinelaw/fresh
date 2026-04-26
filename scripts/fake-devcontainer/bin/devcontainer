@@ -219,18 +219,42 @@ cmd_up() {
         export "$line"
       done < "$cdir/container_env"
     fi
+    # Honor `waitFor` per spec: hooks up to and including the named
+    # one block `up`'s return; hooks AFTER it run in the background
+    # so the editor can become "ready" before slow post-create work
+    # finishes. Default is `updateContentCommand`. The named hook
+    # itself runs synchronously (i.e. waitFor is inclusive).
+    wait_for="$(extract_string_field "waitFor" "$dc_cfg")"
+    [ -n "$wait_for" ] || wait_for="updateContentCommand"
+
+    in_pre=1
     for hook in onCreateCommand updateContentCommand postCreateCommand postStartCommand postAttachCommand; do
       raw="$(extract_string_field "$hook" "$dc_cfg")"
       if [ -n "$raw" ]; then
-        emit_progress "[+] Running $hook"
-        # Run from the workspace dir so $PWD matches the host
-        # workspace path the user expects.
-        if ! ( cd "$workspace" && sh -c "$raw" ) >&2; then
-          emit_progress "error: $hook exited non-zero"
-          printf 'stopped\n' > "$cdir/status"
-          exit 1
+        if [ "$in_pre" = "1" ]; then
+          emit_progress "[+] Running $hook"
+          # Run from the workspace dir so $PWD matches the host
+          # workspace path the user expects.
+          if ! ( cd "$workspace" && sh -c "$raw" ) >&2; then
+            emit_progress "error: $hook exited non-zero"
+            printf 'stopped\n' > "$cdir/status"
+            exit 1
+          fi
+        else
+          emit_progress "[+] Backgrounding $hook (waitFor=$wait_for)"
+          # Background subshells inherit the FDs they need — when
+          # `up` exits the captured pipes close, but the bg child
+          # detaches via `setsid` so it survives. Their output
+          # goes to /dev/null so the build log doesn't grow
+          # unbounded after `up` returns; tests assert via the
+          # hook's own side effects (sentinel files etc.), so the
+          # bg's missing output is fine.
+          ( cd "$workspace" && setsid sh -c "$raw" ) >/dev/null 2>&1 </dev/null &
         fi
         fake_sleep_ms "$delay_ms"
+      fi
+      if [ "$hook" = "$wait_for" ]; then
+        in_pre=0
       fi
     done
   fi
