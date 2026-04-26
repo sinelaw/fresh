@@ -66,3 +66,51 @@ fn click_on_status_message_opens_status_log_buffer() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `set_status_message` (the Rust-side path) is the simpler
+/// case. Plugins set status via `editor.setStatus(...)` which
+/// routes to `plugin_status_message` instead of `status_message`.
+/// Verify the click works for that path too — same `Messages`
+/// element renders both, but different fields populate them.
+#[test]
+fn click_on_plugin_status_message_opens_status_log() -> anyhow::Result<()> {
+    use fresh_core::api::PluginCommand;
+
+    let mut harness = EditorTestHarness::new(120, 30)?;
+
+    let temp = tempfile::NamedTempFile::new()?;
+    std::fs::write(temp.path(), "plugin-path log line\n")?;
+    harness
+        .editor_mut()
+        .set_status_log_path(temp.path().to_path_buf());
+
+    // Use the same path real plugins use: send a SetStatus
+    // command through the plugin command channel.
+    let marker = "plugin-set-status-marker";
+    let _ = harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::SetStatus {
+            message: marker.to_string(),
+        });
+    harness.render()?;
+
+    let (col, row) = harness.find_text_on_screen(marker).ok_or_else(|| {
+        anyhow::anyhow!(
+            "plugin status marker must be visible after handle_plugin_command(SetStatus); \
+             screen:\n{}",
+            harness.screen_to_string()
+        )
+    })?;
+
+    harness.mouse_click(col, row)?;
+    harness.render()?;
+
+    let content = harness.get_buffer_content().unwrap_or_default();
+    assert!(
+        content.contains("plugin-path log line"),
+        "clicking on a plugin-set status message must open the status log; \
+         active buffer content was: {content:?}\nclick=({col},{row})\nscreen:\n{}",
+        harness.screen_to_string()
+    );
+    Ok(())
+}
