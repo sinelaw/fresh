@@ -402,6 +402,29 @@ impl Editor {
                     before,
                 );
             }
+            PluginCommand::AddVirtualTextStyled {
+                buffer_id,
+                virtual_text_id,
+                position,
+                text,
+                fg,
+                bg,
+                bold,
+                italic,
+                before,
+            } => {
+                self.handle_add_virtual_text_styled(
+                    buffer_id,
+                    virtual_text_id,
+                    position,
+                    text,
+                    fg,
+                    bg,
+                    bold,
+                    italic,
+                    before,
+                );
+            }
             PluginCommand::RemoveVirtualText {
                 buffer_id,
                 virtual_text_id,

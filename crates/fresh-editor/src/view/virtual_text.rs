@@ -278,6 +278,49 @@ impl VirtualTextManager {
         id
     }
 
+    /// String-id form of [`add_with_theme_keys`] — same as
+    /// [`add_with_id`] but stores theme keys for live theme updates.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_with_id_and_theme_keys(
+        &mut self,
+        marker_list: &mut MarkerList,
+        position: usize,
+        text: String,
+        style: Style,
+        fg_theme_key: Option<String>,
+        bg_theme_key: Option<String>,
+        vtext_position: VirtualTextPosition,
+        priority: i32,
+        string_id: String,
+    ) -> VirtualTextId {
+        debug_assert!(
+            vtext_position.is_inline(),
+            "add_with_id_and_theme_keys requires BeforeChar or AfterChar"
+        );
+
+        let marker_id = marker_list.create(position, false);
+
+        let id = VirtualTextId(self.next_id);
+        self.next_id += 1;
+
+        self.texts.insert(
+            id,
+            VirtualText {
+                marker_id,
+                text,
+                style,
+                fg_theme_key,
+                bg_theme_key,
+                position: vtext_position,
+                priority,
+                string_id: Some(string_id),
+                namespace: None,
+            },
+        );
+
+        id
+    }
+
     /// Add a virtual line (LineAbove or LineBelow) with namespace for bulk removal
     ///
     /// This is the primary API for features like git blame headers.

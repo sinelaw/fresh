@@ -279,21 +279,25 @@ function redraw(matches: Match[]): void {
       bold: true,
     });
     if (m.label) {
-      // RGB until plugin API #6 (theme-key support for addVirtualText).
-      // Gold-on-dark is legible against typical themes.
-      //
-      // Anchor the label at `position = m.end` with `before = true`.
-      // Renders in the gap immediately after the match (BeforeChar of
+      // Anchor the label at `position = m.end` with `before = true`
+      // — renders in the gap right after the match (BeforeChar of
       // the first char past the match).  `before = false` would
       // render *after* that next char, off-by-one.
-      editor.addVirtualText(
+      //
+      // Colours come from the theme via `search.label_bg` /
+      // `search.label_fg` so the label automatically follows theme
+      // changes and is high-contrast against the match's own bg.
+      editor.addVirtualTextStyled(
         m.bufferId,
         VTEXT_PREFIX + String(m.bufferId) + ":" + String(m.start),
         m.end,
         m.label,
-        255, 215, 0,
-        true,  // before = true → render in the gap right after the match
-        true,  // useBg = true → label gets its own background
+        {
+          fg: "search.label_fg",
+          bg: "search.label_bg",
+          bold: true,
+        },
+        true, // before = true
       );
     }
   }

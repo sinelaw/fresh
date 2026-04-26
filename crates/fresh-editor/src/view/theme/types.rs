@@ -786,6 +786,16 @@ pub struct SearchColors {
     /// Search match text color
     #[serde(default = "default_search_match_fg")]
     pub match_fg: ColorDef,
+    /// Background color for jump labels (e.g. flash plugin labels).
+    /// Should be visually distinct from `match_bg` so labels stand
+    /// out against highlighted matches.  Default: bright magenta.
+    #[serde(default = "default_search_label_bg")]
+    pub label_bg: ColorDef,
+    /// Foreground color for jump labels.  Should be high contrast
+    /// against `label_bg` so the single label letter is unambiguous
+    /// even on small terminal cells.  Default: white.
+    #[serde(default = "default_search_label_fg")]
+    pub label_fg: ColorDef,
 }
 
 // Default search colors
@@ -793,6 +803,16 @@ fn default_search_match_bg() -> ColorDef {
     ColorDef::Rgb(100, 100, 20)
 }
 fn default_search_match_fg() -> ColorDef {
+    ColorDef::Rgb(255, 255, 255)
+}
+// Mirrors flash.nvim's default FlashLabel (links to Substitute, which
+// is a magenta-family colour in most colorschemes).  The pairing is
+// chosen so labels pop visually distinct from `search.match_bg`
+// (typically yellow / orange).
+fn default_search_label_bg() -> ColorDef {
+    ColorDef::Rgb(199, 78, 189)
+}
+fn default_search_label_fg() -> ColorDef {
     ColorDef::Rgb(255, 255, 255)
 }
 
@@ -1052,6 +1072,8 @@ pub struct Theme {
     // Search colors
     pub search_match_bg: Color,
     pub search_match_fg: Color,
+    pub search_label_bg: Color,
+    pub search_label_fg: Color,
 
     // Diagnostic colors
     pub diagnostic_error_fg: Color,
@@ -1207,6 +1229,8 @@ impl From<ThemeFile> for Theme {
                 .unwrap_or_else(|| file.diagnostic.error_fg.clone().into()),
             search_match_bg: file.search.match_bg.into(),
             search_match_fg: file.search.match_fg.into(),
+            search_label_bg: file.search.label_bg.into(),
+            search_label_fg: file.search.label_fg.into(),
             diagnostic_error_fg: file.diagnostic.error_fg.into(),
             diagnostic_error_bg: file.diagnostic.error_bg.into(),
             diagnostic_warning_fg: file.diagnostic.warning_fg.into(),
@@ -1325,6 +1349,8 @@ impl From<Theme> for ThemeFile {
             search: SearchColors {
                 match_bg: theme.search_match_bg.into(),
                 match_fg: theme.search_match_fg.into(),
+                label_bg: theme.search_label_bg.into(),
+                label_fg: theme.search_label_fg.into(),
             },
             diagnostic: DiagnosticColors {
                 error_fg: theme.diagnostic_error_fg.into(),
@@ -1483,6 +1509,8 @@ impl Theme {
             "search" => match field {
                 "match_bg" => Some(self.search_match_bg),
                 "match_fg" => Some(self.search_match_fg),
+                "label_bg" => Some(self.search_label_bg),
+                "label_fg" => Some(self.search_label_fg),
                 _ => None,
             },
             _ => None,
@@ -1576,6 +1604,8 @@ impl Theme {
             "search" => match field {
                 "match_bg" => Some(&mut self.search_match_bg),
                 "match_fg" => Some(&mut self.search_match_fg),
+                "label_bg" => Some(&mut self.search_label_bg),
+                "label_fg" => Some(&mut self.search_label_fg),
                 _ => None,
             },
             _ => None,

@@ -1621,6 +1621,14 @@ interface EditorAPI {
 	*/
 	removeVirtualText(bufferId: number, virtualTextId: string): boolean;
 	/**
+	* Add styled virtual text — richer form of `addVirtualText` whose
+	* `options` accepts an `addOverlay`-style record: `fg`/`bg` may
+	* be RGB arrays or theme-key strings, plus `bold`/`italic`. Theme
+	* keys are resolved at render time so the label follows theme
+	* changes live.
+	*/
+	addVirtualTextStyled(bufferId: number, virtualTextId: string, position: number, text: string, options: Record<string, unknown>, before: boolean): boolean;
+	/**
 	* Remove virtual texts whose ID starts with the given prefix
 	*/
 	removeVirtualTextsByPrefix(bufferId: number, prefix: string): boolean;

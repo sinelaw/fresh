@@ -794,6 +794,24 @@
             255,
             255
           ]
+        },
+        "label_bg": {
+          "description": "Background color for jump labels (e.g. flash plugin labels).\nShould be visually distinct from `match_bg` so labels stand\nout against highlighted matches.  Default: bright magenta.",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            199,
+            78,
+            189
+          ]
+        },
+        "label_fg": {
+          "description": "Foreground color for jump labels.  Should be high contrast\nagainst `label_bg` so the single label letter is unambiguous\neven on small terminal cells.  Default: white.",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            255,
+            255,
+            255
+          ]
         }
       }
     },

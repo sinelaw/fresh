@@ -1196,6 +1196,23 @@ pub enum PluginCommand {
         before: bool, // true = before char, false = after char
     },
 
+    /// Add virtual text with full styling — fg/bg can be RGB or theme
+    /// keys (resolved at render time so theme changes apply live).
+    /// This is the richer form of `AddVirtualText` that lets plugins
+    /// produce themed labels (flash jump, type hints with semantic
+    /// colours, …) without hard-coding RGB values.
+    AddVirtualTextStyled {
+        buffer_id: BufferId,
+        virtual_text_id: String,
+        position: usize,
+        text: String,
+        fg: Option<OverlayColorSpec>,
+        bg: Option<OverlayColorSpec>,
+        bold: bool,
+        italic: bool,
+        before: bool,
+    },
+
     /// Remove a virtual text by ID
     RemoveVirtualText {
         buffer_id: BufferId,

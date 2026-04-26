@@ -2915,6 +2915,69 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Add styled virtual text — richer form of `addVirtualText` whose
+    /// `options` accepts an `addOverlay`-style record: `fg`/`bg` may
+    /// be RGB arrays or theme-key strings, plus `bold`/`italic`. Theme
+    /// keys are resolved at render time so the label follows theme
+    /// changes live.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_virtual_text_styled<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        buffer_id: u32,
+        virtual_text_id: String,
+        position: u32,
+        text: String,
+        options: rquickjs::Object<'js>,
+        before: bool,
+    ) -> rquickjs::Result<bool> {
+        use fresh_core::api::OverlayColorSpec;
+
+        // Same parser shape as addOverlay; accepts `[r, g, b]` arrays
+        // or theme-key strings.
+        fn parse_color_spec(key: &str, obj: &rquickjs::Object<'_>) -> Option<OverlayColorSpec> {
+            if let Ok(theme_key) = obj.get::<_, String>(key) {
+                if !theme_key.is_empty() {
+                    return Some(OverlayColorSpec::ThemeKey(theme_key));
+                }
+            }
+            if let Ok(arr) = obj.get::<_, Vec<u8>>(key) {
+                if arr.len() >= 3 {
+                    return Some(OverlayColorSpec::Rgb(arr[0], arr[1], arr[2]));
+                }
+            }
+            None
+        }
+
+        let fg = parse_color_spec("fg", &options);
+        let bg = parse_color_spec("bg", &options);
+        let bold: bool = options.get("bold").unwrap_or(false);
+        let italic: bool = options.get("italic").unwrap_or(false);
+
+        // Track virtual text ID for cleanup on unload.
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .virtual_text_ids
+            .push((BufferId(buffer_id as usize), virtual_text_id.clone()));
+
+        let _ = self
+            .command_sender
+            .send(PluginCommand::AddVirtualTextStyled {
+                buffer_id: BufferId(buffer_id as usize),
+                virtual_text_id,
+                position: position as usize,
+                text,
+                fg,
+                bg,
+                bold,
+                italic,
+                before,
+            });
+        Ok(true)
+    }
+
     /// Remove virtual texts whose ID starts with the given prefix
     pub fn remove_virtual_texts_by_prefix(&self, buffer_id: u32, prefix: String) -> bool {
         self.command_sender

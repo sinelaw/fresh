@@ -193,6 +193,83 @@ impl Editor {
         }
     }
 
+    /// Handle AddVirtualTextStyled — richer form that accepts theme
+    /// keys for fg/bg and individual style modifiers.  Theme keys are
+    /// resolved at render time so labels follow theme changes live.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_add_virtual_text_styled(
+        &mut self,
+        buffer_id: BufferId,
+        virtual_text_id: String,
+        position: usize,
+        text: String,
+        fg: Option<fresh_core::api::OverlayColorSpec>,
+        bg: Option<fresh_core::api::OverlayColorSpec>,
+        bold: bool,
+        italic: bool,
+        before: bool,
+    ) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            use crate::view::virtual_text::VirtualTextPosition;
+            use fresh_core::api::OverlayColorSpec;
+            use ratatui::style::{Color, Modifier, Style};
+
+            let vtext_position = if before {
+                VirtualTextPosition::BeforeChar
+            } else {
+                VirtualTextPosition::AfterChar
+            };
+
+            // Build a fallback style from any concrete RGB values; theme
+            // keys are passed through separately so the renderer can
+            // resolve them on each frame.
+            let mut fallback = Style::default();
+            let mut fg_theme_key: Option<String> = None;
+            let mut bg_theme_key: Option<String> = None;
+            match &fg {
+                Some(OverlayColorSpec::Rgb(r, g, b)) => {
+                    fallback = fallback.fg(Color::Rgb(*r, *g, *b));
+                }
+                Some(OverlayColorSpec::ThemeKey(k)) => {
+                    fg_theme_key = Some(k.clone());
+                }
+                None => {}
+            }
+            match &bg {
+                Some(OverlayColorSpec::Rgb(r, g, b)) => {
+                    fallback = fallback.bg(Color::Rgb(*r, *g, *b));
+                }
+                Some(OverlayColorSpec::ThemeKey(k)) => {
+                    bg_theme_key = Some(k.clone());
+                }
+                None => {}
+            }
+            if bold {
+                fallback = fallback.add_modifier(Modifier::BOLD);
+            }
+            if italic {
+                fallback = fallback.add_modifier(Modifier::ITALIC);
+            }
+
+            // Replace any existing virtual text with this ID.
+            state
+                .virtual_texts
+                .remove_by_id(&mut state.marker_list, &virtual_text_id);
+
+            state.virtual_texts.add_with_id_and_theme_keys(
+                &mut state.marker_list,
+                position,
+                text,
+                fallback,
+                fg_theme_key,
+                bg_theme_key,
+                vtext_position,
+                0, // priority
+                virtual_text_id,
+            );
+        }
+    }
+
     /// Handle RemoveVirtualText command
     pub(super) fn handle_remove_virtual_text(
         &mut self,
