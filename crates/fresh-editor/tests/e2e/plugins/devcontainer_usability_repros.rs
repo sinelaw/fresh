@@ -728,3 +728,178 @@ fn rebuild_reuses_build_log_split_instead_of_stacking() {
          splits after rebuild: {splits_after_rebuild}"
     );
 }
+
+/// **Bug from interactive walkthrough (Bug #6 retest):** every
+/// `Show *` command (`Show Container Logs`, `Show Container Info`,
+/// `Show Forwarded Ports`) used to open a brand-new horizontal
+/// split each time it was invoked — the existing flag-based
+/// dedupe (`infoPanelOpen`, `portsPanelOpen`) didn't reset when
+/// the user closed the panel manually with `q`, and
+/// `devcontainer_show_logs` had no dedupe at all. After three
+/// `Show *` invocations the right column was three stacked
+/// panes.
+///
+/// Fix: route every panel through `openVirtualInPanelSlot`,
+/// which reuses the panel-slot split if it's still alive and
+/// otherwise drops content into the currently focused split —
+/// never spawns a new one.
+///
+/// Regression guard: invoke `Show Container Info` then
+/// `Show Container Logs` one after the other, assert the split
+/// count stays put.
+#[cfg(unix)]
+#[test]
+fn show_panels_reuse_single_split_instead_of_stacking() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+
+    attach_via_fake(&mut harness);
+    // Wait for the build log to land in the panel slot so we
+    // measure the count *with* the panel split in play.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
+        .unwrap();
+    let baseline = harness.editor().get_split_count();
+
+    // Show Container Info — should reuse the panel slot.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Dev Container: Show Info").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Dev Container: Show Info"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Pump for the panel to land.
+    for _ in 0..40 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+    let after_info = harness.editor().get_split_count();
+
+    // Show Container Logs — should also reuse the panel slot.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Dev Container: Show Container").unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Dev Container: Show Container")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..40 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+    let after_logs = harness.editor().get_split_count();
+
+    assert_eq!(
+        after_info, baseline,
+        "Show Info must reuse the existing panel split. \
+         baseline={baseline}, after_info={after_info}"
+    );
+    assert_eq!(
+        after_logs, baseline,
+        "Show Container Logs must reuse the existing panel split. \
+         baseline={baseline}, after_logs={after_logs}"
+    );
+}
+
+/// **Critical bug from interactive walkthrough:** when the user
+/// ran a lifecycle command, the captured stdout/stderr were
+/// discarded — only a status line ("postCreateCommand failed
+/// (exit 1)") surfaced. With a real failing command the user
+/// had no way to see the actual error, so couldn't diagnose.
+///
+/// Fix: `surfaceLifecycleResult` now dumps the full output
+/// into the shared panel slot. This test pins that the
+/// captured stdout actually lands in a buffer the user can
+/// read.
+#[cfg(unix)]
+#[test]
+fn lifecycle_command_output_lands_in_panel() {
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().canonicalize().unwrap();
+    let dc = workspace.join(".devcontainer");
+    fs::create_dir_all(&dc).unwrap();
+    // postCreateCommand prints a recognizable marker so we can
+    // assert it survived the round-trip into the panel buffer.
+    fs::write(
+        dc.join("devcontainer.json"),
+        r#"{
+  "name": "lifecycle-output-test",
+  "image": "ubuntu:22.04",
+  "remoteUser": "vscode",
+  "postCreateCommand": "echo HELLO_FROM_LIFECYCLE_OUTPUT"
+}"#,
+    )
+    .unwrap();
+    let plugins_dir = workspace.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "devcontainer");
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+
+    attach_via_fake(&mut harness);
+
+    // Drive the picker to invoke postCreateCommand explicitly
+    // (the at-attach background run goes through fake `up`'s
+    // direct sh path; the picker run goes through the plugin's
+    // `editor.spawnProcess` → which now captures stdout).
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Dev Container: Run Lifecycle").unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Dev Container: Run Lifecycle Command")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("postCreateCommand"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The lifecycle handler awaits `spawnProcess`; once it
+    // returns, `surfaceLifecycleResult` opens the panel buffer
+    // with the captured stdout in it. Wait for the marker to
+    // hit the rendered screen.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("HELLO_FROM_LIFECYCLE_OUTPUT"))
+        .unwrap();
+}

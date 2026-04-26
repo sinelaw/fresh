@@ -88,6 +88,29 @@ let infoPanelSplitId: number | null = null;
 let infoPanelOpen = false;
 let cachedContent = "";
 
+/// Single shared panel slot for every devcontainer-owned panel
+/// (Show Info / Show Container Logs / Show Build Logs / Show
+/// Forwarded Ports / lifecycle command output / build-log
+/// streaming / failed-attach error). Without this, each `Show *`
+/// invocation used to call `createVirtualBufferInSplit` directly,
+/// which always creates a new horizontal split — so by the third
+/// invocation the right column was several stacked panes ~5 rows
+/// each, the layout became uninhabitable, and several downstream
+/// L-rows in the usability bug table collapsed into "the layout
+/// strategy is wrong."
+///
+/// Policy (matches the user's spec for fix #6 on retest):
+///   - If `panelSplitId` is set AND that split still exists in
+///     `editor.listSplits()`, REUSE it: focus + swap content.
+///   - Otherwise, use the currently focused split — *don't*
+///     spawn a new one. The first Show command therefore
+///     replaces whatever is in the focused split (the user's
+///     editor pane is gone if they didn't manually split first;
+///     this is the explicit tradeoff the user picked over the
+///     unbounded-stacking alternative).
+let panelSplitId: number | null = null;
+const panelBufferIds = new Set<number>();
+
 // The in-flight `devcontainer up` handle (set before we await, cleared
 // on exit). `devcontainer_cancel_attach` forwards `.kill()` to this.
 // null when no attach is running.
@@ -605,27 +628,21 @@ async function devcontainer_show_info(): Promise<void> {
     return;
   }
 
-  if (infoPanelOpen && infoPanelBufferId !== null) {
-    // Already open - refresh content
-    updateInfoPanel();
-    return;
-  }
-
+  // Re-routed through the shared panel slot (Bug #6 retest):
+  // dropping the previous flag-based dedupe because it kept the
+  // info-panel buffer "open" in module state even when the user
+  // had already closed it with `q`, leaving the next invocation
+  // either refreshing a dead buffer or stacking a new split.
+  // The slot helper handles existence-checking against the live
+  // split list each call.
   infoFocus = { type: "button", index: 0 };
   const entries = buildInfoEntries();
   cachedContent = entriesToContent(entries);
 
-  const result = await editor.createVirtualBufferInSplit({
+  const result = await openVirtualInPanelSlot({
     name: "*Dev Container*",
     mode: "devcontainer-info",
-    readOnly: true,
-    showLineNumbers: false,
-    showCursors: true,
-    editingDisabled: true,
-    lineWrap: true,
-    ratio: 0.4,
-    direction: "horizontal",
-    entries: entries,
+    entries,
   });
 
   if (result !== null) {
@@ -726,26 +743,74 @@ async function devcontainer_on_lifecycle_confirmed(data: {
     editor.setStatus(editor.t("status.running", { name: cmdName }));
     const [bin, args] = wrapWithEnv(env, "sh", ["-c", cmd]);
     const result = await editor.spawnProcess(bin, args, cwd);
-    if (result.exit_code === 0) {
-      editor.setStatus(editor.t("status.completed", { name: cmdName }));
-    } else {
-      editor.setStatus(editor.t("status.failed", { name: cmdName, code: String(result.exit_code) }));
-    }
+    await surfaceLifecycleResult(cmdName, null, cmd, result);
   } else if (Array.isArray(cmd)) {
     const [origBin, ...origArgs] = cmd;
     const [bin, args] = wrapWithEnv(env, origBin, origArgs);
     editor.setStatus(editor.t("status.running", { name: cmdName }));
     const result = await editor.spawnProcess(bin, args, cwd);
-    if (result.exit_code === 0) {
-      editor.setStatus(editor.t("status.completed", { name: cmdName }));
-    } else {
-      editor.setStatus(editor.t("status.failed", { name: cmdName, code: String(result.exit_code) }));
-    }
+    await surfaceLifecycleResult(cmdName, null, [origBin, ...origArgs].join(" "), result);
   } else {
     // Object form: see the rewritten parallel branch in
     // `runLifecycleObjectForm`.
     await runLifecycleObjectForm(cmdName, cmd);
   }
+}
+
+/// Critical bug from interactive walkthrough: lifecycle command
+/// stdout/stderr were captured in `result.stdout` / `result.stderr`
+/// and then discarded — the user only saw a status line like
+/// `postCreateCommand failed (exit 1)` with zero way to see the
+/// real error. Now we surface the full output via the shared
+/// panel slot.
+///
+/// Always render (even on success) so users can see what the
+/// command actually did. Status line keeps the at-a-glance
+/// summary; the panel carries the detail.
+async function surfaceLifecycleResult(
+  cmdName: string,
+  label: string | null,
+  cmdline: string,
+  result: { stdout: string; stderr: string; exit_code: number },
+): Promise<void> {
+  // Status line: the at-a-glance signal. Detail lands in the
+  // panel slot below.
+  if (result.exit_code === 0) {
+    editor.setStatus(editor.t("status.completed", { name: cmdName }));
+  } else if (label !== null) {
+    editor.setStatus(
+      editor.t("status.failed_sub", {
+        name: cmdName,
+        label,
+        code: String(result.exit_code),
+      }),
+    );
+  } else {
+    editor.setStatus(
+      editor.t("status.failed", {
+        name: cmdName,
+        code: String(result.exit_code),
+      }),
+    );
+  }
+
+  const headerLine = label !== null
+    ? `--- ${cmdName} (${label}) — exit ${result.exit_code} ---\n`
+    : `--- ${cmdName} — exit ${result.exit_code} ---\n`;
+  const cmdLineText = `$ ${cmdline}\n`;
+  const stdoutBlock = result.stdout.length > 0 ? result.stdout : "";
+  const stderrBlock = result.stderr.length > 0
+    ? (result.stdout.length > 0 ? "\n--- stderr ---\n" : "") + result.stderr
+    : "";
+  const body = stdoutBlock + stderrBlock;
+  const text = headerLine + cmdLineText
+    + (body.length > 0 ? body : "(no output)\n");
+
+  await openVirtualInPanelSlot({
+    name: "*Dev Container Lifecycle*",
+    mode: "devcontainer-info",
+    entries: [{ text, properties: { type: "log" } }],
+  });
 }
 
 /// Per-workspace storage for `remoteWorkspaceFolder` captured at
@@ -912,40 +977,60 @@ async function runLifecycleObjectForm(
     entries.map(async ([label, subcmd]) => {
       let origBin: string;
       let origArgs: string[];
+      let cmdline: string;
       if (Array.isArray(subcmd)) {
         [origBin, ...origArgs] = subcmd;
+        cmdline = [origBin, ...origArgs].join(" ");
       } else {
         origBin = "sh";
         origArgs = ["-c", subcmd as string];
+        cmdline = subcmd as string;
       }
       const [bin, args] = wrapWithEnv(env, origBin, origArgs);
       const r = await editor.spawnProcess(bin, args, cwd);
-      return { label, code: r.exit_code };
+      return { label, cmdline, result: r };
     }),
   );
 
-  const failed = results.filter((r) => r.code !== 0);
+  // Render every entry's output into the panel slot in one
+  // batched message — N separate calls would flicker the panel
+  // across N intermediate states. Failed entries first so the
+  // user sees the failures even if stdout is enormous.
+  const sorted = [...results].sort(
+    (a, b) => Number(a.result.exit_code === 0) - Number(b.result.exit_code === 0),
+  );
+  const sections = sorted.map(({ label, cmdline, result: r }) => {
+    const header = `--- ${cmdName} (${label}) — exit ${r.exit_code} ---\n`;
+    const cmdLine = `$ ${cmdline}\n`;
+    const stdoutBlock = r.stdout.length > 0 ? r.stdout : "";
+    const stderrBlock = r.stderr.length > 0
+      ? (r.stdout.length > 0 ? "\n--- stderr ---\n" : "") + r.stderr
+      : "";
+    const body = stdoutBlock + stderrBlock;
+    return header + cmdLine + (body.length > 0 ? body : "(no output)\n");
+  });
+  await openVirtualInPanelSlot({
+    name: "*Dev Container Lifecycle*",
+    mode: "devcontainer-info",
+    entries: [{ text: sections.join("\n"), properties: { type: "log" } }],
+  });
+
+  const failed = results.filter((r) => r.result.exit_code !== 0);
   if (failed.length === 0) {
     editor.setStatus(editor.t("status.completed", { name: cmdName }));
     return;
   }
   // Surface the first failure in the status message — same key
   // the old sequential path used so existing translations keep
-  // working. Other failures are debug-logged so users can see
-  // the full picture in the log.
+  // working.
   const first = failed[0];
   editor.setStatus(
     editor.t("status.failed_sub", {
       name: cmdName,
       label: first.label,
-      code: String(first.code),
+      code: String(first.result.exit_code),
     }),
   );
-  for (const f of failed.slice(1)) {
-    editor.debug(
-      `devcontainer: ${cmdName} (${f.label}) also failed (exit ${f.code})`,
-    );
-  }
 }
 registerHandler("devcontainer_on_lifecycle_confirmed", devcontainer_on_lifecycle_confirmed);
 
@@ -1264,23 +1349,15 @@ async function devcontainer_show_forwarded_ports_panel(): Promise<void> {
     return;
   }
 
-  if (portsPanelOpen && portsPanelBufferId !== null) {
-    await renderPortsPanel();
-    return;
-  }
-
+  // Bug #6 retest: route through the shared panel slot rather
+  // than `createVirtualBufferInSplit` (which always splits) and
+  // drop the flag-based dedupe (which left state stale when the
+  // user closed the panel manually with `q`).
   const rows = await gatherForwardedPortRows();
   const entries = buildPortsPanelEntries(rows);
-  const result = await editor.createVirtualBufferInSplit({
+  const result = await openVirtualInPanelSlot({
     name: "*Dev Container Ports*",
     mode: "devcontainer-ports",
-    readOnly: true,
-    showLineNumbers: false,
-    showCursors: true,
-    editingDisabled: true,
-    lineWrap: true,
-    ratio: 0.35,
-    direction: "horizontal",
     entries,
   });
   if (result !== null) {
@@ -1784,37 +1861,93 @@ function lastBuildLogKey(): string {
 /// rebuilds the editor and workspace restore brings the log buffer
 /// back, the first `Show Build Logs` finds the restored split and
 /// focuses it instead of stacking a new one on top.
-function openBuildLogInSplit(path: string): void {
-  const buffers = editor.listBuffers();
-  const existing = buffers.find((b) => b.path === path);
-  if (existing && existing.splits.length > 0) {
-    editor.focusSplit(existing.splits[0]);
-    return;
+/// Resolve the split id to drop a panel into. If we have a
+/// previously-claimed panel split that's still alive, reuse it.
+/// Otherwise grab the currently focused split — never spawn a
+/// new one. Returns the chosen split id.
+function resolvePanelSplit(): number {
+  if (panelSplitId !== null) {
+    const stillAlive = editor.listSplits().some((s) => s.id === panelSplitId);
+    if (stillAlive) return panelSplitId;
+    panelSplitId = null;
   }
-  // Bug #6: "always-split, never-close" used to stack a new
-  // horizontal split per rebuild because each rebuild produces a
-  // log file with a fresh timestamp. Reuse the previous build
-  // log's split if it's still on screen — drop in the new log,
-  // no extra split. The user keeps a single "build log" pane.
-  const cwd = editor.getCwd();
-  const logsPrefix = editor.pathJoin(cwd, ".fresh-cache", "devcontainer-logs");
-  const reusableSplit = buffers.find(
-    (b) => b.path && b.path.startsWith(logsPrefix) && b.splits.length > 0,
+  const active = editor.getActiveSplitId();
+  panelSplitId = active;
+  return active;
+}
+
+/// Drop a virtual buffer into the shared panel slot. Replaces
+/// whatever was in that split (so subsequent Show * commands
+/// cycle the same pane). Returns the new buffer id, or null if
+/// the runtime call failed.
+async function openVirtualInPanelSlot(opts: {
+  name: string;
+  mode: string;
+  entries: TextPropertyEntry[];
+  readOnly?: boolean;
+  showLineNumbers?: boolean;
+  showCursors?: boolean;
+  editingDisabled?: boolean;
+  lineWrap?: boolean;
+}): Promise<{ bufferId: number; splitId: number } | null> {
+  const splitId = resolvePanelSplit();
+  // If this split currently shows a previously-tracked panel
+  // buffer, drop it from the buffer map after the new one lands
+  // so the tab list doesn't accumulate.
+  const before = editor.listBuffers().filter((b) =>
+    b.splits.some((sid) => sid === splitId)
+    && panelBufferIds.has(b.id),
   );
-  if (reusableSplit && reusableSplit.splits.length > 0) {
-    editor.focusSplit(reusableSplit.splits[0]);
-    editor.openFile(path, null, null);
-    // Drop the now-stale buffer to keep the tab list / buffer
-    // map from accumulating one entry per rebuild.
-    if (reusableSplit.path !== path) {
-      editor.closeBuffer(reusableSplit.id);
+  const result = await editor.createVirtualBufferInExistingSplit({
+    name: opts.name,
+    splitId,
+    mode: opts.mode,
+    readOnly: opts.readOnly ?? true,
+    showLineNumbers: opts.showLineNumbers ?? false,
+    showCursors: opts.showCursors ?? true,
+    editingDisabled: opts.editingDisabled ?? true,
+    lineWrap: opts.lineWrap ?? true,
+    entries: opts.entries,
+  });
+  if (result === null) return null;
+  panelBufferIds.add(result.bufferId);
+  for (const stale of before) {
+    if (stale.id !== result.bufferId) {
+      editor.closeBuffer(stale.id);
+      panelBufferIds.delete(stale.id);
     }
-    return;
   }
-  // No prior log split visible → create a new one. openFile
-  // reuses the buffer when the path is already loaded.
-  editor.executeAction("split_horizontal");
+  return { bufferId: result.bufferId, splitId };
+}
+
+/// File-backed equivalent for build-log files: focuses the
+/// panel-slot split, opens the file there, closes any stale
+/// build-log buffer that was previously occupying the slot.
+function openFileInPanelSlot(path: string): void {
+  const splitId = resolvePanelSplit();
+  editor.focusSplit(splitId);
+  // Buffers currently in the panel split: close them after
+  // openFile so the tab list doesn't grow per invocation.
+  const stale = editor.listBuffers().filter((b) =>
+    b.splits.some((sid) => sid === splitId) && b.path !== path,
+  );
   editor.openFile(path, null, null);
+  for (const b of stale) {
+    // Only auto-close panels we own (build logs / other plugin
+    // outputs) — never the user's own files.
+    const isBuildLog =
+      b.path
+        ?.startsWith(editor.pathJoin(editor.getCwd(), ".fresh-cache", "devcontainer-logs"))
+      ?? false;
+    if (panelBufferIds.has(b.id) || isBuildLog) {
+      editor.closeBuffer(b.id);
+      panelBufferIds.delete(b.id);
+    }
+  }
+}
+
+function openBuildLogInSplit(path: string): void {
+  openFileInPanelSlot(path);
 }
 
 /// Close every open build-log buffer for this workspace before the new
@@ -2027,16 +2160,11 @@ async function devcontainer_show_logs(): Promise<void> {
     ? mergedParts.join("\n")
     : editor.t("status.logs_empty");
 
-  const result = await editor.createVirtualBufferInSplit({
+  // Bug #6 retest: was always splitting on every invocation
+  // (no dedupe at all). Route through the shared panel slot.
+  const result = await openVirtualInPanelSlot({
     name: "*Dev Container Logs*",
     mode: "devcontainer-info",
-    readOnly: true,
-    showLineNumbers: false,
-    showCursors: true,
-    editingDisabled: true,
-    lineWrap: true,
-    ratio: 0.4,
-    direction: "horizontal",
     entries: [{ text: merged, properties: { type: "log" } }],
   });
   if (result !== null) {
