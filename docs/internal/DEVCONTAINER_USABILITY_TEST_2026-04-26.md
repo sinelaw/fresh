@@ -104,3 +104,4 @@
 | Low | LSP install prompt and `Dev Container Detected` prompt overlap with ambiguous z-order. | Navigation |
 | Low | Reuse-existing-container path produces a build log containing only the CLI version line — user can't tell whether it built, attached, or skipped. | Task 1 |
 | Low | `Dev Container: Rebuild` sorts alphabetically after every `Show *` command in the palette. | Task 2 |
+| Low | Palette doesn't gate commands by state: `Attach` and `Cancel Startup` remain offered while already attached, alongside `Detach`. | Task 2 |
