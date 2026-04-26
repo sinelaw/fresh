@@ -463,6 +463,17 @@ impl EditorServer {
                 if editor.check_mouse_hover_timer() {
                     needs_render = true;
                 }
+
+                // Active animations force a render every FRAME_DURATION so
+                // the slide settles on its own. Without this the loop only
+                // ticks when an external event (input, resize, async
+                // message) flips `needs_render`, so under tmux a buffer
+                // switch paints its first frame and then freezes mid-slide
+                // until the user nudges the terminal. Mirrors the direct
+                // (non-server) loop in `main.rs`.
+                if editor.animations.is_active() {
+                    needs_render = true;
+                }
             }
 
             // Render and broadcast if needed
