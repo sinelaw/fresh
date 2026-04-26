@@ -19,6 +19,7 @@
     "status.detected": "Dev Container: %{name} (%{image}) - %{features} features, %{ports} ports",
     "status.no_config": "No devcontainer.json found",
     "status.parse_failed": "devcontainer.json parse error in %{path}: %{message}",
+    "status.port_forwarded": "Port %{port} forwarded%{label}",
     "status.panel_opened": "Dev Container info panel opened",
     "status.panel_closed": "Dev Container info panel closed",
     "status.no_lifecycle": "No lifecycle commands defined",

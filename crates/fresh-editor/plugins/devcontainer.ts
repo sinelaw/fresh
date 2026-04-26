@@ -2185,10 +2185,56 @@ editor.on("authority_changed", "devcontainer_on_authority_changed");
 /// (local ↔ container). Without this, after `setAuthority` lands a
 /// container we'd still have `Attach` / `Cancel Startup` in the
 /// palette and `Detach` / `Show Logs` missing.
-function devcontainer_on_authority_changed(_data: unknown): void {
+///
+/// Also runs the auto-forward port-detection sweep when entering
+/// container mode — Bug #4 (L171). Detecting an entry from
+/// `forwardPorts` that's actually bound (host-side) and emitting
+/// the spec'd `onAutoForward: notify` toast.
+function devcontainer_on_authority_changed(data: unknown): void {
   registerCommands();
+  const label = (data as { label?: string } | undefined)?.label ?? "";
+  if (label.startsWith("Container:")) {
+    void runAutoForwardSweep();
+  } else {
+    notifiedPorts.clear();
+  }
 }
 registerHandler("devcontainer_on_authority_changed", devcontainer_on_authority_changed);
+
+/// Set of `port/protocol` keys we've already fired the
+/// `onAutoForward: notify` toast for in the current attach
+/// session. Cleared on detach so a re-attach re-notifies.
+const notifiedPorts = new Set<string>();
+
+/// Bug #4 (L171): emit the spec'd `onAutoForward: notify` toast
+/// for ports that are both declared in `forwardPorts` AND
+/// actually bound on the host (visible in `docker port <id>`).
+///
+/// Scoped fix: only the notification half of the spec. Actually
+/// publishing ports that aren't already mapped is a separate
+/// effort — it requires either a host-side userspace forwarder
+/// (the VS Code approach) or `appPort`/runArgs glue when starting
+/// the container, both of which are larger than this commit.
+async function runAutoForwardSweep(): Promise<void> {
+  if (!config?.forwardPorts || config.forwardPorts.length === 0) return;
+  const rows = await gatherForwardedPortRows();
+  for (const row of rows) {
+    if (row.source !== "configured") continue;
+    if (!row.binding) continue;
+    const attrs = config.portsAttributes?.[row.port];
+    if (attrs?.onAutoForward !== "notify") continue;
+    const key = `${row.port}/${row.protocol.toLowerCase()}`;
+    if (notifiedPorts.has(key)) continue;
+    notifiedPorts.add(key);
+    const labelSuffix = attrs.label ? ` (${attrs.label})` : "";
+    editor.setStatus(
+      editor.t("status.port_forwarded", {
+        port: row.port,
+        label: labelSuffix,
+      }),
+    );
+  }
+}
 
 // =============================================================================
 // Command Registration

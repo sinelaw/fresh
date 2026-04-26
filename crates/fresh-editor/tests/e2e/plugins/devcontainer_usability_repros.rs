@@ -527,3 +527,79 @@ fn broken_devcontainer_json_keeps_recovery_commands_registered() {
          config is unparseable. Registered: {names:?}"
     );
 }
+
+/// **Bug #4 (L171, scoped: notify half).** Spec says
+/// `portsAttributes.<port>.onAutoForward: "notify"` should
+/// surface a notification when the port is auto-forwarded. The
+/// usability report (Task 3) found that no notification ever
+/// fired — the `onAutoForward` field was read by the panel
+/// renderer but never acted on.
+///
+/// Regression guard for that fix: configure `forwardPorts: [9000]`
+/// + `portsAttributes."9000".onAutoForward: "notify"`, set
+/// `FAKE_DC_PORTS=9000` so the fake docker reports the binding,
+/// attach via the fake CLI, and assert the rendered screen
+/// surfaces the `Port 9000 forwarded` toast.
+///
+/// What this fix does NOT cover: actually publishing ports that
+/// docker hasn't already mapped. That requires a host-side
+/// userspace forwarder, much larger work — separate effort.
+#[cfg(unix)]
+#[test]
+fn auto_forward_notify_fires_for_configured_port() {
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().canonicalize().unwrap();
+
+    let dc = workspace.join(".devcontainer");
+    fs::create_dir_all(&dc).unwrap();
+    fs::write(
+        dc.join("devcontainer.json"),
+        r#"{
+  "name": "auto-forward-test",
+  "image": "ubuntu:22.04",
+  "remoteUser": "vscode",
+  "forwardPorts": [9000],
+  "portsAttributes": {
+    "9000": { "onAutoForward": "notify", "label": "App" }
+  }
+}"#,
+    )
+    .unwrap();
+
+    let plugins_dir = workspace.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "devcontainer");
+
+    // FAKE_DC_PORTS makes the fake `docker port <id>` report
+    // `9000/tcp -> 0.0.0.0:32768`, simulating a published port.
+    std::env::set_var("FAKE_DC_PORTS", "9000");
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+
+    attach_via_fake(&mut harness);
+
+    // Wait for the auto-forward sweep to finish (it's async — it
+    // runs `docker port <id>` and then emits setStatus).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Port 9000 forwarded"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    std::env::remove_var("FAKE_DC_PORTS");
+
+    assert!(
+        screen.contains("Port 9000 forwarded"),
+        "configured `forwardPorts` entry with `onAutoForward: notify` must \
+         emit a toast when the port is bound; screen:\n{screen}"
+    );
+}
