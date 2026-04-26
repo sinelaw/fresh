@@ -268,9 +268,12 @@ build-log surfaces.
   /`writeAttachDecision` in `devcontainer.ts`.)
 
 - **`*Dev Container Logs*` is virtual and not restorable.** That split
-  silently disappears on restart, leaving an empty bottom slot in the
-  saved layout. Not a regression — virtual buffers aren't persisted —
-  but worth knowing when comparing pre/post-restart screenshots.
+  silently disappears on restart, but the saved layout *also* drops
+  the slot — `serialize_split_node_pruned` (`workspace.rs:1796-1842`)
+  collapses virtual leaves and hoists their sibling. The "empty
+  bottom slot" I initially flagged was actually the *real* on-disk
+  build log from the previous attach, restored as a normal buffer;
+  see F1 in `DEVCONTAINER_REMEDIATION_PLAN.md`.
 
 - **Multiple tabs in the same split aren't visually marked when they
   collide with the buffer-group ribbon.** The active tab title shows

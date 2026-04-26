@@ -12,17 +12,18 @@ turns them into prioritized work items.
 
 ## Snapshot of issues
 
-| ID | Severity | Description | Where it bites |
-|----|----------|-------------|----------------|
-| F1 | High | Stale build-log buffers restored on cold start with no "this is from a previous run" hint | Confuses the user the first time they re-open a workspace; new attach also stacks a *second* build-log split |
-| F2 | High | Re-prompt for "Reopen in Container?" on every cold restart, even after the user said "Reopen in Container" last time | Annoying churn; defeats the per-workspace "remember decision" intent of `attachDecisionKey` |
-| F3 | Medium | The clickable Remote Indicator was opt-in: not in `default_status_bar_left`, no palette command, no default keybinding | Users couldn't reach the menu without editing config (***fixed in this branch — see commit "feat(remote-indicator): default-on, palette + F6 keybinding"***) |
-| F4 | Medium | `*Dev Container Logs*` virtual buffer disappears on restart, leaving an empty slot in the saved layout | Visual hiccup; layout looks "wrong" until the user manually closes splits |
-| F5 | Low | Multiple buffers in one split aren't visually marked when the tab strip is too narrow | Pre-existing UX wart; surfaces sharply during devcontainer flows because attach opens many transient buffers |
-| F6 | Low | Show Build Logs vs Show Logs is easy to mix up via fuzzy palette match | Cosmetic; just a label clarification |
+| ID | Severity | Description | Status |
+|----|----------|-------------|--------|
+| F1 | High | Stale build-log buffers restored on cold start with no "this is from a previous run" hint; new attach stacks a *second* build-log split alongside the stale one | **Fixed on this branch** — `closeStaleBuildLogBuffers(cwd)` runs at the start of every attach; tracked by `Phase 4` test below |
+| F2 | High | Re-prompt for "Reopen in Container?" on every cold restart, even after the user said "Reopen in Container" last time | **Open** — investigation parked. The plugin writes the decision via `writeAttachDecision("attached")` which lands in `plugin_global_state` (workspace.rs:405). Likely root cause is non-clean process exit (e.g. SIGHUP from a parent shell) skipping the workspace save; verifying needs an integration test that drives a clean Quit. See "F2 next steps" below. |
+| F3 | Medium | The clickable Remote Indicator was opt-in: not in `default_status_bar_left`, no palette command, no default keybinding | **Fixed on this branch** — `feat(remote-indicator): default-on, palette + F6 keybinding` |
+| F4 | Medium | `*Dev Container Logs*` virtual buffer thought to leave an empty slot on restore | **Already-handled (verified)** — `serialize_split_node_pruned` (`workspace.rs:1796-1842`) drops virtual leaves and collapses the parent. The earlier finding in `FAKE_DEVCONTAINER_TEST_PLAN.md` mistook the duplicated *real* build-log buffer for an empty slot |
+| F5 | Low | Multiple buffers in one split aren't visually marked when the tab strip is too narrow | Pre-existing UX wart; out of scope for this remediation, tracked as a separate issue |
+| F6 | Low | Show Build Logs vs Show Logs is easy to mix up via fuzzy palette match | **Fixed on this branch** — `cmd.show_logs` renamed to `Dev Container: Show Container Logs` across all 14 locales |
 
-The rest of this doc walks F1, F2, F4, F5, F6 plus the CI investment.
-F3 is already handled in this branch.
+F1, F3, F4, F6 are landed (or were never bugs). The rest of this doc
+keeps F2 + F5 as forward-looking work, plus the CI investment that
+backs every fix above.
 
 ---
 
@@ -64,75 +65,78 @@ Two complementary moves:
    before opening the fresh one. Keeps the screen single-truth on
    re-attach.
 
-Touchpoints: `crates/fresh-editor/plugins/devcontainer.ts` (logic),
-plus whatever workspace-save filter governs which buffers persist —
-likely in `crates/fresh-editor/src/server/editor_server.rs` or the
-workspace serializer.
+### Landed in this branch
+
+`closeStaleBuildLogBuffers(cwd)` in `plugins/devcontainer.ts` walks
+`editor.listBuffers()`, drops any whose `path` starts with
+`<cwd>/.fresh-cache/devcontainer-logs/`, and runs at the top of
+`runDevcontainerUp` (after `prepareBuildLogFile`, before
+`openBuildLogInSplit`). The on-disk log files stay untouched —
+`Show Build Logs` and "View Log" actions can still re-open the most
+recent one — but no stale buffer is left dangling in a split.
 
 ### Test (CI-able)
 
 Drive Flow A → quit cleanly → relaunch → assert workspace doesn't
 contain a build-log buffer in the restored layout. With the fake CLI,
 `prepareBuildLogFile` runs as normal, so the test exercises the real
-code path. Live in `crates/fresh-editor/tests/e2e/plugins/`.
+code path. Lives next to the new tests in
+`crates/fresh-editor/tests/e2e/plugins/devcontainer_attach_e2e.rs`
+(test name TBD when F1 regression test is added — see Phase 4 below).
 
 ## F2 — Reopen-in-Container re-prompts on every cold start
 
 ### What happens
 
 `devcontainer.ts` keys the prompt decision via `attachDecisionKey()`
-which is per-cwd plugin global state. It *should* persist.
+which is per-cwd plugin global state. It *should* persist —
+`Editor::plugin_global_state` is part of the workspace JSON
+(`workspace.rs:405`).
 
-In the tmux walk, the prompt re-appeared after a cold restart even
-though we'd selected "Reopen in Container" in the prior run. The
-likely cause: `setAuthority` triggers an editor restart immediately
-after `writeAttachDecision("attached")` — the post-restart instance
-reads back the decision but it never fired the Save path, OR the
-write race-loses to a workspace save that captured the pre-write
-state.
+In the tmux walk the prompt re-appeared after a cold restart even
+though we'd selected "Reopen in Container" in the prior run. Two
+plausible root causes:
 
-### Proposed investigation
+1. **Non-clean exit dropped the save.** The walk ended with
+   `tmux kill-session`, which sends SIGHUP through bash to fresh.
+   If the SIGHUP path doesn't flush the workspace, the decision
+   never made it to disk. Easy to verify by re-running with a clean
+   `:Quit` from inside the editor.
+2. **Restart-before-save race.** `setAuthority` triggers an editor
+   restart immediately after `writeAttachDecision("attached")`. If
+   the global-state write isn't flushed to the workspace JSON before
+   the restart, the post-restart instance reads back stale data.
 
-1. Add a single-line debug on plugin load: log the value
-   `readAttachDecision()` returns, compared with what
-   `editor.getCwd()` resolves to. Run the tmux walk with the fake CLI;
-   capture the log to see whether the key landed at all.
-2. If the key is missing post-restart, audit
-   `setGlobalState`/`getGlobalState` plumbing for ordering with
-   `setAuthority`. The fix is likely a flush before authority change
-   (or moving the write earlier in `runDevcontainerUp`).
+### F2 next steps
+
+Pick up after Phase 4's harness work has the F1 regression test in
+place — that test's "quit cleanly → relaunch" scaffold is exactly
+what F2 needs:
+
+1. Extend the F1 test to also assert `readAttachDecision()` returns
+   "attached" on the post-restart plugin instance. If it does, the
+   re-prompt was a tmux-kill artifact and we close F2 as
+   non-reproducible.
+2. If it doesn't, the bug is real. Audit setGlobalState plumbing
+   around `setAuthority` — likely fix is to flush before the
+   authority change, or move `writeAttachDecision` earlier so it
+   lands in the workspace save that fires *before* restart.
 3. If the key lands but the popup still shows, the bug is in
-   `devcontainer_maybe_show_attach_prompt` — re-read its `previousDecision !== null`
-   guard against the actual return value.
-
-### Test
-
-Same recipe as F1's test: attach via fake CLI → quit → relaunch →
-assert no popup with id `devcontainer-attach`.
+   `devcontainer_maybe_show_attach_prompt`'s
+   `previousDecision !== null` guard.
 
 ## F4 — Virtual log buffer leaves a visible empty slot
 
-`*Dev Container Logs*` is created via `createVirtualBufferInSplit` and
-correctly isn't persisted, but the *split* placeholder it occupied
-gets restored as an empty area in the saved layout.
+**Resolved on inspection — this was a misread of the tmux capture.**
 
-### Proposed fix
+`serialize_split_node_pruned` (`crates/fresh-editor/src/app/workspace.rs:1796-1842`)
+already drops virtual-buffer leaves and collapses the parent Split.
+What I saw in the tmux session and labelled as "an empty slot" was
+actually the pre-existing build-log split holding the *real* on-disk
+log file from the previous attach — fixed under F1, not F4.
 
-Two options:
-
-1. **At save time:** drop empty splits from the saved layout (cheap, in
-   the workspace serializer).
-2. **At restore time:** collapse splits whose buffer is missing, with a
-   single-frame relayout pass.
-
-Option 1 is simpler and matches user expectation — if a split's
-content didn't survive, the split shouldn't either.
-
-### Test
-
-Open Dev Container Logs in a split → quit → restart → assert the
-restored split count matches what was actually persisted (i.e. the
-old "Dev Container Logs" slot is gone, not present-but-empty).
+No code change here. Test plan note (in
+`FAKE_DEVCONTAINER_TEST_PLAN.md`) updated separately.
 
 ## F5 — Tab strip hides extra buffers when narrow
 
