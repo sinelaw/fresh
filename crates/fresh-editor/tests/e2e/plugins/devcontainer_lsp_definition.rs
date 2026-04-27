@@ -662,6 +662,88 @@ fn arrange_attached_session_with_open_main_py() -> (
         "expected container authority, got {label:?}"
     );
 
+    // Fail-fast: the editor will shortly call `command_exists`
+    // through the *active* authority's spawner; if it returns
+    // false, the LSP never starts and `wait_until_with_dumps` will
+    // hang for 180s. Run the exact same probe right here so a
+    // misconfigured PATH / missing exec bit / fake-docker shim bug
+    // surfaces with a clear message instead of a nextest timeout.
+    //
+    // The CI logs from the previous failed run pinpointed this as
+    // the actual stuck point on macOS — the editor's
+    // `command_exists` returned false but we couldn't tell whether
+    // the failure was on the host (file/permissions) or in the
+    // fake-docker → sh → `command -v` chain. Running the probe
+    // directly here narrows it to "this exact authority + this
+    // exact command" so the panic message names the gap.
+    {
+        let spawner = harness.editor().authority().long_running_spawner.clone();
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime for command_exists probe");
+        let exists = rt.block_on(async move { spawner.command_exists("fake-pylsp").await });
+        drop(rt);
+        if !exists {
+            // Surface absolutely everything we know about the
+            // probe so CI logs name the cause: which docker shim
+            // ran, what PATH it received, what the host can see.
+            eprintln!("[infra] command_exists('fake-pylsp') returned false");
+            eprintln!("[infra] host fake_lsp_bin: {}", fake_lsp_bin.display());
+            eprintln!(
+                "[infra] host PATH: {}",
+                std::env::var("PATH").unwrap_or_default()
+            );
+            // Try the SAME probe on the host — if this works, the
+            // problem is the docker shim / -e PATH= round-trip;
+            // if it doesn't, the problem is the file/permissions.
+            let host_probe = std::process::Command::new("sh")
+                .args(["-c", "command -v fake-pylsp"])
+                .output();
+            match host_probe {
+                Ok(out) => eprintln!(
+                    "[infra] host `sh -c 'command -v fake-pylsp'`: status={}, stdout={:?}, stderr={:?}",
+                    out.status,
+                    String::from_utf8_lossy(&out.stdout).trim(),
+                    String::from_utf8_lossy(&out.stderr).trim(),
+                ),
+                Err(e) => eprintln!("[infra] host `sh -c 'command -v fake-pylsp'`: spawn failed: {e}"),
+            }
+            // Run the probe a *second* way — directly invoke the
+            // fake-docker shim from this test process, bypassing
+            // the spawner. Surfaces whether the shim itself is
+            // bypassing the export, or `sh` inside it can't see
+            // PATH, or what.
+            let shim_probe = std::process::Command::new("docker")
+                .args([
+                    "exec",
+                    "-e",
+                    &format!(
+                        "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:{}",
+                        fake_lsp_bin.display()
+                    ),
+                    "fake-id",
+                    "sh",
+                    "-c",
+                    "echo PATH=$PATH; command -v fake-pylsp; echo exit=$?",
+                ])
+                .output();
+            match shim_probe {
+                Ok(out) => eprintln!(
+                    "[infra] direct fake-docker probe: status={}, stdout={:?}, stderr={:?}",
+                    out.status,
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr),
+                ),
+                Err(e) => eprintln!("[infra] direct fake-docker probe: spawn failed: {e}"),
+            }
+            dump_external_state(&state, "command_exists pre-flight");
+            panic!(
+                "infra: command_exists('fake-pylsp') returned false through the \
+                 active authority's spawner. The editor's LSP spawn will fail \
+                 the same way and the test would otherwise hang. See diagnostics above."
+            );
+        }
+        eprintln!("[infra] command_exists('fake-pylsp') OK through authority spawner");
+    }
+
     harness.open_file(&main_py).unwrap();
     wait_until_with_dumps(&mut harness, "fake-pylsp initialize", &state, |_| {
         read_uri_log(&state)
