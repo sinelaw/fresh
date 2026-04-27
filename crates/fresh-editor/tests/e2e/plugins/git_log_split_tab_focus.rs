@@ -18,6 +18,7 @@
 
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
+use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::time::Duration;
@@ -47,6 +48,14 @@ fn col_of_text_in_row(harness: &EditorTestHarness, row: u16, needle: &str) -> u1
 
 #[test]
 fn clicking_group_tab_activates_group_in_the_clicked_split() {
+    // Diagnostic instrumentation for the historical 180s nextest
+    // timeout on this test.  Tracing prints flow context (RUST_LOG=
+    // info or debug to expand); signal handlers dump a backtrace +
+    // pending tokio tasks on SIGABRT/SIGSEGV so the next CI hang
+    // gives us actionable data instead of a bare timeout line.
+    init_tracing_from_env();
+    fresh::services::signal_handler::install_signal_handlers();
+
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
     repo.setup_git_log_plugin();

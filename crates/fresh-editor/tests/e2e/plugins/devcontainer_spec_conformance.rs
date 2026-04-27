@@ -217,39 +217,77 @@ fn bounded_wait_for_probe_line(
 // ============================================================================
 
 /// **R1.** Spec: `postCreateCommand: { "a": "...", "b": "..." }`
-/// runs entries in parallel. The plugin's
+/// runs entries in parallel.  The plugin's
 /// `devcontainer_on_lifecycle_confirmed` runs them in a sequential
-/// `for` loop, so wall-clock = sum of entry sleeps instead of the
-/// max. Test sets each entry to sleep 0.4s and asserts wall-clock
-/// is well under the sequential lower bound.
+/// `for` loop — wall-clock = sum of entry sleeps instead of the max.
 ///
-/// Fails on master (sequential ⇒ ~0.8s+); will pass once the
-/// plugin uses `Promise.all` (or the equivalent) to fan out.
+/// Asserts parallelism **without** a wall-clock measurement
+/// (CONTRIBUTING.md rule #3 — no time-sensitive assertions).
+/// Each entry uses a barrier:
+///
+///   1. touch its own `start_X`
+///   2. wait until **every other entry's** `start_*` exists (with a
+///      bounded retry budget to fail fast if the others never start)
+///   3. touch its own `done_X`
+///
+/// If the plugin runs entries in parallel, all three `start_*`
+/// sentinels appear within milliseconds, every entry observes the
+/// others, and every entry touches its `done_*`.  The test waits
+/// for all three `done_*` sentinels.
+///
+/// If the plugin runs entries sequentially, the first entry's
+/// barrier wait can never succeed (the next entry can't start until
+/// the first finishes — chicken-and-egg).  The first entry exhausts
+/// its retry budget without touching `done_a`, then the second runs
+/// the same way, and only the **last** entry can touch its done
+/// sentinel.  The test sees `done_a` / `done_b` missing and fails
+/// with a clear "barrier never satisfied" message.
+///
+/// Bounded retry budget = 30 × 100ms = 3s, so the failure case
+/// runs in roughly `entries × 3s` wall time, well inside nextest's
+/// per-test timeout.
 #[test]
 fn lifecycle_object_form_must_run_in_parallel() {
     let probe_temp = tempfile::tempdir().unwrap();
-    let probe_a = probe_temp.path().join("a.touched");
-    let probe_b = probe_temp.path().join("b.touched");
-    let probe_done = probe_temp.path().join("done");
+    let start_a = probe_temp.path().join("start_a");
+    let start_b = probe_temp.path().join("start_b");
+    let start_c = probe_temp.path().join("start_c");
+    let done_a = probe_temp.path().join("done_a");
+    let done_b = probe_temp.path().join("done_b");
+    let done_c = probe_temp.path().join("done_c");
 
-    // Each entry sleeps then touches its own sentinel. A trailing
-    // postStartCommand-like sentinel `done` is touched by a third
-    // entry so the test has a clear "everything finished" signal.
+    // Bash barrier script: touch own start, wait for the two siblings'
+    // starts to exist (up to 3s), then touch own done.  Each entry's
+    // command differs only in which sentinels it owns vs. waits on.
+    let barrier = |own_start: &Path, sib1: &Path, sib2: &Path, own_done: &Path| -> String {
+        format!(
+            r#"sh -c 'touch {own_start} && for i in $(seq 1 30); do if [ -f {sib1} ] && [ -f {sib2} ]; then touch {own_done}; exit 0; fi; sleep 0.1; done; exit 1'"#,
+            own_start = own_start.display(),
+            sib1 = sib1.display(),
+            sib2 = sib2.display(),
+            own_done = own_done.display(),
+        )
+    };
+
+    let cmd_a = barrier(&start_a, &start_b, &start_c, &done_a);
+    let cmd_b = barrier(&start_b, &start_a, &start_c, &done_b);
+    let cmd_c = barrier(&start_c, &start_a, &start_b, &done_c);
+
     let dc_json = format!(
         r#"{{
   "name": "r1-parallel",
   "image": "ubuntu:22.04",
   "remoteUser": "vscode",
   "postCreateCommand": {{
-    "a": "sleep 0.4 && touch {a}",
-    "b": "sleep 0.4 && touch {b}",
-    "done": "sleep 0.5 && touch {done}"
+    "a": {cmd_a},
+    "b": {cmd_b},
+    "done": {cmd_c}
   }}
 }}
 "#,
-        a = probe_a.display(),
-        b = probe_b.display(),
-        done = probe_done.display(),
+        cmd_a = serde_json::to_string(&cmd_a).unwrap(),
+        cmd_b = serde_json::to_string(&cmd_b).unwrap(),
+        cmd_c = serde_json::to_string(&cmd_c).unwrap(),
     );
     let (_w_temp, workspace) = workspace_with_devcontainer(&dc_json);
 
@@ -264,26 +302,34 @@ fn lifecycle_object_form_must_run_in_parallel() {
     harness.tick_and_render().unwrap();
     attach(&mut harness);
 
-    let start = std::time::Instant::now();
-    let _ = run_post_create(&mut harness, &probe_done);
-    let elapsed = start.elapsed();
+    // Drive the picker, then wait for the **last** entry's done
+    // sentinel to appear.  `done_c` is the picker's tracked probe
+    // (per `run_post_create`'s contract — it's the sentinel marked
+    // by the entry whose key sorts last alphabetically in our
+    // `postCreateCommand` object).  10s deadline is bounded by
+    // `bounded_wait_for_file`; nextest enforces the outer
+    // per-test timeout.
+    let _ = run_post_create(&mut harness, &done_c);
 
-    // All three entries must have run.
-    assert!(probe_a.exists(), "entry `a` never ran");
-    assert!(probe_b.exists(), "entry `b` never ran");
-    assert!(probe_done.exists(), "entry `done` never ran");
-
-    // Sequential lower bound is 0.4 + 0.4 + 0.5 = 1.3s. Parallel
-    // upper bound is ~0.5s plus per-entry docker-exec overhead.
-    // Pick a threshold safely between the two.
-    let max_parallel = std::time::Duration::from_millis(1100);
+    // All three barrier scripts must have completed.  In sequential
+    // execution, only the LAST entry to run has its barrier
+    // satisfied (it sees the previous entries' start sentinels
+    // already exist) — the first two exit 1 without touching their
+    // done.
     assert!(
-        elapsed < max_parallel,
-        "R1 (failing on master): postCreateCommand object form should run \
-         entries in parallel. Wall clock = {:?} > {:?} (sequential lower \
-         bound was 1.3s, parallel upper bound ~0.5s).",
-        elapsed,
-        max_parallel,
+        done_a.exists(),
+        "entry `a` never satisfied the barrier — implies sequential execution \
+         (entry `a` ran first, waited 3s for entries `b`/`done` to start, \
+         timed out without touching done_a).  CONTRIBUTING.md rule #3: this \
+         test is barrier-based, no wall-clock assertion."
+    );
+    assert!(
+        done_b.exists(),
+        "entry `b` never satisfied the barrier — implies sequential execution"
+    );
+    assert!(
+        done_c.exists(),
+        "entry `done` never satisfied the barrier — implies sequential execution"
     );
 }
 
