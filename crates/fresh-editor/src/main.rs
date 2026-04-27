@@ -2026,36 +2026,54 @@ fn write_script_file(dir: &Path, name: &str, content: &str) -> AnyhowResult<()> 
     Ok(())
 }
 
+fn write_package_json(
+    dir: &Path,
+    name: &str,
+    description: &str,
+    author: &str,
+    pkg_type: &str,
+    default_description: &str,
+    fresh_section: &str,
+) -> AnyhowResult<()> {
+    let desc = if description.is_empty() {
+        default_description
+    } else {
+        description
+    };
+    let content = format!(
+        r#"{{
+  "$schema": "https://raw.githubusercontent.com/sinelaw/fresh/main/crates/fresh-editor/plugins/schemas/package.schema.json",
+  "name": "{name}",
+  "version": "0.1.0",
+  "description": "{desc}",
+  "type": "{pkg_type}",
+  "author": "{author}",
+  "license": "MIT",
+  "fresh": {fresh_section}
+}}
+"#
+    );
+    std::fs::write(dir.join("package.json"), content)?;
+    Ok(())
+}
+
 fn create_plugin_package(
     dir: &Path,
     name: &str,
     description: &str,
     author: &str,
 ) -> AnyhowResult<()> {
-    // package.json
-    let package_json = format!(
-        r#"{{
-  "$schema": "https://raw.githubusercontent.com/sinelaw/fresh/main/crates/fresh-editor/plugins/schemas/package.schema.json",
-  "name": "{}",
-  "version": "0.1.0",
-  "description": "{}",
-  "type": "plugin",
-  "author": "{}",
-  "license": "MIT",
-  "fresh": {{
-    "main": "plugin.ts"
-  }}
-}}
-"#,
+    write_package_json(
+        dir,
         name,
-        if description.is_empty() {
-            "A Fresh plugin".to_string()
-        } else {
-            description.to_string()
-        },
-        author
-    );
-    std::fs::write(dir.join("package.json"), package_json)?;
+        description,
+        author,
+        "plugin",
+        "A Fresh plugin",
+        r#"{
+    "main": "plugin.ts"
+  }"#,
+    )?;
 
     // validate.sh
     write_validate_script(dir)?;
@@ -2140,30 +2158,17 @@ fn create_theme_package(
     description: &str,
     author: &str,
 ) -> AnyhowResult<()> {
-    // package.json
-    let package_json = format!(
-        r#"{{
-  "$schema": "https://raw.githubusercontent.com/sinelaw/fresh/main/crates/fresh-editor/plugins/schemas/package.schema.json",
-  "name": "{}",
-  "version": "0.1.0",
-  "description": "{}",
-  "type": "theme",
-  "author": "{}",
-  "license": "MIT",
-  "fresh": {{
-    "theme": "theme.json"
-  }}
-}}
-"#,
+    write_package_json(
+        dir,
         name,
-        if description.is_empty() {
-            "A Fresh theme".to_string()
-        } else {
-            description.to_string()
-        },
-        author
-    );
-    std::fs::write(dir.join("package.json"), package_json)?;
+        description,
+        author,
+        "theme",
+        "A Fresh theme",
+        r#"{
+    "theme": "theme.json"
+  }"#,
+    )?;
 
     // validate.sh - validates both package.json and theme.json
     write_theme_validate_script(dir)?;
@@ -2256,43 +2261,30 @@ fn create_language_package(
     // Create grammars directory
     std::fs::create_dir_all(dir.join("grammars"))?;
 
-    // package.json
-    let package_json = format!(
-        r#"{{
-  "$schema": "https://raw.githubusercontent.com/sinelaw/fresh/main/crates/fresh-editor/plugins/schemas/package.schema.json",
-  "name": "{}",
-  "version": "0.1.0",
-  "description": "{}",
-  "type": "language",
-  "author": "{}",
-  "license": "MIT",
-  "fresh": {{
-    "grammar": {{
+    write_package_json(
+        dir,
+        name,
+        description,
+        author,
+        "language",
+        "Language support for Fresh",
+        r#"{
+    "grammar": {
       "file": "grammars/syntax.sublime-syntax",
       "extensions": ["ext"]
-    }},
-    "language": {{
+    },
+    "language": {
       "commentPrefix": "//",
       "tabSize": 4,
       "autoIndent": true
-    }},
-    "lsp": {{
+    },
+    "lsp": {
       "command": "language-server",
       "args": ["--stdio"],
       "autoStart": true
-    }}
-  }}
-}}
-"#,
-        name,
-        if description.is_empty() {
-            "Language support for Fresh".to_string()
-        } else {
-            description.to_string()
-        },
-        author
-    );
-    std::fs::write(dir.join("package.json"), package_json)?;
+    }
+  }"#,
+    )?;
 
     // validate.sh
     write_validate_script(dir)?;
@@ -2441,20 +2433,18 @@ fn list_grammars_command() -> AnyhowResult<()> {
         .max("SHORT NAME".len());
 
     println!(
-        "{:<nw$}  {:<sw$}  {:<12}  {}",
+        "{:<nw$}  {:<sw$}  {:<12}  EXTENSIONS",
         "GRAMMAR",
         "SHORT NAME",
         "SOURCE",
-        "EXTENSIONS",
         nw = max_name_len,
         sw = max_short_len
     );
     println!(
-        "{:<nw$}  {:<sw$}  {:<12}  {}",
+        "{:<nw$}  {:<sw$}  {:<12}  ----------",
         "-------",
         "----------",
         "------",
-        "----------",
         nw = max_name_len,
         sw = max_short_len
     );
