@@ -1775,7 +1775,7 @@ fn serialize_split_node(
         terminal_indices,
         split_labels,
     )
-    .unwrap_or_else(|| {
+    .unwrap_or({
         // Entire tree was virtual buffers — nothing to persist.  Fall back to
         // an empty [No Name] leaf so the restored workspace is still valid.
         SerializedSplitNode::Leaf {

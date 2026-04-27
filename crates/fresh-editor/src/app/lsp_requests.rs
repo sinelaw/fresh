@@ -87,7 +87,7 @@ impl Editor {
         }
 
         // Update status when all completion responses have arrived
-        if self.pending_completion_requests.is_empty() {}
+        self.pending_completion_requests.is_empty();
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
@@ -1634,7 +1634,7 @@ impl Editor {
         }
 
         // Update status when all code action responses have arrived
-        if self.pending_code_actions_requests.is_empty() {}
+        self.pending_code_actions_requests.is_empty();
 
         // Look up the server name for this request
         let server_name = self

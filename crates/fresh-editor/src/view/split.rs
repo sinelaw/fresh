@@ -1403,16 +1403,14 @@ impl SplitManager {
         first: Option<u16>,
         second: Option<u16>,
     ) {
-        match self.root.find_mut(container_id.into()) {
-            Some(SplitNode::Split {
-                fixed_first,
-                fixed_second,
-                ..
-            }) => {
-                *fixed_first = first;
-                *fixed_second = second;
-            }
-            _ => {}
+        if let Some(SplitNode::Split {
+            fixed_first,
+            fixed_second,
+            ..
+        }) = self.root.find_mut(container_id.into())
+        {
+            *fixed_first = first;
+            *fixed_second = second;
         }
     }
 

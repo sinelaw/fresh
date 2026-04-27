@@ -1604,12 +1604,10 @@ fn unique_paste_name(
             } else {
                 format!("{} copy.{}", stem, ext)
             }
+        } else if ext.is_empty() {
+            format!("{} copy {}", stem, n)
         } else {
-            if ext.is_empty() {
-                format!("{} copy {}", stem, n)
-            } else {
-                format!("{} copy {}.{}", stem, n, ext)
-            }
+            format!("{} copy {}.{}", stem, n, ext)
         };
         let path = dst_dir.join(&candidate);
         if !fs.exists(&path) {

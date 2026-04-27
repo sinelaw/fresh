@@ -127,7 +127,7 @@ impl Editor {
                 if let Some(key) = action_key {
                     self.handle_remote_indicator_action(&key);
                 }
-                return PopupConfirmResult::EarlyReturn;
+                PopupConfirmResult::EarlyReturn
             }
 
             Some(PopupResolver::Completion) => {

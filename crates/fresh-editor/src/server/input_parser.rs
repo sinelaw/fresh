@@ -571,7 +571,7 @@ impl InputParser {
 /// Returns true if `b` is the leading byte of a UTF-8 multi-byte sequence.
 /// 0xC0 and 0xC1 are excluded per RFC 3629 (overlong encodings).
 fn is_utf8_start_byte(b: u8) -> bool {
-    matches!(b, 0xC2..=0xDF | 0xE0..=0xEF | 0xF0..=0xF7)
+    matches!(b, 0xC2..=0xF7)
 }
 
 /// Returns the total byte width of a UTF-8 sequence given its leading byte.

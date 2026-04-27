@@ -1143,11 +1143,10 @@ impl LspManager {
             ) {
                 Ok(handle) => {
                     let effective_root = file_path
-                        .map(|p| {
+                        .and_then(|p| {
                             let root = detect_workspace_root(p, &config.root_markers);
                             path_to_uri(&root)
                         })
-                        .flatten()
                         .or_else(|| self.root_uri.clone());
                     if let Err(e) =
                         handle.initialize(effective_root, config.initialization_options.clone())
@@ -1467,11 +1466,10 @@ impl LspManager {
             Ok(handle) => {
                 let effective_root = if is_universal {
                     file_path
-                        .map(|p| {
+                        .and_then(|p| {
                             let root = detect_workspace_root(p, &config.root_markers);
                             path_to_uri(&root)
                         })
-                        .flatten()
                         .or_else(|| self.root_uri.clone())
                 } else {
                     self.resolve_root_uri(language, file_path)

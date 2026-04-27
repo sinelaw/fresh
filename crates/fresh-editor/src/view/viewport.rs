@@ -296,7 +296,7 @@ impl Viewport {
                 };
                 return cache.get_or_insert_with(key, compute).len();
             }
-            return compute().len();
+            compute().len()
         }
     }
 }

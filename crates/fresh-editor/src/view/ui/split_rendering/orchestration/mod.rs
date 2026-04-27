@@ -769,7 +769,7 @@ pub(crate) fn compute_content_layout(
         let split_tab_bar_visible = tab_bar_visible
             && !split_view_states
                 .get(&split_id)
-                .map_or(false, |vs| vs.suppress_chrome);
+                .is_some_and(|vs| vs.suppress_chrome);
 
         let layout = split_layout(
             split_area,

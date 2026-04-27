@@ -75,7 +75,7 @@ pub(crate) fn scrollbar_jump_visual(
     viewport_width: usize,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
-    if state.buffer.len() == 0 || viewport_height == 0 {
+    if state.buffer.is_empty() || viewport_height == 0 {
         return (0, 0);
     }
 
@@ -115,7 +115,7 @@ pub(crate) fn scrollbar_drag_relative_visual(
     viewport_width: usize,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
-    if state.buffer.len() == 0 || viewport_height == 0 || scrollbar_height <= 1 {
+    if state.buffer.is_empty() || viewport_height == 0 || scrollbar_height <= 1 {
         return (0, 0);
     }
 

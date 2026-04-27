@@ -63,13 +63,11 @@ pub(crate) fn build_base_tokens(
         // when there's actually a fold ahead — without one, segment_end
         // is `buffer_len`, but `cursor >= buffer_len` is fine: `LineIterator`
         // handles the past-EOF case via internal clamping.
-        if next_fold_start.is_some() {
-            if cursor >= segment_end {
-                let r = &fold_skip[fold_idx];
-                cursor = r.end;
-                fold_idx += 1;
-                continue;
-            }
+        if next_fold_start.is_some() && cursor >= segment_end {
+            let r = &fold_skip[fold_idx];
+            cursor = r.end;
+            fold_idx += 1;
+            continue;
         }
 
         let mut iter = buffer.line_iterator(cursor, estimated_line_length);
