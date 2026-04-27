@@ -110,8 +110,22 @@ fn clicking_group_tab_activates_group_in_the_clicked_split() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for the split to be in place by observing buffer *content* rather
+    // than the transient "Split pane horizontally" core status message: any
+    // plugin `editor.setStatus(...)` call (the active git_log group emits
+    // several around layout/focus changes) clears `App::status_message` and
+    // wins, so the core message can disappear before this wait_until samples
+    // it. After step 3 main.rs is the active buffer, so split-horiz clones
+    // main.rs into the new pane and a unique line of its content
+    // ("Hello, world!") goes from appearing once to twice on screen.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Split pane horiz"))
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .filter(|l| l.contains("Hello, world!"))
+                .count()
+                >= 2
+        })
         .unwrap();
 
     // Sanity check: the *Git Log* tab label still lives on the top tab bar
