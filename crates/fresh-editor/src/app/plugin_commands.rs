@@ -1181,6 +1181,11 @@ impl Editor {
     // ==================== View/Layout Commands ====================
 
     /// Handle SetLayoutHints command
+    ///
+    /// Targets `buffer_id`'s state in the resolved split, not the split's
+    /// active buffer. Plugins call this asynchronously, so by the time the
+    /// command is drained the focused buffer may have changed; binding to
+    /// `buffer_id` keeps the hint with the buffer the plugin chose.
     pub(super) fn handle_set_layout_hints(
         &mut self,
         buffer_id: BufferId,
@@ -1196,8 +1201,9 @@ impl Editor {
             .or_insert_with(|| {
                 SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id)
             });
-        view_state.compose_width = hints.compose_width;
-        view_state.compose_column_guides = hints.column_guides;
+        let buf_state = view_state.ensure_buffer_state(buffer_id);
+        buf_state.compose_width = hints.compose_width;
+        buf_state.compose_column_guides = hints.column_guides;
     }
 
     /// Handle SetViewMode command
@@ -2832,5 +2838,83 @@ fn translate_plugin_animation_kind(
             duration: Duration::from_millis(duration_ms as u64),
             delay: Duration::from_millis(delay_ms as u64),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::Editor;
+    use crate::config::Config;
+    use crate::config_io::DirectoryContext;
+    use fresh_core::api::LayoutHints;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn make_editor() -> (Editor, TempDir) {
+        let config = Config::default();
+        let temp_dir = TempDir::new().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
+        let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+        let editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            fs,
+        )
+        .unwrap();
+        (editor, temp_dir)
+    }
+
+    /// Plugin sends `setLayoutHints(targetBufferId, …)` for buffer X while
+    /// buffer Y is active in the split. The compose_width must land on X
+    /// (the targeted buffer), not on Y. Without the fix, `view_state` derefs
+    /// to the active buffer's `BufferViewState`, so Y receives the width and
+    /// renders centered without anything ever asking for it on Y.
+    #[test]
+    fn handle_set_layout_hints_targets_specified_buffer_not_active() {
+        let (mut editor, _temp) = make_editor();
+
+        let initial_buf = editor.active_buffer();
+        let other_buf = editor.new_buffer();
+        // new_buffer makes `other_buf` active; switch back so initial_buf is active
+        // and `other_buf` is the non-active target the plugin wants to reach.
+        editor.switch_buffer(initial_buf);
+        assert_eq!(editor.active_buffer(), initial_buf);
+
+        // Plugin call: target the non-active buffer.
+        editor.handle_set_layout_hints(
+            other_buf,
+            None,
+            LayoutHints {
+                compose_width: Some(80),
+                column_guides: None,
+            },
+        );
+
+        let active_split = editor.split_manager.active_split();
+        let view_state = editor
+            .split_view_states
+            .get(&active_split)
+            .expect("split view state");
+
+        let other_state = view_state
+            .buffer_state(other_buf)
+            .expect("other buffer keyed in split");
+        assert_eq!(
+            other_state.compose_width,
+            Some(80),
+            "compose_width must land on the targeted buffer",
+        );
+
+        let active_state = view_state
+            .buffer_state(initial_buf)
+            .expect("active buffer keyed in split");
+        assert_eq!(
+            active_state.compose_width, None,
+            "compose_width must NOT land on the (different) active buffer",
+        );
     }
 }
