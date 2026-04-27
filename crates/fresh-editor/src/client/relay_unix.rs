@@ -216,7 +216,7 @@ pub fn setup_resize_handler(flag: Arc<AtomicBool>) -> io::Result<()> {
 
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = handle_sigwinch as usize;
+        action.sa_sigaction = handle_sigwinch as *const () as usize;
         action.sa_flags = libc::SA_RESTART;
 
         if libc::sigaction(libc::SIGWINCH, &action, std::ptr::null_mut()) != 0 {

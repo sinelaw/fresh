@@ -171,6 +171,33 @@ fn find_changed_paths_recursive(
     }
 }
 
+/// Strip defaults/nulls from `value`, serialize to pretty JSON, ensure the parent
+/// directory exists, and write to `path`.
+fn write_clean_value_to_path(path: &Path, value: Value) -> Result<(), ConfigError> {
+    if let Some(parent_dir) = path.parent() {
+        std::fs::create_dir_all(parent_dir)
+            .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
+    }
+    let stripped = strip_nulls(value).unwrap_or(Value::Object(Default::default()));
+    let clean = strip_empty_defaults(stripped).unwrap_or(Value::Object(Default::default()));
+    let json = serde_json::to_string_pretty(&clean)
+        .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
+    std::fs::write(path, json)
+        .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+    Ok(())
+}
+
+/// Read an existing config file as raw JSON, returning an empty object when the file
+/// is absent or unparseable.
+fn read_existing_json(path: &Path) -> Result<Value, ConfigError> {
+    if !path.exists() {
+        return Ok(Value::Object(Default::default()));
+    }
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
+    Ok(serde_json::from_str(&content).unwrap_or(Value::Object(Default::default())))
+}
+
 // ============================================================================
 // Configuration Migration System
 // ============================================================================
@@ -417,44 +444,29 @@ impl ConfigResolver {
         Ok(Some(partial))
     }
 
+    /// Resolve the writable path for `layer`, returning an error for the read-only
+    /// System layer.
+    fn layer_write_path(&self, layer: ConfigLayer) -> Result<PathBuf, ConfigError> {
+        match layer {
+            ConfigLayer::User => Ok(self.user_config_path()),
+            ConfigLayer::Project => Ok(self.project_config_write_path()),
+            ConfigLayer::Session => Ok(self.session_config_path()),
+            ConfigLayer::System => Err(ConfigError::ValidationError(
+                "Cannot write to System layer".to_string(),
+            )),
+        }
+    }
+
     /// Save a config to a specific layer, writing only the delta from parent layers.
     pub fn save_to_layer(&self, config: &Config, layer: ConfigLayer) -> Result<(), ConfigError> {
-        if layer == ConfigLayer::System {
-            return Err(ConfigError::ValidationError(
-                "Cannot write to System layer".to_string(),
-            ));
-        }
+        let path = self.layer_write_path(layer)?;
 
-        // Calculate parent config (merge all layers below target)
         let parent_partial = self.resolve_up_to_layer(layer)?;
-
-        // Resolve parent to full config and convert back to get all values populated.
-        // This ensures proper comparison - both current and parent have all fields set,
-        // so the diff will correctly identify only the actual differences.
         let parent = PartialConfig::from(&parent_partial.resolve());
-
-        // Convert current config to partial
         let current = PartialConfig::from(config);
-
-        // Calculate delta - now both are fully populated, so only actual differences are captured
         let delta = diff_partial_config(&current, &parent);
 
-        // Get path for target layer (use write paths for new configs)
-        let path = match layer {
-            ConfigLayer::User => self.user_config_path(),
-            ConfigLayer::Project => self.project_config_write_path(),
-            ConfigLayer::Session => self.session_config_path(),
-            ConfigLayer::System => unreachable!(),
-        };
-
-        // Ensure parent directory exists
-        if let Some(parent_dir) = path.parent() {
-            std::fs::create_dir_all(parent_dir)
-                .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
-        }
-
-        // Read existing file content (if any) as PartialConfig.
-        // This preserves any manual edits made externally while the editor was running.
+        // Preserve any manual edits made externally; delta takes precedence.
         let existing: PartialConfig = if path.exists() {
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
@@ -462,24 +474,12 @@ impl ConfigResolver {
         } else {
             PartialConfig::default()
         };
-
-        // Merge: delta values take precedence, existing fills in gaps where delta is None
         let mut merged = delta;
         merged.merge_from(&existing);
 
-        // Serialize to JSON, stripping null values and empty defaults to keep configs minimal
         let merged_value = serde_json::to_value(&merged)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
-        let stripped_nulls = strip_nulls(merged_value).unwrap_or(Value::Object(Default::default()));
-        let clean_merged =
-            strip_empty_defaults(stripped_nulls).unwrap_or(Value::Object(Default::default()));
-
-        let json = serde_json::to_string_pretty(&clean_merged)
-            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
-        std::fs::write(&path, json)
-            .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-
-        Ok(())
+        write_clean_value_to_path(&path, merged_value)
     }
 
     /// Save a config to a specific layer, using a baseline to track changes.
@@ -497,17 +497,11 @@ impl ConfigResolver {
         baseline: &Config,
         layer: ConfigLayer,
     ) -> Result<(), ConfigError> {
-        if layer == ConfigLayer::System {
-            return Err(ConfigError::ValidationError(
-                "Cannot write to System layer".to_string(),
-            ));
-        }
+        let path = self.layer_write_path(layer)?;
 
-        // Calculate parent config (defaults from layers below)
         let parent_partial = self.resolve_up_to_layer(layer)?;
         let parent = PartialConfig::from(&parent_partial.resolve());
 
-        // Convert configs to JSON for comparison
         let current_json = serde_json::to_value(current)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
         let baseline_json = serde_json::to_value(baseline)
@@ -515,58 +509,22 @@ impl ConfigResolver {
         let parent_json = serde_json::to_value(&parent)
             .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
 
-        // Find which paths changed between baseline and current
         let changed_paths = find_changed_paths(&baseline_json, &current_json);
 
-        // Get path for target layer
-        let path = match layer {
-            ConfigLayer::User => self.user_config_path(),
-            ConfigLayer::Project => self.project_config_write_path(),
-            ConfigLayer::Session => self.session_config_path(),
-            ConfigLayer::System => unreachable!(),
-        };
+        let mut result = read_existing_json(&path)?;
 
-        // Ensure parent directory exists
-        if let Some(parent_dir) = path.parent() {
-            std::fs::create_dir_all(parent_dir)
-                .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
-        }
-
-        // Read existing file content as JSON
-        let mut result: Value = if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-            serde_json::from_str(&content).unwrap_or(Value::Object(Default::default()))
-        } else {
-            Value::Object(Default::default())
-        };
-
-        // For each changed path, update the file:
-        // - If current matches parent (default), remove from file
-        // - If current differs from parent, set in file
+        // For each changed path: remove if value reverted to default, otherwise set it.
         for pointer in &changed_paths {
             let current_val = current_json.pointer(pointer);
             let parent_val = parent_json.pointer(pointer);
-
             if current_val == parent_val {
-                // User changed to default - remove from file so default propagates
                 remove_json_pointer(&mut result, pointer);
             } else if let Some(val) = current_val {
-                // User changed to non-default - set in file
                 set_json_pointer(&mut result, pointer, val.clone());
             }
         }
 
-        // Strip nulls and empty defaults to keep config minimal
-        let stripped = strip_nulls(result).unwrap_or(Value::Object(Default::default()));
-        let clean = strip_empty_defaults(stripped).unwrap_or(Value::Object(Default::default()));
-
-        let json = serde_json::to_string_pretty(&clean)
-            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
-        std::fs::write(&path, json)
-            .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-
-        Ok(())
+        write_clean_value_to_path(&path, result)
     }
 
     /// Save specific changes to a layer file using JSON pointer paths.
@@ -579,60 +537,23 @@ impl ConfigResolver {
         deletions: &std::collections::HashSet<String>,
         layer: ConfigLayer,
     ) -> Result<(), ConfigError> {
-        if layer == ConfigLayer::System {
-            return Err(ConfigError::ValidationError(
-                "Cannot write to System layer".to_string(),
-            ));
-        }
+        let path = self.layer_write_path(layer)?;
 
-        // Get path for target layer
-        let path = match layer {
-            ConfigLayer::User => self.user_config_path(),
-            ConfigLayer::Project => self.project_config_write_path(),
-            ConfigLayer::Session => self.session_config_path(),
-            ConfigLayer::System => unreachable!(),
-        };
+        let mut config_value = read_existing_json(&path)?;
 
-        // Ensure parent directory exists
-        if let Some(parent_dir) = path.parent() {
-            std::fs::create_dir_all(parent_dir)
-                .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
-        }
-
-        // Read existing file content as JSON
-        let mut config_value: Value = if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-            serde_json::from_str(&content).unwrap_or(Value::Object(Default::default()))
-        } else {
-            Value::Object(Default::default())
-        };
-
-        // Apply deletions first
         for pointer in deletions {
             remove_json_pointer(&mut config_value, pointer);
         }
-
-        // Apply changes using JSON pointers
         for (pointer, value) in changes {
             set_json_pointer(&mut config_value, pointer, value.clone());
         }
 
-        // Validate the result can be deserialized
+        // Validate before writing.
         let _: PartialConfig = serde_json::from_value(config_value.clone()).map_err(|e| {
             ConfigError::ValidationError(format!("Result config would be invalid: {}", e))
         })?;
 
-        // Strip null values and empty defaults to keep configs minimal
-        let stripped = strip_nulls(config_value).unwrap_or(Value::Object(Default::default()));
-        let clean = strip_empty_defaults(stripped).unwrap_or(Value::Object(Default::default()));
-
-        let json = serde_json::to_string_pretty(&clean)
-            .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
-        std::fs::write(&path, json)
-            .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-
-        Ok(())
+        write_clean_value_to_path(&path, config_value)
     }
 
     /// Save a SessionConfig to the session layer file.
