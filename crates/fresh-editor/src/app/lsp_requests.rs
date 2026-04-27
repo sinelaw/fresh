@@ -86,9 +86,6 @@ impl Editor {
             return Ok(());
         }
 
-        // Update status when all completion responses have arrived
-        self.pending_completion_requests.is_empty();
-
         if items.is_empty() {
             tracing::debug!("No completion items received");
             return Ok(());
@@ -1632,9 +1629,6 @@ impl Editor {
             tracing::debug!("Ignoring stale code actions response: {}", request_id);
             return;
         }
-
-        // Update status when all code action responses have arrived
-        self.pending_code_actions_requests.is_empty();
 
         // Look up the server name for this request
         let server_name = self
