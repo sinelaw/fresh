@@ -566,30 +566,34 @@ impl EditorTestHarness {
                 .expect("temp_dir must exist when no working_dir provided")
         };
 
-        // Plugin loading isolation. Historically the harness created an
-        // empty `<working_dir>/plugins/` to suppress embedded plugin
-        // loading via the editor's "if `plugin_dirs.is_empty()`" gate.
-        // The editor no longer scans `<working_dir>/plugins/` (issue
-        // #1722), so we now achieve the same isolation by disabling
-        // plugin loading entirely at the editor level when this flag
-        // is set. The flag/method names are kept for source-compat
-        // with existing tests.
+        // Plugin loading. Historically the harness created an empty
+        // `<working_dir>/plugins/` so the editor would scan it and
+        // skip the embedded fallback (suppression by directory
+        // presence). The editor no longer scans `<working_dir>/plugins/`
+        // (issue #1722), but the harness keeps the directory-presence
+        // contract for tests:
         //
-        // Exception: a number of tests use the default
-        // `HarnessOptions::new()` (which leaves `create_empty_plugins_dir`
-        // at `true`) but pre-populate `<working_dir>/plugins/` with their
-        // own fixtures and rely on those plugins loading. Treat any
-        // populated `<working_dir>/plugins/` as an opt-in to plugin
-        // loading regardless of the flag — this matches the pre-#1722
-        // behavior where a populated working-dir plugins folder won out
-        // over the empty-dir trick.
+        //   * `<working_dir>/plugins/` exists       → user controls the
+        //     plugin set; embedded fallback is off, and any contents
+        //     are mirrored into `<config_dir>/plugins/` (which the
+        //     editor does scan).
+        //   * `<working_dir>/plugins/` doesn't exist → embedded loads
+        //     normally (used by tests that exercise bundled plugins).
+        //
+        // The default `create_empty_plugins_dir = true` continues to
+        // mean "auto-create the dir to opt out of embedded". The plugin
+        // runtime is always active so tests can introspect it via
+        // `plugin_manager().state_snapshot_handle()` etc.
         let working_plugins_path = working_dir.join("plugins");
+        if options.create_empty_plugins_dir && !working_plugins_path.exists() {
+            std::fs::create_dir(&working_plugins_path)?;
+        }
+        let user_controls_plugins = working_plugins_path.is_dir();
         let working_plugins_populated = working_plugins_path
             .read_dir()
             .map(|mut it| it.next().is_some())
             .unwrap_or(false);
-        let enable_plugins_for_editor =
-            !options.create_empty_plugins_dir || working_plugins_populated;
+        let enable_plugins_for_editor = true;
 
         // Get or create DirectoryContext
         let dir_context = options.dir_context.unwrap_or_else(|| {
@@ -687,11 +691,12 @@ impl EditorTestHarness {
         // plugin fallback so the bundled set doesn't leak in. This matches
         // the pre-#1722 behavior, where any `working_dir/plugins/` (even
         // empty) suppressed embedded loading.
-        if enable_plugins_for_editor && working_plugins_populated {
+        if working_plugins_populated {
             let target = dir_context.config_dir.join("plugins");
             mirror_plugins_dir(&working_plugins_path, &target)?;
         }
-        let enable_embedded_plugins = enable_plugins_for_editor && !working_plugins_populated;
+        // Embedded loads only when the test isn't taking control.
+        let enable_embedded_plugins = !user_controls_plugins;
 
         // Create editor
         let mut editor = Editor::for_test(
