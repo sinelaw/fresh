@@ -302,35 +302,30 @@ fn lifecycle_object_form_must_run_in_parallel() {
     harness.tick_and_render().unwrap();
     attach(&mut harness);
 
-    // Drive the picker, then wait for the **last** entry's done
-    // sentinel to appear.  `done_c` is the picker's tracked probe
-    // (per `run_post_create`'s contract — it's the sentinel marked
-    // by the entry whose key sorts last alphabetically in our
-    // `postCreateCommand` object).  10s deadline is bounded by
-    // `bounded_wait_for_file`; nextest enforces the outer
-    // per-test timeout.
-    let _ = run_post_create(&mut harness, &done_c);
+    // Drive the lifecycle picker, then wait until **every** entry's
+    // done sentinel exists.  Can't just wait for `done_c` —
+    // `Promise.all` resolves in indeterminate order, and entry `c`
+    // can finish while `a` / `b` are still in their barrier loop.
+    // Bounded by 10s per entry; nextest enforces the outer per-test
+    // timeout.  In the parallel-success path each entry finishes
+    // within ~50ms of the others, so this is essentially three
+    // back-to-back O(1) existence checks.
+    drive_lifecycle_picker(&mut harness);
+    bounded_wait_for_file(&mut harness, &done_a, std::time::Duration::from_secs(10));
+    bounded_wait_for_file(&mut harness, &done_b, std::time::Duration::from_secs(10));
+    bounded_wait_for_file(&mut harness, &done_c, std::time::Duration::from_secs(10));
 
     // All three barrier scripts must have completed.  In sequential
-    // execution, only the LAST entry to run has its barrier
+    // execution, only the last entry to run has its barrier
     // satisfied (it sees the previous entries' start sentinels
     // already exist) — the first two exit 1 without touching their
-    // done.
-    assert!(
-        done_a.exists(),
-        "entry `a` never satisfied the barrier — implies sequential execution \
-         (entry `a` ran first, waited 3s for entries `b`/`done` to start, \
-         timed out without touching done_a).  CONTRIBUTING.md rule #3: this \
-         test is barrier-based, no wall-clock assertion."
-    );
-    assert!(
-        done_b.exists(),
-        "entry `b` never satisfied the barrier — implies sequential execution"
-    );
-    assert!(
-        done_c.exists(),
-        "entry `done` never satisfied the barrier — implies sequential execution"
-    );
+    // done.  `bounded_wait_for_file` panics on timeout, so reaching
+    // these asserts already proves the parallel case.  Kept as
+    // explicit assertions so the failure mode is obvious if a
+    // future refactor breaks the contract.
+    assert!(done_a.exists(), "entry `a` never satisfied the barrier");
+    assert!(done_b.exists(), "entry `b` never satisfied the barrier");
+    assert!(done_c.exists(), "entry `done` never satisfied the barrier");
 }
 
 // ============================================================================
