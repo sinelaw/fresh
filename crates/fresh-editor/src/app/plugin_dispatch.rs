@@ -916,115 +916,7 @@ impl Editor {
                 cwd,
                 callback_id,
             } => {
-                // Bypass the active authority on purpose: this is
-                // reserved for plugin internals that must run host-side
-                // work (e.g. `devcontainer up`) before the authority
-                // they want is even built. Uses the same callback shape
-                // as `SpawnProcess` so the plugin-facing API is
-                // symmetric.
-                //
-                // Kill handle: we store a oneshot sender in
-                // `host_process_handles` keyed by the callback id. A
-                // `KillHostProcess` dispatch sends on it; the spawn
-                // task's `tokio::select!` then start_kill()s the
-                // child. This lets a plugin cancel a long-running
-                // spawn (e.g. "Cancel Startup" on the Remote
-                // Indicator popup during `devcontainer up`).
-                if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
-                    use tokio::io::{AsyncReadExt, BufReader};
-                    use tokio::process::Command as TokioCommand;
-
-                    let effective_cwd = cwd.or_else(|| {
-                        std::env::current_dir()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .ok()
-                    });
-                    let sender = bridge.sender();
-                    let process_id = callback_id.as_u64();
-
-                    let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
-                    self.host_process_handles.insert(process_id, kill_tx);
-
-                    runtime.spawn(async move {
-                        let mut cmd = TokioCommand::new(&command);
-                        cmd.args(&args);
-                        cmd.stdout(std::process::Stdio::piped());
-                        cmd.stderr(std::process::Stdio::piped());
-                        if let Some(ref dir) = effective_cwd {
-                            cmd.current_dir(dir);
-                        }
-                        let mut child = match cmd.spawn() {
-                            Ok(c) => c,
-                            Err(e) => {
-                                #[allow(clippy::let_underscore_must_use)]
-                                let _ = sender.send(AsyncMessage::PluginProcessOutput {
-                                    process_id,
-                                    stdout: String::new(),
-                                    stderr: e.to_string(),
-                                    exit_code: -1,
-                                });
-                                return;
-                            }
-                        };
-
-                        // Take the pipes out of the Child so the
-                        // reader tasks own them; then `child.wait()`
-                        // has exclusive mutable access for the
-                        // kill-or-exit select. Matches the
-                        // fresh-plugin-runtime process.rs pattern.
-                        let stdout_pipe = child.stdout.take();
-                        let stderr_pipe = child.stderr.take();
-
-                        let stdout_fut = async {
-                            let mut buf = String::new();
-                            if let Some(s) = stdout_pipe {
-                                #[allow(clippy::let_underscore_must_use)]
-                                let _ = BufReader::new(s).read_to_string(&mut buf).await;
-                            }
-                            buf
-                        };
-                        let stderr_fut = async {
-                            let mut buf = String::new();
-                            if let Some(s) = stderr_pipe {
-                                #[allow(clippy::let_underscore_must_use)]
-                                let _ = BufReader::new(s).read_to_string(&mut buf).await;
-                            }
-                            buf
-                        };
-                        let wait_fut = async {
-                            tokio::select! {
-                                status = child.wait() => {
-                                    status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
-                                }
-                                _ = &mut kill_rx => {
-                                    // Best-effort SIGKILL + reap.
-                                    // Children of the killed
-                                    // process may leak (Q-C2).
-                                    #[allow(clippy::let_underscore_must_use)]
-                                    let _ = child.start_kill();
-                                    child
-                                        .wait()
-                                        .await
-                                        .map(|s| s.code().unwrap_or(-1))
-                                        .unwrap_or(-1)
-                                }
-                            }
-                        };
-                        let (stdout, stderr, exit_code) =
-                            tokio::join!(stdout_fut, stderr_fut, wait_fut);
-
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = sender.send(AsyncMessage::PluginProcessOutput {
-                            process_id,
-                            stdout,
-                            stderr,
-                            exit_code,
-                        });
-                    });
-                } else {
-                    self.plugin_manager
-                        .reject_callback(callback_id, "Async runtime not available".to_string());
-                }
+                self.handle_spawn_host_process(command, args, cwd, callback_id);
             }
 
             PluginCommand::KillHostProcess { process_id } => {
@@ -1151,114 +1043,7 @@ impl Editor {
                 cwd,
                 callback_id,
             } => {
-                // Spawn background process with streaming output via tokio
-                if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
-                    use tokio::io::{AsyncBufReadExt, BufReader};
-                    use tokio::process::Command as TokioCommand;
-
-                    let effective_cwd = cwd.unwrap_or_else(|| {
-                        std::env::current_dir()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_else(|_| ".".to_string())
-                    });
-
-                    let sender = bridge.sender();
-                    let sender_stdout = sender.clone();
-                    let sender_stderr = sender.clone();
-                    let callback_id_u64 = callback_id.as_u64();
-
-                    // Receiver may be dropped if editor is shutting down
-                    #[allow(clippy::let_underscore_must_use)]
-                    let handle = runtime.spawn(async move {
-                        let mut child = match TokioCommand::new(&command)
-                            .args(&args)
-                            .current_dir(&effective_cwd)
-                            .stdout(std::process::Stdio::piped())
-                            .stderr(std::process::Stdio::piped())
-                            .spawn()
-                        {
-                            Ok(child) => child,
-                            Err(e) => {
-                                let _ = sender.send(
-                                    crate::services::async_bridge::AsyncMessage::Plugin(
-                                        fresh_core::api::PluginAsyncMessage::ProcessExit {
-                                            process_id,
-                                            callback_id: callback_id_u64,
-                                            exit_code: -1,
-                                        },
-                                    ),
-                                );
-                                tracing::error!("Failed to spawn background process: {}", e);
-                                return;
-                            }
-                        };
-
-                        // Stream stdout
-                        let stdout = child.stdout.take();
-                        let stderr = child.stderr.take();
-                        let pid = process_id;
-
-                        // Spawn stdout reader
-                        if let Some(stdout) = stdout {
-                            let sender = sender_stdout;
-                            tokio::spawn(async move {
-                                let reader = BufReader::new(stdout);
-                                let mut lines = reader.lines();
-                                while let Ok(Some(line)) = lines.next_line().await {
-                                    let _ = sender.send(
-                                        crate::services::async_bridge::AsyncMessage::Plugin(
-                                            fresh_core::api::PluginAsyncMessage::ProcessStdout {
-                                                process_id: pid,
-                                                data: line + "\n",
-                                            },
-                                        ),
-                                    );
-                                }
-                            });
-                        }
-
-                        // Spawn stderr reader
-                        if let Some(stderr) = stderr {
-                            let sender = sender_stderr;
-                            tokio::spawn(async move {
-                                let reader = BufReader::new(stderr);
-                                let mut lines = reader.lines();
-                                while let Ok(Some(line)) = lines.next_line().await {
-                                    let _ = sender.send(
-                                        crate::services::async_bridge::AsyncMessage::Plugin(
-                                            fresh_core::api::PluginAsyncMessage::ProcessStderr {
-                                                process_id: pid,
-                                                data: line + "\n",
-                                            },
-                                        ),
-                                    );
-                                }
-                            });
-                        }
-
-                        // Wait for process to complete
-                        let exit_code = match child.wait().await {
-                            Ok(status) => status.code().unwrap_or(-1),
-                            Err(_) => -1,
-                        };
-
-                        let _ = sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
-                            fresh_core::api::PluginAsyncMessage::ProcessExit {
-                                process_id,
-                                callback_id: callback_id_u64,
-                                exit_code,
-                            },
-                        ));
-                    });
-
-                    // Store abort handle for potential kill
-                    self.background_process_handles
-                        .insert(process_id, handle.abort_handle());
-                } else {
-                    // No runtime - reject immediately
-                    self.plugin_manager
-                        .reject_callback(callback_id, "Async runtime not available".to_string());
-                }
+                self.handle_spawn_background_process(process_id, command, args, cwd, callback_id);
             }
 
             PluginCommand::KillBackgroundProcess { process_id } => {
@@ -1294,75 +1079,17 @@ impl Editor {
                 hidden_from_tabs,
                 request_id,
             } => {
-                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
-                tracing::info!(
-                    "Created virtual buffer '{}' with mode '{}' (id={:?})",
+                self.handle_create_virtual_buffer_with_content(
                     name,
                     mode,
-                    buffer_id
+                    read_only,
+                    entries,
+                    show_line_numbers,
+                    show_cursors,
+                    editing_disabled,
+                    hidden_from_tabs,
+                    request_id,
                 );
-
-                // Apply view options to the buffer
-                // TODO: show_line_numbers is duplicated between EditorState.margins and
-                // BufferViewState. The renderer reads BufferViewState and overwrites
-                // margins each frame via configure_for_line_numbers(), making the margin
-                // setting here effectively write-only. Consider removing the margin call
-                // and only setting BufferViewState.show_line_numbers.
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.margins.configure_for_line_numbers(show_line_numbers);
-                    state.show_cursors = show_cursors;
-                    state.editing_disabled = editing_disabled;
-                    tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-                }
-                let active_split = self.split_manager.active_split();
-                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
-                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-                }
-
-                // Apply hidden_from_tabs to buffer metadata
-                if hidden_from_tabs {
-                    if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
-                        meta.hidden_from_tabs = true;
-                    }
-                }
-
-                // Now set the content
-                match self.set_virtual_buffer_content(buffer_id, entries) {
-                    Ok(()) => {
-                        tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
-                        // Switch to the new buffer to display it
-                        self.set_active_buffer(buffer_id);
-                        tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
-
-                        // Send response if request_id is present
-                        if let Some(req_id) = request_id {
-                            tracing::info!(
-                                "CreateVirtualBufferWithContent: resolving callback for request_id={}, buffer_id={:?}",
-                                req_id,
-                                buffer_id
-                            );
-                            // createVirtualBuffer returns VirtualBufferResult: { bufferId, splitId }
-                            let result = fresh_core::api::VirtualBufferResult {
-                                buffer_id: buffer_id.0 as u64,
-                                split_id: None,
-                            };
-                            self.plugin_manager.resolve_callback(
-                                fresh_core::api::JsCallbackId::from(req_id),
-                                serde_json::to_string(&result).unwrap_or_default(),
-                            );
-                            tracing::info!("CreateVirtualBufferWithContent: resolve_callback sent for request_id={}", req_id);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to set virtual buffer content: {}", e);
-                    }
-                }
             }
             PluginCommand::CreateVirtualBufferInSplit {
                 name,
@@ -1379,175 +1106,21 @@ impl Editor {
                 before,
                 request_id,
             } => {
-                // Check if this panel already exists (for idempotent operations)
-                if let Some(pid) = &panel_id {
-                    if let Some(&existing_buffer_id) = self.panel_ids.get(pid) {
-                        // Verify the buffer actually exists (defensive check for stale entries)
-                        if self.buffers.contains_key(&existing_buffer_id) {
-                            // Panel exists, just update its content
-                            if let Err(e) =
-                                self.set_virtual_buffer_content(existing_buffer_id, entries)
-                            {
-                                tracing::error!("Failed to update panel content: {}", e);
-                            } else {
-                                tracing::info!("Updated existing panel '{}' content", pid);
-                            }
-
-                            // Find and focus the split that contains this buffer
-                            let splits = self.split_manager.splits_for_buffer(existing_buffer_id);
-                            if let Some(&split_id) = splits.first() {
-                                self.split_manager.set_active_split(split_id);
-                                // Route through set_pane_buffer so tree + SVS
-                                // stay consistent (issue #1620 invariant).
-                                self.set_pane_buffer(split_id, existing_buffer_id);
-                                tracing::debug!(
-                                    "Focused split {:?} containing panel buffer",
-                                    split_id
-                                );
-                            }
-
-                            // Send response with existing buffer ID and split ID via callback resolution
-                            if let Some(req_id) = request_id {
-                                let result = fresh_core::api::VirtualBufferResult {
-                                    buffer_id: existing_buffer_id.0 as u64,
-                                    split_id: splits.first().map(|s| s.0 .0 as u64),
-                                };
-                                self.plugin_manager.resolve_callback(
-                                    fresh_core::api::JsCallbackId::from(req_id),
-                                    serde_json::to_string(&result).unwrap_or_default(),
-                                );
-                            }
-                            return Ok(());
-                        } else {
-                            // Buffer no longer exists, remove stale panel_id entry
-                            tracing::warn!(
-                                "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
-                                pid,
-                                existing_buffer_id
-                            );
-                            self.panel_ids.remove(pid);
-                            // Fall through to create a new buffer
-                        }
-                    }
-                }
-
-                // Capture the source split before creating the buffer —
-                // `create_virtual_buffer` unconditionally adds the new buffer
-                // as a tab to the currently active split, which is the wrong
-                // thing for a panel that lives in its own dedicated split
-                // (it would show up as a tab in BOTH splits — see bug #3).
-                let source_split_before_create = self.split_manager.active_split();
-
-                // Create the virtual buffer first
-                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
-                tracing::info!(
-                    "Created virtual buffer '{}' with mode '{}' in split (id={:?})",
+                self.handle_create_virtual_buffer_in_split(
                     name,
                     mode,
-                    buffer_id
+                    read_only,
+                    entries,
+                    ratio,
+                    direction,
+                    panel_id,
+                    show_line_numbers,
+                    show_cursors,
+                    editing_disabled,
+                    line_wrap,
+                    before,
+                    request_id,
                 );
-
-                // Apply view options to the buffer
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.margins.configure_for_line_numbers(show_line_numbers);
-                    state.show_cursors = show_cursors;
-                    state.editing_disabled = editing_disabled;
-                    tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-                }
-
-                // Store the panel ID mapping if provided
-                if let Some(pid) = panel_id {
-                    self.panel_ids.insert(pid, buffer_id);
-                }
-
-                // Set the content
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
-                    tracing::error!("Failed to set virtual buffer content: {}", e);
-                    return Ok(());
-                }
-
-                // Determine split direction
-                let split_dir = match direction.as_deref() {
-                    Some("vertical") => crate::model::event::SplitDirection::Vertical,
-                    _ => crate::model::event::SplitDirection::Horizontal,
-                };
-
-                // Create a split with the new buffer
-                let created_split_id = match self
-                    .split_manager
-                    .split_active_positioned(split_dir, buffer_id, ratio, before)
-                {
-                    Ok(new_split_id) => {
-                        // The buffer now lives in its own split, so drop its
-                        // tab from the source split (see bug #3).  Only do
-                        // this when the new split actually differs from the
-                        // source split — otherwise we'd leave no split
-                        // displaying the buffer.
-                        if new_split_id != source_split_before_create {
-                            if let Some(source_view_state) =
-                                self.split_view_states.get_mut(&source_split_before_create)
-                            {
-                                source_view_state.remove_buffer(buffer_id);
-                            }
-                        }
-                        // Create independent view state for the new split with the buffer in tabs
-                        let mut view_state = SplitViewState::with_buffer(
-                            self.terminal_width,
-                            self.terminal_height,
-                            buffer_id,
-                        );
-                        view_state.apply_config_defaults(
-                            self.config.editor.line_numbers,
-                            self.config.editor.highlight_current_line,
-                            line_wrap
-                                .unwrap_or_else(|| self.resolve_line_wrap_for_buffer(buffer_id)),
-                            self.config.editor.wrap_indent,
-                            self.resolve_wrap_column_for_buffer(buffer_id),
-                            self.config.editor.rulers.clone(),
-                        );
-                        // Override with plugin-requested show_line_numbers
-                        view_state.ensure_buffer_state(buffer_id).show_line_numbers =
-                            show_line_numbers;
-                        self.split_view_states.insert(new_split_id, view_state);
-
-                        // Focus the new split (the diagnostics panel)
-                        self.split_manager.set_active_split(new_split_id);
-                        // NOTE: split tree was updated by split_active, active_buffer derives from it
-
-                        tracing::info!(
-                            "Created {:?} split with virtual buffer {:?}",
-                            split_dir,
-                            buffer_id
-                        );
-                        Some(new_split_id)
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to create split: {}", e);
-                        // Fall back to just switching to the buffer
-                        self.set_active_buffer(buffer_id);
-                        None
-                    }
-                };
-
-                // Send response with buffer ID and split ID via callback resolution
-                // NOTE: Using VirtualBufferResult type for type-safe JSON serialization
-                if let Some(req_id) = request_id {
-                    tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
-                    let result = fresh_core::api::VirtualBufferResult {
-                        buffer_id: buffer_id.0 as u64,
-                        split_id: created_split_id.map(|s| s.0 .0 as u64),
-                    };
-                    self.plugin_manager.resolve_callback(
-                        fresh_core::api::JsCallbackId::from(req_id),
-                        serde_json::to_string(&result).unwrap_or_default(),
-                    );
-                }
             }
             PluginCommand::SetVirtualBufferContent { buffer_id, entries } => {
                 match self.set_virtual_buffer_content(buffer_id, entries) {
@@ -1589,68 +1162,18 @@ impl Editor {
                 line_wrap,
                 request_id,
             } => {
-                // Create the virtual buffer
-                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
-                tracing::info!(
-                    "Created virtual buffer '{}' with mode '{}' for existing split {:?} (id={:?})",
+                self.handle_create_virtual_buffer_in_existing_split(
                     name,
                     mode,
+                    read_only,
+                    entries,
                     split_id,
-                    buffer_id
+                    show_line_numbers,
+                    show_cursors,
+                    editing_disabled,
+                    line_wrap,
+                    request_id,
                 );
-
-                // Apply view options to the buffer
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.margins.configure_for_line_numbers(show_line_numbers);
-                    state.show_cursors = show_cursors;
-                    state.editing_disabled = editing_disabled;
-                }
-
-                // Set the content
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
-                    tracing::error!("Failed to set virtual buffer content: {}", e);
-                    return Ok(());
-                }
-
-                // Show the buffer in the target split. set_pane_buffer
-                // covers the tree + SVS updates the old code did by hand.
-                let leaf_id = LeafId(split_id);
-                self.split_manager.set_active_split(leaf_id);
-                self.set_pane_buffer(leaf_id, buffer_id);
-
-                // Fall-through to the cursor/open_buffers housekeeping
-                // that used to follow the manual switch_buffer. We keep
-                // the `if let Some(view_state)` block below — set_pane_buffer
-                // already called switch_buffer, but the downstream code
-                // also nudges open_buffers and focus_history.
-                if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
-                    view_state.switch_buffer(buffer_id);
-                    view_state.add_buffer(buffer_id);
-                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-
-                    // Apply line_wrap setting if provided
-                    if let Some(wrap) = line_wrap {
-                        view_state.active_state_mut().viewport.line_wrap_enabled = wrap;
-                    }
-                }
-
-                tracing::info!(
-                    "Displayed virtual buffer {:?} in split {:?}",
-                    buffer_id,
-                    split_id
-                );
-
-                // Send response with buffer ID and split ID via callback resolution
-                if let Some(req_id) = request_id {
-                    let result = fresh_core::api::VirtualBufferResult {
-                        buffer_id: buffer_id.0 as u64,
-                        split_id: Some(split_id.0 as u64),
-                    };
-                    self.plugin_manager.resolve_callback(
-                        fresh_core::api::JsCallbackId::from(req_id),
-                        serde_json::to_string(&result).unwrap_or_default(),
-                    );
-                }
             }
 
             // ==================== Context Commands ====================
@@ -1726,62 +1249,7 @@ impl Editor {
                 message,
                 actions,
             } => {
-                tracing::info!(
-                    "Action popup requested: id={}, title={}, actions={}",
-                    popup_id,
-                    title,
-                    actions.len()
-                );
-
-                // Build popup list items from actions
-                let items: Vec<crate::model::event::PopupListItemData> = actions
-                    .iter()
-                    .map(|action| crate::model::event::PopupListItemData {
-                        text: action.label.clone(),
-                        detail: None,
-                        icon: None,
-                        data: Some(action.id.clone()),
-                    })
-                    .collect();
-
-                // The popup_id lives on the popup itself via its
-                // `PopupResolver::PluginAction` — no side-channel stack.
-                // Drop the incoming `actions` vec; its ids are already
-                // encoded as each list item's `data` field below.
-                drop(actions);
-
-                // Create popup with message + action list
-                let popup_data = crate::model::event::PopupData {
-                    kind: crate::model::event::PopupKindHint::List,
-                    title: Some(title),
-                    description: Some(message),
-                    transient: false,
-                    content: crate::model::event::PopupContentData::List { items, selected: 0 },
-                    position: crate::model::event::PopupPositionData::BottomRight,
-                    width: 60,
-                    max_height: 15,
-                    bordered: true,
-                };
-
-                // Action popups are buffer-independent notifications; route
-                // them to the editor-level popup stack so they remain visible
-                // (and dismissible) regardless of which buffer is focused —
-                // including virtual buffers like the Dashboard that own the
-                // whole split.
-                //
-                // The resolver carries the popup_id so confirm/cancel fires
-                // `action_popup_result` for exactly THIS popup, even when
-                // multiple plugin popups are stacked concurrently.
-                let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
-                popup_obj.resolver = crate::view::popup::PopupResolver::PluginAction {
-                    popup_id: popup_id.clone(),
-                };
-                self.global_popups.show(popup_obj);
-                tracing::info!(
-                    "Action popup shown: id={}, stack_depth={}",
-                    popup_id,
-                    self.global_popups.all().len()
-                );
+                self.handle_show_action_popup(popup_id, title, message, actions);
             }
 
             PluginCommand::DisableLspForLanguage { language } => {
@@ -2027,201 +1495,7 @@ impl Editor {
                 persistent,
                 request_id,
             } => {
-                let (cols, rows) = self.get_terminal_dimensions();
-
-                // Set up async bridge for terminal manager if not already done
-                if let Some(ref bridge) = self.async_bridge {
-                    self.terminal_manager.set_async_bridge(bridge.clone());
-                }
-
-                // Determine working directory
-                let working_dir = cwd
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| self.working_dir.clone());
-
-                // Prepare persistent storage paths
-                let terminal_root = self.dir_context.terminal_dir_for(&working_dir);
-                if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
-                    tracing::warn!("Failed to create terminal directory: {}", e);
-                }
-                let predicted_terminal_id = self.terminal_manager.next_terminal_id();
-                // Ephemeral terminals get a per-spawn suffix on their backing
-                // files so there is no possibility of picking up the scrollback
-                // that a previous run (with the same numeric terminal ID) wrote
-                // to `fresh-terminal-N.{txt,log}`. Persistent terminals keep
-                // the stable `fresh-terminal-N.*` name so workspace restore
-                // can still find them.
-                let name_stem = if persistent {
-                    format!("fresh-terminal-{}", predicted_terminal_id.0)
-                } else {
-                    let nanos = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0);
-                    format!("fresh-terminal-eph-{}-{}", predicted_terminal_id.0, nanos)
-                };
-                let log_path = terminal_root.join(format!("{}.log", name_stem));
-                let backing_path = terminal_root.join(format!("{}.txt", name_stem));
-                self.terminal_backing_files
-                    .insert(predicted_terminal_id, backing_path);
-                let backing_path_for_spawn = self
-                    .terminal_backing_files
-                    .get(&predicted_terminal_id)
-                    .cloned();
-
-                match self.terminal_manager.spawn(
-                    cols,
-                    rows,
-                    Some(working_dir),
-                    Some(log_path.clone()),
-                    backing_path_for_spawn,
-                    self.resolved_terminal_wrapper(),
-                ) {
-                    Ok(terminal_id) => {
-                        // Track log file path
-                        self.terminal_log_files
-                            .insert(terminal_id, log_path.clone());
-                        // Fix up backing path if the predicted ID didn't match
-                        // the one the terminal manager handed out. Persistent
-                        // terminals re-derive the stable `fresh-terminal-N.txt`
-                        // name so the workspace restore path can find them;
-                        // ephemeral terminals just keep the already-spawned
-                        // file (it has a nanos-unique name either way) and
-                        // rebind the HashMap key to the real ID.
-                        if terminal_id != predicted_terminal_id {
-                            let existing =
-                                self.terminal_backing_files.remove(&predicted_terminal_id);
-                            let fixed_backing = if persistent {
-                                terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
-                            } else {
-                                existing.unwrap_or_else(|| {
-                                    terminal_root.join(format!("{}.txt", name_stem))
-                                })
-                            };
-                            self.terminal_backing_files
-                                .insert(terminal_id, fixed_backing);
-                        }
-                        if !persistent {
-                            self.ephemeral_terminals.insert(terminal_id);
-                        }
-
-                        // Pick buffer-attachment strategy based on whether the
-                        // plugin asked for its own split:
-                        //
-                        // - direction = Some: use `_detached` so the buffer
-                        //   isn't also added as a tab to the user's active
-                        //   split. The new split below owns it exclusively,
-                        //   so when the user closes that split the terminal
-                        //   disappears entirely instead of leaving a ghost
-                        //   tab behind in the main split.
-                        // - direction = None: use `_attached` — the plugin
-                        //   is intentionally placing the terminal as a new
-                        //   tab in the active split, which is the whole
-                        //   point of the no-split branch.
-                        let active_split = self.split_manager.active_split();
-                        let buffer_id = if direction.is_some() {
-                            self.create_terminal_buffer_detached(terminal_id)
-                        } else {
-                            self.create_terminal_buffer_attached(terminal_id, active_split)
-                        };
-
-                        let created_split_id = if let Some(dir_str) = direction.as_deref() {
-                            let split_dir = match dir_str {
-                                "horizontal" => crate::model::event::SplitDirection::Horizontal,
-                                _ => crate::model::event::SplitDirection::Vertical,
-                            };
-
-                            let split_ratio = ratio.unwrap_or(0.5);
-                            match self
-                                .split_manager
-                                .split_active(split_dir, buffer_id, split_ratio)
-                            {
-                                Ok(new_split_id) => {
-                                    let mut view_state = SplitViewState::with_buffer(
-                                        self.terminal_width,
-                                        self.terminal_height,
-                                        buffer_id,
-                                    );
-                                    view_state.apply_config_defaults(
-                                        self.config.editor.line_numbers,
-                                        self.config.editor.highlight_current_line,
-                                        false,
-                                        false,
-                                        None,
-                                        self.config.editor.rulers.clone(),
-                                    );
-                                    // Terminal output is ANSI-sequenced and
-                                    // assumes a fixed column count; wrapping
-                                    // would mangle cursor positioning.
-                                    view_state.viewport.line_wrap_enabled = false;
-                                    self.split_view_states.insert(new_split_id, view_state);
-
-                                    if focus.unwrap_or(true) {
-                                        self.split_manager.set_active_split(new_split_id);
-                                    }
-
-                                    tracing::info!(
-                                        "Created {:?} split for terminal {:?} with buffer {:?}",
-                                        split_dir,
-                                        terminal_id,
-                                        buffer_id
-                                    );
-                                    Some(new_split_id)
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to create split for terminal: {}; \
-                                         falling back to active split",
-                                        e
-                                    );
-                                    // The buffer was created detached. Split
-                                    // creation failed, so attach it to the
-                                    // active split as a graceful fallback
-                                    // rather than leaving an orphan buffer.
-                                    if let Some(view_state) =
-                                        self.split_view_states.get_mut(&active_split)
-                                    {
-                                        view_state.add_buffer(buffer_id);
-                                        view_state.viewport.line_wrap_enabled = false;
-                                    }
-                                    self.set_active_buffer(buffer_id);
-                                    None
-                                }
-                            }
-                        } else {
-                            // No split — just switch to the terminal buffer in the active split
-                            self.set_active_buffer(buffer_id);
-                            None
-                        };
-
-                        // Resize terminal to match actual split content area
-                        self.resize_visible_terminals();
-
-                        // Resolve the callback with TerminalResult
-                        let result = fresh_core::api::TerminalResult {
-                            buffer_id: buffer_id.0 as u64,
-                            terminal_id: terminal_id.0 as u64,
-                            split_id: created_split_id.map(|s| s.0 .0 as u64),
-                        };
-                        self.plugin_manager.resolve_callback(
-                            fresh_core::api::JsCallbackId::from(request_id),
-                            serde_json::to_string(&result).unwrap_or_default(),
-                        );
-
-                        tracing::info!(
-                            "Plugin created terminal {:?} with buffer {:?}",
-                            terminal_id,
-                            buffer_id
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to create terminal for plugin: {}", e);
-                        self.plugin_manager.reject_callback(
-                            fresh_core::api::JsCallbackId::from(request_id),
-                            format!("Failed to create terminal: {}", e),
-                        );
-                    }
-                }
+                self.handle_create_terminal(cwd, direction, ratio, focus, persistent, request_id);
             }
 
             PluginCommand::SendTerminalInput { terminal_id, data } => {
@@ -2722,6 +1996,847 @@ impl Editor {
             let target = line.saturating_sub(lines_above);
             view_state.viewport.scroll_to(&mut state.buffer, target);
             view_state.viewport.set_skip_ensure_visible();
+        }
+    }
+
+    fn handle_spawn_host_process(
+        &mut self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: JsCallbackId,
+    ) {
+        // Bypass the active authority on purpose: this is
+        // reserved for plugin internals that must run host-side
+        // work (e.g. `devcontainer up`) before the authority
+        // they want is even built. Uses the same callback shape
+        // as `SpawnProcess` so the plugin-facing API is
+        // symmetric.
+        //
+        // Kill handle: we store a oneshot sender in
+        // `host_process_handles` keyed by the callback id. A
+        // `KillHostProcess` dispatch sends on it; the spawn
+        // task's `tokio::select!` then start_kill()s the
+        // child. This lets a plugin cancel a long-running
+        // spawn (e.g. "Cancel Startup" on the Remote
+        // Indicator popup during `devcontainer up`).
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            use tokio::io::{AsyncReadExt, BufReader};
+            use tokio::process::Command as TokioCommand;
+
+            let effective_cwd = cwd.or_else(|| {
+                std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .ok()
+            });
+            let sender = bridge.sender();
+            let process_id = callback_id.as_u64();
+
+            let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
+            self.host_process_handles.insert(process_id, kill_tx);
+
+            runtime.spawn(async move {
+                let mut cmd = TokioCommand::new(&command);
+                cmd.args(&args);
+                cmd.stdout(std::process::Stdio::piped());
+                cmd.stderr(std::process::Stdio::piped());
+                if let Some(ref dir) = effective_cwd {
+                    cmd.current_dir(dir);
+                }
+                let mut child = match cmd.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                            process_id,
+                            stdout: String::new(),
+                            stderr: e.to_string(),
+                            exit_code: -1,
+                        });
+                        return;
+                    }
+                };
+
+                // Take the pipes out of the Child so the
+                // reader tasks own them; then `child.wait()`
+                // has exclusive mutable access for the
+                // kill-or-exit select. Matches the
+                // fresh-plugin-runtime process.rs pattern.
+                let stdout_pipe = child.stdout.take();
+                let stderr_pipe = child.stderr.take();
+
+                let stdout_fut = async {
+                    let mut buf = String::new();
+                    if let Some(s) = stdout_pipe {
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = BufReader::new(s).read_to_string(&mut buf).await;
+                    }
+                    buf
+                };
+                let stderr_fut = async {
+                    let mut buf = String::new();
+                    if let Some(s) = stderr_pipe {
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = BufReader::new(s).read_to_string(&mut buf).await;
+                    }
+                    buf
+                };
+                let wait_fut = async {
+                    tokio::select! {
+                        status = child.wait() => {
+                            status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
+                        }
+                        _ = &mut kill_rx => {
+                            // Best-effort SIGKILL + reap.
+                            // Children of the killed
+                            // process may leak (Q-C2).
+                            #[allow(clippy::let_underscore_must_use)]
+                            let _ = child.start_kill();
+                            child
+                                .wait()
+                                .await
+                                .map(|s| s.code().unwrap_or(-1))
+                                .unwrap_or(-1)
+                        }
+                    }
+                };
+                let (stdout, stderr, exit_code) = tokio::join!(stdout_fut, stderr_fut, wait_fut);
+
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                    process_id,
+                    stdout,
+                    stderr,
+                    exit_code,
+                });
+            });
+        } else {
+            self.plugin_manager
+                .reject_callback(callback_id, "Async runtime not available".to_string());
+        }
+    }
+
+    fn handle_spawn_background_process(
+        &mut self,
+        process_id: u64,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: JsCallbackId,
+    ) {
+        // Spawn background process with streaming output via tokio
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            use tokio::process::Command as TokioCommand;
+
+            let effective_cwd = cwd.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| ".".to_string())
+            });
+
+            let sender = bridge.sender();
+            let sender_stdout = sender.clone();
+            let sender_stderr = sender.clone();
+            let callback_id_u64 = callback_id.as_u64();
+
+            // Receiver may be dropped if editor is shutting down
+            #[allow(clippy::let_underscore_must_use)]
+            let handle = runtime.spawn(async move {
+                let mut child = match TokioCommand::new(&command)
+                    .args(&args)
+                    .current_dir(&effective_cwd)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(child) => child,
+                    Err(e) => {
+                        let _ = sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                            fresh_core::api::PluginAsyncMessage::ProcessExit {
+                                process_id,
+                                callback_id: callback_id_u64,
+                                exit_code: -1,
+                            },
+                        ));
+                        tracing::error!("Failed to spawn background process: {}", e);
+                        return;
+                    }
+                };
+
+                // Stream stdout
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
+                let pid = process_id;
+
+                // Spawn stdout reader
+                if let Some(stdout) = stdout {
+                    let sender = sender_stdout;
+                    tokio::spawn(async move {
+                        let reader = BufReader::new(stdout);
+                        let mut lines = reader.lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            let _ =
+                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                                    fresh_core::api::PluginAsyncMessage::ProcessStdout {
+                                        process_id: pid,
+                                        data: line + "\n",
+                                    },
+                                ));
+                        }
+                    });
+                }
+
+                // Spawn stderr reader
+                if let Some(stderr) = stderr {
+                    let sender = sender_stderr;
+                    tokio::spawn(async move {
+                        let reader = BufReader::new(stderr);
+                        let mut lines = reader.lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            let _ =
+                                sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                                    fresh_core::api::PluginAsyncMessage::ProcessStderr {
+                                        process_id: pid,
+                                        data: line + "\n",
+                                    },
+                                ));
+                        }
+                    });
+                }
+
+                // Wait for process to complete
+                let exit_code = match child.wait().await {
+                    Ok(status) => status.code().unwrap_or(-1),
+                    Err(_) => -1,
+                };
+
+                let _ = sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                    fresh_core::api::PluginAsyncMessage::ProcessExit {
+                        process_id,
+                        callback_id: callback_id_u64,
+                        exit_code,
+                    },
+                ));
+            });
+
+            // Store abort handle for potential kill
+            self.background_process_handles
+                .insert(process_id, handle.abort_handle());
+        } else {
+            // No runtime - reject immediately
+            self.plugin_manager
+                .reject_callback(callback_id, "Async runtime not available".to_string());
+        }
+    }
+
+    fn handle_create_virtual_buffer_with_content(
+        &mut self,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+        hidden_from_tabs: bool,
+        request_id: Option<u64>,
+    ) {
+        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        tracing::info!(
+            "Created virtual buffer '{}' with mode '{}' (id={:?})",
+            name,
+            mode,
+            buffer_id
+        );
+
+        // Apply view options to the buffer
+        // TODO: show_line_numbers is duplicated between EditorState.margins and
+        // BufferViewState. The renderer reads BufferViewState and overwrites
+        // margins each frame via configure_for_line_numbers(), making the margin
+        // setting here effectively write-only. Consider removing the margin call
+        // and only setting BufferViewState.show_line_numbers.
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.margins.configure_for_line_numbers(show_line_numbers);
+            state.show_cursors = show_cursors;
+            state.editing_disabled = editing_disabled;
+            tracing::debug!(
+                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
+                        buffer_id,
+                        show_line_numbers,
+                        show_cursors,
+                        editing_disabled
+                    );
+        }
+        let active_split = self.split_manager.active_split();
+        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+        }
+
+        // Apply hidden_from_tabs to buffer metadata
+        if hidden_from_tabs {
+            if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                meta.hidden_from_tabs = true;
+            }
+        }
+
+        // Now set the content
+        match self.set_virtual_buffer_content(buffer_id, entries) {
+            Ok(()) => {
+                tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
+                // Switch to the new buffer to display it
+                self.set_active_buffer(buffer_id);
+                tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
+
+                // Send response if request_id is present
+                if let Some(req_id) = request_id {
+                    tracing::info!(
+                                "CreateVirtualBufferWithContent: resolving callback for request_id={}, buffer_id={:?}",
+                                req_id,
+                                buffer_id
+                            );
+                    // createVirtualBuffer returns VirtualBufferResult: { bufferId, splitId }
+                    let result = fresh_core::api::VirtualBufferResult {
+                        buffer_id: buffer_id.0 as u64,
+                        split_id: None,
+                    };
+                    self.plugin_manager.resolve_callback(
+                        fresh_core::api::JsCallbackId::from(req_id),
+                        serde_json::to_string(&result).unwrap_or_default(),
+                    );
+                    tracing::info!(
+                        "CreateVirtualBufferWithContent: resolve_callback sent for request_id={}",
+                        req_id
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to set virtual buffer content: {}", e);
+            }
+        }
+    }
+
+    fn handle_create_virtual_buffer_in_split(
+        &mut self,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        ratio: f32,
+        direction: Option<String>,
+        panel_id: Option<String>,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+        line_wrap: Option<bool>,
+        before: bool,
+        request_id: Option<u64>,
+    ) {
+        // Check if this panel already exists (for idempotent operations)
+        if let Some(pid) = &panel_id {
+            if let Some(&existing_buffer_id) = self.panel_ids.get(pid) {
+                // Verify the buffer actually exists (defensive check for stale entries)
+                if self.buffers.contains_key(&existing_buffer_id) {
+                    // Panel exists, just update its content
+                    if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries) {
+                        tracing::error!("Failed to update panel content: {}", e);
+                    } else {
+                        tracing::info!("Updated existing panel '{}' content", pid);
+                    }
+
+                    // Find and focus the split that contains this buffer
+                    let splits = self.split_manager.splits_for_buffer(existing_buffer_id);
+                    if let Some(&split_id) = splits.first() {
+                        self.split_manager.set_active_split(split_id);
+                        // Route through set_pane_buffer so tree + SVS
+                        // stay consistent (issue #1620 invariant).
+                        self.set_pane_buffer(split_id, existing_buffer_id);
+                        tracing::debug!("Focused split {:?} containing panel buffer", split_id);
+                    }
+
+                    // Send response with existing buffer ID and split ID via callback resolution
+                    if let Some(req_id) = request_id {
+                        let result = fresh_core::api::VirtualBufferResult {
+                            buffer_id: existing_buffer_id.0 as u64,
+                            split_id: splits.first().map(|s| s.0 .0 as u64),
+                        };
+                        self.plugin_manager.resolve_callback(
+                            fresh_core::api::JsCallbackId::from(req_id),
+                            serde_json::to_string(&result).unwrap_or_default(),
+                        );
+                    }
+                    return;
+                } else {
+                    // Buffer no longer exists, remove stale panel_id entry
+                    tracing::warn!(
+                        "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
+                        pid,
+                        existing_buffer_id
+                    );
+                    self.panel_ids.remove(pid);
+                    // Fall through to create a new buffer
+                }
+            }
+        }
+
+        // Capture the source split before creating the buffer —
+        // `create_virtual_buffer` unconditionally adds the new buffer
+        // as a tab to the currently active split, which is the wrong
+        // thing for a panel that lives in its own dedicated split
+        // (it would show up as a tab in BOTH splits — see bug #3).
+        let source_split_before_create = self.split_manager.active_split();
+
+        // Create the virtual buffer first
+        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        tracing::info!(
+            "Created virtual buffer '{}' with mode '{}' in split (id={:?})",
+            name,
+            mode,
+            buffer_id
+        );
+
+        // Apply view options to the buffer
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.margins.configure_for_line_numbers(show_line_numbers);
+            state.show_cursors = show_cursors;
+            state.editing_disabled = editing_disabled;
+            tracing::debug!(
+                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
+                        buffer_id,
+                        show_line_numbers,
+                        show_cursors,
+                        editing_disabled
+                    );
+        }
+
+        // Store the panel ID mapping if provided
+        if let Some(pid) = panel_id {
+            self.panel_ids.insert(pid, buffer_id);
+        }
+
+        // Set the content
+        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+            tracing::error!("Failed to set virtual buffer content: {}", e);
+            return;
+        }
+
+        // Determine split direction
+        let split_dir = match direction.as_deref() {
+            Some("vertical") => crate::model::event::SplitDirection::Vertical,
+            _ => crate::model::event::SplitDirection::Horizontal,
+        };
+
+        // Create a split with the new buffer
+        let created_split_id = match self
+            .split_manager
+            .split_active_positioned(split_dir, buffer_id, ratio, before)
+        {
+            Ok(new_split_id) => {
+                // The buffer now lives in its own split, so drop its
+                // tab from the source split (see bug #3).  Only do
+                // this when the new split actually differs from the
+                // source split — otherwise we'd leave no split
+                // displaying the buffer.
+                if new_split_id != source_split_before_create {
+                    if let Some(source_view_state) =
+                        self.split_view_states.get_mut(&source_split_before_create)
+                    {
+                        source_view_state.remove_buffer(buffer_id);
+                    }
+                }
+                // Create independent view state for the new split with the buffer in tabs
+                let mut view_state = SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                view_state.apply_config_defaults(
+                    self.config.editor.line_numbers,
+                    self.config.editor.highlight_current_line,
+                    line_wrap.unwrap_or_else(|| self.resolve_line_wrap_for_buffer(buffer_id)),
+                    self.config.editor.wrap_indent,
+                    self.resolve_wrap_column_for_buffer(buffer_id),
+                    self.config.editor.rulers.clone(),
+                );
+                // Override with plugin-requested show_line_numbers
+                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+                self.split_view_states.insert(new_split_id, view_state);
+
+                // Focus the new split (the diagnostics panel)
+                self.split_manager.set_active_split(new_split_id);
+                // NOTE: split tree was updated by split_active, active_buffer derives from it
+
+                tracing::info!(
+                    "Created {:?} split with virtual buffer {:?}",
+                    split_dir,
+                    buffer_id
+                );
+                Some(new_split_id)
+            }
+            Err(e) => {
+                tracing::error!("Failed to create split: {}", e);
+                // Fall back to just switching to the buffer
+                self.set_active_buffer(buffer_id);
+                None
+            }
+        };
+
+        // Send response with buffer ID and split ID via callback resolution
+        // NOTE: Using VirtualBufferResult type for type-safe JSON serialization
+        if let Some(req_id) = request_id {
+            tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: buffer_id.0 as u64,
+                split_id: created_split_id.map(|s| s.0 .0 as u64),
+            };
+            self.plugin_manager.resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+    }
+
+    fn handle_create_virtual_buffer_in_existing_split(
+        &mut self,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        split_id: SplitId,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+        line_wrap: Option<bool>,
+        request_id: Option<u64>,
+    ) {
+        // Create the virtual buffer
+        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        tracing::info!(
+            "Created virtual buffer '{}' with mode '{}' for existing split {:?} (id={:?})",
+            name,
+            mode,
+            split_id,
+            buffer_id
+        );
+
+        // Apply view options to the buffer
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.margins.configure_for_line_numbers(show_line_numbers);
+            state.show_cursors = show_cursors;
+            state.editing_disabled = editing_disabled;
+        }
+
+        // Set the content
+        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+            tracing::error!("Failed to set virtual buffer content: {}", e);
+            return;
+        }
+
+        // Show the buffer in the target split. set_pane_buffer
+        // covers the tree + SVS updates the old code did by hand.
+        let leaf_id = LeafId(split_id);
+        self.split_manager.set_active_split(leaf_id);
+        self.set_pane_buffer(leaf_id, buffer_id);
+
+        // Fall-through to the cursor/open_buffers housekeeping
+        // that used to follow the manual switch_buffer. We keep
+        // the `if let Some(view_state)` block below — set_pane_buffer
+        // already called switch_buffer, but the downstream code
+        // also nudges open_buffers and focus_history.
+        if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+            view_state.switch_buffer(buffer_id);
+            view_state.add_buffer(buffer_id);
+            view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+
+            // Apply line_wrap setting if provided
+            if let Some(wrap) = line_wrap {
+                view_state.active_state_mut().viewport.line_wrap_enabled = wrap;
+            }
+        }
+
+        tracing::info!(
+            "Displayed virtual buffer {:?} in split {:?}",
+            buffer_id,
+            split_id
+        );
+
+        // Send response with buffer ID and split ID via callback resolution
+        if let Some(req_id) = request_id {
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: buffer_id.0 as u64,
+                split_id: Some(split_id.0 as u64),
+            };
+            self.plugin_manager.resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+    }
+
+    fn handle_show_action_popup(
+        &mut self,
+        popup_id: String,
+        title: String,
+        message: String,
+        actions: Vec<fresh_core::api::ActionPopupAction>,
+    ) {
+        tracing::info!(
+            "Action popup requested: id={}, title={}, actions={}",
+            popup_id,
+            title,
+            actions.len()
+        );
+
+        // Build popup list items from actions
+        let items: Vec<crate::model::event::PopupListItemData> = actions
+            .iter()
+            .map(|action| crate::model::event::PopupListItemData {
+                text: action.label.clone(),
+                detail: None,
+                icon: None,
+                data: Some(action.id.clone()),
+            })
+            .collect();
+
+        // The popup_id lives on the popup itself via its
+        // `PopupResolver::PluginAction` — no side-channel stack.
+        // Drop the incoming `actions` vec; its ids are already
+        // encoded as each list item's `data` field below.
+        drop(actions);
+
+        // Create popup with message + action list
+        let popup_data = crate::model::event::PopupData {
+            kind: crate::model::event::PopupKindHint::List,
+            title: Some(title),
+            description: Some(message),
+            transient: false,
+            content: crate::model::event::PopupContentData::List { items, selected: 0 },
+            position: crate::model::event::PopupPositionData::BottomRight,
+            width: 60,
+            max_height: 15,
+            bordered: true,
+        };
+
+        // Action popups are buffer-independent notifications; route
+        // them to the editor-level popup stack so they remain visible
+        // (and dismissible) regardless of which buffer is focused —
+        // including virtual buffers like the Dashboard that own the
+        // whole split.
+        //
+        // The resolver carries the popup_id so confirm/cancel fires
+        // `action_popup_result` for exactly THIS popup, even when
+        // multiple plugin popups are stacked concurrently.
+        let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+        popup_obj.resolver = crate::view::popup::PopupResolver::PluginAction {
+            popup_id: popup_id.clone(),
+        };
+        self.global_popups.show(popup_obj);
+        tracing::info!(
+            "Action popup shown: id={}, stack_depth={}",
+            popup_id,
+            self.global_popups.all().len()
+        );
+    }
+
+    fn handle_create_terminal(
+        &mut self,
+        cwd: Option<String>,
+        direction: Option<String>,
+        ratio: Option<f32>,
+        focus: Option<bool>,
+        persistent: bool,
+        request_id: u64,
+    ) {
+        let (cols, rows) = self.get_terminal_dimensions();
+
+        // Set up async bridge for terminal manager if not already done
+        if let Some(ref bridge) = self.async_bridge {
+            self.terminal_manager.set_async_bridge(bridge.clone());
+        }
+
+        // Determine working directory
+        let working_dir = cwd
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.working_dir.clone());
+
+        // Prepare persistent storage paths
+        let terminal_root = self.dir_context.terminal_dir_for(&working_dir);
+        if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
+            tracing::warn!("Failed to create terminal directory: {}", e);
+        }
+        let predicted_terminal_id = self.terminal_manager.next_terminal_id();
+        // Ephemeral terminals get a per-spawn suffix on their backing
+        // files so there is no possibility of picking up the scrollback
+        // that a previous run (with the same numeric terminal ID) wrote
+        // to `fresh-terminal-N.{txt,log}`. Persistent terminals keep
+        // the stable `fresh-terminal-N.*` name so workspace restore
+        // can still find them.
+        let name_stem = if persistent {
+            format!("fresh-terminal-{}", predicted_terminal_id.0)
+        } else {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("fresh-terminal-eph-{}-{}", predicted_terminal_id.0, nanos)
+        };
+        let log_path = terminal_root.join(format!("{}.log", name_stem));
+        let backing_path = terminal_root.join(format!("{}.txt", name_stem));
+        self.terminal_backing_files
+            .insert(predicted_terminal_id, backing_path);
+        let backing_path_for_spawn = self
+            .terminal_backing_files
+            .get(&predicted_terminal_id)
+            .cloned();
+
+        match self.terminal_manager.spawn(
+            cols,
+            rows,
+            Some(working_dir),
+            Some(log_path.clone()),
+            backing_path_for_spawn,
+            self.resolved_terminal_wrapper(),
+        ) {
+            Ok(terminal_id) => {
+                // Track log file path
+                self.terminal_log_files
+                    .insert(terminal_id, log_path.clone());
+                // Fix up backing path if the predicted ID didn't match
+                // the one the terminal manager handed out. Persistent
+                // terminals re-derive the stable `fresh-terminal-N.txt`
+                // name so the workspace restore path can find them;
+                // ephemeral terminals just keep the already-spawned
+                // file (it has a nanos-unique name either way) and
+                // rebind the HashMap key to the real ID.
+                if terminal_id != predicted_terminal_id {
+                    let existing = self.terminal_backing_files.remove(&predicted_terminal_id);
+                    let fixed_backing = if persistent {
+                        terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+                    } else {
+                        existing.unwrap_or_else(|| terminal_root.join(format!("{}.txt", name_stem)))
+                    };
+                    self.terminal_backing_files
+                        .insert(terminal_id, fixed_backing);
+                }
+                if !persistent {
+                    self.ephemeral_terminals.insert(terminal_id);
+                }
+
+                // Pick buffer-attachment strategy based on whether the
+                // plugin asked for its own split:
+                //
+                // - direction = Some: use `_detached` so the buffer
+                //   isn't also added as a tab to the user's active
+                //   split. The new split below owns it exclusively,
+                //   so when the user closes that split the terminal
+                //   disappears entirely instead of leaving a ghost
+                //   tab behind in the main split.
+                // - direction = None: use `_attached` — the plugin
+                //   is intentionally placing the terminal as a new
+                //   tab in the active split, which is the whole
+                //   point of the no-split branch.
+                let active_split = self.split_manager.active_split();
+                let buffer_id = if direction.is_some() {
+                    self.create_terminal_buffer_detached(terminal_id)
+                } else {
+                    self.create_terminal_buffer_attached(terminal_id, active_split)
+                };
+
+                let created_split_id = if let Some(dir_str) = direction.as_deref() {
+                    let split_dir = match dir_str {
+                        "horizontal" => crate::model::event::SplitDirection::Horizontal,
+                        _ => crate::model::event::SplitDirection::Vertical,
+                    };
+
+                    let split_ratio = ratio.unwrap_or(0.5);
+                    match self
+                        .split_manager
+                        .split_active(split_dir, buffer_id, split_ratio)
+                    {
+                        Ok(new_split_id) => {
+                            let mut view_state = SplitViewState::with_buffer(
+                                self.terminal_width,
+                                self.terminal_height,
+                                buffer_id,
+                            );
+                            view_state.apply_config_defaults(
+                                self.config.editor.line_numbers,
+                                self.config.editor.highlight_current_line,
+                                false,
+                                false,
+                                None,
+                                self.config.editor.rulers.clone(),
+                            );
+                            // Terminal output is ANSI-sequenced and
+                            // assumes a fixed column count; wrapping
+                            // would mangle cursor positioning.
+                            view_state.viewport.line_wrap_enabled = false;
+                            self.split_view_states.insert(new_split_id, view_state);
+
+                            if focus.unwrap_or(true) {
+                                self.split_manager.set_active_split(new_split_id);
+                            }
+
+                            tracing::info!(
+                                "Created {:?} split for terminal {:?} with buffer {:?}",
+                                split_dir,
+                                terminal_id,
+                                buffer_id
+                            );
+                            Some(new_split_id)
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to create split for terminal: {}; \
+                                         falling back to active split",
+                                e
+                            );
+                            // The buffer was created detached. Split
+                            // creation failed, so attach it to the
+                            // active split as a graceful fallback
+                            // rather than leaving an orphan buffer.
+                            if let Some(view_state) = self.split_view_states.get_mut(&active_split)
+                            {
+                                view_state.add_buffer(buffer_id);
+                                view_state.viewport.line_wrap_enabled = false;
+                            }
+                            self.set_active_buffer(buffer_id);
+                            None
+                        }
+                    }
+                } else {
+                    // No split — just switch to the terminal buffer in the active split
+                    self.set_active_buffer(buffer_id);
+                    None
+                };
+
+                // Resize terminal to match actual split content area
+                self.resize_visible_terminals();
+
+                // Resolve the callback with TerminalResult
+                let result = fresh_core::api::TerminalResult {
+                    buffer_id: buffer_id.0 as u64,
+                    terminal_id: terminal_id.0 as u64,
+                    split_id: created_split_id.map(|s| s.0 .0 as u64),
+                };
+                self.plugin_manager.resolve_callback(
+                    fresh_core::api::JsCallbackId::from(request_id),
+                    serde_json::to_string(&result).unwrap_or_default(),
+                );
+
+                tracing::info!(
+                    "Plugin created terminal {:?} with buffer {:?}",
+                    terminal_id,
+                    buffer_id
+                );
+            }
+            Err(e) => {
+                tracing::error!("Failed to create terminal for plugin: {}", e);
+                self.plugin_manager.reject_callback(
+                    fresh_core::api::JsCallbackId::from(request_id),
+                    format!("Failed to create terminal: {}", e),
+                );
+            }
         }
     }
 }
