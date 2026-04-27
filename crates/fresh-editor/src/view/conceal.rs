@@ -259,6 +259,33 @@ impl ConcealManager {
     pub fn is_empty(&self) -> bool {
         self.ranges.is_empty()
     }
+
+    /// Test-only: assert `marker_to_idx` is consistent with `ranges`.
+    /// Panics on any divergence. Used by property tests.
+    #[cfg(test)]
+    fn check_invariants(&self) {
+        assert_eq!(
+            self.marker_to_idx.len(),
+            self.ranges.len() * 2,
+            "marker_to_idx size != 2 * ranges.len()"
+        );
+        for (i, r) in self.ranges.iter().enumerate() {
+            assert_eq!(
+                self.marker_to_idx.get(&r.start_marker).copied(),
+                Some(i),
+                "start_marker {:?} of range {} mismapped",
+                r.start_marker,
+                i,
+            );
+            assert_eq!(
+                self.marker_to_idx.get(&r.end_marker).copied(),
+                Some(i),
+                "end_marker {:?} of range {} mismapped",
+                r.end_marker,
+                i,
+            );
+        }
+    }
 }
 
 impl Default for ConcealManager {
@@ -395,5 +422,86 @@ mod tests {
             .query_viewport(0, LINES * LINE_BYTES, &marker_list)
             .len();
         assert_eq!(still_present, initial);
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone)]
+        enum Op {
+            // Length capped so the spanning-conceal precondition holds:
+            // every conceal is shorter than the smallest query range.
+            Add {
+                start: usize,
+                len: usize,
+                ns_idx: u8,
+            },
+            RemoveInRange {
+                start: usize,
+                end: usize,
+            },
+            ClearNamespace {
+                ns_idx: u8,
+            },
+        }
+
+        const BUFFER_SIZE: usize = 200;
+        const MAX_CONCEAL_LEN: usize = 4;
+        const MIN_QUERY_LEN: usize = MAX_CONCEAL_LEN + 1;
+
+        fn arb_op() -> impl Strategy<Value = Op> {
+            prop_oneof![
+                3 => (0..(BUFFER_SIZE - MAX_CONCEAL_LEN), 1..=MAX_CONCEAL_LEN, 0u8..3u8)
+                    .prop_map(|(start, len, ns_idx)| Op::Add { start, len, ns_idx }),
+                2 => (0..BUFFER_SIZE, MIN_QUERY_LEN..=BUFFER_SIZE)
+                    .prop_map(|(start, qlen)| {
+                        let s = start.min(BUFFER_SIZE - 1);
+                        let e = (s + qlen).min(BUFFER_SIZE);
+                        Op::RemoveInRange { start: s, end: e }
+                    }),
+                1 => (0u8..3u8).prop_map(|ns_idx| Op::ClearNamespace { ns_idx }),
+            ]
+        }
+
+        fn nsf(idx: u8) -> OverlayNamespace {
+            OverlayNamespace::from_string(format!("ns{idx}"))
+        }
+
+        proptest! {
+            /// Invariants must hold after every sequence of operations.
+            /// Plus: after `remove_in_range(r)`, no surviving conceal's
+            /// range overlaps `r` — given the precondition that conceals
+            /// are no longer than the query range.
+            #[test]
+            fn prop_marker_index_consistent(ops in prop::collection::vec(arb_op(), 0..40)) {
+                let mut marker_list = MarkerList::new();
+                marker_list.set_buffer_size(BUFFER_SIZE);
+                let mut manager = ConcealManager::new();
+
+                for op in ops {
+                    match op {
+                        Op::Add { start, len, ns_idx } => {
+                            manager.add(&mut marker_list, nsf(ns_idx), start..(start + len), None);
+                        }
+                        Op::RemoveInRange { start, end } => {
+                            manager.remove_in_range(&(start..end), &mut marker_list);
+                            for (rng, _) in manager.query_viewport(0, BUFFER_SIZE, &marker_list) {
+                                let overlaps = rng.start < end && start < rng.end;
+                                prop_assert!(
+                                    !overlaps,
+                                    "conceal {:?} survived remove_in_range({start}..{end})",
+                                    rng,
+                                );
+                            }
+                        }
+                        Op::ClearNamespace { ns_idx } => {
+                            manager.clear_namespace(&nsf(ns_idx), &mut marker_list);
+                        }
+                    }
+                    manager.check_invariants();
+                }
+            }
+        }
     }
 }

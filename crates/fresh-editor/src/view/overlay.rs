@@ -408,15 +408,13 @@ impl OverlayManager {
 
     /// Remove all overlays in a range and clean up their markers
     pub fn remove_in_range(&mut self, range: &Range<usize>, marker_list: &mut MarkerList) {
-        // O(log N + k): query marker tree for endpoints near `range`,
-        // map back to entries via `marker_to_idx`, verify each candidate's
-        // true overlap (closed-vs-half-open + spanning safety).
+        // O(log N + k) for the lookup; restoring the priority-sorted
+        // invariant after `swap_remove` is O(N) (adaptive sort on a
+        // near-sorted vec) plus O(N) marker_to_idx rebuild. For typical
+        // markdown_compose workloads where overlays in a buffer share
+        // the same priority, the adaptive sort is a no-op pass.
         // Spanning overlays (start < range.start && end > range.end) are
         // not detected — same precondition as ConcealManager.
-        //
-        // swap_remove breaks priority order; the next `add` re-sorts.
-        // Production callers always do remove + add in the same cycle,
-        // so paint never observes the broken state.
         if range.start >= range.end {
             return;
         }
@@ -447,6 +445,9 @@ impl OverlayManager {
         for idx in to_remove {
             self.swap_remove_at(idx, marker_list);
         }
+        // Restore priority order broken by swap_removes.
+        self.overlays.sort_by_key(|o| o.priority);
+        self.rebuild_marker_index();
     }
 
     /// Clear all overlays and their markers
@@ -595,6 +596,50 @@ impl OverlayManager {
     /// Get all overlays (for rendering)
     pub fn all(&self) -> &[Overlay] {
         &self.overlays
+    }
+
+    /// Test-only: assert `marker_to_idx` is consistent with `overlays`,
+    /// and that priorities are non-decreasing along the vector.
+    /// Panics on any divergence. Used by property tests.
+    #[cfg(test)]
+    fn check_invariants(&self) {
+        assert_eq!(
+            self.marker_to_idx.len(),
+            self.overlays.len() * 2,
+            "marker_to_idx size != 2 * overlays.len()"
+        );
+        for (i, o) in self.overlays.iter().enumerate() {
+            assert_eq!(
+                self.marker_to_idx.get(&o.start_marker).copied(),
+                Some(i),
+                "start_marker {:?} of overlay {} mismapped",
+                o.start_marker,
+                i,
+            );
+            assert_eq!(
+                self.marker_to_idx.get(&o.end_marker).copied(),
+                Some(i),
+                "end_marker {:?} of overlay {} mismapped",
+                o.end_marker,
+                i,
+            );
+        }
+        // Priority order — only enforceable when nothing is mid-cycle.
+        // Tests check this via `assert_priority_sorted` after points
+        // where the invariant is supposed to hold (e.g. after `add`).
+    }
+
+    /// Test-only: assert overlays are non-decreasing by priority.
+    #[cfg(test)]
+    fn assert_priority_sorted(&self) {
+        for w in self.overlays.windows(2) {
+            assert!(
+                w[0].priority <= w[1].priority,
+                "priority order broken: {} after {}",
+                w[1].priority,
+                w[0].priority,
+            );
+        }
     }
 }
 
@@ -1028,5 +1073,150 @@ mod tests {
             elapsed / LINES as u32,
         );
         assert_eq!(manager.len(), initial);
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone)]
+        enum Op {
+            Add {
+                start: usize,
+                len: usize,
+                priority: i32,
+                ns_idx: u8,
+            },
+            RemoveInRange {
+                start: usize,
+                end: usize,
+            },
+            ClearNamespace {
+                ns_idx: u8,
+            },
+            ReplaceRange {
+                start: usize,
+                end: usize,
+                ns_idx: u8,
+                /// New overlays to insert in the same range; same shape
+                /// as `Add` but len capped to satisfy precondition.
+                new_overlays: Vec<(usize, usize, i32)>,
+            },
+        }
+
+        const BUFFER_SIZE: usize = 200;
+        const MAX_OVERLAY_LEN: usize = 4;
+        const MIN_QUERY_LEN: usize = MAX_OVERLAY_LEN + 1;
+
+        fn arb_overlay_spec() -> impl Strategy<Value = (usize, usize, i32)> {
+            (
+                0..(BUFFER_SIZE - MAX_OVERLAY_LEN),
+                1..=MAX_OVERLAY_LEN,
+                -5i32..=5i32,
+            )
+        }
+
+        fn arb_op() -> impl Strategy<Value = Op> {
+            prop_oneof![
+                3 => arb_overlay_spec().prop_flat_map(|(start, len, priority)| {
+                    (Just(start), Just(len), Just(priority), 0u8..3u8)
+                }).prop_map(|(start, len, priority, ns_idx)| Op::Add {
+                    start, len, priority, ns_idx,
+                }),
+                2 => (0..BUFFER_SIZE, MIN_QUERY_LEN..=BUFFER_SIZE)
+                    .prop_map(|(start, qlen)| {
+                        let s = start.min(BUFFER_SIZE - 1);
+                        let e = (s + qlen).min(BUFFER_SIZE);
+                        Op::RemoveInRange { start: s, end: e }
+                    }),
+                1 => (0u8..3u8).prop_map(|ns_idx| Op::ClearNamespace { ns_idx }),
+                1 => (
+                    0..BUFFER_SIZE,
+                    MIN_QUERY_LEN..=BUFFER_SIZE,
+                    0u8..3u8,
+                    prop::collection::vec(arb_overlay_spec(), 0..4),
+                )
+                    .prop_map(|(start, qlen, ns_idx, new_overlays)| {
+                        let s = start.min(BUFFER_SIZE - 1);
+                        let e = (s + qlen).min(BUFFER_SIZE);
+                        Op::ReplaceRange { start: s, end: e, ns_idx, new_overlays }
+                    }),
+            ]
+        }
+
+        fn nsf(idx: u8) -> OverlayNamespace {
+            OverlayNamespace::from_string(format!("ns{idx}"))
+        }
+
+        proptest! {
+            /// Invariants must hold after every sequence of operations.
+            /// Plus: after `remove_in_range(r)`, no surviving overlay's
+            /// range overlaps `r`. Plus: after `add` / `extend` /
+            /// `clear_namespace` / `replace_range_in_namespace`, the
+            /// vector is sorted by priority. Note: priority order may be
+            /// transiently broken right after `remove_in_range` until the
+            /// next `add` — production callers always pair these.
+            #[test]
+            fn prop_marker_index_consistent(ops in prop::collection::vec(arb_op(), 0..30)) {
+                let mut marker_list = MarkerList::new();
+                marker_list.set_buffer_size(BUFFER_SIZE);
+                let mut manager = OverlayManager::new();
+
+                for op in ops {
+                    match op {
+                        Op::Add { start, len, priority, ns_idx } => {
+                            let o = Overlay::with_namespace(
+                                &mut marker_list,
+                                start..(start + len),
+                                OverlayFace::Background { color: Color::Red },
+                                nsf(ns_idx),
+                            );
+                            let mut o = o;
+                            o.priority = priority;
+                            manager.add(o);
+                            manager.check_invariants();
+                            manager.assert_priority_sorted();
+                        }
+                        Op::RemoveInRange { start, end } => {
+                            manager.remove_in_range(&(start..end), &mut marker_list);
+                            for (o, rng) in manager.query_viewport(start, end, &marker_list) {
+                                let overlaps = rng.start < end && start < rng.end;
+                                prop_assert!(
+                                    !overlaps,
+                                    "overlay {:?} (handle {:?}) survived remove_in_range({start}..{end})",
+                                    rng, o.handle,
+                                );
+                            }
+                            manager.check_invariants();
+                        }
+                        Op::ClearNamespace { ns_idx } => {
+                            manager.clear_namespace(&nsf(ns_idx), &mut marker_list);
+                            manager.check_invariants();
+                            manager.assert_priority_sorted();
+                        }
+                        Op::ReplaceRange { start, end, ns_idx, new_overlays } => {
+                            let new: Vec<Overlay> = new_overlays.into_iter().map(|(s, l, p)| {
+                                let mut o = Overlay::with_namespace(
+                                    &mut marker_list,
+                                    s..(s + l),
+                                    OverlayFace::Background { color: Color::Blue },
+                                    nsf(ns_idx),
+                                );
+                                o.priority = p;
+                                o
+                            }).collect();
+                            manager.replace_range_in_namespace(
+                                &nsf(ns_idx),
+                                &(start..end),
+                                new,
+                                &mut marker_list,
+                            );
+                            manager.check_invariants();
+                            manager.assert_priority_sorted();
+                        }
+                    }
+                }
+            }
+        }
     }
 }
