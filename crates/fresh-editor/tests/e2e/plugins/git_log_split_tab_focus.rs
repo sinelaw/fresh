@@ -110,21 +110,32 @@ fn clicking_group_tab_activates_group_in_the_clicked_split() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Wait for the split to be in place by observing buffer *content* rather
-    // than the transient "Split pane horizontally" core status message: any
-    // plugin `editor.setStatus(...)` call (the active git_log group emits
-    // several around layout/focus changes) clears `App::status_message` and
-    // wins, so the core message can disappear before this wait_until samples
-    // it. After step 3 main.rs is the active buffer, so split-horiz clones
-    // main.rs into the new pane and a unique line of its content
-    // ("Hello, world!") goes from appearing once to twice on screen.
+    // Wait for the split to be in place by observing rendered buffer
+    // *content* in the lower half of the screen, rather than the transient
+    // "Split pane horizontally" core status message: any plugin
+    // `editor.setStatus(...)` call (the active git_log group emits several
+    // around layout/focus changes) clears `App::status_message` and wins, so
+    // the core message can disappear before wait_until samples it.
+    //
+    // We can't key on a specific buffer's source string (e.g. "Hello,
+    // world!" from main.rs) because the active buffer at the moment split-
+    // horiz fires is non-deterministic — we've observed both the *log*
+    // group buffer and main.rs landing in the new bottom pane on different
+    // platforms. What is stable: whatever buffer the new pane gets, it is
+    // rendered as an editable view with a line-number gutter (the `│`
+    // separator after each line number). Before the split, the lower half
+    // of the screen is just `~` empty-line markers (main.rs is 13 lines
+    // and the pane is 38+ rows tall), so a gutter `│` never appears below
+    // the half-screen mark. The split places a fresh buffer view below the
+    // horizontal separator, so a `│` appearing in the lower half is the
+    // monotonic post-split signal.
+    let lower_half_start = (height / 2) as usize;
     harness
         .wait_until(|h| {
             h.screen_to_string()
                 .lines()
-                .filter(|l| l.contains("Hello, world!"))
-                .count()
-                >= 2
+                .enumerate()
+                .any(|(row, line)| row >= lower_half_start && line.contains('│'))
         })
         .unwrap();
 
