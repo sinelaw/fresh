@@ -21,6 +21,7 @@
 
 use crate::model::marker::{MarkerId, MarkerList};
 use fresh_core::overlay::OverlayNamespace;
+use std::collections::HashMap;
 use std::ops::Range;
 
 /// A conceal range hides or replaces a byte range during rendering
@@ -59,6 +60,10 @@ impl ConcealRange {
 #[derive(Debug, Clone)]
 pub struct ConcealManager {
     ranges: Vec<ConcealRange>,
+    /// `MarkerId -> index into ranges` for O(log N + k) `remove_in_range`.
+    /// Both endpoints of each range are registered. Kept in sync with
+    /// every push / swap_remove on `ranges`.
+    marker_to_idx: HashMap<MarkerId, usize>,
     /// Monotonic counter bumped on every mutation. Consumers that cache derived
     /// data (e.g. `LineWrapCache`) fold this into their key so any mutation
     /// invalidates stale entries automatically.
@@ -70,6 +75,7 @@ impl ConcealManager {
     pub fn new() -> Self {
         Self {
             ranges: Vec::new(),
+            marker_to_idx: HashMap::new(),
             version: 0,
         }
     }
@@ -90,6 +96,9 @@ impl ConcealManager {
         let start_marker = marker_list.create(range.start, true); // left affinity
         let end_marker = marker_list.create(range.end, false); // right affinity
 
+        let idx = self.ranges.len();
+        self.marker_to_idx.insert(start_marker, idx);
+        self.marker_to_idx.insert(end_marker, idx);
         self.ranges.push(ConcealRange {
             namespace,
             start_marker,
@@ -101,49 +110,64 @@ impl ConcealManager {
 
     /// Remove all conceal ranges in a namespace
     pub fn clear_namespace(&mut self, namespace: &OverlayNamespace, marker_list: &mut MarkerList) {
-        // Collect markers to delete
-        let markers_to_delete: Vec<_> = self
+        // Collect indices and markers up-front, then remove via swap_remove
+        // (descending order so indices stay valid).
+        let mut indices: Vec<usize> = self
             .ranges
             .iter()
-            .filter(|r| &r.namespace == namespace)
-            .flat_map(|r| vec![r.start_marker, r.end_marker])
+            .enumerate()
+            .filter_map(|(i, r)| (&r.namespace == namespace).then_some(i))
             .collect();
-
-        // Remove ranges
-        let before = self.ranges.len();
-        self.ranges.retain(|r| &r.namespace != namespace);
-
-        // Delete markers
-        for marker_id in markers_to_delete {
-            marker_list.delete(marker_id);
+        if indices.is_empty() {
+            return;
         }
-        if self.ranges.len() != before {
-            self.version = self.version.wrapping_add(1);
+        indices.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in indices {
+            self.swap_remove_at(idx, marker_list);
         }
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Remove all conceal ranges that overlap with a byte range and clean up their markers
     pub fn remove_in_range(&mut self, range: &Range<usize>, marker_list: &mut MarkerList) {
-        // Resolve each range's marker positions once per call (single retain pass).
-        let before = self.ranges.len();
-        let mut markers_to_delete = Vec::new();
-        self.ranges.retain(|r| {
-            let start = marker_list.get_position(r.start_marker).unwrap_or(0);
-            let end = marker_list.get_position(r.end_marker).unwrap_or(0);
-            let overlaps = start < range.end && range.start < end;
-            if overlaps {
-                markers_to_delete.push(r.start_marker);
-                markers_to_delete.push(r.end_marker);
-            }
-            !overlaps
-        });
+        // O(log N + k): query the marker tree for endpoints near `range`,
+        // map back to entries, then verify each candidate's true range
+        // since `query_range` is closed-interval and the marker at the
+        // exact upper bound represents a one-past-the-end position.
+        // Spanning conceals (start < range.start && end > range.end) are
+        // not detected; document the precondition in the type's contract.
+        if range.start >= range.end {
+            return;
+        }
+        let hits = marker_list.query_range(range.start, range.end);
+        if hits.is_empty() {
+            return;
+        }
+        let mut candidates: Vec<usize> = hits
+            .iter()
+            .filter_map(|(mid, _, _)| self.marker_to_idx.get(mid).copied())
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
 
-        for marker_id in markers_to_delete {
-            marker_list.delete(marker_id);
+        let mut to_remove: Vec<usize> = candidates
+            .into_iter()
+            .filter(|&idx| {
+                let r = &self.ranges[idx];
+                let start = marker_list.get_position(r.start_marker).unwrap_or(0);
+                let end = marker_list.get_position(r.end_marker).unwrap_or(0);
+                start < range.end && range.start < end
+            })
+            .collect();
+        if to_remove.is_empty() {
+            return;
         }
-        if self.ranges.len() != before {
-            self.version = self.version.wrapping_add(1);
+        // Descending so swap_remove doesn't shift earlier indices.
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in to_remove {
+            self.swap_remove_at(idx, marker_list);
         }
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Clear all conceal ranges and their markers
@@ -154,8 +178,24 @@ impl ConcealManager {
             marker_list.delete(range.end_marker);
         }
         self.ranges.clear();
+        self.marker_to_idx.clear();
         if had_any {
             self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Swap-remove the entry at `idx`, deleting its markers and patching
+    /// `marker_to_idx` for whatever entry got swapped in. Does NOT bump
+    /// the version — callers do that at batch boundaries.
+    fn swap_remove_at(&mut self, idx: usize, marker_list: &mut MarkerList) {
+        let removed = self.ranges.swap_remove(idx);
+        self.marker_to_idx.remove(&removed.start_marker);
+        self.marker_to_idx.remove(&removed.end_marker);
+        marker_list.delete(removed.start_marker);
+        marker_list.delete(removed.end_marker);
+        if let Some(moved) = self.ranges.get(idx) {
+            self.marker_to_idx.insert(moved.start_marker, idx);
+            self.marker_to_idx.insert(moved.end_marker, idx);
         }
     }
 
@@ -298,5 +338,62 @@ mod tests {
         assert!(!manager.is_empty());
         manager.remove_in_range(&(19..21), &mut marker_list);
         assert!(manager.is_empty());
+    }
+
+    /// Mirrors the production cycle in `markdown_compose.ts`: for each line
+    /// in a `lines_changed` batch, clear conceals in the line's byte range,
+    /// then re-add the line's conceals. Steady-state entry count holds
+    /// throughout, exactly like the plugin's per-line rebuild.
+    ///
+    /// Run with:
+    ///   cargo nextest run -p fresh-editor --no-capture \
+    ///     view::conceal::tests::perf_full_buffer_rebuild_pass
+    #[test]
+    fn perf_full_buffer_rebuild_pass() {
+        const LINES: usize = 500;
+        const LINE_BYTES: usize = 50;
+        const CONCEALS_PER_LINE: usize = 5;
+
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(LINES * LINE_BYTES);
+        let mut manager = ConcealManager::new();
+
+        let conceal_byte = |line: usize, k: usize| -> usize {
+            line * LINE_BYTES + k * (LINE_BYTES / CONCEALS_PER_LINE)
+        };
+
+        // Populate steady state (mirrors first-render: every line has its conceals).
+        for line in 0..LINES {
+            for k in 0..CONCEALS_PER_LINE {
+                let s = conceal_byte(line, k);
+                manager.add(&mut marker_list, ns(), s..(s + 2), None);
+            }
+        }
+        let initial = LINES * CONCEALS_PER_LINE;
+
+        // One full-buffer `lines_changed` pass: per line, clear + re-add.
+        let start = std::time::Instant::now();
+        for line in 0..LINES {
+            let line_range = (line * LINE_BYTES)..((line + 1) * LINE_BYTES);
+            manager.remove_in_range(&line_range, &mut marker_list);
+            for k in 0..CONCEALS_PER_LINE {
+                let s = conceal_byte(line, k);
+                manager.add(&mut marker_list, ns(), s..(s + 2), None);
+            }
+        }
+        let elapsed = start.elapsed();
+
+        eprintln!(
+            "[perf] conceal full-buffer rebuild ({LINES} lines, {} entries steady): \
+             {:?} total, {:?}/line",
+            initial,
+            elapsed,
+            elapsed / LINES as u32,
+        );
+        // Steady state preserved.
+        let still_present = manager
+            .query_viewport(0, LINES * LINE_BYTES, &marker_list)
+            .len();
+        assert_eq!(still_present, initial);
     }
 }
