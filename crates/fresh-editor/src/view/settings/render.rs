@@ -2685,8 +2685,11 @@ fn render_search_result_item(
     // Third line: Description (if any)
     if let Some(ref desc) = display_desc {
         let desc_style = Style::default().fg(theme.line_number_fg);
-        let truncated_desc = if desc.len() > area.width as usize - 2 {
-            format!("  {}...", &desc[..area.width as usize - 5])
+        let max_chars = (area.width as usize).saturating_sub(2);
+        let truncated_desc = if desc.chars().count() > max_chars {
+            let limit = (area.width as usize).saturating_sub(5);
+            let end = desc.floor_char_boundary(limit);
+            format!("  {}...", &desc[..end])
         } else {
             format!("  {}", desc)
         };
