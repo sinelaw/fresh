@@ -3352,9 +3352,7 @@ fn real_main() -> AnyhowResult<()> {
     // "click status bar to view log" action at, and the user sees
     // "status log not available" for every status message after the
     // restart.
-    let status_log_path: Option<PathBuf> = tracing_handles
-        .as_ref()
-        .map(|h| h.status.path.clone());
+    let status_log_path: Option<PathBuf> = tracing_handles.as_ref().map(|h| h.status.path.clone());
 
     // Warning-log channel survives across restarts the same way,
     // except the `Receiver<()>` is single-consumer and can't be
@@ -3363,8 +3361,9 @@ fn real_main() -> AnyhowResult<()> {
     // Seeded here from `tracing_handles` (which then no longer carries
     // the warning slot), and topped up post-iteration via
     // `editor.take_warning_log()`.
-    let mut warning_log_slot: Option<(std::sync::mpsc::Receiver<()>, PathBuf)> =
-        tracing_handles.take().map(|h| (h.warning.receiver, h.warning.path));
+    let mut warning_log_slot: Option<(std::sync::mpsc::Receiver<()>, PathBuf)> = tracing_handles
+        .take()
+        .map(|h| (h.warning.receiver, h.warning.path));
 
     // Main editor loop - supports restarting with a new working directory
     // Returns (loop_result, last_update_result) tuple

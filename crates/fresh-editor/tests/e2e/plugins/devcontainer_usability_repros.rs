@@ -823,6 +823,169 @@ fn show_panels_reuse_single_split_instead_of_stacking() {
     );
 }
 
+/// **Follow-up to PR #1704**: PR #1704 fixed split-stacking by routing
+/// every Show command through one shared panel slot, but it still
+/// _replaced_ each command's buffer with the next command's buffer.
+/// User feedback was: each Show should keep its own buffer so the
+/// user can flip back to the previous command's output via the tab
+/// bar / buffer list, instead of having to re-run the command.
+///
+/// Regression guard: invoke `Show Container Info`, then
+/// `Show Container Logs`, and assert both buffers exist after.
+#[cfg(unix)]
+#[test]
+fn show_panels_keep_per_command_buffers_alive_across_commands() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    attach_via_fake(&mut harness);
+
+    // Wait for the build log to settle so we don't race the panel
+    // split's first occupant.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
+        .unwrap();
+
+    // Show Container Info first.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Dev Container: Show Info").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Dev Container: Show Info"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..40 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+
+    // Then Show Container Logs.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("Dev Container: Show Container Logs")
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Dev Container: Show Container Logs")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..40 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+
+    // Both panel buffers must still exist — Show Container Logs
+    // should NOT have closed the Info buffer. The tab bar of the
+    // panel split shows both names when both are open.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("*Dev Container*"),
+        "*Dev Container* (info) buffer must still be visible in \
+         the tab bar after Show Container Logs ran. Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("*Dev Container Logs*"),
+        "*Dev Container Logs* buffer must be visible in the \
+         tab bar — most recent Show command. Screen:\n{screen}"
+    );
+}
+
+/// **Follow-up to PR #1704**: line wrapping was on by default for
+/// the panel slot's virtual buffers, so logs (containerd build
+/// output, lifecycle command stdout) would soft-wrap at the panel
+/// width and become unreadable. Pin: panel buffers come up with
+/// line wrap disabled.
+#[cfg(unix)]
+#[test]
+fn show_container_logs_buffer_has_line_wrap_disabled() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    attach_via_fake(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("devcontainer-logs/build-"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("Dev Container: Show Container Logs")
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Dev Container: Show Container Logs")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..40 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        harness.advance_time(Duration::from_millis(25));
+    }
+
+    // The panel buffer's line-wrap setting isn't directly
+    // observable through public Rust APIs without adding a new
+    // accessor; use the screen-based proxy. With wrap enabled
+    // the editor draws a wrap-marker glyph at the line break;
+    // with wrap disabled long lines just truncate at the right
+    // edge with no marker. Force a long line into the panel by
+    // running Show Container Logs against fake-docker logs that
+    // contain a >panel-width entry.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("*Dev Container Logs*"),
+        "Show Container Logs must surface its named panel buffer. \
+         Screen:\n{screen}"
+    );
+    // The screen must NOT contain the wrap-marker the editor
+    // draws when soft-wrap is on. Marker is the unicode return
+    // arrow `↵`; absence is the regression guard.
+    let logs_section = screen
+        .lines()
+        .skip_while(|l| !l.contains("*Dev Container Logs*"))
+        .take(10)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !logs_section.contains('\u{21B5}'),
+        "panel logs buffer should default to line-wrap off — \
+         wrap marker '↵' must not appear in the logs body. \
+         Section:\n{logs_section}"
+    );
+}
+
 /// **Critical bug from interactive walkthrough:** when the user
 /// ran a lifecycle command, the captured stdout/stderr were
 /// discarded — only a status line ("postCreateCommand failed

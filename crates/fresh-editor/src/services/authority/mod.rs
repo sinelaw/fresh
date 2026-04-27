@@ -386,7 +386,10 @@ mod tests {
             serde_json::from_value(json).expect("env field is accepted");
         if let SpawnerSpec::DockerExec { env, .. } = &payload.spawner {
             assert_eq!(env.len(), 2);
-            assert_eq!(env[0], ("PATH".into(), "/home/vscode/.local/bin:/usr/bin".into()));
+            assert_eq!(
+                env[0],
+                ("PATH".into(), "/home/vscode/.local/bin:/usr/bin".into())
+            );
             assert_eq!(env[1], ("LANG".into(), "C.UTF-8".into()));
         } else {
             panic!("expected docker-exec spawner");

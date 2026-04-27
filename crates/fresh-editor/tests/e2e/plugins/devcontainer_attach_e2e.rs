@@ -310,9 +310,8 @@ fn user_env_probe_capture_propagates_path_into_subsequent_execs() {
     // container — the plugin's `captureContainerLoginEnv` runs this
     // before handing the payload to `setAuthority`.
     let history_path = state.join("exec_history");
-    let history = fs::read_to_string(&history_path).unwrap_or_else(|e| {
-        panic!("exec_history not found at {history_path:?}: {e}")
-    });
+    let history = fs::read_to_string(&history_path)
+        .unwrap_or_else(|e| panic!("exec_history not found at {history_path:?}: {e}"));
     let probe_lines: Vec<_> = history
         .lines()
         .filter(|l| l.contains("bash -l -i -c env") || l.contains("bash -l -c env"))
@@ -335,8 +334,7 @@ fn user_env_probe_capture_propagates_path_into_subsequent_execs() {
 
     // The post-attach `command -v ls` probe should carry the env
     // captured by the pre-restart `bash -lic env` call.
-    let final_history =
-        fs::read_to_string(&history_path).expect("history readable post-spawn");
+    let final_history = fs::read_to_string(&history_path).expect("history readable post-spawn");
     let cmd_exists_calls: Vec<_> = final_history
         .lines()
         .filter(|l| l.contains("sh -c command -v ls"))
@@ -605,6 +603,119 @@ fn attach_decision_persists_in_plugin_global_state() {
         Some("attached"),
         "attach decision must be \"attached\" after a successful \
          Reopen-in-Container; got {value:?}"
+    );
+}
+
+/// **Follow-up to PR #1704**: the attach prompt used to offer a single
+/// `Ignore` action. User feedback was that they need _two_ separate
+/// dismissals: a session-only "not now" (re-asks next launch) and a
+/// permanent "stop asking" (persisted). Pin the new three-action
+/// shape and the side-effects of each:
+///   - `Ignore (once)` → no plugin global state writes; popup not
+///     re-shown in this session, but next editor launch re-asks.
+///   - `Ignore (always …)` → writes `attach:<cwd> = "dismissed"`
+///     to plugin global state, persisted across launches.
+#[test]
+fn attach_popup_offers_separate_once_and_always_dismiss() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let (_workspace_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_attach_popup(&mut harness);
+
+    // Both new option labels must appear on the rendered popup.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ignore (once)"),
+        "popup must offer session-only dismiss option. Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Ignore (always"),
+        "popup must offer permanent dismiss option. Screen:\n{screen}"
+    );
+
+    // Pick "Ignore (once)" — second row in the popup. Down arrow
+    // moves the focus, Enter activates.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    // After "Ignore (once)" the plugin must NOT have written a
+    // persistent dismissal — re-launches should re-ask.
+    let workspace_state = harness.editor().capture_workspace();
+    let dc_state = workspace_state.plugin_global_state.get("devcontainer");
+    let key = format!("attach:{}", workspace.display());
+    let persisted = dc_state.and_then(|m| m.get(&key));
+    assert!(
+        persisted.is_none() || persisted.and_then(|v| v.as_str()) != Some("dismissed"),
+        "Ignore (once) must NOT persist `dismissed` to plugin global state. \
+         Got: {persisted:?}"
+    );
+}
+
+/// **Follow-up to PR #1704**: pin the persistent dismissal path.
+/// Picking `Ignore (always in this folder)` writes `dismissed` to
+/// plugin global state so a subsequent editor launch finds it and
+/// skips the popup.
+#[test]
+fn attach_popup_dismiss_always_persists_decision() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let (_workspace_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_attach_popup(&mut harness);
+
+    // Pick the third row: `Ignore (always in this folder)`.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    let workspace_state = harness.editor().capture_workspace();
+    let dc_state = workspace_state
+        .plugin_global_state
+        .get("devcontainer")
+        .unwrap_or_else(|| {
+            panic!(
+                "Ignore (always …) must write to plugin global state. \
+                 Plugin map: {:?}",
+                workspace_state
+                    .plugin_global_state
+                    .keys()
+                    .collect::<Vec<_>>()
+            )
+        });
+    let key = format!("attach:{}", workspace.display());
+    let value = dc_state.get(&key).unwrap_or_else(|| {
+        panic!(
+            "expected key {key:?} after Ignore (always). Keys present: {:?}",
+            dc_state.keys().collect::<Vec<_>>()
+        )
+    });
+    assert_eq!(
+        value.as_str(),
+        Some("dismissed"),
+        "Ignore (always …) must persist as \"dismissed\"; got {value:?}"
     );
 }
 

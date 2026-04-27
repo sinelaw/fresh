@@ -80,8 +80,7 @@ impl DockerExecSpawner {
         extra_env: &[(String, String)],
     ) -> Vec<String> {
         let env_capacity = (self.base_env.len() + extra_env.len()) * 2;
-        let mut docker_args: Vec<String> =
-            Vec::with_capacity(args.len() + env_capacity + 8);
+        let mut docker_args: Vec<String> = Vec::with_capacity(args.len() + env_capacity + 8);
         docker_args.push("exec".into());
         if interactive {
             // `-i` keeps stdin open so JSON-RPC clients can write to
@@ -327,7 +326,10 @@ mod tests {
             ],
         );
         let args = sp.build_exec_args("pylsp", &[], None, false, &[]);
-        let abc_pos = args.iter().position(|a| a == "abc").expect("container id present");
+        let abc_pos = args
+            .iter()
+            .position(|a| a == "abc")
+            .expect("container id present");
         let path_pos = args
             .iter()
             .position(|a| a == "PATH=/home/vscode/.local/bin:/usr/bin")
@@ -336,7 +338,10 @@ mod tests {
             .iter()
             .position(|a| a == "LANG=C.UTF-8")
             .expect("LANG env injected");
-        let pylsp_pos = args.iter().position(|a| a == "pylsp").expect("command present");
+        let pylsp_pos = args
+            .iter()
+            .position(|a| a == "pylsp")
+            .expect("command present");
         assert!(path_pos < abc_pos, "PATH must precede container id");
         assert!(lang_pos < abc_pos, "LANG must precede container id");
         assert!(abc_pos < pylsp_pos, "container id must precede command");
@@ -375,7 +380,9 @@ mod tests {
         let sp =
             DockerLongRunningSpawner::new("abc".into(), Some("vscode".into()), Some("/ws".into()));
         let env: Vec<(String, String)> = vec![("RUST_LOG".into(), "debug".into())];
-        let out = sp.inner.build_exec_args("rust-analyzer", &[], None, true, &env);
+        let out = sp
+            .inner
+            .build_exec_args("rust-analyzer", &[], None, true, &env);
         let e_pos = out.iter().position(|a| a == "-e").unwrap();
         let abc_pos = out.iter().position(|a| a == "abc").unwrap();
         let ra_pos = out.iter().position(|a| a == "rust-analyzer").unwrap();

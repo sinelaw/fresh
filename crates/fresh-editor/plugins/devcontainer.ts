@@ -1962,10 +1962,25 @@ function resolvePanelSplit(): number {
   return active;
 }
 
-/// Drop a virtual buffer into the shared panel slot. Replaces
-/// whatever was in that split (so subsequent Show * commands
-/// cycle the same pane). Returns the new buffer id, or null if
-/// the runtime call failed.
+/// Per-name registry of panel buffers. Keyed by the
+/// `*Dev Container*` / `*Dev Container Logs*` etc. names so
+/// re-running a Show command refreshes its own buffer in place
+/// without destroying the other Show commands' buffers. Lives
+/// in module state — resets on plugin reload, which is fine
+/// since buffer ids change across editor restarts anyway and
+/// the next Show * invocation will (re)create as needed.
+const namedPanelBuffers = new Map<string, number>();
+
+/// Drop a virtual buffer into the shared panel slot.
+///
+/// Per-name dedupe: re-running the same Show command refreshes
+/// the existing same-name buffer in place (`setVirtualBufferContent`)
+/// rather than creating a new one. Different Show commands keep
+/// their own buffers — `Show Container Logs` no longer wipes out
+/// `Show Container Info`'s buffer, so the user can switch back to
+/// it via the tab bar / buffer list.
+///
+/// Returns the new buffer id, or null if the runtime call failed.
 async function openVirtualInPanelSlot(opts: {
   name: string;
   mode: string;
@@ -1977,13 +1992,30 @@ async function openVirtualInPanelSlot(opts: {
   lineWrap?: boolean;
 }): Promise<{ bufferId: number; splitId: number } | null> {
   const splitId = resolvePanelSplit();
-  // If this split currently shows a previously-tracked panel
-  // buffer, drop it from the buffer map after the new one lands
-  // so the tab list doesn't accumulate.
-  const before = editor.listBuffers().filter((b) =>
-    b.splits.some((sid) => sid === splitId)
-    && panelBufferIds.has(b.id),
-  );
+  const liveBuffers = editor.listBuffers();
+
+  // If we already have a same-name buffer (and it's still alive),
+  // refresh its contents and surface it in the panel split rather
+  // than minting a duplicate. This is the per-command-buffer fix:
+  // running `Show Container Logs` twice updates one buffer instead
+  // of stacking two; running it then `Show Container Info` keeps
+  // both alive.
+  const existingId = namedPanelBuffers.get(opts.name);
+  if (existingId !== undefined) {
+    const existing = liveBuffers.find((b) => b.id === existingId);
+    if (existing) {
+      editor.setVirtualBufferContent(
+        existing.id,
+        opts.entries as unknown as Record<string, unknown>[],
+      );
+      editor.focusSplit(splitId);
+      editor.showBuffer(existing.id);
+      panelBufferIds.add(existing.id);
+      return { bufferId: existing.id, splitId };
+    }
+    namedPanelBuffers.delete(opts.name);
+  }
+
   const result = await editor.createVirtualBufferInExistingSplit({
     name: opts.name,
     splitId,
@@ -1992,43 +2024,35 @@ async function openVirtualInPanelSlot(opts: {
     showLineNumbers: opts.showLineNumbers ?? false,
     showCursors: opts.showCursors ?? true,
     editingDisabled: opts.editingDisabled ?? true,
-    lineWrap: opts.lineWrap ?? true,
+    lineWrap: opts.lineWrap ?? false,
     entries: opts.entries,
   });
   if (result === null) return null;
   panelBufferIds.add(result.bufferId);
-  for (const stale of before) {
-    if (stale.id !== result.bufferId) {
-      editor.closeBuffer(stale.id);
-      panelBufferIds.delete(stale.id);
-    }
-  }
+  namedPanelBuffers.set(opts.name, result.bufferId);
   return { bufferId: result.bufferId, splitId };
 }
 
 /// File-backed equivalent for build-log files: focuses the
-/// panel-slot split, opens the file there, closes any stale
-/// build-log buffer that was previously occupying the slot.
+/// panel-slot split and opens the file there. `openFile` is
+/// idempotent by path, so re-running `Show Build Logs` for the
+/// same file just brings the existing buffer to the front; we
+/// don't need our own dedupe layer.
+///
+/// We also turn line-wrap off — build logs are wide structured
+/// output (docker buildx, lifecycle stdout) that's much more
+/// readable scrolled horizontally than soft-wrapped at column 80.
 function openFileInPanelSlot(path: string): void {
   const splitId = resolvePanelSplit();
   editor.focusSplit(splitId);
-  // Buffers currently in the panel split: close them after
-  // openFile so the tab list doesn't grow per invocation.
-  const stale = editor.listBuffers().filter((b) =>
-    b.splits.some((sid) => sid === splitId) && b.path !== path,
-  );
   editor.openFile(path, null, null);
-  for (const b of stale) {
-    // Only auto-close panels we own (build logs / other plugin
-    // outputs) — never the user's own files.
-    const isBuildLog =
-      b.path
-        ?.startsWith(editor.pathJoin(editor.getCwd(), ".fresh-cache", "devcontainer-logs"))
-      ?? false;
-    if (panelBufferIds.has(b.id) || isBuildLog) {
-      editor.closeBuffer(b.id);
-      panelBufferIds.delete(b.id);
-    }
+  // After the file is open, find its buffer id and disable
+  // line wrap. The new-buffer case sets this on first open;
+  // subsequent invocations are no-ops.
+  const opened = editor.listBuffers().find((b) => b.path === path);
+  if (opened) {
+    editor.setLineWrap(opened.id, null, false);
+    panelBufferIds.add(opened.id);
   }
 }
 
@@ -2345,6 +2369,14 @@ function writeAttachDecision(value: AttachDecision): void {
   editor.setGlobalState(attachDecisionKey(), value);
 }
 
+/// In-memory "Ignore (once)" — true after the user picks the
+/// session-only Ignore option in the attach popup. Cleared on
+/// plugin reload, which means the next editor restart asks again.
+/// This is deliberately separate from the persisted "Ignore (always)"
+/// decision (`writeAttachDecision("dismissed")`) so users have a
+/// real choice between "not now" and "stop asking forever".
+let attachDismissedThisSession = false;
+
 /// Breadcrumb written before calling `editor.setAuthority(payload)`
 /// — setAuthority restarts the editor, so there's no clean callback
 /// to hook once the new authority is live. If the post-restart plugin
@@ -2387,7 +2419,8 @@ function showAttachPrompt(): void {
     }),
     actions: [
       { id: "attach", label: editor.t("popup.attach_action_attach") },
-      { id: "dismiss", label: editor.t("popup.attach_action_dismiss") },
+      { id: "dismiss_once", label: editor.t("popup.attach_action_dismiss_once") },
+      { id: "dismiss_always", label: editor.t("popup.attach_action_dismiss_always") },
     ],
   });
 }
@@ -2399,8 +2432,16 @@ function devcontainer_on_attach_popup(data: ActionPopupResultData): void {
     // Fire and forget: runDevcontainerUp's setAuthority call restarts
     // the editor, so nothing after this runs anyway.
     void devcontainer_attach();
-  } else {
+  } else if (data.action_id === "dismiss_always") {
+    // Persistent ignore: write to plugin global state so the next
+    // editor restart in this workspace finds the breadcrumb and
+    // skips the popup entirely.
     writeAttachDecision("dismissed");
+  } else {
+    // `dismiss_once` (or the legacy `dismiss` id from older
+    // popups whose state is replayed mid-session): in-memory flag
+    // only. The next editor restart in this workspace re-asks.
+    attachDismissedThisSession = true;
   }
 }
 registerHandler("devcontainer_on_attach_popup", devcontainer_on_attach_popup);
@@ -2707,11 +2748,15 @@ if (findConfig()) {
       );
       return;
     }
-    // One-shot per-session dismissal: if the user already said "Not
-    // now" in this Editor process, don't re-prompt. On a cold restart
-    // the state is gone and we ask again — that's fine.
+    // Persistent dismissal (`Ignore (always in this directory)`)
+    // OR a successful prior attach — both are recorded in plugin
+    // global state and survive editor restarts. Skip the popup.
     const previousDecision = readAttachDecision();
     if (previousDecision !== null) return;
+    // Session-only dismissal (`Ignore (once)`): in-memory flag,
+    // cleared on plugin reload so the *next* editor restart
+    // re-asks in this workspace.
+    if (attachDismissedThisSession) return;
     showAttachPrompt();
   }
   registerHandler(

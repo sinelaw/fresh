@@ -100,7 +100,9 @@
     "ports_panel.no_ports": "No configured or runtime ports to show.",
     "ports_panel.footer": "r: refresh  q/Esc: close",
     "status.ports_panel_opened": "Dev Container Ports panel opened",
-    "status.ports_panel_refreshed": "Dev Container Ports panel refreshed"
+    "status.ports_panel_refreshed": "Dev Container Ports panel refreshed",
+    "popup.attach_action_dismiss_once": "Ignore (once)",
+    "popup.attach_action_dismiss_always": "Ignore (always in this folder)"
   },
   "cs": {
     "cmd.show_info": "Dev Container: Zobrazit info",
@@ -203,7 +205,9 @@
     "ports_panel.no_ports": "Žádné porty k zobrazení.",
     "ports_panel.footer": "r: obnovit  q/Esc: zavřít",
     "status.ports_panel_opened": "Panel přesměrovaných portů otevřen",
-    "status.ports_panel_refreshed": "Panel přesměrovaných portů obnoven"
+    "status.ports_panel_refreshed": "Panel přesměrovaných portů obnoven",
+    "popup.attach_action_dismiss_once": "Ignorovat (tentokrat)",
+    "popup.attach_action_dismiss_always": "Ignorovat (vzdy v teto slozce)"
   },
   "de": {
     "cmd.show_info": "Dev Container: Info anzeigen",
@@ -306,7 +310,9 @@
     "ports_panel.no_ports": "Keine konfigurierten oder aktiven Ports.",
     "ports_panel.footer": "r: aktualisieren  q/Esc: schliessen",
     "status.ports_panel_opened": "Panel fuer weitergeleitete Ports geoeffnet",
-    "status.ports_panel_refreshed": "Panel fuer weitergeleitete Ports aktualisiert"
+    "status.ports_panel_refreshed": "Panel fuer weitergeleitete Ports aktualisiert",
+    "popup.attach_action_dismiss_once": "Ignorieren (einmalig)",
+    "popup.attach_action_dismiss_always": "Ignorieren (immer in diesem Ordner)"
   },
   "es": {
     "cmd.show_info": "Dev Container: Mostrar Info",
@@ -409,7 +415,9 @@
     "ports_panel.no_ports": "No hay puertos configurados ni en ejecucion.",
     "ports_panel.footer": "r: refrescar  q/Esc: cerrar",
     "status.ports_panel_opened": "Panel de puertos reenviados abierto",
-    "status.ports_panel_refreshed": "Panel de puertos reenviados actualizado"
+    "status.ports_panel_refreshed": "Panel de puertos reenviados actualizado",
+    "popup.attach_action_dismiss_once": "Ignorar (una vez)",
+    "popup.attach_action_dismiss_always": "Ignorar (siempre en esta carpeta)"
   },
   "fr": {
     "cmd.show_info": "Dev Container: Afficher les infos",
@@ -512,7 +520,9 @@
     "ports_panel.no_ports": "Aucun port configure ou actif.",
     "ports_panel.footer": "r : actualiser  q/Echap : fermer",
     "status.ports_panel_opened": "Panneau des ports redirigés ouvert",
-    "status.ports_panel_refreshed": "Panneau des ports redirigés actualisé"
+    "status.ports_panel_refreshed": "Panneau des ports redirigés actualisé",
+    "popup.attach_action_dismiss_once": "Ignorer (une fois)",
+    "popup.attach_action_dismiss_always": "Ignorer (toujours dans ce dossier)"
   },
   "ja": {
     "cmd.show_info": "Dev Container: 情報を表示",
@@ -615,7 +625,9 @@
     "ports_panel.no_ports": "表示するポートがありません。",
     "ports_panel.footer": "r: 更新  q/Esc: 閉じる",
     "status.ports_panel_opened": "転送ポートパネルを開きました",
-    "status.ports_panel_refreshed": "転送ポートパネルを更新しました"
+    "status.ports_panel_refreshed": "転送ポートパネルを更新しました",
+    "popup.attach_action_dismiss_once": "無視 (今回のみ)",
+    "popup.attach_action_dismiss_always": "無視 (このフォルダで常に)"
   },
   "ko": {
     "cmd.show_info": "Dev Container: 정보 표시",
@@ -718,7 +730,9 @@
     "ports_panel.no_ports": "표시할 포트가 없습니다.",
     "ports_panel.footer": "r: 새로고침  q/Esc: 닫기",
     "status.ports_panel_opened": "포워딩 포트 패널을 열었습니다",
-    "status.ports_panel_refreshed": "포워딩 포트 패널을 갱신했습니다"
+    "status.ports_panel_refreshed": "포워딩 포트 패널을 갱신했습니다",
+    "popup.attach_action_dismiss_once": "무시 (이번만)",
+    "popup.attach_action_dismiss_always": "무시 (이 폴더에서 항상)"
   },
   "zh-CN": {
     "cmd.show_info": "Dev Container: 显示信息",
@@ -821,7 +835,9 @@
     "ports_panel.no_ports": "没有可显示的端口。",
     "ports_panel.footer": "r: 刷新  q/Esc: 关闭",
     "status.ports_panel_opened": "已打开转发端口面板",
-    "status.ports_panel_refreshed": "已刷新转发端口面板"
+    "status.ports_panel_refreshed": "已刷新转发端口面板",
+    "popup.attach_action_dismiss_once": "忽略 (本次)",
+    "popup.attach_action_dismiss_always": "忽略 (始终在此文件夹)"
   },
   "it": {
     "cmd.show_info": "Dev Container: Mostra info",
@@ -924,7 +940,9 @@
     "ports_panel.no_ports": "Nessuna porta configurata o attiva.",
     "ports_panel.footer": "r: aggiorna  q/Esc: chiudi",
     "status.ports_panel_opened": "Pannello porte inoltrate aperto",
-    "status.ports_panel_refreshed": "Pannello porte inoltrate aggiornato"
+    "status.ports_panel_refreshed": "Pannello porte inoltrate aggiornato",
+    "popup.attach_action_dismiss_once": "Ignora (una volta)",
+    "popup.attach_action_dismiss_always": "Ignora (sempre in questa cartella)"
   },
   "pt-BR": {
     "cmd.show_info": "Dev Container: Mostrar informacoes",
@@ -1027,7 +1045,9 @@
     "ports_panel.no_ports": "Nenhuma porta configurada ou em execução.",
     "ports_panel.footer": "r: atualizar  q/Esc: fechar",
     "status.ports_panel_opened": "Painel de portas encaminhadas aberto",
-    "status.ports_panel_refreshed": "Painel de portas encaminhadas atualizado"
+    "status.ports_panel_refreshed": "Painel de portas encaminhadas atualizado",
+    "popup.attach_action_dismiss_once": "Ignorar (uma vez)",
+    "popup.attach_action_dismiss_always": "Ignorar (sempre nesta pasta)"
   },
   "ru": {
     "cmd.show_info": "Dev Container: Показать информацию",
@@ -1130,7 +1150,9 @@
     "ports_panel.no_ports": "Нет портов для отображения.",
     "ports_panel.footer": "r: обновить  q/Esc: закрыть",
     "status.ports_panel_opened": "Панель перенаправленных портов открыта",
-    "status.ports_panel_refreshed": "Панель перенаправленных портов обновлена"
+    "status.ports_panel_refreshed": "Панель перенаправленных портов обновлена",
+    "popup.attach_action_dismiss_once": "Игнорировать (один раз)",
+    "popup.attach_action_dismiss_always": "Игнорировать (всегда в этой папке)"
   },
   "th": {
     "cmd.show_info": "Dev Container: แสดงข้อมูล",
@@ -1233,7 +1255,9 @@
     "ports_panel.no_ports": "ไม่มีพอร์ตให้แสดง",
     "ports_panel.footer": "r: รีเฟรช  q/Esc: ปิด",
     "status.ports_panel_opened": "เปิดแผงพอร์ตที่ส่งต่อแล้ว",
-    "status.ports_panel_refreshed": "รีเฟรชแผงพอร์ตที่ส่งต่อแล้ว"
+    "status.ports_panel_refreshed": "รีเฟรชแผงพอร์ตที่ส่งต่อแล้ว",
+    "popup.attach_action_dismiss_once": "ละเว้น (ครั้งนี้)",
+    "popup.attach_action_dismiss_always": "ละเว้น (เสมอในโฟลเดอร์นี้)"
   },
   "uk": {
     "cmd.show_info": "Dev Container: Показати інформацію",
@@ -1336,7 +1360,9 @@
     "ports_panel.no_ports": "Немає портів для показу.",
     "ports_panel.footer": "r: оновити  q/Esc: закрити",
     "status.ports_panel_opened": "Панель перенаправлених портів відкрито",
-    "status.ports_panel_refreshed": "Панель перенаправлених портів оновлено"
+    "status.ports_panel_refreshed": "Панель перенаправлених портів оновлено",
+    "popup.attach_action_dismiss_once": "Ігнорувати (один раз)",
+    "popup.attach_action_dismiss_always": "Ігнорувати (завжди в цій папці)"
   },
   "vi": {
     "cmd.show_info": "Dev Container: Hiển thị thông tin",
@@ -1439,6 +1465,8 @@
     "ports_panel.no_ports": "Không có cổng nào để hiển thị.",
     "ports_panel.footer": "r: làm mới  q/Esc: đóng",
     "status.ports_panel_opened": "Đã mở bảng cổng chuyển tiếp",
-    "status.ports_panel_refreshed": "Đã làm mới bảng cổng chuyển tiếp"
+    "status.ports_panel_refreshed": "Đã làm mới bảng cổng chuyển tiếp",
+    "popup.attach_action_dismiss_once": "Bỏ qua (một lần)",
+    "popup.attach_action_dismiss_always": "Bỏ qua (luôn trong thư mục này)"
   }
 }
