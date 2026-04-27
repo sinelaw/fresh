@@ -409,6 +409,32 @@ pub fn strip_osc8(s: &str) -> String {
     result
 }
 
+/// Find `text` in the row formed by joining `cell_symbols` and return the
+/// **cell column** (not byte offset) where the match starts.
+///
+/// `str::find` returns a byte offset into the joined row, but a single
+/// cell can hold a multi-byte symbol (e.g. `│` is 3 UTF-8 bytes). Casting
+/// the byte offset directly to a column would yield values past the
+/// buffer width whenever the row contains box-drawing or other non-ASCII
+/// glyphs, which then causes `Buffer::index_of` to panic with
+/// "index outside of buffer".
+pub fn find_text_in_row<'a, I: IntoIterator<Item = &'a str>>(
+    cell_symbols: I,
+    text: &str,
+) -> Option<u16> {
+    let mut row_text = String::new();
+    let mut byte_to_col: Vec<u16> = Vec::new();
+    for (col, sym) in cell_symbols.into_iter().enumerate() {
+        let col = u16::try_from(col).ok()?;
+        for _ in 0..sym.len() {
+            byte_to_col.push(col);
+        }
+        row_text.push_str(sym);
+    }
+    let byte_offset = row_text.find(text)?;
+    Some(byte_to_col[byte_offset])
+}
+
 /// Virtual editor environment for testing
 /// Captures all rendering output without displaying to actual terminal
 pub struct EditorTestHarness {
@@ -1425,15 +1451,15 @@ impl EditorTestHarness {
         let (width, height) = (buffer.area.width, buffer.area.height);
 
         for y in 0..height {
-            let mut row_text = String::new();
-            for x in 0..width {
-                let pos = buffer.index_of(x, y);
-                if let Some(cell) = buffer.content.get(pos) {
-                    row_text.push_str(cell.symbol());
-                }
-            }
-            if let Some(col) = row_text.find(text) {
-                return Some((col as u16, y));
+            let symbols = (0..width).map(|x| {
+                buffer
+                    .content
+                    .get(buffer.index_of(x, y))
+                    .map(|cell| cell.symbol())
+                    .unwrap_or("")
+            });
+            if let Some(col) = find_text_in_row(symbols, text) {
+                return Some((col, y));
             }
         }
         None
@@ -2412,5 +2438,34 @@ mod tests {
         let harness = EditorTestHarness::new(80, 24).unwrap();
         let content = harness.get_buffer_content().unwrap();
         assert_eq!(content, ""); // New buffer is empty
+    }
+
+    #[test]
+    fn find_text_in_row_returns_cell_column_not_byte_offset() {
+        // Mixed-width row: 30 box-drawing cells (`│`, 3 bytes each), 70
+        // ASCII spaces, then "ALPHA". Joined byte length is 30*3 + 70 + 5
+        // = 165 bytes, but ALPHA's cell column is 100 in a 120-cell row.
+        // Before the byte→cell translation, callers got byte offset 160
+        // back, which then panicked in `Buffer::index_of` because it's
+        // past the 120-cell buffer width.
+        let mut cells: Vec<&str> = Vec::with_capacity(120);
+        cells.extend(std::iter::repeat_n("│", 30));
+        cells.extend(std::iter::repeat_n(" ", 70));
+        cells.extend(["A", "L", "P", "H", "A"]);
+        // Pad out to a 120-wide row so the test mirrors the dashboard's
+        // actual buffer width.
+        cells.extend(std::iter::repeat_n(" ", 120 - cells.len()));
+
+        let col = find_text_in_row(cells.iter().copied(), "ALPHA");
+        assert_eq!(col, Some(100));
+    }
+
+    #[test]
+    fn find_text_in_row_handles_pure_ascii() {
+        // For all-ASCII rows the cell column equals the byte offset, so
+        // this just guards against regressions in the simple path.
+        let row = ["a", "b", "c", "d", "e", "f"];
+        assert_eq!(find_text_in_row(row.iter().copied(), "cd"), Some(2));
+        assert_eq!(find_text_in_row(row.iter().copied(), "zz"), None);
     }
 }
