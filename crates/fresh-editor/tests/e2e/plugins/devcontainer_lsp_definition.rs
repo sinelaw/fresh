@@ -113,41 +113,30 @@ fn set_up_workspace() -> (tempfile::TempDir, PathBuf) {
 /// is rendered. Mirrors `devcontainer_attach_e2e::wait_for_attach_popup`
 /// but inlined here so the test file stays self-contained.
 fn wait_for_attach_popup(harness: &mut EditorTestHarness) {
-    bounded_wait(harness, "devcontainer plugin command registration", |h| {
-        let reg = h.editor().command_registry().read().unwrap();
-        reg.get_all().iter().any(|c| c.name == "%cmd.run_lifecycle")
-    });
+    // Semantic waits, no in-test timeouts (CONTRIBUTING §3). nextest
+    // applies its own outer timeout if anything genuinely hangs.
+    harness
+        .wait_until(|h| {
+            let reg = h.editor().command_registry().read().unwrap();
+            reg.get_all().iter().any(|c| c.name == "%cmd.run_lifecycle")
+        })
+        .unwrap();
     harness.editor().fire_plugins_loaded_hook();
-    bounded_wait(harness, "Reopen in Container popup", |h| {
-        let screen = h.screen_to_string();
-        screen.contains("Dev Container Detected") && screen.contains("Reopen in Container")
-    });
-}
-
-fn bounded_wait<F>(harness: &mut EditorTestHarness, what: &str, mut cond: F)
-where
-    F: FnMut(&EditorTestHarness) -> bool,
-{
-    for _ in 0..200 {
-        harness.tick_and_render().unwrap();
-        if cond(harness) {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        harness.advance_time(std::time::Duration::from_millis(50));
-    }
-    panic!(
-        "bounded_wait timed out: {what} not satisfied in 200 ticks (~10s).\nScreen:\n{}",
-        harness.screen_to_string()
-    );
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Dev Container Detected") && screen.contains("Reopen in Container")
+        })
+        .unwrap();
 }
 
 /// Promote the plugin-staged authority to active. Same idiom as the
 /// existing devcontainer attach e2e — the harness has no main loop, so
 /// the test does the `take_pending_authority → set_boot_authority`
-/// swap inline.
+/// swap inline. Waits indefinitely (CONTRIBUTING §3); nextest's outer
+/// timeout catches genuine hangs.
 fn wait_for_container_authority(harness: &mut EditorTestHarness) -> String {
-    for _ in 0..200 {
+    loop {
         harness.tick_and_render().unwrap();
         if let Some(auth) = harness.editor_mut().take_pending_authority() {
             harness.editor_mut().set_boot_authority(auth);
@@ -164,10 +153,6 @@ fn wait_for_container_authority(harness: &mut EditorTestHarness) -> String {
         std::thread::sleep(std::time::Duration::from_millis(50));
         harness.advance_time(std::time::Duration::from_millis(50));
     }
-    panic!(
-        "container authority never landed.\nScreen:\n{}",
-        harness.screen_to_string()
-    );
 }
 
 fn read_uri_log(state: &Path) -> String {
@@ -311,19 +296,24 @@ fn goto_definition_translates_uris_between_host_and_container() {
     // Wait for the LSP to handshake. The fake-pylsp logs every URI
     // it sees; an `initialize` line is the earliest signal that the
     // server is alive and the editor is talking to it.
-    bounded_wait(&mut harness, "fake-pylsp initialize", |_| {
-        let log = read_uri_log(&state);
-        log.lines().any(|l| l.starts_with("initialize "))
-    });
+    harness
+        .wait_until(|_| {
+            read_uri_log(&state)
+                .lines()
+                .any(|l| l.starts_with("initialize "))
+        })
+        .unwrap();
 
     // Wait for the editor to send `didOpen` for main.py before we
     // ask for a definition — without this the request races the
     // open notification.
-    bounded_wait(&mut harness, "fake-pylsp didOpen", |_| {
-        let log = read_uri_log(&state);
-        log.lines()
-            .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
-    });
+    harness
+        .wait_until(|_| {
+            read_uri_log(&state)
+                .lines()
+                .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
+        })
+        .unwrap();
 
     // Move the cursor onto the `helper()` call inside `def main():`.
     // main.py contents:
@@ -347,10 +337,13 @@ fn goto_definition_translates_uris_between_host_and_container() {
     harness
         .send_key(KeyCode::F(12), KeyModifiers::NONE)
         .unwrap();
-    bounded_wait(&mut harness, "fake-pylsp definition request", |_| {
-        let log = read_uri_log(&state);
-        log.lines().any(|l| l.starts_with("definition "))
-    });
+    harness
+        .wait_until(|_| {
+            read_uri_log(&state)
+                .lines()
+                .any(|l| l.starts_with("definition "))
+        })
+        .unwrap();
     // Give the editor time to receive the response and act on it.
     for _ in 0..40 {
         harness.process_async_and_render().unwrap();
@@ -514,16 +507,20 @@ fn arrange_attached_session_with_open_main_py() -> (
     );
 
     harness.open_file(&main_py).unwrap();
-    bounded_wait(&mut harness, "fake-pylsp initialize", |_| {
-        read_uri_log(&state)
-            .lines()
-            .any(|l| l.starts_with("initialize "))
-    });
-    bounded_wait(&mut harness, "fake-pylsp didOpen", |_| {
-        read_uri_log(&state)
-            .lines()
-            .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
-    });
+    harness
+        .wait_until(|_| {
+            read_uri_log(&state)
+                .lines()
+                .any(|l| l.starts_with("initialize "))
+        })
+        .unwrap();
+    harness
+        .wait_until(|_| {
+            read_uri_log(&state)
+                .lines()
+                .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
+        })
+        .unwrap();
 
     (workspace_temp, workspace, harness, state)
 }
@@ -572,16 +569,6 @@ fn trigger_goto_definition(harness: &mut EditorTestHarness, down: usize, right: 
         .unwrap();
 }
 
-/// Settle the editor: pump async messages a few times to give the
-/// goto-def response + any container-fetch round-trip time to land.
-fn settle(harness: &mut EditorTestHarness) {
-    for _ in 0..40 {
-        harness.process_async_and_render().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        harness.advance_time(std::time::Duration::from_millis(25));
-    }
-}
-
 /// Reproducer: Goto-Definition into a *container-only* file (the
 /// canonical case is jumping into `flask/app.py` from
 /// `~/.local/lib/python3.12/site-packages/`, which only exists inside
@@ -619,12 +606,21 @@ fn goto_definition_into_container_only_file_opens_read_only_buffer() {
 
     // Trigger Goto-Def from main.py line 4 (the `helper()` call).
     trigger_goto_definition(&mut harness, 4, 6);
-    bounded_wait(&mut harness, "fake-pylsp definition request", |_| {
-        read_uri_log(&state)
-            .lines()
-            .any(|l| l.starts_with("definition "))
-    });
-    settle(&mut harness);
+    // Semantic wait: the goto-def response, the container fetch
+    // round-trip (`docker exec cat`), and the buffer creation /
+    // focus / cursor placement all settle by the time the active
+    // buffer's file_path matches the container path. Using
+    // `wait_until` instead of a fixed pump-loop means CI's
+    // potentially slower docker spawn doesn't push us off a cliff.
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .active_state()
+                .buffer
+                .file_path()
+                .is_some_and(|p| p == Path::new(container_path))
+        })
+        .unwrap();
 
     // ── Container-fetched buffer assertions ──────────────────────
     // The active buffer's path is the container path verbatim — no
@@ -700,12 +696,15 @@ fn goto_definition_to_unreachable_uri_surfaces_error_message() {
     pin_fake_lsp_definition(&state, &format!("file://{unreachable}"), 7, 0);
 
     trigger_goto_definition(&mut harness, 4, 6);
-    bounded_wait(&mut harness, "fake-pylsp definition request", |_| {
-        read_uri_log(&state)
-            .lines()
-            .any(|l| l.starts_with("definition "))
-    });
-    settle(&mut harness);
+    // Semantic wait on the rendered failure — the status bar shows
+    // "could not open …" once the editor has fully resolved the
+    // goto-def response (LSP returns Location → host check fails →
+    // container `cat` fails → `Editor::open_lsp_uri_target` returns
+    // `Err` → status line set). Waiting on the screen instead of a
+    // pump-loop means CI's slower docker spawn doesn't matter.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("could not open"))
+        .unwrap();
 
     // The active buffer must NOT be a phantom at the unreachable
     // path. The most likely "bad" outcome is the editor opening an
@@ -723,19 +722,6 @@ fn goto_definition_to_unreachable_uri_surfaces_error_message() {
         Some(Path::new(unreachable)),
         "Goto-Def into an unreachable URI must NOT open a phantom \
          buffer at that path. Got: {active_path:?}"
-    );
-
-    // The status line should mention the failure. Observation via
-    // the rendered screen (per CONTRIBUTING §2). The status bar
-    // truncates with `...` once it runs out of room, so we look for
-    // a stable prefix that the renderer will keep — "could not open"
-    // is unambiguous and short enough to fit alongside the
-    // filename / cursor / mode segments at our 160-col harness.
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("could not open"),
-        "status line should surface the failure so the user knows the \
-         goto-def didn't navigate. Screen:\n{screen}"
     );
 
     std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
