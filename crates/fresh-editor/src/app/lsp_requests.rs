@@ -88,6 +88,11 @@ impl Editor {
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
+            if self.pending_completion_requests.is_empty() && self.completion_items.is_none() {
+                // All servers responded with nothing — fall back to buffer-word completions,
+                // matching the behaviour when no LSP servers are available at all.
+                self.show_buffer_word_completion_popup();
+            }
             return Ok(());
         }
 
