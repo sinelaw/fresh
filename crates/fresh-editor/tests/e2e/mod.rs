@@ -146,6 +146,7 @@ pub mod scroll_wrapped_reach_last_line;
 pub mod scrolling;
 pub mod search;
 pub mod search_center_on_scroll;
+pub mod search_down_stall_after_wrap;
 pub mod search_navigation_after_move;
 pub mod search_replace;
 pub mod search_viewport_stall_after_wrap;

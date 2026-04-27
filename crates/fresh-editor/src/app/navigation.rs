@@ -150,6 +150,16 @@ impl Editor {
             }
             view_state.viewport.top_byte = iter.current_position();
             view_state.viewport.top_view_line_offset = 0;
+            // The byte-oriented `ensure_cursor_visible` above may have set
+            // `scrolled_up_in_wrap` so the next `ensure_visible_in_layout`
+            // would fine-tune `top_view_line_offset` to place the cursor
+            // exactly `effective_offset` rows from the top. That hint
+            // matched the byte-oriented routine's chosen `top_byte`; we've
+            // since overridden `top_byte` to a recentered position, so the
+            // pending fine-tune is stale and would shift the viewport away
+            // from the recenter on the very first non-skipped render after
+            // a keypress.
+            view_state.viewport.scrolled_up_in_wrap = false;
             // The next render-time `ensure_visible_in_layout` would otherwise
             // immediately undo this recenter to satisfy its own scroll-margin
             // invariants. Tell it to keep the position we just chose.
