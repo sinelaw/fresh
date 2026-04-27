@@ -983,56 +983,37 @@ impl Editor {
         // Check status bar indicators
         if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
             if row == status_row {
-                // Check line ending indicator area
-                if let Some((le_row, le_start, le_end)) =
-                    self.cached_layout.status_bar_line_ending_area
-                {
-                    if row == le_row && col >= le_start && col < le_end {
-                        return Some(HoverTarget::StatusBarLineEndingIndicator);
-                    }
-                }
-
-                // Check encoding indicator area
-                if let Some((enc_row, enc_start, enc_end)) =
-                    self.cached_layout.status_bar_encoding_area
-                {
-                    if row == enc_row && col >= enc_start && col < enc_end {
-                        return Some(HoverTarget::StatusBarEncodingIndicator);
-                    }
-                }
-
-                // Check language indicator area
-                if let Some((lang_row, lang_start, lang_end)) =
-                    self.cached_layout.status_bar_language_area
-                {
-                    if row == lang_row && col >= lang_start && col < lang_end {
-                        return Some(HoverTarget::StatusBarLanguageIndicator);
-                    }
-                }
-
-                // Check LSP indicator area
-                if let Some((lsp_row, lsp_start, lsp_end)) = self.cached_layout.status_bar_lsp_area
-                {
-                    if row == lsp_row && col >= lsp_start && col < lsp_end {
-                        return Some(HoverTarget::StatusBarLspIndicator);
-                    }
-                }
-
-                // Check remote indicator area
-                if let Some((rem_row, rem_start, rem_end)) =
-                    self.cached_layout.status_bar_remote_area
-                {
-                    if row == rem_row && col >= rem_start && col < rem_end {
-                        return Some(HoverTarget::StatusBarRemoteIndicator);
-                    }
-                }
-
-                // Check warning badge area
-                if let Some((warn_row, warn_start, warn_end)) =
-                    self.cached_layout.status_bar_warning_area
-                {
-                    if row == warn_row && col >= warn_start && col < warn_end {
-                        return Some(HoverTarget::StatusBarWarningBadge);
+                let indicators = [
+                    (
+                        self.cached_layout.status_bar_line_ending_area,
+                        HoverTarget::StatusBarLineEndingIndicator,
+                    ),
+                    (
+                        self.cached_layout.status_bar_encoding_area,
+                        HoverTarget::StatusBarEncodingIndicator,
+                    ),
+                    (
+                        self.cached_layout.status_bar_language_area,
+                        HoverTarget::StatusBarLanguageIndicator,
+                    ),
+                    (
+                        self.cached_layout.status_bar_lsp_area,
+                        HoverTarget::StatusBarLspIndicator,
+                    ),
+                    (
+                        self.cached_layout.status_bar_remote_area,
+                        HoverTarget::StatusBarRemoteIndicator,
+                    ),
+                    (
+                        self.cached_layout.status_bar_warning_area,
+                        HoverTarget::StatusBarWarningBadge,
+                    ),
+                ];
+                for (area, target) in indicators {
+                    if let Some((indicator_row, start, end)) = area {
+                        if row == indicator_row && col >= start && col < end {
+                            return Some(target);
+                        }
                     }
                 }
             }
@@ -2256,27 +2237,14 @@ impl Editor {
             return Ok(());
         };
 
-        // Find the buffer for this split
-        let buffer_id = self
+        // Find the buffer and content rect for this split in one pass
+        let Some((buffer_id, content_rect)) = self
             .cached_layout
             .split_areas
             .iter()
             .find(|(sid, _, _, _, _, _)| *sid == split_id)
-            .map(|(_, bid, _, _, _, _)| *bid);
-
-        let Some(buffer_id) = buffer_id else {
-            return Ok(());
-        };
-
-        // Find the content rect for this split
-        let content_rect = self
-            .cached_layout
-            .split_areas
-            .iter()
-            .find(|(sid, _, _, _, _, _)| *sid == split_id)
-            .map(|(_, _, rect, _, _, _)| *rect);
-
-        let Some(content_rect) = content_rect else {
+            .map(|(_, bid, rect, _, _, _)| (*bid, *rect))
+        else {
             return Ok(());
         };
 
