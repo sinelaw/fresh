@@ -192,12 +192,6 @@ fn goto_definition_translates_uris_between_host_and_container() {
     let main_py = workspace.join("main.py");
     let host_util_py = workspace.join("util.py");
 
-    // Pin the in-container workspace path so it diverges from the host
-    // path. Set BEFORE harness creation — the env var is read by the
-    // fake CLI on `up`, and the harness's serialized lock guarantees
-    // we don't race with another test.
-    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/proj");
-
     // Configure python's LSP to use the `fake-pylsp` shim. We
     // deliberately use the bare command name (no path) so the lookup
     // goes through PATH inside the fake "container" — the same path
@@ -232,6 +226,12 @@ fn goto_definition_translates_uris_between_host_and_container() {
             .without_empty_plugins_dir(),
     )
     .unwrap();
+
+    // Pin the in-container workspace path so it diverges from the
+    // host path. Set AFTER `with_fake_devcontainer()` acquires its
+    // process-global mutex — setting before would race with parallel
+    // tests' cleanup of the same env var.
+    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/proj");
 
     // Pre-state: the fake-lsp uri log must not exist yet (or be
     // empty). The fake-pylsp creates it on first message, so we
@@ -423,5 +423,320 @@ fn goto_definition_translates_uris_between_host_and_container() {
     // Cleanup any per-test env that we set above so neighbouring
     // tests in the same process don't inherit it. The fake-devcontainer
     // mutex serializes us, so no race window.
+    std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
+}
+
+/// Common setup for the container-fetched-buffer tests below: planted
+/// workspace, fake-pylsp on PATH, container authority attached, and
+/// `main.py` opened so an LSP handshake has happened. Returns the
+/// per-test state dir so callers can write `fake_lsp_definition_*`
+/// pinning the response, and stash files under `container_fs/`.
+fn arrange_attached_session_with_open_main_py() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    EditorTestHarness,
+    std::path::PathBuf,
+) {
+    let (workspace_temp, workspace) = set_up_workspace();
+    let main_py = workspace.join("main.py");
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "python".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: "fake-pylsp".to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: vec![".devcontainer".to_string(), ".git".to_string()],
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_config(config)
+            .with_fake_devcontainer()
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+
+    // Set FAKE_DC_REMOTE_WORKSPACE *after* the fake-devcontainer
+    // mutex is held (it's acquired inside `with_fake_devcontainer`).
+    // Setting before would race with parallel tests' cleanup of the
+    // same env var — they could clobber the value between our
+    // `set_var` and the lock acquisition.
+    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/proj");
+
+    let state = harness
+        .fake_devcontainer_state()
+        .expect("with_fake_devcontainer was set")
+        .to_path_buf();
+
+    let fake_lsp_bin = fake_lsp_bin_dir();
+    let host_path = std::env::var("PATH").unwrap_or_default();
+    if !host_path
+        .split(':')
+        .any(|p| Path::new(p) == fake_lsp_bin.as_path())
+    {
+        std::env::set_var("PATH", format!("{}:{}", fake_lsp_bin.display(), host_path));
+    }
+    fs::write(
+        state.join("probe_response"),
+        format!(
+            "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:{}\n\
+             HOME=/home/vscode\n\
+             LANG=C.UTF-8\n",
+            fake_lsp_bin.display()
+        ),
+    )
+    .expect("write probe_response");
+
+    harness.tick_and_render().unwrap();
+
+    wait_for_attach_popup(&mut harness);
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let label = wait_for_container_authority(&mut harness);
+    assert!(
+        label.starts_with("Container:"),
+        "expected container authority, got {label:?}"
+    );
+
+    harness.open_file(&main_py).unwrap();
+    bounded_wait(&mut harness, "fake-pylsp initialize", |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("initialize "))
+    });
+    bounded_wait(&mut harness, "fake-pylsp didOpen", |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
+    });
+
+    (workspace_temp, workspace, harness, state)
+}
+
+/// Pin a definition target the fake LSP will return for the next
+/// `textDocument/definition` request.
+fn pin_fake_lsp_definition(state: &Path, uri: &str, line: u32, character: u32) {
+    fs::write(state.join("fake_lsp_definition_uri"), format!("{uri}\n"))
+        .expect("write fake_lsp_definition_uri");
+    fs::write(state.join("fake_lsp_definition_line"), format!("{line}\n"))
+        .expect("write fake_lsp_definition_line");
+    fs::write(
+        state.join("fake_lsp_definition_character"),
+        format!("{character}\n"),
+    )
+    .expect("write fake_lsp_definition_character");
+}
+
+/// Stash a file under `<state>/container_fs/<abs_container_path>` so
+/// the fake docker shim's `cat` special-case can serve it. Mirrors
+/// what `docker exec <id> cat <path>` would return for a real
+/// container.
+fn stash_container_file(state: &Path, container_path: &str, content: &str) {
+    let stash = state.join("container_fs").join(
+        container_path
+            .strip_prefix('/')
+            .expect("container_path must be absolute"),
+    );
+    fs::create_dir_all(stash.parent().expect("non-root container path")).unwrap();
+    fs::write(&stash, content).unwrap_or_else(|e| panic!("stash {stash:?}: {e}"));
+}
+
+/// Run cursor down N times, right M times, then trigger Goto-Def.
+fn trigger_goto_definition(harness: &mut EditorTestHarness, down: usize, right: usize) {
+    for _ in 0..down {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    for _ in 0..right {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::F(12), KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Settle the editor: pump async messages a few times to give the
+/// goto-def response + any container-fetch round-trip time to land.
+fn settle(harness: &mut EditorTestHarness) {
+    for _ in 0..40 {
+        harness.process_async_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        harness.advance_time(std::time::Duration::from_millis(25));
+    }
+}
+
+/// Reproducer: Goto-Definition into a *container-only* file (the
+/// canonical case is jumping into `flask/app.py` from
+/// `~/.local/lib/python3.12/site-packages/`, which only exists inside
+/// the container's Python venv). The translation table doesn't help
+/// here because the path isn't under the workspace mount.
+///
+/// Expected behaviour: the editor fetches the file's contents through
+/// the active authority (`docker exec <id> cat <path>`) and opens the
+/// result as a *read-only* buffer whose path is the in-container path.
+/// Cursor lands at the LSP-reported line/column.
+///
+/// Currently fails because the editor calls `open_file` with the raw
+/// container path, which the host filesystem can't see — the buffer
+/// either errors out or ends up empty at the wrong location.
+#[test]
+fn goto_definition_into_container_only_file_opens_read_only_buffer() {
+    let (_workspace_temp, _workspace, mut harness, state) =
+        arrange_attached_session_with_open_main_py();
+
+    // The container-only file the LSP will point at. Mirrors the
+    // user-reported scenario verbatim (Flask installed into the
+    // vscode user's local site-packages).
+    let container_path = "/home/vscode/.local/lib/python3.12/site-packages/flask/app.py";
+    let container_content = "# flask/app.py — fetched from container\n\
+                             # line 1\n\
+                             # line 2\n\
+                             def some_app_helper():\n\
+                             \treturn 'this content lives only in the container'\n";
+    stash_container_file(&state, container_path, container_content);
+
+    // Pin the LSP response. Line 3 is `def some_app_helper():` in
+    // the stashed content — far from line 0 so we can tell an empty
+    // fallback buffer apart from a real fetch.
+    pin_fake_lsp_definition(&state, &format!("file://{container_path}"), 3, 0);
+
+    // Trigger Goto-Def from main.py line 4 (the `helper()` call).
+    trigger_goto_definition(&mut harness, 4, 6);
+    bounded_wait(&mut harness, "fake-pylsp definition request", |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("definition "))
+    });
+    settle(&mut harness);
+
+    // ── Container-fetched buffer assertions ──────────────────────
+    // The active buffer's path is the container path verbatim — no
+    // host translation possible because the file isn't under the
+    // workspace mount. The buffer's contents are what we stashed,
+    // proving the fetch went through the docker exec route. The
+    // buffer is read-only because container-only files have no
+    // host-side writeback path. The cursor lands where the LSP
+    // pointed.
+    let active_path: Option<PathBuf> = harness
+        .editor()
+        .active_state()
+        .buffer
+        .file_path()
+        .map(|p| p.to_path_buf());
+    assert_eq!(
+        active_path.as_deref(),
+        Some(Path::new(container_path)),
+        "active buffer path must be the container path; got {active_path:?}"
+    );
+
+    let content = harness
+        .editor()
+        .active_state()
+        .buffer
+        .to_string()
+        .expect("buffer content readable");
+    assert_eq!(
+        content, container_content,
+        "active buffer content must match what `docker exec cat` returned"
+    );
+
+    assert!(
+        harness.editor().is_active_buffer_read_only(),
+        "container-fetched buffers must be read-only (no host-side writeback)"
+    );
+
+    let cursor_pos = harness.cursor_position();
+    let (line, character) = harness
+        .editor()
+        .active_state()
+        .buffer
+        .position_to_lsp_position(cursor_pos);
+    assert_eq!(
+        (line, character),
+        (3, 0),
+        "cursor must land at the LSP-reported line/character. (0,0) \
+         usually means the editor created an empty buffer instead of \
+         fetching the container file."
+    );
+
+    std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
+}
+
+/// Reproducer for the failure mode: Goto-Def returns a URI that
+/// resolves to neither a host-visible file nor a container-readable
+/// one (e.g. a stale path the LSP cached, or a typo in a server's
+/// own location math). The editor must surface a user-visible error
+/// instead of silently opening a phantom buffer.
+///
+/// Currently fails because the editor calls `open_file` on the
+/// untranslatable path and either errors silently or opens an empty
+/// buffer.
+#[test]
+fn goto_definition_to_unreachable_uri_surfaces_error_message() {
+    let (_workspace_temp, _workspace, mut harness, state) =
+        arrange_attached_session_with_open_main_py();
+
+    // Path doesn't exist on host; we deliberately *don't* stash it
+    // under `container_fs/`, so the fake docker `cat` falls through
+    // to real `cat` and exits 1.
+    let unreachable = "/this/path/exists/nowhere/ghost.py";
+    pin_fake_lsp_definition(&state, &format!("file://{unreachable}"), 7, 0);
+
+    trigger_goto_definition(&mut harness, 4, 6);
+    bounded_wait(&mut harness, "fake-pylsp definition request", |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("definition "))
+    });
+    settle(&mut harness);
+
+    // The active buffer must NOT be a phantom at the unreachable
+    // path. The most likely "bad" outcome is the editor opening an
+    // empty buffer at `/this/path/exists/nowhere/ghost.py` (visible
+    // as the active buffer's path matching the unreachable string),
+    // which we explicitly forbid.
+    let active_path: Option<PathBuf> = harness
+        .editor()
+        .active_state()
+        .buffer
+        .file_path()
+        .map(|p| p.to_path_buf());
+    assert_ne!(
+        active_path.as_deref(),
+        Some(Path::new(unreachable)),
+        "Goto-Def into an unreachable URI must NOT open a phantom \
+         buffer at that path. Got: {active_path:?}"
+    );
+
+    // The status line should mention the failure. Observation via
+    // the rendered screen (per CONTRIBUTING §2). The status bar
+    // truncates with `...` once it runs out of room, so we look for
+    // a stable prefix that the renderer will keep — "could not open"
+    // is unambiguous and short enough to fit alongside the
+    // filename / cursor / mode segments at our 160-col harness.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("could not open"),
+        "status line should surface the failure so the user knows the \
+         goto-def didn't navigate. Screen:\n{screen}"
+    );
+
     std::env::remove_var("FAKE_DC_REMOTE_WORKSPACE");
 }

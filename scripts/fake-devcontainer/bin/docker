@@ -92,6 +92,44 @@ cmd_exec() {
     fi
   fi
 
+  # Special-case `cat <abs-path>` (and `cat <abs-path-1> <abs-path-2>`)
+  # so tests can stash "in-container" files at
+  # `<state>/container_fs/<abs-path>` and have the editor's
+  # container-fetch path (`docker exec <id> cat /home/vscode/.../foo.py`)
+  # resolve them without those paths needing to actually exist on the
+  # host. Production `docker exec <id> cat <path>` reads the file
+  # from the container's namespace; this is the simplest faithful
+  # fake. Files not in the stash dir get the real `cat`'s
+  # "no such file" exit code 1, which is also what production gives
+  # for nonexistent paths.
+  if [ $# -ge 2 ] && [ "$1" = "cat" ]; then
+    stash="$state/container_fs"
+    all_found=1
+    for p in "${@:2}"; do
+      case "$p" in
+        /*)
+          if [ ! -f "$stash$p" ]; then
+            all_found=0
+            break
+          fi
+          ;;
+        *)
+          all_found=0
+          break
+          ;;
+      esac
+    done
+    if [ "$all_found" = "1" ]; then
+      for p in "${@:2}"; do
+        cat "$stash$p"
+      done
+      exit 0
+    fi
+    # Fall through to real cat: it will report "No such file" for
+    # the missing path with the standard exit code 1, which the
+    # editor surfaces as "could not read from container".
+  fi
+
   if [ -z "$workdir" ] && [ -f "$cdir/workspace" ]; then
     # Treat the recorded host workspace path as the cwd. In real
     # devcontainers the workspace is bind-mounted to remoteWorkspaceFolder

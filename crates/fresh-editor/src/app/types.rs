@@ -340,6 +340,44 @@ impl BufferMetadata {
         }
     }
 
+    /// Create metadata for a buffer fetched from inside a container.
+    ///
+    /// Used by `Editor::open_lsp_uri_target` when a Goto-Definition
+    /// (or similar) URI lands on a path that exists only inside the
+    /// container — typically a stdlib / site-packages entry that
+    /// isn't bind-mounted onto the host. The buffer is read-only
+    /// because there's no host-side writeback path; LSP stays enabled
+    /// so further navigation from the fetched buffer (hover, more
+    /// goto-defs) keeps working.
+    ///
+    /// The supplied `uri` is the wire URI the LSP returned (already
+    /// in container-side coordinates) and is cached verbatim — no
+    /// host→remote translation, because the path *is* the remote
+    /// path. The display name is the file name, since the container
+    /// path has nothing to relativize against the host working dir.
+    pub fn with_container_file(container_path: PathBuf, uri: LspUri) -> Self {
+        let display_name = container_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| container_path.to_string_lossy().to_string());
+        Self {
+            kind: BufferKind::File {
+                path: container_path,
+                uri: Some(uri),
+            },
+            display_name,
+            lsp_enabled: true,
+            lsp_disabled_reason: None,
+            read_only: true,
+            binary: false,
+            lsp_opened_with: HashSet::new(),
+            hidden_from_tabs: false,
+            is_preview: false,
+            recovery_id: None,
+        }
+    }
+
     /// Check if a path is a library file (in vendor directories or standard libraries)
     ///
     /// Library files include:

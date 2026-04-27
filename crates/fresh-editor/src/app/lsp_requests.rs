@@ -230,87 +230,86 @@ impl Editor {
         // For now, just jump to the first location
         let location = &locations[0];
 
-        // Convert URI to file path. The LSP runs on the other side of
-        // a possible host↔container mount, so wrap the wire URI in
-        // [`LspUri`] and apply the authority's translation before
-        // crossing back into the editor's host-path-based filesystem
-        // layer.
+        // Resolve the URI to a buffer. `open_lsp_uri_target` handles
+        // all three cases: host file under the workspace mount,
+        // container-only file fetched via `docker exec cat`, and
+        // unreachable (no file at the host path AND container fetch
+        // failed). The last case becomes a user-visible status
+        // message instead of a phantom empty buffer.
         let wire = crate::app::types::LspUri::from_wire(location.uri.clone());
-        if let Ok(path) =
-            super::lsp_uri_to_host_path(&wire, self.authority.path_translation.as_ref())
-        {
-            // Open the file
-            let buffer_id = match self.open_file(&path) {
-                Ok(id) => id,
-                Err(e) => {
-                    // Check if this is a large file encoding confirmation error
-                    if let Some(confirmation) =
-                        e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
-                    {
-                        self.start_large_file_encoding_confirmation(confirmation);
-                    } else {
-                        self.set_status_message(
-                            t!("file.error_opening", error = e.to_string()).to_string(),
-                        );
-                    }
-                    return Ok(());
+        let buffer_id = match self.open_lsp_uri_target(&wire) {
+            Ok(id) => id,
+            Err(e) => {
+                if let Some(confirmation) =
+                    e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
+                {
+                    self.start_large_file_encoding_confirmation(confirmation);
+                } else {
+                    self.set_status_message(
+                        t!("file.error_opening", error = e.to_string()).to_string(),
+                    );
                 }
+                return Ok(());
+            }
+        };
+
+        // Move cursor to the definition position. The buffer's
+        // `file_path` is the *destination* path — the host path on a
+        // bind-mounted file, the container path on a fetched one —
+        // so we read it back for the status message rather than
+        // formatting the original wire URI.
+        let line = location.range.start.line as usize;
+        let character = location.range.start.character as usize;
+        let position = self
+            .buffers
+            .get(&buffer_id)
+            .map(|state| state.buffer.line_col_to_position(line, character));
+
+        if let Some(position) = position {
+            let (cursor_id, old_position, old_anchor, old_sticky_column) = {
+                let cursors = self.active_cursors();
+                let primary = cursors.primary();
+                (
+                    cursors.primary_id(),
+                    primary.position,
+                    primary.anchor,
+                    primary.sticky_column,
+                )
+            };
+            let event = crate::model::event::Event::MoveCursor {
+                cursor_id,
+                old_position,
+                new_position: position,
+                old_anchor,
+                new_anchor: None,
+                old_sticky_column,
+                new_sticky_column: 0,
             };
 
-            // Move cursor to the definition position
-            let line = location.range.start.line as usize;
-            let character = location.range.start.character as usize;
-
-            // Calculate byte position from line and character
-            let position = self
-                .buffers
-                .get(&buffer_id)
-                .map(|state| state.buffer.line_col_to_position(line, character));
-
-            if let Some(position) = position {
-                // Move cursor - read cursor info from split view state
-                let (cursor_id, old_position, old_anchor, old_sticky_column) = {
-                    let cursors = self.active_cursors();
-                    let primary = cursors.primary();
-                    (
-                        cursors.primary_id(),
-                        primary.position,
-                        primary.anchor,
-                        primary.sticky_column,
-                    )
-                };
-                let event = crate::model::event::Event::MoveCursor {
-                    cursor_id,
-                    old_position,
-                    new_position: position,
-                    old_anchor,
-                    new_anchor: None,
-                    old_sticky_column,
-                    new_sticky_column: 0, // Reset sticky column for goto definition
-                };
-
-                let split_id = self.split_manager.active_split();
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
-                    state.apply(cursors, &event);
-                }
-                // Without this the cursor lands at the definition but the
-                // viewport never scrolls when the target file is already
-                // open (#1689).
-                self.ensure_active_cursor_visible_for_navigation(true);
+            let split_id = self.split_manager.active_split();
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+                state.apply(cursors, &event);
             }
-
-            self.status_message = Some(
-                t!(
-                    "lsp.jumped_to_definition",
-                    path = path.display().to_string(),
-                    line = line + 1
-                )
-                .to_string(),
-            );
-        } else {
-            self.status_message = Some(t!("lsp.cannot_open_definition").to_string());
+            // Without this the cursor lands at the definition but the
+            // viewport never scrolls when the target file is already
+            // open (#1689).
+            self.ensure_active_cursor_visible_for_navigation(true);
         }
+
+        let display_path = self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|s| s.buffer.file_path().map(|p| p.display().to_string()))
+            .unwrap_or_default();
+        self.status_message = Some(
+            t!(
+                "lsp.jumped_to_definition",
+                path = display_path,
+                line = line + 1
+            )
+            .to_string(),
+        );
 
         Ok(())
     }

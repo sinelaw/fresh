@@ -853,4 +853,226 @@ impl Editor {
         PersistedFileWorkspace::save(&abs_path, file_state);
         tracing::debug!("Saved file state on close for {:?}", abs_path);
     }
+
+    /// Open the file an LSP response URI points at, handling the three
+    /// cases the goto-def / references / workspace-edit handlers all
+    /// have to think about:
+    ///
+    ///   * **on-host file** (the workspace bind mount, or a local
+    ///     authority): host-translate the URI and open the host file
+    ///     normally — exactly what the editor has always done.
+    ///   * **container-only file** (devcontainer attach with the
+    ///     target outside the workspace mount, e.g. a pip-installed
+    ///     `~/.local/.../site-packages/flask/app.py`): fetch the file
+    ///     bytes via the authority's process spawner
+    ///     (`docker exec <id> cat <path>`) and open them as a
+    ///     read-only buffer at the in-container path.
+    ///   * **unreachable** (no file at the host path; container fetch
+    ///     failed or no container authority): return `Err` so the
+    ///     caller can surface a user-visible status message instead
+    ///     of silently opening a phantom buffer.
+    ///
+    /// Cursor placement, focus, and any post-open hook firing are the
+    /// caller's job (this method just resolves "URI → BufferId").
+    pub(crate) fn open_lsp_uri_target(
+        &mut self,
+        uri: &crate::app::types::LspUri,
+    ) -> anyhow::Result<BufferId> {
+        let translation = self.authority.path_translation.clone();
+        let host_path = uri
+            .to_host_path(translation.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("URI is not a file path"))?;
+
+        // Case 1: file is reachable on the host filesystem (either
+        // local authority, or workspace-mounted on a devcontainer).
+        // `open_file` focuses, which is what callers (goto-def,
+        // workspace edits) expect — they want the cursor to land in
+        // the destination buffer afterward.
+        if self.authority.filesystem.exists(&host_path) {
+            return self.open_file(&host_path);
+        }
+
+        // Case 2: container-only fetch. Only meaningful when the
+        // active authority can route a `cat` through to the
+        // container — `path_translation` being set is the proxy for
+        // "this is a container authority". Local + SSH authorities
+        // skip straight to the error case.
+        if translation.is_some() {
+            // The container-side path is the URI's raw path. Calling
+            // `to_host_path` with `None` returns the wire-side path
+            // verbatim (no translation applied) — exactly what we
+            // need for `cat <path>` inside the container.
+            let container_path = uri.to_host_path(None).ok_or_else(|| {
+                anyhow::anyhow!("URI is not a file path (container-side decode failed)")
+            })?;
+            let buffer_id = self.fetch_and_open_container_file(container_path, uri.clone())?;
+            // Match `open_file`'s focus behaviour so the cursor
+            // assertion in callers (goto-def's `MoveCursor` event)
+            // applies to the right buffer.
+            self.set_active_buffer(buffer_id);
+            return Ok(buffer_id);
+        }
+
+        // Case 3: nothing we can open.
+        Err(anyhow::anyhow!(
+            "could not open {}: file not found",
+            host_path.display()
+        ))
+    }
+
+    /// Run `cat <container_path>` through the active authority's
+    /// process spawner and open the result as a read-only buffer
+    /// tagged with the wire URI. Helper for [`Self::open_lsp_uri_target`].
+    ///
+    /// On `cat` exit-code 0 the bytes become the buffer's contents.
+    /// On any error (no tokio runtime, spawner failure, non-zero
+    /// exit) we return `Err` with a message that includes the
+    /// container path and stderr's first line — enough for the
+    /// caller's status-line surface.
+    fn fetch_and_open_container_file(
+        &mut self,
+        container_path: std::path::PathBuf,
+        uri: crate::app::types::LspUri,
+    ) -> anyhow::Result<BufferId> {
+        let runtime = self.tokio_runtime.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not open {}: no tokio runtime available for container fetch",
+                container_path.display()
+            )
+        })?;
+
+        let spawner = self.authority.process_spawner.clone();
+        let path_arg = container_path.to_string_lossy().into_owned();
+        let result = runtime
+            .block_on(spawner.spawn("cat".into(), vec![path_arg], None))
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "could not open {} from container: {}",
+                    container_path.display(),
+                    e
+                )
+            })?;
+
+        if result.exit_code != 0 {
+            let first_stderr_line = result
+                .stderr
+                .lines()
+                .next()
+                .unwrap_or("(no error message)")
+                .trim();
+            anyhow::bail!(
+                "could not open {} from container: {}",
+                container_path.display(),
+                first_stderr_line
+            );
+        }
+
+        self.open_container_only_file(container_path, uri, result.stdout.into_bytes())
+    }
+
+    /// Build a buffer from already-fetched container content. The
+    /// buffer's `file_path` is the in-container path (so further LSP
+    /// requests carry the right URI) and the buffer is read-only —
+    /// there is no host writeback path for files that exist only
+    /// inside the container. LSP stays enabled so a follow-up
+    /// goto-def from the fetched buffer works.
+    pub(crate) fn open_container_only_file(
+        &mut self,
+        container_path: std::path::PathBuf,
+        uri: crate::app::types::LspUri,
+        content: Vec<u8>,
+    ) -> anyhow::Result<BufferId> {
+        // Don't double-open. The file_path matches by container path,
+        // since that's what we set after build.
+        let already_open = self
+            .buffers
+            .iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(container_path.as_path()))
+            .map(|(id, _)| *id);
+        if let Some(id) = already_open {
+            return Ok(id);
+        }
+
+        // Build the buffer from the fetched bytes and pin its
+        // file_path to the container path. The host filesystem ref
+        // here is mostly cosmetic — the buffer is read-only so save
+        // never runs through it.
+        let mut buffer = crate::model::buffer::Buffer::from_bytes(
+            content,
+            Arc::clone(&self.authority.filesystem),
+        );
+        buffer.rename_file_path(container_path.clone());
+
+        // Detect language from the container path (the basename's
+        // extension is what matters; the directory tree is
+        // container-side and won't match host-relative globs anyway).
+        let first_line = buffer.first_line_lossy();
+        let detected =
+            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                &container_path,
+                first_line.as_deref(),
+                &self.grammar_registry,
+                &self.config.languages,
+                self.config.default_language.as_deref(),
+            );
+        let mut state = EditorState::from_buffer_with_language(buffer, detected);
+        state.editing_disabled = true;
+
+        // Whitespace / tab settings — same shape as `open_file_no_focus`
+        // so the rendered look is consistent. Container-fetched
+        // buffers should obey the user's editor config like any other
+        // read-only buffer.
+        let mut whitespace =
+            crate::config::WhitespaceVisibility::from_editor_config(&self.config.editor);
+        if let Some(lang_config) = self.config.languages.get(&state.language) {
+            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
+            state.buffer_settings.use_tabs =
+                lang_config.use_tabs.unwrap_or(self.config.editor.use_tabs);
+            state.buffer_settings.tab_size =
+                lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
+        } else {
+            state.buffer_settings.tab_size = self.config.editor.tab_size;
+            state.buffer_settings.use_tabs = self.config.editor.use_tabs;
+        }
+        state.buffer_settings.whitespace = whitespace;
+        state
+            .margins
+            .configure_for_line_numbers(self.config.editor.line_numbers);
+
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        let mut metadata =
+            super::types::BufferMetadata::with_container_file(container_path.clone(), uri);
+        // Notify the LSP servers about the newly opened file so
+        // hover / further goto-def in the fetched buffer works. The
+        // URI we cached is already the wire-form URI, so the LSP
+        // sees the right path.
+        self.notify_lsp_file_opened(&container_path, buffer_id, &mut metadata);
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Wire the buffer into a tab on the preferred split, mirroring
+        // the host-file path. Skip `watch_file` — there's no host
+        // file to inotify, and the spawned-fetch is one-shot.
+        let target_split = self.preferred_split_for_file();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+            view_state.add_buffer(buffer_id);
+            let buf_state = view_state.ensure_buffer_state(buffer_id);
+            buf_state.apply_config_defaults(
+                self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
+                line_wrap,
+                self.config.editor.wrap_indent,
+                wrap_column,
+                self.config.editor.rulers.clone(),
+            );
+        }
+
+        Ok(buffer_id)
+    }
 }
