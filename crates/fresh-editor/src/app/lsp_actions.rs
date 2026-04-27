@@ -794,7 +794,7 @@ impl Editor {
                             sh.name,
                             language
                         );
-                        if let Err(e) = sh.handle.did_close(uri.clone()) {
+                        if let Err(e) = sh.handle.did_close(uri.as_uri().clone()) {
                             tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e);
                         }
                     }
@@ -927,7 +927,7 @@ impl Editor {
                             sh.name,
                             language
                         );
-                        if let Err(e) = sh.handle.did_close(uri.clone()) {
+                        if let Err(e) = sh.handle.did_close(uri.as_uri().clone()) {
                             tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e);
                         }
                     }
@@ -1062,7 +1062,7 @@ impl Editor {
         };
 
         let handle_id = handle.id();
-        if let Err(e) = handle.did_open(uri.clone(), text, language.to_string()) {
+        if let Err(e) = handle.did_open(uri.as_uri().clone(), text, language.to_string()) {
             tracing::warn!("Failed to send didOpen to LSP: {}", e);
             return;
         }
@@ -1076,7 +1076,9 @@ impl Editor {
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
         let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
-        if let Err(e) = handle.document_diagnostic(request_id, uri.clone(), previous_result_id) {
+        if let Err(e) =
+            handle.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
+        {
             tracing::warn!("LSP document_diagnostic request failed: {}", e);
         }
 
@@ -1097,7 +1099,9 @@ impl Editor {
 
             let request_id = self.next_lsp_request_id;
             self.next_lsp_request_id += 1;
-            if let Err(e) = handle.inlay_hints(request_id, uri, 0, 0, last_line, last_char) {
+            if let Err(e) =
+                handle.inlay_hints(request_id, uri.as_uri().clone(), 0, 0, last_line, last_char)
+            {
                 tracing::warn!("LSP inlay_hints request failed: {}", e);
             } else {
                 self.pending_inlay_hints_requests.insert(
@@ -1168,7 +1172,7 @@ impl Editor {
 
                 // Update buffer metadata to point at the temp file, enabling LSP
                 if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                    if let Some(uri) = super::types::file_path_to_lsp_uri_with_translation(
+                    if let Some(uri) = super::types::LspUri::from_host_path(
                         &plugin_file,
                         self.authority.path_translation.as_ref(),
                     ) {

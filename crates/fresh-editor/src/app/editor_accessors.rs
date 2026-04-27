@@ -794,7 +794,9 @@ impl Editor {
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
         let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
-        if let Err(e) = client.document_diagnostic(request_id, uri.clone(), previous_result_id) {
+        if let Err(e) =
+            client.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
+        {
             tracing::debug!(
                 "Failed to pull diagnostics after edit for {}: {}",
                 uri.as_str(),

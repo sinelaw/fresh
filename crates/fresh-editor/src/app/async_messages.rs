@@ -36,10 +36,15 @@ impl Editor {
     ///
     /// This is a common pattern used by diagnostics, inlay hints, and other LSP handlers
     pub(super) fn find_buffer_by_uri(&self, uri: &str) -> Option<BufferId> {
-        let parsed_uri = uri.parse::<lsp_types::Uri>().ok()?;
+        // The incoming URI string came over the LSP wire (e.g. a
+        // `publishDiagnostics` notification), so it's already in the
+        // server's coordinate space. `BufferMetadata.file_uri` is also
+        // wire-side ([`LspUri`]), so a string comparison is the right
+        // primitive here — both sides are translated identically and
+        // we never accidentally compare a host URI to a wire URI.
         self.buffer_metadata
             .iter()
-            .find(|(_, m)| m.file_uri() == Some(&parsed_uri))
+            .find(|(_, m)| m.file_uri().map(|u| u.as_str() == uri).unwrap_or(false))
             .map(|(buffer_id, _)| *buffer_id)
     }
 
@@ -57,7 +62,10 @@ impl Editor {
     /// Callers that need richer per-buffer info (line counts, content, file
     /// paths) can still iterate themselves, but should use the same
     /// `state.language == language` predicate this helper encodes.
-    pub(crate) fn buffers_for_language(&self, language: &str) -> Vec<(BufferId, lsp_types::Uri)> {
+    pub(crate) fn buffers_for_language(
+        &self,
+        language: &str,
+    ) -> Vec<(BufferId, crate::app::types::LspUri)> {
         self.buffers
             .iter()
             .filter_map(|(buffer_id, state)| {
@@ -762,7 +770,9 @@ impl Editor {
             self.next_lsp_request_id += 1;
 
             let last_line = line_count.saturating_sub(1) as u32;
-            if let Err(e) = client.inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000) {
+            if let Err(e) =
+                client.inlay_hints(request_id, uri.as_uri().clone(), 0, 0, last_line, 10000)
+            {
                 tracing::debug!(
                     "Failed to re-request inlay hints for {}: {}",
                     uri.as_str(),
@@ -820,7 +830,8 @@ impl Editor {
             let request_id = self.next_lsp_request_id;
             self.next_lsp_request_id += 1;
             let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
-            if let Err(e) = client.document_diagnostic(request_id, uri.clone(), previous_result_id)
+            if let Err(e) =
+                client.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
             {
                 tracing::debug!("Failed to re-pull diagnostics for {}: {}", uri.as_str(), e);
             } else {

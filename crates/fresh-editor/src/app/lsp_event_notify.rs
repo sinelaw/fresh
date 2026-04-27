@@ -239,7 +239,10 @@ impl Editor {
             // Broadcast didSave to all handles for this language
             let mut any_sent = false;
             for sh in lsp.get_handles_mut(&language) {
-                if let Err(e) = sh.handle.did_save(uri.clone(), Some(full_text.clone())) {
+                if let Err(e) = sh
+                    .handle
+                    .did_save(uri.as_uri().clone(), Some(full_text.clone()))
+                {
                     tracing::warn!("Failed to send didSave to '{}': {}", sh.name, e);
                 } else {
                     any_sent = true;

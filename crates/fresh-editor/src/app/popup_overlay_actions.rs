@@ -423,10 +423,11 @@ impl Editor {
                 tracing::info!("Sending didOpen to LSP servers for: {}", uri.as_str());
                 let mut any_opened = false;
                 for sh in lsp.get_handles_mut(language) {
-                    if let Err(e) =
-                        sh.handle
-                            .did_open(uri.clone(), text.clone(), file_language.clone())
-                    {
+                    if let Err(e) = sh.handle.did_open(
+                        uri.as_uri().clone(),
+                        text.clone(),
+                        file_language.clone(),
+                    ) {
                         tracing::warn!("Failed to send didOpen to '{}': {}", sh.name, e);
                     } else {
                         any_opened = true;
@@ -443,9 +444,11 @@ impl Editor {
                         let request_id = self.next_lsp_request_id;
                         self.next_lsp_request_id += 1;
 
-                        if let Err(e) =
-                            handle.document_diagnostic(request_id, uri.clone(), previous_result_id)
-                        {
+                        if let Err(e) = handle.document_diagnostic(
+                            request_id,
+                            uri.as_uri().clone(),
+                            previous_result_id,
+                        ) {
                             tracing::debug!(
                                 "Failed to request pull diagnostics (server may not support): {}",
                                 e
@@ -462,7 +465,7 @@ impl Editor {
 
                             if let Err(e) = handle.inlay_hints(
                                 request_id,
-                                uri.clone(),
+                                uri.as_uri().clone(),
                                 0,
                                 0,
                                 last_line,

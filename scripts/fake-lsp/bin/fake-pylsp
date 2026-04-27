@@ -111,7 +111,7 @@ while true; do
   case "$method" in
     "initialize")
       log_uri "initialize" "$uri"
-      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"textDocumentSync":1,"definitionProvider":true,"hoverProvider":true}}}'
+      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"textDocumentSync":1,"definitionProvider":true,"hoverProvider":true,"referencesProvider":true}}}'
       ;;
     "initialized")
       # notification, no response
@@ -136,6 +136,20 @@ while true; do
       def_char="${def[2]}"
       end_char=$((def_char + 1))
       send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"uri":"'"$def_uri"'","range":{"start":{"line":'"$def_line"',"character":'"$def_char"'},"end":{"line":'"$def_line"',"character":'"$end_char"'}}}}'
+      ;;
+    "textDocument/references")
+      log_uri "references" "$uri"
+      # Reuse the configured definition target as a single-element
+      # reference list. Tests pin the *kind* of URI we emit (a wire
+      # URI under the in-container workspace) more than the count, so
+      # one location is enough to exercise the `LspUri` translation
+      # path on the editor side.
+      mapfile -t def < <(read_def_target)
+      ref_uri="${def[0]}"
+      ref_line="${def[1]}"
+      ref_char="${def[2]}"
+      end_char=$((ref_char + 1))
+      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":[{"uri":"'"$ref_uri"'","range":{"start":{"line":'"$ref_line"',"character":'"$ref_char"'},"end":{"line":'"$ref_line"',"character":'"$end_char"'}}}]}'
       ;;
     "textDocument/diagnostic")
       log_uri "diagnostic" "$uri"

@@ -214,19 +214,19 @@ pub use self::warning_domains::{
 };
 pub use crate::model::event::BufferId;
 
-/// Convert an `lsp_types::Uri` from an LSP response to a host-side
-/// `PathBuf`, applying the active authority's remote→host workspace
-/// translation when one is set. The editor's open-file primitives
-/// expect host paths, so every URI that arrives from an LSP server
-/// (Goto-Definition `Location`, references, workspace edits, …) must
-/// be mapped back before it crosses into filesystem-facing code.
-/// Out-of-workspace URIs (system headers, library sources) are
-/// returned unchanged so existing callers' handling stays put.
-fn uri_to_path_with_translation(
-    uri: &lsp_types::Uri,
+/// Decode a wire-side LSP URI to a host path. Thin wrapper over
+/// [`LspUri::to_host_path`](crate::app::types::LspUri::to_host_path)
+/// that produces a `Result` for call sites that prefer the
+/// error-string form. Editor code that owns a raw `lsp_types::Uri`
+/// from a third-party type (e.g. `lsp_types::Location.uri`) wraps it
+/// via [`LspUri::from_wire`](crate::app::types::LspUri::from_wire)
+/// and then calls this — that's the only path from a wire URI to a
+/// host `PathBuf`, by construction.
+fn lsp_uri_to_host_path(
+    uri: &crate::app::types::LspUri,
     translation: Option<&crate::services::authority::PathTranslation>,
 ) -> Result<PathBuf, String> {
-    crate::app::types::lsp_uri_to_host_path_with_translation(uri, translation)
+    uri.to_host_path(translation)
         .ok_or_else(|| "URI is not a file path".to_string())
 }
 
