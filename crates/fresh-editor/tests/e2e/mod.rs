@@ -108,6 +108,7 @@ pub mod lsp_server_lifecycle_cleanup;
 pub mod lsp_stop_stale_indicator;
 pub mod lsp_toggle_desync;
 pub mod lsp_unified_code_actions;
+pub mod lsp_unresponsive_capability_does_not_block;
 pub mod macros;
 pub mod margin;
 pub mod markdown_compose;

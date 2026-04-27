@@ -2121,6 +2121,120 @@ done
         dir.join("fake_lsp_server_completions_b.sh")
     }
 
+    /// Spawn a fake LSP server modelled on R languageserver 0.3.17:
+    /// advertises `semanticTokensProvider`, `colorProvider`,
+    /// `completionProvider` and `signatureHelpProvider` capabilities, but
+    /// silently drops requests for `textDocument/semanticTokens/range`,
+    /// `textDocument/semanticTokens/full` and `textDocument/documentColor`
+    /// (no reply at all). Other requests — completion, completionItem
+    /// resolve, signatureHelp, etc. — are answered normally.
+    ///
+    /// Used to reproduce sinelaw/fresh#1679: a misbehaving server must not
+    /// be able to wedge other features by leaving one request unanswered.
+    pub fn spawn_drops_semantic_tokens(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
+            break
+        fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
+    done
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then break; fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | head -1 | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"completionProvider":{"resolveProvider":true,"triggerCharacters":[".",":"]},"signatureHelpProvider":{"triggerCharacters":["(",","]},"hoverProvider":true,"definitionProvider":true,"colorProvider":true,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","function","variable"],"tokenModifiers":["declaration","deprecated"]},"full":{"delta":true},"range":true}}}}'
+        ;;
+    "textDocument/completion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"isIncomplete":false,"items":[{"label":"median","kind":3,"detail":"function","insertText":"median"},{"label":"mean","kind":3,"detail":"function","insertText":"mean"}]}}'
+        ;;
+    "completionItem/resolve")
+        # Echo the item back unchanged with extra documentation
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"label":"median","kind":3,"detail":"function","documentation":"Compute the median.","insertText":"median"}}'
+        ;;
+    "textDocument/signatureHelp")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"signatures":[{"label":"median(x, na.rm = FALSE)","documentation":"Compute the median.","parameters":[{"label":"x"},{"label":"na.rm"}]}],"activeSignature":0,"activeParameter":0}}'
+        ;;
+    "textDocument/hover")
+        line=$(echo "$msg" | grep -o '"line":[0-9]*' | head -1 | cut -d':' -f2)
+        char=$(echo "$msg" | grep -o '"character":[0-9]*' | head -1 | cut -d':' -f2)
+        end_char=$((char + 6))
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"contents":{"kind":"markdown","value":"R hover content"},"range":{"start":{"line":'$line',"character":'$char'},"end":{"line":'$line',"character":'$end_char'}}}}'
+        ;;
+    "textDocument/definition")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"uri":"'$uri'","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":6}}}}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave"|"textDocument/didClose"|"initialized"|"$/cancelRequest")
+        # Notifications: no response.
+        ;;
+    "textDocument/semanticTokens/range"|"textDocument/semanticTokens/full"|"textDocument/semanticTokens/full/delta"|"textDocument/documentColor")
+        # Silently drop. This is the bug shape — server advertises the
+        # capability but never answers, so the client must not block
+        # later requests on this missing reply.
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        # Anything else: drop. We don't reply to unknown requests so we can
+        # observe how the client handles a server that never answers.
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::drops_semantic_tokens_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Path to the drops-semantic-tokens fake LSP server script.
+    pub fn drops_semantic_tokens_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_drops_semantic_tokens.sh")
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());

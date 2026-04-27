@@ -36,9 +36,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
@@ -48,6 +48,13 @@ type PendingRequests = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, Stri
 /// Grace period after didOpen before sending didChange (in milliseconds)
 /// This gives the LSP server time to process didOpen before receiving changes
 const DID_OPEN_GRACE_PERIOD_MS: u64 = 200;
+
+/// Default per-request timeout. After this elapses with no response, the
+/// request is cancelled (`$/cancelRequest`), the pending oneshot is dropped,
+/// and an empty/error response is shipped to the editor. Prevents a
+/// misbehaving server (e.g. one that advertises a capability but never
+/// answers) from leaving features wedged in their loading state forever.
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
 /// LSP error codes that should not surface as user-visible warnings.
 ///
@@ -717,42 +724,48 @@ enum LspCommand {
     Shutdown,
 }
 
-/// Mutable state for LSP command processing
+/// Mutable state for LSP command processing.
+///
+/// All mutable fields use interior mutability (Arc/atomics) so this struct
+/// is cheaply Cloneable and request handlers can be spawned onto independent
+/// tokio tasks. That way one stuck request to a server can't block other
+/// requests or notifications going to the same server (issue #1679).
+#[derive(Clone)]
 struct LspState {
     /// Stdin for sending messages (shared with stdout reader for server responses)
     stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
 
     /// Next request ID
-    next_id: i64,
+    next_id: Arc<AtomicI64>,
 
     /// Server capabilities
-    capabilities: Option<ServerCapabilities>,
+    capabilities: Arc<std::sync::Mutex<Option<ServerCapabilities>>>,
 
     /// Document versions (shared with stdout reader for stale diagnostic filtering)
     document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
 
     /// Track when didOpen was sent for each document to avoid race with didChange
     /// The LSP server needs time to process didOpen before it can handle didChange
-    pending_opens: HashMap<PathBuf, Instant>,
+    pending_opens: Arc<std::sync::Mutex<HashMap<PathBuf, Instant>>>,
 
     /// Whether initialized
-    initialized: bool,
+    initialized: Arc<AtomicBool>,
 
     /// Sender for async messages to main loop
     async_tx: std_mpsc::Sender<AsyncMessage>,
 
     /// Language ID (for error reporting)
-    language: String,
+    language: Arc<String>,
 
     /// Server name (for multi-server status tracking)
-    server_name: String,
+    server_name: Arc<String>,
 
     /// Mapping from editor request_id to LSP JSON-RPC id for cancellation
     /// Key: editor request_id, Value: LSP JSON-RPC id
-    active_requests: HashMap<u64, i64>,
+    active_requests: Arc<std::sync::Mutex<HashMap<u64, i64>>>,
 
     /// Extension-to-languageId overrides for textDocument/didOpen
-    language_id_overrides: HashMap<String, String>,
+    language_id_overrides: Arc<HashMap<String, String>>,
 }
 
 // Channel sends (`async_tx.send()`) throughout LspState are best-effort: if the receiver
@@ -763,11 +776,7 @@ struct LspState {
 #[allow(clippy::let_underscore_must_use)]
 impl LspState {
     /// Replay pending commands that were queued before initialization
-    async fn replay_pending_commands(
-        &mut self,
-        commands: Vec<LspCommand>,
-        pending: &PendingRequests,
-    ) {
+    async fn replay_pending_commands(&self, commands: Vec<LspCommand>, pending: &PendingRequests) {
         if commands.is_empty() {
             return;
         }
@@ -820,9 +829,11 @@ impl LspState {
                 }
                 LspCommand::SemanticTokensFull { request_id, uri } => {
                     tracing::info!("Replaying semantic tokens request for {}", uri.as_str());
-                    let _ = self
-                        .handle_semantic_tokens_full(request_id, uri, pending)
-                        .await;
+                    let s = self.clone();
+                    let p = pending.clone();
+                    tokio::spawn(async move {
+                        let _ = s.handle_semantic_tokens_full(request_id, uri, &p).await;
+                    });
                 }
                 LspCommand::SemanticTokensFullDelta {
                     request_id,
@@ -833,14 +844,18 @@ impl LspState {
                         "Replaying semantic tokens delta request for {}",
                         uri.as_str()
                     );
-                    let _ = self
-                        .handle_semantic_tokens_full_delta(
-                            request_id,
-                            uri,
-                            previous_result_id,
-                            pending,
-                        )
-                        .await;
+                    let s = self.clone();
+                    let p = pending.clone();
+                    tokio::spawn(async move {
+                        let _ = s
+                            .handle_semantic_tokens_full_delta(
+                                request_id,
+                                uri,
+                                previous_result_id,
+                                &p,
+                            )
+                            .await;
+                    });
                 }
                 LspCommand::SemanticTokensRange {
                     request_id,
@@ -851,13 +866,21 @@ impl LspState {
                         "Replaying semantic tokens range request for {}",
                         uri.as_str()
                     );
-                    let _ = self
-                        .handle_semantic_tokens_range(request_id, uri, range, pending)
-                        .await;
+                    let s = self.clone();
+                    let p = pending.clone();
+                    tokio::spawn(async move {
+                        let _ = s
+                            .handle_semantic_tokens_range(request_id, uri, range, &p)
+                            .await;
+                    });
                 }
                 LspCommand::FoldingRange { request_id, uri } => {
                     tracing::info!("Replaying folding range request for {}", uri.as_str());
-                    let _ = self.handle_folding_ranges(request_id, uri, pending).await;
+                    let s = self.clone();
+                    let p = pending.clone();
+                    tokio::spawn(async move {
+                        let _ = s.handle_folding_ranges(request_id, uri, &p).await;
+                    });
                 }
                 _ => {}
             }
@@ -865,7 +888,7 @@ impl LspState {
     }
 
     /// Write a message to stdin
-    async fn write_message<T: Serialize>(&mut self, message: &T) -> Result<(), String> {
+    async fn write_message<T: Serialize>(&self, message: &T) -> Result<(), String> {
         let json =
             serde_json::to_string(message).map_err(|e| format!("Serialization error: {}", e))?;
 
@@ -890,7 +913,7 @@ impl LspState {
     }
 
     /// Send a notification using lsp-types Notification trait (type-safe)
-    async fn send_notification<N>(&mut self, params: N::Params) -> Result<(), String>
+    async fn send_notification<N>(&self, params: N::Params) -> Result<(), String>
     where
         N: Notification,
     {
@@ -906,31 +929,59 @@ impl LspState {
         self.write_message(&notification).await
     }
 
-    /// Send request using shared pending map
+    /// Send request using shared pending map (default per-request timeout).
     async fn send_request_sequential<P: Serialize, R: for<'de> Deserialize<'de>>(
-        &mut self,
+        &self,
         method: &str,
         params: Option<P>,
         pending: &PendingRequests,
     ) -> Result<R, String> {
-        self.send_request_sequential_tracked(method, params, pending, None)
-            .await
+        self.send_request_with_timeout(
+            method,
+            params,
+            pending,
+            None,
+            Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS),
+        )
+        .await
     }
 
     /// Send request using shared pending map with optional editor request tracking
     async fn send_request_sequential_tracked<P: Serialize, R: for<'de> Deserialize<'de>>(
-        &mut self,
+        &self,
         method: &str,
         params: Option<P>,
         pending: &PendingRequests,
         editor_request_id: Option<u64>,
     ) -> Result<R, String> {
-        let id = self.next_id;
-        self.next_id += 1;
+        self.send_request_with_timeout(
+            method,
+            params,
+            pending,
+            editor_request_id,
+            Duration::from_millis(DEFAULT_REQUEST_TIMEOUT_MS),
+        )
+        .await
+    }
+
+    /// Send a request, awaiting the response with a per-request timeout.
+    ///
+    /// On timeout: drops the pending oneshot, sends `$/cancelRequest` to the
+    /// server, and returns Err — so misbehaving servers (advertising a
+    /// capability but never replying) don't wedge features forever.
+    async fn send_request_with_timeout<P: Serialize, R: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        params: Option<P>,
+        pending: &PendingRequests,
+        editor_request_id: Option<u64>,
+        timeout: Duration,
+    ) -> Result<R, String> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         // Track the mapping if editor_request_id is provided
         if let Some(editor_id) = editor_request_id {
-            self.active_requests.insert(editor_id, id);
+            self.active_requests.lock().unwrap().insert(editor_id, id);
             tracing::trace!("Tracking request: editor_id={}, lsp_id={}", editor_id, id);
         }
 
@@ -948,29 +999,55 @@ impl LspState {
         let (tx, rx) = oneshot::channel();
         pending.lock().unwrap().insert(id, tx);
 
-        self.write_message(&request).await?;
+        if let Err(e) = self.write_message(&request).await {
+            pending.lock().unwrap().remove(&id);
+            if let Some(editor_id) = editor_request_id {
+                self.active_requests.lock().unwrap().remove(&editor_id);
+            }
+            return Err(e);
+        }
 
-        tracing::trace!("Sent LSP request id={}, waiting for response...", id);
+        tracing::trace!(
+            "Sent LSP request id={} method={}, waiting up to {:?} for response",
+            id,
+            method,
+            timeout
+        );
 
-        // Await response (this is OK now because the reader task will send it)
-        let result = rx
-            .await
-            .map_err(|_| "Response channel closed".to_string())??;
+        let response_result = match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(inner)) => inner,
+            Ok(Err(_)) => Err("Response channel closed".to_string()),
+            Err(_) => {
+                // Timed out: forget the pending entry, ask the server to cancel.
+                pending.lock().unwrap().remove(&id);
+                tracing::warn!(
+                    "LSP request '{}' (lsp_id={}) on '{}' ({}) timed out after {:?}; sending $/cancelRequest",
+                    method,
+                    id,
+                    self.server_name.as_str(),
+                    self.language.as_str(),
+                    timeout
+                );
+                let _ = self.send_cancel_request(id).await;
+                Err(format!(
+                    "Request '{}' timed out after {:?}",
+                    method, timeout
+                ))
+            }
+        };
 
-        tracing::trace!("Received LSP response for request id={}", id);
-
-        // Remove tracking after response received
         if let Some(editor_id) = editor_request_id {
-            self.active_requests.remove(&editor_id);
+            self.active_requests.lock().unwrap().remove(&editor_id);
             tracing::trace!("Completed request: editor_id={}, lsp_id={}", editor_id, id);
         }
 
+        let result = response_result?;
         serde_json::from_value(result).map_err(|e| format!("Failed to deserialize response: {}", e))
     }
 
     /// Handle initialize command
     async fn handle_initialize_sequential(
-        &mut self,
+        &self,
         root_uri: Option<Uri>,
         initialization_options: Option<Value>,
         pending: &PendingRequests,
@@ -1014,27 +1091,27 @@ impl LspState {
             "LSP initialize result: position_encoding={:?}",
             result.capabilities.position_encoding
         );
-        self.capabilities = Some(result.capabilities.clone());
+        *self.capabilities.lock().unwrap() = Some(result.capabilities.clone());
 
         // Send initialized notification
         self.send_notification::<Initialized>(InitializedParams {})
             .await?;
 
-        self.initialized = true;
+        self.initialized.store(true, Ordering::SeqCst);
 
         let capabilities = extract_capability_summary(&result.capabilities);
 
         // Notify main loop
         let _ = self.async_tx.send(AsyncMessage::LspInitialized {
-            language: self.language.clone(),
-            server_name: self.server_name.clone(),
+            language: (*self.language).clone(),
+            server_name: (*self.server_name).clone(),
             capabilities,
         });
 
         // Send running status
         let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
-            language: self.language.clone(),
-            server_name: self.server_name.clone(),
+            language: (*self.language).clone(),
+            server_name: (*self.server_name).clone(),
             status: LspServerStatus::Running,
             message: None,
         });
@@ -1046,7 +1123,7 @@ impl LspState {
 
     /// Handle did_open command
     async fn handle_did_open_sequential(
-        &mut self,
+        &self,
         uri: Uri,
         text: String,
         language_id: String,
@@ -1054,7 +1131,7 @@ impl LspState {
     ) -> Result<(), String> {
         let path = PathBuf::from(uri.path().as_str());
 
-        if should_skip_did_open(&self.document_versions, &path, &self.language, &uri) {
+        if should_skip_did_open(&self.document_versions, &path, self.language.as_str(), &uri) {
             return Ok(());
         }
 
@@ -1084,14 +1161,17 @@ impl LspState {
             .insert(path.clone(), 0);
 
         // Record when we sent didOpen so didChange can wait if needed
-        self.pending_opens.insert(path, Instant::now());
+        self.pending_opens
+            .lock()
+            .unwrap()
+            .insert(path, Instant::now());
 
         self.send_notification::<DidOpenTextDocument>(params).await
     }
 
     /// Handle did_change command
     async fn handle_did_change_sequential(
-        &mut self,
+        &self,
         uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
         _pending: &PendingRequests,
@@ -1113,7 +1193,8 @@ impl LspState {
         // Check if this document was recently opened and wait if needed
         // This prevents race conditions where the server receives didChange
         // before it has finished processing didOpen
-        if let Some(opened_at) = self.pending_opens.get(&path) {
+        let opened_at = self.pending_opens.lock().unwrap().get(&path).copied();
+        if let Some(opened_at) = opened_at {
             let elapsed = opened_at.elapsed();
             let grace_period = std::time::Duration::from_millis(DID_OPEN_GRACE_PERIOD_MS);
             if elapsed < grace_period {
@@ -1126,7 +1207,7 @@ impl LspState {
                 tokio::time::sleep(wait_time).await;
             }
             // Remove from pending_opens after grace period has passed
-            self.pending_opens.remove(&path);
+            self.pending_opens.lock().unwrap().remove(&path);
         }
 
         let new_version = {
@@ -1149,7 +1230,7 @@ impl LspState {
     }
 
     /// Handle did_save command
-    async fn handle_did_save(&mut self, uri: Uri, text: Option<String>) -> Result<(), String> {
+    async fn handle_did_save(&self, uri: Uri, text: Option<String>) -> Result<(), String> {
         tracing::trace!("LSP: did_save for {}", uri.as_str());
 
         let params = DidSaveTextDocumentParams {
@@ -1161,7 +1242,7 @@ impl LspState {
     }
 
     /// Handle did_close command
-    async fn handle_did_close(&mut self, uri: Uri) -> Result<(), String> {
+    async fn handle_did_close(&self, uri: Uri) -> Result<(), String> {
         let path = PathBuf::from(uri.path().as_str());
 
         // Remove from document_versions so that a subsequent didOpen will be accepted
@@ -1182,7 +1263,7 @@ impl LspState {
         }
 
         // Also remove from pending_opens
-        self.pending_opens.remove(&path);
+        self.pending_opens.lock().unwrap().remove(&path);
 
         let params = DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier { uri },
@@ -1193,7 +1274,7 @@ impl LspState {
 
     /// Handle completion request
     async fn handle_completion(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         line: u32,
@@ -1260,7 +1341,7 @@ impl LspState {
 
     /// Handle go-to-definition request
     async fn handle_goto_definition(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         line: u32,
@@ -1336,7 +1417,7 @@ impl LspState {
 
     /// Handle rename request
     async fn handle_rename(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         line: u32,
@@ -1403,7 +1484,7 @@ impl LspState {
 
     /// Handle hover documentation request
     async fn handle_hover(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         line: u32,
@@ -1520,7 +1601,7 @@ impl LspState {
 
     /// Handle find references request
     async fn handle_references(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         line: u32,
@@ -1584,7 +1665,7 @@ impl LspState {
 
     /// Handle signature help request
     async fn handle_signature_help(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         line: u32,
@@ -1656,7 +1737,7 @@ impl LspState {
     /// Handle code actions request
     #[allow(clippy::too_many_arguments)]
     async fn handle_code_actions(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         start_line: u32,
@@ -1735,7 +1816,7 @@ impl LspState {
 
     /// Handle workspace/executeCommand request
     async fn handle_execute_command(
-        &mut self,
+        &self,
         command: String,
         arguments: Option<Vec<Value>>,
         pending: &PendingRequests,
@@ -1763,7 +1844,7 @@ impl LspState {
 
     /// Handle codeAction/resolve request
     async fn handle_code_action_resolve(
-        &mut self,
+        &self,
         request_id: u64,
         action: lsp_types::CodeAction,
         pending: &PendingRequests,
@@ -1794,7 +1875,7 @@ impl LspState {
 
     /// Handle completionItem/resolve request
     async fn handle_completion_resolve(
-        &mut self,
+        &self,
         request_id: u64,
         item: lsp_types::CompletionItem,
         pending: &PendingRequests,
@@ -1821,7 +1902,7 @@ impl LspState {
 
     /// Handle textDocument/formatting request
     async fn handle_document_formatting(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         tab_size: u32,
@@ -1867,7 +1948,7 @@ impl LspState {
     /// Handle textDocument/rangeFormatting request
     #[allow(clippy::too_many_arguments)]
     async fn handle_document_range_formatting(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         start_line: u32,
@@ -1924,7 +2005,7 @@ impl LspState {
 
     /// Handle textDocument/prepareRename request
     async fn handle_prepare_rename(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         line: u32,
@@ -1962,7 +2043,7 @@ impl LspState {
     }
 
     async fn handle_document_diagnostic(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         previous_result_id: Option<String>,
@@ -1971,12 +2052,14 @@ impl LspState {
         use lsp_types::DocumentDiagnosticParams;
 
         // Check if server supports pull diagnostics (diagnosticProvider capability)
-        if self
+        let supports_pull = self
             .capabilities
+            .lock()
+            .unwrap()
             .as_ref()
             .and_then(|c| c.diagnostic_provider.as_ref())
-            .is_none()
-        {
+            .is_some();
+        if !supports_pull {
             tracing::trace!(
                 "LSP: server does not support pull diagnostics, skipping request for {}",
                 uri.as_str()
@@ -2086,7 +2169,7 @@ impl LspState {
     /// Handle inlay hints request (LSP 3.17+)
     #[allow(clippy::too_many_arguments)]
     async fn handle_inlay_hints(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         start_line: u32,
@@ -2162,7 +2245,7 @@ impl LspState {
 
     /// Handle folding range request
     async fn handle_folding_ranges(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         pending: &PendingRequests,
@@ -2216,7 +2299,7 @@ impl LspState {
     }
 
     async fn handle_semantic_tokens_full(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         pending: &PendingRequests,
@@ -2261,7 +2344,7 @@ impl LspState {
     }
 
     async fn handle_semantic_tokens_full_delta(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         previous_result_id: String,
@@ -2314,7 +2397,7 @@ impl LspState {
     }
 
     async fn handle_semantic_tokens_range(
-        &mut self,
+        &self,
         request_id: u64,
         uri: Uri,
         range: lsp_types::Range,
@@ -2362,7 +2445,7 @@ impl LspState {
 
     /// Handle a plugin-initiated request by forwarding it to the server
     async fn handle_plugin_request(
-        &mut self,
+        &self,
         request_id: u64,
         method: String,
         params: Option<Value>,
@@ -2389,14 +2472,14 @@ impl LspState {
             &result
         );
         let _ = self.async_tx.send(AsyncMessage::PluginLspResponse {
-            language: self.language.clone(),
+            language: (*self.language).clone(),
             request_id,
             result,
         });
     }
 
     /// Handle shutdown command
-    async fn handle_shutdown(&mut self) -> Result<(), String> {
+    async fn handle_shutdown(&self) -> Result<(), String> {
         tracing::info!("Shutting down async LSP server");
 
         let notification = JsonRpcNotification {
@@ -2417,7 +2500,7 @@ impl LspState {
     }
 
     /// Send a cancel request notification to the server
-    async fn send_cancel_request(&mut self, lsp_id: i64) -> Result<(), String> {
+    async fn send_cancel_request(&self, lsp_id: i64) -> Result<(), String> {
         tracing::trace!("Sending $/cancelRequest for LSP id {}", lsp_id);
 
         let notification = JsonRpcNotification {
@@ -2430,8 +2513,9 @@ impl LspState {
     }
 
     /// Cancel a request by editor request_id
-    async fn handle_cancel_request(&mut self, request_id: u64) -> Result<(), String> {
-        if let Some(lsp_id) = self.active_requests.remove(&request_id) {
+    async fn handle_cancel_request(&self, request_id: u64) -> Result<(), String> {
+        let lsp_id = self.active_requests.lock().unwrap().remove(&request_id);
+        if let Some(lsp_id) = lsp_id {
             tracing::info!(
                 "Cancelling request: editor_id={}, lsp_id={}",
                 request_id,
@@ -2720,24 +2804,24 @@ impl LspTask {
         let stdin_writer = Arc::new(tokio::sync::Mutex::new(self.stdin));
 
         // Create state struct for command processing
-        let mut state = LspState {
+        let state = LspState {
             stdin: stdin_writer.clone(),
-            next_id: self.next_id,
-            capabilities: self.capabilities,
+            next_id: Arc::new(AtomicI64::new(self.next_id)),
+            capabilities: Arc::new(Mutex::new(self.capabilities)),
             document_versions: self.document_versions.clone(),
-            pending_opens: self.pending_opens,
-            initialized: self.initialized,
+            pending_opens: Arc::new(Mutex::new(self.pending_opens)),
+            initialized: Arc::new(AtomicBool::new(self.initialized)),
             async_tx: self.async_tx.clone(),
-            language: self.language.clone(),
-            server_name: self.server_name.clone(),
-            active_requests: HashMap::new(),
-            language_id_overrides: self.language_id_overrides.clone(),
+            language: Arc::new(self.language.clone()),
+            server_name: Arc::new(self.server_name.clone()),
+            active_requests: Arc::new(Mutex::new(HashMap::new())),
+            language_id_overrides: Arc::new(self.language_id_overrides.clone()),
         };
 
         let pending = Arc::new(Mutex::new(self.pending));
         let async_tx = state.async_tx.clone();
-        let language_clone = state.language.clone();
-        let server_name = state.server_name.clone();
+        let language_clone: String = (*state.language).clone();
+        let server_name: String = (*state.server_name).clone();
 
         // Flag to indicate intentional shutdown (prevents spurious error messages)
         let shutting_down = Arc::new(AtomicBool::new(false));
@@ -2756,25 +2840,35 @@ impl LspTask {
             self.document_versions.clone(),
         );
 
-        // Sequential command processing loop
+        // Sequential command dispatch loop.
         //
-        // Design: while a handler is blocked waiting for a server response
-        // (via send_request_sequential), incoming commands are drained from
-        // command_rx into `draining_buffer` so they don't pile up.  Buffered
-        // commands are processed first in the next loop iteration, before
-        // polling command_rx again.  This prevents head-of-line blocking:
-        // notifications like DidClose are handled as soon as the current
-        // in-flight response resolves, rather than waiting behind it in the
-        // channel.
+        // Notifications (didOpen, didChange, didSave, didClose, $/cancelRequest,
+        // workspace folder events) are written inline — they don't await a
+        // response and must reach the server promptly even when a prior
+        // request is still in flight.
         //
-        // Note: Server responses (workspace/configuration, etc.) are now written directly
-        // by the stdout reader task using the shared stdin_writer, avoiding deadlocks
-        // when the main loop is blocked waiting for an LSP response.
+        // Request handlers (completion, hover, semantic tokens, …) are
+        // spawned onto independent tokio tasks: each task writes its own
+        // JSON-RPC frame, awaits the matching oneshot response (or a
+        // timeout / cancel), and ships the result back via async_tx. The
+        // main loop therefore returns immediately after dispatching, so a
+        // server that never replies to one request can't wedge any other
+        // request or notification on the same server. Regression for
+        // sinelaw/fresh#1679 (R languageserver advertising semanticTokens
+        // but never answering, blocking every later command).
+        //
+        // Initialize stays inline: subsequent commands key off
+        // `state.initialized` and the existing `pending_commands` replay
+        // depends on it being set before any other request runs.
+        //
+        // Server-to-client requests (workspace/configuration etc.) are
+        // written directly by the stdout reader task using the shared
+        // stdin_writer, so they don't go through this loop.
 
-        /// Await a handler future while draining any commands that arrive on
-        /// `command_rx` into `buf`.  The commands are NOT processed here
-        /// (because `state` is borrowed by `fut`); they are replayed from
-        /// `buf` in subsequent iterations of the main loop.
+        /// Await the initialize handler while draining commands that arrive
+        /// on `command_rx` into `buf`. The commands are NOT processed here
+        /// (because `state` is borrowed by the future); they are replayed
+        /// from `buf` in subsequent iterations of the main loop.
         macro_rules! await_draining {
             ($fut:expr, $command_rx:expr, $buf:expr) => {{
                 let fut = $fut;
@@ -2788,6 +2882,17 @@ impl LspTask {
                         }
                     }
                 }
+            }};
+        }
+
+        /// Spawn an async request handler and forget the JoinHandle.
+        macro_rules! spawn_request {
+            ($state:expr, $pending:expr, |$s:ident, $p:ident| $body:expr) => {{
+                let $s = $state.clone();
+                let $p = $pending.clone();
+                tokio::spawn(async move {
+                    let _ = $body;
+                });
             }};
         }
 
@@ -2810,6 +2915,7 @@ impl LspTask {
             };
 
             tracing::trace!("LspTask received command: {:?}", cmd);
+            let initialized = state.initialized.load(Ordering::SeqCst);
             match cmd {
                 LspCommand::Initialize {
                     root_uri,
@@ -2851,7 +2957,7 @@ impl LspTask {
                     text,
                     language_id,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing DidOpen for {}", uri.as_str());
                         let _ = state
                             .handle_did_open_sequential(uri, text, language_id, &pending)
@@ -2872,8 +2978,10 @@ impl LspTask {
                     uri,
                     content_changes,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::trace!("Processing DidChange for {}", uri.as_str());
+                        // Notification: write inline so it reaches the server
+                        // even while earlier requests are still in flight.
                         let _ = state
                             .handle_did_change_sequential(uri, content_changes, &pending)
                             .await;
@@ -2889,7 +2997,7 @@ impl LspTask {
                     }
                 }
                 LspCommand::DidClose { uri } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing DidClose for {}", uri.as_str());
                         let _ = state.handle_did_close(uri).await;
                     } else {
@@ -2901,7 +3009,7 @@ impl LspTask {
                     }
                 }
                 LspCommand::DidSave { uri, text } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing DidSave for {}", uri.as_str());
                         let _ = state.handle_did_save(uri, text).await;
                     } else {
@@ -2913,7 +3021,7 @@ impl LspTask {
                     }
                 }
                 LspCommand::DidChangeWorkspaceFolders { added, removed } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!(
                             "Processing DidChangeWorkspaceFolders: +{} -{}",
                             added.len(),
@@ -2943,13 +3051,11 @@ impl LspTask {
                     line,
                     character,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing Completion request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_completion(request_id, uri, line, character, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_completion(request_id, uri, line, character, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, sending empty completion");
                         let _ = state.async_tx.send(AsyncMessage::LspCompletion {
@@ -2964,15 +3070,11 @@ impl LspTask {
                     line,
                     character,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing GotoDefinition request for {}", uri.as_str());
-                        let _ = await_draining!(
-                                    state.handle_goto_definition(
-                                        request_id, uri, line, character, &pending,
-                                    ),
-                                    command_rx,
-                                    draining_buffer
-                                );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_goto_definition(request_id, uri, line, character, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, sending empty locations");
                         let _ = state.async_tx.send(AsyncMessage::LspGotoDefinition {
@@ -2988,15 +3090,11 @@ impl LspTask {
                     character,
                     new_name,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing Rename request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_rename(
-                                request_id, uri, line, character, new_name, &pending,
-                            ),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_rename(request_id, uri, line, character, new_name, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot rename");
                         let _ = state.async_tx.send(AsyncMessage::LspRename {
@@ -3011,13 +3109,11 @@ impl LspTask {
                     line,
                     character,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing Hover request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_hover(request_id, uri, line, character, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_hover(request_id, uri, line, character, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get hover");
                         let _ = state.async_tx.send(AsyncMessage::LspHover {
@@ -3034,13 +3130,11 @@ impl LspTask {
                     line,
                     character,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing References request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_references(request_id, uri, line, character, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_references(request_id, uri, line, character, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get references");
                         let _ = state.async_tx.send(AsyncMessage::LspReferences {
@@ -3055,13 +3149,11 @@ impl LspTask {
                     line,
                     character,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing SignatureHelp request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_signature_help(request_id, uri, line, character, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_signature_help(request_id, uri, line, character, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get signature help");
                         let _ = state.async_tx.send(AsyncMessage::LspSignatureHelp {
@@ -3079,10 +3171,10 @@ impl LspTask {
                     end_char,
                     diagnostics,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing CodeActions request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_code_actions(
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_code_actions(
                                 request_id,
                                 uri,
                                 start_line,
@@ -3090,11 +3182,9 @@ impl LspTask {
                                 end_line,
                                 end_char,
                                 diagnostics,
-                                &pending,
-                            ),
-                            command_rx,
-                            draining_buffer
-                        );
+                                &p,
+                            )
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get code actions");
                         let _ = state.async_tx.send(AsyncMessage::LspCodeActions {
@@ -3108,21 +3198,14 @@ impl LspTask {
                     uri,
                     previous_result_id,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!(
                             "Processing DocumentDiagnostic request for {}",
                             uri.as_str()
                         );
-                        let _ = await_draining!(
-                            state.handle_document_diagnostic(
-                                request_id,
-                                uri,
-                                previous_result_id,
-                                &pending,
-                            ),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_document_diagnostic(request_id, uri, previous_result_id, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get document diagnostics");
                         let _ = state.async_tx.send(AsyncMessage::LspPulledDiagnostics {
@@ -3142,16 +3225,13 @@ impl LspTask {
                     end_line,
                     end_char,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing InlayHints request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_inlay_hints(
-                                request_id, uri, start_line, start_char, end_line, end_char,
-                                &pending,
-                            ),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_inlay_hints(
+                                request_id, uri, start_line, start_char, end_line, end_char, &p,
+                            )
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get inlay hints");
                         let _ = state.async_tx.send(AsyncMessage::LspInlayHints {
@@ -3162,13 +3242,11 @@ impl LspTask {
                     }
                 }
                 LspCommand::FoldingRange { request_id, uri } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing FoldingRange request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_folding_ranges(request_id, uri, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_folding_ranges(request_id, uri, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get folding ranges");
                         let _ = state.async_tx.send(AsyncMessage::LspFoldingRanges {
@@ -3179,13 +3257,11 @@ impl LspTask {
                     }
                 }
                 LspCommand::SemanticTokensFull { request_id, uri } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing SemanticTokens request for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_semantic_tokens_full(request_id, uri, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_semantic_tokens_full(request_id, uri, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get semantic tokens");
                         let _ = state.async_tx.send(AsyncMessage::LspSemanticTokens {
@@ -3202,21 +3278,19 @@ impl LspTask {
                     uri,
                     previous_result_id,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!(
                             "Processing SemanticTokens delta request for {}",
                             uri.as_str()
                         );
-                        let _ = await_draining!(
-                            state.handle_semantic_tokens_full_delta(
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_semantic_tokens_full_delta(
                                 request_id,
                                 uri,
                                 previous_result_id,
-                                &pending,
-                            ),
-                            command_rx,
-                            draining_buffer
-                        );
+                                &p,
+                            )
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get semantic tokens");
                         let _ = state.async_tx.send(AsyncMessage::LspSemanticTokens {
@@ -3233,16 +3307,14 @@ impl LspTask {
                     uri,
                     range,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!(
                             "Processing SemanticTokens range request for {}",
                             uri.as_str()
                         );
-                        let _ = await_draining!(
-                            state.handle_semantic_tokens_range(request_id, uri, range, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_semantic_tokens_range(request_id, uri, range, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot get semantic tokens");
                         let _ = state.async_tx.send(AsyncMessage::LspSemanticTokens {
@@ -3255,25 +3327,21 @@ impl LspTask {
                     }
                 }
                 LspCommand::ExecuteCommand { command, arguments } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing ExecuteCommand: {}", command);
-                        let _ = await_draining!(
-                            state.handle_execute_command(command, arguments, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_execute_command(command, arguments, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot execute command");
                     }
                 }
                 LspCommand::CodeActionResolve { request_id, action } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing CodeActionResolve (request_id={})", request_id);
-                        let _ = await_draining!(
-                            state.handle_code_action_resolve(request_id, *action, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_code_action_resolve(request_id, *action, &p)
+                            .await);
                     } else {
                         tracing::trace!("LSP not initialized, cannot resolve code action");
                         let _ = state.async_tx.send(AsyncMessage::LspCodeActionResolved {
@@ -3283,12 +3351,10 @@ impl LspTask {
                     }
                 }
                 LspCommand::CompletionResolve { request_id, item } => {
-                    if state.initialized {
-                        let _ = await_draining!(
-                            state.handle_completion_resolve(request_id, *item, &pending),
-                            command_rx,
-                            draining_buffer
-                        );
+                    if initialized {
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_completion_resolve(request_id, *item, &p)
+                            .await);
                     }
                 }
                 LspCommand::DocumentFormatting {
@@ -3297,19 +3363,17 @@ impl LspTask {
                     tab_size,
                     insert_spaces,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::info!("Processing DocumentFormatting for {}", uri.as_str());
-                        let _ = await_draining!(
-                            state.handle_document_formatting(
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_document_formatting(
                                 request_id,
                                 uri,
                                 tab_size,
                                 insert_spaces,
-                                &pending,
-                            ),
-                            command_rx,
-                            draining_buffer
-                        );
+                                &p,
+                            )
+                            .await);
                     }
                 }
                 LspCommand::DocumentRangeFormatting {
@@ -3322,9 +3386,9 @@ impl LspTask {
                     tab_size,
                     insert_spaces,
                 } => {
-                    if state.initialized {
-                        let _ = await_draining!(
-                            state.handle_document_range_formatting(
+                    if initialized {
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_document_range_formatting(
                                 request_id,
                                 uri,
                                 start_line,
@@ -3333,11 +3397,9 @@ impl LspTask {
                                 end_char,
                                 tab_size,
                                 insert_spaces,
-                                &pending,
-                            ),
-                            command_rx,
-                            draining_buffer
-                        );
+                                &p,
+                            )
+                            .await);
                     }
                 }
                 LspCommand::PrepareRename {
@@ -3346,17 +3408,15 @@ impl LspTask {
                     line,
                     character,
                 } => {
-                    if state.initialized {
-                        let _ = await_draining!(
-                            state
-                                .handle_prepare_rename(request_id, uri, line, character, &pending,),
-                            command_rx,
-                            draining_buffer
-                        );
+                    if initialized {
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_prepare_rename(request_id, uri, line, character, &p)
+                            .await);
                     }
                 }
                 LspCommand::CancelRequest { request_id } => {
                     tracing::info!("Processing CancelRequest for editor_id={}", request_id);
+                    // Notification: inline so cancels reach the server promptly.
                     let _ = state.handle_cancel_request(request_id).await;
                 }
                 LspCommand::PluginRequest {
@@ -3364,13 +3424,11 @@ impl LspTask {
                     method,
                     params,
                 } => {
-                    if state.initialized {
+                    if initialized {
                         tracing::trace!("Processing plugin request {} ({})", request_id, method);
-                        await_draining!(
-                            state.handle_plugin_request(request_id, method, params, &pending,),
-                            command_rx,
-                            draining_buffer
-                        );
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_plugin_request(request_id, method, params, &p)
+                            .await);
                     } else {
                         tracing::trace!(
                             "Plugin LSP request {} received before initialization",
