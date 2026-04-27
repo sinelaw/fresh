@@ -2687,45 +2687,43 @@ mod fromjs_impls {
     use super::*;
     use rquickjs::{Ctx, FromJs, Value};
 
-    impl<'js> FromJs<'js> for JsTextPropertyEntry {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "JsTextPropertyEntry",
-                message: Some(e.to_string()),
-            })
-        }
+    // All types that deserialize from a JS value via rquickjs_serde follow
+    // the same 8-line pattern differing only in the type name. This macro
+    // expands that pattern once so adding a new plugin-API type costs one line
+    // here instead of a copy-pasted block.
+    macro_rules! impl_from_js_via_serde {
+        ($($T:ty),+ $(,)?) => {
+            $(
+                impl<'js> FromJs<'js> for $T {
+                    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+                        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+                            from: "object",
+                            to: stringify!($T),
+                            message: Some(e.to_string()),
+                        })
+                    }
+                }
+            )+
+        };
     }
 
-    impl<'js> FromJs<'js> for CreateVirtualBufferOptions {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "CreateVirtualBufferOptions",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for CreateVirtualBufferInSplitOptions {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "CreateVirtualBufferInSplitOptions",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for CreateVirtualBufferInExistingSplitOptions {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "CreateVirtualBufferInExistingSplitOptions",
-                message: Some(e.to_string()),
-            })
-        }
-    }
+    impl_from_js_via_serde!(
+        JsTextPropertyEntry,
+        CreateVirtualBufferOptions,
+        CreateVirtualBufferInSplitOptions,
+        CreateVirtualBufferInExistingSplitOptions,
+        ActionSpec,
+        ActionPopupAction,
+        ActionPopupOptions,
+        ViewTokenWire,
+        ViewTokenStyle,
+        LayoutHints,
+        CompositeHunk,
+        LanguagePackConfig,
+        LspServerPackConfig,
+        ProcessLimitsPackConfig,
+        CreateTerminalOptions,
+    );
 
     impl<'js> rquickjs::IntoJs<'js> for TextPropertiesAtCursor {
         fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
@@ -2734,71 +2732,10 @@ mod fromjs_impls {
         }
     }
 
-    // === Additional input types for type-safe plugin API ===
-
-    impl<'js> FromJs<'js> for ActionSpec {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "ActionSpec",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for ActionPopupAction {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "ActionPopupAction",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for ActionPopupOptions {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "ActionPopupOptions",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for ViewTokenWire {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "ViewTokenWire",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for ViewTokenStyle {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "ViewTokenStyle",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for LayoutHints {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "LayoutHints",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
     impl<'js> FromJs<'js> for CreateCompositeBufferOptions {
         fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            // Use two-step deserialization for complex nested structures
+            // Two-step deserialization: rquickjs_serde cannot handle the nested
+            // enums in this struct directly, so go via serde_json as an intermediary.
             let json: serde_json::Value =
                 rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
                     from: "object",
@@ -2808,56 +2745,6 @@ mod fromjs_impls {
             serde_json::from_value(json).map_err(|e| rquickjs::Error::FromJs {
                 from: "json",
                 to: "CreateCompositeBufferOptions",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for CompositeHunk {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "CompositeHunk",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for LanguagePackConfig {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "LanguagePackConfig",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for LspServerPackConfig {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "LspServerPackConfig",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for ProcessLimitsPackConfig {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "ProcessLimitsPackConfig",
-                message: Some(e.to_string()),
-            })
-        }
-    }
-
-    impl<'js> FromJs<'js> for CreateTerminalOptions {
-        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-            rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
-                from: "object",
-                to: "CreateTerminalOptions",
                 message: Some(e.to_string()),
             })
         }
