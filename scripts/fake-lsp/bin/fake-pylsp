@@ -1,170 +1,261 @@
-#!/usr/bin/env bash
-# Tiny fake `pylsp` for tests. Reads JSON-RPC framed messages on stdio,
-# logs every received `uri` (with the request method) to
-# `<FAKE_DEVCONTAINER_STATE>/fake_lsp_uris`, and answers the few
-# methods the editor needs to drive Go-to-Definition end-to-end:
-#
-#   - `initialize`              → minimal capabilities
-#   - `textDocument/didOpen`    → notification, no response (logged)
-#   - `textDocument/didChange`  → notification, no response (logged)
-#   - `textDocument/definition` → `Location` whose URI defaults to
-#                                 `file:///workspaces/proj/util.py`
-#                                 line 5, character 0; override by
-#                                 writing the desired URI into
-#                                 `<state>/fake_lsp_definition_uri`
-#                                 before triggering the request.
-#   - `shutdown` / `exit`       → respond null and break
-#
-# Lives in `scripts/fake-lsp/bin/` so tests can prepend that directory
-# to PATH (and to the captured `userEnvProbe` PATH) and have both
-# `command -v fake-pylsp` and the actual spawn resolve via the fake
-# docker shim. See `scripts/fake-lsp/README.md` for the full picture.
-set -u
+#!/usr/bin/env python3
+"""
+Tiny fake `pylsp` for tests.
 
-# Resolve the per-test state dir. Tests using the fake-devcontainer
-# harness already set `FAKE_DEVCONTAINER_STATE`; we reuse that so the
-# uri log lives next to `exec_history` and friends.
-state_dir="${FAKE_DEVCONTAINER_STATE:-${TMPDIR:-/tmp}/fake-lsp-state}"
-mkdir -p "$state_dir" 2>/dev/null || true
-uri_log="$state_dir/fake_lsp_uris"
-def_uri_file="$state_dir/fake_lsp_definition_uri"
-def_line_file="$state_dir/fake_lsp_definition_line"
-def_char_file="$state_dir/fake_lsp_definition_character"
+Speaks just enough of the LSP wire protocol (Content-Length framing
+plus a handful of methods) to let the editor drive Go-to-Definition,
+Find References, and the rest of the request/response surface our e2es
+rely on.
 
-# Read one Content-Length-framed message from stdin into stdout.
-read_message() {
-  local content_length=0 line
-  while IFS= read -r line; do
-    line="${line%$'\r'}"
-    if [ -z "$line" ]; then
-      break
-    fi
-    case "$line" in
-      Content-Length:*)
-        content_length="${line#Content-Length:}"
-        content_length="${content_length// /}"
-        ;;
-    esac
-  done
-  if [ "$content_length" -gt 0 ] 2>/dev/null; then
-    dd bs=1 count="$content_length" 2>/dev/null
-  fi
-}
+Why Python and not bash:
+  * Bash 3.2 (the macOS default `/bin/bash`) lacks `mapfile`/`readarray`
+    and is finicky about negative substring offsets, so a bash script
+    that runs cleanly on Linux can silently die mid-handshake on a
+    macOS CI runner — and the only symptom is that the editor waits
+    forever for a response that never arrives.
+  * Python 3 is universally available on the macOS / Linux / Windows
+    images we target, has reliable buffered I/O, and lets us emit
+    structured progress lines into the URI log so a hung test has
+    actionable diagnostics instead of just "180s timeout".
 
-send_message() {
-  local message="$1"
-  local length=${#message}
-  printf 'Content-Length: %d\r\n\r\n%s' "$length" "$message"
-}
+Behaviour:
+  * Logs every received URI (tagged with method) to
+    `<FAKE_DEVCONTAINER_STATE>/fake_lsp_uris`.
+  * Also logs lifecycle breadcrumbs ("startup", "stdin_eof") to the
+    same file so a CI tail of that file shows where we got stuck.
+  * Answers `textDocument/definition` and `textDocument/references`
+    with a configurable Location. Override per-test by writing the
+    desired values into:
+      - `<state>/fake_lsp_definition_uri`
+      - `<state>/fake_lsp_definition_line`
+      - `<state>/fake_lsp_definition_character`
+    Defaults: `file:///workspaces/proj/util.py`, line 5, char 0.
+"""
+from __future__ import annotations
 
-extract_first_uri() {
-  # First "uri":"..." occurrence in the JSON. Defs/refs requests have
-  # one URI; didOpen has it nested under textDocument; both shapes
-  # share the same first occurrence so this is enough for our needs.
-  printf '%s' "$1" | grep -o '"uri":"[^"]*"' | head -n1 | cut -d'"' -f4
-}
+import json
+import os
+import sys
+from pathlib import Path
 
-extract_method() {
-  printf '%s' "$1" | grep -o '"method":"[^"]*"' | head -n1 | cut -d'"' -f4
-}
+# Per-test scratch dir. The fake-devcontainer harness sets this; if it
+# isn't present we fall back to a tmpdir under TMPDIR so a manual
+# invocation still has somewhere to write the log.
+STATE_DIR = Path(os.environ.get("FAKE_DEVCONTAINER_STATE")
+                 or os.path.join(os.environ.get("TMPDIR", "/tmp"), "fake-lsp-state"))
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+URI_LOG = STATE_DIR / "fake_lsp_uris"
+DEF_URI_FILE = STATE_DIR / "fake_lsp_definition_uri"
+DEF_LINE_FILE = STATE_DIR / "fake_lsp_definition_line"
+DEF_CHAR_FILE = STATE_DIR / "fake_lsp_definition_character"
 
-extract_id() {
-  # Numeric id only — the editor always uses integers.
-  printf '%s' "$1" | grep -oE '"id":[[:space:]]*[0-9]+' | head -n1 | sed -E 's/.*: *([0-9]+).*/\1/'
-}
+DEFAULT_DEF_URI = "file:///workspaces/proj/util.py"
+DEFAULT_DEF_LINE = 5
+DEFAULT_DEF_CHAR = 0
 
-log_uri() {
-  local method="$1" uri="$2"
-  if [ -n "$uri" ]; then
-    printf '%s %s\n' "$method" "$uri" >> "$uri_log" 2>/dev/null || true
-  fi
-}
 
-read_def_target() {
-  local default_uri="file:///workspaces/proj/util.py"
-  local default_line=5
-  local default_char=0
-  local uri line char
-  if [ -f "$def_uri_file" ]; then
-    uri="$(head -n1 "$def_uri_file" 2>/dev/null)"
-  fi
-  : "${uri:=$default_uri}"
-  if [ -f "$def_line_file" ]; then
-    line="$(head -n1 "$def_line_file" 2>/dev/null)"
-  fi
-  : "${line:=$default_line}"
-  if [ -f "$def_char_file" ]; then
-    char="$(head -n1 "$def_char_file" 2>/dev/null)"
-  fi
-  : "${char:=$default_char}"
-  printf '%s\n%s\n%s\n' "$uri" "$line" "$char"
-}
+def log(line: str) -> None:
+    """Append a single line to the URI log. The log doubles as a
+    progress trace for hung tests — CI can dump it to see how far we
+    got."""
+    try:
+        with URI_LOG.open("a") as f:
+            f.write(line + "\n")
+    except OSError:
+        # Logging must never crash the server. If the state dir
+        # vanished mid-test, just keep going.
+        pass
 
-while true; do
-  msg="$(read_message)"
-  [ -z "$msg" ] && break
 
-  method="$(extract_method "$msg")"
-  msg_id="$(extract_id "$msg")"
-  uri="$(extract_first_uri "$msg")"
+def read_def_target() -> tuple[str, int, int]:
+    """Resolve the definition target the editor will pin a Location at.
+    Reads three optional override files, falling back to defaults."""
+    def first_line(path: Path) -> str | None:
+        try:
+            return path.read_text().splitlines()[0]
+        except (OSError, IndexError):
+            return None
 
-  case "$method" in
-    "initialize")
-      log_uri "initialize" "$uri"
-      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"textDocumentSync":1,"definitionProvider":true,"hoverProvider":true,"referencesProvider":true}}}'
-      ;;
-    "initialized")
-      # notification, no response
-      ;;
-    "textDocument/didOpen")
-      log_uri "didOpen" "$uri"
-      ;;
-    "textDocument/didChange")
-      log_uri "didChange" "$uri"
-      ;;
-    "textDocument/didSave")
-      log_uri "didSave" "$uri"
-      ;;
-    "textDocument/didClose")
-      log_uri "didClose" "$uri"
-      ;;
-    "textDocument/definition")
-      log_uri "definition" "$uri"
-      # `read -r` triple instead of `mapfile -t` (bash 4+) — macOS
-      # ships bash 3.2 by default and we want this to run there too.
-      def_uri=""; def_line=""; def_char=""
-      { read -r def_uri; read -r def_line; read -r def_char; } < <(read_def_target)
-      end_char=$((def_char + 1))
-      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"uri":"'"$def_uri"'","range":{"start":{"line":'"$def_line"',"character":'"$def_char"'},"end":{"line":'"$def_line"',"character":'"$end_char"'}}}}'
-      ;;
-    "textDocument/references")
-      log_uri "references" "$uri"
-      # Reuse the configured definition target as a single-element
-      # reference list. Tests pin the *kind* of URI we emit (a wire
-      # URI under the in-container workspace) more than the count, so
-      # one location is enough to exercise the editor-side path
-      # translation.
-      ref_uri=""; ref_line=""; ref_char=""
-      { read -r ref_uri; read -r ref_line; read -r ref_char; } < <(read_def_target)
-      end_char=$((ref_char + 1))
-      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":[{"uri":"'"$ref_uri"'","range":{"start":{"line":'"$ref_line"',"character":'"$ref_char"'},"end":{"line":'"$ref_line"',"character":'"$end_char"'}}}]}'
-      ;;
-    "textDocument/diagnostic")
-      log_uri "diagnostic" "$uri"
-      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"kind":"full","items":[]}}'
-      ;;
-    "shutdown")
-      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
-      ;;
-    "exit")
-      break
-      ;;
-    *)
-      # Unknown method — if it has an id, respond with an empty result
-      # so the editor isn't stuck waiting. Notifications fall through.
-      if [ -n "$msg_id" ]; then
-        send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
-      fi
-      ;;
-  esac
-done
+    uri = first_line(DEF_URI_FILE) or DEFAULT_DEF_URI
+    line_text = first_line(DEF_LINE_FILE)
+    line = int(line_text) if line_text and line_text.strip().isdigit() else DEFAULT_DEF_LINE
+    char_text = first_line(DEF_CHAR_FILE)
+    char = int(char_text) if char_text and char_text.strip().isdigit() else DEFAULT_DEF_CHAR
+    return uri, line, char
+
+
+def read_message() -> dict | None:
+    """Read one Content-Length-framed JSON-RPC message from stdin.
+    Returns the parsed JSON object, or None on clean EOF."""
+    headers: dict[str, str] = {}
+    while True:
+        # `sys.stdin.buffer` for byte-accurate reads — Content-Length
+        # counts bytes, not characters, and decode-on-read could
+        # mis-frame on multibyte payloads.
+        raw = sys.stdin.buffer.readline()
+        if raw == b"":
+            return None  # EOF before any header → graceful shutdown
+        line = raw.decode("ascii", errors="replace").rstrip("\r\n")
+        if line == "":
+            break
+        if ":" in line:
+            key, _, value = line.partition(":")
+            headers[key.strip()] = value.strip()
+
+    length_str = headers.get("Content-Length")
+    if not length_str:
+        return None
+    try:
+        length = int(length_str)
+    except ValueError:
+        return None
+    if length <= 0:
+        return {}
+    body = sys.stdin.buffer.read(length)
+    if len(body) < length:
+        # Truncated — treat as EOF so callers can clean up.
+        return None
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return None
+
+
+def send_message(payload: dict) -> None:
+    """Write one Content-Length-framed JSON-RPC message to stdout."""
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+    sys.stdout.buffer.write(header)
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+
+def first_uri(message: dict) -> str:
+    """Pluck a URI we can use as a wait checkpoint. Production LSP
+    messages put it under `textDocument.uri` (notifications/requests),
+    `params.uri` (some workspace ops), or `rootUri` (the `initialize`
+    handshake — the editor identifies the workspace there). Tests
+    wait on log lines like `initialize file://...` so checking each
+    of these slots in turn matches the editor's actual traffic."""
+    params = message.get("params") or {}
+    text_doc = params.get("textDocument") or {}
+    return (
+        text_doc.get("uri")
+        or params.get("uri")
+        or params.get("rootUri")
+        or ""
+    )
+
+
+def handle(message: dict) -> None:
+    method = message.get("method") or ""
+    msg_id = message.get("id")
+    uri = first_uri(message)
+    # Always log a `<method-tail> <uri>` line, even when the URI is
+    # empty — the test harness waits on prefix matches like
+    # `"initialize "` (with trailing space) and a missing URI must
+    # not silently swallow the breadcrumb.
+    short_method = method.rsplit("/", 1)[-1] or method
+    log(f"{short_method} {uri}")
+
+    if method == "initialize":
+        send_message({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "capabilities": {
+                    "textDocumentSync": 1,
+                    "definitionProvider": True,
+                    "hoverProvider": True,
+                    "referencesProvider": True,
+                }
+            },
+        })
+        return
+
+    if method == "initialized":
+        return  # notification, no response
+
+    if method in ("textDocument/didOpen", "textDocument/didChange",
+                  "textDocument/didSave", "textDocument/didClose"):
+        return  # already logged above
+
+    if method == "textDocument/definition":
+        def_uri, def_line, def_char = read_def_target()
+        send_message({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "uri": def_uri,
+                "range": {
+                    "start": {"line": def_line, "character": def_char},
+                    "end": {"line": def_line, "character": def_char + 1},
+                },
+            },
+        })
+        return
+
+    if method == "textDocument/references":
+        def_uri, def_line, def_char = read_def_target()
+        # Single-element reference list — tests pin the *kind* of URI
+        # we emit (a wire URI under the in-container workspace) more
+        # than the count.
+        send_message({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": [{
+                "uri": def_uri,
+                "range": {
+                    "start": {"line": def_line, "character": def_char},
+                    "end": {"line": def_line, "character": def_char + 1},
+                },
+            }],
+        })
+        return
+
+    if method == "textDocument/diagnostic":
+        send_message({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {"kind": "full", "items": []},
+        })
+        return
+
+    if method == "shutdown":
+        send_message({"jsonrpc": "2.0", "id": msg_id, "result": None})
+        return
+
+    if method == "exit":
+        sys.exit(0)
+
+    # Unknown method — keep the editor happy by responding with `null`
+    # if it expects a result. Notifications (no id) just fall through.
+    if msg_id is not None:
+        send_message({"jsonrpc": "2.0", "id": msg_id, "result": None})
+
+
+def main() -> None:
+    log(f"startup pid={os.getpid()} state={STATE_DIR}")
+    while True:
+        try:
+            message = read_message()
+        except KeyboardInterrupt:
+            log("interrupt")
+            return
+        if message is None:
+            log("stdin_eof")
+            return
+        try:
+            handle(message)
+        except BrokenPipeError:
+            log("broken_pipe")
+            return
+        except Exception as exc:  # noqa: BLE001
+            log(f"handler_error {type(exc).__name__}: {exc}")
+            # Keep the loop alive so a single bad message doesn't kill
+            # the whole session.
+            continue
+
+
+if __name__ == "__main__":
+    main()

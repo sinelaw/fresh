@@ -1433,7 +1433,15 @@ impl LspUri {
     }
 }
 
-#[cfg(test)]
+// `LspUri` translation algebra works on any platform but the unit-test
+// fixtures use POSIX-shaped paths (the only side that ever exists for a
+// container's interior) and a Linux-style URI without a drive letter.
+// On Windows `lsp_types::Uri::parse(\"file:///workspaces/...\")` returns
+// `None` for lack of a drive letter, which would make these tests fail
+// for reasons unrelated to the algebra they're verifying. Gate to Unix
+// — the cross-platform URI encoding is covered separately by
+// `uri_encoding_tests`.
+#[cfg(all(test, unix))]
 mod lsp_uri_tests {
     use super::*;
     use crate::services::authority::PathTranslation;
