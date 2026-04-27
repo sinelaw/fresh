@@ -41,9 +41,158 @@
 #![cfg(all(unix, feature = "plugins"))]
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// Pre-flight checks that must hold before the test attempts to talk
+/// to the fake LSP. These are cheap, deterministic invariants that
+/// fail loudly with an actionable message instead of letting a
+/// missing `python3` (the fake-pylsp shebang) or a stripped-execute
+/// bit on the script silently degrade into a 180s nextest timeout.
+///
+/// Pattern stolen from the rest of the suite: any infra problem that
+/// is going to make the test pointless should panic *before* the
+/// long wait_untils start, so CI logs show the cause on the line the
+/// test fails.
+fn assert_test_infra() {
+    // 1. python3 must resolve via PATH — that's how the fake-pylsp
+    //    shebang (`#!/usr/bin/env python3`) finds an interpreter.
+    //    On macOS CI both `/usr/bin/python3` (XCode tools) and
+    //    `/usr/local/bin/python3` (Homebrew) usually work; we just
+    //    need *some* python3 that `env` can find.
+    match std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            eprintln!(
+                "[infra] python3: {}",
+                String::from_utf8_lossy(&out.stdout).trim()
+            );
+        }
+        Ok(out) => panic!(
+            "infra: `python3 --version` exited {}; stderr={:?}. \
+             The fake-pylsp shebang requires python3 on PATH.",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => panic!(
+            "infra: `python3 --version` failed to spawn: {e}. \
+             The fake-pylsp shebang requires python3 on PATH."
+        ),
+    }
+
+    // 2. fake-pylsp must be a real executable file with a Python
+    //    shebang. Git tracks the +x bit (mode 100755), but a careless
+    //    rebase / scripted edit can lose it; catching that here
+    //    surfaces "this is why your LSP never started" instead of
+    //    "the editor hung waiting for an `initialize` reply".
+    let pylsp = fake_lsp_bin_dir().join("fake-pylsp");
+    let meta = match std::fs::metadata(&pylsp) {
+        Ok(m) => m,
+        Err(e) => panic!("infra: fake-pylsp missing at {pylsp:?}: {e}"),
+    };
+    assert!(
+        meta.is_file(),
+        "infra: fake-pylsp at {pylsp:?} is not a regular file"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        assert!(
+            mode & 0o111 != 0,
+            "infra: fake-pylsp at {pylsp:?} is not executable (mode={:o}). \
+             `chmod +x` it or check that git preserved the executable bit.",
+            mode
+        );
+    }
+    let first_line = std::fs::read_to_string(&pylsp)
+        .ok()
+        .and_then(|s| s.lines().next().map(str::to_string))
+        .unwrap_or_default();
+    assert!(
+        first_line.starts_with("#!") && first_line.contains("python"),
+        "infra: fake-pylsp shebang should reference python; got {first_line:?}"
+    );
+    eprintln!("[infra] fake-pylsp ready: {pylsp:?} ({first_line})");
+}
+
+/// Dump the test's external state (fake-LSP URI log, fake-docker
+/// exec history, container-fs stash) so a hung test in CI shows what
+/// stage it actually got to. Called periodically from
+/// [`wait_until_with_dumps`] and after every `wait_until` panic.
+fn dump_external_state(state: &Path, label: &str) {
+    eprintln!("=== fake state dump [{label}] ===");
+    eprintln!("--- fake_lsp_uris ---");
+    match fs::read_to_string(state.join("fake_lsp_uris")) {
+        Ok(s) if s.is_empty() => eprintln!("(empty)"),
+        Ok(s) => eprint!("{s}"),
+        Err(e) => eprintln!("(missing: {e})"),
+    }
+    eprintln!("--- exec_history ---");
+    match fs::read_to_string(state.join("exec_history")) {
+        Ok(s) if s.is_empty() => eprintln!("(empty)"),
+        Ok(s) => eprint!("{s}"),
+        Err(e) => eprintln!("(missing: {e})"),
+    }
+    // LSP stderr (if any) goes to a per-PID file under the editor's
+    // log dir. Surface its tail so a Python crash inside fake-pylsp
+    // surfaces in the CI log instead of disappearing into the void.
+    let lsp_log_path = fresh::services::log_dirs::lsp_log_path("python");
+    eprintln!("--- lsp stderr ({}) ---", lsp_log_path.display());
+    match fs::read_to_string(&lsp_log_path) {
+        Ok(s) if s.is_empty() => eprintln!("(empty)"),
+        Ok(s) => {
+            // Cap to last ~4 KB so a chatty server doesn't flood CI.
+            let tail = if s.len() > 4096 {
+                &s[s.len() - 4096..]
+            } else {
+                &s[..]
+            };
+            eprint!("{tail}");
+        }
+        Err(e) => eprintln!("(missing: {e})"),
+    }
+    eprintln!("=== end dump ===");
+}
+
+/// Wrap [`EditorTestHarness::wait_until`] with periodic state dumps.
+/// Same semantic-wait contract — runs forever (CONTRIBUTING §3) and
+/// relies on nextest's outer 180s kill — but every 10 s of waiting
+/// it eprintln's the fake state so a CI log of a TIMEOUT shows the
+/// stage we got stuck at instead of just an empty progress line.
+fn wait_until_with_dumps<F>(harness: &mut EditorTestHarness, label: &str, state: &Path, mut cond: F)
+where
+    F: FnMut(&EditorTestHarness) -> bool,
+{
+    let start = Instant::now();
+    let mut last_dump = start;
+    eprintln!("[wait] start: {label}");
+    loop {
+        harness.tick_and_render().unwrap();
+        if cond(harness) {
+            eprintln!(
+                "[wait] satisfied: {label} (after {:.1}s)",
+                start.elapsed().as_secs_f64()
+            );
+            return;
+        }
+        if last_dump.elapsed() >= Duration::from_secs(10) {
+            eprintln!(
+                "[wait] still waiting on {label} after {:.1}s",
+                start.elapsed().as_secs_f64()
+            );
+            dump_external_state(state, label);
+            last_dump = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        harness.advance_time(Duration::from_millis(50));
+    }
+}
 
 /// Path to the in-tree `fake-pylsp` bin dir. Tests prepend this to
 /// PATH so `command -v fake-pylsp` resolves both on the host (for the
@@ -296,24 +445,20 @@ fn goto_definition_translates_uris_between_host_and_container() {
     // Wait for the LSP to handshake. The fake-pylsp logs every URI
     // it sees; an `initialize` line is the earliest signal that the
     // server is alive and the editor is talking to it.
-    harness
-        .wait_until(|_| {
-            read_uri_log(&state)
-                .lines()
-                .any(|l| l.starts_with("initialize "))
-        })
-        .unwrap();
+    wait_until_with_dumps(&mut harness, "fake-pylsp initialize", &state, |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("initialize "))
+    });
 
     // Wait for the editor to send `didOpen` for main.py before we
     // ask for a definition — without this the request races the
     // open notification.
-    harness
-        .wait_until(|_| {
-            read_uri_log(&state)
-                .lines()
-                .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
-        })
-        .unwrap();
+    wait_until_with_dumps(&mut harness, "fake-pylsp didOpen main.py", &state, |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
+    });
 
     // Move the cursor onto the `helper()` call inside `def main():`.
     // main.py contents:
@@ -345,15 +490,13 @@ fn goto_definition_translates_uris_between_host_and_container() {
     // on the editor having *processed the response*. CI is slower
     // than local; pinning a fixed pump-loop here is what gave us
     // the previous timeout.
-    harness
-        .wait_until(|h| {
-            h.editor()
-                .active_state()
-                .buffer
-                .file_path()
-                .is_some_and(|p| p == host_util_py.as_path())
-        })
-        .unwrap();
+    wait_until_with_dumps(&mut harness, "active buffer == host util.py", &state, |h| {
+        h.editor()
+            .active_state()
+            .buffer
+            .file_path()
+            .is_some_and(|p| p == host_util_py.as_path())
+    });
 
     // ── Direction 1: host → container ────────────────────────────
     // The first `didOpen` URI the LSP saw must be the *container*
@@ -434,6 +577,15 @@ fn arrange_attached_session_with_open_main_py() -> (
     EditorTestHarness,
     std::path::PathBuf,
 ) {
+    // Wire up tracing so RUST_LOG=info / debug from CI surfaces
+    // editor-side LSP events (`Spawning async LSP server`, didOpen
+    // race grace, etc.) alongside our explicit eprintln breadcrumbs.
+    init_tracing_from_env();
+    // Pre-flight invariants: any infra problem fails *here*, before
+    // we burn 180s waiting for a python3 that isn't on PATH or a
+    // script with a stripped exec bit.
+    assert_test_infra();
+
     let (workspace_temp, workspace) = set_up_workspace();
     let main_py = workspace.join("main.py");
 
@@ -511,20 +663,16 @@ fn arrange_attached_session_with_open_main_py() -> (
     );
 
     harness.open_file(&main_py).unwrap();
-    harness
-        .wait_until(|_| {
-            read_uri_log(&state)
-                .lines()
-                .any(|l| l.starts_with("initialize "))
-        })
-        .unwrap();
-    harness
-        .wait_until(|_| {
-            read_uri_log(&state)
-                .lines()
-                .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
-        })
-        .unwrap();
+    wait_until_with_dumps(&mut harness, "fake-pylsp initialize", &state, |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("initialize "))
+    });
+    wait_until_with_dumps(&mut harness, "fake-pylsp didOpen main.py", &state, |_| {
+        read_uri_log(&state)
+            .lines()
+            .any(|l| l.starts_with("didOpen ") && l.contains("main.py"))
+    });
 
     (workspace_temp, workspace, harness, state)
 }
@@ -616,15 +764,18 @@ fn goto_definition_into_container_only_file_opens_read_only_buffer() {
     // buffer's file_path matches the container path. Using
     // `wait_until` instead of a fixed pump-loop means CI's
     // potentially slower docker spawn doesn't push us off a cliff.
-    harness
-        .wait_until(|h| {
+    wait_until_with_dumps(
+        &mut harness,
+        "active buffer == fetched container path",
+        &state,
+        |h| {
             h.editor()
                 .active_state()
                 .buffer
                 .file_path()
                 .is_some_and(|p| p == Path::new(container_path))
-        })
-        .unwrap();
+        },
+    );
 
     // ── Container-fetched buffer assertions ──────────────────────
     // The active buffer's path is the container path verbatim — no
@@ -706,9 +857,9 @@ fn goto_definition_to_unreachable_uri_surfaces_error_message() {
     // container `cat` fails → `Editor::open_lsp_uri_target` returns
     // `Err` → status line set). Waiting on the screen instead of a
     // pump-loop means CI's slower docker spawn doesn't matter.
-    harness
-        .wait_until(|h| h.screen_to_string().contains("could not open"))
-        .unwrap();
+    wait_until_with_dumps(&mut harness, "status line: 'could not open'", &state, |h| {
+        h.screen_to_string().contains("could not open")
+    });
 
     // The active buffer must NOT be a phantom at the unreachable
     // path. The most likely "bad" outcome is the editor opening an
