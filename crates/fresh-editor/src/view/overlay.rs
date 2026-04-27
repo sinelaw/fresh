@@ -371,18 +371,19 @@ impl OverlayManager {
 
     /// Remove all overlays in a range and clean up their markers
     pub fn remove_in_range(&mut self, range: &Range<usize>, marker_list: &mut MarkerList) {
-        // Collect markers to delete
-        let markers_to_delete: Vec<_> = self
-            .overlays
-            .iter()
-            .filter(|o| o.overlaps(range, marker_list))
-            .flat_map(|o| vec![o.start_marker, o.end_marker])
-            .collect();
+        // Resolve each overlay's marker positions once per call (single retain pass).
+        let mut markers_to_delete = Vec::new();
+        self.overlays.retain(|o| {
+            let start = marker_list.get_position(o.start_marker).unwrap_or(0);
+            let end = marker_list.get_position(o.end_marker).unwrap_or(0);
+            let overlaps = start < range.end && range.start < end;
+            if overlaps {
+                markers_to_delete.push(o.start_marker);
+                markers_to_delete.push(o.end_marker);
+            }
+            !overlaps
+        });
 
-        // Remove overlays
-        self.overlays.retain(|o| !o.overlaps(range, marker_list));
-
-        // Delete markers
         for marker_id in markers_to_delete {
             marker_list.delete(marker_id);
         }
@@ -797,5 +798,90 @@ mod tests {
         assert!(overlay.overlaps(&(5..15), &marker_list));
         assert!(overlay.overlaps(&(15..25), &marker_list));
         assert!(!overlay.overlaps(&(20..30), &marker_list));
+    }
+
+    #[test]
+    fn test_overlay_remove_in_range_keeps_only_disjoint() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(200);
+        let mut manager = OverlayManager::new();
+
+        manager.add(Overlay::new(
+            &mut marker_list,
+            0..5,
+            OverlayFace::Background { color: Color::Red },
+        ));
+        manager.add(Overlay::new(
+            &mut marker_list,
+            10..20,
+            OverlayFace::Background { color: Color::Blue },
+        ));
+        manager.add(Overlay::new(
+            &mut marker_list,
+            30..40,
+            OverlayFace::Background {
+                color: Color::Green,
+            },
+        ));
+        manager.add(Overlay::new(
+            &mut marker_list,
+            50..60,
+            OverlayFace::Background {
+                color: Color::Yellow,
+            },
+        ));
+
+        // Range 15..35 overlaps overlays #2 (10..20) and #3 (30..40), leaves #1 and #4.
+        manager.remove_in_range(&(15..35), &mut marker_list);
+
+        let kept: Vec<_> = manager
+            .all()
+            .iter()
+            .map(|o| o.range(&marker_list))
+            .collect();
+        assert_eq!(kept, vec![0..5, 50..60]);
+    }
+
+    #[test]
+    fn test_overlay_remove_in_range_deletes_markers() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = OverlayManager::new();
+
+        let overlay = Overlay::new(
+            &mut marker_list,
+            10..20,
+            OverlayFace::Background { color: Color::Red },
+        );
+        let start_id = overlay.start_marker;
+        let end_id = overlay.end_marker;
+        manager.add(overlay);
+
+        manager.remove_in_range(&(0..50), &mut marker_list);
+
+        assert_eq!(manager.len(), 0);
+        assert_eq!(marker_list.get_position(start_id), None);
+        assert_eq!(marker_list.get_position(end_id), None);
+    }
+
+    #[test]
+    fn test_overlay_remove_in_range_endpoint_semantics() {
+        // Touching at a single endpoint must NOT remove (start == range.end or end == range.start).
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = OverlayManager::new();
+
+        manager.add(Overlay::new(
+            &mut marker_list,
+            10..20,
+            OverlayFace::Background { color: Color::Red },
+        ));
+
+        manager.remove_in_range(&(20..30), &mut marker_list);
+        assert_eq!(manager.len(), 1);
+        manager.remove_in_range(&(0..10), &mut marker_list);
+        assert_eq!(manager.len(), 1);
+        manager.remove_in_range(&(19..21), &mut marker_list);
+        assert_eq!(manager.len(), 0);
     }
 }

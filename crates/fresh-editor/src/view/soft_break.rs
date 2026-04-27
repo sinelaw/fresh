@@ -111,15 +111,17 @@ impl SoftBreakManager {
 
     /// Remove all soft breaks that fall within a byte range and clean up their markers
     pub fn remove_in_range(&mut self, start: usize, end: usize, marker_list: &mut MarkerList) {
-        let markers_to_delete: Vec<_> = self
-            .breaks
-            .iter()
-            .filter(|b| b.in_range(start, end, marker_list))
-            .map(|b| b.marker_id)
-            .collect();
-
+        // Resolve each break's marker position once per call (single retain pass).
         let before = self.breaks.len();
-        self.breaks.retain(|b| !b.in_range(start, end, marker_list));
+        let mut markers_to_delete = Vec::new();
+        self.breaks.retain(|b| {
+            let pos = marker_list.get_position(b.marker_id).unwrap_or(0);
+            let in_range = pos >= start && pos < end;
+            if in_range {
+                markers_to_delete.push(b.marker_id);
+            }
+            !in_range
+        });
 
         for marker_id in markers_to_delete {
             marker_list.delete(marker_id);
@@ -177,5 +179,72 @@ impl SoftBreakManager {
 impl Default for SoftBreakManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ns() -> OverlayNamespace {
+        OverlayNamespace::from_string("test".to_string())
+    }
+
+    #[test]
+    fn test_soft_break_remove_in_range_keeps_only_outside() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(200);
+        let mut manager = SoftBreakManager::new();
+
+        manager.add(&mut marker_list, ns(), 5, 0);
+        manager.add(&mut marker_list, ns(), 25, 0);
+        manager.add(&mut marker_list, ns(), 45, 0);
+        manager.add(&mut marker_list, ns(), 65, 0);
+
+        // Remove [20..50): 25 and 45 are inside, 5 and 65 stay.
+        manager.remove_in_range(20, 50, &mut marker_list);
+
+        let kept: Vec<_> = manager
+            .query_viewport(0, 1000, &marker_list)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(kept, vec![5, 65]);
+    }
+
+    #[test]
+    fn test_soft_break_remove_in_range_endpoint_semantics() {
+        // Half-open: pos == start removed, pos == end kept.
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = SoftBreakManager::new();
+
+        manager.add(&mut marker_list, ns(), 10, 0);
+        manager.add(&mut marker_list, ns(), 20, 0);
+
+        manager.remove_in_range(10, 20, &mut marker_list);
+        let kept: Vec<_> = manager
+            .query_viewport(0, 1000, &marker_list)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(kept, vec![20]);
+    }
+
+    #[test]
+    fn test_soft_break_remove_in_range_bumps_version_only_on_change() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = SoftBreakManager::new();
+
+        manager.add(&mut marker_list, ns(), 10, 0);
+        let v0 = manager.version();
+
+        manager.remove_in_range(50, 60, &mut marker_list);
+        assert_eq!(manager.version(), v0);
+
+        manager.remove_in_range(0, 50, &mut marker_list);
+        assert!(manager.is_empty());
+        assert_ne!(manager.version(), v0);
     }
 }

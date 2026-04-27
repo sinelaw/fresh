@@ -124,15 +124,19 @@ impl ConcealManager {
 
     /// Remove all conceal ranges that overlap with a byte range and clean up their markers
     pub fn remove_in_range(&mut self, range: &Range<usize>, marker_list: &mut MarkerList) {
-        let markers_to_delete: Vec<_> = self
-            .ranges
-            .iter()
-            .filter(|r| r.overlaps(range, marker_list))
-            .flat_map(|r| vec![r.start_marker, r.end_marker])
-            .collect();
-
+        // Resolve each range's marker positions once per call (single retain pass).
         let before = self.ranges.len();
-        self.ranges.retain(|r| !r.overlaps(range, marker_list));
+        let mut markers_to_delete = Vec::new();
+        self.ranges.retain(|r| {
+            let start = marker_list.get_position(r.start_marker).unwrap_or(0);
+            let end = marker_list.get_position(r.end_marker).unwrap_or(0);
+            let overlaps = start < range.end && range.start < end;
+            if overlaps {
+                markers_to_delete.push(r.start_marker);
+                markers_to_delete.push(r.end_marker);
+            }
+            !overlaps
+        });
 
         for marker_id in markers_to_delete {
             marker_list.delete(marker_id);
@@ -220,5 +224,79 @@ impl ConcealManager {
 impl Default for ConcealManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ns() -> OverlayNamespace {
+        OverlayNamespace::from_string("test".to_string())
+    }
+
+    #[test]
+    fn test_conceal_remove_in_range_keeps_only_disjoint() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(200);
+        let mut manager = ConcealManager::new();
+
+        manager.add(&mut marker_list, ns(), 0..5, None);
+        manager.add(&mut marker_list, ns(), 10..20, None);
+        manager.add(&mut marker_list, ns(), 30..40, None);
+        manager.add(&mut marker_list, ns(), 50..60, None);
+
+        manager.remove_in_range(&(15..35), &mut marker_list);
+
+        let kept: Vec<_> = manager
+            .query_viewport(0, 1000, &marker_list)
+            .into_iter()
+            .map(|(r, _)| r)
+            .collect();
+        assert_eq!(kept, vec![0..5, 50..60]);
+    }
+
+    #[test]
+    fn test_conceal_remove_in_range_deletes_markers_and_bumps_version() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = ConcealManager::new();
+
+        manager.add(&mut marker_list, ns(), 10..20, None);
+        let v0 = manager.version();
+
+        manager.remove_in_range(&(0..50), &mut marker_list);
+        assert!(manager.is_empty());
+        assert_ne!(manager.version(), v0);
+    }
+
+    #[test]
+    fn test_conceal_remove_in_range_no_match_keeps_version() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = ConcealManager::new();
+
+        manager.add(&mut marker_list, ns(), 10..20, None);
+        let v0 = manager.version();
+
+        manager.remove_in_range(&(50..60), &mut marker_list);
+        assert!(!manager.is_empty());
+        assert_eq!(manager.version(), v0);
+    }
+
+    #[test]
+    fn test_conceal_remove_in_range_endpoint_semantics() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = ConcealManager::new();
+
+        manager.add(&mut marker_list, ns(), 10..20, None);
+
+        manager.remove_in_range(&(20..30), &mut marker_list);
+        assert!(!manager.is_empty());
+        manager.remove_in_range(&(0..10), &mut marker_list);
+        assert!(!manager.is_empty());
+        manager.remove_in_range(&(19..21), &mut marker_list);
+        assert!(manager.is_empty());
     }
 }
