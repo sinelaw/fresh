@@ -331,6 +331,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
             "src/grammars/autohotkey/AutoHotkey.sublime-syntax",
             "AutoHotkey",
         ),
+        ("src/grammars/racket.sublime-syntax", "Racket"),
     ];
 
     let mut loaded = 0;

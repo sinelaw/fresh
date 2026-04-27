@@ -1,0 +1,135 @@
+%YAML 1.2
+---
+name: Racket
+file_extensions: [rkt, rktd, rktl, scrbl]
+scope: source.racket
+contexts:
+  main:
+    - include: comments
+    - include: lang_directive
+    - include: strings
+    - include: characters
+    - include: keywords
+    - include: constants
+    - include: numbers
+    - include: quoted
+    - include: function_call
+    - include: punctuation
+  comments:
+    - match: '#\|'
+      push:
+        - meta_scope: comment.block.racket
+        - match: '\|#'
+          pop: true
+    - match: ';.*$'
+      scope: comment.line.semicolon.racket
+    - match: '#;'
+      scope: comment.expression.racket
+  lang_directive:
+    - match: '^(#lang)\s+([^\s]+)'
+      captures:
+        1: keyword.control.directive.racket
+        2: entity.name.namespace.racket
+  strings:
+    - match: '#?"'
+      push:
+        - meta_scope: string.quoted.double.racket
+        - match: '\\(x[0-9A-Fa-f]+|u[0-9A-Fa-f]+|U[0-9A-Fa-f]+|[0-7]{1,3}|.)'
+          scope: constant.character.escape.racket
+        - match: '"'
+          pop: true
+    - match: '#rx#?"'
+      push:
+        - meta_scope: string.regexp.racket
+        - match: '\\.'
+          scope: constant.character.escape.racket
+        - match: '"'
+          pop: true
+    - match: '#px#?"'
+      push:
+        - meta_scope: string.regexp.racket
+        - match: '\\.'
+          scope: constant.character.escape.racket
+        - match: '"'
+          pop: true
+  characters:
+    - match: "#\\\\(space|newline|tab|return|null|nul|backspace|rubout|page|linefeed|vtab|U[0-9A-Fa-f]+|u[0-9A-Fa-f]+|.)"
+      scope: constant.character.racket
+  constants:
+    - match: '#[tT](rue)?\b'
+      scope: constant.language.boolean.true.racket
+    - match: '#[fF](alse)?\b'
+      scope: constant.language.boolean.false.racket
+    - match: '\bnull\b'
+      scope: constant.language.null.racket
+    - match: "'\\(\\s*\\)"
+      scope: constant.language.empty-list.racket
+  numbers:
+    - match: '\b#[eEiI]?#?[bB][+-]?[01]+(/[01]+)?\b'
+      scope: constant.numeric.binary.racket
+    - match: '\b#[eEiI]?#?[oO][+-]?[0-7]+(/[0-7]+)?\b'
+      scope: constant.numeric.octal.racket
+    - match: '\b#[eEiI]?#?[xX][+-]?[0-9a-fA-F]+(/[0-9a-fA-F]+)?\b'
+      scope: constant.numeric.hex.racket
+    - match: '[+-]?\b\d+/\d+\b'
+      scope: constant.numeric.rational.racket
+    - match: '[+-]?\b\d+(\.\d+)?([eE][+-]?\d+)?\b'
+      scope: constant.numeric.racket
+    - match: '[+-](inf|nan)\.[0f]'
+      scope: constant.numeric.special.racket
+  quoted:
+    - match: "'"
+      scope: punctuation.definition.quote.racket
+    - match: '`'
+      scope: punctuation.definition.quasiquote.racket
+    - match: ',@?'
+      scope: punctuation.definition.unquote.racket
+  keywords:
+    # Definition forms
+    - match: '(?<=\(|\[|\{)\s*(define|define-values|define-syntax|define-syntax-rule|define-syntaxes|define-for-syntax|define-struct|define-record-type|define-type|define-signature|define-module|define/contract|define/public|define/private|define/override|define/match|define/generic|struct|struct/contract)\b'
+      captures:
+        1: keyword.declaration.racket
+    # Lambda / function forms
+    - match: '(?<=\(|\[|\{)\s*(lambda|λ|case-lambda|opt-lambda|kw-lambda)\b'
+      captures:
+        1: keyword.declaration.function.racket
+    # Binding forms
+    - match: '(?<=\(|\[|\{)\s*(let|let\*|letrec|letrec\*|let-values|let\*-values|letrec-values|let-syntax|letrec-syntax|let-syntaxes|letrec-syntaxes|let/cc|let/ec|fluid-let|parameterize|with-handlers|with-syntax|with-continuation-mark)\b'
+      captures:
+        1: keyword.control.binding.racket
+    # Control flow
+    - match: '(?<=\(|\[|\{)\s*(if|when|unless|cond|case|match|match\*|match-lambda|match-lambda\*|match-let|match-let\*|match-letrec|match-define|begin|begin0|begin-for-syntax|and|or|not|set!|set!-values|delay|force)\b'
+      captures:
+        1: keyword.control.racket
+    # Iteration
+    - match: '(?<=\(|\[|\{)\s*(for|for/list|for/vector|for/hash|for/hasheq|for/hasheqv|for/and|for/or|for/sum|for/product|for/first|for/last|for/fold|for/foldr|for\*|for\*/list|for\*/vector|for\*/hash|for\*/and|for\*/or|for\*/sum|for\*/product|for\*/first|for\*/last|for\*/fold|do)\b'
+      captures:
+        1: keyword.control.iteration.racket
+    # Module / require / provide
+    - match: '(?<=\(|\[|\{)\s*(module|module\+|module\*|require|provide|all-defined-out|all-from-out|except-out|except-in|prefix-out|prefix-in|rename-out|rename-in|only-in|combine-in|relative-in|submod|planet|file|lib|quote|quasiquote|unquote|unquote-splicing|syntax|quasisyntax|unsyntax|unsyntax-splicing)\b'
+      captures:
+        1: keyword.control.import.racket
+    # Class / object
+    - match: '(?<=\(|\[|\{)\s*(class|class\*|class/c|interface|interface\*|mixin|send|send\*|send/apply|send/keyword-apply|inherit|inherit-field|init|init-field|init-rest|field|public|private|protected|override|augment|abstract|new|make-object|instantiate|is-a\?|implementation\?|interface\?)\b'
+      captures:
+        1: keyword.control.class.racket
+    # Contracts
+    - match: '(?<=\(|\[|\{)\s*(contract|contract-out|recontract-out|->|->\*|->d|->i|case->|case-_>|listof|vectorof|hash/c|cons/c|or/c|and/c|not/c|any/c|none/c|flat-contract|flat-named-contract|symbols|integer-in|real-in|natural-number/c|true/c|false/c|printable/c|between/c|=/c|>=/c|<=/c|>/c|</c|recursive-contract)\b'
+      captures:
+        1: keyword.control.contract.racket
+    # Built-in syntactic forms
+    - match: '(?<=\(|\[|\{)\s*(syntax-rules|syntax-case|syntax-id-rules|syntax-parser|syntax-parse|datum->syntax|syntax->datum|free-identifier=\?|bound-identifier=\?|identifier\?|generate-temporaries|local-expand|expand|eval|namespace-require)\b'
+      captures:
+        1: keyword.control.syntax.racket
+    # Common procedures (variable.function-like highlighting)
+    - match: '(?<=\(|\[|\{)\s*(car|cdr|cons|list|list\*|append|reverse|length|map|for-each|filter|foldl|foldr|apply|null\?|pair\?|list\?|empty\?|number\?|integer\?|rational\?|real\?|complex\?|string\?|symbol\?|boolean\?|procedure\?|char\?|vector\?|hash\?|eq\?|eqv\?|equal\?|=|<|>|<=|>=|\+|-|\*|/|quotient|remainder|modulo|abs|min|max|expt|sqrt|exp|log|sin|cos|tan|asin|acos|atan|floor|ceiling|round|truncate|exact->inexact|inexact->exact|number->string|string->number|string-append|string-length|substring|string-ref|string-upcase|string-downcase|string->list|list->string|string->symbol|symbol->string|read|write|display|newline|printf|format|error|exit)\b'
+      captures:
+        1: support.function.builtin.racket
+  function_call:
+    # Highlight the first symbol after an open paren as a function call
+    - match: '(?<=\(|\[|\{)\s*([A-Za-z\-_!?$%&*+./:<=>?@^_~][A-Za-z0-9\-_!?$%&*+./:<=>?@^_~]*)'
+      captures:
+        1: variable.function.racket
+  punctuation:
+    - match: '[\(\)\[\]\{\}]'
+      scope: punctuation.section.parens.racket

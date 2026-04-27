@@ -232,6 +232,8 @@ pub const HYPRLANG_GRAMMAR: &str = include_str!("../../grammars/hyprlang.sublime
 /// From: https://github.com/SALZKARTOFFEEEL/ahk-sublime-syntax (MIT License)
 pub const AUTOHOTKEY_GRAMMAR: &str =
     include_str!("../../grammars/autohotkey/AutoHotkey.sublime-syntax");
+/// Embedded Racket grammar (syntect doesn't include one)
+pub const RACKET_GRAMMAR: &str = include_str!("../../grammars/racket.sublime-syntax");
 
 /// Registry of all available TextMate grammars.
 ///
@@ -645,6 +647,7 @@ impl GrammarRegistry {
             (ASTRO_GRAMMAR, "Astro"),
             (HYPRLANG_GRAMMAR, "Hyprlang"),
             (AUTOHOTKEY_GRAMMAR, "AutoHotkey"),
+            (RACKET_GRAMMAR, "Racket"),
         ];
 
         for (grammar_str, name) in additional_grammars {
@@ -1543,6 +1546,21 @@ mod tests {
                 should_exist,
                 filename
             );
+        }
+    }
+
+    #[test]
+    fn test_racket_grammar_loaded() {
+        let registry = GrammarRegistry::default();
+        for filename in ["main.rkt", "data.rktd", "info.rktl", "doc.scrbl"] {
+            let result = registry.find_syntax_for_file(Path::new(filename));
+            assert!(
+                result.is_some(),
+                "Racket grammar should be available for {}",
+                filename
+            );
+            let entry = registry.find_by_path(Path::new(filename), None).unwrap();
+            assert_eq!(entry.display_name, "Racket", "for {}", filename);
         }
     }
 
