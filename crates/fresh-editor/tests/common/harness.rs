@@ -193,6 +193,13 @@ pub struct HarnessOptions {
     /// Defaults to false (uses empty registry for fast test startup).
     /// Set to true only for tests that need syntax highlighting or shebang detection.
     pub use_full_grammar_registry: bool,
+    /// Force the embedded-plugins fallback to fire regardless of whether
+    /// the test created `<working_dir>/plugins/`. The harness's normal
+    /// "directory presence == user controls plugins" rule is for test
+    /// isolation; tests reproducing user-visible plugin behavior (e.g.
+    /// the #1722 regression test) need to override it to match
+    /// production semantics. Defaults to false.
+    pub force_embedded_plugins: bool,
     /// Per-test fake-devcontainer state. Set by [`HarnessOptions::with_fake_devcontainer`];
     /// moved into the harness on `create()` so the lock + tempdir live as long as the test.
     /// Unix-only: the fake CLI is a bash script that doesn't run on Windows.
@@ -215,9 +222,19 @@ impl HarnessOptions {
             filesystem: None,
             preserve_keybinding_map: false,
             use_full_grammar_registry: false,
+            force_embedded_plugins: false,
             #[cfg(unix)]
             fake_devcontainer: None,
         }
+    }
+
+    /// Force the embedded-plugins fallback to fire regardless of test
+    /// fixtures under `<working_dir>/plugins/`. Use only when reproducing
+    /// production plugin-loading behavior in a test (e.g. issue #1722
+    /// regression).
+    pub fn with_forced_embedded_plugins(mut self) -> Self {
+        self.force_embedded_plugins = true;
+        self
     }
 
     /// Set a custom editor configuration.
@@ -695,8 +712,10 @@ impl EditorTestHarness {
             let target = dir_context.config_dir.join("plugins");
             mirror_plugins_dir(&working_plugins_path, &target)?;
         }
-        // Embedded loads only when the test isn't taking control.
-        let enable_embedded_plugins = !user_controls_plugins;
+        // Embedded loads only when the test isn't taking control. The
+        // `force_embedded_plugins` escape hatch overrides this for tests
+        // that need production plugin-loading semantics (see #1722).
+        let enable_embedded_plugins = options.force_embedded_plugins || !user_controls_plugins;
 
         // Create editor
         let mut editor = Editor::for_test(

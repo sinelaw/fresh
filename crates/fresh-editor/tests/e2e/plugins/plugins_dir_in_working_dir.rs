@@ -17,7 +17,7 @@
 
 #![cfg(all(feature = "plugins", feature = "embed-plugins"))]
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use tempfile::TempDir;
@@ -40,14 +40,17 @@ fn test_empty_plugins_dir_in_working_dir_does_not_hide_embedded_plugins() {
     let user_plugins_dir = working_dir.join("plugins");
     fs::create_dir_all(&user_plugins_dir).unwrap();
 
-    // `with_config_and_working_dir` calls `.without_empty_plugins_dir()`
-    // internally, so the harness will not overwrite our setup — the empty
-    // `plugins/` folder we just created is what Fresh sees on startup.
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
+    // The harness's normal "directory presence == user controls plugins"
+    // rule would suppress embedded loading here, masking the bug we want
+    // to verify. `with_forced_embedded_plugins` opts into production
+    // plugin-loading semantics so this test exercises what a real user
+    // would see.
+    let mut harness = EditorTestHarness::create(
         140,
         40,
-        Default::default(),
-        working_dir.clone(),
+        HarnessOptions::new()
+            .with_working_dir(working_dir.clone())
+            .with_forced_embedded_plugins(),
     )
     .unwrap();
 
