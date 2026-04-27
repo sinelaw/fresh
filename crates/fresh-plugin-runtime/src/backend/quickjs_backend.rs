@@ -1262,16 +1262,7 @@ impl JsEditorApi {
     )]
     #[qjs(rename = "_getLineStartPositionStart")]
     pub fn get_line_start_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         // Use buffer_id 0 for active buffer
         let _ = self
             .command_sender
@@ -1293,15 +1284,7 @@ impl JsEditorApi {
     )]
     #[qjs(rename = "_getLineEndPositionStart")]
     pub fn get_line_end_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         // Use buffer_id 0 for active buffer
         let _ = self.command_sender.send(PluginCommand::GetLineEndPosition {
             buffer_id: BufferId(0),
@@ -1320,15 +1303,7 @@ impl JsEditorApi {
     )]
     #[qjs(rename = "_getBufferLineCountStart")]
     pub fn get_buffer_line_count_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         // Use buffer_id 0 for active buffer
         let _ = self.command_sender.send(PluginCommand::GetBufferLineCount {
             buffer_id: BufferId(0),
@@ -1473,6 +1448,21 @@ impl JsEditorApi {
     }
 
     // === Frame-buffer animations ===
+
+    /// Allocate a fresh request id and register this plugin as the callback owner.
+    /// Every async API method that returns a `request_id` must call this instead
+    /// of duplicating the borrow-mut dance inline.
+    #[plugin_api(skip)]
+    #[qjs(skip)]
+    fn alloc_request_id(&self) -> u64 {
+        let mut id_ref = self.next_request_id.borrow_mut();
+        let id = *id_ref;
+        *id_ref += 1;
+        self.callback_contexts
+            .borrow_mut()
+            .insert(id, self.plugin_name.clone());
+        id
+    }
 
     /// Allocate a fresh animation id from the shared request-id counter.
     /// Not exposed to JS — used internally by `animateArea` /
@@ -2084,15 +2074,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "reloadGrammars", ts_return = "void")]
     #[qjs(rename = "_reloadGrammarsStart")]
     pub fn reload_grammars_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ReloadGrammars {
             callback_id: fresh_core::api::JsCallbackId::new(id),
         });
@@ -2322,16 +2304,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "createCompositeBuffer", ts_return = "number")]
     #[qjs(rename = "_createCompositeBufferStart")]
     pub fn create_composite_buffer_start(&self, opts: CreateCompositeBufferOptions) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
 
         // Track request_id → plugin_name for async resource tracking
         if let Ok(mut owners) = self.async_resource_owners.lock() {
@@ -2414,16 +2387,7 @@ impl JsEditorApi {
         start: u32,
         end: u32,
     ) -> rquickjs::Result<u64> {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record plugin name for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
 
         let _ = self.command_sender.send(PluginCommand::RequestHighlights {
             buffer_id: BufferId(buffer_id as usize),
@@ -3082,16 +3046,7 @@ impl JsEditorApi {
         label: String,
         initial_value: String,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
 
         let _ = self.command_sender.send(PluginCommand::StartPromptAsync {
             label,
@@ -3147,15 +3102,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "getNextKey", ts_return = "KeyEventPayload")]
     #[qjs(rename = "_getNextKeyStart")]
     pub fn get_next_key_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::AwaitNextKey {
             callback_id: JsCallbackId::new(id),
         });
@@ -3351,15 +3298,7 @@ impl JsEditorApi {
     )]
     #[qjs(rename = "_getSplitByLabelStart")]
     pub fn get_split_by_label_start(&self, _ctx: rquickjs::Ctx<'_>, label: String) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GetSplitByLabel {
             label,
             request_id: id,
@@ -3813,16 +3752,7 @@ impl JsEditorApi {
         _ctx: rquickjs::Ctx<'_>,
         opts: fresh_core::api::CreateVirtualBufferOptions,
     ) -> rquickjs::Result<u64> {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
 
         // Convert JsTextPropertyEntry to TextPropertyEntry
         let entries: Vec<TextPropertyEntry> = opts
@@ -3873,16 +3803,7 @@ impl JsEditorApi {
         _ctx: rquickjs::Ctx<'_>,
         opts: fresh_core::api::CreateVirtualBufferInSplitOptions,
     ) -> rquickjs::Result<u64> {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
 
         // Convert JsTextPropertyEntry to TextPropertyEntry
         let entries: Vec<TextPropertyEntry> = opts
@@ -3933,16 +3854,7 @@ impl JsEditorApi {
         _ctx: rquickjs::Ctx<'_>,
         opts: fresh_core::api::CreateVirtualBufferInExistingSplitOptions,
     ) -> rquickjs::Result<u64> {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
 
         // Convert JsTextPropertyEntry to TextPropertyEntry
         let entries: Vec<TextPropertyEntry> = opts
@@ -3987,15 +3899,7 @@ impl JsEditorApi {
         mode: String,
         layout_json: String,
     ) -> rquickjs::Result<u64> {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         if let Ok(mut owners) = self.async_resource_owners.lock() {
             owners.insert(id, self.plugin_name.clone());
         }
@@ -4094,16 +3998,7 @@ impl JsEditorApi {
         args: Vec<String>,
         cwd: rquickjs::function::Opt<String>,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         // Use provided cwd, or fall back to snapshot's working_dir.
         // An explicit empty string is treated the same as omitting the
         // argument — the TS declaration says `cwd?: string`, so scripts
@@ -4151,15 +4046,7 @@ impl JsEditorApi {
         args: Vec<String>,
         cwd: rquickjs::function::Opt<String>,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let effective_cwd = cwd.0.or_else(|| {
             self.state_snapshot
                 .read()
@@ -4262,16 +4149,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "spawnProcessWait", ts_return = "SpawnResult")]
     #[qjs(rename = "_spawnProcessWaitStart")]
     pub fn spawn_process_wait_start(&self, _ctx: rquickjs::Ctx<'_>, process_id: u64) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::SpawnProcessWait {
             process_id,
             callback_id: JsCallbackId::new(id),
@@ -4289,16 +4167,7 @@ impl JsEditorApi {
         start: u32,
         end: u32,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GetBufferText {
             buffer_id: BufferId(buffer_id as usize),
             start: start as usize,
@@ -4312,16 +4181,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "delay", ts_return = "void")]
     #[qjs(rename = "_delayStart")]
     pub fn delay_start(&self, _ctx: rquickjs::Ctx<'_>, duration_ms: u64) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::Delay {
             callback_id: JsCallbackId::new(id),
             duration_ms,
@@ -4343,15 +4203,7 @@ impl JsEditorApi {
         max_results: Option<u32>,
         whole_words: Option<bool>,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GrepProject {
             pattern,
             fixed_string: fixed_string.unwrap_or(true),
@@ -4380,15 +4232,7 @@ impl JsEditorApi {
         max_results: u32,
         whole_words: bool,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self
             .command_sender
             .send(PluginCommand::GrepProjectStreaming {
@@ -4415,15 +4259,7 @@ impl JsEditorApi {
         matches: Vec<Vec<u32>>,
         replacement: String,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         // Convert [[offset, length], ...] to Vec<(usize, usize)>
         let match_pairs: Vec<(usize, usize)> = matches
             .iter()
@@ -4448,16 +4284,7 @@ impl JsEditorApi {
         method: String,
         params: Option<rquickjs::Object<'js>>,
     ) -> rquickjs::Result<u64> {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         // Convert params object to serde_json::Value
         let params_json: Option<serde_json::Value> = params.map(|obj| {
             let val = obj.into_value();
@@ -4486,16 +4313,7 @@ impl JsEditorApi {
         args: Vec<String>,
         cwd: rquickjs::function::Opt<String>,
     ) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            // Record context for this callback
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         // Use id as process_id for simplicity
         let process_id = id;
         // Track process ID for cleanup on unload
@@ -4539,15 +4357,7 @@ impl JsEditorApi {
         _ctx: rquickjs::Ctx<'_>,
         opts: rquickjs::function::Opt<fresh_core::api::CreateTerminalOptions>,
     ) -> rquickjs::Result<u64> {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
 
         let opts = opts.0.unwrap_or(fresh_core::api::CreateTerminalOptions {
             cwd: None,
@@ -4616,15 +4426,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "loadPlugin", ts_return = "boolean")]
     #[qjs(rename = "_loadPluginStart")]
     pub fn load_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, path: String) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::LoadPlugin {
             path: std::path::PathBuf::from(path),
             callback_id: JsCallbackId::new(id),
@@ -4636,15 +4438,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "unloadPlugin", ts_return = "boolean")]
     #[qjs(rename = "_unloadPluginStart")]
     pub fn unload_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::UnloadPlugin {
             name,
             callback_id: JsCallbackId::new(id),
@@ -4656,15 +4450,7 @@ impl JsEditorApi {
     #[plugin_api(async_promise, js_name = "reloadPlugin", ts_return = "boolean")]
     #[qjs(rename = "_reloadPluginStart")]
     pub fn reload_plugin_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ReloadPlugin {
             name,
             callback_id: JsCallbackId::new(id),
@@ -4681,15 +4467,7 @@ impl JsEditorApi {
     )]
     #[qjs(rename = "_listPluginsStart")]
     pub fn list_plugins_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
-        let id = {
-            let mut id_ref = self.next_request_id.borrow_mut();
-            let id = *id_ref;
-            *id_ref += 1;
-            self.callback_contexts
-                .borrow_mut()
-                .insert(id, self.plugin_name.clone());
-            id
-        };
+        let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::ListPlugins {
             callback_id: JsCallbackId::new(id),
         });
