@@ -793,7 +793,7 @@ pub struct ViewTokenWire {
     /// The token content
     pub kind: ViewTokenWireKind,
     /// Optional styling for injected content (only used when source_offset is None)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub style: Option<ViewTokenStyle>,
 }

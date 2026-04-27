@@ -1785,7 +1785,7 @@ mod tests {
 
     #[test]
     fn test_hook_args_to_json_editor_initialized() {
-        let args = HookArgs::EditorInitialized;
+        let args = HookArgs::EditorInitialized {};
         let json = hook_args_to_json(&args).unwrap();
         assert_eq!(json, serde_json::json!({}));
     }

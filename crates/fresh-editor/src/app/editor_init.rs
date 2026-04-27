@@ -787,7 +787,7 @@ impl Editor {
             if editor.plugin_manager.is_active() {
                 editor.plugin_manager.run_hook(
                     "editor_initialized",
-                    crate::services::plugins::hooks::HookArgs::EditorInitialized,
+                    crate::services::plugins::hooks::HookArgs::EditorInitialized {},
                 );
             }
         }
@@ -958,7 +958,7 @@ impl Editor {
         if self.plugin_manager.is_active() {
             self.plugin_manager.run_hook(
                 "plugins_loaded",
-                crate::services::plugins::hooks::HookArgs::PluginsLoaded,
+                crate::services::plugins::hooks::HookArgs::PluginsLoaded {},
             );
         }
     }
@@ -968,7 +968,7 @@ impl Editor {
         #[cfg(feature = "plugins")]
         if self.plugin_manager.is_active() {
             self.plugin_manager
-                .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready);
+                .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready {});
         }
     }
 

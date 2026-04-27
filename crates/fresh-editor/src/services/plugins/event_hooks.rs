@@ -31,7 +31,8 @@ impl EventHooks for Event {
             }),
             Self::Delete { range, .. } => Some(HookArgs::BeforeDelete {
                 buffer_id,
-                range: range.clone(),
+                start: range.start,
+                end: range.end,
             }),
             _ => None, // Most events don't have "before" hooks
         }
@@ -60,7 +61,8 @@ impl EventHooks for Event {
                 ..
             } => Some(HookArgs::AfterDelete {
                 buffer_id,
-                range: range.clone(),
+                start: range.start,
+                end: range.end,
                 deleted_text: deleted_text.clone(),
                 affected_start: range.start,
                 deleted_len: deleted_text.len(),

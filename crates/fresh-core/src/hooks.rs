@@ -4,15 +4,15 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::ops::Range;
 use std::path::PathBuf;
 
 use crate::action::Action;
-use crate::api::{ViewTokenWire, ViewTokenWireKind};
+use crate::api::ViewTokenWire;
 use crate::{BufferId, CursorId, SplitId};
 
 /// Arguments passed to hook callbacks
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(untagged)]
 pub enum HookArgs {
     /// Before a file is opened
     BeforeFileOpen { path: PathBuf },
@@ -56,13 +56,15 @@ pub enum HookArgs {
     /// Before text is deleted
     BeforeDelete {
         buffer_id: BufferId,
-        range: Range<usize>,
+        start: usize,
+        end: usize,
     },
 
     /// After text was deleted
     AfterDelete {
         buffer_id: BufferId,
-        range: Range<usize>,
+        start: usize,
+        end: usize,
         deleted_text: String,
         /// Byte position where the deletion occurred
         affected_start: usize,
@@ -112,17 +114,17 @@ pub enum HookArgs {
     Idle { milliseconds: u64 },
 
     /// Editor is initializing
-    EditorInitialized,
+    EditorInitialized {},
 
     /// All plugin packages + init.ts have been loaded. Fires after the
     /// plugin discovery loop and before session restore — the lifecycle
     /// hook for code that wants to configure a plugin via its
     /// getPluginApi(...) surface. See design §3.3 (phase 2).
-    PluginsLoaded,
+    PluginsLoaded {},
 
     /// Editor has completed startup: plugins are loaded, session is
     /// restored, and the active buffer exists. Design §3.3 (phase 3).
-    Ready,
+    Ready {},
 
     /// The editor's active authority changed (e.g. local → container,
     /// container → local). Fires after the new authority is in place
@@ -333,7 +335,7 @@ pub enum HookArgs {
     Resize { width: u16, height: u16 },
 
     /// Terminal focus was gained (e.g. user switched back to the editor)
-    FocusGained,
+    FocusGained {},
 }
 
 /// Information about a single line for the LinesChanged hook
@@ -419,382 +421,13 @@ impl Default for HookRegistry {
     }
 }
 
-/// Convert HookArgs to a serde_json::Value for plugin communication
+/// Convert HookArgs to a serde_json::Value for plugin communication.
+///
+/// `HookArgs` is `#[serde(untagged)]`, so each variant serializes as its
+/// fields only — no discriminant wrapper. Empty struct variants (`{}`) produce
+/// an empty JSON object rather than `null`.
 pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
-    let json_value = match args {
-        // These four variants all carry only a buffer_id and produce the same payload shape.
-        HookArgs::RenderStart { buffer_id }
-        | HookArgs::BufferActivated { buffer_id }
-        | HookArgs::BufferDeactivated { buffer_id }
-        | HookArgs::BufferClosed { buffer_id } => {
-            serde_json::json!({ "buffer_id": buffer_id })
-        }
-        HookArgs::RenderLine {
-            buffer_id,
-            line_number,
-            byte_start,
-            byte_end,
-            content,
-        } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "line_number": line_number,
-                "byte_start": byte_start,
-                "byte_end": byte_end,
-                "content": content,
-            })
-        }
-        HookArgs::DiagnosticsUpdated { uri, count } => {
-            serde_json::json!({
-                "uri": uri,
-                "count": count,
-            })
-        }
-        HookArgs::CursorMoved {
-            buffer_id,
-            cursor_id,
-            old_position,
-            new_position,
-            line,
-            text_properties,
-        } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "cursor_id": cursor_id,
-                "old_position": old_position,
-                "new_position": new_position,
-                "line": line,
-                "text_properties": text_properties,
-            })
-        }
-        HookArgs::BeforeInsert {
-            buffer_id,
-            position,
-            text,
-        } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "position": position,
-                "text": text,
-            })
-        }
-        HookArgs::AfterInsert {
-            buffer_id,
-            position,
-            text,
-            affected_start,
-            affected_end,
-            start_line,
-            end_line,
-            lines_added,
-        } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "position": position,
-                "text": text,
-                "affected_start": affected_start,
-                "affected_end": affected_end,
-                "start_line": start_line,
-                "end_line": end_line,
-                "lines_added": lines_added,
-            })
-        }
-        HookArgs::BeforeDelete { buffer_id, range } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "start": range.start,
-                "end": range.end,
-            })
-        }
-        HookArgs::AfterDelete {
-            buffer_id,
-            range,
-            deleted_text,
-            affected_start,
-            deleted_len,
-            start_line,
-            end_line,
-            lines_removed,
-        } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "start": range.start,
-                "end": range.end,
-                "deleted_text": deleted_text,
-                "affected_start": affected_start,
-                "deleted_len": deleted_len,
-                "start_line": start_line,
-                "end_line": end_line,
-                "lines_removed": lines_removed,
-            })
-        }
-        HookArgs::BeforeFileOpen { path } => {
-            serde_json::json!({ "path": path.to_string_lossy() })
-        }
-        // AfterFileOpen, BeforeFileSave, and AfterFileSave all carry path + buffer_id.
-        HookArgs::AfterFileOpen { path, buffer_id }
-        | HookArgs::BeforeFileSave { path, buffer_id }
-        | HookArgs::AfterFileSave { path, buffer_id } => {
-            serde_json::json!({
-                "path": path.to_string_lossy(),
-                "buffer_id": buffer_id,
-            })
-        }
-        HookArgs::PreCommand { action } | HookArgs::PostCommand { action } => {
-            serde_json::json!({ "action": format!("{:?}", action) })
-        }
-        HookArgs::Idle { milliseconds } => {
-            serde_json::json!({ "milliseconds": milliseconds })
-        }
-        HookArgs::EditorInitialized
-        | HookArgs::PluginsLoaded
-        | HookArgs::Ready
-        | HookArgs::FocusGained => serde_json::json!({}),
-        HookArgs::AuthorityChanged { label } => {
-            serde_json::json!({ "label": label })
-        }
-        // PromptChanged and PromptCancelled share the same { prompt_type, input } payload.
-        HookArgs::PromptChanged { prompt_type, input }
-        | HookArgs::PromptCancelled { prompt_type, input } => {
-            serde_json::json!({
-                "prompt_type": prompt_type,
-                "input": input,
-            })
-        }
-        HookArgs::PromptConfirmed {
-            prompt_type,
-            input,
-            selected_index,
-        } => {
-            serde_json::json!({
-                "prompt_type": prompt_type,
-                "input": input,
-                "selected_index": selected_index,
-            })
-        }
-        HookArgs::PromptSelectionChanged {
-            prompt_type,
-            selected_index,
-        } => {
-            serde_json::json!({
-                "prompt_type": prompt_type,
-                "selected_index": selected_index,
-            })
-        }
-        HookArgs::KeyboardShortcuts { bindings } => {
-            let entries: Vec<serde_json::Value> = bindings
-                .iter()
-                .map(|(key, action)| serde_json::json!({ "key": key, "action": action }))
-                .collect();
-            serde_json::json!({ "bindings": entries })
-        }
-        HookArgs::LspReferences { symbol, locations } => {
-            let locs: Vec<serde_json::Value> = locations
-                .iter()
-                .map(|loc| {
-                    serde_json::json!({
-                        "file": loc.file,
-                        "line": loc.line,
-                        "column": loc.column,
-                    })
-                })
-                .collect();
-            serde_json::json!({ "symbol": symbol, "locations": locs })
-        }
-        HookArgs::LinesChanged { buffer_id, lines } => {
-            let lines_json: Vec<serde_json::Value> = lines
-                .iter()
-                .map(|line| {
-                    serde_json::json!({
-                        "line_number": line.line_number,
-                        "byte_start": line.byte_start,
-                        "byte_end": line.byte_end,
-                        "content": line.content,
-                    })
-                })
-                .collect();
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "lines": lines_json,
-            })
-        }
-        HookArgs::ViewTransformRequest {
-            buffer_id,
-            split_id,
-            viewport_start,
-            viewport_end,
-            tokens,
-            cursor_positions,
-        } => {
-            let tokens_json: Vec<serde_json::Value> = tokens
-                .iter()
-                .map(|token| {
-                    let kind_json = match &token.kind {
-                        ViewTokenWireKind::Text(s) => serde_json::json!({ "Text": s }),
-                        ViewTokenWireKind::Newline => serde_json::json!("Newline"),
-                        ViewTokenWireKind::Space => serde_json::json!("Space"),
-                        ViewTokenWireKind::Break => serde_json::json!("Break"),
-                        ViewTokenWireKind::BinaryByte(b) => serde_json::json!({ "BinaryByte": b }),
-                    };
-                    serde_json::json!({
-                        "source_offset": token.source_offset,
-                        "kind": kind_json,
-                    })
-                })
-                .collect();
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "split_id": split_id,
-                "viewport_start": viewport_start,
-                "viewport_end": viewport_end,
-                "tokens": tokens_json,
-                "cursor_positions": cursor_positions,
-            })
-        }
-        HookArgs::MouseClick {
-            column,
-            row,
-            button,
-            modifiers,
-            content_x,
-            content_y,
-            buffer_id,
-            buffer_row,
-            buffer_col,
-        } => {
-            serde_json::json!({
-                "column": column,
-                "row": row,
-                "button": button,
-                "modifiers": modifiers,
-                "content_x": content_x,
-                "content_y": content_y,
-                "buffer_id": buffer_id,
-                "buffer_row": buffer_row,
-                "buffer_col": buffer_col,
-            })
-        }
-        HookArgs::MouseMove {
-            column,
-            row,
-            content_x,
-            content_y,
-        } => {
-            serde_json::json!({
-                "column": column,
-                "row": row,
-                "content_x": content_x,
-                "content_y": content_y,
-            })
-        }
-        HookArgs::LspServerRequest {
-            language,
-            method,
-            server_command,
-            params,
-        } => {
-            serde_json::json!({
-                "language": language,
-                "method": method,
-                "server_command": server_command,
-                "params": params,
-            })
-        }
-        HookArgs::ViewportChanged {
-            split_id,
-            buffer_id,
-            top_byte,
-            top_line,
-            width,
-            height,
-        } => {
-            serde_json::json!({
-                "split_id": split_id,
-                "buffer_id": buffer_id,
-                "top_byte": top_byte,
-                "top_line": top_line,
-                "width": width,
-                "height": height,
-            })
-        }
-        HookArgs::LspServerError {
-            language,
-            server_command,
-            error_type,
-            message,
-        } => {
-            serde_json::json!({
-                "language": language,
-                "server_command": server_command,
-                "error_type": error_type,
-                "message": message,
-            })
-        }
-        HookArgs::LspStatusClicked {
-            language,
-            has_error,
-            missing_servers,
-            user_dismissed,
-        } => {
-            serde_json::json!({
-                "language": language,
-                "has_error": has_error,
-                "missing_servers": missing_servers,
-                "user_dismissed": user_dismissed,
-            })
-        }
-        HookArgs::ActionPopupResult {
-            popup_id,
-            action_id,
-        } => {
-            serde_json::json!({
-                "popup_id": popup_id,
-                "action_id": action_id,
-            })
-        }
-        HookArgs::ProcessOutput { process_id, data } => {
-            serde_json::json!({
-                "process_id": process_id,
-                "data": data,
-            })
-        }
-        HookArgs::LanguageChanged {
-            buffer_id,
-            language,
-        } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "language": language,
-            })
-        }
-        HookArgs::ThemeInspectKey { theme_name, key } => {
-            serde_json::json!({
-                "theme_name": theme_name,
-                "key": key,
-            })
-        }
-        HookArgs::MouseScroll {
-            buffer_id,
-            delta,
-            col,
-            row,
-        } => {
-            serde_json::json!({
-                "buffer_id": buffer_id,
-                "delta": delta,
-                "col": col,
-                "row": row,
-            })
-        }
-        HookArgs::Resize { width, height } => {
-            serde_json::json!({
-                "width": width,
-                "height": height,
-            })
-        }
-    };
-
-    Ok(json_value)
+    Ok(serde_json::to_value(args)?)
 }
 
 #[cfg(test)]
@@ -839,7 +472,7 @@ mod tests {
     #[test]
     fn run_hooks_all_true_and_short_circuits_on_false() {
         let mut reg = HookRegistry::new();
-        let args = HookArgs::EditorInitialized;
+        let args = HookArgs::EditorInitialized {};
 
         // Unknown hook: treated as "no callbacks" → true.
         assert!(reg.run_hooks("unknown", &args));
@@ -893,5 +526,35 @@ mod tests {
         .unwrap();
         assert_eq!(json["uri"], "file:///x.rs");
         assert_eq!(json["count"], 7);
+    }
+
+    #[test]
+    fn hook_args_to_json_empty_variants_produce_empty_object() {
+        for args in [
+            HookArgs::EditorInitialized {},
+            HookArgs::PluginsLoaded {},
+            HookArgs::Ready {},
+            HookArgs::FocusGained {},
+        ] {
+            let json = hook_args_to_json(&args).unwrap();
+            assert_eq!(
+                json,
+                serde_json::json!({}),
+                "variant should serialize as {{}}"
+            );
+        }
+    }
+
+    #[test]
+    fn hook_args_to_json_delete_fields_are_flat() {
+        let json = hook_args_to_json(&HookArgs::BeforeDelete {
+            buffer_id: crate::BufferId(1),
+            start: 10,
+            end: 20,
+        })
+        .unwrap();
+        assert_eq!(json["start"], 10);
+        assert_eq!(json["end"], 20);
+        assert!(json.get("range").is_none(), "range must not be nested");
     }
 }

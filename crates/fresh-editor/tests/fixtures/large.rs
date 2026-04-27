@@ -1629,7 +1629,7 @@ impl Editor {
             if editor.plugin_manager.is_active() {
                 editor.plugin_manager.run_hook(
                     "editor_initialized",
-                    crate::services::plugins::hooks::HookArgs::EditorInitialized,
+                    crate::services::plugins::hooks::HookArgs::EditorInitialized {},
                 );
             }
         }
@@ -3015,7 +3015,8 @@ impl Editor {
                     "after_delete",
                     crate::services::plugins::hooks::HookArgs::AfterDelete {
                         buffer_id,
-                        range: range.clone(),
+                        start: range.start,
+                        end: range.end,
                         deleted_text: deleted_text.clone(),
                         // Byte position and length of deleted content
                         affected_start: delete_start,

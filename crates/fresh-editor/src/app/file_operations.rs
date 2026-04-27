@@ -668,7 +668,7 @@ impl Editor {
                     self.dir_mod_times.insert(path, current_mtime);
                     self.plugin_manager.run_hook(
                         "focus_gained",
-                        crate::services::plugins::hooks::HookArgs::FocusGained,
+                        crate::services::plugins::hooks::HookArgs::FocusGained {},
                     );
                     true
                 } else {

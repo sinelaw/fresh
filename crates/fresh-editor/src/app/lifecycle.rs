@@ -243,7 +243,7 @@ impl Editor {
     pub fn focus_gained(&mut self) {
         self.plugin_manager.run_hook(
             "focus_gained",
-            crate::services::plugins::hooks::HookArgs::FocusGained,
+            crate::services::plugins::hooks::HookArgs::FocusGained {},
         );
     }
 

@@ -579,7 +579,8 @@ impl Editor {
                     "after_delete",
                     crate::services::plugins::hooks::HookArgs::AfterDelete {
                         buffer_id,
-                        range: range.clone(),
+                        start: range.start,
+                        end: range.end,
                         deleted_text: deleted_text.clone(),
                         // Byte position and length of deleted content
                         affected_start: delete_start,
