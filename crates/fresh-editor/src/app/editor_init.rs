@@ -105,6 +105,9 @@ impl Editor {
     ///
     /// By default uses empty grammar registry for fast initialization.
     /// Pass `Some(registry)` for tests that need syntax highlighting or shebang detection.
+    ///
+    /// `enable_plugins` controls whether plugins (embedded + user) load — pass
+    /// `false` for test isolation (no plugins at all).
     #[allow(clippy::too_many_arguments)]
     pub fn for_test(
         config: Config,
@@ -116,6 +119,7 @@ impl Editor {
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         time_source: Option<SharedTimeSource>,
         grammar_registry: Option<Arc<crate::primitives::grammar::GrammarRegistry>>,
+        enable_plugins: bool,
     ) -> AnyhowResult<Self> {
         let mut grammar_registry =
             grammar_registry.unwrap_or_else(crate::primitives::grammar::GrammarRegistry::empty);
@@ -134,7 +138,7 @@ impl Editor {
             height,
             working_dir,
             filesystem,
-            true,
+            enable_plugins,
             dir_context,
             time_source,
             color_capability,

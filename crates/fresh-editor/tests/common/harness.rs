@@ -131,6 +131,26 @@ pub fn copy_plugin_lib(plugins_dir: &Path) {
     }
 }
 
+/// Recursively copy `<src>` into `<dst>`, creating `<dst>` if missing.
+/// Existing files at the destination are overwritten (for re-runs).
+fn mirror_plugins_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            mirror_plugins_dir(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Configuration options for creating an EditorTestHarness.
 ///
 /// Use the builder pattern to configure the harness:
@@ -150,8 +170,15 @@ pub struct HarnessOptions {
     /// Create a "project_root" subdirectory for deterministic paths in snapshots.
     /// When true, `project_dir()` returns this subdirectory path.
     pub create_project_root: bool,
-    /// Create an empty plugins directory to prevent embedded plugin loading.
-    /// Defaults to true for test isolation.
+    /// Disable plugin loading (embedded + user) for test isolation.
+    /// Defaults to true. Set to false (via `without_empty_plugins_dir()`)
+    /// for tests that exercise plugin behavior — they then either pre-
+    /// populate `<working_dir>/plugins/` (which the harness mirrors into
+    /// `<config_dir>/plugins/`) or rely on the embedded plugins fallback.
+    ///
+    /// (Field name kept for source-compat with existing callers; the
+    /// historical "create empty plugins dir" mechanism is gone — see
+    /// issue #1722.)
     pub create_empty_plugins_dir: bool,
     /// Shared DirectoryContext. If None, creates a new one for test isolation.
     pub dir_context: Option<DirectoryContext>,
@@ -175,7 +202,7 @@ pub struct HarnessOptions {
 
 impl HarnessOptions {
     /// Create new options with default settings.
-    /// - `create_empty_plugins_dir`: true (prevents embedded plugin loading)
+    /// - `create_empty_plugins_dir`: true (disables plugin loading for isolation)
     /// - `create_project_root`: false
     pub fn new() -> Self {
         Self {
@@ -210,21 +237,24 @@ impl HarnessOptions {
     /// Use `harness.project_dir()` to get the path.
     pub fn with_project_root(mut self) -> Self {
         self.create_project_root = true;
-        // When using project_root, don't auto-create plugins dir inside it
-        // to avoid breaking tests that check project contents or create their own plugins
+        // Tests using project_root often install their own plugin fixtures
+        // and need plugin loading enabled; opt them out of the no-plugins
+        // default.
         self.create_empty_plugins_dir = false;
         self
     }
 
-    /// Create an empty plugins directory to prevent embedded plugin loading.
-    /// This is enabled by default for test isolation.
+    /// Disable plugin loading for the test (default for isolation). Method
+    /// name kept for source-compat with existing tests.
     pub fn with_empty_plugins_dir(mut self) -> Self {
         self.create_empty_plugins_dir = true;
         self
     }
 
-    /// Don't create an empty plugins directory.
-    /// Embedded plugins may be loaded if no plugins directory exists.
+    /// Enable plugin loading for the test (embedded plugins fire, and any
+    /// fixtures in `<working_dir>/plugins/` are mirrored into the editor's
+    /// scanned `<config_dir>/plugins/`). Method name kept for source-compat
+    /// with existing tests.
     pub fn without_empty_plugins_dir(mut self) -> Self {
         self.create_empty_plugins_dir = false;
         self
@@ -536,13 +566,15 @@ impl EditorTestHarness {
                 .expect("temp_dir must exist when no working_dir provided")
         };
 
-        // Create empty plugins directory if requested
-        if options.create_empty_plugins_dir {
-            let plugins_dir = working_dir.join("plugins");
-            if !plugins_dir.exists() {
-                std::fs::create_dir(&plugins_dir)?;
-            }
-        }
+        // Plugin loading isolation. Historically the harness created an
+        // empty `<working_dir>/plugins/` to suppress embedded plugin
+        // loading via the editor's "if `plugin_dirs.is_empty()`" gate.
+        // The editor no longer scans `<working_dir>/plugins/` (issue
+        // #1722), so we now achieve the same isolation by disabling
+        // plugin loading entirely at the editor level when this flag
+        // is set. The flag/method names are kept for source-compat
+        // with existing tests.
+        let enable_plugins_for_editor = !options.create_empty_plugins_dir;
 
         // Get or create DirectoryContext
         let dir_context = options.dir_context.unwrap_or_else(|| {
@@ -628,6 +660,20 @@ impl EditorTestHarness {
             None // Use empty registry for fast test startup
         };
 
+        // Mirror any plugins the test pre-populated under
+        // `<working_dir>/plugins/` into `<config_dir>/plugins/` (which the
+        // editor scans). Tests historically set up plugin fixtures via
+        // `copy_plugin()` against `working_dir/plugins/`; the editor no
+        // longer scans that path (issue #1722), so we forward the fixtures
+        // here to keep the test API working without touching every caller.
+        if enable_plugins_for_editor {
+            let working_plugins = working_dir.join("plugins");
+            if working_plugins.is_dir() {
+                let target = dir_context.config_dir.join("plugins");
+                mirror_plugins_dir(&working_plugins, &target)?;
+            }
+        }
+
         // Create editor
         let mut editor = Editor::for_test(
             config,
@@ -639,6 +685,7 @@ impl EditorTestHarness {
             filesystem,
             Some(time_source),
             grammar_registry,
+            enable_plugins_for_editor,
         )?;
 
         // Process any pending plugin commands

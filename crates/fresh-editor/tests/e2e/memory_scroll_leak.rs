@@ -156,8 +156,9 @@ fn test_page_down_to_bottom_crossterm_backend_no_memory_explosion() {
         dir_context,
         fresh::view::color_support::ColorCapability::TrueColor,
         filesystem,
-        None, // time source
-        None, // grammar registry
+        None,  // time source
+        None,  // grammar registry
+        false, // enable_plugins (memory test doesn't need them)
     )
     .unwrap();
     editor.process_async_messages();
