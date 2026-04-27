@@ -16,8 +16,8 @@ use ts_rs::{Config as TsConfig, TS};
 
 use fresh_core::api::{
     ActionPopupAction, ActionPopupOptions, ActionSpec, AnimationRect, BackgroundProcessResult,
-    BufferInfo, BufferSavedDiff, CompositeHunk, CompositeLayoutConfig, CompositePaneStyle,
-    CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
+    BufferGroupResult, BufferInfo, BufferSavedDiff, CompositeHunk, CompositeLayoutConfig,
+    CompositePaneStyle, CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
@@ -101,6 +101,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Return types
         "TextPropertiesAtCursor" => Some(TextPropertiesAtCursor::decl(&cfg)),
         "VirtualBufferResult" => Some(VirtualBufferResult::decl(&cfg)),
+        "BufferGroupResult" => Some(BufferGroupResult::decl(&cfg)),
 
         // Prompt and directory types
         "PromptSuggestion" | "Suggestion" => Some(Suggestion::decl(&cfg)),
@@ -158,6 +159,7 @@ type AuthoritySpawner =
       container_id: string;
       user?: string | null;
       workspace?: string | null;
+      env?: [string, string][];
     };
 
 type AuthorityTerminalWrapper =
@@ -500,14 +502,23 @@ interface HookEventMap {
 interface EditorAPI {
   on<K extends keyof HookEventMap>(
     eventName: K,
-    handler: (args: HookEventMap[K]) => void,
+    handler: (args: HookEventMap[K]) => boolean | void | Promise<boolean | void>,
   ): void;
   on<K extends keyof HookEventMap>(eventName: K, handlerName: string): void;
   off<K extends keyof HookEventMap>(
     eventName: K,
-    handler: (args: HookEventMap[K]) => void,
+    handler: (args: HookEventMap[K]) => boolean | void | Promise<boolean | void>,
   ): void;
   off<K extends keyof HookEventMap>(eventName: K, handlerName: string): void;
+  /**
+   * Create a buffer group: multiple panels appearing as one tab.
+   * This is an async runtime binding (not a direct #[qjs] method).
+   */
+  createBufferGroup(
+    name: string,
+    mode: string,
+    layout: unknown,
+  ): Promise<BufferGroupResult>;
 }
 "#;
 

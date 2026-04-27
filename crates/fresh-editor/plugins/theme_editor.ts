@@ -1660,7 +1660,7 @@ function findMatchingColor(input: string): string | null {
 
 
 // Register prompt handlers
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
   editor.debug(`[theme_editor] onThemeSelectInitialPromptConfirmed called with: ${JSON.stringify(args)}`);
   if (args.prompt_type !== "theme-select-initial") {
     editor.debug(`[theme_editor] prompt_type mismatch, expected 'theme-select-initial', got '${args.prompt_type}'`);
@@ -1770,7 +1770,7 @@ editor.on("prompt_confirmed", (args) => {
 
   return true;
 });
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
   if (args.prompt_type !== "theme-save-as") return true;
 
   const name = args.input.trim();
@@ -1843,7 +1843,7 @@ editor.on("prompt_confirmed", (args) => {
 
   return false;
 });
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
   if (args.prompt_type !== "theme-overwrite-confirm") return true;
 
   const response = args.input.trim().toLowerCase();
@@ -1865,7 +1865,7 @@ editor.on("prompt_confirmed", (args) => {
 
   return false;
 });
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
   if (args.prompt_type !== "theme-delete-confirm") return true;
 
   const value = args.input.trim();
@@ -2166,7 +2166,7 @@ editor.on("buffer_closed", (data) => {
  */
 
 
-editor.on("theme_inspect_key", (data) => {
+editor.on("theme_inspect_key", async (data) => {
   // If already open, focus and navigate to the key
   if (isThemeEditorOpen()) {
     if (state.bufferId !== null) {

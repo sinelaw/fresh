@@ -1894,7 +1894,7 @@ function lastBuildLogKey(): string {
 /// new one. Returns the chosen split id.
 function resolvePanelSplit(): number {
   if (panelSplitId !== null) {
-    const stillAlive = editor.listSplits().some((s) => s.id === panelSplitId);
+    const stillAlive = editor.listSplits().some((s) => s.splitId === panelSplitId);
     if (stillAlive) return panelSplitId;
     panelSplitId = null;
   }
@@ -2391,7 +2391,7 @@ registerHandler("devcontainer_on_attach_popup", devcontainer_on_attach_popup);
 // Event Handlers
 // =============================================================================
 
-editor.on("prompt_confirmed", (data) => {
+editor.on("prompt_confirmed", async (data) => {
   if (data.prompt_type !== "devcontainer-lifecycle") return;
 
   const cmdName = data.input;

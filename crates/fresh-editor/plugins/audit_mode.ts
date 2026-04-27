@@ -54,6 +54,7 @@ interface Hunk {
   oldRange: { start: number; end: number };  // old file line range
   type: 'add' | 'remove' | 'modify';
   lines: string[];
+  status?: string;
   contextHeader: string;
   byteOffset: number; // Position in the virtual buffer
   gitStatus?: 'staged' | 'unstaged' | 'untracked';
@@ -3489,7 +3490,7 @@ editor.on("prompt_confirmed", (args) => {
     pendingCommentInfo = null;
     return true;
 });
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
     if (args.prompt_type !== "review-discard-confirm") return true;
 
     const response = args.input.trim().toLowerCase();
@@ -3510,7 +3511,7 @@ editor.on("prompt_confirmed", (args) => {
     pendingDiscardFile = null;
     return false;
 });
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
     if (args.prompt_type !== "review-discard-hunk-confirm") return true;
     const response = args.input.trim().toLowerCase();
     if (response === "discard" || args.selected_index === 0) {
@@ -3730,7 +3731,7 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
 
     updateMagitDisplay();
 
-    editor.focusBufferGroupPanel(state.groupId, "diff");
+    editor.focusBufferGroupPanel(state.groupId!, "diff");
 
     editor.on("resize", onReviewDiffResize);
     updateReviewStatus();

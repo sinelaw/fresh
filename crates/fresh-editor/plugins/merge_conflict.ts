@@ -1711,7 +1711,7 @@ registerHandler("merge_show_help", merge_show_help);
 // Hook Registration
 // =============================================================================
 
-editor.on("buffer_activated", (data) => {
+editor.on("buffer_activated", async (data) => {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
@@ -1736,7 +1736,7 @@ editor.on("buffer_activated", (data) => {
     // Not in git repo or other error, ignore
   }
 });
-editor.on("after_file_open", (data) => {
+editor.on("after_file_open", async (data) => {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 

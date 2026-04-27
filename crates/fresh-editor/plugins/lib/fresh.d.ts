@@ -692,15 +692,7 @@ type AuthoritySpawner = {
 	container_id: string;
 	user?: string | null;
 	workspace?: string | null;
-	/**
-	 * Captured `userEnvProbe` env (typically PATH/HOME/LANG/...) applied
-	 * to every `docker exec` the spawner runs. Plugins fill this from a
-	 * one-shot `bash -lic env` against the just-up container so LSP
-	 * `command_exists` and `spawn_stdio` see binaries on shell-only PATH
-	 * entries (e.g. `~/.local/bin`). Optional; empty = use container's
-	 * bare exec env.
-	 */
-	env?: Array<[string, string]>;
+	env?: [string, string][];
 };
 type AuthorityTerminalWrapper = {
 	kind: "host-shell";
@@ -2048,4 +2040,255 @@ interface EditorAPI {
 */
 interface EditorAPI {
 	getPluginApi<K extends keyof FreshPluginRegistry>(name: K): FreshPluginRegistry[K] | null;
+}
+/**
+* Maps every hook event name to its payload type.
+*
+* Payloads match the flat JSON produced by `hook_args_to_json` on the Rust
+* side (`HookArgs` is `#[serde(untagged)]`, so each variant serializes as its
+* fields only). The TypeScript types here are derived directly from the Rust
+* field definitions and must be kept in sync with `fresh-core/src/hooks.rs`.
+*
+* `action` in `pre_command`/`post_command` is the serde JSON of the `Action`
+* enum: unit variants serialize as a plain string (e.g. `"MoveLeft"`),
+* tuple variants as a single-key object (e.g. `{"InsertChar": "a"}`).
+*/
+interface HookEventMap {
+	// ── lifecycle ────────────────────────────────────────────────────────────
+	editor_initialized: Record<string, never>;
+	plugins_loaded: Record<string, never>;
+	ready: Record<string, never>;
+	focus_gained: Record<string, never>;
+	authority_changed: {
+		label: string;
+	};
+	// ── buffer lifecycle ─────────────────────────────────────────────────────
+	buffer_activated: {
+		buffer_id: number;
+	};
+	buffer_deactivated: {
+		buffer_id: number;
+	};
+	buffer_closed: {
+		buffer_id: number;
+	};
+	// ── file I/O ─────────────────────────────────────────────────────────────
+	before_file_open: {
+		path: string;
+	};
+	after_file_open: {
+		path: string;
+		buffer_id: number;
+	};
+	before_file_save: {
+		path: string;
+		buffer_id: number;
+	};
+	after_file_save: {
+		path: string;
+		buffer_id: number;
+	};
+	// ── text edits ───────────────────────────────────────────────────────────
+	before_insert: {
+		buffer_id: number;
+		position: number;
+		text: string;
+	};
+	after_insert: {
+		buffer_id: number;
+		position: number;
+		text: string;
+		affected_start: number;
+		affected_end: number;
+		start_line: number;
+		end_line: number;
+		lines_added: number;
+	};
+	before_delete: {
+		buffer_id: number;
+		start: number;
+		end: number;
+	};
+	after_delete: {
+		buffer_id: number;
+		start: number;
+		end: number;
+		deleted_text: string;
+		affected_start: number;
+		deleted_len: number;
+		start_line: number;
+		end_line: number;
+		lines_removed: number;
+	};
+	// ── cursor & viewport ────────────────────────────────────────────────────
+	cursor_moved: {
+		buffer_id: number;
+		cursor_id: number;
+		old_position: number;
+		new_position: number;
+		line: number;
+		text_properties: Record<string, unknown>[];
+	};
+	viewport_changed: {
+		split_id: number;
+		buffer_id: number;
+		top_byte: number;
+		top_line: number | null;
+		width: number;
+		height: number;
+	};
+	// ── rendering ────────────────────────────────────────────────────────────
+	render_start: {
+		buffer_id: number;
+	};
+	render_line: {
+		buffer_id: number;
+		line_number: number;
+		byte_start: number;
+		byte_end: number;
+		content: string;
+	};
+	lines_changed: {
+		buffer_id: number;
+		lines: {
+			line_number: number;
+			byte_start: number;
+			byte_end: number;
+			content: string;
+		}[];
+	};
+	view_transform_request: {
+		buffer_id: number;
+		split_id: number;
+		viewport_start: number;
+		viewport_end: number;
+		tokens: ViewTokenWire[];
+		cursor_positions: number[];
+	};
+	// ── commands ─────────────────────────────────────────────────────────────
+	pre_command: {
+		action: string | Record<string, unknown>;
+	};
+	post_command: {
+		action: string | Record<string, unknown>;
+	};
+	idle: {
+		milliseconds: number;
+	};
+	resize: {
+		width: number;
+		height: number;
+	};
+	// ── prompts ──────────────────────────────────────────────────────────────
+	prompt_changed: {
+		prompt_type: string;
+		input: string;
+	};
+	prompt_confirmed: {
+		prompt_type: string;
+		input: string;
+		selected_index: number | null;
+	};
+	prompt_cancelled: {
+		prompt_type: string;
+		input: string;
+	};
+	prompt_selection_changed: {
+		prompt_type: string;
+		selected_index: number;
+	};
+	// ── mouse ────────────────────────────────────────────────────────────────
+	mouse_click: MouseClickHookArgs;
+	mouse_move: {
+		column: number;
+		row: number;
+		content_x: number;
+		content_y: number;
+	};
+	mouse_scroll: {
+		buffer_id: number;
+		delta: number;
+		col: number;
+		row: number;
+	};
+	// ── LSP ──────────────────────────────────────────────────────────────────
+	diagnostics_updated: {
+		uri: string;
+		count: number;
+	};
+	lsp_references: {
+		symbol: string;
+		locations: {
+			file: string;
+			line: number;
+			column: number;
+		}[];
+	};
+	lsp_server_request: {
+		language: string;
+		method: string;
+		server_command: string;
+		params: string | null;
+	};
+	lsp_server_error: {
+		language: string;
+		server_command: string;
+		error_type: string;
+		message: string;
+	};
+	lsp_status_clicked: {
+		language: string;
+		has_error: boolean;
+		missing_servers: string[];
+		user_dismissed: boolean;
+	};
+	// ── UI events ────────────────────────────────────────────────────────────
+	action_popup_result: {
+		popup_id: string;
+		action_id: string;
+	};
+	process_output: {
+		process_id: number;
+		data: string;
+	};
+	language_changed: {
+		buffer_id: number;
+		language: string;
+	};
+	theme_inspect_key: {
+		theme_name: string;
+		key: string;
+	};
+	keyboard_shortcuts: {
+		bindings: {
+			key: string;
+			action: string;
+		}[];
+	};
+}
+/**
+* Typed overloads of `editor.on` / `editor.off`.
+*
+* When the event name is a key of `HookEventMap` the handler receives a
+* fully-typed payload — TypeScript will flag misspelled field accesses at
+* compile time. Unknown event names fall through to the untyped base
+* signatures in the EditorAPI interface.
+*
+* Both function-value and handler-name forms are supported:
+*
+* ```ts
+* editor.on("buffer_activated", (args) => { /* args.buffer_id is number *\/ });
+* editor.on("buffer_activated", "myHandler");   // registerHandler("myHandler", fn)
+* ```
+*/
+interface EditorAPI {
+	on<K extends keyof HookEventMap>(eventName: K, handler: (args: HookEventMap[K]) => boolean | void | Promise<boolean | void>): void;
+	on<K extends keyof HookEventMap>(eventName: K, handlerName: string): void;
+	off<K extends keyof HookEventMap>(eventName: K, handler: (args: HookEventMap[K]) => boolean | void | Promise<boolean | void>): void;
+	off<K extends keyof HookEventMap>(eventName: K, handlerName: string): void;
+	/**
+	* Create a buffer group: multiple panels appearing as one tab.
+	* This is an async runtime binding (not a direct #[qjs] method).
+	*/
+	createBufferGroup(name: string, mode: string, layout: unknown): Promise<BufferGroupResult>;
 }

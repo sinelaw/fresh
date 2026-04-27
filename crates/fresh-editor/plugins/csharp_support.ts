@@ -172,7 +172,7 @@ async function restoreProject(projectPath: string): Promise<void> {
 
 
 // Register hook for file open
-editor.on("after_file_open", (data) => {
+editor.on("after_file_open", async (data) => {
   // Only handle .cs files
   if (!data.path.endsWith(".cs")) {
     return;

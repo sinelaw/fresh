@@ -2861,7 +2861,7 @@ function handleSetCommand(args: string): CommandResult {
 }
 
 // Register event handler for prompt confirmation
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
   if (args.prompt_type !== "vi-command") {
     return false; // Not our prompt, let other handlers process it
   }

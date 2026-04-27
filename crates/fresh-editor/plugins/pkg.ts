@@ -2576,7 +2576,7 @@ registerHandler("pkg_install_url", pkg_install_url);
 
 
 
-editor.on("prompt_confirmed", (args) => {
+editor.on("prompt_confirmed", async (args) => {
   if (args.prompt_type !== "pkg-install-url") return true;
 
   const url = args.input.trim();

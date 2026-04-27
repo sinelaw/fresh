@@ -83,7 +83,7 @@ async function loadLineContent(
 
 
 // Register the hook handler
-editor.on("lsp_references", (data) => {
+editor.on("lsp_references", async (data) => {
   editor.debug(
     `Received ${data.locations.length} references for '${data.symbol}'`
   );
