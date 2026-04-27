@@ -953,56 +953,29 @@ fn handle_insert_newline(
 
         if auto_indent {
             let use_tabs = state.buffer_settings.use_tabs;
-            if let Some(language) = state.highlighter.language() {
-                // Use tree-sitter-based indent when we have a highlighter
-                if let Some(indent_width) = state.indent_calculator.borrow_mut().calculate_indent(
+            let indent_width_opt = match state.highlighter.language() {
+                Some(language) => state.indent_calculator.borrow_mut().calculate_indent(
                     &state.buffer,
                     indent_position,
                     language,
                     tab_size,
-                ) {
-                    let indent_str = indent_to_string(indent_width, use_tabs, tab_size);
-                    text.push_str(&indent_str);
-
-                    // For bracket expansion, add another newline with dedented closing bracket
-                    if bracket_expansion {
-                        // Record where cursor should end up (end of cursor line)
-                        cursor_line_end_position =
-                            Some(indent_position + line_ending.len() + indent_str.len());
-
-                        // Calculate the dedent for the closing bracket line
-                        // It should match the indent of the line containing the opening bracket
-                        let opening_bracket_indent =
-                                crate::primitives::indent::IndentCalculator::get_line_indent_at_position(
-                                    &state.buffer,
-                                    indent_position.saturating_sub(1),
-                                    tab_size,
-                                );
-                        text.push_str(line_ending);
-                        text.push_str(&indent_to_string(
-                            opening_bracket_indent,
-                            use_tabs,
-                            tab_size,
-                        ));
-                    }
-                }
-            } else {
+                ),
                 // Fallback for files without syntax highlighting (e.g., .txt)
-                let indent_width =
+                None => Some(
                     crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
                         &state.buffer,
                         indent_position,
                         tab_size,
-                    );
+                    ),
+                ),
+            };
+            if let Some(indent_width) = indent_width_opt {
                 let indent_str = indent_to_string(indent_width, use_tabs, tab_size);
                 text.push_str(&indent_str);
 
-                // For bracket expansion in non-language files
                 if bracket_expansion {
-                    // Record where cursor should end up (end of cursor line)
                     cursor_line_end_position =
                         Some(indent_position + line_ending.len() + indent_str.len());
-
                     let opening_bracket_indent =
                         crate::primitives::indent::IndentCalculator::get_line_indent_at_position(
                             &state.buffer,
@@ -1983,21 +1956,20 @@ pub fn action_to_events(
                     adjust_position_for_crlf_left(&state.buffer, p)
                 };
 
-                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column on horizontal movement
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2019,21 +1991,20 @@ pub fn action_to_events(
                     next_position_for_crlf(&state.buffer, cursor.position, max_pos)
                 };
 
-                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column on horizontal movement
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2051,21 +2022,20 @@ pub fn action_to_events(
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, _)) = iter.next_line() {
-                    // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                     let new_anchor = if cursor.deselect_on_move {
                         None
                     } else {
                         cursor.anchor
                     };
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: line_start,
-                        old_anchor: cursor.anchor,
+                        cursor.position,
+                        line_start,
+                        cursor.anchor,
                         new_anchor,
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.sticky_column,
+                    );
                 }
             }
         }
@@ -2080,21 +2050,20 @@ pub fn action_to_events(
                     // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
                     let line_end = line_start + content_len_without_line_ending(&line_content);
 
-                    // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                     let new_anchor = if cursor.deselect_on_move {
                         None
                     } else {
                         cursor.anchor
                     };
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: line_end,
-                        old_anchor: cursor.anchor,
+                        cursor.position,
+                        line_end,
+                        cursor.anchor,
                         new_anchor,
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.sticky_column,
+                    );
                 }
             }
         }
@@ -2102,63 +2071,60 @@ pub fn action_to_events(
         Action::MoveWordLeft => {
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_left(&state.buffer, cursor.position);
-                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
         Action::MoveWordRight => {
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_right(&state.buffer, cursor.position);
-                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
         Action::MoveWordEnd => {
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_end_right(&state.buffer, cursor.position);
-                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2170,15 +2136,15 @@ pub fn action_to_events(
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0,
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2197,15 +2163,15 @@ pub fn action_to_events(
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: clamped,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    clamped,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0,
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2234,56 +2200,54 @@ pub fn action_to_events(
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: clamped,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    clamped,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0,
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
         Action::MoveDocumentStart => {
             for (cursor_id, cursor) in cursors.iter() {
-                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: 0,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    0,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
         Action::MoveDocumentEnd => {
             for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
-                // Preserve anchor if deselect_on_move is false (Emacs mark mode)
                 let new_anchor = if cursor.deselect_on_move {
                     None
                 } else {
                     cursor.anchor
                 };
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: max_pos,
-                    old_anchor: cursor.anchor,
+                    cursor.position,
+                    max_pos,
+                    cursor.anchor,
                     new_anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2313,17 +2277,16 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
                 let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
-
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2331,17 +2294,16 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
-
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2432,18 +2394,16 @@ pub fn action_to_events(
                     }
                 }
 
-                // If no empty line found, go to start of buffer
                 let new_pos = found_pos.unwrap_or(0);
-
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0,
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2469,18 +2429,16 @@ pub fn action_to_events(
                     }
                 }
 
-                // If no empty line found, go to end of buffer
                 let new_pos = found_pos.unwrap_or(state.buffer.len());
-
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0,
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2492,15 +2450,15 @@ pub fn action_to_events(
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
 
                 if let Some((line_start, _)) = iter.next_line() {
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: line_start,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(anchor),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.position,
+                        line_start,
+                        cursor.anchor,
+                        Some(anchor),
+                        cursor.sticky_column,
+                    );
                 }
             }
         }
@@ -2516,16 +2474,15 @@ pub fn action_to_events(
                     // In both LF and CRLF mode, cursor lands at the first byte of line ending
                     // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
                     let line_end = line_start + content_len_without_line_ending(&line_content);
-
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: line_end,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(anchor),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.position,
+                        line_end,
+                        cursor.anchor,
+                        Some(anchor),
+                        cursor.sticky_column,
+                    );
                 }
             }
         }
@@ -2534,15 +2491,15 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_left(&state.buffer, cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2550,15 +2507,15 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_start_right(&state.buffer, cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2566,15 +2523,15 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_word_end_right(&state.buffer, cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2582,30 +2539,30 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let new_pos = find_vi_word_end(&state.buffer, cursor.position);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: new_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0,
-                });
+                    cursor.position,
+                    new_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
         Action::SelectDocumentStart => {
             for (cursor_id, cursor) in cursors.iter() {
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: 0,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.position,
+                    0,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2613,15 +2570,15 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 let max_pos = max_cursor_position(&state.buffer);
                 let anchor = cursor.anchor.unwrap_or(cursor.position);
-                events.push(Event::MoveCursor {
+                add_move_cursor_event(
+                    &mut events,
                     cursor_id,
-                    old_position: cursor.position,
-                    new_position: max_pos,
-                    old_anchor: cursor.anchor,
-                    new_anchor: Some(anchor),
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: 0, // Reset sticky column
-                });
+                    cursor.position,
+                    max_pos,
+                    cursor.anchor,
+                    Some(anchor),
+                    cursor.sticky_column,
+                );
             }
         }
 
@@ -2647,40 +2604,38 @@ pub fn action_to_events(
 
         Action::SelectAll => {
             // Select entire buffer for primary cursor only
+            // Note: RemoveSecondaryCursors is handled in handle_key, not as an event
             let primary_id = cursors.primary_id();
             let primary_cursor = cursors.primary();
             let max_pos = max_cursor_position(&state.buffer);
-            events.push(Event::MoveCursor {
-                cursor_id: primary_id,
-                old_position: primary_cursor.position,
-                new_position: max_pos,
-                old_anchor: primary_cursor.anchor,
-                new_anchor: Some(0),
-                old_sticky_column: primary_cursor.sticky_column,
-                new_sticky_column: 0, // Reset sticky column
-            });
-            // Note: RemoveSecondaryCursors is handled in handle_key, not as an event
+            add_move_cursor_event(
+                &mut events,
+                primary_id,
+                primary_cursor.position,
+                max_pos,
+                primary_cursor.anchor,
+                Some(0),
+                primary_cursor.sticky_column,
+            );
         }
 
         Action::SelectWord => {
             for (cursor_id, cursor) in cursors.iter() {
-                // Find word boundaries at current position
-                // First find the start of the word we're in/adjacent to
+                // First find the start of the word we're in/adjacent to,
+                // then the end from that start (not from cursor) to select the current word.
                 let word_start = find_word_start(&state.buffer, cursor.position);
-                // Then find the end of that word (from the start, not from cursor)
-                // This ensures we select the current word, not the next one
                 let word_end = find_word_end(&state.buffer, word_start);
 
                 if word_start < word_end {
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: word_end,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(word_start),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.position,
+                        word_end,
+                        cursor.anchor,
+                        Some(word_start),
+                        cursor.sticky_column,
+                    );
                 }
             }
         }
@@ -3263,18 +3218,16 @@ pub fn action_to_events(
                     .buffer
                     .line_iterator(cursor.position, estimated_line_length);
                 if let Some((line_start, line_content)) = iter.next_line() {
-                    // Include newline if present
                     let line_end = line_start + line_content.len();
-
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: line_end,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(line_start),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.position,
+                        line_end,
+                        cursor.anchor,
+                        Some(line_start),
+                        cursor.sticky_column,
+                    );
                 }
             }
         }
@@ -3284,18 +3237,17 @@ pub fn action_to_events(
             for (cursor_id, cursor) in cursors.iter() {
                 if let Some(anchor) = cursor.anchor {
                     // Already have a selection - expand by one word to the right
-                    // First move to the start of the next word, then to its end
                     let next_word_start = find_word_start_right(&state.buffer, cursor.position);
                     let new_end = find_word_end(&state.buffer, next_word_start);
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: new_end,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(anchor),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.position,
+                        new_end,
+                        cursor.anchor,
+                        Some(anchor),
+                        cursor.sticky_column,
+                    );
                 } else {
                     // No selection - select from cursor to end of current word
                     let word_start = find_word_start(&state.buffer, cursor.position);
@@ -3305,25 +3257,22 @@ pub fn action_to_events(
                     // select from current position to end of next word
                     let (final_start, final_end) =
                         if word_start == word_end || cursor.position == word_end {
-                            // Find the next word (skip non-word characters to find it)
                             let next_start = find_word_start_right(&state.buffer, cursor.position);
                             let next_end = find_word_end(&state.buffer, next_start);
-                            // Select FROM cursor position TO the end of next word
                             (cursor.position, next_end)
                         } else {
-                            // On a word char - select from cursor to end of current word
                             (cursor.position, word_end)
                         };
 
-                    events.push(Event::MoveCursor {
+                    add_move_cursor_event(
+                        &mut events,
                         cursor_id,
-                        old_position: cursor.position,
-                        new_position: final_end,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(final_start),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: 0, // Reset sticky column
-                    });
+                        cursor.position,
+                        final_end,
+                        cursor.anchor,
+                        Some(final_start),
+                        cursor.sticky_column,
+                    );
                 }
             }
         }
