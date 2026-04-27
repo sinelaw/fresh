@@ -15,8 +15,26 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 
-/// Short timeout for tests so they complete quickly.
-const TEST_TIMEOUT: Duration = Duration::from_secs(2);
+/// Per-request timeout used by the channel under test.
+///
+/// Sized as "essentially infinity" for sub-millisecond agent
+/// responses on a healthy runner — a load spike on CI must not trip
+/// a happy-path "should succeed" assertion that shares this timeout
+/// (CONTRIBUTING.md rule #3 forbids time-sensitive assertions:
+/// "Wait indefinitely, don't put timeouts inside tests").  Reduces
+/// the historical 2s value, which surfaced as
+/// `test_multiple_reconnections` flaking with
+/// "Round 2: request should succeed: Err(Timeout)" on slow runners.
+///
+/// The intentional-timeout assertions in this file (`silent_agent`
+/// cases) still pay at most this duration once each — the explicit
+/// timeout cost is part of the test's contract.  Tests with
+/// multiple back-to-back intentional timeouts (e.g.
+/// `test_multiple_reconnections`'s 3 rounds = 3 × `TEST_TIMEOUT`)
+/// run on the order of seconds × N wall-clock; that's bounded by
+/// nextest's external per-test timeout (default 180s) so we don't
+/// need an internal cap here.
+const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Spawn a Python script that sends a ready message then never responds to requests.
 /// The script reads stdin (so it doesn't die from SIGPIPE) but never writes back.

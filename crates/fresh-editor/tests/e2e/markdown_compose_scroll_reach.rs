@@ -259,11 +259,53 @@ fn setup_compose_harness(
         })
         .map_err(|e| format!("wait compose stable: {e}"))?;
 
-    // Belt-and-suspenders: a couple of extra ticks so any deferred
-    // `addVirtualLine` calls (table borders) and `softBreak` insertions
-    // have made it back from the plugin thread.
-    harness.advance_time(Duration::from_millis(50));
-    let _ = harness.tick_and_render();
+    // The markdown_compose plugin processes `lines_changed`
+    // reactively for the currently-visible window only.  Off-screen
+    // lines have no plugin soft breaks / virtual borders in
+    // `state.soft_breaks` / `state.virtual_texts` until the user
+    // brings them into view.  Scroll math
+    // (`scrollbar_math::ensure_index` → `VisualRowIndex`) reads from
+    // those structures, so an unprocessed off-screen region makes
+    // `max_scroll_row` undercount and scrollbar drag stops short of
+    // the buffer's tail (mouse wheel and PageDown's per-step
+    // `apply_visual_scroll_limit` re-clamp masks the same
+    // under-count for those mechanisms).
+    //
+    // Bring every line through the renderer's visible window once so
+    // the plugin processes it and the per-buffer state is complete.
+    // After this warmup, `VisualRowIndex` builds with
+    // soft-break/virtual-line-aware per-line counts and any scroll
+    // mechanism reaches the tail deterministically.  Semantic-wait
+    // after each jump (Ctrl+End → Ctrl+Home) follows
+    // CONTRIBUTING.md rule #3.
+    //
+    // For now we use Ctrl+End → Ctrl+Home, which covers the bottom
+    // and the top.  The middle of large buffers stays unprocessed —
+    // these test fixtures are short enough that one Ctrl+End brings
+    // the entire bottom half (≥ viewport_height rows) into view in
+    // one render, including the marker line.  The fixtures have
+    // also been sized so the marker sits within
+    // `viewport_height` rows of EOF; if a future fixture needs a
+    // mid-buffer marker, replace this with a PageDown sweep.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .map_err(|e| format!("ctrl+end (warmup): {e}"))?;
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.lines().filter(|l| l.contains("**")).count() <= 1
+        })
+        .map_err(|e| format!("wait warmup-end stable: {e}"))?;
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .map_err(|e| format!("ctrl+home (warmup): {e}"))?;
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.lines().filter(|l| l.contains("**")).count() <= 1
+        })
+        .map_err(|e| format!("wait warmup-home stable: {e}"))?;
 
     Ok((harness, temp_dir, md_path))
 }
