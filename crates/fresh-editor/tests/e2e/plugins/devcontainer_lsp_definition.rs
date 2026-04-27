@@ -396,10 +396,22 @@ fn goto_definition_translates_uris_between_host_and_container() {
     // resolve the binary. The fake docker reuses the parent process's
     // env when no `-e` is passed, but the captured probe overrides
     // PATH on every spawn — so it *must* contain our dir.
+    // The captured probe PATH gets sent to every subsequent
+    // `docker exec` via `-e PATH=…`, which means it has to be a PATH
+    // a real shell can survive on. Include `/bin` and `/sbin`
+    // explicitly: the fake-docker shim's `exec sh -c "…"` needs to
+    // resolve `sh` itself through this PATH, and on macOS `sh` lives
+    // *only* at `/bin/sh` (Linux usrmerge distros also have
+    // `/usr/bin/sh`, which is why the missing `/bin` only hurt
+    // macOS CI). The fake-docker shim's *default* probe-response
+    // includes `/sbin:/bin` for the same reason; we just have to
+    // remember to do the same when overriding it. Without `/bin`,
+    // `exec sh …` exits 127, `command_exists` returns false, and the
+    // LSP never starts — which is what the previous CI run hung on.
     fs::write(
         state.join("probe_response"),
         format!(
-            "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:{}\n\
+            "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin:{}\n\
              HOME=/home/vscode\n\
              LANG=C.UTF-8\n",
             fake_lsp_bin.display()
@@ -639,10 +651,22 @@ fn arrange_attached_session_with_open_main_py() -> (
     {
         std::env::set_var("PATH", format!("{}:{}", fake_lsp_bin.display(), host_path));
     }
+    // The captured probe PATH gets sent to every subsequent
+    // `docker exec` via `-e PATH=…`, which means it has to be a PATH
+    // a real shell can survive on. Include `/bin` and `/sbin`
+    // explicitly: the fake-docker shim's `exec sh -c "…"` needs to
+    // resolve `sh` itself through this PATH, and on macOS `sh` lives
+    // *only* at `/bin/sh` (Linux usrmerge distros also have
+    // `/usr/bin/sh`, which is why the missing `/bin` only hurt
+    // macOS CI). The fake-docker shim's *default* probe-response
+    // includes `/sbin:/bin` for the same reason; we just have to
+    // remember to do the same when overriding it. Without `/bin`,
+    // `exec sh …` exits 127, `command_exists` returns false, and the
+    // LSP never starts — which is what the previous CI run hung on.
     fs::write(
         state.join("probe_response"),
         format!(
-            "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:{}\n\
+            "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin:{}\n\
              HOME=/home/vscode\n\
              LANG=C.UTF-8\n",
             fake_lsp_bin.display()
@@ -716,7 +740,7 @@ fn arrange_attached_session_with_open_main_py() -> (
                     "exec",
                     "-e",
                     &format!(
-                        "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:{}",
+                        "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin:{}",
                         fake_lsp_bin.display()
                     ),
                     "fake-id",
