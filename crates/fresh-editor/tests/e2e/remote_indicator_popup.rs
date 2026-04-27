@@ -244,6 +244,7 @@ fn test_remote_indicator_popup_connected_container_offers_show_build_logs() -> a
         spawner: SpawnerSpec::Local,
         terminal_wrapper: TerminalWrapperSpec::HostShell,
         display_label: "Container:deadbeef".to_string(),
+        path_translation: None,
     })?;
     harness.editor_mut().set_boot_authority(authority);
 

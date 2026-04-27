@@ -253,10 +253,7 @@ fn goto_definition_translates_uris_between_host_and_container() {
         .split(':')
         .any(|p| Path::new(p) == fake_lsp_bin.as_path());
     if !already_on_path {
-        std::env::set_var(
-            "PATH",
-            format!("{}:{}", fake_lsp_bin.display(), host_path),
-        );
+        std::env::set_var("PATH", format!("{}:{}", fake_lsp_bin.display(), host_path));
     }
 
     // Have `userEnvProbe` echo a PATH that includes the fake-lsp dir
@@ -336,9 +333,7 @@ fn goto_definition_translates_uris_between_host_and_container() {
     //   line 3: `def main():`
     //   line 4: `    helper()`
     for _ in 0..4 {
-        harness
-            .send_key(KeyCode::Down, KeyModifiers::NONE)
-            .unwrap();
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     for _ in 0..6 {
         harness
@@ -349,7 +344,9 @@ fn goto_definition_translates_uris_between_host_and_container() {
 
     // Trigger Go-to-Definition. F12 is the conventional binding;
     // mirrors `lsp_goto_definition_readonly.rs`.
-    harness.send_key(KeyCode::F(12), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::F(12), KeyModifiers::NONE)
+        .unwrap();
     bounded_wait(&mut harness, "fake-pylsp definition request", |_| {
         let log = read_uri_log(&state);
         log.lines().any(|l| l.starts_with("definition "))
@@ -366,10 +363,7 @@ fn goto_definition_translates_uris_between_host_and_container() {
     // path (the workspace mounted at `/workspaces/proj`). The host
     // path leaks in today.
     let log = read_uri_log(&state);
-    let did_open_lines: Vec<&str> = log
-        .lines()
-        .filter(|l| l.starts_with("didOpen "))
-        .collect();
+    let did_open_lines: Vec<&str> = log.lines().filter(|l| l.starts_with("didOpen ")).collect();
     assert!(
         !did_open_lines.is_empty(),
         "expected at least one didOpen URI in the fake-lsp log; full log:\n{log}"

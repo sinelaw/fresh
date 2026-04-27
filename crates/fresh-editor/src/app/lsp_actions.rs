@@ -141,7 +141,10 @@ impl Editor {
                 continue; // Skip buffers that aren't fully loaded
             };
 
-            let Some(uri) = super::types::file_path_to_lsp_uri(&buf_path) else {
+            let Some(uri) = super::types::file_path_to_lsp_uri_with_translation(
+                &buf_path,
+                self.authority.path_translation.as_ref(),
+            ) else {
                 continue;
             };
 
@@ -1165,7 +1168,10 @@ impl Editor {
 
                 // Update buffer metadata to point at the temp file, enabling LSP
                 if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                    if let Some(uri) = super::types::file_path_to_lsp_uri(&plugin_file) {
+                    if let Some(uri) = super::types::file_path_to_lsp_uri_with_translation(
+                        &plugin_file,
+                        self.authority.path_translation.as_ref(),
+                    ) {
                         metadata.kind = super::types::BufferKind::File {
                             path: plugin_file.clone(),
                             uri: Some(uri),
@@ -1211,7 +1217,10 @@ impl Editor {
                 // Add the plugin workspace folder so tsserver discovers tsconfig.json + fresh.d.ts
                 if let Some(lsp) = &self.lsp {
                     if let Some(handle) = lsp.get_handle("typescript") {
-                        if let Some(uri) = super::types::file_path_to_lsp_uri(&workspace_dir) {
+                        if let Some(uri) = super::types::file_path_to_lsp_uri_with_translation(
+                            &workspace_dir,
+                            self.authority.path_translation.as_ref(),
+                        ) {
                             let name = workspace_dir
                                 .file_name()
                                 .unwrap_or_default()

@@ -253,7 +253,10 @@ impl Editor {
                 state.buffer.rename_file_path(new_path.clone());
             }
             if let Some(metadata) = self.buffer_metadata.get_mut(&id) {
-                let file_uri = super::types::file_path_to_lsp_uri(&new_path);
+                let file_uri = super::types::file_path_to_lsp_uri_with_translation(
+                    &new_path,
+                    self.authority.path_translation.as_ref(),
+                );
                 metadata.kind = super::BufferKind::File {
                     path: new_path.clone(),
                     uri: file_uri,

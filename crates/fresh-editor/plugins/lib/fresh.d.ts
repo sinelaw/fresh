@@ -715,6 +715,17 @@ type AuthorityPayload = {
 	spawner: AuthoritySpawner;
 	terminal_wrapper: AuthorityTerminalWrapper;
 	display_label?: string;
+	/**
+	* Optional host↔remote workspace path mapping. The dev-container
+	* authority sets both roots (editor.getCwd() on host;
+	* remoteWorkspaceFolder on container) so LSP URIs translate at the
+	* host/container boundary. Local and SSH authorities omit it.
+	*/
+	path_translation?: PathTranslationSpec;
+};
+type PathTranslationSpec = {
+	host_root: string;
+	remote_root: string;
 };
 type BackgroundProcessResult = {
 	/**

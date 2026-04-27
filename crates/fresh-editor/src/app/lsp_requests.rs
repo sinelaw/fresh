@@ -24,7 +24,7 @@ use crate::view::prompt::{Prompt, PromptType};
 use crate::services::lsp::async_handler::LspHandle;
 use crate::types::LspFeature;
 
-use super::{uri_to_path, Editor, SemanticTokenRangeRequest};
+use super::{Editor, SemanticTokenRangeRequest};
 
 /// Ensure every line in a docstring is separated by a blank line.
 ///
@@ -230,8 +230,14 @@ impl Editor {
         // For now, just jump to the first location
         let location = &locations[0];
 
-        // Convert URI to file path
-        if let Ok(path) = uri_to_path(&location.uri) {
+        // Convert URI to file path. The LSP runs on the other side of
+        // a possible host↔container mount, so apply the active
+        // authority's translation before crossing back into the
+        // editor's host-path-based filesystem layer.
+        if let Ok(path) = super::uri_to_path_with_translation(
+            &location.uri,
+            self.authority.path_translation.as_ref(),
+        ) {
             // Open the file
             let buffer_id = match self.open_file(&path) {
                 Ok(id) => id,
@@ -2199,7 +2205,9 @@ impl Editor {
         // Version check: if the server specifies a version, verify it matches
         // what we sent. A mismatch means the edit was computed against stale content.
         if let Some(expected_version) = text_doc_edit.text_document.version {
-            if let Ok(path) = uri_to_path(&uri) {
+            if let Ok(path) =
+                super::uri_to_path_with_translation(&uri, self.authority.path_translation.as_ref())
+            {
                 if let Some(lsp) = &self.lsp {
                     let language = self
                         .buffers
@@ -2224,7 +2232,9 @@ impl Editor {
             }
         }
 
-        if let Ok(path) = uri_to_path(&uri) {
+        if let Ok(path) =
+            super::uri_to_path_with_translation(&uri, self.authority.path_translation.as_ref())
+        {
             let buffer_id = match self.open_file(&path) {
                 Ok(id) => id,
                 Err(e) => {
@@ -2397,7 +2407,10 @@ impl Editor {
         // Handle changes (map of URI -> Vec<TextEdit>)
         if let Some(changes) = workspace_edit.changes {
             for (uri, edits) in changes {
-                if let Ok(path) = uri_to_path(&uri) {
+                if let Ok(path) = super::uri_to_path_with_translation(
+                    &uri,
+                    self.authority.path_translation.as_ref(),
+                ) {
                     let buffer_id = match self.open_file(&path) {
                         Ok(id) => id,
                         Err(e) => {

@@ -214,9 +214,20 @@ pub use self::warning_domains::{
 };
 pub use crate::model::event::BufferId;
 
-/// Helper function to convert lsp_types::Uri to PathBuf
-fn uri_to_path(uri: &lsp_types::Uri) -> Result<PathBuf, String> {
-    fresh_core::file_uri::lsp_uri_to_path(uri).ok_or_else(|| "URI is not a file path".to_string())
+/// Convert an `lsp_types::Uri` from an LSP response to a host-side
+/// `PathBuf`, applying the active authority's remote→host workspace
+/// translation when one is set. The editor's open-file primitives
+/// expect host paths, so every URI that arrives from an LSP server
+/// (Goto-Definition `Location`, references, workspace edits, …) must
+/// be mapped back before it crosses into filesystem-facing code.
+/// Out-of-workspace URIs (system headers, library sources) are
+/// returned unchanged so existing callers' handling stays put.
+fn uri_to_path_with_translation(
+    uri: &lsp_types::Uri,
+    translation: Option<&crate::services::authority::PathTranslation>,
+) -> Result<PathBuf, String> {
+    crate::app::types::lsp_uri_to_host_path_with_translation(uri, translation)
+        .ok_or_else(|| "URI is not a file path".to_string())
 }
 
 /// A pending grammar registration waiting for reload_grammars() to apply

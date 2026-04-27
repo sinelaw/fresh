@@ -1639,6 +1639,7 @@ function parseDevcontainerUpOutput(stdout: string): DevcontainerUpResult | null 
 function buildContainerAuthorityPayload(
   result: DevcontainerUpResult,
   baseEnv: Array<[string, string]>,
+  hostWorkspace: string | null,
 ): AuthorityPayload | null {
   if (!result.containerId) return null;
   const user = result.remoteUser ?? null;
@@ -1654,6 +1655,20 @@ function buildContainerAuthorityPayload(
   args.push(result.containerId, "bash", "-l");
 
   const shortId = result.containerId.slice(0, 12);
+
+  // Plumb the host↔container workspace mapping through to the
+  // authority. Without this, every LSP URI carrying a workspace path
+  // is mis-translated at the host/container boundary: didOpen sends
+  // host paths to the in-container LSP, and Goto-Definition responses
+  // come back with container paths the editor opens verbatim on the
+  // host. Both roots must be present and absolute for the mapping to
+  // be useful — when either is missing we leave path_translation
+  // unset and accept the (broken) status quo rather than installing a
+  // half-mapping that translates one direction.
+  const path_translation =
+    hostWorkspace && workspace
+      ? { host_root: hostWorkspace, remote_root: workspace }
+      : undefined;
 
   return {
     filesystem: { kind: "local" },
@@ -1671,6 +1686,7 @@ function buildContainerAuthorityPayload(
       manages_cwd: true,
     },
     display_label: "Container:" + shortId,
+    path_translation,
   };
 }
 
@@ -1871,7 +1887,13 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   // `userEnvProbe` is unset the default is `loginInteractiveShell`.
   const baseEnv = await captureContainerLoginEnv(parsed);
 
-  const payload = buildContainerAuthorityPayload(parsed, baseEnv);
+  // Capture the host workspace path so the authority can translate
+  // LSP URIs at the host↔container boundary. `editor.getCwd()` is
+  // the production host workspace today; we read it just before
+  // setAuthority so the value matches the editor that's about to be
+  // rebuilt.
+  const hostWorkspace = editor.getCwd();
+  const payload = buildContainerAuthorityPayload(parsed, baseEnv, hostWorkspace);
   if (!payload) {
     enterFailedAttach(editor.t("status.rebuild_missing_container_id"));
     return;

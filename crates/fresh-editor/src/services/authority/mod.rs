@@ -29,6 +29,7 @@
 //!   small and additive so we can grow new kinds without breaking the
 //!   plugin contract.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,55 @@ use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
     LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
 };
+
+/// Plugin-supplied form of the host↔remote workspace mapping. Plugins
+/// build this from their own knowledge (e.g. the devcontainer plugin
+/// already has `editor.getCwd()` for the host root and
+/// `result.remoteWorkspaceFolder` for the in-container root). Strings
+/// because the wire format is JSON; paths get parsed in
+/// `Authority::from_plugin_payload`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathTranslationSpec {
+    pub host_root: String,
+    pub remote_root: String,
+}
+
+/// Symmetric path translation between host and remote workspace
+/// roots. Owned by the active [`Authority`] when the backend lives in
+/// a container (or any other place where the workspace is mounted at a
+/// different path than its on-host location). Local authorities and
+/// SSH leave this field unset.
+///
+/// LSP URIs are the primary consumer: the editor's buffer file paths
+/// are host-side, but the LSP server is on the other side of the
+/// mount and only knows the remote-side path. We translate at the
+/// boundary so the editor can keep using host paths internally and
+/// the LSP keeps seeing the paths it expects.
+#[derive(Debug, Clone)]
+pub struct PathTranslation {
+    pub host_root: PathBuf,
+    pub remote_root: PathBuf,
+}
+
+impl PathTranslation {
+    /// Map a host-side path under `host_root` to its remote-side
+    /// counterpart. Returns `None` for paths outside the workspace
+    /// (e.g. system headers, library sources) — those are passed
+    /// through unchanged so the caller can decide whether to forward
+    /// them as-is or drop them.
+    pub fn host_to_remote(&self, host: &Path) -> Option<PathBuf> {
+        let rel = host.strip_prefix(&self.host_root).ok()?;
+        Some(self.remote_root.join(rel))
+    }
+
+    /// Map a remote-side path under `remote_root` back to its
+    /// host-side counterpart. Same outside-the-workspace caveat as
+    /// [`Self::host_to_remote`].
+    pub fn remote_to_host(&self, remote: &Path) -> Option<PathBuf> {
+        let rel = remote.strip_prefix(&self.remote_root).ok()?;
+        Some(self.host_root.join(rel))
+    }
+}
 
 /// How the integrated terminal is launched under this authority.
 ///
@@ -107,6 +157,13 @@ pub struct AuthorityPayload {
     /// Status-bar / explorer label. Empty = no label rendered.
     #[serde(default)]
     pub display_label: String,
+    /// Optional host↔remote workspace path mapping. Devcontainer-style
+    /// authorities supply both the host workspace path (the editor's
+    /// `cwd` at attach time) and the in-container `remoteWorkspaceFolder`
+    /// so URIs traveling to/from the LSP get translated symmetrically.
+    /// SSH and local authorities leave this unset.
+    #[serde(default)]
+    pub path_translation: Option<PathTranslationSpec>,
 }
 
 /// Filesystem kind chosen by a plugin payload.
@@ -192,6 +249,12 @@ pub struct Authority {
     /// filesystem's `remote_connection_info()` so disconnect annotations
     /// stay in one place.
     pub display_label: String,
+    /// Host↔remote workspace path mapping for backends where the
+    /// workspace is mounted at a different path than its on-host
+    /// location. The dev-container authority populates this so LSP
+    /// URIs translate at the host/container boundary; local and SSH
+    /// authorities leave it `None` and URIs flow through unchanged.
+    pub path_translation: Option<PathTranslation>,
 }
 
 impl Authority {
@@ -205,6 +268,7 @@ impl Authority {
             long_running_spawner: Arc::new(LocalLongRunningSpawner),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
+            path_translation: None,
         }
     }
 
@@ -228,6 +292,7 @@ impl Authority {
             long_running_spawner: Arc::new(LocalLongRunningSpawner),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
+            path_translation: None,
         }
     }
 
@@ -287,12 +352,18 @@ impl Authority {
             },
         };
 
+        let path_translation = payload.path_translation.map(|spec| PathTranslation {
+            host_root: PathBuf::from(spec.host_root),
+            remote_root: PathBuf::from(spec.remote_root),
+        });
+
         Ok(Self {
             filesystem,
             process_spawner,
             long_running_spawner,
             terminal_wrapper,
             display_label: payload.display_label,
+            path_translation,
         })
     }
 }
@@ -328,6 +399,7 @@ mod tests {
             spawner: SpawnerSpec::Local,
             terminal_wrapper: TerminalWrapperSpec::HostShell,
             display_label: String::new(),
+            path_translation: None,
         };
         let auth = Authority::from_plugin_payload(payload).expect("local payload is valid");
         assert!(!auth.terminal_wrapper.command.is_empty());
@@ -510,10 +582,74 @@ mod tests {
                 manages_cwd: true,
             },
             display_label: "Container:abc123".into(),
+            path_translation: None,
         };
         let auth = Authority::from_plugin_payload(payload).expect("docker payload is valid");
         assert_eq!(auth.terminal_wrapper.command, "docker");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "Container:abc123");
+    }
+
+    #[test]
+    fn path_translation_round_trips_under_workspace() {
+        let pt = PathTranslation {
+            host_root: PathBuf::from("/tmp/.tmpA1B2"),
+            remote_root: PathBuf::from("/workspaces/proj"),
+        };
+        let host = Path::new("/tmp/.tmpA1B2/src/util.py");
+        let remote = pt.host_to_remote(host).expect("host under host_root");
+        assert_eq!(remote, PathBuf::from("/workspaces/proj/src/util.py"));
+        assert_eq!(
+            pt.remote_to_host(&remote)
+                .expect("remote under remote_root"),
+            host.to_path_buf(),
+        );
+    }
+
+    #[test]
+    fn path_translation_returns_none_outside_root() {
+        // Library / system paths sit outside the workspace mapping —
+        // callers decide what to do with them. The translator just
+        // says "not mine".
+        let pt = PathTranslation {
+            host_root: PathBuf::from("/host/proj"),
+            remote_root: PathBuf::from("/workspaces/proj"),
+        };
+        assert!(pt
+            .host_to_remote(Path::new("/usr/include/stdio.h"))
+            .is_none());
+        assert!(pt
+            .remote_to_host(Path::new("/usr/include/stdio.h"))
+            .is_none());
+    }
+
+    #[test]
+    fn from_plugin_payload_with_path_translation_round_trips() {
+        // Plugins (the devcontainer one in particular) supply both
+        // workspace roots so LSP URIs translate at the boundary. The
+        // wire shape uses strings so it survives JSON; the constructed
+        // authority parses them into `PathBuf`.
+        let json = serde_json::json!({
+            "filesystem": { "kind": "local" },
+            "spawner": {
+                "kind": "docker-exec",
+                "container_id": "abc123",
+                "workspace": "/workspaces/proj"
+            },
+            "terminal_wrapper": { "kind": "host-shell" },
+            "path_translation": {
+                "host_root": "/tmp/.tmpA1B2",
+                "remote_root": "/workspaces/proj"
+            }
+        });
+        let payload: AuthorityPayload =
+            serde_json::from_value(json).expect("path_translation is accepted");
+        let auth =
+            Authority::from_plugin_payload(payload).expect("payload with translation is valid");
+        let pt = auth
+            .path_translation
+            .expect("authority carries the translation");
+        assert_eq!(pt.host_root, PathBuf::from("/tmp/.tmpA1B2"));
+        assert_eq!(pt.remote_root, PathBuf::from("/workspaces/proj"));
     }
 }

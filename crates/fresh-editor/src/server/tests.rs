@@ -1344,6 +1344,7 @@ mod integration_tests {
                     manages_cwd: true,
                 },
                 display_label: "Container:deadbeef".into(),
+                path_translation: None,
             };
             let new_auth = Authority::from_plugin_payload(payload)
                 .map_err(|e| format!("from_plugin_payload: {e}"))?;
@@ -1505,6 +1506,7 @@ mod integration_tests {
                 manages_cwd: true,
             },
             display_label: "Container:cafef00d".into(),
+            path_translation: None,
         };
         let startup_auth =
             Authority::from_plugin_payload(payload).expect("docker payload is valid");

@@ -300,6 +300,12 @@ pub struct LspManager {
     /// before any LSP spawn can happen.
     long_running_spawner: Option<std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>>,
 
+    /// Active authority's host↔remote workspace mapping. When set
+    /// (devcontainer attach), [`Self::resolve_root_uri`] applies it to
+    /// the marker-walked workspace root so an in-container LSP sees
+    /// `file:///workspaces/proj` rather than the on-host temp path.
+    path_translation: Option<crate::services::authority::PathTranslation>,
+
     /// Restart attempt timestamps per language (for tracking restart frequency)
     restart_attempts: HashMap<String, Vec<Instant>>,
 
@@ -330,6 +336,7 @@ impl LspManager {
             runtime: None,
             async_bridge: None,
             long_running_spawner: None,
+            path_translation: None,
             restart_attempts: HashMap::new(),
             restart_cooldown: HashSet::new(),
             pending_restarts: HashMap::new(),
@@ -351,6 +358,17 @@ impl LspManager {
         spawner: std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>,
     ) {
         self.long_running_spawner = Some(spawner);
+    }
+
+    /// Install the active authority's host↔remote path mapping. The
+    /// editor calls this from `set_boot_authority` alongside the
+    /// spawner setter so URI translation is in place before any LSP
+    /// spawns under the new authority.
+    pub fn set_path_translation(
+        &mut self,
+        translation: Option<crate::services::authority::PathTranslation>,
+    ) {
+        self.path_translation = translation;
     }
 
     /// Blocking variant of the authority-routed command probe used by
@@ -647,7 +665,10 @@ impl LspManager {
             return Some(uri.clone());
         }
 
-        // 2. Use root_markers to detect workspace root from file path
+        // 2. Use root_markers to detect workspace root from file path.
+        //    Walks the host filesystem; on a container authority that
+        //    yields a host path, which would confuse an in-container
+        //    LSP. Translate before encoding to a URI.
         if let Some(path) = file_path {
             let markers = self
                 .config
@@ -656,7 +677,12 @@ impl LspManager {
                 .map(|c| c.root_markers.as_slice())
                 .unwrap_or(&[]);
             let root = detect_workspace_root(path, markers);
-            if let Some(uri) = path_to_uri(&root) {
+            let mapped = self
+                .path_translation
+                .as_ref()
+                .and_then(|t| t.host_to_remote(&root))
+                .unwrap_or(root);
+            if let Some(uri) = path_to_uri(&mapped) {
                 return Some(uri);
             }
         }

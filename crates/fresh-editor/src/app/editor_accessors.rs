@@ -502,9 +502,12 @@ impl Editor {
         // manager so `force_spawn` can route server processes through
         // the right backend. The editor rebuilds on every authority
         // transition (AUTHORITY_DESIGN.md principle 7), so this is the
-        // single wiring point — no need for a hot-swap API.
+        // single wiring point — no need for a hot-swap API. Path
+        // translation rides along for the same reason — LSP URIs need
+        // to be host↔container-translated under the new authority.
         if let Some(lsp) = self.lsp.as_mut() {
             lsp.set_long_running_spawner(self.authority.long_running_spawner.clone());
+            lsp.set_path_translation(self.authority.path_translation.clone());
         }
         #[cfg(feature = "plugins")]
         {

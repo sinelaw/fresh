@@ -301,6 +301,7 @@ impl Editor {
             path.to_path_buf(),
             &display_path,
             &self.working_dir,
+            self.authority.path_translation.as_ref(),
         );
 
         // Mark binary files in metadata and disable LSP
@@ -447,6 +448,7 @@ impl Editor {
             path.to_path_buf(),
             &display_path,
             &self.working_dir,
+            self.authority.path_translation.as_ref(),
         );
         self.buffer_metadata.insert(buffer_id, metadata);
 
@@ -559,6 +561,7 @@ impl Editor {
             path.to_path_buf(),
             &display_path,
             &self.working_dir,
+            self.authority.path_translation.as_ref(),
         );
         self.buffer_metadata.insert(buffer_id, metadata);
 
@@ -707,6 +710,7 @@ impl Editor {
             path.to_path_buf(),
             &display_path,
             &self.working_dir,
+            self.authority.path_translation.as_ref(),
         );
         self.buffer_metadata.insert(buffer_id, metadata);
 

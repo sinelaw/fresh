@@ -283,9 +283,20 @@ impl BufferMetadata {
     /// * `canonical_path` - The canonical (symlink-resolved) absolute path to the file
     /// * `display_path` - The user-visible path before canonicalization (for library detection)
     /// * `working_dir` - The canonical working directory for computing relative display name
-    pub fn with_file(canonical_path: PathBuf, display_path: &Path, working_dir: &Path) -> Self {
-        // Compute URI from the absolute path
-        let file_uri = file_path_to_lsp_uri(&canonical_path);
+    /// * `path_translation` - Active authority's host↔remote workspace mapping;
+    ///   used to build the LSP-facing `file_uri` so an in-container LSP sees
+    ///   in-container paths. `None` for local/SSH authorities.
+    pub fn with_file(
+        canonical_path: PathBuf,
+        display_path: &Path,
+        working_dir: &Path,
+        path_translation: Option<&crate::services::authority::PathTranslation>,
+    ) -> Self {
+        // Compute URI from the absolute path. When the active authority
+        // has a host↔remote mapping (devcontainer attach), this is
+        // where the host path gets rewritten into the container path
+        // the LSP server actually understands.
+        let file_uri = file_path_to_lsp_uri_with_translation(&canonical_path, path_translation);
 
         // Compute display name (project-relative when under working_dir, else absolute path).
         // Use canonicalized forms first to handle macOS /var -> /private/var differences.
@@ -1261,6 +1272,44 @@ impl CachedLayout {
 /// Convert a file path to an `lsp_types::Uri`.
 pub fn file_path_to_lsp_uri(path: &Path) -> Option<lsp_types::Uri> {
     fresh_core::file_uri::path_to_lsp_uri(path)
+}
+
+/// Build the LSP-facing URI for a host-side `path`, applying the
+/// authority's host→remote translation when one is set. Used for
+/// every URI that crosses the editor↔LSP boundary outbound (didOpen,
+/// definition, root_uri, …) so a container LSP sees in-container
+/// paths even though the editor caches host paths.
+///
+/// When `translation` is `None` (local + SSH authorities) or the
+/// path doesn't sit under `host_root` (system headers, library
+/// sources), the result is the unchanged host URI — the caller's
+/// handling of out-of-workspace paths is unchanged from the
+/// pre-authority world.
+pub fn file_path_to_lsp_uri_with_translation(
+    path: &Path,
+    translation: Option<&crate::services::authority::PathTranslation>,
+) -> Option<lsp_types::Uri> {
+    let mapped = translation
+        .and_then(|t| t.host_to_remote(path))
+        .unwrap_or_else(|| path.to_path_buf());
+    fresh_core::file_uri::path_to_lsp_uri(&mapped)
+}
+
+/// Inverse of [`file_path_to_lsp_uri_with_translation`]: turn an LSP
+/// URI into a host-side path, applying the authority's remote→host
+/// translation when one is set. Used wherever the editor receives a
+/// URI from the server (Goto-Definition `Location`, references,
+/// workspace edits, …) and needs to open the corresponding host file.
+pub fn lsp_uri_to_host_path_with_translation(
+    uri: &lsp_types::Uri,
+    translation: Option<&crate::services::authority::PathTranslation>,
+) -> Option<PathBuf> {
+    let raw = fresh_core::file_uri::lsp_uri_to_path(uri)?;
+    Some(
+        translation
+            .and_then(|t| t.remote_to_host(&raw))
+            .unwrap_or(raw),
+    )
 }
 
 #[cfg(test)]

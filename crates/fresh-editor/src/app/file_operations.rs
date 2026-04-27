@@ -1040,7 +1040,10 @@ impl Editor {
     pub(crate) fn notify_lsp_file_changed(&mut self, path: &Path) {
         use crate::services::lsp::manager::LspSpawnResult;
 
-        let Some(lsp_uri) = super::types::file_path_to_lsp_uri(path) else {
+        let Some(lsp_uri) = super::types::file_path_to_lsp_uri_with_translation(
+            path,
+            self.authority.path_translation.as_ref(),
+        ) else {
             return;
         };
 

@@ -35,6 +35,7 @@ fn devcontainer_authority_payload(label: &str) -> AuthorityPayload {
         spawner: SpawnerSpec::Local,
         terminal_wrapper: TerminalWrapperSpec::HostShell,
         display_label: label.to_string(),
+        path_translation: None,
     }
 }
 

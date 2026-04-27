@@ -725,8 +725,12 @@ impl Editor {
                     after_save_len
                 );
 
-                let metadata =
-                    BufferMetadata::with_file(full_path.clone(), &full_path, &self.working_dir);
+                let metadata = BufferMetadata::with_file(
+                    full_path.clone(),
+                    &full_path,
+                    &self.working_dir,
+                    self.authority.path_translation.as_ref(),
+                );
                 self.buffer_metadata.insert(self.active_buffer(), metadata);
 
                 // Auto-detect language if it's currently "text"
