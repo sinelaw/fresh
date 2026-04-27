@@ -29,45 +29,7 @@ impl Editor {
         let col = mouse_event.column;
         let row = mouse_event.row;
 
-        // Detect multi-click (double/triple) for left button down events
-        let (is_double_click, is_triple_click) =
-            if matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left)) {
-                let now = self.time_source.now();
-                let is_consecutive = if let (Some(previous_time), Some(previous_pos)) =
-                    (self.previous_click_time, self.previous_click_position)
-                {
-                    let threshold =
-                        std::time::Duration::from_millis(self.config.editor.double_click_time_ms);
-                    let within_time = now.duration_since(previous_time) < threshold;
-                    let same_position = previous_pos == (col, row);
-                    within_time && same_position
-                } else {
-                    false
-                };
-
-                // Update click tracking
-                if is_consecutive {
-                    self.click_count += 1;
-                } else {
-                    self.click_count = 1;
-                }
-                self.previous_click_time = Some(now);
-                self.previous_click_position = Some((col, row));
-
-                let is_triple = self.click_count >= 3;
-                let is_double = self.click_count == 2;
-
-                if is_triple {
-                    // Reset after triple-click so the next click starts fresh
-                    self.click_count = 0;
-                    self.previous_click_time = None;
-                    self.previous_click_position = None;
-                }
-
-                (is_double, is_triple)
-            } else {
-                (false, false)
-            };
+        let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
         // When keybinding editor is open, capture all mouse events
         if self.keybinding_editor.is_some() {
@@ -281,73 +243,12 @@ impl Editor {
                 self.update_lsp_hover_state(col, row);
             }
             MouseEventKind::ScrollUp => {
-                // Shift+ScrollUp => horizontal scroll left
-                if mouse_event
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::SHIFT)
-                {
-                    self.handle_horizontal_scroll(col, row, -3)?;
-                    needs_render = true;
-                } else if self.handle_prompt_scroll(-3) {
-                    // Check if prompt with suggestions is active and should handle scroll
-                    needs_render = true;
-                } else if self.is_file_open_active()
-                    && self.is_mouse_over_file_browser(col, row)
-                    && self.handle_file_open_scroll(-3)
-                {
-                    // Check if file browser is active and mouse is over it
-                    needs_render = true;
-                } else if self.is_mouse_over_any_popup(col, row) {
-                    // Scroll the popup content (works for all popups including completion)
-                    self.scroll_popup(-3);
-                    needs_render = true;
-                } else {
-                    // If in terminal mode, exit to scrollback mode first so scrolling works
-                    if self.terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
-                        self.sync_terminal_to_buffer(self.active_buffer());
-                        self.terminal_mode = false;
-                        self.key_context = crate::input::keybindings::KeyContext::Normal;
-                    }
-                    // Dismiss hover/signature help popups on scroll
-                    self.dismiss_transient_popups();
-                    self.handle_mouse_scroll(col, row, -3)?;
-                    // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
-                    needs_render = true;
-                }
+                self.handle_vertical_scroll(col, row, mouse_event.modifiers, -3)?;
+                needs_render = true;
             }
             MouseEventKind::ScrollDown => {
-                // Shift+ScrollDown => horizontal scroll right
-                if mouse_event
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::SHIFT)
-                {
-                    self.handle_horizontal_scroll(col, row, 3)?;
-                    needs_render = true;
-                } else if self.handle_prompt_scroll(3) {
-                    // Check if prompt with suggestions is active and should handle scroll
-                    needs_render = true;
-                } else if self.is_file_open_active()
-                    && self.is_mouse_over_file_browser(col, row)
-                    && self.handle_file_open_scroll(3)
-                {
-                    needs_render = true;
-                } else if self.is_mouse_over_any_popup(col, row) {
-                    // Scroll the popup content (works for all popups including completion)
-                    self.scroll_popup(3);
-                    needs_render = true;
-                } else {
-                    // If in terminal mode, exit to scrollback mode first so scrolling works
-                    if self.terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
-                        self.sync_terminal_to_buffer(self.active_buffer());
-                        self.terminal_mode = false;
-                        self.key_context = crate::input::keybindings::KeyContext::Normal;
-                    }
-                    // Dismiss hover/signature help popups on scroll
-                    self.dismiss_transient_popups();
-                    self.handle_mouse_scroll(col, row, 3)?;
-                    // Sync viewport from SplitViewState to EditorState so rendering sees the scroll
-                    needs_render = true;
-                }
+                self.handle_vertical_scroll(col, row, mouse_event.modifiers, 3)?;
+                needs_render = true;
             }
             MouseEventKind::ScrollLeft => {
                 // Native horizontal scroll left
@@ -379,6 +280,75 @@ impl Editor {
 
         self.mouse_state.last_position = Some((col, row));
         Ok(needs_render)
+    }
+
+    /// Detect double/triple clicks and update click-tracking state.
+    fn detect_multi_click(
+        &mut self,
+        mouse_event: &crossterm::event::MouseEvent,
+        col: u16,
+        row: u16,
+    ) -> (bool, bool) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        if !matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return (false, false);
+        }
+        let now = self.time_source.now();
+        let threshold = std::time::Duration::from_millis(self.config.editor.double_click_time_ms);
+        let is_consecutive = if let (Some(prev_time), Some(prev_pos)) =
+            (self.previous_click_time, self.previous_click_position)
+        {
+            now.duration_since(prev_time) < threshold && prev_pos == (col, row)
+        } else {
+            false
+        };
+        if is_consecutive {
+            self.click_count += 1;
+        } else {
+            self.click_count = 1;
+        }
+        self.previous_click_time = Some(now);
+        self.previous_click_position = Some((col, row));
+        let is_triple = self.click_count >= 3;
+        let is_double = self.click_count == 2;
+        if is_triple {
+            self.click_count = 0;
+            self.previous_click_time = None;
+            self.previous_click_position = None;
+        }
+        (is_double, is_triple)
+    }
+
+    /// Dispatch a vertical scroll event (ScrollUp/ScrollDown) through the priority chain:
+    /// Shift → horizontal scroll, prompt, file browser, popup, editor/terminal.
+    fn handle_vertical_scroll(
+        &mut self,
+        col: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+        delta: i32,
+    ) -> AnyhowResult<()> {
+        if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+            self.handle_horizontal_scroll(col, row, delta)?;
+        } else if self.handle_prompt_scroll(delta) {
+            // prompt consumed the scroll
+        } else if self.is_file_open_active()
+            && self.is_mouse_over_file_browser(col, row)
+            && self.handle_file_open_scroll(delta)
+        {
+            // file browser consumed the scroll
+        } else if self.is_mouse_over_any_popup(col, row) {
+            self.scroll_popup(delta);
+        } else {
+            if self.terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
+                self.sync_terminal_to_buffer(self.active_buffer());
+                self.terminal_mode = false;
+                self.key_context = crate::input::keybindings::KeyContext::Normal;
+            }
+            self.dismiss_transient_popups();
+            self.handle_mouse_scroll(col, row, delta)?;
+        }
+        Ok(())
     }
 
     /// Update the current hover target based on mouse position
