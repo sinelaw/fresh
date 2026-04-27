@@ -130,10 +130,10 @@ while true; do
       ;;
     "textDocument/definition")
       log_uri "definition" "$uri"
-      mapfile -t def < <(read_def_target)
-      def_uri="${def[0]}"
-      def_line="${def[1]}"
-      def_char="${def[2]}"
+      # `read -r` triple instead of `mapfile -t` (bash 4+) — macOS
+      # ships bash 3.2 by default and we want this to run there too.
+      def_uri=""; def_line=""; def_char=""
+      { read -r def_uri; read -r def_line; read -r def_char; } < <(read_def_target)
       end_char=$((def_char + 1))
       send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"uri":"'"$def_uri"'","range":{"start":{"line":'"$def_line"',"character":'"$def_char"'},"end":{"line":'"$def_line"',"character":'"$end_char"'}}}}'
       ;;
@@ -142,12 +142,10 @@ while true; do
       # Reuse the configured definition target as a single-element
       # reference list. Tests pin the *kind* of URI we emit (a wire
       # URI under the in-container workspace) more than the count, so
-      # one location is enough to exercise the `LspUri` translation
-      # path on the editor side.
-      mapfile -t def < <(read_def_target)
-      ref_uri="${def[0]}"
-      ref_line="${def[1]}"
-      ref_char="${def[2]}"
+      # one location is enough to exercise the editor-side path
+      # translation.
+      ref_uri=""; ref_line=""; ref_char=""
+      { read -r ref_uri; read -r ref_line; read -r ref_char; } < <(read_def_target)
       end_char=$((ref_char + 1))
       send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":[{"uri":"'"$ref_uri"'","range":{"start":{"line":'"$ref_line"',"character":'"$ref_char"'},"end":{"line":'"$ref_line"',"character":'"$end_char"'}}}]}'
       ;;

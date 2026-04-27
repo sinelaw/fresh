@@ -337,19 +337,23 @@ fn goto_definition_translates_uris_between_host_and_container() {
     harness
         .send_key(KeyCode::F(12), KeyModifiers::NONE)
         .unwrap();
+    // Wait until the goto-def round-trip has fully settled — i.e.
+    // the active buffer has switched to util.py. That's a stronger
+    // semantic checkpoint than "fake-pylsp logged the definition
+    // request" because the latter passes as soon as the LSP
+    // *receives* the request, whereas the assertions below depend
+    // on the editor having *processed the response*. CI is slower
+    // than local; pinning a fixed pump-loop here is what gave us
+    // the previous timeout.
     harness
-        .wait_until(|_| {
-            read_uri_log(&state)
-                .lines()
-                .any(|l| l.starts_with("definition "))
+        .wait_until(|h| {
+            h.editor()
+                .active_state()
+                .buffer
+                .file_path()
+                .is_some_and(|p| p == host_util_py.as_path())
         })
         .unwrap();
-    // Give the editor time to receive the response and act on it.
-    for _ in 0..40 {
-        harness.process_async_and_render().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        harness.advance_time(std::time::Duration::from_millis(25));
-    }
 
     // ── Direction 1: host → container ────────────────────────────
     // The first `didOpen` URI the LSP saw must be the *container*
