@@ -571,11 +571,7 @@ impl Editor {
                 self.split_manager.clear_label(split_id);
             }
             PluginCommand::GetSplitByLabel { label, request_id } => {
-                let split_id = self.split_manager.find_split_by_label(&label);
-                let callback_id = fresh_core::api::JsCallbackId::from(request_id);
-                let json = serde_json::to_string(&split_id.map(|s| s.0 .0))
-                    .unwrap_or_else(|_| "null".to_string());
-                self.plugin_manager.resolve_callback(callback_id, json);
+                self.handle_get_split_by_label(label, request_id);
             }
             PluginCommand::DistributeSplitsEvenly { split_ids: _ } => {
                 self.handle_distribute_splits_evenly();
@@ -587,11 +583,7 @@ impl Editor {
                 self.handle_set_buffer_cursor(buffer_id, position);
             }
             PluginCommand::SetBufferShowCursors { buffer_id, show } => {
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    state.show_cursors = show;
-                } else {
-                    tracing::warn!("SetBufferShowCursors: buffer {:?} not found", buffer_id);
-                }
+                self.handle_set_buffer_show_cursors(buffer_id, show);
             }
 
             // ==================== View/Layout Commands ====================
@@ -698,16 +690,7 @@ impl Editor {
                 self.apply_theme(&theme_name);
             }
             PluginCommand::OverrideThemeColors { overrides } => {
-                let pairs = overrides
-                    .into_iter()
-                    .map(|(k, [r, g, b])| (k, ratatui::style::Color::Rgb(r, g, b)));
-                let applied = self.theme.override_colors(pairs);
-                if applied > 0 {
-                    // Diagnostics / semantic overlays bake RGB at creation
-                    // time — rebuild them so the override is visible
-                    // everywhere on the next frame.
-                    self.reapply_all_overlays();
-                }
+                self.handle_override_theme_colors(overrides);
             }
             PluginCommand::ReloadConfig => {
                 self.reload_config();
@@ -755,17 +738,7 @@ impl Editor {
                 self.handle_start_prompt_async(label, initial_value, callback_id);
             }
             PluginCommand::AwaitNextKey { callback_id } => {
-                // If keys arrived during a key-capture window while no
-                // callback was pending, drain the front-most buffered
-                // key and resolve immediately. Otherwise enqueue the
-                // callback for the next live keypress.
-                if let Some(payload) = self.pending_key_capture_buffer.pop_front() {
-                    let json =
-                        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
-                    self.plugin_manager.resolve_callback(callback_id, json);
-                } else {
-                    self.pending_next_key_callbacks.push_back(callback_id);
-                }
+                self.handle_await_next_key(callback_id);
             }
             PluginCommand::SetKeyCaptureActive { active } => {
                 self.key_capture_active = active;
@@ -870,44 +843,7 @@ impl Editor {
                 cwd,
                 callback_id,
             } => {
-                // Spawn process asynchronously using the process spawner
-                // (supports both local and remote execution)
-                if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
-                    let effective_cwd = cwd.or_else(|| {
-                        std::env::current_dir()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .ok()
-                    });
-                    let sender = bridge.sender();
-                    let spawner = self.authority.process_spawner.clone();
-
-                    runtime.spawn(async move {
-                        // Receiver may be dropped if editor is shutting down
-                        #[allow(clippy::let_underscore_must_use)]
-                        match spawner.spawn(command, args, effective_cwd).await {
-                            Ok(result) => {
-                                let _ = sender.send(AsyncMessage::PluginProcessOutput {
-                                    process_id: callback_id.as_u64(),
-                                    stdout: result.stdout,
-                                    stderr: result.stderr,
-                                    exit_code: result.exit_code,
-                                });
-                            }
-                            Err(e) => {
-                                let _ = sender.send(AsyncMessage::PluginProcessOutput {
-                                    process_id: callback_id.as_u64(),
-                                    stdout: String::new(),
-                                    stderr: e.to_string(),
-                                    exit_code: -1,
-                                });
-                            }
-                        }
-                    });
-                } else {
-                    // No async runtime - reject the callback
-                    self.plugin_manager
-                        .reject_callback(callback_id, "Async runtime not available".to_string());
-                }
+                self.handle_spawn_process(command, args, cwd, callback_id);
             }
 
             PluginCommand::SpawnHostProcess {
@@ -920,49 +856,11 @@ impl Editor {
             }
 
             PluginCommand::KillHostProcess { process_id } => {
-                // Removing from the map gives us the oneshot sender.
-                // Firing it signals the spawn task to `start_kill()`
-                // the child and reap. Unknown ids are intentionally
-                // silent — the process may have exited on its own
-                // and its cleanup already drained the slot.
-                if let Some(tx) = self.host_process_handles.remove(&process_id) {
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = tx.send(());
-                    tracing::debug!("KillHostProcess: sent kill for process_id={}", process_id);
-                } else {
-                    tracing::debug!(
-                        "KillHostProcess: unknown process_id={} (already exited?)",
-                        process_id
-                    );
-                }
+                self.handle_kill_host_process(process_id);
             }
 
             PluginCommand::SetAuthority { payload } => {
-                // Payload is an opaque `serde_json::Value` at the
-                // fresh-core layer; the concrete schema lives in
-                // `services::authority::AuthorityPayload` and is only
-                // deserialized here, so core stays ignorant of backend
-                // kinds.
-                match serde_json::from_value::<crate::services::authority::AuthorityPayload>(
-                    payload,
-                ) {
-                    Ok(parsed) => {
-                        match crate::services::authority::Authority::from_plugin_payload(parsed) {
-                            Ok(auth) => {
-                                tracing::info!("Plugin installed new authority");
-                                self.install_authority(auth);
-                            }
-                            Err(e) => {
-                                tracing::warn!("setAuthority: invalid payload: {}", e);
-                                self.set_status_message(format!("setAuthority rejected: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("setAuthority: failed to parse payload: {}", e);
-                        self.set_status_message(format!("setAuthority rejected: {}", e));
-                    }
-                }
+                self.handle_set_authority(payload);
             }
 
             PluginCommand::ClearAuthority => {
@@ -971,20 +869,7 @@ impl Editor {
             }
 
             PluginCommand::SetRemoteIndicatorState { state } => {
-                // Opaque JSON at the fresh-core boundary; the concrete
-                // schema (RemoteIndicatorOverride) lives in the view
-                // crate so core stays ignorant of per-state labels.
-                match serde_json::from_value::<crate::view::ui::status_bar::RemoteIndicatorOverride>(
-                    state,
-                ) {
-                    Ok(over) => {
-                        self.remote_indicator_override = Some(over);
-                    }
-                    Err(e) => {
-                        tracing::warn!("setRemoteIndicatorState: invalid payload: {}", e);
-                        self.set_status_message(format!("setRemoteIndicatorState rejected: {}", e));
-                    }
-                }
+                self.handle_set_remote_indicator_state(state);
             }
 
             PluginCommand::ClearRemoteIndicatorState => {
@@ -995,45 +880,14 @@ impl Editor {
                 process_id,
                 callback_id,
             } => {
-                // TODO: Implement proper process wait tracking
-                // For now, just reject with an error since there's no process tracking yet
-                tracing::warn!(
-                    "SpawnProcessWait not fully implemented - process_id={}",
-                    process_id
-                );
-                self.plugin_manager.reject_callback(
-                    callback_id,
-                    format!(
-                        "SpawnProcessWait not yet fully implemented for process_id={}",
-                        process_id
-                    ),
-                );
+                self.handle_spawn_process_wait(process_id, callback_id);
             }
 
             PluginCommand::Delay {
                 callback_id,
                 duration_ms,
             } => {
-                // Spawn async delay via tokio
-                if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
-                    let sender = bridge.sender();
-                    let callback_id_u64 = callback_id.as_u64();
-                    runtime.spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms)).await;
-                        // Receiver may have been dropped during shutdown.
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
-                            fresh_core::api::PluginAsyncMessage::DelayComplete {
-                                callback_id: callback_id_u64,
-                            },
-                        ));
-                    });
-                } else {
-                    // Fallback to blocking if no runtime available
-                    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
-                    self.plugin_manager
-                        .resolve_callback(callback_id, "null".to_string());
-                }
+                self.handle_delay(callback_id, duration_ms);
             }
 
             PluginCommand::SpawnBackgroundProcess {
@@ -1047,10 +901,7 @@ impl Editor {
             }
 
             PluginCommand::KillBackgroundProcess { process_id } => {
-                if let Some(handle) = self.background_process_handles.remove(&process_id) {
-                    handle.abort();
-                    tracing::debug!("Killed background process {}", process_id);
-                }
+                self.handle_kill_background_process(process_id);
             }
 
             // ==================== Virtual Buffer Commands (complex, kept inline) ====================
@@ -1059,14 +910,7 @@ impl Editor {
                 mode,
                 read_only,
             } => {
-                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
-                tracing::info!(
-                    "Created virtual buffer '{}' with mode '{}' (id={:?})",
-                    name,
-                    mode,
-                    buffer_id
-                );
-                // TODO: Return buffer_id to plugin via callback or hook
+                self.handle_create_virtual_buffer(name, mode, read_only);
             }
             PluginCommand::CreateVirtualBufferWithContent {
                 name,
@@ -1123,32 +967,10 @@ impl Editor {
                 );
             }
             PluginCommand::SetVirtualBufferContent { buffer_id, entries } => {
-                match self.set_virtual_buffer_content(buffer_id, entries) {
-                    Ok(()) => {
-                        tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to set virtual buffer content: {}", e);
-                    }
-                }
+                self.handle_set_virtual_buffer_content(buffer_id, entries);
             }
             PluginCommand::GetTextPropertiesAtCursor { buffer_id } => {
-                // Get text properties at cursor and fire a hook with the data
-                if let Some(state) = self.buffers.get(&buffer_id) {
-                    let cursor_pos = self
-                        .split_view_states
-                        .values()
-                        .find_map(|vs| vs.buffer_state(buffer_id))
-                        .map(|bs| bs.cursors.primary().position)
-                        .unwrap_or(0);
-                    let properties = state.text_properties.get_at(cursor_pos);
-                    tracing::debug!(
-                        "Text properties at cursor in {:?}: {} properties found",
-                        buffer_id,
-                        properties.len()
-                    );
-                    // TODO: Fire hook with properties data for plugins to consume
-                }
+                self.handle_get_text_properties_at_cursor(buffer_id);
             }
             PluginCommand::CreateVirtualBufferInExistingSplit {
                 name,
@@ -1178,13 +1000,7 @@ impl Editor {
 
             // ==================== Context Commands ====================
             PluginCommand::SetContext { name, active } => {
-                if active {
-                    self.active_custom_contexts.insert(name.clone());
-                    tracing::debug!("Set custom context: {}", name);
-                } else {
-                    self.active_custom_contexts.remove(&name);
-                    tracing::debug!("Unset custom context: {}", name);
-                }
+                self.handle_set_context(name, active);
             }
 
             // ==================== Review Diff Commands ====================
@@ -1253,83 +1069,15 @@ impl Editor {
             }
 
             PluginCommand::DisableLspForLanguage { language } => {
-                tracing::info!("Disabling LSP for language: {}", language);
-
-                // 1. Stop the LSP server for this language if running
-                if let Some(ref mut lsp) = self.lsp {
-                    lsp.shutdown_server(&language);
-                    tracing::info!("Stopped LSP server for {}", language);
-                }
-
-                // 2. Update the config to disable the language
-                if let Some(lsp_configs) = self.config_mut().lsp.get_mut(&language) {
-                    for c in lsp_configs.as_mut_slice() {
-                        c.enabled = false;
-                        c.auto_start = false;
-                    }
-                    tracing::info!("Disabled LSP config for {}", language);
-                }
-
-                // 3. Persist the config change
-                if let Err(e) = self.save_config() {
-                    tracing::error!("Failed to save config: {}", e);
-                    self.status_message = Some(format!(
-                        "LSP disabled for {} (config save failed)",
-                        language
-                    ));
-                } else {
-                    self.status_message = Some(format!("LSP disabled for {}", language));
-                }
-
-                // 4. Clear any LSP-related warnings for this language
-                self.warning_domains.lsp.clear();
+                self.handle_disable_lsp_for_language(language);
             }
 
             PluginCommand::RestartLspForLanguage { language } => {
-                tracing::info!("Plugin restarting LSP for language: {}", language);
-
-                let file_path = self
-                    .buffer_metadata
-                    .get(&self.active_buffer())
-                    .and_then(|meta| meta.file_path().cloned());
-                let success = if let Some(ref mut lsp) = self.lsp {
-                    let (ok, msg) = lsp.manual_restart(&language, file_path.as_deref());
-                    self.status_message = Some(msg);
-                    ok
-                } else {
-                    self.status_message = Some("No LSP manager available".to_string());
-                    false
-                };
-
-                if success {
-                    self.reopen_buffers_for_language(&language);
-                }
+                self.handle_restart_lsp_for_language(language);
             }
 
             PluginCommand::SetLspRootUri { language, uri } => {
-                tracing::info!("Plugin setting LSP root URI for {}: {}", language, uri);
-
-                // Parse the URI string into an lsp_types::Uri
-                match uri.parse::<lsp_types::Uri>() {
-                    Ok(parsed_uri) => {
-                        if let Some(ref mut lsp) = self.lsp {
-                            let restarted = lsp.set_language_root_uri(&language, parsed_uri);
-                            if restarted {
-                                self.status_message = Some(format!(
-                                    "LSP root updated for {} (restarting server)",
-                                    language
-                                ));
-                            } else {
-                                self.status_message =
-                                    Some(format!("LSP root set for {}", language));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Invalid LSP root URI '{}': {}", uri, e);
-                        self.status_message = Some(format!("Invalid LSP root URI: {}", e));
-                    }
-                }
+                self.handle_set_lsp_root_uri(language, uri);
             }
 
             // ==================== Scroll Sync Commands ====================
@@ -1338,48 +1086,13 @@ impl Editor {
                 left_split,
                 right_split,
             } => {
-                let success = self.scroll_sync_manager.create_group_with_id(
-                    group_id,
-                    left_split,
-                    right_split,
-                );
-                if success {
-                    tracing::debug!(
-                        "Created scroll sync group {} for splits {:?} and {:?}",
-                        group_id,
-                        left_split,
-                        right_split
-                    );
-                } else {
-                    tracing::warn!(
-                        "Failed to create scroll sync group {} (ID already exists)",
-                        group_id
-                    );
-                }
+                self.handle_create_scroll_sync_group(group_id, left_split, right_split);
             }
             PluginCommand::SetScrollSyncAnchors { group_id, anchors } => {
-                use crate::view::scroll_sync::SyncAnchor;
-                let anchor_count = anchors.len();
-                let sync_anchors: Vec<SyncAnchor> = anchors
-                    .into_iter()
-                    .map(|(left_line, right_line)| SyncAnchor {
-                        left_line,
-                        right_line,
-                    })
-                    .collect();
-                self.scroll_sync_manager.set_anchors(group_id, sync_anchors);
-                tracing::debug!(
-                    "Set {} anchors for scroll sync group {}",
-                    anchor_count,
-                    group_id
-                );
+                self.handle_set_scroll_sync_anchors(group_id, anchors);
             }
             PluginCommand::RemoveScrollSyncGroup { group_id } => {
-                if self.scroll_sync_manager.remove_group(group_id) {
-                    tracing::debug!("Removed scroll sync group {}", group_id);
-                } else {
-                    tracing::warn!("Scroll sync group {} not found", group_id);
-                }
+                self.handle_remove_scroll_sync_group(group_id);
             }
 
             // ==================== Composite Buffer Commands ====================
@@ -1426,18 +1139,9 @@ impl Editor {
                 mode,
                 layout_json,
                 request_id,
-            } => match self.create_buffer_group(name, mode, layout_json) {
-                Ok(result) => {
-                    if let Some(req_id) = request_id {
-                        let json = serde_json::to_string(&result).unwrap_or_default();
-                        self.plugin_manager
-                            .resolve_callback(fresh_core::api::JsCallbackId::from(req_id), json);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create buffer group: {}", e);
-                }
-            },
+            } => {
+                self.handle_create_buffer_group(name, mode, layout_json, request_id);
+            }
             PluginCommand::SetPanelContent {
                 group_id,
                 panel_name,
@@ -1499,39 +1203,11 @@ impl Editor {
             }
 
             PluginCommand::SendTerminalInput { terminal_id, data } => {
-                if let Some(handle) = self.terminal_manager.get(terminal_id) {
-                    handle.write(data.as_bytes());
-                    tracing::trace!(
-                        "Plugin sent {} bytes to terminal {:?}",
-                        data.len(),
-                        terminal_id
-                    );
-                } else {
-                    tracing::warn!(
-                        "Plugin tried to send input to non-existent terminal {:?}",
-                        terminal_id
-                    );
-                }
+                self.handle_send_terminal_input(terminal_id, data);
             }
 
             PluginCommand::CloseTerminal { terminal_id } => {
-                // Find and close the buffer associated with this terminal
-                let buffer_to_close = self
-                    .terminal_buffers
-                    .iter()
-                    .find(|(_, &tid)| tid == terminal_id)
-                    .map(|(&bid, _)| bid);
-
-                if let Some(buffer_id) = buffer_to_close {
-                    if let Err(e) = self.close_buffer(buffer_id) {
-                        tracing::warn!("Failed to close terminal buffer: {}", e);
-                    }
-                    tracing::info!("Plugin closed terminal {:?}", terminal_id);
-                } else {
-                    // Terminal exists but no buffer — just close the terminal directly
-                    self.terminal_manager.close(terminal_id);
-                    tracing::info!("Plugin closed terminal {:?} (no buffer found)", terminal_id);
-                }
+                self.handle_close_terminal(terminal_id);
             }
 
             PluginCommand::GrepProject {
@@ -2837,6 +2513,427 @@ impl Editor {
                     format!("Failed to create terminal: {}", e),
                 );
             }
+        }
+    }
+    // ==================== Extracted handlers for previously inline match arms ====================
+
+    fn handle_get_split_by_label(&mut self, label: String, request_id: u64) {
+        let split_id = self.split_manager.find_split_by_label(&label);
+        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
+        let json =
+            serde_json::to_string(&split_id.map(|s| s.0 .0)).unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager.resolve_callback(callback_id, json);
+    }
+
+    fn handle_set_buffer_show_cursors(&mut self, buffer_id: BufferId, show: bool) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.show_cursors = show;
+        } else {
+            tracing::warn!("SetBufferShowCursors: buffer {:?} not found", buffer_id);
+        }
+    }
+
+    fn handle_override_theme_colors(
+        &mut self,
+        overrides: std::collections::HashMap<String, [u8; 3]>,
+    ) {
+        let pairs = overrides
+            .into_iter()
+            .map(|(k, [r, g, b])| (k, ratatui::style::Color::Rgb(r, g, b)));
+        let applied = self.theme.override_colors(pairs);
+        if applied > 0 {
+            // Diagnostics / semantic overlays bake RGB at creation time — rebuild
+            // them so the override is visible everywhere on the next frame.
+            self.reapply_all_overlays();
+        }
+    }
+
+    fn handle_await_next_key(&mut self, callback_id: fresh_core::api::JsCallbackId) {
+        // If keys arrived during a key-capture window while no callback was
+        // pending, drain the front-most buffered key and resolve immediately.
+        // Otherwise enqueue the callback for the next live keypress.
+        if let Some(payload) = self.pending_key_capture_buffer.pop_front() {
+            let json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
+            self.plugin_manager.resolve_callback(callback_id, json);
+        } else {
+            self.pending_next_key_callbacks.push_back(callback_id);
+        }
+    }
+
+    fn handle_spawn_process(
+        &mut self,
+        command: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            let effective_cwd = cwd.or_else(|| {
+                std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .ok()
+            });
+            let sender = bridge.sender();
+            let spawner = self.authority.process_spawner.clone();
+            runtime.spawn(async move {
+                #[allow(clippy::let_underscore_must_use)]
+                match spawner.spawn(command, args, effective_cwd).await {
+                    Ok(result) => {
+                        let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                            process_id: callback_id.as_u64(),
+                            stdout: result.stdout,
+                            stderr: result.stderr,
+                            exit_code: result.exit_code,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                            process_id: callback_id.as_u64(),
+                            stdout: String::new(),
+                            stderr: e.to_string(),
+                            exit_code: -1,
+                        });
+                    }
+                }
+            });
+        } else {
+            self.plugin_manager
+                .reject_callback(callback_id, "Async runtime not available".to_string());
+        }
+    }
+
+    fn handle_kill_host_process(&mut self, process_id: u64) {
+        // Removing from the map gives us the oneshot sender. Firing it signals
+        // the spawn task to start_kill() the child and reap. Unknown IDs are
+        // intentionally silent — the process may have already exited.
+        if let Some(tx) = self.host_process_handles.remove(&process_id) {
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = tx.send(());
+            tracing::debug!("KillHostProcess: sent kill for process_id={}", process_id);
+        } else {
+            tracing::debug!(
+                "KillHostProcess: unknown process_id={} (already exited?)",
+                process_id
+            );
+        }
+    }
+
+    fn handle_set_authority(&mut self, payload: serde_json::Value) {
+        // Payload is opaque at the fresh-core layer; the concrete schema lives
+        // in services::authority::AuthorityPayload so core stays ignorant of backend kinds.
+        match serde_json::from_value::<crate::services::authority::AuthorityPayload>(payload) {
+            Ok(parsed) => {
+                match crate::services::authority::Authority::from_plugin_payload(parsed) {
+                    Ok(auth) => {
+                        tracing::info!("Plugin installed new authority");
+                        self.install_authority(auth);
+                    }
+                    Err(e) => {
+                        tracing::warn!("setAuthority: invalid payload: {}", e);
+                        self.set_status_message(format!("setAuthority rejected: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("setAuthority: failed to parse payload: {}", e);
+                self.set_status_message(format!("setAuthority rejected: {}", e));
+            }
+        }
+    }
+
+    fn handle_set_remote_indicator_state(&mut self, state: serde_json::Value) {
+        // Opaque JSON at the fresh-core boundary; the concrete schema
+        // (RemoteIndicatorOverride) lives in the view crate.
+        match serde_json::from_value::<crate::view::ui::status_bar::RemoteIndicatorOverride>(state)
+        {
+            Ok(over) => {
+                self.remote_indicator_override = Some(over);
+            }
+            Err(e) => {
+                tracing::warn!("setRemoteIndicatorState: invalid payload: {}", e);
+                self.set_status_message(format!("setRemoteIndicatorState rejected: {}", e));
+            }
+        }
+    }
+
+    fn handle_spawn_process_wait(
+        &mut self,
+        process_id: u64,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        tracing::warn!(
+            "SpawnProcessWait not fully implemented - process_id={}",
+            process_id
+        );
+        self.plugin_manager.reject_callback(
+            callback_id,
+            format!(
+                "SpawnProcessWait not yet fully implemented for process_id={}",
+                process_id
+            ),
+        );
+    }
+
+    fn handle_delay(&mut self, callback_id: fresh_core::api::JsCallbackId, duration_ms: u64) {
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            let sender = bridge.sender();
+            let callback_id_u64 = callback_id.as_u64();
+            runtime.spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms)).await;
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(crate::services::async_bridge::AsyncMessage::Plugin(
+                    fresh_core::api::PluginAsyncMessage::DelayComplete {
+                        callback_id: callback_id_u64,
+                    },
+                ));
+            });
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+            self.plugin_manager
+                .resolve_callback(callback_id, "null".to_string());
+        }
+    }
+
+    fn handle_kill_background_process(&mut self, process_id: u64) {
+        if let Some(handle) = self.background_process_handles.remove(&process_id) {
+            handle.abort();
+            tracing::debug!("Killed background process {}", process_id);
+        }
+    }
+
+    fn handle_create_virtual_buffer(&mut self, name: String, mode: String, read_only: bool) {
+        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        tracing::info!(
+            "Created virtual buffer '{}' with mode '{}' (id={:?})",
+            name,
+            mode,
+            buffer_id
+        );
+        // TODO: Return buffer_id to plugin via callback or hook
+    }
+
+    fn handle_set_virtual_buffer_content(
+        &mut self,
+        buffer_id: BufferId,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+    ) {
+        match self.set_virtual_buffer_content(buffer_id, entries) {
+            Ok(()) => {
+                tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
+            }
+            Err(e) => {
+                tracing::error!("Failed to set virtual buffer content: {}", e);
+            }
+        }
+    }
+
+    fn handle_get_text_properties_at_cursor(&self, buffer_id: BufferId) {
+        if let Some(state) = self.buffers.get(&buffer_id) {
+            let cursor_pos = self
+                .split_view_states
+                .values()
+                .find_map(|vs| vs.buffer_state(buffer_id))
+                .map(|bs| bs.cursors.primary().position)
+                .unwrap_or(0);
+            let properties = state.text_properties.get_at(cursor_pos);
+            tracing::debug!(
+                "Text properties at cursor in {:?}: {} properties found",
+                buffer_id,
+                properties.len()
+            );
+            // TODO: Fire hook with properties data for plugins to consume
+        }
+    }
+
+    fn handle_set_context(&mut self, name: String, active: bool) {
+        if active {
+            self.active_custom_contexts.insert(name.clone());
+            tracing::debug!("Set custom context: {}", name);
+        } else {
+            self.active_custom_contexts.remove(&name);
+            tracing::debug!("Unset custom context: {}", name);
+        }
+    }
+
+    fn handle_disable_lsp_for_language(&mut self, language: String) {
+        tracing::info!("Disabling LSP for language: {}", language);
+        if let Some(ref mut lsp) = self.lsp {
+            lsp.shutdown_server(&language);
+            tracing::info!("Stopped LSP server for {}", language);
+        }
+        if let Some(lsp_configs) = self.config_mut().lsp.get_mut(&language) {
+            for c in lsp_configs.as_mut_slice() {
+                c.enabled = false;
+                c.auto_start = false;
+            }
+            tracing::info!("Disabled LSP config for {}", language);
+        }
+        if let Err(e) = self.save_config() {
+            tracing::error!("Failed to save config: {}", e);
+            self.status_message = Some(format!(
+                "LSP disabled for {} (config save failed)",
+                language
+            ));
+        } else {
+            self.status_message = Some(format!("LSP disabled for {}", language));
+        }
+        self.warning_domains.lsp.clear();
+    }
+
+    fn handle_restart_lsp_for_language(&mut self, language: String) {
+        tracing::info!("Plugin restarting LSP for language: {}", language);
+        let file_path = self
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .and_then(|meta| meta.file_path().cloned());
+        let success = if let Some(ref mut lsp) = self.lsp {
+            let (ok, msg) = lsp.manual_restart(&language, file_path.as_deref());
+            self.status_message = Some(msg);
+            ok
+        } else {
+            self.status_message = Some("No LSP manager available".to_string());
+            false
+        };
+        if success {
+            self.reopen_buffers_for_language(&language);
+        }
+    }
+
+    fn handle_set_lsp_root_uri(&mut self, language: String, uri: String) {
+        tracing::info!("Plugin setting LSP root URI for {}: {}", language, uri);
+        match uri.parse::<lsp_types::Uri>() {
+            Ok(parsed_uri) => {
+                if let Some(ref mut lsp) = self.lsp {
+                    let restarted = lsp.set_language_root_uri(&language, parsed_uri);
+                    if restarted {
+                        self.status_message = Some(format!(
+                            "LSP root updated for {} (restarting server)",
+                            language
+                        ));
+                    } else {
+                        self.status_message = Some(format!("LSP root set for {}", language));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Invalid LSP root URI '{}': {}", uri, e);
+                self.status_message = Some(format!("Invalid LSP root URI: {}", e));
+            }
+        }
+    }
+
+    fn handle_create_scroll_sync_group(
+        &mut self,
+        group_id: crate::view::scroll_sync::ScrollSyncGroupId,
+        left_split: SplitId,
+        right_split: SplitId,
+    ) {
+        let success =
+            self.scroll_sync_manager
+                .create_group_with_id(group_id, left_split, right_split);
+        if success {
+            tracing::debug!(
+                "Created scroll sync group {} for splits {:?} and {:?}",
+                group_id,
+                left_split,
+                right_split
+            );
+        } else {
+            tracing::warn!(
+                "Failed to create scroll sync group {} (ID already exists)",
+                group_id
+            );
+        }
+    }
+
+    fn handle_set_scroll_sync_anchors(
+        &mut self,
+        group_id: crate::view::scroll_sync::ScrollSyncGroupId,
+        anchors: Vec<(usize, usize)>,
+    ) {
+        use crate::view::scroll_sync::SyncAnchor;
+        let anchor_count = anchors.len();
+        let sync_anchors: Vec<SyncAnchor> = anchors
+            .into_iter()
+            .map(|(left_line, right_line)| SyncAnchor {
+                left_line,
+                right_line,
+            })
+            .collect();
+        self.scroll_sync_manager.set_anchors(group_id, sync_anchors);
+        tracing::debug!(
+            "Set {} anchors for scroll sync group {}",
+            anchor_count,
+            group_id
+        );
+    }
+
+    fn handle_remove_scroll_sync_group(
+        &mut self,
+        group_id: crate::view::scroll_sync::ScrollSyncGroupId,
+    ) {
+        if self.scroll_sync_manager.remove_group(group_id) {
+            tracing::debug!("Removed scroll sync group {}", group_id);
+        } else {
+            tracing::warn!("Scroll sync group {} not found", group_id);
+        }
+    }
+
+    fn handle_create_buffer_group(
+        &mut self,
+        name: String,
+        mode: String,
+        layout_json: String,
+        request_id: Option<u64>,
+    ) {
+        match self.create_buffer_group(name, mode, layout_json) {
+            Ok(result) => {
+                if let Some(req_id) = request_id {
+                    let json = serde_json::to_string(&result).unwrap_or_default();
+                    self.plugin_manager
+                        .resolve_callback(fresh_core::api::JsCallbackId::from(req_id), json);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to create buffer group: {}", e);
+            }
+        }
+    }
+
+    fn handle_send_terminal_input(
+        &mut self,
+        terminal_id: crate::services::terminal::TerminalId,
+        data: String,
+    ) {
+        if let Some(handle) = self.terminal_manager.get(terminal_id) {
+            handle.write(data.as_bytes());
+            tracing::trace!(
+                "Plugin sent {} bytes to terminal {:?}",
+                data.len(),
+                terminal_id
+            );
+        } else {
+            tracing::warn!(
+                "Plugin tried to send input to non-existent terminal {:?}",
+                terminal_id
+            );
+        }
+    }
+
+    fn handle_close_terminal(&mut self, terminal_id: crate::services::terminal::TerminalId) {
+        let buffer_to_close = self
+            .terminal_buffers
+            .iter()
+            .find(|(_, &tid)| tid == terminal_id)
+            .map(|(&bid, _)| bid);
+        if let Some(buffer_id) = buffer_to_close {
+            if let Err(e) = self.close_buffer(buffer_id) {
+                tracing::warn!("Failed to close terminal buffer: {}", e);
+            }
+            tracing::info!("Plugin closed terminal {:?}", terminal_id);
+        } else {
+            self.terminal_manager.close(terminal_id);
+            tracing::info!("Plugin closed terminal {:?} (no buffer found)", terminal_id);
         }
     }
 }
