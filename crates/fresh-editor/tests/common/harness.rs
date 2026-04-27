@@ -574,7 +574,22 @@ impl EditorTestHarness {
         // plugin loading entirely at the editor level when this flag
         // is set. The flag/method names are kept for source-compat
         // with existing tests.
-        let enable_plugins_for_editor = !options.create_empty_plugins_dir;
+        //
+        // Exception: a number of tests use the default
+        // `HarnessOptions::new()` (which leaves `create_empty_plugins_dir`
+        // at `true`) but pre-populate `<working_dir>/plugins/` with their
+        // own fixtures and rely on those plugins loading. Treat any
+        // populated `<working_dir>/plugins/` as an opt-in to plugin
+        // loading regardless of the flag — this matches the pre-#1722
+        // behavior where a populated working-dir plugins folder won out
+        // over the empty-dir trick.
+        let working_plugins_path = working_dir.join("plugins");
+        let working_plugins_populated = working_plugins_path
+            .read_dir()
+            .map(|mut it| it.next().is_some())
+            .unwrap_or(false);
+        let enable_plugins_for_editor =
+            !options.create_empty_plugins_dir || working_plugins_populated;
 
         // Get or create DirectoryContext
         let dir_context = options.dir_context.unwrap_or_else(|| {
@@ -672,19 +687,11 @@ impl EditorTestHarness {
         // plugin fallback so the bundled set doesn't leak in. This matches
         // the pre-#1722 behavior, where any `working_dir/plugins/` (even
         // empty) suppressed embedded loading.
-        let mut user_plugins_supplied = false;
-        if enable_plugins_for_editor {
-            let working_plugins = working_dir.join("plugins");
-            if working_plugins.is_dir() {
-                let mut iter = std::fs::read_dir(&working_plugins)?;
-                if iter.next().is_some() {
-                    let target = dir_context.config_dir.join("plugins");
-                    mirror_plugins_dir(&working_plugins, &target)?;
-                    user_plugins_supplied = true;
-                }
-            }
+        if enable_plugins_for_editor && working_plugins_populated {
+            let target = dir_context.config_dir.join("plugins");
+            mirror_plugins_dir(&working_plugins_path, &target)?;
         }
-        let enable_embedded_plugins = enable_plugins_for_editor && !user_plugins_supplied;
+        let enable_embedded_plugins = enable_plugins_for_editor && !working_plugins_populated;
 
         // Create editor
         let mut editor = Editor::for_test(
