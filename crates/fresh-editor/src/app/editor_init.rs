@@ -94,6 +94,7 @@ impl Editor {
             working_dir,
             filesystem,
             plugins_enabled,
+            true, // enable_embedded_plugins (production: always allow embedded fallback)
             dir_context,
             None,
             color_capability,
@@ -106,8 +107,11 @@ impl Editor {
     /// By default uses empty grammar registry for fast initialization.
     /// Pass `Some(registry)` for tests that need syntax highlighting or shebang detection.
     ///
-    /// `enable_plugins` controls whether plugins (embedded + user) load — pass
-    /// `false` for test isolation (no plugins at all).
+    /// `enable_plugins` controls whether the plugin runtime is active at all.
+    /// `enable_embedded_plugins` separately gates the cargo-binstall embedded
+    /// plugins fallback — tests that pre-populate `<config_dir>/plugins/` and
+    /// want exact control over which plugins load can pass `false` here while
+    /// keeping `enable_plugins = true`.
     #[allow(clippy::too_many_arguments)]
     pub fn for_test(
         config: Config,
@@ -120,6 +124,7 @@ impl Editor {
         time_source: Option<SharedTimeSource>,
         grammar_registry: Option<Arc<crate::primitives::grammar::GrammarRegistry>>,
         enable_plugins: bool,
+        enable_embedded_plugins: bool,
     ) -> AnyhowResult<Self> {
         let mut grammar_registry =
             grammar_registry.unwrap_or_else(crate::primitives::grammar::GrammarRegistry::empty);
@@ -139,6 +144,7 @@ impl Editor {
             working_dir,
             filesystem,
             enable_plugins,
+            enable_embedded_plugins,
             dir_context,
             time_source,
             color_capability,
@@ -161,6 +167,8 @@ impl Editor {
         working_dir: Option<PathBuf>,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         enable_plugins: bool,
+        #[cfg_attr(not(feature = "embed-plugins"), allow(unused_variables))]
+        enable_embedded_plugins: bool,
         dir_context: DirectoryContext,
         time_source: Option<SharedTimeSource>,
         color_capability: crate::view::color_support::ColorCapability,
@@ -404,9 +412,12 @@ impl Editor {
             // dev workflow come in via the embedded fallback below; user
             // plugins live under `<config_dir>/plugins/`. See issue #1722.
 
-            // If no disk plugins found, try embedded plugins (cargo-binstall builds)
+            // If no disk plugins found, try embedded plugins (cargo-binstall builds).
+            // `enable_embedded_plugins` lets tests opt out so they get exactly
+            // the plugin set they pre-populated under `<config_dir>/plugins/`,
+            // without the bundled set leaking in.
             #[cfg(feature = "embed-plugins")]
-            if plugin_dirs.is_empty() {
+            if enable_embedded_plugins && plugin_dirs.is_empty() {
                 if let Some(embedded_dir) =
                     crate::services::plugins::embedded::get_embedded_plugins_dir()
                 {

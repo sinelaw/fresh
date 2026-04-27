@@ -666,13 +666,25 @@ impl EditorTestHarness {
         // `copy_plugin()` against `working_dir/plugins/`; the editor no
         // longer scans that path (issue #1722), so we forward the fixtures
         // here to keep the test API working without touching every caller.
+        //
+        // When the test pre-populated its own plugins, treat that as an
+        // explicit "use exactly these" request and disable the embedded
+        // plugin fallback so the bundled set doesn't leak in. This matches
+        // the pre-#1722 behavior, where any `working_dir/plugins/` (even
+        // empty) suppressed embedded loading.
+        let mut user_plugins_supplied = false;
         if enable_plugins_for_editor {
             let working_plugins = working_dir.join("plugins");
             if working_plugins.is_dir() {
-                let target = dir_context.config_dir.join("plugins");
-                mirror_plugins_dir(&working_plugins, &target)?;
+                let mut iter = std::fs::read_dir(&working_plugins)?;
+                if iter.next().is_some() {
+                    let target = dir_context.config_dir.join("plugins");
+                    mirror_plugins_dir(&working_plugins, &target)?;
+                    user_plugins_supplied = true;
+                }
             }
         }
+        let enable_embedded_plugins = enable_plugins_for_editor && !user_plugins_supplied;
 
         // Create editor
         let mut editor = Editor::for_test(
@@ -686,6 +698,7 @@ impl EditorTestHarness {
             Some(time_source),
             grammar_registry,
             enable_plugins_for_editor,
+            enable_embedded_plugins,
         )?;
 
         // Process any pending plugin commands
