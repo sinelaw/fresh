@@ -692,6 +692,15 @@ type AuthoritySpawner = {
 	container_id: string;
 	user?: string | null;
 	workspace?: string | null;
+	/**
+	 * Captured `userEnvProbe` env (typically PATH/HOME/LANG/...) applied
+	 * to every `docker exec` the spawner runs. Plugins fill this from a
+	 * one-shot `bash -lic env` against the just-up container so LSP
+	 * `command_exists` and `spawn_stdio` see binaries on shell-only PATH
+	 * entries (e.g. `~/.local/bin`). Optional; empty = use container's
+	 * bare exec env.
+	 */
+	env?: Array<[string, string]>;
 };
 type AuthorityTerminalWrapper = {
 	kind: "host-shell";

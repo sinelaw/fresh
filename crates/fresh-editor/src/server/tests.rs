@@ -1331,6 +1331,7 @@ mod integration_tests {
                     container_id: "deadbeef".into(),
                     user: Some("vscode".into()),
                     workspace: Some("/workspaces/proj".into()),
+                    env: Vec::new(),
                 },
                 terminal_wrapper: TerminalWrapperSpec::Explicit {
                     command: "docker".into(),
@@ -1491,6 +1492,7 @@ mod integration_tests {
                 container_id: "cafef00d".into(),
                 user: None,
                 workspace: None,
+                env: Vec::new(),
             },
             terminal_wrapper: TerminalWrapperSpec::Explicit {
                 command: "docker".into(),

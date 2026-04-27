@@ -20,11 +20,19 @@ EOF
 cmd_exec() {
   user=""
   workdir=""
+  exec_env_pairs=()
   while [ $# -gt 0 ]; do
     case "$1" in
       -i|-t|-it|-ti) shift ;;
       -u) user="${2:-}"; shift 2 ;;
       -w) workdir="${2:-}"; shift 2 ;;
+      -e)
+        # `docker exec -e KEY=VAL` — capture for the optional history
+        # log so tests can assert against the env that reached the
+        # container, then export so the child sees it.
+        exec_env_pairs+=("${2:-}")
+        export "${2:-}"
+        shift 2 ;;
       --) shift; break ;;
       -*)
         # Unknown flag — pass through to the child by stopping flag parsing.
@@ -47,12 +55,42 @@ cmd_exec() {
   state="$(fake_state_dir)"
   cdir="$state/containers/$container_id"
 
+  # Record this exec invocation to a per-state history file so tests
+  # can assert on which env vars were forwarded via `-e` and which
+  # commands ran. Each line: `<container_id>\t<env_pair>;<env_pair>...\t<cmd> <args...>`.
+  exec_history_file="$state/exec_history"
+  exec_env_joined="$(IFS=';'; printf '%s' "${exec_env_pairs[*]:-}")"
+  printf '%s\t%s\t%s\n' "$container_id" "$exec_env_joined" "$*" >> "$exec_history_file" 2>/dev/null || true
+
   # Always surface what the editor *requested* via -w, regardless of
   # whether that path exists on the host. Lets tests assert against
   # the in-container path the plugin would have sent (which is what
   # real `docker exec -w` honors), without the fake silently masking
   # a host-vs-container path mismatch.
   export FAKE_DC_REQUESTED_CWD="$workdir"
+
+  # Special-case the `userEnvProbe` exec so tests don't depend on
+  # whatever bash exists on the host (a real `bash -lic env` against
+  # the host can take seconds and emit terminal-mode warnings).
+  # Triggered when the *plain* `bash <flags> -c env` shape arrives —
+  # i.e. the captureContainerLoginEnv probe with no env wrapping.
+  #
+  # Lifecycle-style probes that go through `wrapWithEnv` arrive as
+  # `env KEY=VAL bash <flags> -c env`; those still need to hit a real
+  # bash so `BASH_ENV` etc. get honored (B3 in spec_conformance pins
+  # this). Detect by checking $1 — `bash` means plain probe, anything
+  # else (notably `env`) falls through.
+  if [ $# -ge 2 ] && [ "$1" = "bash" ]; then
+    last_two="${@: -2}"
+    if [ "$last_two" = "-c env" ]; then
+      if [ -f "$state/probe_response" ]; then
+        cat "$state/probe_response"
+      else
+        printf 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nHOME=/root\nLANG=C.UTF-8\n'
+      fi
+      exit 0
+    fi
+  fi
 
   if [ -z "$workdir" ] && [ -f "$cdir/workspace" ]; then
     # Treat the recorded host workspace path as the cwd. In real

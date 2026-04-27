@@ -793,18 +793,15 @@ fn handle_first_run_setup(
     file_locations: &[FileLocation],
     show_file_explorer: bool,
     stdin_stream: &mut Option<StdinStreamState>,
-    tracing_handles: &mut Option<TracingHandles>,
     workspace_enabled: bool,
 ) -> AnyhowResult<()> {
     if let Some(log_path) = &args.event_log {
         tracing::trace!("Event logging enabled: {}", log_path.display());
         editor.enable_event_streaming(log_path)?;
     }
-
-    if let Some(handles) = tracing_handles.take() {
-        editor.set_warning_log(handles.warning.receiver, handles.warning.path);
-        editor.set_status_log_path(handles.status.path);
-    }
+    // The warning-log channel and status-log path used to be wired up
+    // here from `tracing_handles`; that wiring now lives in the main
+    // loop so it survives editor restarts (e.g. devcontainer attach).
 
     let restore_full_session = workspace_enabled
         && (args.force_restore || editor.config().editor.restore_previous_session);
@@ -3349,6 +3346,26 @@ fn real_main() -> AnyhowResult<()> {
     // we consume right before dropping it below.
     let mut current_authority = startup_authority;
 
+    // Status-message log path is just a clone-able path — capture it
+    // once and re-bind to every restarted editor instance. Without
+    // this, the post-`setAuthority` editor has no path to point the
+    // "click status bar to view log" action at, and the user sees
+    // "status log not available" for every status message after the
+    // restart.
+    let status_log_path: Option<PathBuf> = tracing_handles
+        .as_ref()
+        .map(|h| h.status.path.clone());
+
+    // Warning-log channel survives across restarts the same way,
+    // except the `Receiver<()>` is single-consumer and can't be
+    // cloned: lift the whole `(receiver, path)` pair out of the
+    // editor before we drop it, and reinstall it on the next one.
+    // Seeded here from `tracing_handles` (which then no longer carries
+    // the warning slot), and topped up post-iteration via
+    // `editor.take_warning_log()`.
+    let mut warning_log_slot: Option<(std::sync::mpsc::Receiver<()>, PathBuf)> =
+        tracing_handles.take().map(|h| (h.warning.receiver, h.warning.path));
+
     // Main editor loop - supports restarting with a new working directory
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = loop {
@@ -3400,6 +3417,17 @@ fn real_main() -> AnyhowResult<()> {
             editor.set_gpm_active(true);
         }
 
+        // Re-wire the tracing log paths into every editor instance,
+        // not just the first. Status-bar click → open log, warning
+        // indicator click → open log all break otherwise after the
+        // first authority swap restart.
+        if let Some(p) = status_log_path.as_ref() {
+            editor.set_status_log_path(p.clone());
+        }
+        if let Some((rx, p)) = warning_log_slot.take() {
+            editor.set_warning_log(rx, p);
+        }
+
         if first_run {
             tracing::info!("Running first-run setup...");
             handle_first_run_setup(
@@ -3408,7 +3436,6 @@ fn real_main() -> AnyhowResult<()> {
                 &file_locations,
                 show_file_explorer,
                 &mut stdin_stream,
-                &mut tracing_handles,
                 workspace_enabled,
             )
             .context("Failed first run setup")?;
@@ -3497,6 +3524,10 @@ fn real_main() -> AnyhowResult<()> {
             tracing::info!("Authority transition queued; restarting editor");
             current_authority = new_authority;
         }
+
+        // Pluck the warning-log channel back out of the soon-to-be-
+        // dropped editor so the next iteration can re-bind it.
+        warning_log_slot = editor.take_warning_log();
 
         drop(editor);
 

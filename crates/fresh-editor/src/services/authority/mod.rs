@@ -129,12 +129,26 @@ pub enum SpawnerSpec {
     /// manages the container lifecycle (e.g. via `editor.spawnHostProcess`
     /// to invoke `devcontainer up`) and hands us the container id once it
     /// is ready.
+    ///
+    /// `env` is the captured `userEnvProbe` snapshot from inside the
+    /// container — typically `PATH`, `HOME`, `LANG`, and any vars the
+    /// user's profile exports. It's applied to every `docker exec`
+    /// (one-shot spawns, LSP/long-running, `command_exists` probes)
+    /// so plugins-installed binaries on `~/.local/bin` (or any
+    /// shell-only PATH) actually resolve. Empty when `userEnvProbe`
+    /// is `none` or the probe fails.
     DockerExec {
         container_id: String,
         #[serde(default)]
         user: Option<String>,
         #[serde(default)]
         workspace: Option<String>,
+        /// Captured `userEnvProbe` env. Order is preserved so
+        /// per-call `env` can layer over it deterministically; the
+        /// list of pairs (rather than a HashMap) keeps `docker exec
+        /// -e` ordering explicit.
+        #[serde(default)]
+        env: Vec<(String, String)>,
     },
 }
 
@@ -239,19 +253,22 @@ impl Authority {
                 container_id,
                 user,
                 workspace,
+                env,
             } => (
                 Arc::new(
-                    crate::services::authority::docker_spawner::DockerExecSpawner::new(
+                    crate::services::authority::docker_spawner::DockerExecSpawner::with_env(
                         container_id.clone(),
                         user.clone(),
                         workspace.clone(),
+                        env.clone(),
                     ),
                 ),
                 Arc::new(
-                    crate::services::authority::docker_spawner::DockerLongRunningSpawner::new(
+                    crate::services::authority::docker_spawner::DockerLongRunningSpawner::with_env(
                         container_id,
                         user,
                         workspace,
+                        env,
                     ),
                 ),
             ),
@@ -347,6 +364,54 @@ mod tests {
     }
 
     #[test]
+    fn payload_accepts_docker_exec_env_pairs() {
+        // The captured `userEnvProbe` env carries the in-container
+        // `PATH`/`HOME`/etc. so LSP `command_exists` can find binaries
+        // that live in shell-only PATHs (e.g. `~/.local/bin`).
+        let json = serde_json::json!({
+            "filesystem": { "kind": "local" },
+            "spawner": {
+                "kind": "docker-exec",
+                "container_id": "abc123",
+                "user": "vscode",
+                "workspace": "/workspaces/proj",
+                "env": [
+                    ["PATH", "/home/vscode/.local/bin:/usr/bin"],
+                    ["LANG", "C.UTF-8"]
+                ]
+            },
+            "terminal_wrapper": { "kind": "host-shell" }
+        });
+        let payload: AuthorityPayload =
+            serde_json::from_value(json).expect("env field is accepted");
+        if let SpawnerSpec::DockerExec { env, .. } = &payload.spawner {
+            assert_eq!(env.len(), 2);
+            assert_eq!(env[0], ("PATH".into(), "/home/vscode/.local/bin:/usr/bin".into()));
+            assert_eq!(env[1], ("LANG".into(), "C.UTF-8".into()));
+        } else {
+            panic!("expected docker-exec spawner");
+        }
+        // And the omitted-field form still parses (the field defaults
+        // to empty), so older plugins that don't populate it stay
+        // wire-compatible.
+        let json_no_env = serde_json::json!({
+            "filesystem": { "kind": "local" },
+            "spawner": {
+                "kind": "docker-exec",
+                "container_id": "abc123"
+            },
+            "terminal_wrapper": { "kind": "host-shell" }
+        });
+        let payload2: AuthorityPayload =
+            serde_json::from_value(json_no_env).expect("env is optional");
+        if let SpawnerSpec::DockerExec { env, .. } = payload2.spawner {
+            assert!(env.is_empty());
+        } else {
+            panic!("expected docker-exec spawner");
+        }
+    }
+
+    #[test]
     fn payload_defaults_manages_cwd_to_true_for_explicit_wrapper() {
         // Per the schema, `manages_cwd` is optional in the JSON and
         // defaults to true because re-parented shells almost always
@@ -424,6 +489,7 @@ mod tests {
                 container_id: "abc123".into(),
                 user: Some("vscode".into()),
                 workspace: Some("/workspaces/proj".into()),
+                env: Vec::new(),
             },
             terminal_wrapper: TerminalWrapperSpec::Explicit {
                 command: "docker".into(),

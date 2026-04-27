@@ -241,6 +241,121 @@ fn attach_via_fake_devcontainer_lands_container_authority() {
 /// caller's `_workspace_temp`.
 fn drop_workspace_temp(_workspace: &Path) {}
 
+/// `userEnvProbe` capture is plumbed through to the docker spawner,
+/// so subsequent `docker exec` invocations carry the captured env via
+/// `-e KEY=VAL` flags. Without this, an LSP server installed by a
+/// `postCreateCommand` into a shell-only PATH (e.g. `~/.local/bin`)
+/// fails the editor's `command_exists` probe with "executable not
+/// found in the active authority's PATH".
+///
+/// The fake docker exposes two hooks that make this checkable
+/// without a real container:
+///   - `FAKE_DC_PROBE_RESPONSE`: stdout for any `docker exec ... -c env`,
+///     standing in for what `bash -lic env` would print inside a
+///     real container.
+///   - `<state>/exec_history`: tab-separated record of every `docker
+///     exec` (id, semicolon-joined `-e KEY=VAL` pairs, command).
+///
+/// Test sequence:
+///   1. Workspace + plugin set up; fake `bash -lic env` returns a
+///      known PATH/HOME.
+///   2. Attach via the popup; the plugin's pre-restart probe call
+///      gets recorded in `exec_history` (assertion #1: probe ran).
+///   3. After authority lands, exercise a `docker exec` through the
+///      authority's spawner (LSP `command_exists` is the production
+///      caller; we stand in by spawning a process via the plugin
+///      runtime so the harness doesn't need an LSP wired up).
+///   4. Assertion #2: that exec carries `PATH=...` we set up — the
+///      whole point of the env-plumbing fix.
+#[cfg(unix)]
+#[test]
+fn user_env_probe_capture_propagates_path_into_subsequent_execs() {
+    use crossterm::event::KeyCode;
+
+    let (_workspace_temp, workspace) = set_up_workspace();
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+
+    // Pin the env-probe response in the per-test state dir (process
+    // env vars would leak across parallel test bins). The fake docker
+    // shim cats this file when invoked with `... -c env`.
+    let state = harness
+        .fake_devcontainer_state()
+        .expect("fake state present")
+        .to_path_buf();
+    fs::write(
+        state.join("probe_response"),
+        "PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin\nHOME=/home/vscode\nLANG=C.UTF-8\n",
+    )
+    .expect("write probe_response");
+
+    harness.tick_and_render().unwrap();
+
+    wait_for_attach_popup(&mut harness);
+    harness
+        .send_key(KeyCode::Enter, crossterm::event::KeyModifiers::NONE)
+        .unwrap();
+
+    let _label = wait_for_container_authority(&mut harness);
+
+    // Read the recorded exec history. The probe call should be in
+    // there: a `bash -l -i -c env` invocation against the just-up
+    // container — the plugin's `captureContainerLoginEnv` runs this
+    // before handing the payload to `setAuthority`.
+    let history_path = state.join("exec_history");
+    let history = fs::read_to_string(&history_path).unwrap_or_else(|e| {
+        panic!("exec_history not found at {history_path:?}: {e}")
+    });
+    let probe_lines: Vec<_> = history
+        .lines()
+        .filter(|l| l.contains("bash -l -i -c env") || l.contains("bash -l -c env"))
+        .collect();
+    assert!(
+        !probe_lines.is_empty(),
+        "plugin must call `bash -lic env` to capture userEnvProbe; \
+         exec_history was:\n{history}"
+    );
+
+    // Now drive a post-attach `docker exec` through the authority's
+    // long-running spawner. The actual production caller is
+    // `LongRunningSpawner::command_exists` (the LSP path probe).
+    // Construct a fresh tokio runtime for the awaiter — the harness
+    // doesn't expose its own and creating one here is cheap.
+    let spawner = harness.editor().authority().long_running_spawner.clone();
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime starts");
+    rt.block_on(async move { spawner.command_exists("ls").await });
+    drop(rt);
+
+    // The post-attach `command -v ls` probe should carry the env
+    // captured by the pre-restart `bash -lic env` call.
+    let final_history =
+        fs::read_to_string(&history_path).expect("history readable post-spawn");
+    let cmd_exists_calls: Vec<_> = final_history
+        .lines()
+        .filter(|l| l.contains("sh -c command -v ls"))
+        .collect();
+    assert!(
+        !cmd_exists_calls.is_empty(),
+        "post-attach command_exists must have run a `command -v` probe; \
+         final history:\n{final_history}"
+    );
+    let last = cmd_exists_calls.last().unwrap();
+    assert!(
+        last.contains("PATH=/home/vscode/.local/bin:/usr/local/bin:/usr/bin"),
+        "command_exists probe must include the captured PATH; \
+         got line: {last:?}\nfull history:\n{final_history}"
+    );
+
+    drop_workspace_temp(&workspace);
+}
+
 /// Wait until the failed-attach popup has rendered. Title comes from
 /// `popup.failed_attach_title` in the plugin's i18n bundle.
 fn wait_for_failed_attach_popup(harness: &mut EditorTestHarness) {

@@ -934,6 +934,81 @@ async function effectiveLifecycleEnv(): Promise<Record<string, string>> {
   return out;
 }
 
+/// Probe the just-launched container's user-shell env so the docker
+/// authority's spawner can apply it to every `docker exec` (including
+/// the LSP `command_exists` probe and the LSP server spawn itself).
+///
+/// Why pre-restart, not post-restart: `setAuthority` rebuilds the
+/// editor in place; the next plugin instance can't influence the
+/// already-installed authority's spawner without a second restart.
+/// We have one shot, here, while we still hold the host-side spawner
+/// and know which container we're talking to.
+///
+/// Why bash login-interactive: per the dev-container spec, the
+/// default `userEnvProbe` is `loginInteractiveShell`. `bash -lic env`
+/// matches what an attached terminal would see — including PATH
+/// additions from `~/.profile`, `~/.bashrc`, and friends. Custom
+/// `userEnvProbe` settings (`loginShell`, `interactiveShell`, `none`)
+/// are honoured.
+///
+/// Failures (no bash, probe times out, exit non-zero) degrade
+/// gracefully: we return `[]` and the user gets the bare
+/// container-default PATH back — same behaviour as before this fix,
+/// no regression.
+async function captureContainerLoginEnv(
+  result: DevcontainerUpResult,
+): Promise<Array<[string, string]>> {
+  if (!result.containerId) return [];
+  const probe = config?.userEnvProbe ?? "loginInteractiveShell";
+  if (probe === "none") return [];
+
+  const flagMap: Record<string, string[]> = {
+    loginShell: ["-l"],
+    loginInteractiveShell: ["-l", "-i"],
+    interactiveShell: ["-i"],
+  };
+  const flags = flagMap[probe];
+  if (!flags) return [];
+
+  // Compose `docker exec -i [-u USER] [-w WORKSPACE] <id> bash ...`
+  // by hand: at this point the authority hasn't been installed yet,
+  // so `editor.spawnProcess` would route to the host. Use
+  // `spawnHostProcess` and address the container directly via the
+  // host docker CLI.
+  const dockerArgs: string[] = ["exec", "-i"];
+  if (result.remoteUser) {
+    dockerArgs.push("-u", result.remoteUser);
+  }
+  if (result.remoteWorkspaceFolder) {
+    dockerArgs.push("-w", result.remoteWorkspaceFolder);
+  }
+  dockerArgs.push(result.containerId, "bash", ...flags, "-c", "env");
+
+  const probeResult = await editor.spawnHostProcess("docker", dockerArgs);
+  if (probeResult.exit_code !== 0) {
+    editor.debug(
+      `devcontainer: container userEnvProbe (${probe}) failed exit=${probeResult.exit_code}: ${probeResult.stderr.trim()}`,
+    );
+    return [];
+  }
+
+  // Filter to a small allowlist of high-value entries. Forwarding the
+  // entire `env` dump risks shadowing useful container defaults
+  // (`HOSTNAME`, `_`, …) and balloons the `docker exec` arg list.
+  // `PATH` is the one that drives the LSP fix; the others are common
+  // setup the user's shell exports and a non-shell exec wouldn't.
+  const wanted = new Set(["PATH", "HOME", "LANG", "LC_ALL", "SHELL", "USER", "LOGNAME"]);
+  const out: Array<[string, string]> = [];
+  for (const line of probeResult.stdout.split("\n")) {
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq);
+    if (!wanted.has(key)) continue;
+    out.push([key, line.slice(eq + 1)]);
+  }
+  return out;
+}
+
 /// Wrap `[bin, args]` with an `env K1=V1 K2=V2 bin args...`
 /// invocation when `env` is non-empty. Returns the original pair
 /// when env is empty (no wrapper needed).
@@ -1563,6 +1638,7 @@ function parseDevcontainerUpOutput(stdout: string): DevcontainerUpResult | null 
 
 function buildContainerAuthorityPayload(
   result: DevcontainerUpResult,
+  baseEnv: Array<[string, string]>,
 ): AuthorityPayload | null {
   if (!result.containerId) return null;
   const user = result.remoteUser ?? null;
@@ -1586,6 +1662,7 @@ function buildContainerAuthorityPayload(
       container_id: result.containerId,
       user,
       workspace,
+      env: baseEnv,
     },
     terminal_wrapper: {
       kind: "explicit",
@@ -1785,7 +1862,16 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
     return;
   }
 
-  const payload = buildContainerAuthorityPayload(parsed);
+  // Capture the in-container `userEnvProbe` env BEFORE we hand the
+  // payload to setAuthority. setAuthority restarts the editor; once
+  // the new editor's spawner is wired with the captured PATH, LSP
+  // `command_exists` and `spawn_stdio` see the same binaries the
+  // user's interactive shell sees (e.g. `pylsp` installed by a
+  // `postCreateCommand` into `~/.local/bin`). Per spec, when
+  // `userEnvProbe` is unset the default is `loginInteractiveShell`.
+  const baseEnv = await captureContainerLoginEnv(parsed);
+
+  const payload = buildContainerAuthorityPayload(parsed, baseEnv);
   if (!payload) {
     enterFailedAttach(editor.t("status.rebuild_missing_container_id"));
     return;

@@ -18,23 +18,46 @@ use crate::services::remote::{
 };
 
 /// Spawn processes inside a long-lived Docker container via `docker exec`.
+///
+/// `base_env` carries env vars that get injected via `docker exec -e
+/// KEY=VAL` on every spawn — the plugin populates this with the
+/// container's `userEnvProbe` capture (notably `PATH`, which differs
+/// between an interactive login shell and a bare `docker exec`). LSP
+/// servers and `command_exists` probes both go through this so
+/// `pylsp` installed by a `postCreateCommand` into `~/.local/bin`
+/// is actually discoverable when the editor goes to spawn it.
 pub(crate) struct DockerExecSpawner {
     container_id: String,
     user: Option<String>,
     workspace: Option<String>,
+    base_env: Vec<(String, String)>,
 }
 
 impl DockerExecSpawner {
-    pub(crate) fn new(
+    pub(crate) fn with_env(
         container_id: String,
         user: Option<String>,
         workspace: Option<String>,
+        base_env: Vec<(String, String)>,
     ) -> Self {
         Self {
             container_id,
             user,
             workspace,
+            base_env,
         }
+    }
+
+    /// Test helper — `with_env` with an empty base env. Production
+    /// always knows whether it has a `userEnvProbe` capture or not, so
+    /// the explicit form is what `from_plugin_payload` calls.
+    #[cfg(test)]
+    pub(crate) fn new(
+        container_id: String,
+        user: Option<String>,
+        workspace: Option<String>,
+    ) -> Self {
+        Self::with_env(container_id, user, workspace, Vec::new())
     }
 }
 
@@ -43,14 +66,22 @@ impl DockerExecSpawner {
     /// `args` inside the container. Shared between the one-shot
     /// `ProcessSpawner` impl and the long-running variant so both
     /// paths honour `-u <user>` / `-w <cwd-or-workspace>` consistently.
+    ///
+    /// `extra_env` is merged after the spawner's own `base_env` (so
+    /// per-call entries override the captured probe). Both flatten to
+    /// `-e KEY=VALUE` flags placed before the container id, matching
+    /// `docker`'s flag-parsing rules.
     fn build_exec_args(
         &self,
         command: &str,
         args: &[String],
         cwd: Option<&Path>,
         interactive: bool,
+        extra_env: &[(String, String)],
     ) -> Vec<String> {
-        let mut docker_args: Vec<String> = Vec::with_capacity(args.len() + 8);
+        let env_capacity = (self.base_env.len() + extra_env.len()) * 2;
+        let mut docker_args: Vec<String> =
+            Vec::with_capacity(args.len() + env_capacity + 8);
         docker_args.push("exec".into());
         if interactive {
             // `-i` keeps stdin open so JSON-RPC clients can write to
@@ -68,6 +99,14 @@ impl DockerExecSpawner {
             docker_args.push("-w".into());
             docker_args.push(dir);
         }
+        for (k, v) in &self.base_env {
+            docker_args.push("-e".into());
+            docker_args.push(format!("{}={}", k, v));
+        }
+        for (k, v) in extra_env {
+            docker_args.push("-e".into());
+            docker_args.push(format!("{}={}", k, v));
+        }
         docker_args.push(self.container_id.clone());
         docker_args.push(command.to_string());
         docker_args.extend(args.iter().cloned());
@@ -84,7 +123,7 @@ impl ProcessSpawner for DockerExecSpawner {
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
         let cwd_path = cwd.as_deref().map(Path::new);
-        let docker_args = self.build_exec_args(&command, &args, cwd_path, false);
+        let docker_args = self.build_exec_args(&command, &args, cwd_path, false, &[]);
 
         let output = Command::new("docker")
             .args(&docker_args)
@@ -120,14 +159,25 @@ pub(crate) struct DockerLongRunningSpawner {
 }
 
 impl DockerLongRunningSpawner {
+    pub(crate) fn with_env(
+        container_id: String,
+        user: Option<String>,
+        workspace: Option<String>,
+        base_env: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            inner: DockerExecSpawner::with_env(container_id, user, workspace, base_env),
+        }
+    }
+
+    /// Test helper — see [`DockerExecSpawner::new`].
+    #[cfg(test)]
     pub(crate) fn new(
         container_id: String,
         user: Option<String>,
         workspace: Option<String>,
     ) -> Self {
-        Self {
-            inner: DockerExecSpawner::new(container_id, user, workspace),
-        }
+        Self::with_env(container_id, user, workspace, Vec::new())
     }
 }
 
@@ -158,29 +208,12 @@ impl LongRunningSpawner for DockerLongRunningSpawner {
             }
         }
 
-        // `-e KEY=VAL` entries are injected *before* the container id
-        // so `docker exec` applies them to the server process. We use
-        // the same slot as the one-shot path but build a distinct
-        // vector so interactive mode and env flags compose cleanly.
-        let base_args = self.inner.build_exec_args(command, args, cwd, true);
-
-        // `base_args` starts with ["exec", "-i", "-u?", "-w?",
-        // <container>, <command>, <args…>]. Env flags belong between
-        // the flags block and the container id; splice them in by
-        // locating the container id position (first arg that equals
-        // `self.inner.container_id` and isn't a flag value).
-        let mut docker_args: Vec<String> = Vec::with_capacity(base_args.len() + env.len() * 2);
-        let mut inserted_env = false;
-        for arg in base_args {
-            if !inserted_env && arg == self.inner.container_id {
-                for (k, v) in &env {
-                    docker_args.push("-e".into());
-                    docker_args.push(format!("{}={}", k, v));
-                }
-                inserted_env = true;
-            }
-            docker_args.push(arg);
-        }
+        // `-e KEY=VAL` entries (the spawner's captured `userEnvProbe`
+        // base env plus this call's per-spawn `env`) are injected
+        // *before* the container id so `docker exec` applies them to
+        // the server process. `build_exec_args` handles both layers in
+        // one pass.
+        let docker_args = self.inner.build_exec_args(command, args, cwd, true, &env);
 
         let child = Command::new("docker")
             .args(&docker_args)
@@ -199,9 +232,16 @@ impl LongRunningSpawner for DockerLongRunningSpawner {
         // functions, and `$PATH` lookups — the same semantics
         // `which::which` gives on the host, minus `which`'s non-
         // ubiquity inside minimal container images.
+        //
+        // The probe has to see the same `$PATH` the LSP child will see
+        // when it actually spawns; otherwise the editor declines to
+        // launch a server that's perfectly installed (e.g. `pylsp` in
+        // `~/.local/bin`, on PATH for an interactive login shell but
+        // not for the bare exec env). `build_exec_args` includes
+        // `base_env` here for free.
         let probe = format!("command -v {}", shell_quote(command));
         let sh_args = vec!["-c".to_string(), probe];
-        let docker_args = self.inner.build_exec_args("sh", &sh_args, None, false);
+        let docker_args = self.inner.build_exec_args("sh", &sh_args, None, false, &[]);
 
         match Command::new("docker")
             .args(&docker_args)
@@ -243,7 +283,7 @@ mod tests {
             Some("vscode".into()),
             Some("/workspaces/proj".into()),
         );
-        let args = sp.build_exec_args("rust-analyzer", &[], None, false);
+        let args = sp.build_exec_args("rust-analyzer", &[], None, false, &[]);
         // ["exec", "-u", "vscode", "-w", "/workspaces/proj", "abc123", "rust-analyzer"]
         assert_eq!(args[0], "exec");
         assert_eq!(args[1], "-u");
@@ -258,17 +298,73 @@ mod tests {
     #[test]
     fn build_exec_args_interactive_inserts_dash_i() {
         let sp = DockerExecSpawner::new("abc".into(), None, None);
-        let args = sp.build_exec_args("bash", &[], None, true);
+        let args = sp.build_exec_args("bash", &[], None, true, &[]);
         assert_eq!(&args[..3], &["exec", "-i", "abc"]);
     }
 
     #[test]
     fn build_exec_args_cwd_override_wins_over_workspace() {
         let sp = DockerExecSpawner::new("abc".into(), None, Some("/default".into()));
-        let args = sp.build_exec_args("ls", &[], Some(Path::new("/override")), false);
+        let args = sp.build_exec_args("ls", &[], Some(Path::new("/override")), false, &[]);
         // The cwd slot must carry the per-call override, not the default
         let w_pos = args.iter().position(|a| a == "-w").expect("-w present");
         assert_eq!(args[w_pos + 1], "/override");
+    }
+
+    #[test]
+    fn build_exec_args_base_env_lands_before_container_id() {
+        // `userEnvProbe`-captured PATH (and any other env the plugin
+        // hands the spawner constructor) must reach the in-container
+        // command. `docker exec` parses `-e` only before the container
+        // id; anything after is treated as the command/args.
+        let sp = DockerExecSpawner::with_env(
+            "abc".into(),
+            None,
+            None,
+            vec![
+                ("PATH".into(), "/home/vscode/.local/bin:/usr/bin".into()),
+                ("LANG".into(), "C.UTF-8".into()),
+            ],
+        );
+        let args = sp.build_exec_args("pylsp", &[], None, false, &[]);
+        let abc_pos = args.iter().position(|a| a == "abc").expect("container id present");
+        let path_pos = args
+            .iter()
+            .position(|a| a == "PATH=/home/vscode/.local/bin:/usr/bin")
+            .expect("PATH env injected");
+        let lang_pos = args
+            .iter()
+            .position(|a| a == "LANG=C.UTF-8")
+            .expect("LANG env injected");
+        let pylsp_pos = args.iter().position(|a| a == "pylsp").expect("command present");
+        assert!(path_pos < abc_pos, "PATH must precede container id");
+        assert!(lang_pos < abc_pos, "LANG must precede container id");
+        assert!(abc_pos < pylsp_pos, "container id must precede command");
+        // Each env value must be preceded by a `-e` flag.
+        assert_eq!(args[path_pos - 1], "-e");
+        assert_eq!(args[lang_pos - 1], "-e");
+    }
+
+    #[test]
+    fn build_exec_args_extra_env_appended_after_base_env() {
+        // Per-call `env` should compose with the base env so callers
+        // can override individual keys; the call-site env is appended
+        // last, which means later `-e KEY=VAL` wins under `docker exec`'s
+        // last-flag-wins semantics.
+        let sp = DockerExecSpawner::with_env(
+            "abc".into(),
+            None,
+            None,
+            vec![("PATH".into(), "/base".into())],
+        );
+        let extra = vec![("PATH".into(), "/override".into())];
+        let args = sp.build_exec_args("ls", &[], None, false, &extra);
+        let base_idx = args.iter().position(|a| a == "PATH=/base").unwrap();
+        let override_idx = args.iter().position(|a| a == "PATH=/override").unwrap();
+        assert!(
+            base_idx < override_idx,
+            "base env precedes per-call env so the call-site value wins"
+        );
     }
 
     #[test]
@@ -278,21 +374,8 @@ mod tests {
         // the flag block and the container id, not after the command.
         let sp =
             DockerLongRunningSpawner::new("abc".into(), Some("vscode".into()), Some("/ws".into()));
-        let base = sp.inner.build_exec_args("rust-analyzer", &[], None, true);
-        // Simulate the splice the spawner does.
         let env: Vec<(String, String)> = vec![("RUST_LOG".into(), "debug".into())];
-        let mut out: Vec<String> = Vec::with_capacity(base.len() + 2);
-        let mut inserted = false;
-        for a in base {
-            if !inserted && a == "abc" {
-                for (k, v) in &env {
-                    out.push("-e".into());
-                    out.push(format!("{}={}", k, v));
-                }
-                inserted = true;
-            }
-            out.push(a);
-        }
+        let out = sp.inner.build_exec_args("rust-analyzer", &[], None, true, &env);
         let e_pos = out.iter().position(|a| a == "-e").unwrap();
         let abc_pos = out.iter().position(|a| a == "abc").unwrap();
         let ra_pos = out.iter().position(|a| a == "rust-analyzer").unwrap();

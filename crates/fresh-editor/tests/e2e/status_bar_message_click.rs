@@ -114,3 +114,85 @@ fn click_on_plugin_status_message_opens_status_log() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `set_status_log_path` survives a destructive editor rebuild.
+///
+/// Production drops the old editor and constructs a new one on every
+/// authority swap (devcontainer attach, SSH connect, …). The status
+/// log path used to be wired up only in `handle_first_run_setup`, so
+/// after the swap the new editor had no log path and clicking the
+/// status bar surfaced "Status log not available". `main.rs` now
+/// captures the path once and re-binds it to every editor — this test
+/// pins the bare invariant that re-applying the path on a fresh editor
+/// gets clicks routed back to the log.
+#[test]
+fn status_log_path_can_be_rebound_after_editor_rebuild() -> anyhow::Result<()> {
+    use crate::common::harness::HarnessOptions;
+
+    let temp = tempfile::NamedTempFile::new()?;
+    std::fs::write(temp.path(), "post-restart status log line\n")?;
+    let log_path: PathBuf = temp.path().to_path_buf();
+
+    // First editor: configure the path, then drop it without
+    // touching the channel — simulates the pre-restart editor going
+    // out of scope when `setAuthority` triggers a rebuild.
+    {
+        let mut harness = EditorTestHarness::create(120, 30, HarnessOptions::new())?;
+        harness.editor_mut().set_status_log_path(log_path.clone());
+    }
+
+    // Second editor: brand-new instance, no first-run setup, just
+    // the explicit re-bind that the new main-loop wiring performs.
+    let mut harness = EditorTestHarness::create(120, 30, HarnessOptions::new())?;
+    harness.editor_mut().set_status_log_path(log_path.clone());
+
+    let marker = "post-restart-status-marker";
+    harness.editor_mut().set_status_message(marker.to_string());
+    harness.render()?;
+
+    let (col, row) = harness.find_text_on_screen(marker).ok_or_else(|| {
+        anyhow::anyhow!(
+            "post-restart status marker must be visible; screen:\n{}",
+            harness.screen_to_string()
+        )
+    })?;
+    harness.mouse_click(col, row)?;
+    harness.render()?;
+
+    let content = harness.get_buffer_content().unwrap_or_default();
+    assert!(
+        content.contains("post-restart status log line"),
+        "rebound status log path must open the log buffer; \
+         active buffer content was: {content:?}\nscreen:\n{}",
+        harness.screen_to_string()
+    );
+    Ok(())
+}
+
+/// `take_warning_log` returns the path that was last set, and a
+/// freshly-created editor without `set_warning_log` returns None.
+/// Pins the round-trip used by `main.rs` to forward the warning
+/// channel across editor restarts.
+#[test]
+fn take_warning_log_returns_set_value() -> anyhow::Result<()> {
+    let mut harness = EditorTestHarness::new(80, 24)?;
+    assert!(
+        harness.editor_mut().take_warning_log().is_none(),
+        "new editor has no warning log channel installed"
+    );
+
+    let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    let path = std::path::PathBuf::from("/tmp/fake-warning-log");
+    harness.editor_mut().set_warning_log(rx, path.clone());
+
+    let taken = harness
+        .editor_mut()
+        .take_warning_log()
+        .expect("warning log was set, must be returned by take");
+    assert_eq!(taken.1, path);
+    assert!(
+        harness.editor_mut().take_warning_log().is_none(),
+        "subsequent take returns None — single-consumer semantics"
+    );
+    Ok(())
+}
