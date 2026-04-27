@@ -112,24 +112,18 @@ impl Editor {
             String::new()
         };
 
-        // Filter completions to match the typed prefix
-        let filtered_items: Vec<&lsp_types::CompletionItem> = if prefix.is_empty() {
-            // No prefix - show all completions
-            items.iter().collect()
-        } else {
-            // Filter to items that start with the prefix (case-insensitive)
-            items
-                .iter()
-                .filter(|item| {
-                    item.label.to_lowercase().starts_with(&prefix)
-                        || item
-                            .filter_text
-                            .as_ref()
-                            .map(|ft| ft.to_lowercase().starts_with(&prefix))
-                            .unwrap_or(false)
-                })
-                .collect()
+        let matches_prefix = |item: &lsp_types::CompletionItem| -> bool {
+            prefix.is_empty()
+                || item.label.to_lowercase().starts_with(&prefix)
+                || item
+                    .filter_text
+                    .as_ref()
+                    .map(|ft| ft.to_lowercase().starts_with(&prefix))
+                    .unwrap_or(false)
         };
+
+        let filtered_items: Vec<&lsp_types::CompletionItem> =
+            items.iter().filter(|item| matches_prefix(item)).collect();
 
         if filtered_items.is_empty() && self.completion_items.is_none() {
             tracing::debug!("No completion items match prefix '{}'", prefix);
@@ -149,21 +143,10 @@ impl Editor {
 
         // Rebuild popup from ALL merged items (not just the new batch)
         let all_items = self.completion_items.as_ref().unwrap();
-        let all_filtered: Vec<&lsp_types::CompletionItem> = if prefix.is_empty() {
-            all_items.iter().collect()
-        } else {
-            all_items
-                .iter()
-                .filter(|item| {
-                    item.label.to_lowercase().starts_with(&prefix)
-                        || item
-                            .filter_text
-                            .as_ref()
-                            .map(|ft| ft.to_lowercase().starts_with(&prefix))
-                            .unwrap_or(false)
-                })
-                .collect()
-        };
+        let all_filtered: Vec<&lsp_types::CompletionItem> = all_items
+            .iter()
+            .filter(|item| matches_prefix(item))
+            .collect();
 
         if all_filtered.is_empty() {
             tracing::debug!("No completion items match prefix '{}'", prefix);
@@ -1283,72 +1266,19 @@ impl Editor {
 
     /// Request LSP find references at current cursor position
     pub(crate) fn request_references(&mut self) -> AnyhowResult<()> {
-        // Get the current buffer and cursor position
+        use crate::primitives::word_navigation::{find_word_end, find_word_start};
+
         let cursor_pos = self.active_cursors().primary().position;
-        let state = self.active_state();
-
-        // Extract the word under cursor for display
-        let symbol = {
-            let text = match state.buffer.to_string() {
-                Some(t) => t,
-                None => {
-                    self.set_status_message(t!("error.buffer_not_loaded").to_string());
-                    return Ok(());
-                }
-            };
-            let bytes = text.as_bytes();
-            let buf_len = bytes.len();
-
-            if cursor_pos <= buf_len {
-                // Find word boundaries
-                let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
-
-                // Find start of word
-                let mut start = cursor_pos;
-                while start > 0 {
-                    // Move to previous byte
-                    start -= 1;
-                    // Skip continuation bytes (UTF-8)
-                    while start > 0 && (bytes[start] & 0xC0) == 0x80 {
-                        start -= 1;
-                    }
-                    // Get the character at this position
-                    if let Some(ch) = text[start..].chars().next() {
-                        if !is_word_char(ch) {
-                            start += ch.len_utf8();
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-
-                // Find end of word
-                let mut end = cursor_pos;
-                while end < buf_len {
-                    if let Some(ch) = text[end..].chars().next() {
-                        if is_word_char(ch) {
-                            end += ch.len_utf8();
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-
-                if start < end {
-                    text[start..end].to_string()
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            }
+        let (line, character, symbol) = {
+            let state = self.active_state();
+            let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
+            let word_start = find_word_start(&state.buffer, cursor_pos);
+            let word_end = find_word_end(&state.buffer, cursor_pos);
+            let symbol = String::from_utf8_lossy(&state.buffer.slice_bytes(word_start..word_end))
+                .into_owned();
+            (line, character, symbol)
         };
 
-        // Convert byte position to LSP position (line, UTF-16 code units)
-        let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
         let buffer_id = self.active_buffer();
         let request_id = self.next_lsp_request_id;
 
