@@ -176,6 +176,10 @@ fn test_current_line_highlight_extends_through_inline_diagnostic() {
 fn test_multiline_diagnostic_highlight_visible_when_partially_scrolled() {
     let mut config = fresh::config::Config::default();
     config.editor.line_numbers = false;
+    // Ctrl+Home and the post-scroll cursor reposition both cross the
+    // cursor-jump threshold (dy >= 3); without this, the trail can paint
+    // cells with blended cursor/bg colors and race the assertion below.
+    config.editor.animations = false;
 
     // Use a small viewport so we can scroll easily
     // Height 10: menu bar (1) + tab bar (1) + content (6) + status (1) + prompt (1)
