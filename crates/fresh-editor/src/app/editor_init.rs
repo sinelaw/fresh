@@ -377,10 +377,10 @@ impl Editor {
 
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)
-        // 2. In the working directory (for development/local usage)
-        // 3. From embedded plugins (for cargo-binstall, when embed-plugins feature is enabled)
-        // 4. User plugins directory (~/.config/fresh/plugins)
-        // 5. Package manager installed plugins (~/.config/fresh/plugins/packages/*)
+        // 2. From embedded plugins (for cargo-binstall and `cargo run`,
+        //    when embed-plugins feature is enabled)
+        // 3. User plugins directory (~/.config/fresh/plugins)
+        // 4. Package manager installed plugins (~/.config/fresh/plugins/packages/*)
         if plugin_manager.is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
@@ -394,11 +394,11 @@ impl Editor {
                 }
             }
 
-            // Then check working directory (for development)
-            let working_plugin_dir = working_dir.join("plugins");
-            if working_plugin_dir.exists() && !plugin_dirs.contains(&working_plugin_dir) {
-                plugin_dirs.push(working_plugin_dir);
-            }
+            // No working-directory `plugins/` check: a user project with a
+            // folder named `plugins/` (e.g. a Vite/Rollup project, a Hugo
+            // site) is not a Fresh plugin source. Bundled plugins for the
+            // dev workflow come in via the embedded fallback below; user
+            // plugins live under `<config_dir>/plugins/`. See issue #1722.
 
             // If no disk plugins found, try embedded plugins (cargo-binstall builds)
             #[cfg(feature = "embed-plugins")]
