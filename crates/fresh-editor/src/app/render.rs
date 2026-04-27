@@ -1274,13 +1274,15 @@ impl Editor {
 
         let dx = (current.0 as i32 - prev.0 as i32).abs();
         let dy = (current.1 as i32 - prev.1 as i32).abs();
-        // Animate only when the cursor crossed split panes, or when it
-        // moved more than two rows within the same pane. Small horizontal
-        // moves and short vertical hops (typing, arrow keys, word-jump,
-        // home/end on short lines) are intentionally skipped.
+        // Animate when the cursor crossed split panes, or when it made a
+        // non-incremental move within the same pane: more than two rows
+        // vertically, or at least ten columns horizontally. Small hops
+        // (typing, arrow keys, word-jump, home/end on short lines) are
+        // intentionally skipped.
         let crossed_panes = prev_split != active_split;
         let row_jump = dy > 2;
-        if !crossed_panes && !row_jump {
+        let col_jump = dx >= 10;
+        if !crossed_panes && !row_jump && !col_jump {
             return;
         }
 

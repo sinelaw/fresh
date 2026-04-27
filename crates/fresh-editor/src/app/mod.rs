@@ -1170,8 +1170,8 @@ pub struct Editor {
     /// detect "jumps" (search, goto-line, click, goto-definition, focus
     /// change between splits, tab/buffer switch, etc.) and animate the
     /// cursor moving from its old screen position to its new one. Cross-
-    /// pane jumps animate unconditionally; same-pane jumps animate only
-    /// when the cursor moved more than two rows.
+    /// pane jumps animate unconditionally; same-pane jumps animate when
+    /// the cursor moved more than two rows or at least ten columns.
     pub(crate) previous_cursor_screen_pos: Option<((u16, u16), LeafId)>,
     /// ID of the most recent cursor-jump animation, kept so successive jumps
     /// cancel the prior one instead of stacking trail effects.
