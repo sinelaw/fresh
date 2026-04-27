@@ -2389,11 +2389,13 @@ async function runAutoForwardSweep(): Promise<void> {
 /// State-gated commands that get re-evaluated on every authority
 /// transition. Listed in one place so `registerCommands` and the
 /// `authority_changed` cleanup path stay in sync.
-const ATTACHED_ONLY_COMMANDS = [
-  "%cmd.detach",
-  "%cmd.show_logs",
-  "%cmd.show_forwarded_ports_panel",
-];
+///
+/// `show_forwarded_ports_panel` stays available in BOTH modes —
+/// the panel renders configured `forwardPorts` even when no
+/// container is up, which is useful for previewing a config
+/// (and one of the tests exercises that exact "configured only"
+/// branch).
+const ATTACHED_ONLY_COMMANDS = ["%cmd.detach", "%cmd.show_logs"];
 const DETACHED_ONLY_COMMANDS = ["%cmd.attach", "%cmd.cancel_attach"];
 
 /// Bug #3 (L170): when `devcontainer.json` exists but fails to
@@ -2499,6 +2501,16 @@ function registerCommands(): void {
     "devcontainer_run_lifecycle",
     null,
   );
+  // `show_forwarded_ports_panel` works in both modes too — the
+  // panel renders configured `forwardPorts` even with no
+  // container up. (The "configured only" branch is what the
+  // panel's regression test exercises.)
+  editor.registerCommand(
+    "%cmd.show_forwarded_ports_panel",
+    "%cmd.show_forwarded_ports_panel_desc",
+    "devcontainer_show_forwarded_ports_panel",
+    null,
+  );
   if (attached) {
     editor.registerCommand(
       "%cmd.detach",
@@ -2510,12 +2522,6 @@ function registerCommands(): void {
       "%cmd.show_logs",
       "%cmd.show_logs_desc",
       "devcontainer_show_logs",
-      null,
-    );
-    editor.registerCommand(
-      "%cmd.show_forwarded_ports_panel",
-      "%cmd.show_forwarded_ports_panel_desc",
-      "devcontainer_show_forwarded_ports_panel",
       null,
     );
   } else {

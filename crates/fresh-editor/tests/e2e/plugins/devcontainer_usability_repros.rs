@@ -446,8 +446,8 @@ fn broken_devcontainer_json_surfaces_parse_error_in_status_bar() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("devcontainer.json parse error"),
-        "broken devcontainer.json must surface a parse error in the status bar; \
+        screen.contains("devcontainer.json could not be parsed"),
+        "broken devcontainer.json must surface a parse failure in the status bar; \
          screen:\n{screen}"
     );
 }
