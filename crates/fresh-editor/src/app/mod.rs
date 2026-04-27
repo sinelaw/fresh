@@ -1165,13 +1165,14 @@ pub struct Editor {
     /// while animations are running.
     pub animations: crate::view::animation::AnimationRunner,
 
-    /// Hardware-cursor screen position from the previous render pass, used
-    /// to detect "jumps" (search, goto-line, click, goto-definition, focus
+    /// Hardware-cursor screen position from the previous render pass, paired
+    /// with the active split that owned the cursor at that time. Used to
+    /// detect "jumps" (search, goto-line, click, goto-definition, focus
     /// change between splits, tab/buffer switch, etc.) and animate the
     /// cursor moving from its old screen position to its new one. Cross-
-    /// pane and cross-buffer jumps animate too — the trail just paints
-    /// over whatever cells lie along the straight line.
-    pub(crate) previous_cursor_screen_pos: Option<(u16, u16)>,
+    /// pane jumps animate unconditionally; same-pane jumps animate only
+    /// when the cursor moved more than two rows.
+    pub(crate) previous_cursor_screen_pos: Option<((u16, u16), LeafId)>,
     /// ID of the most recent cursor-jump animation, kept so successive jumps
     /// cancel the prior one instead of stacking trail effects.
     pub(crate) cursor_jump_animation: Option<crate::view::animation::AnimationId>,

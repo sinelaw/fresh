@@ -493,13 +493,11 @@ impl Editor {
         drop(_content_span);
 
         // Cursor-jump animation: compare the cursor's screen position to
-        // the prior frame and, if the user moved it non-incrementally
-        // (search match, goto-line, click, goto-definition, focus change
-        // between split panes, tab switch, etc.), kick off a short trail
-        // effect from the old to the new screen cell. The trail crosses
-        // pane separators when the jump is across splits — that's the
-        // intended "follow the focus" cue.
-        self.maybe_start_cursor_jump_animation(pending_hardware_cursor);
+        // the prior frame and animate either when the cursor crossed split
+        // panes or moved more than two rows within the same pane. The
+        // trail crosses pane separators when the jump is across splits —
+        // that's the intended "follow the focus" cue.
+        self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
 
         // Detect viewport changes and fire hooks
         // Compare against previous frame's viewport state (stored in self.previous_viewports)
@@ -1241,13 +1239,17 @@ impl Editor {
     /// (small `dx`/`dy`) must NOT trigger the animation, but search jumps,
     /// goto-line/definition, and pane switches (which always cross several
     /// rows or many columns) must.
-    fn maybe_start_cursor_jump_animation(&mut self, current_pos: Option<(u16, u16)>) {
+    fn maybe_start_cursor_jump_animation(
+        &mut self,
+        current_pos: Option<(u16, u16)>,
+        active_split: crate::model::event::LeafId,
+    ) {
         // Honour the global animations toggle. Tests default to
         // `animations = false` so single-tick `render()` calls observe the
         // settled buffer instead of a mid-flight trail; users can also
         // disable animations entirely from config.
         if !self.config.editor.animations {
-            self.previous_cursor_screen_pos = current_pos;
+            self.previous_cursor_screen_pos = current_pos.map(|p| (p, active_split));
             return;
         }
 
@@ -1259,25 +1261,26 @@ impl Editor {
             return;
         };
 
-        let prev_pos = self.previous_cursor_screen_pos;
+        let prev_entry = self.previous_cursor_screen_pos;
         // Update tracking unconditionally for the next frame.
-        self.previous_cursor_screen_pos = Some(current);
+        self.previous_cursor_screen_pos = Some((current, active_split));
 
-        let Some(prev) = prev_pos else {
+        let Some((prev, prev_split)) = prev_entry else {
             return;
         };
-        if prev == current {
+        if prev == current && prev_split == active_split {
             return;
         }
 
         let dx = (current.0 as i32 - prev.0 as i32).abs();
         let dy = (current.1 as i32 - prev.1 as i32).abs();
-        // Heuristic: animate only when the move is clearly non-incremental.
-        // Typing / arrow keys produce |dx|<=1 and |dy|<=1; word-jump and
-        // home/end on short lines produce small dx; we want to skip those
-        // and animate jumps that visibly cross the screen.
-        let is_jump = dy >= 3 || dx >= 10;
-        if !is_jump {
+        // Animate only when the cursor crossed split panes, or when it
+        // moved more than two rows within the same pane. Small horizontal
+        // moves and short vertical hops (typing, arrow keys, word-jump,
+        // home/end on short lines) are intentionally skipped.
+        let crossed_panes = prev_split != active_split;
+        let row_jump = dy > 2;
+        if !crossed_panes && !row_jump {
             return;
         }
 
