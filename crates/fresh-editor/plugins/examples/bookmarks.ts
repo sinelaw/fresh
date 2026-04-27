@@ -237,11 +237,13 @@ function bookmark_select() : void {
 registerHandler("bookmark_select", bookmark_select);
 
 // Handle bookmark selection confirmation
-function onBookmarkSelectConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): boolean {
+
+
+// Handle bookmark selection cancellation
+
+
+// Register bookmark event handlers
+editor.on("prompt_confirmed", (args) => {
   if (args.prompt_type !== "bookmark-select") {
     return true;
   }
@@ -259,23 +261,15 @@ function onBookmarkSelectConfirmed(args: {
   }
 
   return true;
-}
-registerHandler("onBookmarkSelectConfirmed", onBookmarkSelectConfirmed);
-
-// Handle bookmark selection cancellation
-function onBookmarkSelectCancelled(args: { prompt_type: string }) : boolean {
+});
+editor.on("prompt_cancelled", (args) => {
   if (args.prompt_type !== "bookmark-select") {
     return true;
   }
 
   editor.setStatus("Bookmark selection cancelled");
   return true;
-}
-registerHandler("onBookmarkSelectCancelled", onBookmarkSelectCancelled);
-
-// Register bookmark event handlers
-editor.on("prompt_confirmed", "onBookmarkSelectConfirmed");
-editor.on("prompt_cancelled", "onBookmarkSelectCancelled");
+});
 
 // Register commands on plugin load
 editor.registerCommand(

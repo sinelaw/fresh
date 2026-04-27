@@ -50,7 +50,8 @@ let graphqlLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for GraphQL
  */
-function on_graphql_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "graphql") {
     return;
   }
@@ -69,14 +70,13 @@ function on_graphql_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`GraphQL LSP error: ${data.message}`);
   }
-}
-registerHandler("on_graphql_lsp_server_error", on_graphql_lsp_server_error);
-editor.on("lsp_server_error", "on_graphql_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a GraphQL LSP error
  */
-function on_graphql_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "graphql" || !graphqlLspError) {
     return;
   }
@@ -94,14 +94,13 @@ function on_graphql_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_graphql_lsp_status_clicked", on_graphql_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_graphql_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for GraphQL LSP help
  */
-function on_graphql_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "graphql-lsp-help") {
     return;
   }
@@ -132,8 +131,6 @@ function on_graphql_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`graphql-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_graphql_lsp_action_result", on_graphql_lsp_action_result);
-editor.on("action_popup_result", "on_graphql_lsp_action_result");
+});
 
 editor.debug("graphql-lsp: Plugin loaded");

@@ -47,7 +47,8 @@ let solidityLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for Solidity
  */
-function on_solidity_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "solidity") {
     return;
   }
@@ -66,14 +67,13 @@ function on_solidity_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Solidity LSP error: ${data.message}`);
   }
-}
-registerHandler("on_solidity_lsp_server_error", on_solidity_lsp_server_error);
-editor.on("lsp_server_error", "on_solidity_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a Solidity LSP error
  */
-function on_solidity_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "solidity" || !solidityLspError) {
     return;
   }
@@ -90,14 +90,13 @@ function on_solidity_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_solidity_lsp_status_clicked", on_solidity_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_solidity_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for Solidity LSP help
  */
-function on_solidity_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "solidity-lsp-help") {
     return;
   }
@@ -123,8 +122,6 @@ function on_solidity_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`solidity-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_solidity_lsp_action_result", on_solidity_lsp_action_result);
-editor.on("action_popup_result", "on_solidity_lsp_action_result");
+});
 
 editor.debug("solidity-lsp: Plugin loaded");

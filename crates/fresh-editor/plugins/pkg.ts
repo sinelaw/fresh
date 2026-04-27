@@ -2456,11 +2456,9 @@ function pkg_search() : void {
 }
 registerHandler("pkg_search", pkg_search);
 
-function onPkgSearchConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): boolean {
+
+
+editor.on("prompt_confirmed", (args) => {
   if (args.prompt_type !== "pkg-search") return true;
 
   pkgState.searchQuery = args.input.trim();
@@ -2469,21 +2467,17 @@ function onPkgSearchConfirmed(args: {
   updatePkgManagerView();
 
   return true;
-}
-registerHandler("onPkgSearchConfirmed", onPkgSearchConfirmed);
+});
 
-editor.on("prompt_confirmed", "onPkgSearchConfirmed");
 
-function on_pkg_resize(): void {
+editor.on("resize", () => {
   if (!pkgState.isOpen) return;
   const viewport = editor.getViewport();
   if (viewport) {
     pkgState.viewportHeight = viewport.height;
   }
   updatePkgManagerView();
-}
-registerHandler("on_pkg_resize", on_pkg_resize);
-editor.on("resize", "on_pkg_resize");
+});
 
 // Legacy Finder-based UI (kept for backwards compatibility)
 const registryFinder = new Finder<[string, RegistryEntry]>(editor, {
@@ -2580,11 +2574,9 @@ function pkg_install_url() : void {
 }
 registerHandler("pkg_install_url", pkg_install_url);
 
-async function onPkgInstallUrlConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
+
+
+editor.on("prompt_confirmed", (args) => {
   if (args.prompt_type !== "pkg-install-url") return true;
 
   const url = args.input.trim();
@@ -2595,10 +2587,7 @@ async function onPkgInstallUrlConfirmed(args: {
   }
 
   return true;
-}
-registerHandler("onPkgInstallUrlConfirmed", onPkgInstallUrlConfirmed);
-
-editor.on("prompt_confirmed", "onPkgInstallUrlConfirmed");
+});
 
 /**
  * Open the package manager UI

@@ -1255,7 +1255,9 @@ registerHandler("start_search_replace", start_search_replace);
 // Event handlers (resize updates width)
 // =============================================================================
 
-function onSearchReplaceResize(data: { width: number; height: number }): void {
+
+
+editor.on("resize", (data) => {
   if (!panel) return;
   // Try viewport first (gives actual split width), fall back to terminal width estimate
   const vp = editor.getViewport();
@@ -1266,31 +1268,26 @@ function onSearchReplaceResize(data: { width: number; height: number }): void {
     panel.viewportWidth = Math.floor(data.width * 0.4);
   }
   updatePanelContent();
-}
-registerHandler("onSearchReplaceResize", onSearchReplaceResize);
-
-editor.on("resize", "onSearchReplaceResize");
+});
 
 // Prompt handlers (in case prompts are opened externally for this panel - gracefully handle)
-function onSearchReplacePromptCancelled(args: { prompt_type: string }): boolean {
+
+editor.on("prompt_cancelled", (args) => {
   if (!args.prompt_type.startsWith("search-replace-")) return true;
   return true;
-}
-registerHandler("onSearchReplacePromptCancelled", onSearchReplacePromptCancelled);
-editor.on("prompt_cancelled", "onSearchReplacePromptCancelled");
+});
 
 // If the panel's virtual buffer is closed externally (via the × button,
 // the Close Buffer/Close Tab commands, or anything else), reset the
 // plugin's internal state so the next invocation of `openPanel` creates
 // a fresh buffer/split instead of trying to update a buffer that no
 // longer exists (which silently no-ops and leaves the user with no UI).
-function onSearchReplaceBufferClosed(args: { buffer_id: number }): void {
+
+editor.on("buffer_closed", (args) => {
   if (panel && args.buffer_id === panel.resultsBufferId) {
     panel = null;
   }
-}
-registerHandler("onSearchReplaceBufferClosed", onSearchReplaceBufferClosed);
-editor.on("buffer_closed", "onSearchReplaceBufferClosed");
+});
 
 editor.registerCommand(
   "%cmd.search_replace",

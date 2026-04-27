@@ -2462,48 +2462,9 @@ function review_discard_file() {
 }
 registerHandler("review_discard_file", review_discard_file);
 
-async function on_review_discard_hunk_confirm(args: { prompt_type: string; input: string; selected_index: number | null }): Promise<boolean> {
-    if (args.prompt_type !== "review-discard-hunk-confirm") return true;
-    const response = args.input.trim().toLowerCase();
-    if (response === "discard" || args.selected_index === 0) {
-        const hunk = getHunkAtDiffCursor();
-        if (hunk && hunk.file) {
-            const patch = buildHunkPatch(hunk.file, hunk);
-            const ok = await applyHunkPatch(patch, ["--reverse"]);
-            if (ok) {
-                editor.setStatus(editor.t("status.hunk_discarded") || "Hunk discarded");
-                await refreshMagitData();
-            }
-        }
-    } else {
-        editor.setStatus("Discard cancelled");
-    }
-    return false;
-}
-registerHandler("on_review_discard_hunk_confirm", on_review_discard_hunk_confirm);
 
-async function on_review_discard_confirm(args: { prompt_type: string; input: string; selected_index: number | null }): Promise<boolean> {
-    if (args.prompt_type !== "review-discard-confirm") return true;
 
-    const response = args.input.trim().toLowerCase();
-    if (response === "discard" || args.selected_index === 0) {
-        const f = pendingDiscardFile;
-        if (f) {
-            if (f.category === 'untracked') {
-                await editor.spawnProcess("rm", ["--", f.path]);
-            } else {
-                await editor.spawnProcess("git", ["checkout", "--", f.path]);
-            }
-            await refreshMagitData();
-            editor.setStatus(`Discarded: ${f.path}`);
-        }
-    } else {
-        editor.setStatus("Discard cancelled");
-    }
-    pendingDiscardFile = null;
-    return false;
-}
-registerHandler("on_review_discard_confirm", on_review_discard_confirm);
+
 
 /**
  * Refresh file list and diffs using the new git status approach, then re-render.
@@ -3456,28 +3417,15 @@ async function review_delete_comment() {
 }
 registerHandler("review_delete_comment", review_delete_comment);
 
-function on_review_delete_comment_confirm(args: { prompt_type: string; input: string; selected_index: number | null }): boolean {
-    if (args.prompt_type !== "review-delete-comment-confirm") return true;
-    const response = args.input.trim().toLowerCase();
-    if ((response === "delete" || args.selected_index === 0) && pendingDeleteCommentId) {
-        if (pendingDeleteCommentId === '__note__') {
-            state.note = '';
-        } else {
-            state.comments = state.comments.filter(c => c.id !== pendingDeleteCommentId);
-        }
-        persistReview();
-        updateMagitDisplay();
-        editor.setStatus("Deleted");
-    } else {
-        editor.setStatus("Delete cancelled");
-    }
-    pendingDeleteCommentId = null;
-    return false;
-}
-registerHandler("on_review_delete_comment_confirm", on_review_delete_comment_confirm);
+
 
 // Prompt event handlers
-function on_review_prompt_confirm(args: { prompt_type: string; input: string }): boolean {
+
+
+
+
+// Register prompt event handlers
+editor.on("prompt_confirmed", (args) => {
     if (args.prompt_type !== "review-comment") {
         return true;
     }
@@ -3540,38 +3488,47 @@ function on_review_prompt_confirm(args: { prompt_type: string; input: string }):
     }
     pendingCommentInfo = null;
     return true;
-}
-registerHandler("on_review_prompt_confirm", on_review_prompt_confirm);
+});
+editor.on("prompt_confirmed", (args) => {
+    if (args.prompt_type !== "review-discard-confirm") return true;
 
-function on_review_prompt_cancel(args: { prompt_type: string }): boolean {
-    if (args.prompt_type === "review-comment") {
-        pendingCommentInfo = null;
-        editingCommentId = null;
-        editor.setStatus(editor.t("status.comment_cancelled"));
-    }
-    return true;
-}
-registerHandler("on_review_prompt_cancel", on_review_prompt_cancel);
-
-// Register prompt event handlers
-editor.on("prompt_confirmed", "on_review_prompt_confirm");
-editor.on("prompt_confirmed", "on_review_discard_confirm");
-editor.on("prompt_confirmed", "on_review_discard_hunk_confirm");
-editor.on("prompt_confirmed", "on_review_edit_note_confirm");
-editor.on("prompt_confirmed", "on_review_delete_comment_confirm");
-editor.on("prompt_cancelled", "on_review_prompt_cancel");
-
-async function review_edit_note() {
-    const label = editor.t("prompt.overall_comment") || "Note: ";
-    if (state.note) {
-        editor.startPromptWithInitial(label, "review-edit-note", state.note);
+    const response = args.input.trim().toLowerCase();
+    if (response === "discard" || args.selected_index === 0) {
+        const f = pendingDiscardFile;
+        if (f) {
+            if (f.category === 'untracked') {
+                await editor.spawnProcess("rm", ["--", f.path]);
+            } else {
+                await editor.spawnProcess("git", ["checkout", "--", f.path]);
+            }
+            await refreshMagitData();
+            editor.setStatus(`Discarded: ${f.path}`);
+        }
     } else {
-        editor.startPrompt(label, "review-edit-note");
+        editor.setStatus("Discard cancelled");
     }
-}
-registerHandler("review_edit_note", review_edit_note);
-
-function on_review_edit_note_confirm(args: { prompt_type: string; input: string }): boolean {
+    pendingDiscardFile = null;
+    return false;
+});
+editor.on("prompt_confirmed", (args) => {
+    if (args.prompt_type !== "review-discard-hunk-confirm") return true;
+    const response = args.input.trim().toLowerCase();
+    if (response === "discard" || args.selected_index === 0) {
+        const hunk = getHunkAtDiffCursor();
+        if (hunk && hunk.file) {
+            const patch = buildHunkPatch(hunk.file, hunk);
+            const ok = await applyHunkPatch(patch, ["--reverse"]);
+            if (ok) {
+                editor.setStatus(editor.t("status.hunk_discarded") || "Hunk discarded");
+                await refreshMagitData();
+            }
+        }
+    } else {
+        editor.setStatus("Discard cancelled");
+    }
+    return false;
+});
+editor.on("prompt_confirmed", (args) => {
     if (args.prompt_type !== "review-edit-note") return true;
     if (args.input && args.input.trim()) {
         state.note = args.input.trim();
@@ -3585,8 +3542,45 @@ function on_review_edit_note_confirm(args: { prompt_type: string; input: string 
         }
     }
     return true;
+});
+editor.on("prompt_confirmed", (args) => {
+    if (args.prompt_type !== "review-delete-comment-confirm") return true;
+    const response = args.input.trim().toLowerCase();
+    if ((response === "delete" || args.selected_index === 0) && pendingDeleteCommentId) {
+        if (pendingDeleteCommentId === '__note__') {
+            state.note = '';
+        } else {
+            state.comments = state.comments.filter(c => c.id !== pendingDeleteCommentId);
+        }
+        persistReview();
+        updateMagitDisplay();
+        editor.setStatus("Deleted");
+    } else {
+        editor.setStatus("Delete cancelled");
+    }
+    pendingDeleteCommentId = null;
+    return false;
+});
+editor.on("prompt_cancelled", (args) => {
+    if (args.prompt_type === "review-comment") {
+        pendingCommentInfo = null;
+        editingCommentId = null;
+        editor.setStatus(editor.t("status.comment_cancelled"));
+    }
+    return true;
+});
+
+async function review_edit_note() {
+    const label = editor.t("prompt.overall_comment") || "Note: ";
+    if (state.note) {
+        editor.startPromptWithInitial(label, "review-edit-note", state.note);
+    } else {
+        editor.startPrompt(label, "review-edit-note");
+    }
 }
-registerHandler("on_review_edit_note_confirm", on_review_edit_note_confirm);
+registerHandler("review_edit_note", review_edit_note);
+
+
 
 async function review_export_session() {
     const cwd = editor.getCwd();
@@ -3738,13 +3732,13 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
 
     editor.focusBufferGroupPanel(state.groupId, "diff");
 
-    editor.on("resize", "onReviewDiffResize");
+    editor.on("resize", onReviewDiffResize);
     updateReviewStatus();
-    editor.on("buffer_activated", "on_review_buffer_activated");
-    editor.on("buffer_closed", "on_review_buffer_closed");
-    editor.on("cursor_moved", "on_review_cursor_moved");
-    editor.on("viewport_changed", "on_review_viewport_changed");
-    editor.on("mouse_click", "on_review_mouse_click");
+    editor.on("buffer_activated", on_review_buffer_activated);
+    editor.on("buffer_closed", on_review_buffer_closed);
+    editor.on("cursor_moved", on_review_cursor_moved);
+    editor.on("viewport_changed", on_review_viewport_changed);
+    editor.on("mouse_click", on_review_mouse_click);
     return true;
 }
 
@@ -3820,12 +3814,12 @@ function stop_review_diff() {
     }
     state.reviewBufferId = null;
     editor.setContext("review-mode", false);
-    editor.off("resize", "onReviewDiffResize");
-    editor.off("buffer_activated", "on_review_buffer_activated");
-    editor.off("buffer_closed", "on_review_buffer_closed");
-    editor.off("cursor_moved", "on_review_cursor_moved");
-    editor.off("viewport_changed", "on_review_viewport_changed");
-    editor.off("mouse_click", "on_review_mouse_click");
+    editor.off("resize", onReviewDiffResize);
+    editor.off("buffer_activated", on_review_buffer_activated);
+    editor.off("buffer_closed", on_review_buffer_closed);
+    editor.off("cursor_moved", on_review_cursor_moved);
+    editor.off("viewport_changed", on_review_viewport_changed);
+    editor.off("mouse_click", on_review_mouse_click);
     editor.setStatus(editor.t("status.stopped"));
 }
 registerHandler("stop_review_diff", stop_review_diff);
@@ -3968,7 +3962,8 @@ async function start_review_range(): Promise<void> {
 }
 registerHandler("start_review_range", start_review_range);
 
-function on_review_range_confirm(args: { prompt_type: string; input: string }): boolean {
+
+editor.on("prompt_confirmed", (args) => {
     if (args.prompt_type !== "review-range") return true;
     const range = parseRangeInput(args.input);
     if (!range) {
@@ -3979,9 +3974,7 @@ function on_review_range_confirm(args: { prompt_type: string; input: string }): 
     // can return immediately.
     bootstrapRangeReview(range);
     return true;
-}
-registerHandler("on_review_range_confirm", on_review_range_confirm);
-editor.on("prompt_confirmed", "on_review_range_confirm");
+});
 
 async function bootstrapRangeReview(range: ReviewRange): Promise<void> {
     editor.setStatus(editor.t("status.generating") || "Generating diff…");
@@ -4607,7 +4600,7 @@ async function start_review_branch(): Promise<void> {
     if (branchState.groupId !== null) {
         editor.focusBufferGroupPanel(branchState.groupId, "log");
     }
-    editor.on("cursor_moved", "on_review_branch_cursor_moved");
+    editor.on("cursor_moved", on_review_branch_cursor_moved);
 
     editor.setStatus(
         editor.t("status.review_branch_ready", {
@@ -4621,7 +4614,7 @@ registerHandler("start_review_branch", start_review_branch);
 function stop_review_branch(): void {
     if (!branchState.isOpen) return;
     if (branchState.groupId !== null) editor.closeBufferGroup(branchState.groupId);
-    editor.off("cursor_moved", "on_review_branch_cursor_moved");
+    editor.off("cursor_moved", on_review_branch_cursor_moved);
     branchState.isOpen = false;
     branchState.groupId = null;
     branchState.logBufferId = null;
@@ -4717,7 +4710,9 @@ editor.registerCommand("%cmd.export_markdown", "%cmd.export_markdown_desc", "rev
 editor.registerCommand("%cmd.export_json", "%cmd.export_json_desc", "review_export_json", "review-mode");
 
 // Handler for when buffers are closed - cleans up scroll sync groups and composite buffers
-function on_buffer_closed(data: any) {
+
+
+editor.on("buffer_closed", (data) => {
     // If one of the diff view buffers is closed, clean up the scroll sync group
     if (activeSideBySideState) {
         if (data.buffer_id === activeSideBySideState.oldBufferId ||
@@ -4744,10 +4739,7 @@ function on_buffer_closed(data: any) {
             activeCompositeDiffState = null;
         }
     }
-}
-registerHandler("on_buffer_closed", on_buffer_closed);
-
-editor.on("buffer_closed", "on_buffer_closed");
+});
 
 editor.defineMode("review-mode", [
     // Native cursor motion in the unified diff stream.

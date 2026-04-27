@@ -322,85 +322,17 @@ async function updateGitGutter(bufferId: number): Promise<void> {
 /**
  * Handle after file open - initialize git state and update indicators
  */
-function onGitGutterAfterFileOpen(args: {
-  buffer_id: number;
-  path: string;
-}): boolean {
-  const bufferId = args.buffer_id;
-  const filePath = args.path;
 
-  if (!filePath || filePath === "") {
-    return true;
-  }
-
-  // Initialize state for this buffer
-  bufferStates.set(bufferId, {
-    filePath,
-    hunks: [],
-    updating: false,
-  });
-
-  // Update immediately (no debounce for file open)
-  updateGitGutter(bufferId);
-
-  return true;
-}
-registerHandler("onGitGutterAfterFileOpen", onGitGutterAfterFileOpen);
 
 /**
  * Handle buffer activation - update if we have state but indicators might be stale
  */
-function onGitGutterBufferActivated(args: {
-  buffer_id: number;
-}): boolean {
-  const bufferId = args.buffer_id;
 
-  // If we don't have state yet, try to initialize from buffer path
-  if (!bufferStates.has(bufferId)) {
-    const filePath = editor.getBufferPath(bufferId);
-    if (filePath && filePath !== "") {
-      bufferStates.set(bufferId, {
-        filePath,
-        hunks: [],
-        updating: false,
-      });
-      updateGitGutter(bufferId);
-    }
-  }
-  // If we already have state, the indicators should be current
-  // (they update on file open and save)
-
-  return true;
-}
-registerHandler("onGitGutterBufferActivated", onGitGutterBufferActivated);
 
 /**
  * Handle after file save - refresh indicators
  */
-function onGitGutterAfterSave(args: {
-  buffer_id: number;
-  path: string;
-}): boolean {
-  const bufferId = args.buffer_id;
 
-  // Update state with new path (in case of save-as)
-  const state = bufferStates.get(bufferId);
-  if (state) {
-    state.filePath = args.path;
-  } else {
-    bufferStates.set(bufferId, {
-      filePath: args.path,
-      hunks: [],
-      updating: false,
-    });
-  }
-
-  // Update immediately after save (no debounce)
-  updateGitGutter(bufferId);
-
-  return true;
-}
-registerHandler("onGitGutterAfterSave", onGitGutterAfterSave);
 
 // Note: Git diff compares the file on disk, not the in-memory buffer.
 // Line indicators automatically track position changes via byte-position markers.
@@ -409,13 +341,7 @@ registerHandler("onGitGutterAfterSave", onGitGutterAfterSave);
 /**
  * Handle buffer closed - cleanup state
  */
-function onGitGutterBufferClosed(args: {
-  buffer_id: number;
-}): boolean {
-  bufferStates.delete(args.buffer_id);
-  return true;
-}
-registerHandler("onGitGutterBufferClosed", onGitGutterBufferClosed);
+
 
 // =============================================================================
 // Commands
@@ -458,10 +384,70 @@ registerHandler("git_gutter_refresh", git_gutter_refresh);
 // Register event handlers
 // Note: No need to register after-insert/after-delete hooks - indicators
 // automatically track position changes via byte-position markers in the editor.
-editor.on("after_file_open", "onGitGutterAfterFileOpen");
-editor.on("buffer_activated", "onGitGutterBufferActivated");
-editor.on("after_file_save", "onGitGutterAfterSave");
-editor.on("buffer_closed", "onGitGutterBufferClosed");
+editor.on("after_file_open", (args) => {
+  const bufferId = args.buffer_id;
+  const filePath = args.path;
+
+  if (!filePath || filePath === "") {
+    return true;
+  }
+
+  // Initialize state for this buffer
+  bufferStates.set(bufferId, {
+    filePath,
+    hunks: [],
+    updating: false,
+  });
+
+  // Update immediately (no debounce for file open)
+  updateGitGutter(bufferId);
+
+  return true;
+});
+editor.on("buffer_activated", (args) => {
+  const bufferId = args.buffer_id;
+
+  // If we don't have state yet, try to initialize from buffer path
+  if (!bufferStates.has(bufferId)) {
+    const filePath = editor.getBufferPath(bufferId);
+    if (filePath && filePath !== "") {
+      bufferStates.set(bufferId, {
+        filePath,
+        hunks: [],
+        updating: false,
+      });
+      updateGitGutter(bufferId);
+    }
+  }
+  // If we already have state, the indicators should be current
+  // (they update on file open and save)
+
+  return true;
+});
+editor.on("after_file_save", (args) => {
+  const bufferId = args.buffer_id;
+
+  // Update state with new path (in case of save-as)
+  const state = bufferStates.get(bufferId);
+  if (state) {
+    state.filePath = args.path;
+  } else {
+    bufferStates.set(bufferId, {
+      filePath: args.path,
+      hunks: [],
+      updating: false,
+    });
+  }
+
+  // Update immediately after save (no debounce)
+  updateGitGutter(bufferId);
+
+  return true;
+});
+editor.on("buffer_closed", (args) => {
+  bufferStates.delete(args.buffer_id);
+  return true;
+});
 
 // Register commands
 editor.registerCommand(

@@ -37,7 +37,8 @@ const INSTALL_COMMANDS = {
 
 let swiftLspError: { serverCommand: string; message: string } | null = null;
 
-function on_swift_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "swift") {
     return;
   }
@@ -56,11 +57,10 @@ function on_swift_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Swift LSP error: ${data.message}`);
   }
-}
-registerHandler("on_swift_lsp_server_error", on_swift_lsp_server_error);
-editor.on("lsp_server_error", "on_swift_lsp_server_error");
+});
 
-function on_swift_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "swift" || !swiftLspError) {
     return;
   }
@@ -78,11 +78,10 @@ function on_swift_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_swift_lsp_status_clicked", on_swift_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_swift_lsp_status_clicked");
+});
 
-function on_swift_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "swift-lsp-help") {
     return;
   }
@@ -113,8 +112,6 @@ function on_swift_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`swift-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_swift_lsp_action_result", on_swift_lsp_action_result);
-editor.on("action_popup_result", "on_swift_lsp_action_result");
+});
 
 editor.debug("swift-lsp: Plugin loaded");

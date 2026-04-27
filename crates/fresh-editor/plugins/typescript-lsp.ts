@@ -51,9 +51,10 @@ let tsLspError: { serverCommand: string; message: string; language: string } | n
 /**
  * Handle LSP server errors for TypeScript/JavaScript
  */
-function on_typescript_lsp_server_error(
-  data: LspServerErrorData
-): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle TypeScript/JavaScript language errors
   if (!HANDLED_LANGUAGES.includes(data.language)) {
     return;
@@ -78,18 +79,15 @@ function on_typescript_lsp_server_error(
   } else {
     editor.setStatus(`TypeScript LSP error: ${data.message}`);
   }
-}
-registerHandler("on_typescript_lsp_server_error", on_typescript_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_typescript_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a TypeScript LSP error
  */
-function on_typescript_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle TypeScript/JavaScript language clicks when there's an error
   if (!HANDLED_LANGUAGES.includes(data.language) || !tsLspError) {
     return;
@@ -110,18 +108,15 @@ function on_typescript_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_typescript_lsp_status_clicked", on_typescript_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_typescript_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for TypeScript LSP help
  */
-function on_typescript_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "typescript-lsp-help") {
     return;
@@ -161,10 +156,6 @@ function on_typescript_lsp_action_result(
     default:
       editor.debug(`typescript-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_typescript_lsp_action_result", on_typescript_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_typescript_lsp_action_result");
+});
 
 editor.debug("typescript-lsp: Plugin loaded");

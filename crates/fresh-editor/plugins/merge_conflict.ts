@@ -1700,7 +1700,18 @@ registerHandler("merge_show_help", merge_show_help);
 /**
  * Handle buffer activation - check for conflict markers
  */
-async function onMergeBufferActivated(data: { buffer_id: number }) : Promise<void> {
+
+
+/**
+ * Handle file open - check for conflict markers
+ */
+
+
+// =============================================================================
+// Hook Registration
+// =============================================================================
+
+editor.on("buffer_activated", (data) => {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
@@ -1724,13 +1735,8 @@ async function onMergeBufferActivated(data: { buffer_id: number }) : Promise<voi
   } catch (e) {
     // Not in git repo or other error, ignore
   }
-}
-registerHandler("onMergeBufferActivated", onMergeBufferActivated);
-
-/**
- * Handle file open - check for conflict markers
- */
-async function onMergeAfterFileOpen(data: { buffer_id: number; path: string }) : Promise<void> {
+});
+editor.on("after_file_open", (data) => {
   // Don't trigger if already in merge mode
   if (mergeState.isActive) return;
 
@@ -1750,15 +1756,7 @@ async function onMergeAfterFileOpen(data: { buffer_id: number; path: string }) :
   } catch (e) {
     // Not in git repo or other error, ignore
   }
-}
-registerHandler("onMergeAfterFileOpen", onMergeAfterFileOpen);
-
-// =============================================================================
-// Hook Registration
-// =============================================================================
-
-editor.on("buffer_activated", "onMergeBufferActivated");
-editor.on("after_file_open", "onMergeAfterFileOpen");
+});
 
 // =============================================================================
 // Command Registration - Dynamic based on merge mode state

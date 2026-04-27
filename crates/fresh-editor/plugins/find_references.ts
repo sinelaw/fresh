@@ -80,10 +80,10 @@ async function loadLineContent(
 }
 
 // Handle lsp_references hook
-async function on_lsp_references(data: {
-  symbol: string;
-  locations: ReferenceLocation[];
-}): Promise<void> {
+
+
+// Register the hook handler
+editor.on("lsp_references", (data) => {
   editor.debug(
     `Received ${data.locations.length} references for '${data.symbol}'`
   );
@@ -104,11 +104,7 @@ async function on_lsp_references(data: {
       load: async () => pendingRefs,
     },
   });
-}
-registerHandler("on_lsp_references", on_lsp_references);
-
-// Register the hook handler
-editor.on("lsp_references", "on_lsp_references");
+});
 
 // Close function for command palette
 function close_references() : void {

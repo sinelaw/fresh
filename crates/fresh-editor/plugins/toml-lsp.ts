@@ -50,7 +50,10 @@ let tomlLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for TOML
  */
-function on_toml_lsp_server_error(data: LspServerErrorData): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle TOML language errors
   if (data.language !== "toml") {
     return;
@@ -72,18 +75,15 @@ function on_toml_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`TOML LSP error: ${data.message}`);
   }
-}
-registerHandler("on_toml_lsp_server_error", on_toml_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_toml_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a TOML LSP error
  */
-function on_toml_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle TOML language clicks when there's an error
   if (data.language !== "toml" || !tomlLspError) {
     return;
@@ -104,18 +104,15 @@ function on_toml_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_toml_lsp_status_clicked", on_toml_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_toml_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for TOML LSP help
  */
-function on_toml_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "toml-lsp-help") {
     return;
@@ -153,10 +150,6 @@ function on_toml_lsp_action_result(
     default:
       editor.debug(`toml-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_toml_lsp_action_result", on_toml_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_toml_lsp_action_result");
+});
 
 editor.debug("toml-lsp: Plugin loaded");

@@ -51,7 +51,10 @@ let yamlLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for YAML
  */
-function on_yaml_lsp_server_error(data: LspServerErrorData): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle YAML language errors
   if (data.language !== "yaml") {
     return;
@@ -73,18 +76,15 @@ function on_yaml_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`YAML LSP error: ${data.message}`);
   }
-}
-registerHandler("on_yaml_lsp_server_error", on_yaml_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_yaml_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a YAML LSP error
  */
-function on_yaml_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle YAML language clicks when there's an error
   if (data.language !== "yaml" || !yamlLspError) {
     return;
@@ -105,18 +105,15 @@ function on_yaml_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_yaml_lsp_status_clicked", on_yaml_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_yaml_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for YAML LSP help
  */
-function on_yaml_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "yaml-lsp-help") {
     return;
@@ -154,10 +151,6 @@ function on_yaml_lsp_action_result(
     default:
       editor.debug(`yaml-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_yaml_lsp_action_result", on_yaml_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_yaml_lsp_action_result");
+});
 
 editor.debug("yaml-lsp: Plugin loaded");

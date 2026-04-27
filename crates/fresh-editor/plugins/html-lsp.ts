@@ -46,9 +46,10 @@ let htmlLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for HTML
  */
-function on_html_lsp_server_error(
-  data: LspServerErrorData
-): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle HTML language errors
   if (data.language !== "html") {
     return;
@@ -70,18 +71,15 @@ function on_html_lsp_server_error(
   } else {
     editor.setStatus(`HTML LSP error: ${data.message}`);
   }
-}
-registerHandler("on_html_lsp_server_error", on_html_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_html_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's an HTML LSP error
  */
-function on_html_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle HTML language clicks when there's an error
   if (data.language !== "html" || !htmlLspError) {
     return;
@@ -100,18 +98,15 @@ function on_html_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_html_lsp_status_clicked", on_html_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_html_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for HTML LSP help
  */
-function on_html_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "html-lsp-help") {
     return;
@@ -139,10 +134,6 @@ function on_html_lsp_action_result(
     default:
       editor.debug(`html-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_html_lsp_action_result", on_html_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_html_lsp_action_result");
+});
 
 editor.debug("html-lsp: Plugin loaded");

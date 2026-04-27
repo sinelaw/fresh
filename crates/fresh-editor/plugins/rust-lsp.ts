@@ -48,9 +48,10 @@ let rustLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for Rust
  */
-function on_rust_lsp_server_error(
-  data: LspServerErrorData
-): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle Rust language errors
   if (data.language !== "rust") {
     return;
@@ -72,18 +73,15 @@ function on_rust_lsp_server_error(
   } else {
     editor.setStatus(`Rust LSP error: ${data.message}`);
   }
-}
-registerHandler("on_rust_lsp_server_error", on_rust_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_rust_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a Rust LSP error
  */
-function on_rust_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   editor.debug(
     `rust-lsp: lsp_status_clicked hook received - language=${data.language}, has_error=${data.has_error}, rustLspError=${rustLspError ? "SET" : "NULL"}`
   );
@@ -111,18 +109,15 @@ function on_rust_lsp_status_clicked(
     ],
   });
   editor.debug(`rust-lsp: showActionPopup returned ${result}`);
-}
-registerHandler("on_rust_lsp_status_clicked", on_rust_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_rust_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for Rust LSP help
  */
-function on_rust_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   editor.debug(
     `rust-lsp: action_popup_result received - popup_id=${data.popup_id}, action_id=${data.action_id}`
   );
@@ -160,11 +155,7 @@ function on_rust_lsp_action_result(
     default:
       editor.debug(`rust-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_rust_lsp_action_result", on_rust_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_rust_lsp_action_result");
+});
 
 // =====================================================================
 // Rust LSP mode switching (Full vs Reduced Memory)
@@ -221,7 +212,8 @@ editor.registerCommand(
   null
 );
 
-function on_rust_lsp_mode_selected(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "rust-lsp-mode") {
     return;
   }
@@ -255,8 +247,6 @@ function on_rust_lsp_mode_selected(data: ActionPopupResultData): void {
     case "dismissed":
       break;
   }
-}
-registerHandler("on_rust_lsp_mode_selected", on_rust_lsp_mode_selected);
-editor.on("action_popup_result", "on_rust_lsp_mode_selected");
+});
 
 editor.debug("rust-lsp: Plugin loaded");

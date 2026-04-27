@@ -49,7 +49,8 @@ let dartLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for Dart
  */
-function on_dart_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "dart") {
     return;
   }
@@ -68,14 +69,13 @@ function on_dart_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Dart LSP error: ${data.message}`);
   }
-}
-registerHandler("on_dart_lsp_server_error", on_dart_lsp_server_error);
-editor.on("lsp_server_error", "on_dart_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a Dart LSP error
  */
-function on_dart_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "dart" || !dartLspError) {
     return;
   }
@@ -94,14 +94,13 @@ function on_dart_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_dart_lsp_status_clicked", on_dart_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_dart_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for Dart LSP help
  */
-function on_dart_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "dart-lsp-help") {
     return;
   }
@@ -137,8 +136,6 @@ function on_dart_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`dart-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_dart_lsp_action_result", on_dart_lsp_action_result);
-editor.on("action_popup_result", "on_dart_lsp_action_result");
+});
 
 editor.debug("dart-lsp: Plugin loaded");

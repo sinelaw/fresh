@@ -148,7 +148,10 @@ function generateCompletions(input: string): PromptSuggestion[] {
 }
 
 // Handle prompt changes for file prompts
-function onPathCompletePromptChanged(args: { prompt_type: string; input: string }) : boolean {
+
+
+// Register event handler
+editor.on("prompt_changed", (args) => {
   if (args.prompt_type !== "open-file" && args.prompt_type !== "save-file-as") {
     return true; // Not our prompt
   }
@@ -157,9 +160,5 @@ function onPathCompletePromptChanged(args: { prompt_type: string; input: string 
   editor.setPromptSuggestions(suggestions);
 
   return true;
-}
-registerHandler("onPathCompletePromptChanged", onPathCompletePromptChanged);
-
-// Register event handler
-editor.on("prompt_changed", "onPathCompletePromptChanged");
+});
 

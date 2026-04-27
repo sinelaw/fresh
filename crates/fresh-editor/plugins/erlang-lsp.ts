@@ -38,7 +38,8 @@ const INSTALL_COMMANDS = {
 
 let erlangLspError: { serverCommand: string; message: string } | null = null;
 
-function on_erlang_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "erlang") {
     return;
   }
@@ -57,11 +58,10 @@ function on_erlang_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Erlang LSP error: ${data.message}`);
   }
-}
-registerHandler("on_erlang_lsp_server_error", on_erlang_lsp_server_error);
-editor.on("lsp_server_error", "on_erlang_lsp_server_error");
+});
 
-function on_erlang_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "erlang" || !erlangLspError) {
     return;
   }
@@ -79,11 +79,10 @@ function on_erlang_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_erlang_lsp_status_clicked", on_erlang_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_erlang_lsp_status_clicked");
+});
 
-function on_erlang_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "erlang-lsp-help") {
     return;
   }
@@ -114,8 +113,6 @@ function on_erlang_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`erlang-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_erlang_lsp_action_result", on_erlang_lsp_action_result);
-editor.on("action_popup_result", "on_erlang_lsp_action_result");
+});
 
 editor.debug("erlang-lsp: Plugin loaded");

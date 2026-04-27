@@ -36,7 +36,8 @@ const INSTALL_COMMANDS = {
 
 let ocamlLspError: { serverCommand: string; message: string } | null = null;
 
-function on_ocaml_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "ocaml") {
     return;
   }
@@ -55,11 +56,10 @@ function on_ocaml_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`OCaml LSP error: ${data.message}`);
   }
-}
-registerHandler("on_ocaml_lsp_server_error", on_ocaml_lsp_server_error);
-editor.on("lsp_server_error", "on_ocaml_lsp_server_error");
+});
 
-function on_ocaml_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "ocaml" || !ocamlLspError) {
     return;
   }
@@ -77,11 +77,10 @@ function on_ocaml_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_ocaml_lsp_status_clicked", on_ocaml_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_ocaml_lsp_status_clicked");
+});
 
-function on_ocaml_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "ocaml-lsp-help") {
     return;
   }
@@ -112,8 +111,6 @@ function on_ocaml_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`ocaml-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_ocaml_lsp_action_result", on_ocaml_lsp_action_result);
-editor.on("action_popup_result", "on_ocaml_lsp_action_result");
+});
 
 editor.debug("ocaml-lsp: Plugin loaded");

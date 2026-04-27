@@ -53,7 +53,10 @@ let phpLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for PHP
  */
-function on_php_lsp_server_error(data: LspServerErrorData): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle PHP language errors
   if (data.language !== "php") {
     return;
@@ -75,18 +78,15 @@ function on_php_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`PHP LSP error: ${data.message}`);
   }
-}
-registerHandler("on_php_lsp_server_error", on_php_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_php_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a PHP LSP error
  */
-function on_php_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle PHP language clicks when there's an error
   if (data.language !== "php" || !phpLspError) {
     return;
@@ -107,18 +107,15 @@ function on_php_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_php_lsp_status_clicked", on_php_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_php_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for PHP LSP help
  */
-function on_php_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "php-lsp-help") {
     return;
@@ -156,10 +153,6 @@ function on_php_lsp_action_result(
     default:
       editor.debug(`php-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_php_lsp_action_result", on_php_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_php_lsp_action_result");
+});
 
 editor.debug("php-lsp: Plugin loaded");

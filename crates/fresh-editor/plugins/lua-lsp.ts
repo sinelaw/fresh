@@ -49,7 +49,10 @@ let luaLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for Lua
  */
-function on_lua_lsp_server_error(data: LspServerErrorData): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle Lua language errors
   if (data.language !== "lua") {
     return;
@@ -71,18 +74,15 @@ function on_lua_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Lua LSP error: ${data.message}`);
   }
-}
-registerHandler("on_lua_lsp_server_error", on_lua_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_lua_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a Lua LSP error
  */
-function on_lua_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle Lua language clicks when there's an error
   if (data.language !== "lua" || !luaLspError) {
     return;
@@ -103,18 +103,15 @@ function on_lua_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_lua_lsp_status_clicked", on_lua_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_lua_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for Lua LSP help
  */
-function on_lua_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "lua-lsp-help") {
     return;
@@ -152,10 +149,6 @@ function on_lua_lsp_action_result(
     default:
       editor.debug(`lua-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_lua_lsp_action_result", on_lua_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_lua_lsp_action_result");
+});
 
 editor.debug("lua-lsp: Plugin loaded");

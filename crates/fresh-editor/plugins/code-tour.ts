@@ -123,22 +123,7 @@ interface ActionPopupResultData {
   action_id: string;
 }
 
-function tour_on_action_popup_result(data: ActionPopupResultData) : void {
-  if (data.popup_id !== TOUR_POPUP_ID) return;
 
-  switch (data.action_id) {
-    case "next":
-      nextStep();
-      break;
-    case "prev":
-      prevStep();
-      break;
-    case "exit":
-      exitTour();
-      break;
-  }
-}
-registerHandler("tour_on_action_popup_result", tour_on_action_popup_result);
 
 // ============================================================================
 // Overlay Rendering
@@ -397,6 +382,20 @@ editor.registerCommand(
 );
 
 // Subscribe to action popup results for navigation buttons
-editor.on("action_popup_result", "tour_on_action_popup_result");
+editor.on("action_popup_result", (data) => {
+  if (data.popup_id !== TOUR_POPUP_ID) return;
+
+  switch (data.action_id) {
+    case "next":
+      nextStep();
+      break;
+    case "prev":
+      prevStep();
+      break;
+    case "exit":
+      exitTour();
+      break;
+  }
+});
 
 editor.debug("Code Tour plugin loaded");

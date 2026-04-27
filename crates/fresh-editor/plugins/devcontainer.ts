@@ -718,44 +718,7 @@ function devcontainer_run_lifecycle(): void {
 }
 registerHandler("devcontainer_run_lifecycle", devcontainer_run_lifecycle);
 
-async function devcontainer_on_lifecycle_confirmed(data: {
-  prompt_type: string;
-  input: string;
-}): Promise<void> {
-  if (data.prompt_type !== "devcontainer-lifecycle") return;
 
-  const cmdName = data.input;
-  if (!config || !cmdName) return;
-
-  const cmd = (config as Record<string, unknown>)[cmdName] as LifecycleCommand | undefined;
-  if (!cmd) return;
-
-  // cwd: when attached to a Container, pass the in-container
-  // `remoteWorkspaceFolder` so `docker exec -w` lands inside
-  // the container. When local, pass "" — the runtime treats
-  // empty-string cwd the same as omitted (both fall back to
-  // working_dir). Avoids passing literal `undefined` through
-  // the QuickJS bridge, which the marshaller rejects with
-  // "Error converting from js 'undefined' into type 'string'".
-  const cwd = lifecycleCwd() ?? "";
-  const env = await effectiveLifecycleEnv();
-  if (typeof cmd === "string") {
-    editor.setStatus(editor.t("status.running", { name: cmdName }));
-    const [bin, args] = wrapWithEnv(env, "sh", ["-c", cmd]);
-    const result = await editor.spawnProcess(bin, args, cwd);
-    await surfaceLifecycleResult(cmdName, null, cmd, result);
-  } else if (Array.isArray(cmd)) {
-    const [origBin, ...origArgs] = cmd;
-    const [bin, args] = wrapWithEnv(env, origBin, origArgs);
-    editor.setStatus(editor.t("status.running", { name: cmdName }));
-    const result = await editor.spawnProcess(bin, args, cwd);
-    await surfaceLifecycleResult(cmdName, null, [origBin, ...origArgs].join(" "), result);
-  } else {
-    // Object form: see the rewritten parallel branch in
-    // `runLifecycleObjectForm`.
-    await runLifecycleObjectForm(cmdName, cmd);
-  }
-}
 
 /// Critical bug from interactive walkthrough: lifecycle command
 /// stdout/stderr were captured in `result.stdout` / `result.stderr`
@@ -1107,7 +1070,6 @@ async function runLifecycleObjectForm(
     }),
   );
 }
-registerHandler("devcontainer_on_lifecycle_confirmed", devcontainer_on_lifecycle_confirmed);
 
 function devcontainer_show_features(): void {
   if (!config || !config.features || Object.keys(config.features).length === 0) {
@@ -1505,28 +1467,7 @@ function showCliNotFoundPopup(): void {
   });
 }
 
-function devcontainer_on_action_result(data: ActionPopupResultData): void {
-  if (data.popup_id === "devcontainer-cli-help") {
-    switch (data.action_id) {
-      case "copy_install":
-        editor.setClipboard(INSTALL_COMMAND);
-        editor.setStatus(editor.t("status.copied_install", { cmd: INSTALL_COMMAND }));
-        break;
-      case "dismiss":
-      case "dismissed":
-        break;
-    }
-    return;
-  }
-  if (data.popup_id === "devcontainer-attach") {
-    devcontainer_on_attach_popup(data);
-    return;
-  }
-  if (data.popup_id === "devcontainer-failed-attach") {
-    devcontainer_on_failed_attach_popup(data);
-  }
-}
-registerHandler("devcontainer_on_action_result", devcontainer_on_action_result);
+
 
 /// Surface a proactive action popup after a failed attach so users
 /// don't have to notice the Remote Indicator's red state on their own.
@@ -2450,9 +2391,71 @@ registerHandler("devcontainer_on_attach_popup", devcontainer_on_attach_popup);
 // Event Handlers
 // =============================================================================
 
-editor.on("prompt_confirmed", "devcontainer_on_lifecycle_confirmed");
-editor.on("action_popup_result", "devcontainer_on_action_result");
-editor.on("authority_changed", "devcontainer_on_authority_changed");
+editor.on("prompt_confirmed", (data) => {
+  if (data.prompt_type !== "devcontainer-lifecycle") return;
+
+  const cmdName = data.input;
+  if (!config || !cmdName) return;
+
+  const cmd = (config as Record<string, unknown>)[cmdName] as LifecycleCommand | undefined;
+  if (!cmd) return;
+
+  // cwd: when attached to a Container, pass the in-container
+  // `remoteWorkspaceFolder` so `docker exec -w` lands inside
+  // the container. When local, pass "" — the runtime treats
+  // empty-string cwd the same as omitted (both fall back to
+  // working_dir). Avoids passing literal `undefined` through
+  // the QuickJS bridge, which the marshaller rejects with
+  // "Error converting from js 'undefined' into type 'string'".
+  const cwd = lifecycleCwd() ?? "";
+  const env = await effectiveLifecycleEnv();
+  if (typeof cmd === "string") {
+    editor.setStatus(editor.t("status.running", { name: cmdName }));
+    const [bin, args] = wrapWithEnv(env, "sh", ["-c", cmd]);
+    const result = await editor.spawnProcess(bin, args, cwd);
+    await surfaceLifecycleResult(cmdName, null, cmd, result);
+  } else if (Array.isArray(cmd)) {
+    const [origBin, ...origArgs] = cmd;
+    const [bin, args] = wrapWithEnv(env, origBin, origArgs);
+    editor.setStatus(editor.t("status.running", { name: cmdName }));
+    const result = await editor.spawnProcess(bin, args, cwd);
+    await surfaceLifecycleResult(cmdName, null, [origBin, ...origArgs].join(" "), result);
+  } else {
+    // Object form: see the rewritten parallel branch in
+    // `runLifecycleObjectForm`.
+    await runLifecycleObjectForm(cmdName, cmd);
+  }
+});
+editor.on("action_popup_result", (data) => {
+  if (data.popup_id === "devcontainer-cli-help") {
+    switch (data.action_id) {
+      case "copy_install":
+        editor.setClipboard(INSTALL_COMMAND);
+        editor.setStatus(editor.t("status.copied_install", { cmd: INSTALL_COMMAND }));
+        break;
+      case "dismiss":
+      case "dismissed":
+        break;
+    }
+    return;
+  }
+  if (data.popup_id === "devcontainer-attach") {
+    devcontainer_on_attach_popup(data);
+    return;
+  }
+  if (data.popup_id === "devcontainer-failed-attach") {
+    devcontainer_on_failed_attach_popup(data);
+  }
+});
+editor.on("authority_changed", (data) => {
+  registerCommands();
+  const label = (data as { label?: string } | undefined)?.label ?? "";
+  if (label.startsWith("Container:")) {
+    void runAutoForwardSweep();
+  } else {
+    notifiedPorts.clear();
+  }
+});
 
 /// Re-register state-gated commands when the authority transitions
 /// (local ↔ container). Without this, after `setAuthority` lands a
@@ -2463,16 +2466,7 @@ editor.on("authority_changed", "devcontainer_on_authority_changed");
 /// container mode — Bug #4 (L171). Detecting an entry from
 /// `forwardPorts` that's actually bound (host-side) and emitting
 /// the spec'd `onAutoForward: notify` toast.
-function devcontainer_on_authority_changed(data: unknown): void {
-  registerCommands();
-  const label = (data as { label?: string } | undefined)?.label ?? "";
-  if (label.startsWith("Container:")) {
-    void runAutoForwardSweep();
-  } else {
-    notifiedPorts.clear();
-  }
-}
-registerHandler("devcontainer_on_authority_changed", devcontainer_on_authority_changed);
+
 
 /// Set of `port/protocol` keys we've already fired the
 /// `onAutoForward: notify` toast for in the current attach
@@ -2759,11 +2753,7 @@ if (findConfig()) {
     if (attachDismissedThisSession) return;
     showAttachPrompt();
   }
-  registerHandler(
-    "devcontainer_maybe_show_attach_prompt",
-    devcontainer_maybe_show_attach_prompt,
-  );
-  editor.on("plugins_loaded", "devcontainer_maybe_show_attach_prompt");
+  editor.on("plugins_loaded", devcontainer_maybe_show_attach_prompt);
 } else {
   // Bug #2 + #3: a `devcontainer.json` that exists but fails to
   // parse used to fail silently AND drop every `Dev Container:`

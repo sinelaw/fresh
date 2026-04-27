@@ -488,10 +488,10 @@ async function show_git_log(): Promise<void> {
   if (state.groupId !== null) {
     editor.focusBufferGroupPanel(state.groupId, "log");
   }
-  editor.on("cursor_moved", "on_git_log_cursor_moved");
-  editor.on("mouse_click", "on_git_log_toolbar_click");
-  editor.on("resize", "on_git_log_resize");
-  editor.on("buffer_closed", "on_git_log_buffer_closed");
+  editor.on("cursor_moved", on_git_log_cursor_moved);
+  editor.on("mouse_click", on_git_log_toolbar_click);
+  editor.on("resize", on_git_log_resize);
+  editor.on("buffer_closed", on_git_log_buffer_closed);
 
   editor.setStatus(
     editor.t("status.log_ready", { count: String(state.commits.length) })
@@ -504,10 +504,10 @@ registerHandler("show_git_log", show_git_log);
  * close button, which triggers `buffer_closed`). */
 function git_log_cleanup(): void {
   if (!state.isOpen) return;
-  editor.off("cursor_moved", "on_git_log_cursor_moved");
-  editor.off("mouse_click", "on_git_log_toolbar_click");
-  editor.off("resize", "on_git_log_resize");
-  editor.off("buffer_closed", "on_git_log_buffer_closed");
+  editor.off("cursor_moved", on_git_log_cursor_moved);
+  editor.off("mouse_click", on_git_log_toolbar_click);
+  editor.off("resize", on_git_log_resize);
+  editor.off("buffer_closed", on_git_log_buffer_closed);
   state.isOpen = false;
   state.groupId = null;
   state.logBufferId = null;

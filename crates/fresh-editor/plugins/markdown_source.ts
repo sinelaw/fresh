@@ -343,17 +343,15 @@ function updateMarkdownMode(): void {
   }
 }
 
-function md_src_on_buffer_activated() : void {
-  updateMarkdownMode();
-}
-registerHandler("md_src_on_buffer_activated", md_src_on_buffer_activated);
 
-function md_src_on_language_changed() : void {
-  updateMarkdownMode();
-}
-registerHandler("md_src_on_language_changed", md_src_on_language_changed);
 
-editor.on("buffer_activated", "md_src_on_buffer_activated");
-editor.on("language_changed", "md_src_on_language_changed");
+
+
+editor.on("buffer_activated", () => {
+  updateMarkdownMode();
+});
+editor.on("language_changed", () => {
+  updateMarkdownMode();
+});
 
 editor.debug("markdown_source plugin loaded");

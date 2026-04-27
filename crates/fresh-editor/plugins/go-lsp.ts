@@ -46,7 +46,10 @@ let goLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for Go
  */
-function on_go_lsp_server_error(data: LspServerErrorData) : void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle Go language errors
   if (data.language !== "go") {
     return;
@@ -68,18 +71,15 @@ function on_go_lsp_server_error(data: LspServerErrorData) : void {
   } else {
     editor.setStatus(`Go LSP error: ${data.message}`);
   }
-}
-registerHandler("on_go_lsp_server_error", on_go_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_go_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a Go LSP error
  */
-function on_go_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle Go language clicks when there's an error
   if (data.language !== "go" || !goLspError) {
     return;
@@ -98,18 +98,15 @@ function on_go_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_go_lsp_status_clicked", on_go_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_go_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for Go LSP help
  */
-function on_go_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "go-lsp-help") {
     return;
@@ -137,10 +134,6 @@ function on_go_lsp_action_result(
     default:
       editor.debug(`go-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_go_lsp_action_result", on_go_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_go_lsp_action_result");
+});
 
 editor.debug("go-lsp: Plugin loaded");

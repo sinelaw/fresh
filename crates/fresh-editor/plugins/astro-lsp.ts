@@ -35,7 +35,7 @@ const INSTALL_COMMANDS = {
 
 let astroLspError: { serverCommand: string; message: string } | null = null;
 
-function on_astro_lsp_server_error(data: LspServerErrorData): void {
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "astro") {
     return;
   }
@@ -54,11 +54,9 @@ function on_astro_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Astro LSP error: ${data.message}`);
   }
-}
-registerHandler("on_astro_lsp_server_error", on_astro_lsp_server_error);
-editor.on("lsp_server_error", "on_astro_lsp_server_error");
+});
 
-function on_astro_lsp_status_clicked(data: LspStatusClickedData): void {
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "astro" || !astroLspError) {
     return;
   }
@@ -76,11 +74,9 @@ function on_astro_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_astro_lsp_status_clicked", on_astro_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_astro_lsp_status_clicked");
+});
 
-function on_astro_lsp_action_result(data: ActionPopupResultData): void {
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "astro-lsp-help") {
     return;
   }
@@ -111,8 +107,6 @@ function on_astro_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`astro-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_astro_lsp_action_result", on_astro_lsp_action_result);
-editor.on("action_popup_result", "on_astro_lsp_action_result");
+});
 
 editor.debug("astro-lsp: Plugin loaded");

@@ -2066,28 +2066,7 @@ function vi_command_mode(): void {
 registerHandler("vi_command_mode", vi_command_mode);
 
 // Handle command execution when user presses Enter
-async function vi_command_handler(args: { prompt_type: string; input: string }): Promise<boolean> {
-  if (args.prompt_type !== "vi-command") {
-    return false; // Not our prompt, let other handlers process it
-  }
 
-  const input = args.input.trim();
-  if (!input) {
-    return true; // Empty command, just dismiss
-  }
-
-  // Parse the command
-  const result = await executeViCommand(input);
-
-  if (result.error) {
-    editor.setStatus(`E: ${result.error}`);
-  } else if (result.message) {
-    editor.setStatus(result.message);
-  }
-
-  return true; // We handled it
-}
-registerHandler("vi_command_handler", vi_command_handler);
 
 interface CommandResult {
   error?: string;
@@ -2882,7 +2861,27 @@ function handleSetCommand(args: string): CommandResult {
 }
 
 // Register event handler for prompt confirmation
-editor.on("prompt_confirmed", "vi_command_handler");
+editor.on("prompt_confirmed", (args) => {
+  if (args.prompt_type !== "vi-command") {
+    return false; // Not our prompt, let other handlers process it
+  }
+
+  const input = args.input.trim();
+  if (!input) {
+    return true; // Empty command, just dismiss
+  }
+
+  // Parse the command
+  const result = await executeViCommand(input);
+
+  if (result.error) {
+    editor.setStatus(`E: ${result.error}`);
+  } else if (result.message) {
+    editor.setStatus(result.message);
+  }
+
+  return true; // We handled it
+});
 
 // ============================================================================
 // Toggle Command

@@ -46,9 +46,10 @@ let jsonLspError: { serverCommand: string; message: string } | null = null;
 /**
  * Handle LSP server errors for JSON
  */
-function on_json_lsp_server_error(
-  data: LspServerErrorData
-): void {
+
+
+// Register hook for LSP server errors
+editor.on("lsp_server_error", (data) => {
   // Only handle JSON language errors
   if (data.language !== "json") {
     return;
@@ -70,18 +71,15 @@ function on_json_lsp_server_error(
   } else {
     editor.setStatus(`JSON LSP error: ${data.message}`);
   }
-}
-registerHandler("on_json_lsp_server_error", on_json_lsp_server_error);
-
-// Register hook for LSP server errors
-editor.on("lsp_server_error", "on_json_lsp_server_error");
+});
 
 /**
  * Handle status bar click when there's a JSON LSP error
  */
-function on_json_lsp_status_clicked(
-  data: LspStatusClickedData
-): void {
+
+
+// Register hook for status bar clicks
+editor.on("lsp_status_clicked", (data) => {
   // Only handle JSON language clicks when there's an error
   if (data.language !== "json" || !jsonLspError) {
     return;
@@ -100,18 +98,15 @@ function on_json_lsp_status_clicked(
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_json_lsp_status_clicked", on_json_lsp_status_clicked);
-
-// Register hook for status bar clicks
-editor.on("lsp_status_clicked", "on_json_lsp_status_clicked");
+});
 
 /**
  * Handle action popup results for JSON LSP help
  */
-function on_json_lsp_action_result(
-  data: ActionPopupResultData
-): void {
+
+
+// Register hook for action popup results
+editor.on("action_popup_result", (data) => {
   // Only handle our popup
   if (data.popup_id !== "json-lsp-help") {
     return;
@@ -139,10 +134,6 @@ function on_json_lsp_action_result(
     default:
       editor.debug(`json-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_json_lsp_action_result", on_json_lsp_action_result);
-
-// Register hook for action popup results
-editor.on("action_popup_result", "on_json_lsp_action_result");
+});
 
 editor.debug("json-lsp: Plugin loaded");

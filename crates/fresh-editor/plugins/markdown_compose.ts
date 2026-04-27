@@ -1610,15 +1610,40 @@ function processTableAlignment(
 }
 
 // lines_changed: called for newly visible or invalidated lines
-function onMarkdownLinesChanged(data: {
-  buffer_id: number;
-  lines: Array<{
-    line_number: number;
-    byte_start: number;
-    byte_end: number;
-    content: string;
-  }>;
-}): void {
+
+
+// after_insert: no-op for conceals/overlays.
+// The edit automatically invalidates seen_byte_ranges for affected lines,
+// causing lines_changed to fire on the next render. processLineConceals
+// handles clearing and rebuilding atomically.
+// Marker-based positions auto-adjust with buffer edits, so existing conceals
+// remain visually correct until lines_changed rebuilds them.
+
+
+// after_delete: no-op for conceals/overlays (same reasoning as after_insert).
+
+
+// cursor_moved: update cursor-aware reveal/conceal for old and new cursor lines
+
+
+// view_transform_request is no longer needed — soft wrapping is handled by
+// marker-based soft breaks (computed in lines_changed), and layout hints
+// are set directly via setLayoutHints. This eliminates the one-frame flicker
+// caused by the async view_transform round-trip.
+
+// Handle buffer close events - clean up compose mode tracking
+
+
+// viewport_changed: recalculate table column widths on terminal resize
+
+
+// Re-enable compose mode for buffers restored from a saved session.
+// The Rust side restores ViewMode::Compose and compose_width, but the plugin
+// needs to re-apply line numbers, line wrap, and layout hints when activated.
+
+
+// Register hooks
+editor.on("lines_changed", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   const lineNums = data.lines.map(l => `${l.line_number}(${l.byte_start}..${l.byte_end})`).join(', ');
   editor.debug(`[mc] lines_changed: ${data.lines.length} lines: [${lineNums}]`);
@@ -1653,49 +1678,16 @@ function onMarkdownLinesChanged(data: {
   if (tableWidthsGrew) {
     editor.refreshLines(data.buffer_id);
   }
-}
-registerHandler("onMarkdownLinesChanged", onMarkdownLinesChanged);
-
-// after_insert: no-op for conceals/overlays.
-// The edit automatically invalidates seen_byte_ranges for affected lines,
-// causing lines_changed to fire on the next render. processLineConceals
-// handles clearing and rebuilding atomically.
-// Marker-based positions auto-adjust with buffer edits, so existing conceals
-// remain visually correct until lines_changed rebuilds them.
-function onMarkdownAfterInsert(data: {
-  buffer_id: number;
-  position: number;
-  text: string;
-  affected_start: number;
-  affected_end: number;
-}): void {
+});
+editor.on("after_insert", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_insert: pos=${data.position} text="${data.text.replace(/\n/g,'\\n')}" affected=${data.affected_start}..${data.affected_end}`);
-}
-registerHandler("onMarkdownAfterInsert", onMarkdownAfterInsert);
-
-// after_delete: no-op for conceals/overlays (same reasoning as after_insert).
-function onMarkdownAfterDelete(data: {
-  buffer_id: number;
-  start: number;
-  end: number;
-  deleted_text: string;
-  affected_start: number;
-  deleted_len: number;
-}): void {
+});
+editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
-}
-registerHandler("onMarkdownAfterDelete", onMarkdownAfterDelete);
-
-// cursor_moved: update cursor-aware reveal/conceal for old and new cursor lines
-function onMarkdownCursorMoved(data: {
-  buffer_id: number;
-  cursor_id: number;
-  old_position: number;
-  new_position: number;
-  line: number;
-}): void {
+});
+editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
 
   const prevLine = editor.getViewState(data.buffer_id, "last-cursor-line") as number | undefined;
@@ -1707,28 +1699,12 @@ function onMarkdownCursorMoved(data: {
   // auto-expose is span-level (cursor entering/leaving an emphasis or link
   // span within the same line must toggle its syntax markers).
   editor.refreshLines(data.buffer_id);
-}
-registerHandler("onMarkdownCursorMoved", onMarkdownCursorMoved);
-
-// view_transform_request is no longer needed — soft wrapping is handled by
-// marker-based soft breaks (computed in lines_changed), and layout hints
-// are set directly via setLayoutHints. This eliminates the one-frame flicker
-// caused by the async view_transform round-trip.
-
-// Handle buffer close events - clean up compose mode tracking
-function onMarkdownBufferClosed(data: { buffer_id: number }) : void {
+});
+// view_transform_request hook no longer needed — wrapping is handled by soft breaks
+editor.on("buffer_closed", (data) => {
   // View state is cleaned up automatically when the buffer is removed from keyed_states
-}
-registerHandler("onMarkdownBufferClosed", onMarkdownBufferClosed);
-
-// viewport_changed: recalculate table column widths on terminal resize
-function onMarkdownViewportChanged(data: {
-  split_id: number;
-  buffer_id: number;
-  top_byte: number;
-  width: number;
-  height: number;
-}): void {
+});
+editor.on("viewport_changed", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   if (data.width === lastViewportWidth) return;
   lastViewportWidth = data.width;
@@ -1749,62 +1725,8 @@ function onMarkdownViewportChanged(data: {
     setTableWidths(data.buffer_id, bufWidths);
   }
   editor.refreshLines(data.buffer_id);
-}
-registerHandler("onMarkdownViewportChanged", onMarkdownViewportChanged);
-
-// Re-enable compose mode for buffers restored from a saved session.
-// The Rust side restores ViewMode::Compose and compose_width, but the plugin
-// needs to re-apply line numbers, line wrap, and layout hints when activated.
-function onMarkdownBufferActivated(data: { buffer_id: number }) : void {
-  const bufferId = data.buffer_id;
-
-  const info = editor.getBufferInfo(bufferId);
-  if (!info || !isMarkdownFile(info.path)) return;
-
-  if (info.view_mode === "compose") {
-    // Restore config.composeWidth from the persisted session value
-    // before enabling compose mode, so enableMarkdownCompose uses
-    // the correct width (same path as a fresh toggle).
-    if (info.compose_width != null) {
-      config.composeWidth = info.compose_width;
-    }
-    enableMarkdownCompose(bufferId);
-  } else if (getGlobalComposeEnabled()) {
-    // Global compose/preview mode is active — auto-enable for newly opened
-    // markdown buffers that aren't already in compose mode.
-    enableMarkdownCompose(bufferId);
-  }
-}
-registerHandler("onMarkdownBufferActivated", onMarkdownBufferActivated);
-
-// Register hooks
-editor.on("lines_changed", "onMarkdownLinesChanged");
-editor.on("after_insert", "onMarkdownAfterInsert");
-editor.on("after_delete", "onMarkdownAfterDelete");
-editor.on("cursor_moved", "onMarkdownCursorMoved");
-// view_transform_request hook no longer needed — wrapping is handled by soft breaks
-editor.on("buffer_closed", "onMarkdownBufferClosed");
-editor.on("viewport_changed", "onMarkdownViewportChanged");
-editor.on("prompt_confirmed", "onMarkdownComposeWidthConfirmed");
-editor.on("buffer_activated", "onMarkdownBufferActivated");
-
-// Set compose width command - starts interactive prompt
-function markdownSetComposeWidth() : void {
-  const currentValue = config.composeWidth === null ? "None" : String(config.composeWidth);
-  editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
-  editor.setPromptInputSync(true);
-  editor.setPromptSuggestions([
-    { text: "None", description: editor.t("suggestion.none") },
-    { text: "120", description: editor.t("suggestion.default") },
-  ]);
-}
-registerHandler("markdownSetComposeWidth", markdownSetComposeWidth);
-
-// Handle compose width prompt confirmation
-function onMarkdownComposeWidthConfirmed(args: {
-  prompt_type: string;
-  input: string;
-}): void {
+});
+editor.on("prompt_confirmed", (args) => {
   if (args.prompt_type !== "markdown-compose-width") return;
 
   const input = args.input.trim();
@@ -1834,8 +1756,42 @@ function onMarkdownComposeWidthConfirmed(args: {
   } else {
     editor.setStatus(editor.t("status.invalid_width"));
   }
+});
+editor.on("buffer_activated", (data) => {
+  const bufferId = data.buffer_id;
+
+  const info = editor.getBufferInfo(bufferId);
+  if (!info || !isMarkdownFile(info.path)) return;
+
+  if (info.view_mode === "compose") {
+    // Restore config.composeWidth from the persisted session value
+    // before enabling compose mode, so enableMarkdownCompose uses
+    // the correct width (same path as a fresh toggle).
+    if (info.compose_width != null) {
+      config.composeWidth = info.compose_width;
+    }
+    enableMarkdownCompose(bufferId);
+  } else if (getGlobalComposeEnabled()) {
+    // Global compose/preview mode is active — auto-enable for newly opened
+    // markdown buffers that aren't already in compose mode.
+    enableMarkdownCompose(bufferId);
+  }
+});
+
+// Set compose width command - starts interactive prompt
+function markdownSetComposeWidth() : void {
+  const currentValue = config.composeWidth === null ? "None" : String(config.composeWidth);
+  editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
+  editor.setPromptInputSync(true);
+  editor.setPromptSuggestions([
+    { text: "None", description: editor.t("suggestion.none") },
+    { text: "120", description: editor.t("suggestion.default") },
+  ]);
 }
-registerHandler("onMarkdownComposeWidthConfirmed", onMarkdownComposeWidthConfirmed);
+registerHandler("markdownSetComposeWidth", markdownSetComposeWidth);
+
+// Handle compose width prompt confirmation
+
 
 // Register commands
 editor.registerCommand(

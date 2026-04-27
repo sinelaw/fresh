@@ -36,7 +36,8 @@ const INSTALL_COMMANDS = {
 
 let fsharpLspError: { serverCommand: string; message: string } | null = null;
 
-function on_fsharp_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "fsharp") {
     return;
   }
@@ -55,11 +56,10 @@ function on_fsharp_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`F# LSP error: ${data.message}`);
   }
-}
-registerHandler("on_fsharp_lsp_server_error", on_fsharp_lsp_server_error);
-editor.on("lsp_server_error", "on_fsharp_lsp_server_error");
+});
 
-function on_fsharp_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "fsharp" || !fsharpLspError) {
     return;
   }
@@ -78,11 +78,10 @@ function on_fsharp_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_fsharp_lsp_status_clicked", on_fsharp_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_fsharp_lsp_status_clicked");
+});
 
-function on_fsharp_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "fsharp-lsp-help") {
     return;
   }
@@ -118,8 +117,6 @@ function on_fsharp_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`fsharp-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_fsharp_lsp_action_result", on_fsharp_lsp_action_result);
-editor.on("action_popup_result", "on_fsharp_lsp_action_result");
+});
 
 editor.debug("fsharp-lsp: Plugin loaded");

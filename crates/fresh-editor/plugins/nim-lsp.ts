@@ -35,7 +35,8 @@ const INSTALL_COMMANDS = {
 
 let nimLspError: { serverCommand: string; message: string } | null = null;
 
-function on_nim_lsp_server_error(data: LspServerErrorData): void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "nim") {
     return;
   }
@@ -54,11 +55,10 @@ function on_nim_lsp_server_error(data: LspServerErrorData): void {
   } else {
     editor.setStatus(`Nim LSP error: ${data.message}`);
   }
-}
-registerHandler("on_nim_lsp_server_error", on_nim_lsp_server_error);
-editor.on("lsp_server_error", "on_nim_lsp_server_error");
+});
 
-function on_nim_lsp_status_clicked(data: LspStatusClickedData): void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "nim" || !nimLspError) {
     return;
   }
@@ -76,11 +76,10 @@ function on_nim_lsp_status_clicked(data: LspStatusClickedData): void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_nim_lsp_status_clicked", on_nim_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_nim_lsp_status_clicked");
+});
 
-function on_nim_lsp_action_result(data: ActionPopupResultData): void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "nim-lsp-help") {
     return;
   }
@@ -111,8 +110,6 @@ function on_nim_lsp_action_result(data: ActionPopupResultData): void {
     default:
       editor.debug(`nim-lsp: Unknown action: ${data.action_id}`);
   }
-}
-registerHandler("on_nim_lsp_action_result", on_nim_lsp_action_result);
-editor.on("action_popup_result", "on_nim_lsp_action_result");
+});
 
 editor.debug("nim-lsp: Plugin loaded");

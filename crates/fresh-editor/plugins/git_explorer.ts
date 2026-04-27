@@ -141,29 +141,25 @@ async function refreshGitExplorerDecorations() {
   }
 }
 
-function onGitExplorerAfterFileOpen() {
-  refreshGitExplorerDecorations();
-}
-registerHandler("onGitExplorerAfterFileOpen", onGitExplorerAfterFileOpen);
 
-function onGitExplorerAfterFileSave() {
-  refreshGitExplorerDecorations();
-}
-registerHandler("onGitExplorerAfterFileSave", onGitExplorerAfterFileSave);
 
-function onGitExplorerEditorInitialized() {
-  refreshGitExplorerDecorations();
-}
-registerHandler("onGitExplorerEditorInitialized", onGitExplorerEditorInitialized);
 
-function onGitExplorerFocusGained() {
-  refreshGitExplorerDecorations();
-}
-registerHandler("onGitExplorerFocusGained", onGitExplorerFocusGained);
 
-editor.on("after_file_open", "onGitExplorerAfterFileOpen");
-editor.on("after_file_save", "onGitExplorerAfterFileSave");
-editor.on("editor_initialized", "onGitExplorerEditorInitialized");
-editor.on("focus_gained", "onGitExplorerFocusGained");
+
+
+
+
+editor.on("after_file_open", () => {
+  refreshGitExplorerDecorations();
+});
+editor.on("after_file_save", () => {
+  refreshGitExplorerDecorations();
+});
+editor.on("editor_initialized", () => {
+  refreshGitExplorerDecorations();
+});
+editor.on("focus_gained", () => {
+  refreshGitExplorerDecorations();
+});
 
 refreshGitExplorerDecorations();

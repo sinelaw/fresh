@@ -22,7 +22,8 @@ interface ActionPopupResultData {
 const INSTALL_URL = "https://github.com/zigtools/zls#installation";
 let zigLspError: { serverCommand: string; message: string } | null = null;
 
-function on_zig_lsp_server_error(data: LspServerErrorData) : void {
+
+editor.on("lsp_server_error", (data) => {
   if (data.language !== "zig") return;
   zigLspError = { serverCommand: data.server_command, message: data.message };
   if (data.error_type === "not_found") {
@@ -30,11 +31,10 @@ function on_zig_lsp_server_error(data: LspServerErrorData) : void {
   } else {
     editor.setStatus(`Zig LSP error: ${data.message}`);
   }
-}
-registerHandler("on_zig_lsp_server_error", on_zig_lsp_server_error);
-editor.on("lsp_server_error", "on_zig_lsp_server_error");
+});
 
-function on_zig_lsp_status_clicked(data: LspStatusClickedData) : void {
+
+editor.on("lsp_status_clicked", (data) => {
   if (data.language !== "zig" || !zigLspError) return;
   editor.showActionPopup({
     id: "zig-lsp-help",
@@ -46,11 +46,10 @@ function on_zig_lsp_status_clicked(data: LspStatusClickedData) : void {
       { id: "dismiss", label: "Dismiss (ESC)" },
     ],
   });
-}
-registerHandler("on_zig_lsp_status_clicked", on_zig_lsp_status_clicked);
-editor.on("lsp_status_clicked", "on_zig_lsp_status_clicked");
+});
 
-function on_zig_lsp_action_result(data: ActionPopupResultData) : void {
+
+editor.on("action_popup_result", (data) => {
   if (data.popup_id !== "zig-lsp-help") return;
   switch (data.action_id) {
     case "copy_url":
@@ -63,6 +62,4 @@ function on_zig_lsp_action_result(data: ActionPopupResultData) : void {
       zigLspError = null;
       break;
   }
-}
-registerHandler("on_zig_lsp_action_result", on_zig_lsp_action_result);
-editor.on("action_popup_result", "on_zig_lsp_action_result");
+});

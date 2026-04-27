@@ -1637,11 +1637,66 @@ function findMatchingColor(input: string): string | null {
 /**
  * Handle color prompt confirmation
  */
-function onThemeColorPromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): boolean {
+
+
+/**
+ * Handle open theme prompt (both builtin and user themes)
+ */
+
+
+/**
+ * Handle save as prompt
+ */
+
+
+/**
+ * Handle prompt cancellation
+ */
+
+
+/**
+ * Handle initial theme selection prompt (when opening editor)
+ */
+
+
+// Register prompt handlers
+editor.on("prompt_confirmed", (args) => {
+  editor.debug(`[theme_editor] onThemeSelectInitialPromptConfirmed called with: ${JSON.stringify(args)}`);
+  if (args.prompt_type !== "theme-select-initial") {
+    editor.debug(`[theme_editor] prompt_type mismatch, expected 'theme-select-initial', got '${args.prompt_type}'`);
+    return true;
+  }
+  editor.debug(`[theme_editor] prompt_type matched, processing selection...`);
+
+  const key = args.input.trim();
+  const isBuiltin = state.builtinKeys.has(key);
+  const entry = state.themeRegistry.get(key);
+  const themeName = entry?.name || key;
+
+  editor.debug(editor.t("status.loading"));
+
+  const themeData = loadThemeFile(key);
+  if (themeData) {
+    state.themeData = deepClone(themeData);
+    state.originalThemeData = deepClone(themeData);
+    state.themeName = themeName;
+    state.themeKey = key;
+    state.themePath = null;
+    state.isBuiltin = isBuiltin;
+    state.hasChanges = false;
+  } else {
+    editor.setStatus(`Failed to load theme '${themeName}'`);
+    return true;
+  }
+
+  // Now open the editor with loaded theme
+  editor.debug(`[theme_editor] About to call doOpenThemeEditor()`);
+  await doOpenThemeEditor();
+  editor.debug(`[theme_editor] doOpenThemeEditor() completed`);
+
+  return true;
+});
+editor.on("prompt_confirmed", (args) => {
   if (!args.prompt_type.startsWith("theme-color-")) return true;
 
   const path = args.prompt_type.replace("theme-color-", "");
@@ -1688,17 +1743,8 @@ function onThemeColorPromptConfirmed(args: {
   }
 
   return true;
-}
-registerHandler("onThemeColorPromptConfirmed", onThemeColorPromptConfirmed);
-
-/**
- * Handle open theme prompt (both builtin and user themes)
- */
-async function onThemeOpenPromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
+});
+editor.on("prompt_confirmed", (args) => {
   if (args.prompt_type !== "theme-open") return true;
 
   const key = args.input.trim();
@@ -1723,17 +1769,8 @@ async function onThemeOpenPromptConfirmed(args: {
   }
 
   return true;
-}
-registerHandler("onThemeOpenPromptConfirmed", onThemeOpenPromptConfirmed);
-
-/**
- * Handle save as prompt
- */
-async function onThemeSaveAsPromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
+});
+editor.on("prompt_confirmed", (args) => {
   if (args.prompt_type !== "theme-save-as") return true;
 
   const name = args.input.trim();
@@ -1789,13 +1826,77 @@ async function onThemeSaveAsPromptConfirmed(args: {
   }
 
   return true;
-}
-registerHandler("onThemeSaveAsPromptConfirmed", onThemeSaveAsPromptConfirmed);
+});
+editor.on("prompt_confirmed", (args) => {
+  if (args.prompt_type !== "theme-discard-confirm") return true;
 
-/**
- * Handle prompt cancellation
- */
-function onThemePromptCancelled(args: { prompt_type: string }) : boolean {
+  const response = args.input.trim().toLowerCase();
+  if (response === "discard" || args.selected_index === 2) {
+    editor.setStatus(editor.t("status.unsaved_discarded"));
+    doCloseEditor();
+  } else if (response === "save" || args.selected_index === 1) {
+    state.closeAfterSave = true;
+    theme_editor_save();
+  } else {
+    editor.debug(editor.t("status.cancelled"));
+  }
+
+  return false;
+});
+editor.on("prompt_confirmed", (args) => {
+  if (args.prompt_type !== "theme-overwrite-confirm") return true;
+
+  const response = args.input.trim().toLowerCase();
+  if (response === "overwrite" || args.selected_index === 0) {
+    // Use pending name if set (from Save As), otherwise use current name
+    const nameToSave = state.pendingSaveName || state.themeName;
+    state.themeName = nameToSave;
+    state.themeData.name = nameToSave;
+    state.pendingSaveName = null;
+    const restorePath = state.savedCursorPath;
+    state.savedCursorPath = null;
+    await saveTheme(nameToSave, restorePath);
+  } else {
+    state.pendingSaveName = null;
+    state.savedCursorPath = null;
+    state.closeAfterSave = false;
+    editor.debug(editor.t("status.cancelled"));
+  }
+
+  return false;
+});
+editor.on("prompt_confirmed", (args) => {
+  if (args.prompt_type !== "theme-delete-confirm") return true;
+
+  const value = args.input.trim();
+  if (value === "delete" || value === editor.t("prompt.delete_yes")) {
+    if (state.themeName) {
+      try {
+        // Delete the theme file by name
+        await editor.deleteTheme(state.themeName);
+        const deletedName = state.themeName;
+
+        // Reset to default theme
+        state.themeData = createDefaultTheme();
+        state.originalThemeData = deepClone(state.themeData);
+        state.themeName = "";
+        state.themeKey = "";
+        state.themePath = null;
+        state.hasChanges = false;
+        updateDisplay();
+
+        editor.setStatus(editor.t("status.deleted", { name: deletedName }));
+      } catch (e) {
+        editor.setStatus(editor.t("status.delete_failed", { error: String(e) }));
+      }
+    }
+  } else {
+    editor.debug(editor.t("status.cancelled"));
+  }
+
+  return true;
+});
+editor.on("prompt_cancelled", (args) => {
   if (!args.prompt_type.startsWith("theme-")) return true;
 
   // Clear saved state on cancellation
@@ -1806,63 +1907,7 @@ function onThemePromptCancelled(args: { prompt_type: string }) : boolean {
 
   editor.debug(editor.t("status.cancelled"));
   return true;
-}
-registerHandler("onThemePromptCancelled", onThemePromptCancelled);
-
-/**
- * Handle initial theme selection prompt (when opening editor)
- */
-async function onThemeSelectInitialPromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
-  editor.debug(`[theme_editor] onThemeSelectInitialPromptConfirmed called with: ${JSON.stringify(args)}`);
-  if (args.prompt_type !== "theme-select-initial") {
-    editor.debug(`[theme_editor] prompt_type mismatch, expected 'theme-select-initial', got '${args.prompt_type}'`);
-    return true;
-  }
-  editor.debug(`[theme_editor] prompt_type matched, processing selection...`);
-
-  const key = args.input.trim();
-  const isBuiltin = state.builtinKeys.has(key);
-  const entry = state.themeRegistry.get(key);
-  const themeName = entry?.name || key;
-
-  editor.debug(editor.t("status.loading"));
-
-  const themeData = loadThemeFile(key);
-  if (themeData) {
-    state.themeData = deepClone(themeData);
-    state.originalThemeData = deepClone(themeData);
-    state.themeName = themeName;
-    state.themeKey = key;
-    state.themePath = null;
-    state.isBuiltin = isBuiltin;
-    state.hasChanges = false;
-  } else {
-    editor.setStatus(`Failed to load theme '${themeName}'`);
-    return true;
-  }
-
-  // Now open the editor with loaded theme
-  editor.debug(`[theme_editor] About to call doOpenThemeEditor()`);
-  await doOpenThemeEditor();
-  editor.debug(`[theme_editor] doOpenThemeEditor() completed`);
-
-  return true;
-}
-registerHandler("onThemeSelectInitialPromptConfirmed", onThemeSelectInitialPromptConfirmed);
-
-// Register prompt handlers
-editor.on("prompt_confirmed", "onThemeSelectInitialPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeColorPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeOpenPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeSaveAsPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeDiscardPromptConfirmed");
-editor.on("prompt_confirmed", "onThemeOverwritePromptConfirmed");
-editor.on("prompt_confirmed", "onThemeDeletePromptConfirmed");
-editor.on("prompt_cancelled", "onThemePromptCancelled");
+});
 
 // =============================================================================
 // Theme Operations
@@ -2014,13 +2059,9 @@ function createDefaultTheme(): Record<string, unknown> {
 // Cursor Movement Handler
 // =============================================================================
 
-function onThemeEditorCursorMoved(data: {
-  buffer_id: number;
-  cursor_id: number;
-  old_position: number;
-  new_position: number;
-  text_properties?: Array<Record<string, any>>;
-}): void {
+
+
+editor.on("cursor_moved", (data) => {
   if (state.bufferId === null) return;
   // Accept cursor_moved events for any of the buffer group's panels
   // (tree, picker, footer). With buffer groups each panel is its own
@@ -2088,26 +2129,22 @@ function onThemeEditorCursorMoved(data: {
   }
 
   applySelectionHighlighting();
-}
-registerHandler("onThemeEditorCursorMoved", onThemeEditorCursorMoved);
+});
 
-editor.on("cursor_moved", "onThemeEditorCursorMoved");
 
-function onThemeEditorResize(data: { width: number; height: number }): void {
+editor.on("resize", (data) => {
   if (state.bufferId === null) return;
   state.viewportHeight = data.height;
   state.viewportWidth = data.width;
   updateDisplay();
-}
-registerHandler("onThemeEditorResize", onThemeEditorResize);
-editor.on("resize", "onThemeEditorResize");
+});
 
 /**
  * Handle buffer_closed event to reset state when buffer is closed by any means
  */
-function onThemeEditorBufferClosed(data: {
-  buffer_id: number;
-}): void {
+
+
+editor.on("buffer_closed", (data) => {
   if (state.bufferId !== null && data.buffer_id === state.bufferId) {
     // Reset state when our buffer is closed
     state.bufferId = null;
@@ -2122,18 +2159,14 @@ function onThemeEditorBufferClosed(data: {
     state.selectedIndex = 0;
     state.treeScrollOffset = 0;
   }
-}
-registerHandler("onThemeEditorBufferClosed", onThemeEditorBufferClosed);
-
-editor.on("buffer_closed", "onThemeEditorBufferClosed");
+});
 
 /**
  * Handle theme_inspect_key hook: open the theme editor at a specific key
  */
-async function onThemeInspectKey(data: {
-  theme_name: string;
-  key: string;
-}): Promise<void> {
+
+
+editor.on("theme_inspect_key", (data) => {
   // If already open, focus and navigate to the key
   if (isThemeEditorOpen()) {
     if (state.bufferId !== null) {
@@ -2178,10 +2211,7 @@ async function onThemeInspectKey(data: {
   // Open editor and navigate
   await doOpenThemeEditor();
   moveCursorToField(data.key);
-}
-registerHandler("onThemeInspectKey", onThemeInspectKey);
-
-editor.on("theme_inspect_key", "onThemeInspectKey");
+});
 
 // =============================================================================
 // Smart Navigation - Skip Non-Selectable Lines
@@ -2422,11 +2452,9 @@ registerHandler("theme_editor_filter", theme_editor_filter);
 /**
  * Handle filter prompt confirmation
  */
-function onThemeFilterPromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): boolean {
+
+
+editor.on("prompt_confirmed", (args) => {
   if (args.prompt_type !== "theme-filter") return true;
 
   state.filterText = args.input.trim();
@@ -2435,10 +2463,7 @@ function onThemeFilterPromptConfirmed(args: {
   state.treeScrollOffset = 0;
   updateDisplay();
   return true;
-}
-registerHandler("onThemeFilterPromptConfirmed", onThemeFilterPromptConfirmed);
-
-editor.on("prompt_confirmed", "onThemeFilterPromptConfirmed");
+});
 
 /**
  * Navigate picker vertically (between sections: hex, named-colors, palette)
@@ -2708,27 +2733,7 @@ function doCloseEditor(): void {
 /**
  * Handle discard confirmation prompt
  */
-function onThemeDiscardPromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): boolean {
-  if (args.prompt_type !== "theme-discard-confirm") return true;
 
-  const response = args.input.trim().toLowerCase();
-  if (response === "discard" || args.selected_index === 2) {
-    editor.setStatus(editor.t("status.unsaved_discarded"));
-    doCloseEditor();
-  } else if (response === "save" || args.selected_index === 1) {
-    state.closeAfterSave = true;
-    theme_editor_save();
-  } else {
-    editor.debug(editor.t("status.cancelled"));
-  }
-
-  return false;
-}
-registerHandler("onThemeDiscardPromptConfirmed", onThemeDiscardPromptConfirmed);
 
 /**
  * Edit color at cursor
@@ -2842,33 +2847,7 @@ registerHandler("theme_editor_save", theme_editor_save);
 /**
  * Handle overwrite confirmation prompt
  */
-async function onThemeOverwritePromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
-  if (args.prompt_type !== "theme-overwrite-confirm") return true;
 
-  const response = args.input.trim().toLowerCase();
-  if (response === "overwrite" || args.selected_index === 0) {
-    // Use pending name if set (from Save As), otherwise use current name
-    const nameToSave = state.pendingSaveName || state.themeName;
-    state.themeName = nameToSave;
-    state.themeData.name = nameToSave;
-    state.pendingSaveName = null;
-    const restorePath = state.savedCursorPath;
-    state.savedCursorPath = null;
-    await saveTheme(nameToSave, restorePath);
-  } else {
-    state.pendingSaveName = null;
-    state.savedCursorPath = null;
-    state.closeAfterSave = false;
-    editor.debug(editor.t("status.cancelled"));
-  }
-
-  return false;
-}
-registerHandler("onThemeOverwritePromptConfirmed", onThemeOverwritePromptConfirmed);
 
 /**
  * Save theme as (new name)
@@ -2946,42 +2925,7 @@ registerHandler("theme_editor_delete", theme_editor_delete);
 /**
  * Handle delete confirmation prompt
  */
-async function onThemeDeletePromptConfirmed(args: {
-  prompt_type: string;
-  selected_index: number | null;
-  input: string;
-}): Promise<boolean> {
-  if (args.prompt_type !== "theme-delete-confirm") return true;
 
-  const value = args.input.trim();
-  if (value === "delete" || value === editor.t("prompt.delete_yes")) {
-    if (state.themeName) {
-      try {
-        // Delete the theme file by name
-        await editor.deleteTheme(state.themeName);
-        const deletedName = state.themeName;
-
-        // Reset to default theme
-        state.themeData = createDefaultTheme();
-        state.originalThemeData = deepClone(state.themeData);
-        state.themeName = "";
-        state.themeKey = "";
-        state.themePath = null;
-        state.hasChanges = false;
-        updateDisplay();
-
-        editor.setStatus(editor.t("status.deleted", { name: deletedName }));
-      } catch (e) {
-        editor.setStatus(editor.t("status.delete_failed", { error: String(e) }));
-      }
-    }
-  } else {
-    editor.debug(editor.t("status.cancelled"));
-  }
-
-  return true;
-}
-registerHandler("onThemeDeletePromptConfirmed", onThemeDeletePromptConfirmed);
 
 // =============================================================================
 // Command Registration
