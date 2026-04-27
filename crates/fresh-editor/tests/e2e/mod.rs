@@ -48,6 +48,7 @@ pub mod hot_exit_recovery_lsp_sync;
 pub mod indent_dedent;
 pub mod inline_diagnostics;
 pub mod issue_1147_wrapped_line_nav;
+pub mod issue_1718_settings_search_utf8_panic;
 pub mod issue_1288_word_select_whitespace;
 pub mod issue_1502_word_wrap_squished;
 pub mod issue_1540_tab_click_focus;
