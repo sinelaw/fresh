@@ -422,10 +422,12 @@ impl Default for HookRegistry {
 /// Convert HookArgs to a serde_json::Value for plugin communication
 pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
     let json_value = match args {
-        HookArgs::RenderStart { buffer_id } => {
-            serde_json::json!({
-                "buffer_id": buffer_id.0,
-            })
+        // These four variants all carry only a buffer_id and produce the same payload shape.
+        HookArgs::RenderStart { buffer_id }
+        | HookArgs::BufferActivated { buffer_id }
+        | HookArgs::BufferDeactivated { buffer_id }
+        | HookArgs::BufferClosed { buffer_id } => {
+            serde_json::json!({ "buffer_id": buffer_id })
         }
         HookArgs::RenderLine {
             buffer_id,
@@ -435,27 +437,18 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             content,
         } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "line_number": line_number,
                 "byte_start": byte_start,
                 "byte_end": byte_end,
                 "content": content,
             })
         }
-        HookArgs::BufferActivated { buffer_id } => {
-            serde_json::json!({ "buffer_id": buffer_id.0 })
-        }
-        HookArgs::BufferDeactivated { buffer_id } => {
-            serde_json::json!({ "buffer_id": buffer_id.0 })
-        }
         HookArgs::DiagnosticsUpdated { uri, count } => {
             serde_json::json!({
                 "uri": uri,
                 "count": count,
             })
-        }
-        HookArgs::BufferClosed { buffer_id } => {
-            serde_json::json!({ "buffer_id": buffer_id.0 })
         }
         HookArgs::CursorMoved {
             buffer_id,
@@ -466,8 +459,8 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             text_properties,
         } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
-                "cursor_id": cursor_id.0,
+                "buffer_id": buffer_id,
+                "cursor_id": cursor_id,
                 "old_position": old_position,
                 "new_position": new_position,
                 "line": line,
@@ -480,7 +473,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             text,
         } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "position": position,
                 "text": text,
             })
@@ -496,7 +489,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             lines_added,
         } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "position": position,
                 "text": text,
                 "affected_start": affected_start,
@@ -508,7 +501,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
         }
         HookArgs::BeforeDelete { buffer_id, range } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "start": range.start,
                 "end": range.end,
             })
@@ -524,7 +517,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             lines_removed,
         } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "start": range.start,
                 "end": range.end,
                 "deleted_text": deleted_text,
@@ -538,46 +531,31 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
         HookArgs::BeforeFileOpen { path } => {
             serde_json::json!({ "path": path.to_string_lossy() })
         }
-        HookArgs::AfterFileOpen { path, buffer_id } => {
+        // AfterFileOpen, BeforeFileSave, and AfterFileSave all carry path + buffer_id.
+        HookArgs::AfterFileOpen { path, buffer_id }
+        | HookArgs::BeforeFileSave { path, buffer_id }
+        | HookArgs::AfterFileSave { path, buffer_id } => {
             serde_json::json!({
                 "path": path.to_string_lossy(),
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
             })
         }
-        HookArgs::BeforeFileSave { path, buffer_id } => {
-            serde_json::json!({
-                "path": path.to_string_lossy(),
-                "buffer_id": buffer_id.0,
-            })
-        }
-        HookArgs::AfterFileSave { path, buffer_id } => {
-            serde_json::json!({
-                "path": path.to_string_lossy(),
-                "buffer_id": buffer_id.0,
-            })
-        }
-        HookArgs::PreCommand { action } => {
-            serde_json::json!({ "action": format!("{:?}", action) })
-        }
-        HookArgs::PostCommand { action } => {
+        HookArgs::PreCommand { action } | HookArgs::PostCommand { action } => {
             serde_json::json!({ "action": format!("{:?}", action) })
         }
         HookArgs::Idle { milliseconds } => {
             serde_json::json!({ "milliseconds": milliseconds })
         }
-        HookArgs::EditorInitialized => {
-            serde_json::json!({})
-        }
-        HookArgs::PluginsLoaded => {
-            serde_json::json!({})
-        }
-        HookArgs::Ready => {
-            serde_json::json!({})
-        }
+        HookArgs::EditorInitialized
+        | HookArgs::PluginsLoaded
+        | HookArgs::Ready
+        | HookArgs::FocusGained => serde_json::json!({}),
         HookArgs::AuthorityChanged { label } => {
             serde_json::json!({ "label": label })
         }
-        HookArgs::PromptChanged { prompt_type, input } => {
+        // PromptChanged and PromptCancelled share the same { prompt_type, input } payload.
+        HookArgs::PromptChanged { prompt_type, input }
+        | HookArgs::PromptCancelled { prompt_type, input } => {
             serde_json::json!({
                 "prompt_type": prompt_type,
                 "input": input,
@@ -592,12 +570,6 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 "prompt_type": prompt_type,
                 "input": input,
                 "selected_index": selected_index,
-            })
-        }
-        HookArgs::PromptCancelled { prompt_type, input } => {
-            serde_json::json!({
-                "prompt_type": prompt_type,
-                "input": input,
             })
         }
         HookArgs::PromptSelectionChanged {
@@ -642,7 +614,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 })
                 .collect();
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "lines": lines_json,
             })
         }
@@ -671,8 +643,8 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 })
                 .collect();
             serde_json::json!({
-                "buffer_id": buffer_id.0,
-                "split_id": split_id.0,
+                "buffer_id": buffer_id,
+                "split_id": split_id,
                 "viewport_start": viewport_start,
                 "viewport_end": viewport_end,
                 "tokens": tokens_json,
@@ -737,8 +709,8 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             height,
         } => {
             serde_json::json!({
-                "split_id": split_id.0,
-                "buffer_id": buffer_id.0,
+                "split_id": split_id,
+                "buffer_id": buffer_id,
                 "top_byte": top_byte,
                 "top_line": top_line,
                 "width": width,
@@ -791,7 +763,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             language,
         } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "language": language,
             })
         }
@@ -808,7 +780,7 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
             row,
         } => {
             serde_json::json!({
-                "buffer_id": buffer_id.0,
+                "buffer_id": buffer_id,
                 "delta": delta,
                 "col": col,
                 "row": row,
@@ -819,9 +791,6 @@ pub fn hook_args_to_json(args: &HookArgs) -> Result<serde_json::Value> {
                 "width": width,
                 "height": height,
             })
-        }
-        HookArgs::FocusGained => {
-            serde_json::json!({})
         }
     };
 
