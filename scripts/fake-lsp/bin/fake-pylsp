@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Tiny fake `pylsp` for tests. Reads JSON-RPC framed messages on stdio,
+# logs every received `uri` (with the request method) to
+# `<FAKE_DEVCONTAINER_STATE>/fake_lsp_uris`, and answers the few
+# methods the editor needs to drive Go-to-Definition end-to-end:
+#
+#   - `initialize`              → minimal capabilities
+#   - `textDocument/didOpen`    → notification, no response (logged)
+#   - `textDocument/didChange`  → notification, no response (logged)
+#   - `textDocument/definition` → `Location` whose URI defaults to
+#                                 `file:///workspaces/proj/util.py`
+#                                 line 5, character 0; override by
+#                                 writing the desired URI into
+#                                 `<state>/fake_lsp_definition_uri`
+#                                 before triggering the request.
+#   - `shutdown` / `exit`       → respond null and break
+#
+# Lives in `scripts/fake-lsp/bin/` so tests can prepend that directory
+# to PATH (and to the captured `userEnvProbe` PATH) and have both
+# `command -v fake-pylsp` and the actual spawn resolve via the fake
+# docker shim. See `scripts/fake-lsp/README.md` for the full picture.
+set -u
+
+# Resolve the per-test state dir. Tests using the fake-devcontainer
+# harness already set `FAKE_DEVCONTAINER_STATE`; we reuse that so the
+# uri log lives next to `exec_history` and friends.
+state_dir="${FAKE_DEVCONTAINER_STATE:-${TMPDIR:-/tmp}/fake-lsp-state}"
+mkdir -p "$state_dir" 2>/dev/null || true
+uri_log="$state_dir/fake_lsp_uris"
+def_uri_file="$state_dir/fake_lsp_definition_uri"
+def_line_file="$state_dir/fake_lsp_definition_line"
+def_char_file="$state_dir/fake_lsp_definition_character"
+
+# Read one Content-Length-framed message from stdin into stdout.
+read_message() {
+  local content_length=0 line
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [ -z "$line" ]; then
+      break
+    fi
+    case "$line" in
+      Content-Length:*)
+        content_length="${line#Content-Length:}"
+        content_length="${content_length// /}"
+        ;;
+    esac
+  done
+  if [ "$content_length" -gt 0 ] 2>/dev/null; then
+    dd bs=1 count="$content_length" 2>/dev/null
+  fi
+}
+
+send_message() {
+  local message="$1"
+  local length=${#message}
+  printf 'Content-Length: %d\r\n\r\n%s' "$length" "$message"
+}
+
+extract_first_uri() {
+  # First "uri":"..." occurrence in the JSON. Defs/refs requests have
+  # one URI; didOpen has it nested under textDocument; both shapes
+  # share the same first occurrence so this is enough for our needs.
+  printf '%s' "$1" | grep -o '"uri":"[^"]*"' | head -n1 | cut -d'"' -f4
+}
+
+extract_method() {
+  printf '%s' "$1" | grep -o '"method":"[^"]*"' | head -n1 | cut -d'"' -f4
+}
+
+extract_id() {
+  # Numeric id only — the editor always uses integers.
+  printf '%s' "$1" | grep -oE '"id":[[:space:]]*[0-9]+' | head -n1 | sed -E 's/.*: *([0-9]+).*/\1/'
+}
+
+log_uri() {
+  local method="$1" uri="$2"
+  if [ -n "$uri" ]; then
+    printf '%s %s\n' "$method" "$uri" >> "$uri_log" 2>/dev/null || true
+  fi
+}
+
+read_def_target() {
+  local default_uri="file:///workspaces/proj/util.py"
+  local default_line=5
+  local default_char=0
+  local uri line char
+  if [ -f "$def_uri_file" ]; then
+    uri="$(head -n1 "$def_uri_file" 2>/dev/null)"
+  fi
+  : "${uri:=$default_uri}"
+  if [ -f "$def_line_file" ]; then
+    line="$(head -n1 "$def_line_file" 2>/dev/null)"
+  fi
+  : "${line:=$default_line}"
+  if [ -f "$def_char_file" ]; then
+    char="$(head -n1 "$def_char_file" 2>/dev/null)"
+  fi
+  : "${char:=$default_char}"
+  printf '%s\n%s\n%s\n' "$uri" "$line" "$char"
+}
+
+while true; do
+  msg="$(read_message)"
+  [ -z "$msg" ] && break
+
+  method="$(extract_method "$msg")"
+  msg_id="$(extract_id "$msg")"
+  uri="$(extract_first_uri "$msg")"
+
+  case "$method" in
+    "initialize")
+      log_uri "initialize" "$uri"
+      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"capabilities":{"textDocumentSync":1,"definitionProvider":true,"hoverProvider":true}}}'
+      ;;
+    "initialized")
+      # notification, no response
+      ;;
+    "textDocument/didOpen")
+      log_uri "didOpen" "$uri"
+      ;;
+    "textDocument/didChange")
+      log_uri "didChange" "$uri"
+      ;;
+    "textDocument/didSave")
+      log_uri "didSave" "$uri"
+      ;;
+    "textDocument/didClose")
+      log_uri "didClose" "$uri"
+      ;;
+    "textDocument/definition")
+      log_uri "definition" "$uri"
+      mapfile -t def < <(read_def_target)
+      def_uri="${def[0]}"
+      def_line="${def[1]}"
+      def_char="${def[2]}"
+      end_char=$((def_char + 1))
+      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"uri":"'"$def_uri"'","range":{"start":{"line":'"$def_line"',"character":'"$def_char"'},"end":{"line":'"$def_line"',"character":'"$end_char"'}}}}'
+      ;;
+    "textDocument/diagnostic")
+      log_uri "diagnostic" "$uri"
+      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":{"kind":"full","items":[]}}'
+      ;;
+    "shutdown")
+      send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+      ;;
+    "exit")
+      break
+      ;;
+    *)
+      # Unknown method — if it has an id, respond with an empty result
+      # so the editor isn't stuck waiting. Notifications fall through.
+      if [ -n "$msg_id" ]; then
+        send_message '{"jsonrpc":"2.0","id":'"$msg_id"',"result":null}'
+      fi
+      ;;
+  esac
+done

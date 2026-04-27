@@ -16,6 +16,8 @@ pub mod dashboard;
 #[cfg(unix)]
 pub mod devcontainer_attach_e2e;
 pub mod devcontainer_failed_attach_popup;
+#[cfg(unix)]
+pub mod devcontainer_lsp_definition;
 pub mod devcontainer_ports_panel;
 pub mod devcontainer_run_lifecycle;
 #[cfg(unix)]
