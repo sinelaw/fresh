@@ -493,10 +493,19 @@ async function flashJump(): Promise<void> {
   // enough to survive status-bar truncation.  Includes the current
   // pattern so tests (and careful users) can confirm the plugin has
   // accepted each typed key.
+  //
+  // The banner doubles as a synchronization barrier for tests: as long
+  // as setStatus runs AFTER redraw within the same loop iteration, any
+  // observer that sees `Flash[<pattern>]` on screen is guaranteed to
+  // also see the conceals/labels for that same pattern — they were
+  // committed in the redraw immediately before.  Setting the banner
+  // earlier (e.g. in the keypress handler before `continue`) breaks
+  // this invariant: the new banner reaches the screen while the
+  // previous iteration's conceals are still painted, so a renderer
+  // tick in that window shows banner=N with conceals=N-1.
   const setStatusForPattern = (): void => {
     editor.setStatus("Flash[" + state.pattern + "]");
   };
-  setStatusForPattern();
 
   try {
     while (true) {
@@ -522,6 +531,7 @@ async function flashJump(): Promise<void> {
         if (m.label) state.prevLabelByKey.set(matchKey(m), m.label);
       }
       redraw(state.matches, views);
+      setStatusForPattern();
 
       const ev = await editor.getNextKey();
 
@@ -538,7 +548,6 @@ async function flashJump(): Promise<void> {
         if (state.pattern.length > 0) {
           state.pattern = state.pattern.slice(0, -1);
         }
-        setStatusForPattern();
         continue;
       }
 
@@ -551,7 +560,6 @@ async function flashJump(): Promise<void> {
           break;
         }
         state.pattern += ev.key;
-        setStatusForPattern();
         continue;
       }
 
