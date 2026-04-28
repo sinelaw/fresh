@@ -841,11 +841,10 @@ pub struct EditorConfig {
     pub status_bar: StatusBarConfig,
 
     /// Whether the prompt line is always visible.
-    /// The prompt line is the bottom-most line used for command input, search, file open, etc.
+    /// The prompt line is the bottom-most line used for search, file open, and other prompts.
     /// When `false` (the default), the prompt line auto-hides — it only appears
     /// while a prompt is active and disappears again once the prompt closes.
     /// When `true`, the prompt line is always reserved at the bottom of the screen.
-    /// Can be toggled at runtime via command palette or keybinding.
     /// Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]

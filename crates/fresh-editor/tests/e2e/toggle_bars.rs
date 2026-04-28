@@ -400,16 +400,19 @@ fn test_prompt_line_visible_by_default() {
     );
 }
 
-/// Test that config option show_prompt_line: false hides prompt line on startup
+/// Test that toggling the prompt line off at runtime hides it.
+/// (The config-load path with show_prompt_line=false is covered by
+/// `test_settings_show_prompt_line_applies_immediately`; the harness
+/// always forces show_prompt_line=true so layout-sensitive tests stay
+/// stable, hence this test exercises the runtime toggle instead.)
 #[test]
-fn test_config_show_prompt_line_false() {
-    let mut config = Config::default();
-    config.editor.show_prompt_line = false;
-
-    let harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+fn test_toggle_prompt_line_off_hides_it() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    assert!(harness.editor().prompt_line_visible());
+    harness.editor_mut().toggle_prompt_line();
     assert!(
         !harness.editor().prompt_line_visible(),
-        "Prompt line should be hidden when show_prompt_line is false"
+        "Prompt line should be hidden after toggling it off"
     );
 }
 

@@ -640,6 +640,15 @@ impl EditorTestHarness {
             config.editor.auto_close = false; // Disable for simpler testing
             config.editor.animations = false;
         }
+        // Always force the prompt line to be visible in tests so layout-
+        // sensitive assertions (scrolling, scrollbar invariants, status bar
+        // positioning, content_area_rows) stay stable. The user-facing
+        // default is auto-hide (show_prompt_line=false); tests that need
+        // to exercise the auto-hide path do so via the runtime toggle
+        // (`editor.toggle_prompt_line()`) or the Settings UI rather than
+        // by passing a config, so the override here never gets in their
+        // way.
+        config.editor.show_prompt_line = true;
         // Force "default" keybinding map for consistent test behavior across platforms
         // (Config::default() uses platform-specific keymaps which breaks test assumptions)
         // Skip this if the test explicitly wants to preserve its keymap (e.g., testing emacs bindings)
