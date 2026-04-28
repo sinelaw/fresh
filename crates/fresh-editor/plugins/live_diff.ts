@@ -262,8 +262,9 @@ function lineDiff(oldLines: string[], newLines: string[]): DiffOp[] | null {
     if ((m + 1) * (n + 1) > MAX_DP_CELLS) return null;
 
     // dp[(i)*(n+1) + j] = LCS length of oldMid[0..i] vs newMid[0..j].
+    // Plain Array — QuickJS doesn't expose typed arrays in this runtime.
     const stride = n + 1;
-    const dp = new Int32Array((m + 1) * stride);
+    const dp: number[] = new Array((m + 1) * stride).fill(0);
     for (let i = 1; i <= m; i++) {
       const oi = oldLines[prefix + i - 1];
       for (let j = 1; j <= n; j++) {
@@ -394,10 +395,15 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
 
   for (const h of state.hunks) {
     if (h.kind === "removed") {
-      // Anchor removal indicator on the line that took the deletion's place.
-      // If the deletion happened past EOF, anchor on the last line.
-      const lineCount = await editor.getBufferLineCount();
-      const anchor = Math.min(h.newStart, Math.max(0, (lineCount ?? 1) - 1));
+      // Anchor on the line that took the deletion's place.  If newStart
+      // is past EOF (`getLineStartPosition` returns null), step back
+      // until we find a real line.
+      let anchor = h.newStart;
+      while (anchor > 0) {
+        const pos = await editor.getLineStartPosition(anchor);
+        if (pos !== null) break;
+        anchor--;
+      }
       removedAnchors.push(anchor);
     } else if (h.kind === "added") {
       for (let i = 0; i < h.newCount; i++) addedLines.push(h.newStart + i);
@@ -434,7 +440,7 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
       if (start !== null && end !== null) {
         editor.addOverlay(bid, NS_OVERLAY, start, end, {
           bg: h.kind === "added" ? COLORS.added : COLORS.modified,
-          extend_to_line_end: true,
+          extendToLineEnd: true,
         });
       }
     }
@@ -442,19 +448,17 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
     if (h.oldLines.length === 0) continue;
 
     // Anchor: for removed/modified hunks, use the line that follows the
-    // deletion on the new side. If newStart is past EOF, anchor at the
-    // last line (and rely on `above: true` to draw the virtual lines on
-    // the line *below* via the renderer's edge handling). When newStart
-    // == lineCount we instead anchor on the last line and place "below".
-    const lineCount = await editor.getBufferLineCount();
-    const total = lineCount ?? 0;
+    // deletion on the new side. If newStart is past EOF (line index out
+    // of range), step back to the last real line and anchor "below" so
+    // the virtual lines appear after the existing tail.
     let anchorLine = h.newStart;
     let above = true;
-    if (anchorLine >= total) {
-      anchorLine = Math.max(0, total - 1);
+    let anchor = await editor.getLineStartPosition(anchorLine);
+    while (anchor === null && anchorLine > 0) {
+      anchorLine--;
       above = false;
+      anchor = await editor.getLineStartPosition(anchorLine);
     }
-    const anchor = await editor.getLineStartPosition(anchorLine);
     if (anchor === null) continue;
 
     for (let i = 0; i < h.oldLines.length; i++) {
