@@ -168,6 +168,7 @@ pub struct PartialEditorConfig {
     pub auto_save_interval_secs: Option<u32>,
     pub hot_exit: Option<bool>,
     pub restore_previous_session: Option<bool>,
+    pub auto_create_empty_buffer_on_last_buffer_close: Option<bool>,
     pub highlight_context_bytes: Option<usize>,
     pub mouse_hover_enabled: Option<bool>,
     pub mouse_hover_delay_ms: Option<u64>,
@@ -250,6 +251,8 @@ impl Merge for PartialEditorConfig {
         self.hot_exit.merge_from(&other.hot_exit);
         self.restore_previous_session
             .merge_from(&other.restore_previous_session);
+        self.auto_create_empty_buffer_on_last_buffer_close
+            .merge_from(&other.auto_create_empty_buffer_on_last_buffer_close);
         self.highlight_context_bytes
             .merge_from(&other.highlight_context_bytes);
         self.mouse_hover_enabled
@@ -336,6 +339,7 @@ pub struct PartialFileExplorerConfig {
     pub width: Option<crate::config::ExplorerWidth>,
     pub preview_tabs: Option<bool>,
     pub side: Option<crate::config::FileExplorerSide>,
+    pub auto_open_on_last_buffer_close: Option<bool>,
 }
 
 impl Merge for PartialFileExplorerConfig {
@@ -348,6 +352,8 @@ impl Merge for PartialFileExplorerConfig {
         self.width.merge_from(&other.width);
         self.preview_tabs.merge_from(&other.preview_tabs);
         self.side.merge_from(&other.side);
+        self.auto_open_on_last_buffer_close
+            .merge_from(&other.auto_open_on_last_buffer_close);
     }
 }
 
@@ -524,6 +530,9 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             auto_save_interval_secs: Some(cfg.auto_save_interval_secs),
             hot_exit: Some(cfg.hot_exit),
             restore_previous_session: Some(cfg.restore_previous_session),
+            auto_create_empty_buffer_on_last_buffer_close: Some(
+                cfg.auto_create_empty_buffer_on_last_buffer_close,
+            ),
             highlight_context_bytes: Some(cfg.highlight_context_bytes),
             mouse_hover_enabled: Some(cfg.mouse_hover_enabled),
             mouse_hover_delay_ms: Some(cfg.mouse_hover_delay_ms),
@@ -629,6 +638,9 @@ impl PartialEditorConfig {
             restore_previous_session: self
                 .restore_previous_session
                 .unwrap_or(defaults.restore_previous_session),
+            auto_create_empty_buffer_on_last_buffer_close: self
+                .auto_create_empty_buffer_on_last_buffer_close
+                .unwrap_or(defaults.auto_create_empty_buffer_on_last_buffer_close),
             highlight_context_bytes: self
                 .highlight_context_bytes
                 .unwrap_or(defaults.highlight_context_bytes),
@@ -737,6 +749,7 @@ impl From<&FileExplorerConfig> for PartialFileExplorerConfig {
             width: Some(cfg.width),
             preview_tabs: Some(cfg.preview_tabs),
             side: Some(cfg.side),
+            auto_open_on_last_buffer_close: Some(cfg.auto_open_on_last_buffer_close),
         }
     }
 }
@@ -753,6 +766,9 @@ impl PartialFileExplorerConfig {
             width: self.width.unwrap_or(defaults.width),
             preview_tabs: self.preview_tabs.unwrap_or(defaults.preview_tabs),
             side: self.side.unwrap_or(defaults.side),
+            auto_open_on_last_buffer_close: self
+                .auto_open_on_last_buffer_close
+                .unwrap_or(defaults.auto_open_on_last_buffer_close),
         }
     }
 }

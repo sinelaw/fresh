@@ -1154,6 +1154,17 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Recovery"))]
     pub restore_previous_session: bool,
 
+    /// Whether to auto-create a fresh empty `[No Name]` buffer when the
+    /// last open buffer is closed. When `false`, the editor still creates
+    /// an internal placeholder buffer (it always needs at least one) but
+    /// hides it from the tab bar so the workspace looks blank. Combined
+    /// with `file_explorer.auto_open_on_last_buffer_close = false`, this
+    /// gives a fully blank workspace where nothing opens automatically.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub auto_create_empty_buffer_on_last_buffer_close: bool,
+
     // ===== Recovery =====
     /// Whether to enable file recovery (Emacs-style auto-save)
     /// When enabled, buffers are periodically saved to recovery files
@@ -1384,6 +1395,7 @@ impl Default for EditorConfig {
             auto_save_interval_secs: default_auto_save_interval(),
             hot_exit: true,
             restore_previous_session: true,
+            auto_create_empty_buffer_on_last_buffer_close: true,
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),
             highlight_context_bytes: default_highlight_context_bytes(),
@@ -1479,6 +1491,14 @@ pub struct FileExplorerConfig {
     /// Default: left
     #[serde(default = "default_explorer_side")]
     pub side: FileExplorerSide,
+
+    /// Automatically focus the file explorer when the last buffer is
+    /// closed. Set to `false` for a "blank workspace" workflow where
+    /// nothing opens automatically and the user explicitly invokes the
+    /// file explorer (e.g. via keybinding or command palette).
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub auto_open_on_last_buffer_close: bool,
 }
 
 /// Width configuration for the file explorer.
@@ -1834,6 +1854,7 @@ impl Default for FileExplorerConfig {
             width: default_explorer_width(),
             preview_tabs: true,
             side: default_explorer_side(),
+            auto_open_on_last_buffer_close: true,
         }
     }
 }

@@ -185,7 +185,23 @@ impl Editor {
             .or(any_remaining)
         {
             Some(bid) => (bid, false),
-            None => (self.new_buffer(), true),
+            None => {
+                // Editor invariants require at least one buffer at all times.
+                // When the user opted out of auto-creating a visible empty
+                // buffer on last close, hide the synthesized buffer from the
+                // tab bar so the workspace appears blank.
+                let new_id = self.new_buffer();
+                if !self
+                    .config
+                    .editor
+                    .auto_create_empty_buffer_on_last_buffer_close
+                {
+                    if let Some(meta) = self.buffer_metadata.get_mut(&new_id) {
+                        meta.hidden_from_tabs = true;
+                    }
+                }
+                (new_id, true)
+            }
         };
 
         // Switch to replacement buffer BEFORE updating splits.
@@ -253,7 +269,12 @@ impl Editor {
         }
 
         if closing_active {
-            if created_empty_buffer {
+            if created_empty_buffer
+                && self
+                    .config
+                    .file_explorer
+                    .auto_open_on_last_buffer_close
+            {
                 self.focus_file_explorer();
             }
             if let Some(group_leaf) = return_to_group {
