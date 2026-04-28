@@ -15,6 +15,7 @@
 //!   through this so an authority pointing at a container runs the server
 //!   inside the container (via `docker exec -i`) instead of on the host.
 
+use crate::services::process_hidden::HideWindow;
 use crate::services::process_limits::PostSpawnAction;
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{decode_base64, exec_params};
@@ -75,6 +76,7 @@ impl ProcessSpawner for LocalProcessSpawner {
     ) -> Result<SpawnResult, SpawnError> {
         let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&args);
+        cmd.hide_window();
 
         if let Some(ref dir) = cwd {
             cmd.current_dir(dir);
@@ -329,6 +331,7 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .hide_window()
             .kill_on_drop(true);
         if let Some(dir) = cwd {
             cmd.current_dir(dir);

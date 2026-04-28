@@ -1239,6 +1239,7 @@ impl FileSystem for StdFileSystem {
         uid: u32,
         gid: u32,
     ) -> io::Result<()> {
+        use crate::services::process_hidden::HideWindow;
         use std::process::{Command, Stdio};
 
         // Write data via sudo tee
@@ -1247,6 +1248,7 @@ impl FileSystem for StdFileSystem {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
+            .hide_window()
             .spawn()
             .map_err(|e| io::Error::other(format!("failed to spawn sudo: {}", e)))?;
 
@@ -1267,6 +1269,7 @@ impl FileSystem for StdFileSystem {
         // Set permissions via sudo chmod
         let status = Command::new("sudo")
             .args(["chmod", &format!("{:o}", mode), &path.to_string_lossy()])
+            .hide_window()
             .status()?;
         if !status.success() {
             return Err(io::Error::other("sudo chmod failed"));
@@ -1279,6 +1282,7 @@ impl FileSystem for StdFileSystem {
                 &format!("{}:{}", uid, gid),
                 &path.to_string_lossy(),
             ])
+            .hide_window()
             .status()?;
         if !status.success() {
             return Err(io::Error::other("sudo chown failed"));

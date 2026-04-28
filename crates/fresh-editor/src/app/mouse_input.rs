@@ -2774,6 +2774,7 @@ impl Editor {
 
     /// Get git diff stats for a file (insertions/deletions)
     fn get_git_diff_stats(&self, path: &std::path::Path) -> Option<String> {
+        use crate::services::process_hidden::HideWindow;
         use std::process::Command;
 
         // Run git diff --numstat for the file
@@ -2781,6 +2782,7 @@ impl Editor {
             .args(["diff", "--numstat", "--"])
             .arg(path)
             .current_dir(&self.working_dir)
+            .hide_window()
             .output()
             .ok()?;
 
@@ -2814,6 +2816,7 @@ impl Editor {
             .args(["diff", "--numstat", "--cached", "--"])
             .arg(path)
             .current_dir(&self.working_dir)
+            .hide_window()
             .output()
             .ok()?;
 
@@ -2847,6 +2850,7 @@ impl Editor {
         &self,
         dir_path: &std::path::Path,
     ) -> Option<Vec<std::path::PathBuf>> {
+        use crate::services::process_hidden::HideWindow;
         use std::process::Command;
 
         // Resolve symlinks to get the actual directory path
@@ -2859,6 +2863,7 @@ impl Editor {
             .args(["status", "--porcelain", "--"])
             .arg(&resolved_path)
             .current_dir(&self.working_dir)
+            .hide_window()
             .output()
             .ok()?;
 

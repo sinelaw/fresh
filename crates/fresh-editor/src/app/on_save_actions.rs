@@ -11,6 +11,7 @@ use std::time::Duration;
 use super::Editor;
 use crate::config::{FormatterConfig, OnSaveAction};
 use crate::model::event::Event;
+use crate::services::process_hidden::HideWindow;
 use rust_i18n::t;
 
 /// Result of running a formatter or on-save action
@@ -189,7 +190,8 @@ impl Editor {
         cmd.args(["-c", &full_command])
             .current_dir(&project_root)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .hide_window();
 
         if formatter.stdin {
             cmd.stdin(Stdio::piped());
@@ -373,7 +375,8 @@ impl Editor {
         cmd.args(["-c", &full_command])
             .current_dir(&working_dir)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .hide_window();
 
         if action.stdin {
             cmd.stdin(Stdio::piped());
@@ -587,6 +590,7 @@ fn command_exists(command: &str) -> bool {
             .arg(command)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .hide_window()
             .status()
             .map(|s| s.success())
             .unwrap_or(false)

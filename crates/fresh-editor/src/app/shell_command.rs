@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 
 use super::Editor;
 use crate::model::event::Event;
+use crate::services::process_hidden::HideWindow;
 use crate::view::prompt::PromptType;
 use rust_i18n::t;
 
@@ -40,6 +41,7 @@ impl Editor {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .hide_window()
             .spawn()
             .map_err(|e| format!("Failed to spawn shell: {}", e))?;
 
@@ -261,6 +263,7 @@ impl Editor {
         let shell = detect_shell();
         let mut child = Command::new(&shell)
             .args(["-c", command])
+            .hide_window()
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn shell: {}", e))?;
 

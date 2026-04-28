@@ -13,6 +13,7 @@ use std::process::Stdio;
 use async_trait::async_trait;
 use tokio::process::Command;
 
+use crate::services::process_hidden::HideWindow;
 use crate::services::remote::{
     LongRunningSpawner, ProcessSpawner, SpawnError, SpawnResult, StdioChild,
 };
@@ -128,6 +129,7 @@ impl ProcessSpawner for DockerExecSpawner {
             .args(&docker_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .hide_window()
             .output()
             .await
             .map_err(|e| SpawnError::Process(e.to_string()))?;
@@ -219,6 +221,7 @@ impl LongRunningSpawner for DockerLongRunningSpawner {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .hide_window()
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| SpawnError::Process(e.to_string()))?;
@@ -246,6 +249,7 @@ impl LongRunningSpawner for DockerLongRunningSpawner {
             .args(&docker_args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .hide_window()
             .status()
             .await
         {

@@ -2,6 +2,7 @@
 //!
 //! Handles spawning SSH process and bootstrapping the Python agent.
 
+use crate::services::process_hidden::HideWindow;
 use crate::services::remote::channel::AgentChannel;
 use crate::services::remote::protocol::AgentResponse;
 use crate::services::remote::AGENT_SOURCE;
@@ -124,6 +125,7 @@ impl SshConnection {
         cmd.stdout(Stdio::piped());
         // Inherit stderr so SSH can prompt for password on the terminal
         cmd.stderr(Stdio::inherit());
+        cmd.hide_window();
 
         let mut child = cmd.spawn()?;
 
@@ -422,6 +424,7 @@ async fn establish_ssh_transport(
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null()); // No terminal for reconnection
+    cmd.hide_window();
 
     let mut child = cmd.spawn()?;
 
@@ -490,6 +493,7 @@ pub async fn spawn_local_agent() -> Result<std::sync::Arc<AgentChannel>, SshErro
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .hide_window()
         .spawn()?;
 
     let stdin = child
@@ -536,6 +540,7 @@ pub async fn spawn_local_agent_with_capacity(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .hide_window()
         .spawn()?;
 
     let stdin = child
@@ -591,6 +596,7 @@ pub async fn spawn_local_agent_transport() -> Result<
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .hide_window()
         .spawn()?;
 
     let stdin = child

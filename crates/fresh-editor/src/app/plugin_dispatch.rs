@@ -1677,10 +1677,12 @@ impl Editor {
             self.host_process_handles.insert(process_id, kill_tx);
 
             runtime.spawn(async move {
+                use crate::services::process_hidden::HideWindow;
                 let mut cmd = TokioCommand::new(&command);
                 cmd.args(&args);
                 cmd.stdout(std::process::Stdio::piped());
                 cmd.stderr(std::process::Stdio::piped());
+                cmd.hide_window();
                 if let Some(ref dir) = effective_cwd {
                     cmd.current_dir(dir);
                 }
@@ -1784,11 +1786,13 @@ impl Editor {
             // Receiver may be dropped if editor is shutting down
             #[allow(clippy::let_underscore_must_use)]
             let handle = runtime.spawn(async move {
+                use crate::services::process_hidden::HideWindow;
                 let mut child = match TokioCommand::new(&command)
                     .args(&args)
                     .current_dir(&effective_cwd)
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
+                    .hide_window()
                     .spawn()
                 {
                     Ok(child) => child,

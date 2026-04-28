@@ -46,6 +46,12 @@ pub async fn spawn_plugin_process(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    // On Windows, suppress the transient console window that the OS
+    // would otherwise flash for a console-subsystem child spawned from
+    // the GUI editor. CREATE_NO_WINDOW = 0x0800_0000.
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+
     // Set working directory if provided
     if let Some(ref dir) = cwd {
         cmd.current_dir(dir);
