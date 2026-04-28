@@ -20,10 +20,7 @@ use crossterm::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
-    terminal::{
-        disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
-        LeaveAlternateScreen,
-    },
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
 use std::io::{stdout, Write};
@@ -170,27 +167,38 @@ impl TerminalModes {
         modes.alternate_screen = true;
         tracing::debug!("Entered alternate screen");
 
-        // Check and enable keyboard enhancement flags (if any are configured)
-        // This must happen AFTER entering alternate screen so the flags are pushed
-        // to the alternate screen's stack, not the main screen's stack.
+        // Push keyboard enhancement flags (if any are configured).
+        //
+        // Must happen AFTER entering alternate screen so the flags land on
+        // the alternate screen's stack, not the main screen's.
+        //
+        // We push optimistically — no detection probe. The kitty keyboard
+        // protocol [1] is explicit that push/pop CSIs are silently ignored
+        // by terminals that don't implement it, so an unconditional push
+        // is safe; we still pop in `undo()` to leave the user's terminal
+        // exactly as we found it.
+        //
+        // The detection probe `crossterm::supports_keyboard_enhancement`
+        // exists, but at version 0.29 it has a 2-second timeout that
+        // fires on every terminal answering the universal `\x1B[c`
+        // (primary device attributes) query but not the kitty-specific
+        // `\x1B[?u` query — i.e., gnome-terminal, konsole, xterm, Apple
+        // Terminal, screen, tmux without kitty passthrough, etc. That's
+        // a 2 s hang on every startup for those users, with no upside
+        // (the editor still works fine without the enhancement).
+        //
+        // [1] https://sw.kovidgoyal.net/kitty/keyboard-protocol/
         if keyboard_config.any_enabled() {
-            match supports_keyboard_enhancement() {
-                Ok(true) => {
-                    let flags = keyboard_config.to_flags();
-                    if let Err(e) = stdout().execute(PushKeyboardEnhancementFlags(flags)) {
-                        tracing::warn!("Failed to enable keyboard enhancement: {}", e);
-                        // Non-fatal, continue without it
-                    } else {
-                        modes.keyboard_enhancement = true;
-                        tracing::debug!("Enabled keyboard enhancement flags: {:?}", flags);
-                    }
-                }
-                Ok(false) => {
-                    tracing::info!("Keyboard enhancement not supported by terminal");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to query keyboard enhancement support: {}", e);
-                }
+            let flags = keyboard_config.to_flags();
+            if let Err(e) = stdout().execute(PushKeyboardEnhancementFlags(flags)) {
+                tracing::warn!("Failed to push keyboard enhancement flags: {}", e);
+                // Non-fatal, continue without it
+            } else {
+                modes.keyboard_enhancement = true;
+                tracing::debug!(
+                    "Pushed keyboard enhancement flags optimistically: {:?}",
+                    flags
+                );
             }
         } else {
             tracing::debug!("Keyboard enhancement disabled by config");
