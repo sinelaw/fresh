@@ -23,6 +23,38 @@ use crate::view::split::SplitViewState;
 
 use super::Editor;
 
+/// Returns the byte offset of the start (want_end=false) or end (want_end=true)
+/// of `line` (0-indexed) within `content`. Returns `None` when `line` is out of
+/// range. The "end" position is the byte index of the terminating `\n`; for the
+/// last line with no trailing newline it is `buffer_len`.
+fn buffer_line_byte_offset(
+    content: &str,
+    buffer_len: usize,
+    line: usize,
+    want_end: bool,
+) -> Option<usize> {
+    if !want_end && line == 0 {
+        return Some(0);
+    }
+    let mut current_line = 0usize;
+    for (byte_idx, c) in content.char_indices() {
+        if c == '\n' {
+            if want_end && current_line == line {
+                return Some(byte_idx);
+            }
+            current_line += 1;
+            if !want_end && current_line == line {
+                return Some(byte_idx + 1);
+            }
+        }
+    }
+    if want_end && current_line == line {
+        Some(buffer_len)
+    } else {
+        None
+    }
+}
+
 impl Editor {
     /// Update the plugin state snapshot with current editor state
     #[cfg(feature = "plugins")]
@@ -1442,106 +1474,48 @@ impl Editor {
         tracing::debug!("Set editor mode: {:?}", mode);
     }
 
-    /// Get the byte offset of the start of a line in the active buffer
-    fn handle_get_line_start_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        // Use active buffer if buffer_id is 0
-        let actual_buffer_id = if buffer_id.0 == 0 {
-            self.active_buffer_id()
+    /// Normalize a plugin-supplied `BufferId`: treat id 0 as "use the active buffer".
+    fn resolve_buffer_id(&self, buffer_id: BufferId) -> BufferId {
+        if buffer_id.0 == 0 {
+            self.active_buffer()
         } else {
             buffer_id
-        };
+        }
+    }
 
-        let result = if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
-            // Get line start position by iterating through the buffer content
-            let line_number = line as usize;
-            let buffer_len = state.buffer.len();
-
-            if line_number == 0 {
-                // First line always starts at 0
-                Some(0)
-            } else {
-                // Count newlines to find the start of the requested line
-                let mut current_line = 0;
-                let mut line_start = None;
-
-                // Read buffer content to find newlines using the BufferState's get_text_range
-                let content = state.get_text_range(0, buffer_len);
-                for (byte_idx, c) in content.char_indices() {
-                    if c == '\n' {
-                        current_line += 1;
-                        if current_line == line_number {
-                            // Found the start of the requested line (byte after newline)
-                            line_start = Some(byte_idx + 1);
-                            break;
-                        }
-                    }
-                }
-                line_start
-            }
-        } else {
-            None
-        };
-
-        // Resolve the JavaScript Promise callback directly
+    /// Serialize `value` as JSON and resolve `request_id` as a JS Promise callback.
+    fn resolve_json_callback<T: serde::Serialize>(&mut self, request_id: u64, value: T) {
         let callback_id = fresh_core::api::JsCallbackId::from(request_id);
-        // Serialize as JSON (null for None, number for Some)
-        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
+        let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
         self.plugin_manager.resolve_callback(callback_id, json);
     }
 
-    /// Get the byte offset of the end of a line in the active buffer
-    /// Returns the position after the last character of the line (before newline)
+    /// Get the byte offset of the start of a line in the active buffer
+    fn handle_get_line_start_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
+        let result = self.buffers.get_mut(&actual_buffer_id).and_then(|state| {
+            let len = state.buffer.len();
+            let content = state.get_text_range(0, len);
+            buffer_line_byte_offset(&content, len, line as usize, false)
+        });
+        self.resolve_json_callback(request_id, result);
+    }
+
+    /// Get the byte offset of the end of a line (position of its terminating newline,
+    /// or `buffer_len` for the last line without a trailing newline).
     fn handle_get_line_end_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        // Use active buffer if buffer_id is 0
-        let actual_buffer_id = if buffer_id.0 == 0 {
-            self.active_buffer_id()
-        } else {
-            buffer_id
-        };
-
-        let result = if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
-            let line_number = line as usize;
-            let buffer_len = state.buffer.len();
-
-            // Read buffer content to find line boundaries
-            let content = state.get_text_range(0, buffer_len);
-            let mut current_line = 0;
-            let mut line_end = None;
-
-            for (byte_idx, c) in content.char_indices() {
-                if c == '\n' {
-                    if current_line == line_number {
-                        // Found the end of the requested line (position of newline)
-                        line_end = Some(byte_idx);
-                        break;
-                    }
-                    current_line += 1;
-                }
-            }
-
-            // Handle last line (no trailing newline)
-            if line_end.is_none() && current_line == line_number {
-                line_end = Some(buffer_len);
-            }
-
-            line_end
-        } else {
-            None
-        };
-
-        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
-        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
-        self.plugin_manager.resolve_callback(callback_id, json);
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
+        let result = self.buffers.get_mut(&actual_buffer_id).and_then(|state| {
+            let len = state.buffer.len();
+            let content = state.get_text_range(0, len);
+            buffer_line_byte_offset(&content, len, line as usize, true)
+        });
+        self.resolve_json_callback(request_id, result);
     }
 
     /// Get the total number of lines in a buffer
     fn handle_get_buffer_line_count(&mut self, buffer_id: BufferId, request_id: u64) {
-        // Use active buffer if buffer_id is 0
-        let actual_buffer_id = if buffer_id.0 == 0 {
-            self.active_buffer_id()
-        } else {
-            buffer_id
-        };
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
 
         let result = if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
             let buffer_len = state.buffer.len();
@@ -1564,9 +1538,7 @@ impl Editor {
             None
         };
 
-        let callback_id = fresh_core::api::JsCallbackId::from(request_id);
-        let json = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
-        self.plugin_manager.resolve_callback(callback_id, json);
+        self.resolve_json_callback(request_id, result);
     }
 
     /// Scroll a split to center a specific line in the viewport
@@ -1576,19 +1548,12 @@ impl Editor {
         buffer_id: BufferId,
         line: usize,
     ) {
-        // Use active split if split_id is 0
         let actual_split_id = if split_id.0 == 0 {
             self.split_manager.active_split()
         } else {
             LeafId(split_id)
         };
-
-        // Use active buffer if buffer_id is 0
-        let actual_buffer_id = if buffer_id.0 == 0 {
-            self.active_buffer()
-        } else {
-            buffer_id
-        };
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
 
         // Get viewport height
         let viewport_height = if let Some(view_state) = self.split_view_states.get(&actual_split_id)
