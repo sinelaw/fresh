@@ -133,6 +133,18 @@ impl Editor {
             return None;
         }
 
+        // Higher-priority modal contexts (Settings, Menu, Prompt) own the
+        // keyboard regardless of whether a buffer popup happens to be
+        // visible underneath. Skip the unfocused-popup interception so
+        // pressing Esc in a settings dialog still closes the dialog
+        // rather than reaching past it to dismiss a stale popup.
+        if self.settings_state.as_ref().is_some_and(|s| s.visible)
+            || self.menu_state.active_menu.is_some()
+            || self.is_prompting()
+        {
+            return None;
+        }
+
         let kb = self.keybindings.read().ok()?;
         let resolved_popup = kb.resolve_in_context_only(event, KeyContext::Popup);
         if let Some(action @ Action::PopupCancel) = resolved_popup {

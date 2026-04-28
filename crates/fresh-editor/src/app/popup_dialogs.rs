@@ -39,6 +39,10 @@ impl Editor {
 
     /// Show LSP status popup with details about servers active for the current buffer.
     /// Lists each server with its status and provides actions: restart, stop, view log.
+    ///
+    /// User-initiated (status-bar click, `lsp_status` action). The popup
+    /// grabs focus on show because the user explicitly asked for it,
+    /// matching the historical click-to-pick-action affordance.
     pub fn show_lsp_status_popup(&mut self) {
         // Toggle behavior: if the LSP popup is already showing, close it
         // instead of rebuilding and re-showing it.  This lets clicking the
@@ -98,7 +102,7 @@ impl Editor {
             },
         );
 
-        self.build_and_show_lsp_status_popup(&language);
+        self.build_and_show_lsp_status_popup(&language, true);
     }
 
     /// If an auto-start prompt is queued for the active buffer's
@@ -175,7 +179,20 @@ impl Editor {
             }
         }
 
-        self.show_lsp_status_popup();
+        // Auto-prompt on file open: build the popup *unfocused* so it
+        // doesn't silently swallow the user's next keystroke. The user
+        // can grab the keyboard with `popup_focus` (default Alt+T) or
+        // dismiss with Esc. We bypass `show_lsp_status_popup` (which
+        // toggles + grabs focus) and go straight to the builder; the
+        // visibility precondition is already satisfied by the active-
+        // buffer popup-stack check above.
+        let language = self
+            .buffers
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone());
+        if let Some(language) = language {
+            self.build_and_show_lsp_status_popup(&language, false);
+        }
     }
 
     /// Rebuild the LSP-status popup in place if it's currently open.
@@ -202,12 +219,22 @@ impl Editor {
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_else(|| "unknown".to_string());
-        // Replace contents: hide then rebuild.
+        // Replace contents: hide then rebuild. Refresh is triggered by
+        // async progress updates while the popup is already on screen,
+        // so we keep its existing focused state — flipping it back to
+        // unfocused on every progress tick would yank focus away from
+        // a user mid-interaction.
+        let was_focused = self
+            .active_state()
+            .popups
+            .top()
+            .map(|p| p.focused)
+            .unwrap_or(true);
         self.hide_popup();
-        self.build_and_show_lsp_status_popup(&language);
+        self.build_and_show_lsp_status_popup(&language, was_focused);
     }
 
-    fn build_and_show_lsp_status_popup(&mut self, language: &str) {
+    fn build_and_show_lsp_status_popup(&mut self, language: &str, focused: bool) {
         use crate::services::async_bridge::LspServerStatus;
 
         // Build a unified list of all configured servers for this language,
@@ -602,7 +629,11 @@ impl Editor {
         use crate::view::popup::{Popup, PopupContent, PopupKind, PopupResolver};
         use ratatui::style::Style;
 
-        let focus_hint = self.popup_focus_key_hint();
+        let focus_hint = if !focused {
+            self.popup_focus_key_hint()
+        } else {
+            None
+        };
         let popup = Popup {
             kind: PopupKind::List,
             title: Some(format!("LSP Servers ({})", language)),
@@ -625,10 +656,11 @@ impl Editor {
             // confirm/cancel routes through handle_lsp_status_action
             // regardless of what other popups are on screen.
             resolver: PopupResolver::LspStatus,
-            // LSP popups appear unfocused so they don't silently swallow
-            // the user's next keystroke; `popup_focus` (default Alt+T)
-            // grabs the keyboard.
-            focused: false,
+            // Auto-prompt path appears unfocused so an LSP popup that
+            // pops up under the user's cursor does not silently swallow
+            // the next keystroke. User-initiated path (status-bar
+            // click, `lsp_status` action) grabs focus on show.
+            focused,
             focus_key_hint: focus_hint,
         };
 
