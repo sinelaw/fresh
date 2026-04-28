@@ -269,12 +269,7 @@ impl Editor {
         }
 
         if closing_active {
-            if created_empty_buffer
-                && self
-                    .config
-                    .file_explorer
-                    .auto_open_on_last_buffer_close
-            {
+            if created_empty_buffer && self.config.file_explorer.auto_open_on_last_buffer_close {
                 self.focus_file_explorer();
             }
             if let Some(group_leaf) = return_to_group {

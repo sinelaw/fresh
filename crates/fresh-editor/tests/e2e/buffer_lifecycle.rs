@@ -1,6 +1,6 @@
 // End-to-end tests for buffer lifecycle: save, close, quit with modifications
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 
@@ -651,5 +651,143 @@ fn test_close_returns_to_previous_focused() {
         screen.contains("CONTENT_A"),
         "After closing B, should return to previously focused A. Screen:\n{}",
         screen
+    );
+}
+
+/// Build a harness with a real temp project root but plugin loading disabled,
+/// so plugin-driven UI (e.g. the welcome plugin's Dashboard) doesn't race
+/// with the editor-core close behavior we want to assert on.
+fn isolated_project_harness(config: Config) -> EditorTestHarness {
+    EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_project_root()
+            .with_empty_plugins_dir()
+            .with_config(config),
+    )
+    .unwrap()
+}
+
+/// Row that the tab bar is rendered on (just below the menu bar).
+const TAB_BAR_ROW: u16 = 1;
+
+/// Default: closing the last buffer auto-opens the file explorer and
+/// auto-creates a fresh `[No Name]` tab. This is the baseline the two
+/// new config flags below opt out of (issue #1753).
+#[test]
+fn test_close_last_buffer_default_opens_explorer_and_empty_tab() {
+    let mut harness = isolated_project_harness(Config::default());
+    let project_root = harness.project_dir().unwrap();
+    let file = project_root.join("only.txt");
+    std::fs::write(&file, "only content").unwrap();
+
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("only content");
+
+    // Close the only buffer.
+    harness.editor_mut().close_tab();
+    // File explorer init is async — wait for the panel to appear.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    // A fresh empty tab is also auto-created in the tab bar.
+    assert!(
+        harness.screen_row_text(TAB_BAR_ROW).contains("[No Name]"),
+        "Expected `[No Name]` tab in tab bar. Tab bar:\n{}",
+        harness.screen_row_text(TAB_BAR_ROW)
+    );
+}
+
+/// `file_explorer.auto_open_on_last_buffer_close = false` keeps the
+/// explorer hidden when the last buffer is closed. The empty `[No Name]`
+/// buffer still appears because that toggle is independent.
+#[test]
+fn test_close_last_buffer_does_not_open_explorer_when_disabled() {
+    let mut config = Config::default();
+    config.file_explorer.auto_open_on_last_buffer_close = false;
+    let mut harness = isolated_project_harness(config);
+    let project_root = harness.project_dir().unwrap();
+    let file = project_root.join("only.txt");
+    std::fs::write(&file, "only content").unwrap();
+
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("only content");
+
+    harness.editor_mut().close_tab();
+    // The `[No Name]` tab appearing is the semantic signal that the close
+    // has fully propagated.
+    harness
+        .wait_until(|h| h.screen_row_text(TAB_BAR_ROW).contains("[No Name]"))
+        .unwrap();
+
+    // Explorer panel is NOT shown.
+    harness.assert_screen_not_contains("File Explorer");
+}
+
+/// `editor.auto_create_empty_buffer_on_last_buffer_close = false` hides
+/// the synthesized `[No Name]` buffer from the tab bar so the workspace
+/// looks blank — the file explorer still opens, which gives us a
+/// semantic wait point.
+#[test]
+fn test_close_last_buffer_hides_empty_tab_when_disabled() {
+    let mut config = Config::default();
+    config.editor.auto_create_empty_buffer_on_last_buffer_close = false;
+    let mut harness = isolated_project_harness(config);
+    let project_root = harness.project_dir().unwrap();
+    let file = project_root.join("only.txt");
+    std::fs::write(&file, "only content").unwrap();
+
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("only content");
+
+    harness.editor_mut().close_tab();
+    // Wait until the explorer (which is still allowed to auto-open here) is
+    // on screen, then assert the `[No Name]` tab is absent from the tab bar.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    let tab_bar = harness.screen_row_text(TAB_BAR_ROW);
+    assert!(
+        !tab_bar.contains("[No Name]"),
+        "Expected no `[No Name]` tab. Tab bar:\n{}",
+        tab_bar
+    );
+}
+
+/// Both options off → fully blank workspace: no file explorer, no
+/// `[No Name]` tab. This is the workflow requested in issue #1753.
+#[test]
+fn test_close_last_buffer_blank_workspace_when_both_disabled() {
+    let mut config = Config::default();
+    config.file_explorer.auto_open_on_last_buffer_close = false;
+    config.editor.auto_create_empty_buffer_on_last_buffer_close = false;
+    let mut harness = isolated_project_harness(config);
+    let project_root = harness.project_dir().unwrap();
+    let file = project_root.join("only.txt");
+    std::fs::write(&file, "only content").unwrap();
+
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("only content");
+
+    harness.editor_mut().close_tab();
+    // Stable-screen wait: the original buffer's contents are gone and
+    // nothing replaces them in the editor pane.
+    harness
+        .wait_until_stable(|h| !h.screen_to_string().contains("only content"))
+        .unwrap();
+
+    harness.assert_screen_not_contains("File Explorer");
+    let tab_bar = harness.screen_row_text(TAB_BAR_ROW);
+    assert!(
+        !tab_bar.contains("[No Name]"),
+        "Expected no `[No Name]` tab. Tab bar:\n{}",
+        tab_bar
     );
 }

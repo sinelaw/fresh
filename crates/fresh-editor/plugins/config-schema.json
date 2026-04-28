@@ -103,6 +103,7 @@
         "auto_save_interval_secs": 30,
         "hot_exit": true,
         "restore_previous_session": true,
+        "auto_create_empty_buffer_on_last_buffer_close": true,
         "recovery_enabled": true,
         "auto_recovery_save_interval_secs": 2,
         "auto_revert_poll_interval_ms": 2000,
@@ -129,7 +130,8 @@
         "custom_ignore_patterns": [],
         "width": "30%",
         "preview_tabs": true,
-        "side": "left"
+        "side": "left",
+        "auto_open_on_last_buffer_close": true
       }
     },
     "file_browser": {
@@ -646,6 +648,12 @@
           "default": true,
           "x-section": "Recovery"
         },
+        "auto_create_empty_buffer_on_last_buffer_close": {
+          "description": "Whether to auto-create a fresh empty `[No Name]` buffer when the\nlast open buffer is closed. When `false`, the editor still creates\nan internal placeholder buffer (it always needs at least one) but\nhides it from the tab bar so the workspace looks blank. Combined\nwith `file_explorer.auto_open_on_last_buffer_close = false`, this\ngives a fully blank workspace where nothing opens automatically.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Editing"
+        },
         "recovery_enabled": {
           "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",
           "type": "boolean",
@@ -924,6 +932,11 @@
           "description": "Which side of the screen to show the file explorer on.\nDefault: left",
           "$ref": "#/$defs/FileExplorerSide",
           "default": "left"
+        },
+        "auto_open_on_last_buffer_close": {
+          "description": "Automatically focus the file explorer when the last buffer is\nclosed. Set to `false` for a \"blank workspace\" workflow where\nnothing opens automatically and the user explicitly invokes the\nfile explorer (e.g. via keybinding or command palette).\nDefault: true",
+          "type": "boolean",
+          "default": true
         }
       }
     },
