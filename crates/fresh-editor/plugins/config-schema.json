@@ -63,7 +63,7 @@
             "{palette}"
           ]
         },
-        "show_prompt_line": true,
+        "show_prompt_line": false,
         "show_vertical_scrollbar": true,
         "show_horizontal_scrollbar": false,
         "show_tilde": true,
@@ -392,9 +392,9 @@
           "x-section": "Status Bar"
         },
         "show_prompt_line": {
-          "description": "Whether the prompt line is visible by default.\nThe prompt line is the bottom-most line used for command input, search, file open, etc.\nWhen hidden, the prompt line only appears when a prompt is active.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "description": "Whether the prompt line is always visible.\nThe prompt line is the bottom-most line used for command input, search, file open, etc.\nWhen `false` (the default), the prompt line auto-hides — it only appears\nwhile a prompt is active and disappears again once the prompt closes.\nWhen `true`, the prompt line is always reserved at the bottom of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: false",
           "type": "boolean",
-          "default": true,
+          "default": false,
           "x-section": "Display"
         },
         "show_vertical_scrollbar": {

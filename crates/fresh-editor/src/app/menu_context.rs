@@ -44,7 +44,15 @@ impl Editor {
         let mouse_capture = self.mouse_enabled;
         let mouse_hover = self.config.editor.mouse_hover_enabled;
         let inlay_hints = self.config.editor.enable_inlay_hints;
-        let has_selection = self.has_active_selection();
+        // True for any real buffer; false when the active buffer is the
+        // synthesized placeholder kept alive after a last-buffer close with
+        // `auto_create_empty_buffer_on_last_buffer_close` disabled.
+        let has_buffer = !self
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .map(|m| m.synthetic_placeholder)
+            .unwrap_or(false);
+        let has_selection = has_buffer && self.has_active_selection();
         let can_copy = has_selection
             || file_explorer_focused
             || self
@@ -53,11 +61,12 @@ impl Editor {
                 .map(|fe| fe.get_selected().is_some())
                 .unwrap_or(false);
         // Paste is available in the explorer only when a file is in the clipboard,
-        // or in the editor only when no file is in the clipboard
+        // or in the editor only when no file is in the clipboard. There's no
+        // buffer to paste into in placeholder mode, so suppress it there.
         let can_paste = if file_explorer_focused {
             self.file_explorer_clipboard.is_some()
         } else {
-            self.file_explorer_clipboard.is_none()
+            has_buffer && self.file_explorer_clipboard.is_none()
         };
         let menu_bar = self.menu_bar_visible;
         let vertical_scrollbar = self.config.editor.show_vertical_scrollbar;
@@ -84,6 +93,7 @@ impl Editor {
         // Apply all context values
         self.menu_state
             .context
+            .set(context_keys::HAS_BUFFER, has_buffer)
             .set(context_keys::KEYMAP_DEFAULT, active_keymap == "default")
             .set(context_keys::KEYMAP_EMACS, active_keymap == "emacs")
             .set(context_keys::KEYMAP_VSCODE, active_keymap == "vscode")

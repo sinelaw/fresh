@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 /// Constants for menu context state keys
 /// These are used both in menu item `when` conditions and `checkbox` states
 pub mod context_keys {
+    /// True when the active buffer is a real, user-visible buffer.
+    /// False when it's the synthesized placeholder kept alive by the
+    /// close path with `auto_create_empty_buffer_on_last_buffer_close`
+    /// disabled. Buffer-specific menu items gate on this so they don't
+    /// pretend to operate on a non-existent buffer.
+    pub const HAS_BUFFER: &str = "has_buffer";
     pub const LINE_NUMBERS: &str = "line_numbers";
     pub const LINE_WRAP: &str = "line_wrap";
     pub const PAGE_VIEW: &str = "page_view";

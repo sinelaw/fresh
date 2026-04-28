@@ -840,12 +840,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Status Bar"))]
     pub status_bar: StatusBarConfig,
 
-    /// Whether the prompt line is visible by default.
+    /// Whether the prompt line is always visible.
     /// The prompt line is the bottom-most line used for command input, search, file open, etc.
-    /// When hidden, the prompt line only appears when a prompt is active.
+    /// When `false` (the default), the prompt line auto-hides — it only appears
+    /// while a prompt is active and disappears again once the prompt closes.
+    /// When `true`, the prompt line is always reserved at the bottom of the screen.
     /// Can be toggled at runtime via command palette or keybinding.
-    /// Default: true
-    #[serde(default = "default_true")]
+    /// Default: false
+    #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
     pub show_prompt_line: bool,
 
@@ -1424,7 +1426,7 @@ impl Default for EditorConfig {
             show_tab_bar: true,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
-            show_prompt_line: true,
+            show_prompt_line: false,
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
             show_tilde: true,
@@ -2418,28 +2420,28 @@ impl MenuConfig {
                         label: t!("menu.file.save").to_string(),
                         action: "save".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.file.save_as").to_string(),
                         action: "save_as".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.file.revert").to_string(),
                         action: "revert".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.file.reload_with_encoding").to_string(),
                         action: "reload_with_encoding".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -2447,7 +2449,7 @@ impl MenuConfig {
                         label: t!("menu.file.close_buffer").to_string(),
                         action: "close".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -2485,14 +2487,14 @@ impl MenuConfig {
                         label: t!("menu.edit.undo").to_string(),
                         action: "undo".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.edit.redo").to_string(),
                         action: "redo".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -2526,7 +2528,7 @@ impl MenuConfig {
                         label: t!("menu.edit.select_all").to_string(),
                         action: "select_all".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -2534,7 +2536,7 @@ impl MenuConfig {
                         label: t!("menu.edit.find").to_string(),
                         action: "search".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
@@ -2548,21 +2550,21 @@ impl MenuConfig {
                         label: t!("menu.edit.find_next").to_string(),
                         action: "find_next".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.edit.find_previous").to_string(),
                         action: "find_previous".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.edit.replace").to_string(),
                         action: "query_replace".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -2570,7 +2572,7 @@ impl MenuConfig {
                         label: t!("menu.edit.delete_line").to_string(),
                         action: "delete_line".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
@@ -2703,21 +2705,21 @@ impl MenuConfig {
                         label: t!("menu.view.split_horizontal").to_string(),
                         action: "split_horizontal".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.view.split_vertical").to_string(),
                         action: "split_vertical".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.view.close_split").to_string(),
                         action: "close_split".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
@@ -2832,7 +2834,7 @@ impl MenuConfig {
             Menu {
                 id: Some("Selection".to_string()),
                 label: t!("menu.selection").to_string(),
-                when: None,
+                when: Some(context_keys::HAS_BUFFER.to_string()),
                 items: vec![
                     MenuItem::Action {
                         label: t!("menu.selection.select_all").to_string(),
@@ -2903,21 +2905,21 @@ impl MenuConfig {
                         label: t!("menu.go.goto_line").to_string(),
                         action: "goto_line".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.go.goto_definition").to_string(),
                         action: "lsp_goto_definition".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.go.find_references").to_string(),
                         action: "lsp_references".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -2925,14 +2927,14 @@ impl MenuConfig {
                         label: t!("menu.go.next_buffer").to_string(),
                         action: "next_buffer".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Action {
                         label: t!("menu.go.prev_buffer").to_string(),
                         action: "prev_buffer".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                     MenuItem::Separator { separator: true },
@@ -3043,7 +3045,7 @@ impl MenuConfig {
                         label: t!("menu.lsp.toggle_for_buffer").to_string(),
                         action: "lsp_toggle_for_buffer".to_string(),
                         args: HashMap::new(),
-                        when: None,
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
                         checkbox: None,
                     },
                 ],
