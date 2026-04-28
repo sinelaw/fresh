@@ -361,15 +361,20 @@ pub(crate) fn render_content(
         // For GroupTabBarOnly entries we've already rendered the tab bar;
         // skip buffer content rendering so the group's inner leaves can
         // draw into the content rect without being overwritten.
-        //
-        // Likewise skip the synthesized placeholder buffer that the close
-        // path keeps alive when `auto_create_empty_buffer_on_last_buffer_close`
-        // is disabled — the user wants a blank pane, not line numbers and
-        // tildes for an unreachable phantom buffer.
+        if skip_content {
+            view_line_mappings.insert(split_id, Vec::new());
+            continue;
+        }
+
+        // Synthesized placeholder buffer (kept alive when
+        // `auto_create_empty_buffer_on_last_buffer_close` is disabled): paint
+        // the pane blank with a subdued, centered hint so the user sees how
+        // to leave the empty workspace state.
         let is_synthetic_placeholder = buffer_metadata
             .get(&buffer_id)
             .is_some_and(|m| m.synthetic_placeholder);
-        if skip_content || is_synthetic_placeholder {
+        if is_synthetic_placeholder {
+            render_placeholder_hint(frame, layout.content_rect, theme);
             view_line_mappings.insert(split_id, Vec::new());
             continue;
         }
@@ -912,4 +917,22 @@ pub(crate) fn build_base_tokens_for_hook(
         line_ending,
         &[],
     )
+}
+
+/// Render a centered, subdued hint in the empty pane left behind when the
+/// user closes the last buffer with both `file_explorer.auto_open_on_last_buffer_close`
+/// and `editor.auto_create_empty_buffer_on_last_buffer_close` set to false.
+/// Tells the user how to escape the blank-workspace state.
+fn render_placeholder_hint(frame: &mut Frame, area: Rect, theme: &crate::view::theme::Theme) {
+    const HINT: &str =
+        "Ctrl+P  command palette   ·   Ctrl+O  open file   ·   Ctrl+E  file explorer";
+    let needed_width = HINT.chars().count() as u16;
+    if area.width < needed_width || area.height == 0 {
+        return;
+    }
+    let x = area.x + area.width.saturating_sub(needed_width) / 2;
+    let y = area.y + area.height / 2;
+    let hint_area = Rect::new(x, y, needed_width, 1);
+    let style = Style::default().fg(theme.syntax_comment);
+    frame.render_widget(Paragraph::new(HINT).style(style), hint_area);
 }
