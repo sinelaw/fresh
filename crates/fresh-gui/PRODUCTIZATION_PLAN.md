@@ -56,6 +56,113 @@ architecture** rather than rewriting it.
 
 ---
 
+## 0.1 Cross-cutting concern: icon coverage matrix
+
+Surfaced early because empirical testing already showed icons appearing in
+some contexts but not others. "Set the window icon" is not a complete
+solution on either platform — each OS surface has a distinct source-of-truth
+and a distinct failure mode. Phases 1, 2, and 3 each touch part of this; the
+matrix below is the contract those phases must satisfy together.
+
+### Windows surfaces
+
+| Surface | Driven by | Failure mode |
+|---|---|---|
+| Explorer / Desktop / Properties dialog | `RT_GROUP_ICON` resource embedded in `.exe` (via `winresource`) | `.ico` missing sizes → stretched fallback at that size |
+| Window title bar (small icon) + Alt-Tab thumbnail (small) | winit `Window::set_window_icon` → `WM_SETICON(ICON_SMALL)` | If unset, falls back to exe resource — usually fine |
+| Taskbar (large icon) + Alt-Tab thumbnail (large) | `WM_SETICON(ICON_BIG)`; falls back to exe resource | winit historically only sets `ICON_SMALL`; `ICON_BIG` *must* be in the exe resource or set explicitly via Win32 platform extensions |
+| Pinned-taskbar shortcut + Start Menu tile | The `.lnk`'s `Icon=` attribute, set by the MSI shortcut definition | MSI omits the icon attribute → generic exe icon on the pin |
+| Jump list, taskbar grouping, notifications | **AppUserModelID** — `SetCurrentProcessExplicitAppUserModelID(L"dev.getfresh.Fresh")` called early in `main` | Not set → Windows infers an AUMID from the exe path, groups runs of Fresh under the wrong identity, and the pinned shortcut points to a different AUMID than the running window |
+| Apps & Features uninstall entry | MSI `ARPPRODUCTICON` property | Omitted → generic Windows Installer icon |
+| SmartScreen "do you want to run this" prompt | Exe resource + version info block | Missing version info → "Unknown publisher: Unknown" even ignoring signing |
+
+**Required `.ico` size set**: 16, 24, 32, 48, 64, 256 (the 256 entry must be
+PNG-compressed, not BMP, or older Windows fails to render it). Generate from
+the existing `crates/fresh-gui/resources/icon_*.png` set; `winresource` will
+embed the result as both `RT_GROUP_ICON/1` and the small/large pair Windows
+expects.
+
+**Required code-side calls**:
+
+```rust
+#[cfg(windows)]
+unsafe {
+    use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+    use windows::core::w;
+    let _ = SetCurrentProcessExplicitAppUserModelID(w!("dev.getfresh.Fresh"));
+}
+// ... before creating the winit EventLoop
+```
+
+The AUMID string must match the one the MSI uses for its shortcut, or the
+"running window" and "pinned shortcut" stay separate in the taskbar.
+
+### macOS surfaces
+
+| Surface | Driven by | Failure mode |
+|---|---|---|
+| Finder / Get Info / drag-out from title bar | `CFBundleIconFile` → `Resources/Fresh.icns` | `.icns` missing required types (`ic07/ic08/ic09/ic10/ic11/ic12/ic13/ic14`) → blank for that size |
+| Dock (running app) + Cmd-Tab switcher | Same `CFBundleIconFile`, unless overridden via `[NSApp setApplicationIconImage:]` | Stale Launch Services icon cache — Finder/Dock keeps the old icon across rebuilds |
+| About dialog | `CFBundleIconFile` | — |
+| Notification Center | `CFBundleIconFile` | — |
+| Window proxy icon (the file glyph in the title bar) | Per-document, `[NSWindow setRepresentedFilename:]` | This is **not** the app icon — common confusion source |
+
+**Required `.icns` type set**: `iconutil -c iconset Fresh.icns` must list all
+of `icon_16x16`, `icon_16x16@2x`, `icon_32x32`, `icon_32x32@2x`,
+`icon_128x128`, `icon_128x128@2x`, `icon_256x256`, `icon_256x256@2x`,
+`icon_512x512`, `icon_512x512@2x`. Missing any of those → blank icon at that
+size in some surfaces. The current `create-app-bundle.sh` *does* generate
+the full set; verify the output, don't just trust the script.
+
+**Bundle-level requirements**:
+
+- `CFBundleIconFile` set in `Info.plist` (currently: `Fresh.icns` ✓).
+- `CFBundleIdentifier` stable across releases — Launch Services keys icon
+  cache by bundle ID, not path. Changing it strands the cached icon.
+- `LSApplicationCategoryType` set so Finder picks the right "kind" badge.
+
+### Cache invalidation during development
+
+Both OSes aggressively cache icons; a "wrong icon after rebuild" report is
+50/50 a real bug vs. a stale cache. Document these in `RELEASING.md` as
+sanity steps before signing off on a build:
+
+- **macOS**: `sudo rm -rf /Library/Caches/com.apple.iconservices.store &&
+  killall Dock Finder`. Bumping `CFBundleVersion` between dev rebuilds also
+  forces re-cache.
+- **Windows**: `ie4uinit.exe -show`, or delete `%LOCALAPPDATA%\IconCache.db`
+  and `%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*.db`, then
+  restart `explorer.exe`.
+
+### Acceptance test (icon-specific)
+
+Run on a clean machine after a fresh install, with caches invalidated:
+
+- [ ] **Windows — Explorer**: navigating to the install dir shows the icon
+      at every Explorer view size (Small / Medium / Large / Extra Large
+      Icons in the View menu). At Extra Large the 256-px PNG entry must
+      render without aliasing.
+- [ ] **Windows — Alt-Tab**: holding Alt-Tab shows the large icon, not a
+      blurry upscale of the 16-px one.
+- [ ] **Windows — Taskbar**: the running-app icon and a pinned-shortcut
+      icon are visually identical and group into the same taskbar entry
+      (proves AUMID is correct).
+- [ ] **Windows — Apps & Features**: uninstall entry shows the Fresh icon.
+- [ ] **macOS — Finder**: `/Applications/Fresh.app` shows the icon at
+      every Finder icon size (toggle View → as Icons → slider).
+- [ ] **macOS — Dock**: launching shows the correct icon; quit and
+      relaunch keeps it (catches an icon-cache miss on first launch only).
+- [ ] **macOS — Cmd-Tab**: the switcher shows the correct icon.
+- [ ] **macOS — Get Info**: the icon in the top-left of the Get Info pane
+      matches the Dock icon (different size buckets, same image).
+
+Subsections that own pieces of this matrix: §1.3 (Windows `.ico` +
+`winresource`), §1.4 (macOS bundle assembly), §3.1 (MSI `ARPPRODUCTICON` +
+shortcut icon + AUMID registration), §2.5 + §3.4 (acceptance tests roll up
+the icon checklist).
+
+---
+
 ## 1. Phase 1 — Cross-platform build polish
 
 Goal: a `cargo build --release --features gui` binary that, when launched from
@@ -102,14 +209,24 @@ Plan:
 
 ### 1.3 Windows icon and version resource
 
-Add `winresource` to the editor crate and wire it up in `build.rs`:
+Add `winresource` to the editor crate and wire it up in `build.rs`. Owns
+the **Explorer / Alt-Tab / taskbar** rows of the icon matrix in §0.1.
 
 - Generate `crates/fresh-gui/resources/windows/fresh.ico` from the existing
-  `crates/fresh-gui/resources/icon_*.png` set (16/32/48/256 in one container).
+  `crates/fresh-gui/resources/icon_*.png` set, containing **all** of
+  16/24/32/48/64/256 (256 must be PNG-compressed, not BMP). Missing sizes
+  are the most common cause of the "right in Explorer, wrong in Alt-Tab"
+  problem.
 - Embed it as the app icon, plus `FileVersion`, `ProductVersion`,
   `CompanyName`, `LegalCopyright`, `OriginalFilename`. These show up in
   Explorer's Properties dialog and in SmartScreen's "do you want to run this"
   prompt.
+- Call `SetCurrentProcessExplicitAppUserModelID(L"dev.getfresh.Fresh")` at
+  the very top of `main` (before the winit `EventLoop` is constructed). This
+  is what makes the running window and the pinned-taskbar shortcut group
+  under the same icon — without it, Windows generates an AUMID from the exe
+  path and the two desync. The string must match the AUMID the MSI sets on
+  the shortcut in §3.1.
 
 ### 1.4 macOS universal binary
 
@@ -267,9 +384,18 @@ Action: add `wix/main.wxs` under `crates/fresh-editor/`, configure
   story across every future release.
 - Per-user install by default (no admin prompt), with an opt-in per-machine
   flag.
-- `INSTALLDIR` Start Menu shortcut + Desktop shortcut (opt-in).
+- `INSTALLDIR` Start Menu shortcut + Desktop shortcut (opt-in). Each
+  shortcut element must set `Icon="fresh.ico"` and
+  `Arguments="--gui"` (so a Start Menu launch goes to GUI mode). The
+  shortcut also needs an `<MsiShortcutProperty Id="AppUserModelID"
+  Value="dev.getfresh.Fresh"/>` — same string as the runtime call in §1.3,
+  or the pinned shortcut and the running window stay un-grouped on the
+  taskbar.
 - `ARPPRODUCTICON` so the entry in "Apps & Features" shows the Fresh icon.
 - File-association registry entries (see §6.3 below).
+
+This block owns the **Start Menu / pinned shortcut / taskbar grouping /
+Apps & Features** rows of the icon matrix in §0.1. §1.3 owns the rest.
 
 ### 3.2 Authenticode signing
 
