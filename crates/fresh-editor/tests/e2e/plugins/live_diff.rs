@@ -430,3 +430,171 @@ fn test_live_diff_does_not_skip_empty_lines_on_arrow_keys() {
         "Down thrice should land on 'tail' (byte 7); saw byte {pos3}",
     );
 }
+
+/// Regression: when two non-adjacent lines were modified with
+/// unchanged context lines between them, the OLD content (rendered as
+/// a `LineAbove` virtual line for each modified hunk) was anchored to
+/// the wrong line. The virtual line for the SECOND modification
+/// appeared above the unchanged context line, not above the modified
+/// line itself.
+///
+/// User repro: changed two assignments separated by `} else {`. The
+/// virtual "current_visual_column" (old line 3's content) appeared
+/// between the new line 1 and the unchanged line 2, instead of
+/// between the unchanged line 2 and the new line 3.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // Use distinct unique markers so the row finders can't confuse
+    // OLD virtual lines with NEW source lines or with the unchanged
+    // "else" context.
+    // Mirror the user's edit sequence. The HEAD content is identical
+    // to what they had on disk; the user then *typed* the two ` + 1`
+    // additions in sequence, first on the if-body line and then on
+    // the else-body line. Each keystroke fires `after_insert`, which
+    // schedules a debounced recompute — so both modifications and
+    // both virtual lines should end up in place after a stable wait.
+    // Long file that forces the modifications onto a scrolled
+    // viewport — the user's bug only showed up at line 1280 of a
+    // big buffer, not on a 5-line repro. Each filler line is a
+    // unique string so the LCS can't accidentally match it
+    // against the OLD/NEW markers.
+    let mut head_lines = Vec::with_capacity(1290);
+    for i in 1..=1280 {
+        head_lines.push(format!("FILLER_LINE_NUMBER_{i:04}_unique"));
+    }
+    head_lines.push("        let goal = if cond {".into());
+    head_lines.push("            UNIQUE_IF_BODY_OLD_MARKER".into());
+    head_lines.push("        } else {".into());
+    head_lines.push("            UNIQUE_ELSE_BODY_OLD_MARKER".into());
+    head_lines.push("        };".into());
+    let head_text = head_lines.join("\n") + "\n";
+
+    repo.create_file("code.rs", &head_text);
+    repo.git_add(&["code.rs"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "code.rs");
+
+    // Jump to the if-body line (line 1282 / idx 1281), append ` + 1`.
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    // Cursor now at end of last line. Up 4 → if-body line.
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" + 1").unwrap();
+    harness.render().unwrap();
+
+    // Wait for the first modification to render with its OLD virtual line.
+    let virtual_row_present = |screen: &str, marker: &str| {
+        screen
+            .lines()
+            .any(|l| l.contains(marker) && !l.contains(" + 1"))
+    };
+    harness
+        .wait_until(|h| virtual_row_present(&h.screen_to_string(), "UNIQUE_IF_BODY_OLD_MARKER"))
+        .unwrap();
+
+    // Down 2 → else-body line (one unchanged "} else {" between).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.type_text(" + 1").unwrap();
+    harness.render().unwrap();
+
+    // Wait until BOTH OLD virtual lines are present as their own rows.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            virtual_row_present(&s, "UNIQUE_IF_BODY_OLD_MARKER")
+                && virtual_row_present(&s, "UNIQUE_ELSE_BODY_OLD_MARKER")
+        })
+        .unwrap();
+
+    let buf = harness.buffer();
+    let rows: Vec<String> = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect();
+
+    let dump = || {
+        rows.iter()
+            .enumerate()
+            .map(|(i, r)| format!("{i:3} | {}", r.trim_end()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    // After both edits the buffer holds `UNIQUE_IF_BODY_OLD_MARKER + 1` and `UNIQUE_ELSE_BODY_OLD_MARKER + 1`
+    // (the user appended ` + 1` to each line), and the virtual lines
+    // hold the bare `UNIQUE_IF_BODY_OLD_MARKER` / `UNIQUE_ELSE_BODY_OLD_MARKER`. Distinguish the source
+    // rows from the virtual rows by whether ` + 1` is present.
+    let row_new_top = rows
+        .iter()
+        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER + 1"))
+        .unwrap_or_else(|| panic!("new top line not on screen. screen:\n{}", dump()));
+    let row_else = rows
+        .iter()
+        .position(|r| r.contains("} else {"))
+        .unwrap_or_else(|| panic!("unchanged else line not on screen. screen:\n{}", dump()));
+    let row_new_bot = rows
+        .iter()
+        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER + 1"))
+        .unwrap_or_else(|| panic!("new bot line not on screen. screen:\n{}", dump()));
+    let row_old_top = rows
+        .iter()
+        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(" + 1"))
+        .unwrap_or_else(|| panic!("old top virtual line not on screen. screen:\n{}", dump()));
+    let row_old_bot = rows
+        .iter()
+        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(" + 1"))
+        .unwrap_or_else(|| panic!("old bot virtual line not on screen. screen:\n{}", dump()));
+
+    // Layout invariants:
+    //   * the OLD virtual line for the first modification sits directly
+    //     above the NEW line that replaced it
+    //   * the OLD virtual line for the second modification sits directly
+    //     above the NEW line that replaced it (NOT above the unchanged
+    //     "else" context line — that's the user-reported bug)
+    assert_eq!(
+        row_old_top + 1,
+        row_new_top,
+        "OLD top virtual line ({row_old_top}) should be directly above NEW top ({row_new_top})",
+    );
+    assert!(
+        row_new_top < row_else,
+        "NEW top row ({row_new_top}) should come before the unchanged else row ({row_else})",
+    );
+    assert_eq!(
+        row_old_bot + 1,
+        row_new_bot,
+        "OLD bot virtual line ({row_old_bot}) should be directly above NEW bot ({row_new_bot}); \
+         the user-reported bug puts it above the unchanged 'else' line instead",
+    );
+    assert!(
+        row_else < row_old_bot,
+        "unchanged 'else' row ({row_else}) should come before OLD bot virtual line ({row_old_bot})",
+    );
+}
