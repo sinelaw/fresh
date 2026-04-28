@@ -64,13 +64,13 @@ pub fn set_window_icon(window: &Window) {
 
 #[cfg(target_os = "windows")]
 fn set_window_icon_windows(window: &Window) {
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON,
         LR_DEFAULTCOLOR, LR_SHARED, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, WM_SETICON,
     };
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     // Resource ordinal "1" — winresource's `set_icon` writes the icon as
     // `1 ICON "path"` in the generated .rc.  Wrapping a small integer as a
