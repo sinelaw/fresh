@@ -37,3 +37,8 @@ muda = "0.15"
 # Versions match the ones muda 0.15 already pulls in.
 objc2-foundation = { version = "0.2", features = ["NSNotification", "NSString", "NSOperation", "block2"] }
 block2 = "0.5"
+
+# Windows: AppUserModelID registration so taskbar grouping and the pinned-
+# shortcut identity match the running window (see PRODUCTIZATION_PLAN.md §0.1).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_Shell"] }

@@ -8,6 +8,7 @@
 #[cfg(target_os = "macos")]
 pub mod macos;
 mod native_menu;
+pub mod platform;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -239,6 +240,10 @@ where
     F: FnOnce(u16, u16) -> AnyhowResult<A> + 'static,
     A: GuiApplication + 'static,
 {
+    // Per-platform process-level setup (e.g. Windows AppUserModelID).
+    // Must happen before the EventLoop is constructed.
+    platform::init();
+
     let event_loop = EventLoop::new().context("Failed to create winit event loop")?;
     // Use WaitUntil for frame pacing instead of Poll.  Poll causes winit to
     // schedule a CFRunLoopTimer at f64::MIN (fire immediately), which
