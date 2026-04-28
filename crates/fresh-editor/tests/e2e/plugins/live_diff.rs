@@ -310,8 +310,6 @@ fn test_live_diff_highlights_empty_added_line() {
     enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "src/utils.rs");
 
-    // Wait for the new function and a `+` glyph to be visible — that
-    // means live-diff has finished its first recompute.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
@@ -319,11 +317,6 @@ fn test_live_diff_highlights_empty_added_line() {
         })
         .unwrap();
 
-    // Now find the row immediately above `UNIQUE_NEW_FN_MARKER` (the
-    // empty added line) and check that a column well past the gutter
-    // has the bg color the plugin paints for added lines (the
-    // theme-resolved `editor.diff_add_bg`). For the bundled
-    // high-contrast theme that's `Rgb(0, 80, 0)`.
     let buf = harness.buffer();
     let mut marker_row: Option<u16> = None;
     for y in 0..buf.area.height {
@@ -348,5 +341,100 @@ fn test_live_diff_highlights_empty_added_line() {
         Some(ratatui::style::Color::Rgb(0, 80, 0)),
         "empty added line at row {empty_row} should have the green \
          diff_add_bg out to col 40; saw {bg:?}",
+    );
+}
+
+/// Regression: pressing Down through empty lines used to skip them
+/// when live-diff was enabled. With the plugin off, cursor moved one
+/// line at a time as expected; with the plugin on, Down jumped from
+/// the line above the empty block straight to the first non-empty
+/// line below it.
+///
+/// Hypothesis: the per-line `addOverlay` calls (one per added line)
+/// somehow interact with `move_visual_line`. Repro asserts cursor
+/// position changes by one source line at a time on Down.
+///
+/// `#[ignore]`d as WIP repro; remove the attribute when the bug is
+/// fixed.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+#[ignore = "WIP repro for cursor-skip-empty-line bug"]
+fn test_live_diff_does_not_skip_empty_lines_on_arrow_keys() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_live_diff_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // Replace utils.rs so the diff has an added block containing two
+    // consecutive empty lines (lines the user pressed Enter on).
+    repo.modify_file(
+        "src/utils.rs",
+        "fn a() {}\n\
+         \n\
+         \n\
+         fn b() {}\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    // Wait for the plugin to render at least one decoration so we
+    // know it's active.
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+
+    // Move cursor to start of buffer (line 0, "fn a() {}").
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let pos0 = harness.cursor_position();
+    // Down 1 → start of line 1 (first empty line).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos1 = harness.cursor_position();
+
+    // Down 2 → start of line 2 (second empty line).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos2 = harness.cursor_position();
+
+    // Down 3 → start of line 3 ("fn b() {}").
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos3 = harness.cursor_position();
+
+    // Buffer is "fn a() {}\n\n\nfn b() {}\n":
+    //   line 0 starts at byte 0
+    //   line 1 starts at byte 10 (after "fn a() {}\n")
+    //   line 2 starts at byte 11
+    //   line 3 starts at byte 12
+    // Down should move through 0 → 10 → 11 → 12.
+    assert_eq!(pos0, 0, "expected cursor at line 0 start");
+    assert_eq!(
+        pos1, 10,
+        "Down once should land on first empty line; saw byte {pos1}",
+    );
+    assert_eq!(
+        pos2, 11,
+        "Down twice should land on second empty line (NOT skip it); saw byte {pos2}",
+    );
+    assert_eq!(
+        pos3, 12,
+        "Down thrice should land on 'fn b() {{}}'; saw byte {pos3}",
     );
 }
