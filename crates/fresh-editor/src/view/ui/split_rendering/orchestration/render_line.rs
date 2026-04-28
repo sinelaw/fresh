@@ -1169,12 +1169,30 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
                 if let Some(fill_bg) = fill_style {
                     let fill_text = " ".repeat(remaining_cols);
+                    // Source byte for the fill cells. Virtual lines
+                    // (LineAbove / LineBelow) stay `None` so the
+                    // navigation logic in `move_visual_line` keeps
+                    // skipping over them. Source lines with no chars
+                    // (empty lines, including those inside a live-diff
+                    // green block) carry the line's start byte so the
+                    // mapping's `char_source_bytes` has at least one
+                    // `Some` entry — without this, the navigable check
+                    // there sees an all-None mapping and treats the
+                    // empty source line as a plugin-injected
+                    // decoration to skip, making the cursor jump over
+                    // it on Up/Down.
+                    let fill_source =
+                        if current_view_line.line_start == LineStart::AfterInjectedNewline {
+                            None
+                        } else {
+                            current_view_line.source_start_byte
+                        };
                     push_span_with_map(
                         &mut line_spans,
                         &mut line_view_map,
                         fill_text,
                         fill_bg,
-                        None,
+                        fill_source,
                     );
                 }
             }

@@ -353,31 +353,27 @@ fn test_live_diff_highlights_empty_added_line() {
 /// Hypothesis: the per-line `addOverlay` calls (one per added line)
 /// somehow interact with `move_visual_line`. Repro asserts cursor
 /// position changes by one source line at a time on Down.
-///
-/// `#[ignore]`d as WIP repro; remove the attribute when the bug is
-/// fixed.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-#[ignore = "WIP repro for cursor-skip-empty-line bug"]
 fn test_live_diff_does_not_skip_empty_lines_on_arrow_keys() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
     let repo = GitTestRepo::new();
-    repo.setup_typical_project();
     repo.setup_live_diff_plugin();
+    // No setup_typical_project — we want a clean repo with one
+    // committed file so the diff is a pure-additions hunk (no
+    // confusing modify-vs-add LCS classification).
+    repo.create_file("src/utils.rs", "head\n");
+    repo.git_add(&["src/utils.rs"]);
+    repo.git_commit("init");
 
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
-    // Replace utils.rs so the diff has an added block containing two
-    // consecutive empty lines (lines the user pressed Enter on).
-    repo.modify_file(
-        "src/utils.rs",
-        "fn a() {}\n\
-         \n\
-         \n\
-         fn b() {}\n",
-    );
+    // Working tree: "head\n" + two empty lines + "tail\n". The two
+    // blank middle lines are added empty lines — the ones the user
+    // saw cursor skip over.
+    repo.modify_file("src/utils.rs", "head\n\n\ntail\n");
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -390,51 +386,47 @@ fn test_live_diff_does_not_skip_empty_lines_on_arrow_keys() {
     enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "src/utils.rs");
 
-    // Wait for the plugin to render at least one decoration so we
-    // know it's active.
+    // Wait for the plugin to render the added-line `+` glyph so we
+    // know its overlays are in place before we try to move the cursor.
     harness
         .wait_until(|h| has_glyph(&h.screen_to_string(), '+'))
         .unwrap();
 
-    // Move cursor to start of buffer (line 0, "fn a() {}").
+    // Move cursor to start of buffer.
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
     let pos0 = harness.cursor_position();
-    // Down 1 → start of line 1 (first empty line).
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos1 = harness.cursor_position();
-
-    // Down 2 → start of line 2 (second empty line).
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos2 = harness.cursor_position();
-
-    // Down 3 → start of line 3 ("fn b() {}").
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     let pos3 = harness.cursor_position();
 
-    // Buffer is "fn a() {}\n\n\nfn b() {}\n":
-    //   line 0 starts at byte 0
-    //   line 1 starts at byte 10 (after "fn a() {}\n")
-    //   line 2 starts at byte 11
-    //   line 3 starts at byte 12
-    // Down should move through 0 → 10 → 11 → 12.
-    assert_eq!(pos0, 0, "expected cursor at line 0 start");
+    // Buffer is "head\n\n\ntail\n":
+    //   line 0 ("head") starts at byte 0
+    //   line 1 (empty) starts at byte 5
+    //   line 2 (empty) starts at byte 6
+    //   line 3 ("tail") starts at byte 7
+    // Down should move 0 → 5 → 6 → 7. With live-diff buggy, Down skips
+    // the two empty lines and lands directly at "tail" (byte 7).
+    assert_eq!(pos0, 0, "expected cursor at start");
     assert_eq!(
-        pos1, 10,
-        "Down once should land on first empty line; saw byte {pos1}",
+        pos1, 5,
+        "Down once should land at first empty line (byte 5); saw byte {pos1}",
     );
     assert_eq!(
-        pos2, 11,
-        "Down twice should land on second empty line (NOT skip it); saw byte {pos2}",
+        pos2, 6,
+        "Down twice should land at second empty line (byte 6); saw byte {pos2}",
     );
     assert_eq!(
-        pos3, 12,
-        "Down thrice should land on 'fn b() {{}}'; saw byte {pos3}",
+        pos3, 7,
+        "Down thrice should land on 'tail' (byte 7); saw byte {pos3}",
     );
 }
