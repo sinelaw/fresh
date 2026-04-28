@@ -468,8 +468,14 @@ impl Editor {
             // Load from all found plugin directories, respecting config
             for plugin_dir in plugin_dirs {
                 tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
+                let load_start = std::time::Instant::now();
                 let (errors, discovered_plugins) =
                     plugin_manager.load_plugins_from_dir_with_config(&plugin_dir, &config.plugins);
+                tracing::info!(
+                    "Loaded TypeScript plugins from {:?} in {:?}",
+                    plugin_dir,
+                    load_start.elapsed()
+                );
 
                 // Merge discovered plugins into config
                 // discovered_plugins already contains the merged config (saved enabled state + discovered path)

@@ -1629,8 +1629,12 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         report_alternate_keys: config.editor.keyboard_report_alternate_keys,
         report_all_keys_as_escape_codes: config.editor.keyboard_report_all_keys_as_escape_codes,
     };
+    tracing::info!("Enabling terminal modes...");
     let terminal_modes = TerminalModes::enable(Some(&keyboard_config))?;
+    tracing::info!("Terminal modes enabled");
 
+    #[cfg(target_os = "linux")]
+    tracing::info!("Connecting to GPM...");
     #[cfg(target_os = "linux")]
     let gpm_client = match GpmClient::connect() {
         Ok(client) => client,
@@ -1644,6 +1648,8 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
 
     if gpm_client.is_some() {
         tracing::info!("Using GPM for mouse capture");
+    } else {
+        tracing::info!("GPM not in use");
     }
 
     // Set cursor style from config
@@ -1653,9 +1659,11 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let _ = stdout().execute(config.editor.cursor_style.to_crossterm_style());
     tracing::info!("Set cursor style to {:?}", config.editor.cursor_style);
 
+    tracing::info!("Initializing terminal backend...");
     let backend = ratatui::backend::CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
+    tracing::info!("Terminal backend ready");
 
     let size = terminal.size()?;
     tracing::info!("Terminal size: {}x{}", size.width, size.height);
