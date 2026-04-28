@@ -1421,6 +1421,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "windows-sys 0.60.2",
  "winit",
 ]
 
