@@ -1,3 +1,8 @@
+// On Windows, a GUI-feature build uses the "windows" subsystem so launching
+// from Explorer / a Start-Menu shortcut does not flash a console window.
+// The TUI build (no `gui` feature) keeps the default "console" subsystem.
+#![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
+
 use anyhow::{Context, Result as AnyhowResult};
 use clap::Parser;
 use crossterm::event::{
