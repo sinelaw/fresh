@@ -217,6 +217,7 @@ pub mod vertical_rulers;
 pub mod vi_mode;
 #[cfg(feature = "plugins")]
 pub mod vi_mode_bugs;
+pub mod virtual_line_bg_and_wrap;
 pub mod virtual_lines;
 pub mod visual_regression;
 pub mod warning_indicators;
