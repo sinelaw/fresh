@@ -10,6 +10,7 @@
 
 use crate::common::git_test_helper::{DirGuard, GitTestRepo};
 use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 
 // =============================================================================
@@ -54,6 +55,21 @@ fn open_file(harness: &mut EditorTestHarness, repo_path: &std::path::Path, relat
         .unwrap();
 }
 
+/// Live-diff is opt-in (off by default). Trigger the global-toggle
+/// command via the command palette so the rest of the test can observe
+/// gutter glyphs and virtual lines.
+fn enable_live_diff_globally(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Diff: Toggle (Global)").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -94,6 +110,7 @@ pub fn validate_config(config: &Config) -> bool {
     )
     .unwrap();
 
+    enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "src/utils.rs");
 
     harness
@@ -102,7 +119,7 @@ pub fn validate_config(config: &Config) -> bool {
 }
 
 /// vs HEAD: a modified line shows `~` in the gutter AND a virtual line
-/// rendered above it containing the OLD text prefixed with `- `.
+/// rendered above it containing the OLD text.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn test_live_diff_modified_line_shows_old_content_above() {
@@ -134,6 +151,7 @@ pub fn validate_config(config: &Config) -> bool {
     )
     .unwrap();
 
+    enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "src/utils.rs");
 
     // Wait for the modified glyph to appear.
@@ -141,7 +159,8 @@ pub fn validate_config(config: &Config) -> bool {
         .wait_until(|h| has_glyph(&h.screen_to_string(), '~'))
         .unwrap();
 
-    // The virtual line carries the OLD content prefixed with "- ".
+    // The virtual line carries the OLD content (no leading "- " prefix —
+    // the red bg/fg is the visual signal).
     // Original line was: `    format!("[INFO] {}", msg)`
     harness
         .wait_until(|h| has_text(&h.screen_to_string(), "[INFO]"))
@@ -181,6 +200,7 @@ fn test_live_diff_updates_on_buffer_edit() {
     )
     .unwrap();
 
+    enable_live_diff_globally(&mut harness);
     // Open a clean (HEAD-equal) file. No glyphs initially.
     open_file(&mut harness, &repo.path, "src/utils.rs");
     harness

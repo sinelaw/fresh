@@ -110,8 +110,12 @@ interface BufferDiffState {
   updating: boolean;
   /** Token bumped on every scheduleRecompute; mismatched tokens are stale. */
   pendingToken: number;
-  /** Plugin disabled for this buffer (Live Diff: Toggle). */
-  disabled: boolean;
+  /**
+   * Per-buffer enable override. `null` means "follow the global toggle";
+   * `true` forces live-diff on for this buffer regardless of the global
+   * setting; `false` forces it off. Set by `Live Diff: Toggle (Buffer)`.
+   */
+  override: boolean | null;
   /**
    * Last buffer text we ran the diff against. `lines_changed` fires for
    * viewport scrolls too — comparing the text catches those cheaply and
@@ -156,6 +160,32 @@ function getStoredMode(bufferId: number): DiffMode | null {
 
 function storeMode(bufferId: number, mode: DiffMode): void {
   editor.setViewState(bufferId, "live_diff.mode", mode);
+}
+
+// Plugin is opt-in: `live_diff.global_enabled` defaults to false. Users
+// flip it via "Live Diff: Toggle (Global)" or override per buffer with
+// "Live Diff: Toggle (Buffer)".
+function isGlobalEnabled(): boolean {
+  return editor.getGlobalState("live_diff.global_enabled") === true;
+}
+
+function setGlobalEnabled(enabled: boolean): void {
+  editor.setGlobalState("live_diff.global_enabled", enabled);
+}
+
+function getStoredOverride(bufferId: number): boolean | null {
+  const stored = editor.getViewState(bufferId, "live_diff.override");
+  if (stored === true || stored === false) return stored;
+  return null;
+}
+
+function storeOverride(bufferId: number, override: boolean | null): void {
+  editor.setViewState(bufferId, "live_diff.override", override);
+}
+
+function isEnabledForBuffer(state: BufferDiffState): boolean {
+  if (state.override !== null) return state.override;
+  return isGlobalEnabled();
 }
 
 // =============================================================================
@@ -527,7 +557,7 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
 async function recompute(bufferId: number): Promise<void> {
   const state = states.get(bufferId);
   if (!state) return;
-  if (state.disabled) return;
+  if (!isEnabledForBuffer(state)) return;
   if (state.updating) return;
 
   state.updating = true;
@@ -637,7 +667,7 @@ function ensureState(bufferId: number): BufferDiffState | null {
     hunks: [],
     updating: false,
     pendingToken: 0,
-    disabled: false,
+    override: getStoredOverride(bufferId),
     lastBufferText: null,
     lastHunksKey: "",
   };
@@ -658,7 +688,11 @@ async function setMode(bufferId: number, mode: DiffMode): Promise<void> {
   const state = ensureState(bufferId);
   if (!state) return;
   state.mode = mode;
-  state.disabled = false;
+  // Choosing a comparison reference is a clear "I want to see the diff"
+  // signal — force-on for this buffer so the command works even when the
+  // global toggle is off.
+  state.override = true;
+  storeOverride(bufferId, true);
   storeMode(bufferId, mode);
   dropReference(state);
   await recompute(bufferId);
@@ -668,25 +702,58 @@ async function setMode(bufferId: number, mode: DiffMode): Promise<void> {
 // Commands
 // =============================================================================
 
-function live_diff_toggle(): void {
+/**
+ * Reflect the current effective enabled state for a buffer in the
+ * editor: paint or clear decorations and (re)compute as needed.
+ * Called from both toggle commands.
+ */
+function syncBufferToEnabledState(state: BufferDiffState): void {
+  if (isEnabledForBuffer(state)) {
+    recompute(state.bufferId).catch((e) => editor.error(`live-diff: ${e}`));
+  } else {
+    clearDecorations(state.bufferId);
+    state.hunks = [];
+    state.lastBufferText = null;
+    state.lastHunksKey = "";
+    editor.setViewState(state.bufferId, "live_diff_hunks", null);
+  }
+}
+
+/**
+ * Toggle the per-buffer override for the active buffer. Sets the
+ * override to the opposite of the buffer's current effective state, so
+ * one invocation always flips what the user sees on screen.
+ */
+function live_diff_toggle_buffer(): void {
   const bid = editor.getActiveBufferId();
   const state = ensureState(bid);
   if (!state) {
     editor.setStatus(editor.t("status.no_file"));
     return;
   }
-  state.disabled = !state.disabled;
-  if (state.disabled) {
-    clearDecorations(bid);
-    state.hunks = [];
-    editor.setViewState(bid, "live_diff_hunks", null);
-    editor.setStatus(editor.t("status.disabled"));
-  } else {
-    editor.setStatus(editor.t("status.enabled"));
-    recompute(bid).catch((e) => editor.error(`live-diff: ${e}`));
-  }
+  const newEnabled = !isEnabledForBuffer(state);
+  state.override = newEnabled;
+  storeOverride(bid, newEnabled);
+  syncBufferToEnabledState(state);
+  editor.setStatus(editor.t(newEnabled ? "status.buffer_enabled" : "status.buffer_disabled"));
 }
-registerHandler("live_diff_toggle", live_diff_toggle);
+registerHandler("live_diff_toggle_buffer", live_diff_toggle_buffer);
+
+/**
+ * Toggle the global enable flag. Refreshes every tracked buffer that
+ * doesn't have its own override set so the change is visible immediately.
+ */
+function live_diff_toggle_global(): void {
+  const newEnabled = !isGlobalEnabled();
+  setGlobalEnabled(newEnabled);
+  for (const state of states.values()) {
+    if (state.override === null) {
+      syncBufferToEnabledState(state);
+    }
+  }
+  editor.setStatus(editor.t(newEnabled ? "status.global_enabled" : "status.global_disabled"));
+}
+registerHandler("live_diff_toggle_global", live_diff_toggle_global);
 
 async function live_diff_vs_head(): Promise<void> {
   await setMode(editor.getActiveBufferId(), { kind: "head" });
@@ -817,7 +884,8 @@ editor.on("buffer_closed", (args) => {
 // Command registration
 // =============================================================================
 
-editor.registerCommand("%cmd.toggle", "%cmd.toggle_desc", "live_diff_toggle", null);
+editor.registerCommand("%cmd.toggle_global", "%cmd.toggle_global_desc", "live_diff_toggle_global", null);
+editor.registerCommand("%cmd.toggle_buffer", "%cmd.toggle_buffer_desc", "live_diff_toggle_buffer", null);
 editor.registerCommand("%cmd.vs_head", "%cmd.vs_head_desc", "live_diff_vs_head", null);
 editor.registerCommand("%cmd.vs_disk", "%cmd.vs_disk_desc", "live_diff_vs_disk", null);
 editor.registerCommand("%cmd.vs_branch", "%cmd.vs_branch_desc", "live_diff_vs_branch", null);
