@@ -217,6 +217,16 @@ jobs:
             fresh-editor-gui-*.pkg
             fresh-editor-gui-*.pkg.sha256
 
+      # Raw binary uploaded separately so the universal-build job downstream
+      # can lipo the two arches into a single fat binary.
+      - name: Upload raw macOS binary (for universal lipo)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-binary-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/fresh
+          if-no-files-found: error
+
       - name: Upload GUI artifacts (Linux)
         if: contains(matrix.target, 'linux')
         uses: actions/upload-artifact@v6
@@ -225,3 +235,72 @@ jobs:
           path: |
             fresh-editor-gui-*.AppImage
             fresh-editor-gui-*.AppImage.sha256
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Universal macOS .pkg — lipos the two per-arch binaries into one fat
+  # binary, bundles + ad-hoc-signs the result, and packages a single .pkg
+  # that runs natively on both Intel and Apple Silicon Macs.  Per-arch
+  # .pkg artifacts above are kept as a fallback.
+  # ────────────────────────────────────────────────────────────────────────
+  package-macos-universal:
+    needs: build-gui
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      FRESH_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v6
+        with:
+          name: macos-binary-x86_64-apple-darwin
+          path: artifacts/x86_64
+      - name: Download aarch64 binary
+        uses: actions/download-artifact@v6
+        with:
+          name: macos-binary-aarch64-apple-darwin
+          path: artifacts/aarch64
+
+      - name: lipo into universal binary
+        run: |
+          chmod +x artifacts/x86_64/fresh artifacts/aarch64/fresh
+          mkdir -p universal
+          lipo -create -output universal/fresh \
+              artifacts/x86_64/fresh \
+              artifacts/aarch64/fresh
+          # Sanity-check both archs are present
+          lipo -info universal/fresh
+
+      - name: Build universal .app bundle and .pkg
+        run: |
+          cd crates/fresh-gui/resources/macos
+          ./create-app-bundle.sh "../../../../universal/fresh"
+          cd ../../../..
+
+          codesign --force --deep --sign - \
+              crates/fresh-gui/resources/macos/Fresh.app
+
+          mkdir -p pkg-root/Applications
+          mv crates/fresh-gui/resources/macos/Fresh.app pkg-root/Applications/
+
+          PKG_NAME="fresh-editor-gui-universal-${VERSION}.pkg"
+          pkgbuild \
+              --root pkg-root \
+              --identifier dev.getfresh.Fresh \
+              --version "${VERSION}" \
+              --install-location / \
+              "${PKG_NAME}"
+
+          shasum -a 256 "${PKG_NAME}" > "${PKG_NAME}.sha256"
+
+      - name: Upload universal .pkg
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-gui-macos-universal
+          path: |
+            fresh-editor-gui-universal-*.pkg
+            fresh-editor-gui-universal-*.pkg.sha256
+          if-no-files-found: error
