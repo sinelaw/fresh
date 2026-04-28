@@ -36,13 +36,28 @@ const NS_OVERLAY = "live-diff-overlay";
 // on the same line — but in practice users will run one or the other.
 const PRIORITY = 9;
 
-// RGB defaults; the plan calls for theme keys, but the bundled themes don't
-// define them yet, so we inline the colors here. Easy to swap to theme keys
-// once the theme PR lands.
-const COLORS = {
-  added: [80, 250, 123] as [number, number, number],
-  modified: [255, 184, 108] as [number, number, number],
-  removed: [255, 85, 85] as [number, number, number],
+// Theme keys for backgrounds and virtual-line foregrounds. These are
+// resolved at render time by the editor, so the diff colors track
+// the active theme automatically.  All bundled themes provide
+// `editor.diff_*_bg` (defaulted via serde) and `ui.file_status_*_fg`
+// (falls through to `diagnostic.{info,warning,error}_fg` when the
+// theme doesn't override).
+const THEME = {
+  addedBg: "editor.diff_add_bg",
+  addedFg: "ui.file_status_added_fg",
+  modifiedBg: "editor.diff_modify_bg",
+  modifiedFg: "ui.file_status_modified_fg",
+  removedBg: "editor.diff_remove_bg",
+  removedFg: "ui.file_status_deleted_fg",
+};
+
+// `setLineIndicator` only accepts RGB triples (not theme keys), so the
+// gutter glyphs use a fixed palette. Keep them muted so they read on
+// both light and dark themes; the visual signal is the glyph shape.
+const GUTTER_COLORS = {
+  added: [80, 200, 120] as [number, number, number],
+  modified: [220, 160, 90] as [number, number, number],
+  removed: [220, 90, 90] as [number, number, number],
 };
 const SYMBOLS = {
   added: "+",
@@ -97,6 +112,20 @@ interface BufferDiffState {
   pendingToken: number;
   /** Plugin disabled for this buffer (Live Diff: Toggle). */
   disabled: boolean;
+  /**
+   * Last buffer text we ran the diff against. `lines_changed` fires for
+   * viewport scrolls too — comparing the text catches those cheaply and
+   * skips the expensive clear-and-repaint that caused flicker on cursor
+   * movement.
+   */
+  lastBufferText: string | null;
+  /**
+   * Stringified hunks from the previous successful render. When a
+   * recompute produces an identical structure we skip the redraw to
+   * avoid a clear-then-set flash even when the buffer itself did
+   * change (e.g., the user typed inside an already-modified line).
+   */
+  lastHunksKey: string;
 }
 
 const states: Map<number, BufferDiffState> = new Map();
@@ -415,19 +444,19 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
   if (addedLines.length > 0) {
     editor.setLineIndicators(
       bid, addedLines, NS_GUTTER, SYMBOLS.added,
-      COLORS.added[0], COLORS.added[1], COLORS.added[2], PRIORITY,
+      GUTTER_COLORS.added[0], GUTTER_COLORS.added[1], GUTTER_COLORS.added[2], PRIORITY,
     );
   }
   if (modifiedLines.length > 0) {
     editor.setLineIndicators(
       bid, modifiedLines, NS_GUTTER, SYMBOLS.modified,
-      COLORS.modified[0], COLORS.modified[1], COLORS.modified[2], PRIORITY,
+      GUTTER_COLORS.modified[0], GUTTER_COLORS.modified[1], GUTTER_COLORS.modified[2], PRIORITY,
     );
   }
   if (removedAnchors.length > 0) {
     editor.setLineIndicators(
       bid, removedAnchors, NS_GUTTER, SYMBOLS.removed,
-      COLORS.removed[0], COLORS.removed[1], COLORS.removed[2], PRIORITY,
+      GUTTER_COLORS.removed[0], GUTTER_COLORS.removed[1], GUTTER_COLORS.removed[2], PRIORITY,
     );
   }
 
@@ -438,7 +467,7 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
       // One overlay per line so `extendToLineEnd` paints each line's full
       // width — a single multi-line overlay only paints the last line's
       // tail, leaving intermediate lines unhighlighted past their content.
-      const bg = h.kind === "added" ? COLORS.added : COLORS.modified;
+      const bg = h.kind === "added" ? THEME.addedBg : THEME.modifiedBg;
       for (let i = 0; i < h.newCount; i++) {
         const line = h.newStart + i;
         const start = await editor.getLineStartPosition(line);
@@ -474,8 +503,8 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
         anchor,
         "- " + h.oldLines[i],
         {
-          fg: COLORS.removed,
-          bg: [60, 20, 25] as [number, number, number],
+          fg: THEME.removedFg,
+          bg: THEME.removedBg,
         },
         above,
         NS_VLINE,
@@ -512,6 +541,18 @@ async function recompute(bufferId: number): Promise<void> {
 
     const length = editor.getBufferLength(bufferId);
     const newText = await editor.getBufferText(bufferId, 0, length);
+
+    // Skip 1: same buffer text as last recompute. `lines_changed` fires
+    // on viewport scrolls (cursor up/down past the visible area), and
+    // re-clearing then re-painting the same decorations causes a
+    // visible flash on the highlighted lines. The string comparison is
+    // microseconds for typical source files; we only fall through when
+    // the buffer actually changed.
+    if (state.lastBufferText === newText) {
+      return;
+    }
+    state.lastBufferText = newText;
+
     const newLines = splitLines(newText);
 
     if (state.oldLines.length > MAX_DIFF_LINES || newLines.length > MAX_DIFF_LINES) {
@@ -519,6 +560,7 @@ async function recompute(bufferId: number): Promise<void> {
       // a status so the user knows why the gutter is empty.
       clearDecorations(bufferId);
       state.hunks = [];
+      state.lastHunksKey = "";
       editor.setViewState(bufferId, "live_diff_hunks", null);
       editor.setStatus(editor.t("status.too_large"));
       return;
@@ -528,6 +570,7 @@ async function recompute(bufferId: number): Promise<void> {
     if (ops === null) {
       clearDecorations(bufferId);
       state.hunks = [];
+      state.lastHunksKey = "";
       editor.setViewState(bufferId, "live_diff_hunks", null);
       editor.setStatus(editor.t("status.too_large"));
       return;
@@ -535,7 +578,18 @@ async function recompute(bufferId: number): Promise<void> {
 
     const hunks = opsToHunks(ops);
     fillOldLines(hunks, state.oldLines);
+
+    // Skip 2: same hunks as last render. The user can edit inside an
+    // already-flagged region without changing line counts (e.g., typing
+    // mid-word on a modified line). Without this guard we still
+    // clear+repaint each keystroke, producing visible flicker.
+    const hunksKey = JSON.stringify(hunks);
+    if (hunksKey === state.lastHunksKey) {
+      state.hunks = hunks;
+      return;
+    }
     state.hunks = hunks;
+    state.lastHunksKey = hunksKey;
 
     await renderHunks(state);
 
@@ -578,6 +632,8 @@ function ensureState(bufferId: number): BufferDiffState | null {
     updating: false,
     pendingToken: 0,
     disabled: false,
+    lastBufferText: null,
+    lastHunksKey: "",
   };
   states.set(bufferId, state);
   return state;
@@ -586,6 +642,10 @@ function ensureState(bufferId: number): BufferDiffState | null {
 function dropReference(state: BufferDiffState): void {
   state.oldText = null;
   state.oldLines = [];
+  // Force the next recompute to repaint even if the buffer itself
+  // hasn't changed (mode swap rebuilds against a new reference).
+  state.lastBufferText = null;
+  state.lastHunksKey = "";
 }
 
 async function setMode(bufferId: number, mode: DiffMode): Promise<void> {
