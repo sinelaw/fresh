@@ -15,7 +15,13 @@ use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
 use crate::view::prompt::PromptType;
 use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
+use ratatui::layout::Rect;
 use rust_i18n::t;
+
+/// Returns true if (col, row) falls inside `rect`.
+fn in_rect(col: u16, row: u16, rect: Rect) -> bool {
+    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
 
 impl Editor {
     /// Handle a mouse event.
@@ -80,18 +86,9 @@ impl Editor {
         if self.theme_info_popup.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                 if let Some((popup_rect, button_row_offset)) = self.theme_info_popup_rect() {
-                    let popup_x = popup_rect.x;
-                    let popup_y = popup_rect.y;
-                    let popup_w = popup_rect.width;
-                    let popup_h = popup_rect.height;
-                    let in_popup = col >= popup_x
-                        && col < popup_x + popup_w
-                        && row >= popup_y
-                        && row < popup_y + popup_h;
-
-                    if in_popup {
+                    if in_rect(col, row, popup_rect) {
                         // Check if click is on the button row (last content row before border)
-                        let actual_button_row = popup_y + button_row_offset;
+                        let actual_button_row = popup_rect.y + button_row_offset;
                         if row == actual_button_row {
                             let fg_key = self
                                 .theme_info_popup
@@ -199,12 +196,7 @@ impl Editor {
                         .cached_layout
                         .split_areas
                         .iter()
-                        .find(|(_, _, content_rect, _, _, _)| {
-                            col >= content_rect.x
-                                && col < content_rect.x + content_rect.width
-                                && row >= content_rect.y
-                                && row < content_rect.y + content_rect.height
-                        })
+                        .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
                         .map(|(_, _, rect, _, _, _)| *rect);
 
                     let (content_x, content_y) = content_rect.map(|r| (r.x, r.y)).unwrap_or((0, 0));
@@ -362,6 +354,13 @@ impl Editor {
         // If a menu is currently open and we're hovering over a different menu bar item,
         // switch to that menu automatically
         if let Some(active_menu_idx) = self.menu_state.active_menu {
+            let all_menus: Vec<crate::config::Menu> = self
+                .menus
+                .menus
+                .iter()
+                .chain(self.menu_state.plugin_menus.iter())
+                .cloned()
+                .collect();
             if let Some(HoverTarget::MenuBarItem(hovered_menu_idx)) = new_target.clone() {
                 if hovered_menu_idx != active_menu_idx {
                     self.menu_state.open_menu(hovered_menu_idx);
@@ -371,14 +370,6 @@ impl Editor {
 
             // If hovering over a menu dropdown item, check if it's a submenu and open it
             if let Some(HoverTarget::MenuDropdownItem(_, item_idx)) = new_target.clone() {
-                let all_menus: Vec<crate::config::Menu> = self
-                    .menus
-                    .menus
-                    .iter()
-                    .chain(self.menu_state.plugin_menus.iter())
-                    .cloned()
-                    .collect();
-
                 // If this item is the parent of the currently open submenu, keep it open.
                 // This prevents blinking when hovering over the parent item of an open submenu.
                 if self.menu_state.submenu_path.first() == Some(&item_idx) {
@@ -449,14 +440,6 @@ impl Editor {
                     );
                     self.menu_state.submenu_path.truncate(depth);
                 }
-
-                let all_menus: Vec<crate::config::Menu> = self
-                    .menus
-                    .menus
-                    .iter()
-                    .chain(self.menu_state.plugin_menus.iter())
-                    .cloned()
-                    .collect();
 
                 // Get the items at this depth
                 if let Some(items) = self
@@ -566,12 +549,7 @@ impl Editor {
             .cached_layout
             .split_areas
             .iter()
-            .find(|(_, _, content_rect, _, _, _)| {
-                col >= content_rect.x
-                    && col < content_rect.x + content_rect.width
-                    && row >= content_rect.y
-                    && row < content_rect.y + content_rect.height
-            })
+            .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
             .map(|(split_id, buffer_id, content_rect, _, _, _)| {
                 (*split_id, *buffer_id, *content_rect)
             });
@@ -716,11 +694,7 @@ impl Editor {
         // Editor-level popup overlays absorb every click within their outer
         // rect so the buffer below doesn't receive a stray cursor placement.
         for (_, popup_area, _, _, _) in &self.cached_layout.global_popup_areas {
-            if col >= popup_area.x
-                && col < popup_area.x + popup_area.width
-                && row >= popup_area.y
-                && row < popup_area.y + popup_area.height
-            {
+            if in_rect(col, row, *popup_area) {
                 return true;
             }
         }
@@ -742,16 +716,10 @@ impl Editor {
         for &(split_id, buffer_id, content_rect, scrollbar_rect, _, _) in
             &self.cached_layout.split_areas
         {
-            let in_content = col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height;
+            let in_content = in_rect(col, row, content_rect);
             let in_scrollbar = scrollbar_rect.width > 0
                 && scrollbar_rect.height > 0
-                && col >= scrollbar_rect.x
-                && col < scrollbar_rect.x + scrollbar_rect.width
-                && row >= scrollbar_rect.y
-                && row < scrollbar_rect.y + scrollbar_rect.height;
+                && in_rect(col, row, scrollbar_rect);
             if in_content || in_scrollbar {
                 return Some((split_id, buffer_id));
             }
@@ -805,11 +773,7 @@ impl Editor {
         if let Some((inner_rect, start_idx, _visible_count, total_count)) =
             &self.cached_layout.suggestions_area
         {
-            if col >= inner_rect.x
-                && col < inner_rect.x + inner_rect.width
-                && row >= inner_rect.y
-                && row < inner_rect.y + inner_rect.height
-            {
+            if in_rect(col, row, *inner_rect) {
                 let relative_row = (row - inner_rect.y) as usize;
                 let item_idx = start_idx + relative_row;
 
@@ -824,12 +788,7 @@ impl Editor {
         for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
             self.cached_layout.popup_areas.iter().rev()
         {
-            if col >= inner_rect.x
-                && col < inner_rect.x + inner_rect.width
-                && row >= inner_rect.y
-                && row < inner_rect.y + inner_rect.height
-                && *num_items > 0
-            {
+            if in_rect(col, row, *inner_rect) && *num_items > 0 {
                 // Calculate which item is being hovered
                 let relative_row = (row - inner_rect.y) as usize;
                 let item_idx = scroll_offset + relative_row;
@@ -964,11 +923,7 @@ impl Editor {
         for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
             &self.cached_layout.split_areas
         {
-            if col >= scrollbar_rect.x
-                && col < scrollbar_rect.x + scrollbar_rect.width
-                && row >= scrollbar_rect.y
-                && row < scrollbar_rect.y + scrollbar_rect.height
-            {
+            if in_rect(col, row, *scrollbar_rect) {
                 let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
                 let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
 
@@ -1074,11 +1029,7 @@ impl Editor {
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             &split_areas
         {
-            if col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height
-            {
+            if in_rect(col, row, *content_rect) {
                 // Double-clicked on an editor split
                 if self.is_terminal_buffer(*buffer_id) {
                     self.key_context = crate::input::keybindings::KeyContext::Terminal;
@@ -1223,11 +1174,7 @@ impl Editor {
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             &split_areas
         {
-            if col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height
-            {
+            if in_rect(col, row, *content_rect) {
                 if self.is_terminal_buffer(*buffer_id) {
                     return Ok(());
                 }
@@ -1410,11 +1357,7 @@ impl Editor {
                 content_rect.width,
                 content_rect.height
             );
-            if col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height
-            {
+            if in_rect(col, row, *content_rect) {
                 // Click in editor - focus split and position cursor
                 tracing::debug!("  -> HIT! calling handle_editor_click");
                 self.handle_editor_click(
@@ -1531,12 +1474,7 @@ impl Editor {
                     return Some(self.handle_action(Action::PopupCancel));
                 }
             }
-            if col >= inner_rect.x
-                && col < inner_rect.x + inner_rect.width
-                && row >= inner_rect.y
-                && row < inner_rect.y + inner_rect.height
-                && num_items > 0
-            {
+            if in_rect(col, row, inner_rect) && num_items > 0 {
                 let relative_row = (row - inner_rect.y) as usize;
                 let item_idx = scroll_offset + relative_row;
                 if item_idx < num_items {
@@ -1578,11 +1516,7 @@ impl Editor {
         for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
             popup_areas.iter().rev()
         {
-            if !(col >= inner_rect.x
-                && col < inner_rect.x + inner_rect.width
-                && row >= inner_rect.y
-                && row < inner_rect.y + inner_rect.height)
-            {
+            if !in_rect(col, row, *inner_rect) {
                 continue;
             }
             let relative_col = (col - inner_rect.x) as usize;
@@ -1701,11 +1635,7 @@ impl Editor {
             self.mouse_state.drag_start_explorer_width = Some(self.file_explorer_width);
             return Some(Ok(()));
         }
-        if col >= explorer_area.x
-            && col < explorer_area.x + explorer_area.width
-            && row >= explorer_area.y
-            && row < explorer_area.y + explorer_area.height
-        {
+        if in_rect(col, row, explorer_area) {
             return Some(self.handle_file_explorer_click(col, row, explorer_area));
         }
         None
@@ -1715,11 +1645,7 @@ impl Editor {
         let (split_id, buffer_id, scrollbar_rect, is_on_thumb) =
             self.cached_layout.split_areas.iter().find_map(
                 |(split_id, buffer_id, _content, scrollbar_rect, thumb_start, thumb_end)| {
-                    if col >= scrollbar_rect.x
-                        && col < scrollbar_rect.x + scrollbar_rect.width
-                        && row >= scrollbar_rect.y
-                        && row < scrollbar_rect.y + scrollbar_rect.height
-                    {
+                    if in_rect(col, row, *scrollbar_rect) {
                         let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
                         let on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
                         Some((*split_id, *buffer_id, *scrollbar_rect, on_thumb))
