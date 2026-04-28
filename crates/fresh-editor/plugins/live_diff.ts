@@ -435,13 +435,20 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
   // out per-hunk. Each hunk does at most O(oldLines + 1) API calls.
   for (const h of state.hunks) {
     if (h.kind === "added" || h.kind === "modified") {
-      const start = await editor.getLineStartPosition(h.newStart);
-      const end = await editor.getLineEndPosition(h.newStart + h.newCount - 1);
-      if (start !== null && end !== null) {
-        editor.addOverlay(bid, NS_OVERLAY, start, end, {
-          bg: h.kind === "added" ? COLORS.added : COLORS.modified,
-          extendToLineEnd: true,
-        });
+      // One overlay per line so `extendToLineEnd` paints each line's full
+      // width — a single multi-line overlay only paints the last line's
+      // tail, leaving intermediate lines unhighlighted past their content.
+      const bg = h.kind === "added" ? COLORS.added : COLORS.modified;
+      for (let i = 0; i < h.newCount; i++) {
+        const line = h.newStart + i;
+        const start = await editor.getLineStartPosition(line);
+        const end = await editor.getLineEndPosition(line);
+        if (start !== null && end !== null) {
+          editor.addOverlay(bid, NS_OVERLAY, start, end, {
+            bg,
+            extendToLineEnd: true,
+          });
+        }
       }
     }
 
@@ -708,6 +715,16 @@ editor.on("after_insert", (args) => {
 });
 
 editor.on("after_delete", (args) => {
+  if (!states.has(args.buffer_id)) return true;
+  scheduleRecompute(args.buffer_id).catch((e) => editor.error(`live-diff: ${e}`));
+  return true;
+});
+
+// `lines_changed` fires on every visible-line redraw, including the ones
+// driven by Fresh's external-file-watch reload (which doesn't go through
+// after_insert/after_delete). This is the hook that makes the live-diff
+// view update when a coding agent rewrites the file on disk.
+editor.on("lines_changed", (args) => {
   if (!states.has(args.buffer_id)) return true;
   scheduleRecompute(args.buffer_id).catch((e) => editor.error(`live-diff: ${e}`));
   return true;
