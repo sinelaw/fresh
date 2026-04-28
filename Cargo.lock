@@ -1491,6 +1491,7 @@ dependencies = [
  "oxc_span",
  "rquickjs",
  "rquickjs-serde",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

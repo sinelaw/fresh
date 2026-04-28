@@ -12,7 +12,7 @@
 use crate::backend::quickjs_backend::{AsyncResourceOwners, PendingResponses, TsPluginInfo};
 use crate::backend::QuickJsBackend;
 use anyhow::{anyhow, Result};
-use fresh_core::api::{EditorStateSnapshot, PluginCommand};
+use fresh_core::api::{EditorStateSnapshot, JsCallbackId, PluginCommand};
 use fresh_core::hooks::HookArgs;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -350,7 +350,7 @@ impl PluginThreadHandle {
         }
 
         // If not found, it must be a JS callback
-        use fresh_core::api::{JsCallbackId, PluginResponse};
+        use fresh_core::api::PluginResponse;
 
         match response {
             PluginResponse::VirtualBufferCreated {
@@ -379,8 +379,7 @@ impl PluginThreadHandle {
                 }
             },
             PluginResponse::HighlightsComputed { request_id, spans } => {
-                let result = serde_json::to_string(&spans).unwrap_or_else(|_| "[]".to_string());
-                self.resolve_callback(JsCallbackId(request_id), result);
+                self.resolve_json_callback(request_id, &spans, "[]");
             }
             PluginResponse::BufferText { request_id, text } => match text {
                 Ok(content) => {
@@ -409,24 +408,16 @@ impl PluginThreadHandle {
                 request_id,
                 position,
             } => {
-                // Return the position as a number or null
-                let result =
-                    serde_json::to_string(&position).unwrap_or_else(|_| "null".to_string());
-                self.resolve_callback(JsCallbackId(request_id), result);
+                self.resolve_json_callback(request_id, position, "null");
             }
             PluginResponse::LineEndPosition {
                 request_id,
                 position,
             } => {
-                // Return the position as a number or null
-                let result =
-                    serde_json::to_string(&position).unwrap_or_else(|_| "null".to_string());
-                self.resolve_callback(JsCallbackId(request_id), result);
+                self.resolve_json_callback(request_id, position, "null");
             }
             PluginResponse::BufferLineCount { request_id, count } => {
-                // Return the count as a number or null
-                let result = serde_json::to_string(&count).unwrap_or_else(|_| "null".to_string());
-                self.resolve_callback(JsCallbackId(request_id), result);
+                self.resolve_json_callback(request_id, count, "null");
             }
             PluginResponse::TerminalCreated {
                 request_id,
@@ -447,11 +438,16 @@ impl PluginThreadHandle {
                 request_id,
                 split_id,
             } => {
-                let result = serde_json::to_string(&split_id.map(|s| s.0))
-                    .unwrap_or_else(|_| "null".to_string());
-                self.resolve_callback(JsCallbackId(request_id), result);
+                self.resolve_json_callback(request_id, split_id.map(|s| s.0), "null");
             }
         }
+    }
+
+    /// Serialize `value` to JSON and resolve a JS callback with the result.
+    /// Uses `fallback` as the JSON string if serialization fails.
+    fn resolve_json_callback(&self, request_id: u64, value: impl serde::Serialize, fallback: &str) {
+        let result = serde_json::to_string(&value).unwrap_or_else(|_| fallback.to_string());
+        self.resolve_callback(JsCallbackId(request_id), result);
     }
 
     /// Look up the plugin that owns a request_id and send a TrackAsyncResource
@@ -826,19 +822,7 @@ fn respond_to_pending(
     pending_responses: &PendingResponses,
     response: fresh_core::api::PluginResponse,
 ) -> bool {
-    let request_id = match &response {
-        fresh_core::api::PluginResponse::VirtualBufferCreated { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::LspRequest { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::HighlightsComputed { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::BufferText { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::CompositeBufferCreated { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::LineStartPosition { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::LineEndPosition { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::BufferLineCount { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::TerminalCreated { request_id, .. } => *request_id,
-        fresh_core::api::PluginResponse::SplitByLabel { request_id, .. } => *request_id,
-    };
-
+    let request_id = response.request_id();
     let sender = {
         let mut pending = pending_responses.lock().unwrap();
         pending.remove(&request_id)

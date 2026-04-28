@@ -278,6 +278,23 @@ pub enum PluginResponse {
     },
 }
 
+impl PluginResponse {
+    pub fn request_id(&self) -> u64 {
+        match self {
+            Self::VirtualBufferCreated { request_id, .. }
+            | Self::TerminalCreated { request_id, .. }
+            | Self::LspRequest { request_id, .. }
+            | Self::HighlightsComputed { request_id, .. }
+            | Self::BufferText { request_id, .. }
+            | Self::LineStartPosition { request_id, .. }
+            | Self::LineEndPosition { request_id, .. }
+            | Self::BufferLineCount { request_id, .. }
+            | Self::CompositeBufferCreated { request_id, .. }
+            | Self::SplitByLabel { request_id, .. } => *request_id,
+        }
+    }
+}
+
 /// Messages sent from async plugin tasks to the synchronous main loop
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
