@@ -28,15 +28,46 @@ fn main() {
     // Rerun if themes change
     println!("cargo::rerun-if-changed=themes");
 
-    // On Windows, embed the application icon into the .exe
+    // On Windows, embed the application icon, version info, and (for GUI
+    // builds) the application manifest into the .exe.  All payload files
+    // live under crates/fresh-gui/resources/windows/ — this build script
+    // only points winresource at them.
     #[cfg(target_os = "windows")]
     {
         let ico_path = Path::new("../../docs/icons/windows/app.ico");
         if ico_path.exists() {
             let mut res = winresource::WindowsResource::new();
             res.set_icon(ico_path.to_str().unwrap());
+
+            // Version info block (Explorer "Properties" dialog, SmartScreen).
+            let version = env!("CARGO_PKG_VERSION");
+            res.set("FileVersion", version);
+            res.set("ProductVersion", version);
+            res.set("ProductName", "Fresh");
+            res.set("FileDescription", "Fresh — fast terminal text editor");
+            res.set("CompanyName", "Fresh");
+            res.set("LegalCopyright", "Licensed under GPL-2.0");
+            res.set("OriginalFilename", "fresh.exe");
+            res.set("InternalName", "fresh");
+
+            // Manifest is GUI-only: it declares Per-Monitor DPI awareness
+            // and Common Controls v6, both of which are only useful when
+            // the binary actually opens a window.  The TUI-only build
+            // skips the manifest so it stays a "normal console app".
+            if std::env::var("CARGO_FEATURE_GUI").is_ok() {
+                let manifest = "../fresh-gui/resources/windows/fresh.manifest";
+                if Path::new(manifest).exists() {
+                    res.set_manifest_file(manifest);
+                } else {
+                    eprintln!(
+                        "Warning: gui feature enabled but manifest missing at {}",
+                        manifest
+                    );
+                }
+            }
+
             if let Err(e) = res.compile() {
-                eprintln!("Warning: Failed to embed Windows icon: {}", e);
+                eprintln!("Warning: Failed to embed Windows resources: {}", e);
             }
         }
     }
