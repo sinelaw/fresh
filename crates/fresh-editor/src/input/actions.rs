@@ -4,7 +4,7 @@ use crate::input::keybindings::Action;
 use crate::input::line_move::{move_lines, LineMoveDirection};
 use crate::model::buffer::{Buffer, LineEnding};
 use crate::model::buffer_position::{byte_to_2d, pos_2d_to_byte};
-use crate::model::cursor::{Cursors, Position2D, SelectionMode};
+use crate::model::cursor::{Cursor, Cursors, Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::highlighter::HighlightCategory;
@@ -183,6 +183,54 @@ fn add_move_cursor_event(
         old_sticky_column,
         new_sticky_column: 0,
     });
+}
+
+/// Move each cursor to the position returned by `new_pos_fn`, respecting
+/// `deselect_on_move`: collapses any selection or preserves the anchor.
+fn move_each_cursor(
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    mut new_pos_fn: impl FnMut(&Cursor) -> usize,
+) {
+    for (cursor_id, cursor) in cursors.iter() {
+        let new_pos = new_pos_fn(cursor);
+        let new_anchor = if cursor.deselect_on_move {
+            None
+        } else {
+            cursor.anchor
+        };
+        add_move_cursor_event(
+            events,
+            cursor_id,
+            cursor.position,
+            new_pos,
+            cursor.anchor,
+            new_anchor,
+            cursor.sticky_column,
+        );
+    }
+}
+
+/// Move each cursor to the position returned by `new_pos_fn` while extending
+/// the selection (anchor stays fixed at its current location).
+fn select_each_cursor(
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    mut new_pos_fn: impl FnMut(&Cursor) -> usize,
+) {
+    for (cursor_id, cursor) in cursors.iter() {
+        let new_pos = new_pos_fn(cursor);
+        let anchor = cursor.anchor.unwrap_or(cursor.position);
+        add_move_cursor_event(
+            events,
+            cursor_id,
+            cursor.position,
+            new_pos,
+            cursor.anchor,
+            Some(anchor),
+            cursor.sticky_column,
+        );
+    }
 }
 
 /// Handle block selection movement
@@ -1939,73 +1987,29 @@ pub fn action_to_events(
         // Basic movement - move each cursor
         // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::MoveLeft => {
-            for (cursor_id, cursor) in cursors.iter() {
-                // If a selection is active and the cursor is in "deselect on move"
-                // mode (i.e. normal, non-Emacs-mark), collapse the selection to
-                // its LEFT edge instead of stepping one grapheme. This matches
-                // VSCode, Sublime, browser text inputs, etc. (issue #1566).
-                let new_pos = if cursor.deselect_on_move {
-                    if let Some(range) = cursor.selection_range() {
-                        range.start
-                    } else {
-                        let p = state.buffer.prev_grapheme_boundary(cursor.position);
-                        adjust_position_for_crlf_left(&state.buffer, p)
+            // Collapse selection to LEFT edge when deselect_on_move (issue #1566).
+            move_each_cursor(cursors, &mut events, |c| {
+                if c.deselect_on_move {
+                    if let Some(range) = c.selection_range() {
+                        return range.start;
                     }
-                } else {
-                    let p = state.buffer.prev_grapheme_boundary(cursor.position);
-                    adjust_position_for_crlf_left(&state.buffer, p)
-                };
-
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+                }
+                let p = state.buffer.prev_grapheme_boundary(c.position);
+                adjust_position_for_crlf_left(&state.buffer, p)
+            });
         }
 
         Action::MoveRight => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let max_pos = max_cursor_position(&state.buffer);
-                // If a selection is active and the cursor is in "deselect on
-                // move" mode (i.e. normal, non-Emacs-mark), collapse the
-                // selection to its RIGHT edge instead of stepping one grapheme.
-                // This matches VSCode, Sublime, browser text inputs, etc.
-                // (issue #1566).
-                let new_pos = if cursor.deselect_on_move {
-                    if let Some(range) = cursor.selection_range() {
-                        range.end.min(max_pos)
-                    } else {
-                        next_position_for_crlf(&state.buffer, cursor.position, max_pos)
+            // Collapse selection to RIGHT edge when deselect_on_move (issue #1566).
+            let max_pos = max_cursor_position(&state.buffer);
+            move_each_cursor(cursors, &mut events, |c| {
+                if c.deselect_on_move {
+                    if let Some(range) = c.selection_range() {
+                        return range.end.min(max_pos);
                     }
-                } else {
-                    next_position_for_crlf(&state.buffer, cursor.position, max_pos)
-                };
-
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+                }
+                next_position_for_crlf(&state.buffer, c.position, max_pos)
+            });
         }
 
         Action::MoveUp => {
@@ -2017,172 +2021,71 @@ pub fn action_to_events(
         }
 
         Action::MoveLineStart => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let mut iter = state
+            move_each_cursor(cursors, &mut events, |c| {
+                state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                if let Some((line_start, _)) = iter.next_line() {
-                    let new_anchor = if cursor.deselect_on_move {
-                        None
-                    } else {
-                        cursor.anchor
-                    };
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        line_start,
-                        cursor.anchor,
-                        new_anchor,
-                        cursor.sticky_column,
-                    );
-                }
-            }
+                    .line_iterator(c.position, estimated_line_length)
+                    .next_line()
+                    .map(|(ls, _)| ls)
+                    .unwrap_or(c.position)
+            });
         }
 
         Action::MoveLineEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let mut iter = state
+            // Cursor lands at the first byte of line ending (LF: on \n; CRLF: on \r).
+            move_each_cursor(cursors, &mut events, |c| {
+                state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                if let Some((line_start, line_content)) = iter.next_line() {
-                    // In both LF and CRLF mode, cursor lands at the first byte of line ending
-                    // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
-                    let line_end = line_start + content_len_without_line_ending(&line_content);
-
-                    let new_anchor = if cursor.deselect_on_move {
-                        None
-                    } else {
-                        cursor.anchor
-                    };
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        line_end,
-                        cursor.anchor,
-                        new_anchor,
-                        cursor.sticky_column,
-                    );
-                }
-            }
+                    .line_iterator(c.position, estimated_line_length)
+                    .next_line()
+                    .map(|(ls, lc)| ls + content_len_without_line_ending(&lc))
+                    .unwrap_or(c.position)
+            });
         }
 
         Action::MoveWordLeft => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_word_start_left(&state.buffer, cursor.position);
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+            move_each_cursor(cursors, &mut events, |c| {
+                find_word_start_left(&state.buffer, c.position)
+            });
         }
 
         Action::MoveWordRight => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_word_start_right(&state.buffer, cursor.position);
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+            move_each_cursor(cursors, &mut events, |c| {
+                find_word_start_right(&state.buffer, c.position)
+            });
         }
 
         Action::MoveWordEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_word_end_right(&state.buffer, cursor.position);
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+            move_each_cursor(cursors, &mut events, |c| {
+                find_word_end_right(&state.buffer, c.position)
+            });
         }
 
         Action::ViMoveWordEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_vi_word_end(&state.buffer, cursor.position);
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+            move_each_cursor(cursors, &mut events, |c| {
+                find_vi_word_end(&state.buffer, c.position)
+            });
         }
 
         Action::MoveLeftInLine => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
+            move_each_cursor(cursors, &mut events, |c| {
+                let new_pos = state.buffer.prev_grapheme_boundary(c.position);
                 let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
-                // Check if moving left would cross a line boundary
                 let mut iter = state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
+                    .line_iterator(c.position, estimated_line_length);
                 let line_start = iter.next_line().map(|(ls, _)| ls).unwrap_or(0);
-                let clamped = new_pos.max(line_start);
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    clamped,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+                new_pos.max(line_start)
+            });
         }
 
         Action::MoveRightInLine => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let max_pos = max_cursor_position(&state.buffer);
-                let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
-                // Clamp to last character on the line (before the newline)
+            let max_pos = max_cursor_position(&state.buffer);
+            move_each_cursor(cursors, &mut events, |c| {
+                let new_pos = next_position_for_crlf(&state.buffer, c.position, max_pos);
                 let mut iter = state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
+                    .line_iterator(c.position, estimated_line_length);
                 let line_last_char = iter
                     .next_line()
                     .map(|(ls, lc)| {
@@ -2194,61 +2097,17 @@ pub fn action_to_events(
                         }
                     })
                     .unwrap_or(max_pos);
-                let clamped = new_pos.min(line_last_char);
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    clamped,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+                new_pos.min(line_last_char)
+            });
         }
 
         Action::MoveDocumentStart => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    0,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+            move_each_cursor(cursors, &mut events, |_| 0);
         }
 
         Action::MoveDocumentEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let max_pos = max_cursor_position(&state.buffer);
-                let new_anchor = if cursor.deselect_on_move {
-                    None
-                } else {
-                    cursor.anchor
-                };
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    max_pos,
-                    cursor.anchor,
-                    new_anchor,
-                    cursor.sticky_column,
-                );
-            }
+            let max_pos = max_cursor_position(&state.buffer);
+            move_each_cursor(cursors, &mut events, |_| max_pos);
         }
 
         Action::MovePageUp => {
@@ -2274,37 +2133,17 @@ pub fn action_to_events(
         // Selection movement - same as regular movement but keeps anchor
         // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::SelectLeft => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = state.buffer.prev_grapheme_boundary(cursor.position);
-                let new_pos = adjust_position_for_crlf_left(&state.buffer, new_pos);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            select_each_cursor(cursors, &mut events, |c| {
+                let p = state.buffer.prev_grapheme_boundary(c.position);
+                adjust_position_for_crlf_left(&state.buffer, p)
+            });
         }
 
         Action::SelectRight => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let max_pos = max_cursor_position(&state.buffer);
-                let new_pos = next_position_for_crlf(&state.buffer, cursor.position, max_pos);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            let max_pos = max_cursor_position(&state.buffer);
+            select_each_cursor(cursors, &mut events, |c| {
+                next_position_for_crlf(&state.buffer, c.position, max_pos)
+            });
         }
 
         Action::SelectUp => {
@@ -2376,210 +2215,94 @@ pub fn action_to_events(
         }
 
         Action::SelectToParagraphUp => {
-            // Jump to previous empty line while extending selection
-            for (cursor_id, cursor) in cursors.iter() {
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
+            select_each_cursor(cursors, &mut events, |c| {
                 let mut iter = state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-
-                // Move to previous line first
+                    .line_iterator(c.position, estimated_line_length);
                 let mut found_pos = None;
                 while let Some((line_start, line_content)) = iter.prev() {
-                    // Check if this is an empty line (only whitespace/newline)
                     let trimmed = line_content.trim_end_matches(['\n', '\r']);
                     if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
                         found_pos = Some(line_start);
                         break;
                     }
                 }
-
-                let new_pos = found_pos.unwrap_or(0);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+                found_pos.unwrap_or(0)
+            });
         }
 
         Action::SelectToParagraphDown => {
-            // Jump to next empty line while extending selection
-            for (cursor_id, cursor) in cursors.iter() {
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
+            select_each_cursor(cursors, &mut events, |c| {
                 let mut iter = state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-
-                // Skip current line
+                    .line_iterator(c.position, estimated_line_length);
                 iter.next_line();
-
-                // Find next empty line
                 let mut found_pos = None;
                 while let Some((line_start, line_content)) = iter.next_line() {
-                    // Check if this is an empty line (only whitespace/newline)
                     let trimmed = line_content.trim_end_matches(['\n', '\r']);
                     if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
                         found_pos = Some(line_start);
                         break;
                     }
                 }
-
-                let new_pos = found_pos.unwrap_or(state.buffer.len());
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+                found_pos.unwrap_or(state.buffer.len())
+            });
         }
 
         Action::SelectLineStart => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let mut iter = state
+            select_each_cursor(cursors, &mut events, |c| {
+                state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-                if let Some((line_start, _)) = iter.next_line() {
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        line_start,
-                        cursor.anchor,
-                        Some(anchor),
-                        cursor.sticky_column,
-                    );
-                }
-            }
+                    .line_iterator(c.position, estimated_line_length)
+                    .next_line()
+                    .map(|(ls, _)| ls)
+                    .unwrap_or(c.position)
+            });
         }
 
         Action::SelectLineEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let mut iter = state
+            // Cursor lands at the first byte of line ending (LF: on \n; CRLF: on \r).
+            select_each_cursor(cursors, &mut events, |c| {
+                state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-                if let Some((line_start, line_content)) = iter.next_line() {
-                    // In both LF and CRLF mode, cursor lands at the first byte of line ending
-                    // For LF: cursor on \n. For CRLF: cursor on \r (before both \r\n)
-                    let line_end = line_start + content_len_without_line_ending(&line_content);
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        line_end,
-                        cursor.anchor,
-                        Some(anchor),
-                        cursor.sticky_column,
-                    );
-                }
-            }
+                    .line_iterator(c.position, estimated_line_length)
+                    .next_line()
+                    .map(|(ls, lc)| ls + content_len_without_line_ending(&lc))
+                    .unwrap_or(c.position)
+            });
         }
 
         Action::SelectWordLeft => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_word_start_left(&state.buffer, cursor.position);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            select_each_cursor(cursors, &mut events, |c| {
+                find_word_start_left(&state.buffer, c.position)
+            });
         }
 
         Action::SelectWordRight => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_word_start_right(&state.buffer, cursor.position);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            select_each_cursor(cursors, &mut events, |c| {
+                find_word_start_right(&state.buffer, c.position)
+            });
         }
 
         Action::SelectWordEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_word_end_right(&state.buffer, cursor.position);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            select_each_cursor(cursors, &mut events, |c| {
+                find_word_end_right(&state.buffer, c.position)
+            });
         }
 
         Action::ViSelectWordEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let new_pos = find_vi_word_end(&state.buffer, cursor.position);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    new_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            select_each_cursor(cursors, &mut events, |c| {
+                find_vi_word_end(&state.buffer, c.position)
+            });
         }
 
         Action::SelectDocumentStart => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    0,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            select_each_cursor(cursors, &mut events, |_| 0);
         }
 
         Action::SelectDocumentEnd => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let max_pos = max_cursor_position(&state.buffer);
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-                add_move_cursor_event(
-                    &mut events,
-                    cursor_id,
-                    cursor.position,
-                    max_pos,
-                    cursor.anchor,
-                    Some(anchor),
-                    cursor.sticky_column,
-                );
-            }
+            let max_pos = max_cursor_position(&state.buffer);
+            select_each_cursor(cursors, &mut events, |_| max_pos);
         }
 
         Action::SelectPageUp => {
