@@ -701,30 +701,8 @@ impl Editor {
             workspace.split_states.len()
         );
 
-        // 1. Apply config overrides
-        if let Some(line_numbers) = workspace.config_overrides.line_numbers {
-            self.config_mut().editor.line_numbers = line_numbers;
-        }
-        if let Some(relative_line_numbers) = workspace.config_overrides.relative_line_numbers {
-            self.config_mut().editor.relative_line_numbers = relative_line_numbers;
-        }
-        if let Some(line_wrap) = workspace.config_overrides.line_wrap {
-            self.config_mut().editor.line_wrap = line_wrap;
-        }
-        if let Some(syntax_highlighting) = workspace.config_overrides.syntax_highlighting {
-            self.config_mut().editor.syntax_highlighting = syntax_highlighting;
-        }
-        if let Some(enable_inlay_hints) = workspace.config_overrides.enable_inlay_hints {
-            self.config_mut().editor.enable_inlay_hints = enable_inlay_hints;
-        }
-        if let Some(mouse_enabled) = workspace.config_overrides.mouse_enabled {
-            self.mouse_enabled = mouse_enabled;
-        }
-        if let Some(menu_bar_hidden) = workspace.config_overrides.menu_bar_hidden {
-            self.menu_bar_visible = !menu_bar_hidden;
-        }
+        self.restore_config_overrides(&workspace.config_overrides);
 
-        // 2. Restore plugin global state
         if !workspace.plugin_global_state.is_empty() {
             tracing::debug!(
                 "Restoring plugin global state for {} plugins",
@@ -733,340 +711,18 @@ impl Editor {
             self.plugin_global_state = workspace.plugin_global_state.clone();
         }
 
-        // 3. Restore search options
-        self.search_case_sensitive = workspace.search_options.case_sensitive;
-        self.search_whole_word = workspace.search_options.whole_word;
-        self.search_use_regex = workspace.search_options.use_regex;
-        self.search_confirm_each = workspace.search_options.confirm_each;
+        self.restore_search_options(&workspace.search_options);
+        self.restore_prompt_histories(&workspace.histories);
+        self.restore_file_explorer_settings(&workspace.file_explorer);
 
-        // 3. Restore histories (merge with any existing)
-        tracing::debug!(
-            "Restoring histories: {} search, {} replace, {} goto_line",
-            workspace.histories.search.len(),
-            workspace.histories.replace.len(),
-            workspace.histories.goto_line.len()
-        );
-        for item in &workspace.histories.search {
-            self.get_or_create_prompt_history("search")
-                .push(item.clone());
-        }
-        for item in &workspace.histories.replace {
-            self.get_or_create_prompt_history("replace")
-                .push(item.clone());
-        }
-        for item in &workspace.histories.goto_line {
-            self.get_or_create_prompt_history("goto_line")
-                .push(item.clone());
-        }
+        let mut path_to_buffer = self.open_workspace_files(&workspace.split_states);
+        self.restore_external_files(&workspace.external_files, &mut path_to_buffer);
+        self.apply_read_only_flags(&workspace.read_only_files, &path_to_buffer);
+        self.restore_hot_exit_changes(&path_to_buffer);
 
-        // 4. Restore file explorer state
-        self.file_explorer_visible = workspace.file_explorer.visible;
-        self.file_explorer_width = workspace.file_explorer.width;
-        self.file_explorer_side = workspace.file_explorer.side;
+        let unnamed_buffer_map = self.restore_unnamed_buffers(&workspace.unnamed_buffers);
+        let terminal_buffer_map = self.restore_terminals_from_workspace(&workspace.terminals);
 
-        // Store pending show_hidden and show_gitignored settings (fixes #569)
-        // These will be applied when the file explorer is initialized (async)
-        if workspace.file_explorer.show_hidden {
-            self.pending_file_explorer_show_hidden = Some(true);
-        }
-        if workspace.file_explorer.show_gitignored {
-            self.pending_file_explorer_show_gitignored = Some(true);
-        }
-
-        // Initialize file explorer if it was visible in the workspace
-        // Note: We keep key_context as Normal so the editor has focus, not the explorer
-        if self.file_explorer_visible && self.file_explorer.is_none() {
-            self.init_file_explorer();
-        }
-
-        // 5. Open files from the workspace and build buffer mappings
-        // Collect all unique file paths from split_states (which tracks all open files per split)
-        let file_paths = collect_file_paths_from_states(&workspace.split_states);
-        tracing::debug!(
-            "Workspace has {} files to restore: {:?}",
-            file_paths.len(),
-            file_paths
-        );
-        let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
-
-        for rel_path in file_paths {
-            let abs_path = self.working_dir.join(&rel_path);
-            tracing::trace!(
-                "Checking file: {:?} (exists: {})",
-                abs_path,
-                abs_path.exists()
-            );
-            if abs_path.exists() {
-                // Open the file (this will reuse existing buffer if already open)
-                match self.open_file_internal(&abs_path) {
-                    Ok(buffer_id) => {
-                        tracing::debug!("Opened file {:?} as buffer {:?}", rel_path, buffer_id);
-                        path_to_buffer.insert(rel_path, buffer_id);
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to open file {:?}: {}", abs_path, e);
-                    }
-                }
-            } else {
-                tracing::debug!("Skipping non-existent file: {:?}", abs_path);
-            }
-        }
-
-        tracing::debug!("Opened {} files from workspace", path_to_buffer.len());
-
-        // 5b. Restore external files (files outside the working directory)
-        // These are stored as absolute paths
-        if !workspace.external_files.is_empty() {
-            tracing::debug!(
-                "Restoring {} external files: {:?}",
-                workspace.external_files.len(),
-                workspace.external_files
-            );
-            for abs_path in &workspace.external_files {
-                if abs_path.exists() {
-                    match self.open_file_internal(abs_path) {
-                        Ok(buffer_id) => {
-                            // Add to path_to_buffer so open_tabs with absolute paths resolve
-                            path_to_buffer.insert(abs_path.clone(), buffer_id);
-                            tracing::debug!(
-                                "Restored external file {:?} as buffer {:?}",
-                                abs_path,
-                                buffer_id
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to restore external file {:?}: {}", abs_path, e);
-                        }
-                    }
-                } else {
-                    tracing::debug!("Skipping non-existent external file: {:?}", abs_path);
-                }
-            }
-        }
-
-        // Re-apply read-only flag for files that were locked in the saved
-        // session. Paths in read_only_files are relative (under working_dir)
-        // or absolute — try both lookups.
-        for ro_path in &workspace.read_only_files {
-            let buffer_id = path_to_buffer
-                .get(ro_path)
-                .copied()
-                .or_else(|| path_to_buffer.get(&self.working_dir.join(ro_path)).copied());
-            if let Some(id) = buffer_id {
-                self.mark_buffer_read_only(id, true);
-            }
-        }
-
-        // 5b2. Apply hot exit recovery: restore unsaved changes to file-backed buffers
-        if self.config.editor.hot_exit {
-            let entries = self.recovery_service.list_recoverable().unwrap_or_default();
-            if !entries.is_empty() {
-                for &buffer_id in path_to_buffer.values() {
-                    let file_path = self
-                        .buffers
-                        .get(&buffer_id)
-                        .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()));
-                    let file_path = match file_path {
-                        Some(p) => p,
-                        None => continue,
-                    };
-
-                    // Look for a recovery entry matching this file
-                    let recovery_id = self.recovery_service.get_buffer_id(Some(&file_path));
-                    let entry = entries.iter().find(|e| e.id == recovery_id);
-                    if let Some(entry) = entry {
-                        match self.recovery_service.load_recovery(entry) {
-                            Ok(crate::services::recovery::RecoveryResult::Recovered {
-                                content,
-                                ..
-                            }) => {
-                                // Small file: replace buffer content with full recovered version
-                                let mut mutated = false;
-                                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                                    let current_len = state.buffer.total_bytes();
-                                    let text = String::from_utf8_lossy(&content).into_owned();
-                                    let current =
-                                        state.buffer.get_text_range_mut(0, current_len).ok();
-                                    let current_text = current
-                                        .as_ref()
-                                        .map(|b| String::from_utf8_lossy(b).into_owned());
-                                    if current_text.as_deref() != Some(&text) {
-                                        state.buffer.delete(0..current_len);
-                                        state.buffer.insert(0, &text);
-                                        state.buffer.set_modified(true);
-                                        state.buffer.set_recovery_pending(false);
-                                        mutated = true;
-                                        tracing::info!(
-                                            "Restored unsaved changes for {:?} from hot exit recovery",
-                                            file_path
-                                        );
-                                    }
-                                }
-                                // Invalidate saved position so undo can't
-                                // incorrectly clear the modified flag
-                                if let Some(log) = self.event_logs.get_mut(&buffer_id) {
-                                    log.clear_saved_position();
-                                }
-                                if mutated {
-                                    self.sync_lsp_after_recovery_replay(buffer_id);
-                                }
-                            }
-                            Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
-                                chunks,
-                                ..
-                            }) => {
-                                // Large file: apply diff chunks on top of on-disk content
-                                let mut mutated = false;
-                                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                                    for chunk in chunks.into_iter().rev() {
-                                        let text =
-                                            String::from_utf8_lossy(&chunk.content).into_owned();
-                                        if chunk.original_len > 0 {
-                                            state.buffer.delete(
-                                                chunk.offset..chunk.offset + chunk.original_len,
-                                            );
-                                        }
-                                        state.buffer.insert(chunk.offset, &text);
-                                    }
-                                    state.buffer.set_modified(true);
-                                    state.buffer.set_recovery_pending(false);
-                                    mutated = true;
-                                    tracing::info!(
-                                        "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
-                                        file_path
-                                    );
-                                }
-                                // Invalidate saved position so undo can't
-                                // incorrectly clear the modified flag
-                                if let Some(log) = self.event_logs.get_mut(&buffer_id) {
-                                    log.clear_saved_position();
-                                }
-                                if mutated {
-                                    self.sync_lsp_after_recovery_replay(buffer_id);
-                                }
-                            }
-                            Ok(
-                                crate::services::recovery::RecoveryResult::OriginalFileModified {
-                                    original_path,
-                                    ..
-                                },
-                            ) => {
-                                let name = original_path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy();
-                                tracing::warn!(
-                                    "{} changed on disk; unsaved changes not restored",
-                                    name
-                                );
-                                self.set_status_message(format!(
-                                    "{} changed on disk; unsaved changes not restored",
-                                    name
-                                ));
-                            }
-                            Ok(_) => {} // Corrupted, NotFound - skip
-                            Err(e) => {
-                                tracing::debug!(
-                                    "Failed to load hot exit recovery for {:?}: {}",
-                                    file_path,
-                                    e
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5c. Restore unnamed buffers from recovery files
-        let mut unnamed_buffer_map: HashMap<String, BufferId> = HashMap::new();
-        if self.config.editor.hot_exit && !workspace.unnamed_buffers.is_empty() {
-            tracing::debug!(
-                "Restoring {} unnamed buffers from recovery",
-                workspace.unnamed_buffers.len()
-            );
-            for unnamed_ref in &workspace.unnamed_buffers {
-                // Try to load content from recovery files
-                let entries = match self.recovery_service.list_recoverable() {
-                    Ok(e) => e,
-                    Err(e) => {
-                        tracing::warn!("Failed to list recovery entries: {}", e);
-                        continue;
-                    }
-                };
-
-                let entry = entries.iter().find(|e| e.id == unnamed_ref.recovery_id);
-                if let Some(entry) = entry {
-                    match self.recovery_service.load_recovery(entry) {
-                        Ok(crate::services::recovery::RecoveryResult::Recovered {
-                            content,
-                            ..
-                        }) => {
-                            let text = String::from_utf8_lossy(&content).into_owned();
-                            let buffer_id = self.new_buffer();
-                            {
-                                let state = self.active_state_mut();
-                                state.buffer.insert(0, &text);
-                                // Mark as modified so it shows the dot indicator
-                                state.buffer.set_modified(true);
-                                state.buffer.set_recovery_pending(false);
-                            }
-                            // Invalidate saved position so undo can't
-                            // incorrectly clear the modified flag
-                            self.active_event_log_mut().clear_saved_position();
-
-                            // Store recovery ID in metadata for future saves
-                            if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
-                                meta.recovery_id = Some(unnamed_ref.recovery_id.clone());
-                                meta.display_name = unnamed_ref.display_name.clone();
-                            }
-
-                            unnamed_buffer_map.insert(unnamed_ref.recovery_id.clone(), buffer_id);
-                            tracing::info!(
-                                "Restored unnamed buffer '{}' (recovery_id={})",
-                                unnamed_ref.display_name,
-                                unnamed_ref.recovery_id
-                            );
-                        }
-                        Ok(other) => {
-                            tracing::warn!(
-                                "Unexpected recovery result for unnamed buffer {}: {:?}",
-                                unnamed_ref.recovery_id,
-                                std::mem::discriminant(&other)
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to load recovery for unnamed buffer {}: {}",
-                                unnamed_ref.recovery_id,
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    tracing::debug!(
-                        "Recovery file not found for unnamed buffer {}",
-                        unnamed_ref.recovery_id
-                    );
-                }
-            }
-        }
-
-        // Restore terminals and build index -> buffer map
-        let mut terminal_buffer_map: HashMap<usize, BufferId> = HashMap::new();
-        if !workspace.terminals.is_empty() {
-            if let Some(ref bridge) = self.async_bridge {
-                self.terminal_manager.set_async_bridge(bridge.clone());
-            }
-            for terminal in &workspace.terminals {
-                if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
-                    terminal_buffer_map.insert(terminal.terminal_index, buffer_id);
-                }
-            }
-        }
-
-        // 6. Rebuild split layout from the saved tree
-        // Map old split IDs to new ones as we create splits
         let mut split_id_map: HashMap<usize, SplitId> = HashMap::new();
         self.restore_split_node(
             &workspace.split_layout,
@@ -1075,36 +731,415 @@ impl Editor {
             &unnamed_buffer_map,
             &workspace.split_states,
             &mut split_id_map,
-            true, // is_first_leaf - the first leaf reuses the existing split
+            true,
         );
 
-        // Set the active split based on the saved active_split_id
-        // NOTE: active_buffer is now derived from split_manager, which was already
-        // correctly set up by restore_split_view_state() via set_split_buffer()
         if let Some(&new_active_split) = split_id_map.get(&workspace.active_split_id) {
             self.split_manager
                 .set_active_split(LeafId(new_active_split));
         }
 
-        // 7. Restore bookmarks
-        for (key, bookmark) in &workspace.bookmarks {
-            if let Some(&buffer_id) = path_to_buffer.get(&bookmark.file_path) {
-                // Verify position is valid
-                if let Some(buffer) = self.buffers.get(&buffer_id) {
-                    let pos = bookmark.position.min(buffer.buffer.len());
-                    self.bookmarks.set(
-                        *key,
-                        Bookmark {
-                            buffer_id,
-                            position: pos,
-                        },
+        self.restore_bookmarks_from_workspace(&workspace.bookmarks, &path_to_buffer);
+        self.clean_orphaned_buffers();
+        self.log_restore_summary();
+
+        #[cfg(feature = "plugins")]
+        {
+            let buffer_id = self.active_buffer();
+            self.update_plugin_state_snapshot();
+            tracing::debug!(
+                "Firing buffer_activated for active buffer {:?} after workspace restore",
+                buffer_id
+            );
+            self.plugin_manager.run_hook(
+                "buffer_activated",
+                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+            );
+        }
+
+        Ok(())
+    }
+
+    fn restore_config_overrides(&mut self, overrides: &WorkspaceConfigOverrides) {
+        if let Some(line_numbers) = overrides.line_numbers {
+            self.config_mut().editor.line_numbers = line_numbers;
+        }
+        if let Some(relative_line_numbers) = overrides.relative_line_numbers {
+            self.config_mut().editor.relative_line_numbers = relative_line_numbers;
+        }
+        if let Some(line_wrap) = overrides.line_wrap {
+            self.config_mut().editor.line_wrap = line_wrap;
+        }
+        if let Some(syntax_highlighting) = overrides.syntax_highlighting {
+            self.config_mut().editor.syntax_highlighting = syntax_highlighting;
+        }
+        if let Some(enable_inlay_hints) = overrides.enable_inlay_hints {
+            self.config_mut().editor.enable_inlay_hints = enable_inlay_hints;
+        }
+        if let Some(mouse_enabled) = overrides.mouse_enabled {
+            self.mouse_enabled = mouse_enabled;
+        }
+        if let Some(menu_bar_hidden) = overrides.menu_bar_hidden {
+            self.menu_bar_visible = !menu_bar_hidden;
+        }
+    }
+
+    fn restore_search_options(&mut self, opts: &SearchOptions) {
+        self.search_case_sensitive = opts.case_sensitive;
+        self.search_whole_word = opts.whole_word;
+        self.search_use_regex = opts.use_regex;
+        self.search_confirm_each = opts.confirm_each;
+    }
+
+    fn restore_prompt_histories(&mut self, histories: &WorkspaceHistories) {
+        tracing::debug!(
+            "Restoring histories: {} search, {} replace, {} goto_line",
+            histories.search.len(),
+            histories.replace.len(),
+            histories.goto_line.len()
+        );
+        for item in &histories.search {
+            self.get_or_create_prompt_history("search")
+                .push(item.clone());
+        }
+        for item in &histories.replace {
+            self.get_or_create_prompt_history("replace")
+                .push(item.clone());
+        }
+        for item in &histories.goto_line {
+            self.get_or_create_prompt_history("goto_line")
+                .push(item.clone());
+        }
+    }
+
+    fn restore_file_explorer_settings(&mut self, fe: &FileExplorerState) {
+        self.file_explorer_visible = fe.visible;
+        self.file_explorer_width = fe.width;
+        self.file_explorer_side = fe.side;
+
+        // Store pending settings (fixes #569); applied when explorer initialises (async).
+        if fe.show_hidden {
+            self.pending_file_explorer_show_hidden = Some(true);
+        }
+        if fe.show_gitignored {
+            self.pending_file_explorer_show_gitignored = Some(true);
+        }
+
+        // Keep key_context as Normal so the editor (not the explorer) has focus.
+        if self.file_explorer_visible && self.file_explorer.is_none() {
+            self.init_file_explorer();
+        }
+    }
+
+    /// Open every file referenced by the saved split states, returning a map
+    /// from relative (or absolute) path to the new `BufferId`.
+    fn open_workspace_files(
+        &mut self,
+        split_states: &HashMap<usize, SerializedSplitViewState>,
+    ) -> HashMap<PathBuf, BufferId> {
+        let file_paths = collect_file_paths_from_states(split_states);
+        tracing::debug!(
+            "Workspace has {} files to restore: {:?}",
+            file_paths.len(),
+            file_paths
+        );
+        let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
+        for rel_path in file_paths {
+            let abs_path = self.working_dir.join(&rel_path);
+            tracing::trace!(
+                "Checking file: {:?} (exists: {})",
+                abs_path,
+                abs_path.exists()
+            );
+            if abs_path.exists() {
+                match self.open_file_internal(&abs_path) {
+                    Ok(buffer_id) => {
+                        tracing::debug!("Opened file {:?} as buffer {:?}", rel_path, buffer_id);
+                        path_to_buffer.insert(rel_path, buffer_id);
+                    }
+                    Err(e) => tracing::warn!("Failed to open file {:?}: {}", abs_path, e),
+                }
+            } else {
+                tracing::debug!("Skipping non-existent file: {:?}", abs_path);
+            }
+        }
+        tracing::debug!("Opened {} files from workspace", path_to_buffer.len());
+        path_to_buffer
+    }
+
+    /// Restore files that live outside the working directory (stored as absolute paths).
+    fn restore_external_files(
+        &mut self,
+        external_files: &[PathBuf],
+        path_to_buffer: &mut HashMap<PathBuf, BufferId>,
+    ) {
+        if external_files.is_empty() {
+            return;
+        }
+        tracing::debug!(
+            "Restoring {} external files: {:?}",
+            external_files.len(),
+            external_files
+        );
+        for abs_path in external_files {
+            if !abs_path.exists() {
+                tracing::debug!("Skipping non-existent external file: {:?}", abs_path);
+                continue;
+            }
+            match self.open_file_internal(abs_path) {
+                Ok(buffer_id) => {
+                    path_to_buffer.insert(abs_path.clone(), buffer_id);
+                    tracing::debug!(
+                        "Restored external file {:?} as buffer {:?}",
+                        abs_path,
+                        buffer_id
+                    );
+                }
+                Err(e) => tracing::warn!("Failed to restore external file {:?}: {}", abs_path, e),
+            }
+        }
+    }
+
+    /// Re-apply read-only flags for files that were locked in the saved session.
+    /// Paths may be relative (under `working_dir`) or absolute.
+    fn apply_read_only_flags(
+        &mut self,
+        read_only_files: &[PathBuf],
+        path_to_buffer: &HashMap<PathBuf, BufferId>,
+    ) {
+        for ro_path in read_only_files {
+            let buffer_id = path_to_buffer
+                .get(ro_path)
+                .copied()
+                .or_else(|| path_to_buffer.get(&self.working_dir.join(ro_path)).copied());
+            if let Some(id) = buffer_id {
+                self.mark_buffer_read_only(id, true);
+            }
+        }
+    }
+
+    /// Replay hot-exit recovery data onto file-backed buffers that were modified
+    /// when the editor last exited.
+    fn restore_hot_exit_changes(&mut self, path_to_buffer: &HashMap<PathBuf, BufferId>) {
+        if !self.config.editor.hot_exit {
+            return;
+        }
+        let entries = self.recovery_service.list_recoverable().unwrap_or_default();
+        if entries.is_empty() {
+            return;
+        }
+        let buffer_ids: Vec<BufferId> = path_to_buffer.values().copied().collect();
+        for buffer_id in buffer_ids {
+            let file_path = self
+                .buffers
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()));
+            let Some(file_path) = file_path else { continue };
+
+            let recovery_id = self.recovery_service.get_buffer_id(Some(&file_path));
+            let Some(entry) = entries.iter().find(|e| e.id == recovery_id) else {
+                continue;
+            };
+            match self.recovery_service.load_recovery(entry) {
+                Ok(crate::services::recovery::RecoveryResult::Recovered { content, .. }) => {
+                    let mut mutated = false;
+                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        let current_len = state.buffer.total_bytes();
+                        let text = String::from_utf8_lossy(&content).into_owned();
+                        let current = state.buffer.get_text_range_mut(0, current_len).ok();
+                        let current_text = current
+                            .as_ref()
+                            .map(|b| String::from_utf8_lossy(b).into_owned());
+                        if current_text.as_deref() != Some(&text) {
+                            state.buffer.delete(0..current_len);
+                            state.buffer.insert(0, &text);
+                            state.buffer.set_modified(true);
+                            state.buffer.set_recovery_pending(false);
+                            mutated = true;
+                            tracing::info!(
+                                "Restored unsaved changes for {:?} from hot exit recovery",
+                                file_path
+                            );
+                        }
+                    }
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.clear_saved_position();
+                    }
+                    if mutated {
+                        self.sync_lsp_after_recovery_replay(buffer_id);
+                    }
+                }
+                Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
+                    chunks, ..
+                }) => {
+                    let mut mutated = false;
+                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        for chunk in chunks.into_iter().rev() {
+                            let text = String::from_utf8_lossy(&chunk.content).into_owned();
+                            if chunk.original_len > 0 {
+                                state
+                                    .buffer
+                                    .delete(chunk.offset..chunk.offset + chunk.original_len);
+                            }
+                            state.buffer.insert(chunk.offset, &text);
+                        }
+                        state.buffer.set_modified(true);
+                        state.buffer.set_recovery_pending(false);
+                        mutated = true;
+                        tracing::info!(
+                            "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
+                            file_path
+                        );
+                    }
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.clear_saved_position();
+                    }
+                    if mutated {
+                        self.sync_lsp_after_recovery_replay(buffer_id);
+                    }
+                }
+                Ok(crate::services::recovery::RecoveryResult::OriginalFileModified {
+                    original_path,
+                    ..
+                }) => {
+                    let name = original_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    tracing::warn!("{} changed on disk; unsaved changes not restored", name);
+                    self.set_status_message(format!(
+                        "{} changed on disk; unsaved changes not restored",
+                        name
+                    ));
+                }
+                Ok(_) => {} // Corrupted, NotFound — skip
+                Err(e) => {
+                    tracing::debug!(
+                        "Failed to load hot exit recovery for {:?}: {}",
+                        file_path,
+                        e
                     );
                 }
             }
         }
+    }
 
-        // Clean up orphaned buffers: the initial empty buffer created at startup
-        // may no longer be referenced by any split after workspace restore.
+    /// Restore unnamed (unsaved) buffers from their hot-exit recovery files.
+    /// Returns a map from `recovery_id` to the newly created `BufferId`.
+    fn restore_unnamed_buffers(
+        &mut self,
+        unnamed_buffers: &[UnnamedBufferRef],
+    ) -> HashMap<String, BufferId> {
+        let mut unnamed_buffer_map: HashMap<String, BufferId> = HashMap::new();
+        if !self.config.editor.hot_exit || unnamed_buffers.is_empty() {
+            return unnamed_buffer_map;
+        }
+        tracing::debug!(
+            "Restoring {} unnamed buffers from recovery",
+            unnamed_buffers.len()
+        );
+        for unnamed_ref in unnamed_buffers {
+            let entries = match self.recovery_service.list_recoverable() {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!("Failed to list recovery entries: {}", e);
+                    continue;
+                }
+            };
+            let Some(entry) = entries.iter().find(|e| e.id == unnamed_ref.recovery_id) else {
+                tracing::debug!(
+                    "Recovery file not found for unnamed buffer {}",
+                    unnamed_ref.recovery_id
+                );
+                continue;
+            };
+            match self.recovery_service.load_recovery(entry) {
+                Ok(crate::services::recovery::RecoveryResult::Recovered { content, .. }) => {
+                    let text = String::from_utf8_lossy(&content).into_owned();
+                    let buffer_id = self.new_buffer();
+                    {
+                        let state = self.active_state_mut();
+                        state.buffer.insert(0, &text);
+                        state.buffer.set_modified(true);
+                        state.buffer.set_recovery_pending(false);
+                    }
+                    self.active_event_log_mut().clear_saved_position();
+                    if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                        meta.recovery_id = Some(unnamed_ref.recovery_id.clone());
+                        meta.display_name = unnamed_ref.display_name.clone();
+                    }
+                    unnamed_buffer_map.insert(unnamed_ref.recovery_id.clone(), buffer_id);
+                    tracing::info!(
+                        "Restored unnamed buffer '{}' (recovery_id={})",
+                        unnamed_ref.display_name,
+                        unnamed_ref.recovery_id
+                    );
+                }
+                Ok(other) => {
+                    tracing::warn!(
+                        "Unexpected recovery result for unnamed buffer {}: {:?}",
+                        unnamed_ref.recovery_id,
+                        std::mem::discriminant(&other)
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load recovery for unnamed buffer {}: {}",
+                        unnamed_ref.recovery_id,
+                        e
+                    );
+                }
+            }
+        }
+        unnamed_buffer_map
+    }
+
+    /// Restore all serialized terminals and return a map from terminal index to `BufferId`.
+    fn restore_terminals_from_workspace(
+        &mut self,
+        terminals: &[SerializedTerminalWorkspace],
+    ) -> HashMap<usize, BufferId> {
+        let mut terminal_buffer_map: HashMap<usize, BufferId> = HashMap::new();
+        if terminals.is_empty() {
+            return terminal_buffer_map;
+        }
+        if let Some(ref bridge) = self.async_bridge {
+            self.terminal_manager.set_async_bridge(bridge.clone());
+        }
+        for terminal in terminals {
+            if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
+                terminal_buffer_map.insert(terminal.terminal_index, buffer_id);
+            }
+        }
+        terminal_buffer_map
+    }
+
+    /// Re-create bookmarks from the saved workspace, resolving file paths to buffer IDs.
+    fn restore_bookmarks_from_workspace(
+        &mut self,
+        bookmarks: &HashMap<char, SerializedBookmark>,
+        path_to_buffer: &HashMap<PathBuf, BufferId>,
+    ) {
+        for (key, bookmark) in bookmarks {
+            let Some(&buffer_id) = path_to_buffer.get(&bookmark.file_path) else {
+                continue;
+            };
+            if let Some(buffer) = self.buffers.get(&buffer_id) {
+                let pos = bookmark.position.min(buffer.buffer.len());
+                self.bookmarks.set(
+                    *key,
+                    Bookmark {
+                        buffer_id,
+                        position: pos,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Drop the initial empty unnamed buffer if it is no longer referenced by any
+    /// split after the workspace has been applied.
+    fn clean_orphaned_buffers(&mut self) {
         let referenced: HashSet<BufferId> = self
             .split_view_states
             .values()
@@ -1127,8 +1162,16 @@ impl Editor {
             self.event_logs.remove(&id);
             self.buffer_metadata.remove(&id);
         }
+    }
 
-        // Count restored buffers (excluding hidden/virtual)
+    /// Set a status-bar message summarising how many buffers were restored and from
+    /// which session, then emit a debug log with split/buffer counts.
+    fn log_restore_summary(&mut self) {
+        tracing::debug!(
+            "Workspace restore complete: {} splits, {} buffers",
+            self.split_view_states.len(),
+            self.buffers.len()
+        );
         let restored_count = self
             .buffers
             .keys()
@@ -1138,47 +1181,21 @@ impl Editor {
                     .is_some_and(|m| !m.hidden_from_tabs && !m.is_virtual())
             })
             .count();
-        if restored_count > 0 {
-            let session_label = self
-                .session_name
-                .as_ref()
-                .map(|n| format!("session '{}'", n));
-            let msg = if let Some(label) = session_label {
-                format!("Restored {} ({} buffer(s))", label, restored_count)
-            } else {
-                format!(
-                    "Restored {} buffer(s) from previous session",
-                    restored_count
-                )
-            };
-            self.set_status_message(msg);
+        if restored_count == 0 {
+            return;
         }
-
-        tracing::debug!(
-            "Workspace restore complete: {} splits, {} buffers",
-            self.split_view_states.len(),
-            self.buffers.len()
-        );
-
-        // Fire buffer_activated for the active buffer so plugins can
-        // re-enable compose mode (the plugin's composeBuffers set is empty
-        // after restart). Only fires for the active buffer — other buffers
-        // will get buffer_activated when the user switches to them.
-        #[cfg(feature = "plugins")]
+        let msg = match self
+            .session_name
+            .as_ref()
+            .map(|n| format!("session '{}'", n))
         {
-            let buffer_id = self.active_buffer();
-            self.update_plugin_state_snapshot();
-            tracing::debug!(
-                "Firing buffer_activated for active buffer {:?} after workspace restore",
-                buffer_id
-            );
-            self.plugin_manager.run_hook(
-                "buffer_activated",
-                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-            );
-        }
-
-        Ok(())
+            Some(label) => format!("Restored {} ({} buffer(s))", label, restored_count),
+            None => format!(
+                "Restored {} buffer(s) from previous session",
+                restored_count
+            ),
+        };
+        self.set_status_message(msg);
     }
 
     /// Restore a terminal from serialized workspace metadata.
