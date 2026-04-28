@@ -221,3 +221,48 @@ fn test_live_diff_updates_on_buffer_edit() {
         })
         .unwrap();
 }
+
+/// Regression: a buffer with multi-byte UTF-8 (emoji that needs a JS
+/// surrogate pair) used to crash the plugin with
+/// "TypeError: Conversion from string failed: invalid utf-8 sequence
+/// of 1 bytes from index 0", because the line-byte-start calculator
+/// indexed the buffer text by UTF-16 code unit and handed half-
+/// surrogates to `editor.utf8ByteLength`.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_handles_surrogate_pair_content() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_live_diff_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // 🎉 (U+1F389) is a 4-byte UTF-8 char that needs a surrogate pair
+    // in JS strings. Modify the line so the diff has actual content.
+    repo.modify_file(
+        "src/utils.rs",
+        "pub fn format_output(msg: &str) -> String {\n    \
+         format!(\"\u{1F389} {}\", msg)\n}\n\n\
+         pub fn validate_config(config: &Config) -> bool {\n    \
+         config.port > 0 && !config.host.is_empty()\n}\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    // The plugin should run cleanly and produce a `~` glyph for the
+    // modified line. If the surrogate-pair bug regresses, the plugin
+    // throws and never paints the gutter.
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '~'))
+        .unwrap();
+}

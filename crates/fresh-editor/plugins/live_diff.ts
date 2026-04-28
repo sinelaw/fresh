@@ -444,33 +444,41 @@ function clearDecorations(bufferId: number): void {
 }
 
 /**
- * Compute byte offsets of every line start in the buffer (and one
- * extra entry past the last line) so renderHunks can map line indices
+ * Compute byte offsets of every line start in the buffer (one entry per
+ * line, plus one past-the-end entry) so renderHunks can map line indices
  * to byte ranges synchronously, without awaiting `getLineStartPosition`
  * per line.
  *
- * `getLineStartPosition` is async and yields back to the editor
- * event loop on every call. With one await per overlay we add, the
- * editor renders frames mid-render and the user sees green stripes
- * fill in one line at a time. Computing locally from the buffer text
- * keeps the whole render in a single JS turn → instant repaint.
+ * `getLineStartPosition` is async and yields back to the editor event
+ * loop on every call. With one await per overlay we add, the editor
+ * renders frames mid-render and the user sees green stripes fill in one
+ * line at a time. Computing locally from the buffer text keeps the
+ * whole render in a single JS turn → instant repaint.
+ *
+ * Uses `editor.utf8ByteLength` once per *whole* line (the
+ * `fresh.d.ts`-documented helper for converting JS UTF-16 string
+ * lengths to UTF-8 byte counts). Calling it per character would be
+ * incorrect because `text[i]` splits a surrogate pair into invalid
+ * half-code-units; passing whole lines is safe — `splitLines` always
+ * returns valid Unicode strings.
  */
-function computeLineByteStarts(text: string): number[] {
-  const starts = [0];
+function computeLineByteStarts(lines: string[]): number[] {
+  const starts: number[] = new Array(lines.length + 1);
   let pos = 0;
-  for (let i = 0; i < text.length; i++) {
-    pos += editor.utf8ByteLength(text[i]);
-    if (text[i] === "\n") starts.push(pos);
+  starts[0] = 0;
+  for (let i = 0; i < lines.length; i++) {
+    pos += editor.utf8ByteLength(lines[i]) + 1; // +1 for the trailing newline
+    starts[i + 1] = pos;
   }
   return starts;
 }
 
-function renderHunks(state: BufferDiffState, newText: string): void {
+function renderHunks(state: BufferDiffState, newLines: string[]): void {
   const bid = state.bufferId;
   clearDecorations(bid);
 
-  const lineStarts = computeLineByteStarts(newText);
-  const totalBytes = lineStarts[lineStarts.length - 1] || newText.length;
+  const lineStarts = computeLineByteStarts(newLines);
+  const totalBytes = lineStarts[lineStarts.length - 1] || 0;
   // For line N, lineStarts[N] = byte of first char on line N. lineEnd
   // before the trailing newline = lineStarts[N+1] - 1 (when a newline
   // follows) or totalBytes when N is the last line. Empty/last-line
@@ -648,7 +656,7 @@ async function recompute(bufferId: number): Promise<void> {
     state.hunks = hunks;
     state.lastHunksKey = hunksKey;
 
-    renderHunks(state, newText);
+    renderHunks(state, newLines);
 
     editor.setViewState(bufferId, "live_diff_hunks", hunks);
   } finally {
