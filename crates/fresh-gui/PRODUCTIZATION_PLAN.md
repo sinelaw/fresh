@@ -410,3 +410,387 @@ than hijacking the global `HKCR\.rs` mapping — users hate editors that
 - [ ] Quit Fresh, repeat the same actions → Fresh launches fresh and opens
       the file.
 
+---
+
+## 5. Phase 5 — Observability
+
+Goal: when a production user hits a crash, we know within minutes — with a
+backtrace, OS, GPU adapter, and a breadcrumb trail of recent events — and
+we can ship a fix before they file an issue.
+
+### 5.1 `tracing` to a rotating file sink
+
+In TUI mode, `tracing` output goes to stderr. In GUI mode there is no
+stderr — Explorer/Finder swallows it. Wire `tracing-appender` to a daily
+rotating file:
+
+- macOS: `~/Library/Logs/Fresh/fresh.log` (Console.app picks this up
+  automatically).
+- Windows: `%LOCALAPPDATA%\Fresh\logs\fresh.log`.
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/fresh/fresh.log`.
+
+Initialize the sink in `main.rs` **before** `tokio::runtime::Runtime::new()`
+so wgpu adapter selection logs are captured. Cap retention at 7 days /
+50 MB so the log directory doesn't grow unbounded.
+
+Add a "Help → Reveal Log File" menu item (already an open slot in `muda`)
+that calls `open` / `Finder.app` / `explorer.exe` on the log directory —
+makes "send me your log" a one-click ask in bug reports.
+
+### 5.2 `sentry` panic and error reporting
+
+Add `sentry` + `sentry-tracing` as **optional** deps gated on a `telemetry`
+feature flag (default-on for release builds, default-off for dev builds and
+for users who set `FRESH_TELEMETRY=0`).
+
+Initialization order matters:
+
+```rust
+fn main() {
+    let _sentry = std::env::var("FRESH_TELEMETRY").map(|v| v != "0").unwrap_or(true)
+        .then(|| sentry::init((SENTRY_DSN, sentry::ClientOptions {
+            release: sentry::release_name!(),
+            traces_sample_rate: 0.0,        // no perf tracing for now
+            send_default_pii: false,        // no usernames, no file paths
+            attach_stacktrace: true,
+            ..Default::default()
+        })));
+
+    // tracing → sentry breadcrumbs
+    tracing_subscriber::registry()
+        .with(file_layer)
+        .with(sentry_tracing::layer())
+        .init();
+
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(run_gui());
+}
+```
+
+The `_sentry` guard must outlive `main` so its async flush runs on Drop.
+
+### 5.3 Privacy
+
+Productizing telemetry is a trust contract. Document it explicitly:
+
+- **First-run dialog**: a one-time modal in the GUI ("Help us catch crashes
+  — send anonymous error reports? [Yes] [No]"). Persist the choice to
+  `config.json`. Default is opt-in but the user can revoke any time from
+  Settings.
+- **Scrub**: register a `sentry::ClientOptions::before_send` hook that
+  strips `$HOME` and `$USERNAME` from any captured paths and replaces them
+  with `~` / `<user>`. File contents must never be uploaded.
+- **Document**: extend `docs/privacy.md` with the exact list of fields
+  Sentry receives — release version, OS, GPU adapter name, panic message,
+  redacted stack frames, breadcrumb log lines.
+
+### 5.4 GPU diagnostics
+
+Add a "Help → System Info" menu item that opens a modal with:
+
+- Fresh version + git SHA.
+- OS + version.
+- `wgpu::AdapterInfo` (vendor, device, driver, backend).
+- Active scale factor + window size in physical/logical pixels.
+- A "Copy" button.
+
+This is a force-multiplier on bug reports: 90 % of GPU-related issues are
+"Intel UHD on Windows 10 with driver X" and the user has no way to know
+that without it.
+
+---
+
+## 6. Phase 6 — Auto-update
+
+Goal: a user running v(N) sees a non-blocking notification within hours of
+v(N+1) shipping, and one click installs it.
+
+### 6.1 Update channel design
+
+Two channels: `stable` and `beta`. Each is a small JSON manifest hosted on
+GitHub Pages (the existing `homepage/` deploy target works fine):
+
+```json
+{
+  "version": "0.4.0",
+  "pub_date": "2026-05-12T15:00:00Z",
+  "platforms": {
+    "darwin-universal": {
+      "url": "https://github.com/sinelaw/fresh/releases/download/v0.4.0/Fresh-0.4.0-universal.dmg",
+      "signature": "<minisign signature over the file>"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/sinelaw/fresh/releases/download/v0.4.0/Fresh-0.4.0-x64.msi",
+      "signature": "<minisign signature over the file>"
+    }
+  }
+}
+```
+
+The signature is verified against a public key **embedded in the binary at
+compile time**. This is the single most important property of an
+auto-updater: even if GitHub's CDN is compromised, an attacker cannot push
+a malicious update because they don't have the minisign secret key.
+
+### 6.2 Implementation
+
+Use [`cargo-packager-updater`](https://crates.io/crates/cargo-packager-updater)
+or roll a thin wrapper using `minisign-verify` + `reqwest` + the OS-native
+installer launcher. The crate is the safer default — it already handles:
+
+- Manifest fetch + parse.
+- Background download with `If-Modified-Since`.
+- Signature verification.
+- Platform-appropriate install:
+  - macOS: replace the `.app` bundle in place via `mv` then relaunch.
+  - Windows: launch the new MSI with `msiexec /i Fresh.msi /qb /norestart`
+    (passive UI; small progress bar, no prompts), then exit so Windows
+    Installer can replace the running exe.
+
+Update check schedule: on startup (delayed 30s so it doesn't slow launch)
+and every 6 hours thereafter via a tokio `interval`. Network errors are
+silent — failed checks must never prompt the user or block the UI.
+
+### 6.3 In-app UX
+
+- A non-modal banner at the top of the window: "Fresh 0.4.0 is available. •
+  [Install on Quit] • [Install Now] • [Skip This Version]".
+- "Install on Quit" is the default — patches the bundle the next time the
+  user closes the app, no interruption to their flow.
+- Skipped versions are tracked in `config.json` so the banner doesn't
+  re-appear for the same release.
+- A "Help → Check for Updates…" menu item for manual checks.
+
+### 6.4 Acceptance test
+
+- [ ] Cut a fake v(N+1) release with a tweaked manifest.
+- [ ] An installed v(N) shows the banner within one update interval.
+- [ ] "Install on Quit" replaces the binary; relaunching shows the new
+      version in About.
+- [ ] Tampering with the downloaded artifact (flip one byte) causes the
+      updater to refuse the install and log a signature-mismatch error.
+- [ ] Disabling the network mid-download leaves the installed version
+      untouched on next launch.
+
+---
+
+## 7. Phase 7 — HiDPI text quality
+
+Goal: text is crisp on every supported monitor configuration, including
+the awkward cases (mixed-DPI multi-monitor setups, dragging the window
+between a 1080p panel and a 4K external display).
+
+### 7.1 Surface reconfiguration on scale change
+
+`crates/fresh-gui/src/lib.rs` currently handles `WindowEvent::Resized` but
+not `WindowEvent::ScaleFactorChanged`. Add a handler:
+
+```rust
+WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+    let physical = self.window.inner_size();
+    self.surface.configure(&self.device, &SurfaceConfiguration {
+        width:  physical.width,
+        height: physical.height,
+        ..self.surface_config.clone()
+    });
+    let cell_px = self.font.cell_size_for_scale(scale_factor);
+    let cols = (physical.width  as f32 / cell_px.width ) as u16;
+    let rows = (physical.height as f32 / cell_px.height) as u16;
+    self.app.resize(cols, rows);
+    self.window.request_redraw();
+}
+```
+
+Two invariants must hold:
+
+1. The wgpu surface is configured in **physical pixels** (`PhysicalSize`).
+2. The ratatui grid (cols × rows) is computed from physical pixels divided
+   by the **per-scale-factor** cell size, not the logical-pixel cell size.
+   Otherwise a 4K monitor renders 80 columns of 30 px text instead of
+   the expected ~250 columns.
+
+### 7.2 Font cell sizing
+
+`ratatui-wgpu` exposes a `Font` builder; we currently build it once at
+startup. For HiDPI we need to either:
+
+- Re-rasterize the font atlas at the new scale factor (cleaner, more
+  memory), or
+- Render at 2× and downsample with a known-good filter (simpler, slightly
+  worse on fractional scales like 1.5× / 1.75×).
+
+Pick the first option for v1.0 — it's the only one that produces crisp
+text on Windows's common 125% / 150% scales. Cache the atlas keyed by
+`(font_size_px.round() as u32)` so toggling between two monitors doesn't
+re-rasterize on every frame.
+
+### 7.3 Subpixel positioning
+
+ratatui's character grid is integer-aligned by definition, so subpixel
+glyph positioning is not in scope — but **subpixel anti-aliasing** is.
+Confirm that the embedded JetBrains Mono atlas is rendered with the
+glyphon / fontdue settings that produce LCD-subpixel output on Windows
+(where ClearType is the user expectation) and grayscale AA on macOS
+(where Apple removed subpixel AA in 10.14).
+
+### 7.4 Acceptance test
+
+- [ ] Single 1080p monitor at 100%: text is crisp, baseline-aligned.
+- [ ] Single 4K monitor at 200%: text is crisp; column count roughly
+      doubles vs. the same window size at 100%.
+- [ ] Dragging the window between a 100% monitor and a 200% monitor:
+      glyphs re-rasterize, no visible tearing or column reflow lag > 1
+      frame.
+- [ ] Windows at 125% scale: no fractional-pixel blur (the most common
+      complaint about non-DPI-aware apps).
+
+---
+
+## 8. Phase 8 — Native UX polish
+
+Goal: hit the threshold where the app feels native rather than ported.
+Most of the macOS-specific items live in `MACOS_TODO.md`; this section
+captures the cross-platform parity work.
+
+### 8.1 System theme detection
+
+Use [`dark-light`](https://crates.io/crates/dark-light) (cross-platform,
+~20 LOC of glue) to read the OS appearance and forward it to the editor's
+theme system. Subscribe to changes:
+
+- macOS: `NSDistributedNotificationCenter` for
+  `AppleInterfaceThemeChangedNotification`.
+- Windows: `WM_SETTINGCHANGE` with `SPI_SETCLIENTAREAANIMATION`.
+- Linux: D-Bus `org.freedesktop.portal.Settings`.
+
+When the user has `theme: "system"` in `config.json`, switch palettes live
+without a restart.
+
+### 8.2 Native chrome
+
+- **Window title**: show `<filename> — Fresh` and a "modified" indicator
+  (a bullet on macOS via `setDocumentEdited:`, a `*` prefix on Windows).
+- **Proxy icon** (macOS): the file icon next to the title that the user
+  can drag out — `setRepresentedFilename:` does this.
+- **Recent files**: hook into `NSDocumentController`'s
+  `noteNewRecentDocumentURL:` on macOS and the Windows
+  `SHAddToRecentDocs` API. The "Open Recent" submenu (already a TODO in
+  `MACOS_TODO.md`) reads from these system stores.
+
+### 8.3 Keyboard accelerator coalescing
+
+Right now `muda` accelerators on Windows fire through a separate event
+loop and can race with winit's keyboard input. Adopt the
+`EventLoopProxy<UserEvent>` pattern:
+
+- All `MenuEvent`s are forwarded to a single `UserEvent::Menu(id)`.
+- All winit keyboard events that match a registered accelerator are
+  **swallowed** (don't reach the editor as raw key events).
+- The editor sees one and only one path for a given action: the
+  `UserEvent::Menu` dispatch.
+
+This eliminates the class of bugs where Cmd-S triggers Save twice (once
+from the menu, once from the keymap).
+
+### 8.4 First-run experience
+
+- A welcome screen on first launch that links to the existing tour
+  (`.fresh-tour.json`) and the docs.
+- Skip the first-run dialog if the binary was launched with a file path.
+
+---
+
+## 9. Phase 9 — CI/CD release pipeline
+
+Goal: a single `git tag v0.4.0 && git push --tags` produces signed,
+notarized, downloadable artifacts on every supported platform within ~30
+minutes, with no human in the loop except the secret-holder for emergency
+overrides.
+
+### 9.1 Pipeline shape
+
+Extend the existing `.github/workflows/release.yml` so that on a tag push:
+
+1. **Plan** (existing) — read the tag, compute version, emit a matrix.
+2. **Build** (existing `gui-builds.yml`, extended):
+   - macOS x86_64 → unsigned binary artifact.
+   - macOS aarch64 → unsigned binary artifact.
+   - Windows x86_64 → unsigned `fresh.exe`.
+   - Linux x86_64 / aarch64 → AppImage (existing flow).
+3. **Sign** (new):
+   - macOS-merge job: download both arch artifacts, `lipo` them into a
+     universal binary, build the `.app`, sign with Developer ID, build
+     `.pkg` and `.dmg`, sign the DMG, notarize, staple.
+   - Windows-sign job: build the MSI, sign the inner `.exe` and the MSI
+     itself via Trusted Signing.
+4. **Manifest** (new): emit `latest-stable.json` with version + signed
+   download URLs + minisign signatures, sign it with the update key,
+   upload to the GitHub Pages site.
+5. **Publish** (existing `release.yml`): create the GitHub release, attach
+   all artifacts, run downstream homebrew/winget/AUR/npm publish jobs.
+6. **Smoke test** (new, post-release): a separate workflow that downloads
+   each artifact on a clean runner, installs it, runs `fresh --version`,
+   and reports green/red. Catches "we forgot to sign one of them" the
+   same hour the release ships.
+
+### 9.2 Secret hygiene
+
+All signing secrets live as GitHub Actions repository secrets, never in
+the repo. Group them under environment protection rules (`production`)
+that require manual approval on tag pushes — so a compromised PR can't
+exfiltrate them via a workflow change.
+
+Document the rotation procedure in `docs/internal/`:
+
+- Apple cert: rotate annually before expiry; update both `.p12` secrets
+  and the `APPLE_TEAM_ID` reference.
+- Trusted Signing: managed by Azure, no manual rotation needed.
+- Minisign updater key: kept offline (encrypted on a hardware key); the
+  matching public key is committed to the repo at
+  `crates/fresh-gui/src/updater_pubkey.minisig.pub` and embedded into the
+  binary via `include_bytes!`. Compromise → cut a new key, ship a
+  bridge-release signed with both old and new keys.
+
+### 9.3 Pre-release channel
+
+For risk reduction, run every commit to `main` through the same pipeline
+but publish to `latest-beta.json` (signed with the same key, published to
+the beta channel). The auto-updater opt-in makes this safe — only users
+who flip "Settings → Updates → Use beta channel" see them. Internal
+dogfooding catches signing/notarization regressions before they hit the
+stable channel.
+
+### 9.4 Release checklist
+
+A minimal `RELEASING.md` lives next to this plan once Phase 9 lands.
+Per-release manual gates:
+
+- [ ] CHANGELOG.md updated and stamped with the version + date.
+- [ ] `Cargo.toml` workspace version bumped.
+- [ ] Smoke-test workflow green on the previous tag.
+- [ ] Run §2.5 + §3.4 + §4.4 acceptance checklists on the staging
+      artifacts (the universal DMG, the signed MSI, the AppImage).
+- [ ] Tag pushed, release notes drafted from the CHANGELOG entry.
+
+---
+
+## Sequencing and milestones
+
+The phases are listed in priority order, but they parallelize naturally:
+
+| Milestone | Phases | Outcome |
+|---|---|---|
+| **M1 — Native polish** | 1, 7 | A `cargo build --release --features gui` binary that looks native on every monitor and doesn't flash a console. No signing, no auto-update. Internal alpha. |
+| **M2 — Signed installers** | 2, 3 | Notarized DMG + signed MSI. Users can install Fresh from a download link without scary OS warnings. Public beta. |
+| **M3 — Production runtime** | 4, 5 | Single-instance + telemetry. We can debug user crashes and the app feels like a real editor when files are double-clicked. v1.0. |
+| **M4 — Continuous delivery** | 6, 8, 9 | Auto-updates, system theme, recent files, automated release pipeline. Steady-state product. |
+
+The two phase-spanning blockers worth surfacing early are **secret
+provisioning** (Apple Developer enrollment, Azure Trusted Signing setup,
+minisign keypair generation — all owner-only actions, all multi-day
+turnaround) and the **GPU regression risk** in Phase 7 — `ratatui-wgpu` is
+a git-only dependency on a young commit, and changing its font/scale
+plumbing may require upstream patches before HiDPI is solid.
+
+Both should be kicked off in parallel with Phase 1, not deferred to their
+own milestones.
