@@ -326,6 +326,7 @@ impl Editor {
 
         // Read cursor state from split view state
         let cursors = self.active_cursors();
+        let old_cursor = cursors.primary().clone();
         let cursor_id = cursors.primary_id();
         let old_position = cursors.primary().position;
         let old_anchor = cursors.primary().anchor;
@@ -368,12 +369,19 @@ impl Editor {
                 state.buffer.line_col_to_position(actual_line, target_col)
             };
 
+            // Preserve anchor if deselect_on_move is false (Emacs mark mode)
+            let new_anchor = if old_cursor.deselect_on_move {
+                None
+            } else {
+                old_cursor.anchor
+            };
+
             let event = Event::MoveCursor {
                 cursor_id,
                 old_position,
                 new_position: position,
                 old_anchor,
-                new_anchor: None,
+                new_anchor,
                 old_sticky_column,
                 new_sticky_column: target_col,
             };

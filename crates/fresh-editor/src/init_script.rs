@@ -40,6 +40,7 @@ const editor = getEditor();
 //   - Reusable features                                 -> A plugin package
 //
 // init.ts IS for things that:
+//   - Register code handlers, commands, etc.
 //   - Depend on where/how Fresh is starting (host, SSH, $TERM, project, ...)
 //   - Would differ across machines or launches
 //   - Can't live in a shared config.json without lying to teammates
@@ -47,6 +48,22 @@ const editor = getEditor();
 // API reference: ~/.config/fresh/types/fresh.d.ts (same as plugins)
 // Commands:  Ctrl+P -> "init: Reload", "init: Check"
 // CLI:       fresh --cmd init check | fresh --safe | fresh --no-init
+
+// Example: Add a command to select (mark) from current cursor to target line.
+//
+// registerHandler("select_to_line_handler", async function start_review_range() {
+//   editor.executeActions([
+//     { action: "set_mark", count: 1 },
+//     { action: "goto_line", count: 1 },
+//   ]);
+// });
+//
+// editor.registerCommand(
+//   "select_to_line",
+//   "Select from current position to target line",
+//   "select_to_line_handler",
+// );
+//
 
 // Example: fade the editor in from black to the target theme. Uses
 // `overrideThemeColors` (in-memory, no disk I/O) for each frame, then
