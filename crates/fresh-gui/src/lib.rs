@@ -37,8 +37,15 @@ use native_menu::NativeMenuBar;
 /// Embedded JetBrains Mono Regular font (SIL Open Font License 1.1).
 const FONT_DATA: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
 
-/// Embedded application icon (32x32 RGBA PNG).
-const ICON_PNG_32: &[u8] = include_bytes!("../resources/icon_32x32.png");
+/// Cross-platform fallback application icon (256×256 RGBA PNG).
+///
+/// Used as the winit `Window::set_window_icon` value, which Linux WMs read
+/// as `_NET_WM_ICON` and scale down per task-bar size.  On Windows we
+/// additionally override this immediately after window creation with the
+/// multi-size HICON from the .exe's embedded `RT_GROUP_ICON` resource — see
+/// [`platform::set_window_icon`].  256 px scales down well; 32 px upscales
+/// poorly to 48/64 at 150%/200% DPI.
+const ICON_PNG: &[u8] = include_bytes!("../resources/icon_256x256.png");
 
 /// Frame duration target (60fps).
 const FRAME_DURATION: Duration = Duration::from_millis(16);
@@ -583,6 +590,12 @@ impl<A: GuiApplication> WgpuRunner<A> {
                 .context("Failed to create window")?,
         );
 
+        // On Windows, override the cross-platform PNG icon with the multi-size
+        // HICON loaded from the .exe's embedded resource so the running
+        // window's icon (small + large) is sharp at every DPI and matches
+        // what Explorer / Properties / Alt-Tab show.  No-op elsewhere.
+        platform::set_window_icon(&window);
+
         let size = window.inner_size();
 
         // Build the wgpu backend (async adapter/device request — block on it).
@@ -960,9 +973,9 @@ pub fn cell_dimensions_to_grid(width: f64, height: f64, cell_size: (f64, f64)) -
     (cols.max(1), rows.max(1))
 }
 
-/// Decode the embedded 32x32 PNG icon into a winit `Icon`.
+/// Decode the embedded 256×256 PNG icon into a winit `Icon`.
 fn load_window_icon() -> Option<winit::window::Icon> {
-    decode_png_rgba(ICON_PNG_32)
+    decode_png_rgba(ICON_PNG)
         .and_then(|(rgba, w, h)| winit::window::Icon::from_rgba(rgba, w, h).ok())
 }
 

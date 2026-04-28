@@ -40,5 +40,13 @@ block2 = "0.5"
 
 # Windows: AppUserModelID registration so taskbar grouping and the pinned-
 # shortcut identity match the running window (see PRODUCTIZATION_PLAN.md §0.1).
+# Also: load the multi-size HICON from the .exe's embedded resource and apply
+# it via WM_SETICON, so the running window's icon is the same one Windows
+# shows in Explorer/Properties/Alt-Tab and gets size-correctly per scale.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_Shell"] }
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
