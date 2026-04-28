@@ -464,9 +464,8 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
   // out per-hunk. Each hunk does at most O(oldLines + 1) API calls.
   for (const h of state.hunks) {
     if (h.kind === "added" || h.kind === "modified") {
-      // One overlay per line so `extendToLineEnd` paints each line's full
-      // width — a single multi-line overlay only paints the last line's
-      // tail, leaving intermediate lines unhighlighted past their content.
+      // Per-line overlay with extendToLineEnd to paint a full-row stripe
+      // (same approach as audit_mode.ts's diff/cursor highlights).
       const bg = h.kind === "added" ? THEME.addedBg : THEME.modifiedBg;
       for (let i = 0; i < h.newCount; i++) {
         const line = h.newStart + i;
@@ -475,6 +474,10 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
         if (start !== null && end !== null) {
           editor.addOverlay(bid, NS_OVERLAY, start, end, {
             bg,
+            underline: false,
+            bold: false,
+            italic: false,
+            strikethrough: false,
             extendToLineEnd: true,
           });
         }
@@ -498,10 +501,13 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
     if (anchor === null) continue;
 
     for (let i = 0; i < h.oldLines.length; i++) {
+      // No "- " prefix — the red bg/fg is enough of a visual signal,
+      // and the user prefers any "-" indicator to live in the gutter
+      // rather than inside the buffer content.
       editor.addVirtualLine(
         bid,
         anchor,
-        "- " + h.oldLines[i],
+        h.oldLines[i],
         {
           fg: THEME.removedFg,
           bg: THEME.removedBg,
