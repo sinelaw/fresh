@@ -57,6 +57,7 @@
     "julia-lsp.ts",
     "kotlin-lsp.ts",
     "latex-lsp.ts",
+    "live_diff.ts",
     "live_grep.ts",
     "lua-lsp.ts",
     "markdown_compose.ts",
