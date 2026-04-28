@@ -1151,7 +1151,7 @@ pub struct EditorConfig {
     /// restoring and saving the workspace.
     /// Default: true
     #[serde(default = "default_true")]
-    #[schemars(extend("x-section" = "Recovery"))]
+    #[schemars(extend("x-section" = "Startup"))]
     pub restore_previous_session: bool,
 
     /// Whether to auto-create a fresh empty `[No Name]` buffer when the
@@ -1162,7 +1162,7 @@ pub struct EditorConfig {
     /// gives a fully blank workspace where nothing opens automatically.
     /// Default: true
     #[serde(default = "default_true")]
-    #[schemars(extend("x-section" = "Editing"))]
+    #[schemars(extend("x-section" = "Startup"))]
     pub auto_create_empty_buffer_on_last_buffer_close: bool,
 
     // ===== Recovery =====

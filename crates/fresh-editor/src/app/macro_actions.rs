@@ -222,6 +222,7 @@ impl Editor {
             binary: false,
             lsp_opened_with: std::collections::HashSet::new(),
             hidden_from_tabs: false,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         };
@@ -295,6 +296,7 @@ impl Editor {
             binary: false,
             lsp_opened_with: std::collections::HashSet::new(),
             hidden_from_tabs: false,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         };

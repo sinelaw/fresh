@@ -184,6 +184,14 @@ pub struct BufferMetadata {
     /// Whether this buffer should be hidden from tabs (used for composite source buffers)
     pub hidden_from_tabs: bool,
 
+    /// Whether this buffer is a synthetic placeholder created when the user
+    /// closed their last buffer with `auto_create_empty_buffer_on_last_buffer_close`
+    /// disabled. The editor's invariants require at least one buffer at all
+    /// times, so we keep this one around but render the split pane as blank
+    /// (no line numbers, no `~` filler) and hide it from tabs to give the
+    /// user a truly empty workspace.
+    pub synthetic_placeholder: bool,
+
     /// Whether this buffer is opened in "preview" mode (ephemeral).
     /// A preview buffer is one opened by a single-click in the file explorer
     /// (or a similar soft-open gesture). Its tab is rendered in italic and
@@ -261,6 +269,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         }
@@ -281,6 +290,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         }
@@ -335,6 +345,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         }
@@ -373,6 +384,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         }
@@ -509,6 +521,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: false,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         }
@@ -527,6 +540,7 @@ impl BufferMetadata {
             binary: false,
             lsp_opened_with: HashSet::new(),
             hidden_from_tabs: true,
+            synthetic_placeholder: false,
             is_preview: false,
             recovery_id: None,
         }

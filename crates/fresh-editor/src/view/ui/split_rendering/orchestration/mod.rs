@@ -361,7 +361,15 @@ pub(crate) fn render_content(
         // For GroupTabBarOnly entries we've already rendered the tab bar;
         // skip buffer content rendering so the group's inner leaves can
         // draw into the content rect without being overwritten.
-        if skip_content {
+        //
+        // Likewise skip the synthesized placeholder buffer that the close
+        // path keeps alive when `auto_create_empty_buffer_on_last_buffer_close`
+        // is disabled — the user wants a blank pane, not line numbers and
+        // tildes for an unreachable phantom buffer.
+        let is_synthetic_placeholder = buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|m| m.synthetic_placeholder);
+        if skip_content || is_synthetic_placeholder {
             view_line_mappings.insert(split_id, Vec::new());
             continue;
         }

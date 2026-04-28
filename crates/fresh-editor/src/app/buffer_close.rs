@@ -188,8 +188,9 @@ impl Editor {
             None => {
                 // Editor invariants require at least one buffer at all times.
                 // When the user opted out of auto-creating a visible empty
-                // buffer on last close, hide the synthesized buffer from the
-                // tab bar so the workspace appears blank.
+                // buffer on last close, mark the synthesized buffer as a
+                // placeholder: hidden from tabs *and* skipped during pane
+                // rendering, so the workspace genuinely looks blank.
                 let new_id = self.new_buffer();
                 if !self
                     .config
@@ -198,6 +199,7 @@ impl Editor {
                 {
                     if let Some(meta) = self.buffer_metadata.get_mut(&new_id) {
                         meta.hidden_from_tabs = true;
+                        meta.synthetic_placeholder = true;
                     }
                 }
                 (new_id, true)

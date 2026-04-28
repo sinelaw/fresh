@@ -646,13 +646,13 @@
           "description": "Whether to auto-open previously opened files (session restore) when\nstarting Fresh in a directory.  When enabled (the default), tabs,\nsplits, cursor positions and the file explorer state are restored\nfrom the last clean exit in the same working directory.  When\ndisabled, Fresh starts with a clean workspace.  The workspace file\non disk is still written on exit, so re-enabling this setting picks\nup whatever state was saved at the most recent clean exit.  The\n`--no-restore` CLI flag is a stronger override: it skips both\nrestoring and saving the workspace.\nDefault: true",
           "type": "boolean",
           "default": true,
-          "x-section": "Recovery"
+          "x-section": "Startup"
         },
         "auto_create_empty_buffer_on_last_buffer_close": {
           "description": "Whether to auto-create a fresh empty `[No Name]` buffer when the\nlast open buffer is closed. When `false`, the editor still creates\nan internal placeholder buffer (it always needs at least one) but\nhides it from the tab bar so the workspace looks blank. Combined\nwith `file_explorer.auto_open_on_last_buffer_close = false`, this\ngives a fully blank workspace where nothing opens automatically.\nDefault: true",
           "type": "boolean",
           "default": true,
-          "x-section": "Editing"
+          "x-section": "Startup"
         },
         "recovery_enabled": {
           "description": "Whether to enable file recovery (Emacs-style auto-save)\nWhen enabled, buffers are periodically saved to recovery files\nso they can be recovered if the editor crashes.",
