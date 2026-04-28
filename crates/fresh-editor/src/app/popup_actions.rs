@@ -350,20 +350,23 @@ impl Editor {
     /// (the default) when no binding is registered.
     pub(crate) fn popup_focus_key_hint(&self) -> Option<String> {
         let kb = self.keybindings.read().ok()?;
-        // The action is meant to fire in any context the user is in
-        // when an unfocused popup is on screen — i.e. Normal,
-        // FileExplorer, Terminal, etc. The keymap registers it under
-        // `KeyContext::Global` so it applies uniformly; look it up
-        // there first, then fall through to `Normal` for users who
-        // override the binding without specifying `when`.
+        // The keymap registers `popup_focus` in the `Normal` and
+        // `FileExplorer` contexts (not `Global`) so a user's own
+        // `alt+t` rebinding in those same contexts wins at the same
+        // precedence level — a Global default would shadow the
+        // override and silently swallow the user's keystroke. Look up
+        // Normal first (the most likely place a user is when the
+        // popup pops up), then fall through to FileExplorer, and
+        // finally to a hard-coded `Alt+T` so the title is never an
+        // empty parenthetical.
         kb.get_keybinding_for_action(
             &crate::input::keybindings::Action::PopupFocus,
-            crate::input::keybindings::KeyContext::Global,
+            crate::input::keybindings::KeyContext::Normal,
         )
         .or_else(|| {
             kb.get_keybinding_for_action(
                 &crate::input::keybindings::Action::PopupFocus,
-                crate::input::keybindings::KeyContext::Normal,
+                crate::input::keybindings::KeyContext::FileExplorer,
             )
         })
         .or_else(|| Some("Alt+T".to_string()))

@@ -133,12 +133,19 @@
       "when": "popup"
     },
     {
-      "comment": "Transfer keyboard focus to the topmost popup (LSP popups appear unfocused so they don't swallow the next keystroke)",
+      "comment": "Transfer keyboard focus to the topmost popup (LSP popups appear unfocused so they don't swallow the next keystroke). Scoped to non-modal contexts so a user-overridden alt+t in normal/fileExplorer still wins at the same precedence level.",
       "key": "t",
       "modifiers": ["alt"],
       "action": "popup_focus",
       "args": {},
-      "when": "global"
+      "when": "normal"
+    },
+    {
+      "key": "t",
+      "modifiers": ["alt"],
+      "action": "popup_focus",
+      "args": {},
+      "when": "fileExplorer"
     },
     {
       "key": "g",

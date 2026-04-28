@@ -146,21 +146,33 @@ impl Editor {
         }
 
         let kb = self.keybindings.read().ok()?;
+
+        // `popup_focus` lives in the Normal/FileExplorer context defaults
+        // (not Global) so a user's own binding for the same key in those
+        // contexts wins at the same precedence level. If the resolution
+        // here returns anything other than `PopupFocus`, it's the user's
+        // override — let the normal dispatcher handle it. Don't claim
+        // `popup_cancel` from Normal because Normal's default `Esc`
+        // resolves to `remove_secondary_cursors`, which would shadow the
+        // popup-dismiss intent here.
+        let popup_focus_match = matches!(
+            kb.resolve_in_context_only(event, self.key_context.clone()),
+            Some(Action::PopupFocus),
+        );
+        if popup_focus_match {
+            return Some(Action::PopupFocus);
+        }
+
+        // Fall back to the Popup context for `popup_cancel`. Esc
+        // (the default `popup_cancel` binding) should still dismiss
+        // an unfocused popup even though the popup itself isn't
+        // claiming the keyboard — that matches every other popup-
+        // dismissal affordance in the editor.
         let resolved_popup = kb.resolve_in_context_only(event, KeyContext::Popup);
-        if let Some(action @ Action::PopupCancel) = resolved_popup {
-            return Some(action);
+        match resolved_popup {
+            Some(action @ (Action::PopupCancel | Action::PopupFocus)) => Some(action),
+            _ => None,
         }
-        // `popup_focus` lives in the Global context by default so it
-        // works in any UI state; check Global first, then fall through
-        // to Popup for users who scope it explicitly.
-        let resolved_global = kb.resolve_in_context_only(event, KeyContext::Global);
-        if matches!(resolved_global, Some(Action::PopupFocus)) {
-            return resolved_global;
-        }
-        if matches!(resolved_popup, Some(Action::PopupFocus)) {
-            return resolved_popup;
-        }
-        None
     }
 
     /// Resolve a key event against `KeyContext::Completion` when the topmost

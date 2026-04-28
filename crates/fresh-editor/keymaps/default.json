@@ -1342,12 +1342,19 @@
       "when": "popup"
     },
     {
-      "comment": "Transfer keyboard focus to the topmost popup (LSP popups appear unfocused so they don't swallow the next keystroke)",
+      "comment": "Transfer keyboard focus to the topmost popup (LSP popups appear unfocused so they don't swallow the next keystroke). Bound in normal/fileExplorer rather than global so a user's own alt+t binding in either context wins at the same precedence level — global defaults would shadow the user's normal-context override.",
       "key": "t",
       "modifiers": ["alt"],
       "action": "popup_focus",
       "args": {},
-      "when": "global"
+      "when": "normal"
+    },
+    {
+      "key": "t",
+      "modifiers": ["alt"],
+      "action": "popup_focus",
+      "args": {},
+      "when": "fileExplorer"
     },
     {
       "comment": "Completion popup context - Tab accepts the selected completion",
