@@ -741,6 +741,11 @@ impl Editor {
                 .get(&active_buf)
                 .map(|m| m.read_only)
                 .unwrap_or(false);
+            let is_synthetic_placeholder = self
+                .buffer_metadata
+                .get(&active_buf)
+                .map(|m| m.synthetic_placeholder)
+                .unwrap_or(false);
             let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
                 state: self.buffers.get_mut(&active_buf).unwrap(),
                 cursors: status_cursors,
@@ -760,6 +765,7 @@ impl Editor {
                 session_name: session_name.as_deref(),
                 read_only: is_read_only,
                 remote_state_override: self.remote_indicator_override.as_ref(),
+                is_synthetic_placeholder,
                 // Filled in by `render_status` from the user's
                 // status_bar config; the value here is just a
                 // safe default for the rare path that builds the

@@ -225,6 +225,12 @@ pub struct StatusBarContext<'a> {
     /// `ClearRemoteIndicatorState` or by a `None` pass at the call
     /// site.
     pub remote_state_override: Option<&'a RemoteIndicatorOverride>,
+    /// True when the active buffer is the synthesized placeholder kept
+    /// alive by the close path with `auto_create_empty_buffer_on_last_buffer_close`
+    /// disabled. Buffer-specific elements (filename, cursor, line ending,
+    /// encoding, language, diagnostics) suppress themselves so the bar
+    /// reflects "no real buffer is open" rather than `[No Name] | Ln 1, Col 1 …`.
+    pub is_synthetic_placeholder: bool,
     /// True when the user's status-bar layout contains the
     /// `RemoteIndicator` element. Set by the renderer after
     /// inspecting `StatusBarConfig.left` / `.right`. Read by the
@@ -691,6 +697,25 @@ impl StatusBarRenderer {
         element: &StatusBarElement,
         ctx: &mut StatusBarContext<'_>,
     ) -> Option<RenderedElement> {
+        // Buffer-specific elements have nothing meaningful to show when
+        // the active buffer is just a synthesized placeholder kept alive
+        // for editor invariants. Suppress them so the status bar tells
+        // the truth: there's no real file open.
+        if ctx.is_synthetic_placeholder
+            && matches!(
+                element,
+                StatusBarElement::Filename
+                    | StatusBarElement::Cursor
+                    | StatusBarElement::CursorCompact
+                    | StatusBarElement::CursorCount
+                    | StatusBarElement::Diagnostics
+                    | StatusBarElement::LineEnding
+                    | StatusBarElement::Encoding
+                    | StatusBarElement::Language
+            )
+        {
+            return None;
+        }
         match element {
             StatusBarElement::Filename => {
                 let modified = if ctx.state.buffer.is_modified() {
