@@ -24,15 +24,17 @@ use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::style::Modifier;
 
-/// Navigate to Terminal -> Command via the settings search.
+/// Navigate to Terminal -> Command by typing the explicit field path
+/// into the settings search. Using the slash-prefixed path avoids the
+/// fuzzy-matcher tie-breaks that show up when the query happens to be
+/// a non-trivial substring of unrelated long descriptions.
 fn open_terminal_command(harness: &mut EditorTestHarness) {
     harness.open_settings().unwrap();
 
-    // Filter to the Terminal category via search.
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    harness.type_text("terminal command").unwrap();
+    harness.type_text("/terminal/shell/command").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
