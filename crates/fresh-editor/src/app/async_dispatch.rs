@@ -623,6 +623,19 @@ impl Editor {
                         }
                     }
                 }
+                AsyncMessage::PluginsDirLoaded {
+                    dir,
+                    errors,
+                    discovered_plugins,
+                } => {
+                    self.handle_plugins_dir_loaded(dir, errors, discovered_plugins);
+                }
+                AsyncMessage::PluginDeclarationsReady { declarations } => {
+                    self.handle_plugin_declarations_ready(declarations);
+                }
+                AsyncMessage::PluginInitScriptLoaded(outcome) => {
+                    self.handle_plugin_init_script_loaded(outcome);
+                }
             }
         }
 

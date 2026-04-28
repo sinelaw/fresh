@@ -341,6 +341,57 @@ impl PluginManager {
             .reload_plugin(name)
     }
 
+    /// Submit a "load plugins from dir with config" request without
+    /// blocking. Returns `None` when the plugin runtime is inactive (no
+    /// thread), or when the request couldn't be submitted. Used by the
+    /// startup async-load path.
+    #[cfg(feature = "plugins")]
+    pub fn load_plugins_from_dir_with_config_request(
+        &self,
+        dir: &Path,
+        plugin_configs: &HashMap<String, PluginConfig>,
+    ) -> Option<
+        fresh_plugin_runtime::thread::oneshot::Receiver<
+            fresh_plugin_runtime::thread::PluginsDirLoadResult,
+        >,
+    > {
+        self.inner.as_ref().and_then(|m| {
+            m.load_plugins_from_dir_with_config_request(dir, plugin_configs)
+                .ok()
+        })
+    }
+
+    /// Submit a "load plugin from source" request without blocking.
+    /// Returns `None` when the plugin runtime is inactive.
+    #[cfg(feature = "plugins")]
+    pub fn load_plugin_from_source_request(
+        &self,
+        source: &str,
+        name: &str,
+        is_typescript: bool,
+    ) -> Option<fresh_plugin_runtime::thread::oneshot::Receiver<anyhow::Result<()>>> {
+        self.inner.as_ref().and_then(|m| {
+            m.load_plugin_from_source_request(source, name, is_typescript)
+                .ok()
+        })
+    }
+
+    /// Submit a "list plugins" request without blocking. Submitted after
+    /// a batch of dir-load requests, this guarantees the response covers
+    /// every plugin loaded by that batch (FIFO request channel).
+    #[cfg(feature = "plugins")]
+    pub fn list_plugins_request(
+        &self,
+    ) -> Option<
+        fresh_plugin_runtime::thread::oneshot::Receiver<
+            Vec<fresh_plugin_runtime::backend::quickjs_backend::TsPluginInfo>,
+        >,
+    > {
+        self.inner
+            .as_ref()
+            .and_then(|m| m.list_plugins_request().ok())
+    }
+
     /// Check if any handlers are registered for a hook.
     pub fn has_hook_handlers(&self, hook_name: &str) -> bool {
         #[cfg(feature = "plugins")]

@@ -284,6 +284,37 @@ pub enum AsyncMessage {
         files: std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>,
         complete: bool,
     },
+
+    /// Startup-async: a single plugin directory finished loading on the
+    /// plugin thread. Carries the same payload as the blocking
+    /// `load_plugins_from_dir_with_config` return value.
+    PluginsDirLoaded {
+        dir: std::path::PathBuf,
+        errors: Vec<String>,
+        discovered_plugins: std::collections::HashMap<String, fresh_core::config::PluginConfig>,
+    },
+
+    /// Startup-async: every directory in the startup batch has loaded and
+    /// the resulting `.d.ts` declarations have been collected from the
+    /// plugin runtime. Triggers `init_script::write_plugin_declarations`.
+    PluginDeclarationsReady { declarations: Vec<(String, String)> },
+
+    /// Startup-async: `init.ts` (auto-loaded source plugin) finished
+    /// running its top level and has either succeeded, failed, or was
+    /// skipped/fused. The handler logs and applies the corresponding
+    /// status message, and (on `Loaded`) clears the crash fuse.
+    PluginInitScriptLoaded(PluginInitScriptOutcome),
+}
+
+/// Async equivalent of `init_script::InitOutcome`. Wraps the same set
+/// of states but is plain data so it can travel across the bridge.
+#[derive(Debug, Clone)]
+pub enum PluginInitScriptOutcome {
+    NotFound,
+    Disabled,
+    CrashFused { failures: u32 },
+    Loaded,
+    Failed { message: String },
 }
 
 /// LSP progress value types

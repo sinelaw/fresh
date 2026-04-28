@@ -3386,7 +3386,7 @@ fn real_main() -> AnyhowResult<()> {
         let fs = current_authority.filesystem.clone();
 
         tracing::info!("Creating editor instance...");
-        let mut editor = Editor::with_working_dir(
+        let mut editor = Editor::with_working_dir_opts(
             config.clone(),
             terminal_width,
             terminal_height,
@@ -3395,6 +3395,8 @@ fn real_main() -> AnyhowResult<()> {
             !args.no_plugins,
             color_capability,
             fs,
+            true, // defer_plugin_load: TUI startup; plugin loads run on the
+                  // plugin thread and arrive via AsyncBridge each tick.
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
@@ -3407,8 +3409,10 @@ fn real_main() -> AnyhowResult<()> {
         // User init.ts: auto-load from ~/.config/fresh/init.ts through the
         // same pipeline as "Load Plugin from Buffer". Respects `--no-init`
         // and `--safe`, and is short-circuited by the crash fuse after
-        // repeated failures.
-        editor.load_init_script(!args.no_init);
+        // repeated failures. Async to avoid blocking the boot sequence;
+        // the request goes through the same FIFO channel as the startup
+        // plugin loads, so init.ts evaluates after every batch plugin.
+        editor.load_init_script_async(!args.no_init);
 
         // All plugins (registry + init.ts) have loaded — fire the
         // plugins_loaded lifecycle hook so init.ts `on("plugins_loaded",

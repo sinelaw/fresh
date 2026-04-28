@@ -72,6 +72,38 @@ impl Editor {
         color_capability: crate::view::color_support::ColorCapability,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> AnyhowResult<Self> {
+        Self::with_working_dir_opts(
+            config,
+            width,
+            height,
+            working_dir,
+            dir_context,
+            plugins_enabled,
+            color_capability,
+            filesystem,
+            false,
+        )
+    }
+
+    /// Like [`Self::with_working_dir`] but with `defer_plugin_load`
+    /// exposed. When `true`, plugin loading is dispatched to the plugin
+    /// thread and the constructor returns immediately; results arrive
+    /// later via `AsyncMessage::PluginsDirLoaded` /
+    /// `PluginDeclarationsReady` and are applied in `process_async_messages`.
+    /// Used by the TUI startup path so the first frame draws without
+    /// waiting on TS parse/transpile/register.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_working_dir_opts(
+        config: Config,
+        width: u16,
+        height: u16,
+        working_dir: Option<PathBuf>,
+        dir_context: DirectoryContext,
+        plugins_enabled: bool,
+        color_capability: crate::view::color_support::ColorCapability,
+        filesystem: Arc<dyn FileSystem + Send + Sync>,
+        defer_plugin_load: bool,
+    ) -> AnyhowResult<Self> {
         tracing::info!("Building default grammar registry...");
         let start = std::time::Instant::now();
         let mut grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
@@ -99,6 +131,7 @@ impl Editor {
             None,
             color_capability,
             grammar_registry,
+            defer_plugin_load,
         )
     }
 
@@ -149,6 +182,7 @@ impl Editor {
             time_source,
             color_capability,
             grammar_registry,
+            false,
         )?;
         // Tests typically have no async_bridge, so the deferred grammar build
         // would just drain pending_grammars and early-return. Skip it entirely.
@@ -173,6 +207,7 @@ impl Editor {
         time_source: Option<SharedTimeSource>,
         color_capability: crate::view::color_support::ColorCapability,
         grammar_registry: Arc<crate::primitives::grammar::GrammarRegistry>,
+        defer_plugin_load: bool,
     ) -> AnyhowResult<Self> {
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
@@ -465,47 +500,149 @@ impl Editor {
                 );
             }
 
-            // Load from all found plugin directories, respecting config
-            for plugin_dir in plugin_dirs {
-                tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
-                let load_start = std::time::Instant::now();
-                let (errors, discovered_plugins) =
-                    plugin_manager.load_plugins_from_dir_with_config(&plugin_dir, &config.plugins);
-                tracing::info!(
-                    "Loaded TypeScript plugins from {:?} in {:?}",
-                    plugin_dir,
-                    load_start.elapsed()
-                );
-
-                // Merge discovered plugins into config
-                // discovered_plugins already contains the merged config (saved enabled state + discovered path)
-                for (name, plugin_config) in discovered_plugins {
-                    config.plugins.insert(name, plugin_config);
-                }
-
-                if !errors.is_empty() {
-                    for err in &errors {
-                        tracing::error!("TypeScript plugin load error: {}", err);
+            if defer_plugin_load {
+                // Async startup path: hand each dir + a trailing
+                // ListPlugins request to the plugin thread now, return
+                // before they finish, and let a forwarder thread
+                // translate the responses into AsyncMessages that the
+                // main loop applies via `process_async_messages`. The
+                // plugin thread is FIFO, so submitting in this exact
+                // order guarantees declarations cover only the startup
+                // batch — init.ts and lifecycle hooks queue *after*
+                // ListPlugins from main.rs after construction returns,
+                // matching the original blocking behaviour.
+                #[cfg(feature = "plugins")]
+                {
+                    let bridge = &async_bridge;
+                    let mut dir_receivers: Vec<(
+                        std::path::PathBuf,
+                        fresh_plugin_runtime::thread::oneshot::Receiver<
+                            fresh_plugin_runtime::thread::PluginsDirLoadResult,
+                        >,
+                    )> = Vec::with_capacity(plugin_dirs.len());
+                    for plugin_dir in &plugin_dirs {
+                        tracing::info!(
+                            "Submitting async TypeScript plugin load for: {:?}",
+                            plugin_dir
+                        );
+                        if let Some(rx) = plugin_manager
+                            .load_plugins_from_dir_with_config_request(plugin_dir, &config.plugins)
+                        {
+                            dir_receivers.push((plugin_dir.clone(), rx));
+                        }
                     }
-                    // In debug/test builds, panic to surface plugin loading errors
-                    #[cfg(debug_assertions)]
-                    panic!(
-                        "TypeScript plugin loading failed with {} error(s): {}",
-                        errors.len(),
-                        errors.join("; ")
-                    );
+                    let declarations_rx = if !dir_receivers.is_empty() {
+                        plugin_manager.list_plugins_request()
+                    } else {
+                        None
+                    };
+                    if !dir_receivers.is_empty() {
+                        let sender = bridge.sender();
+                        std::thread::Builder::new()
+                            .name("plugin-load-forwarder".to_string())
+                            .spawn(move || {
+                                for (dir, rx) in dir_receivers {
+                                    let load_start = std::time::Instant::now();
+                                    match rx.recv() {
+                                        Ok((errors, discovered_plugins)) => {
+                                            tracing::info!(
+                                                "Loaded TypeScript plugins from {:?} in {:?}",
+                                                dir,
+                                                load_start.elapsed()
+                                            );
+                                            drop(sender.send(
+                                                crate::services::async_bridge::AsyncMessage::PluginsDirLoaded {
+                                                    dir,
+                                                    errors,
+                                                    discovered_plugins,
+                                                },
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "plugin-load-forwarder: dir {:?} recv failed: {}",
+                                                dir,
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                                if let Some(rx) = declarations_rx {
+                                    match rx.recv() {
+                                        Ok(plugin_infos) => {
+                                            let declarations: Vec<(String, String)> = plugin_infos
+                                                .into_iter()
+                                                .filter_map(|info| {
+                                                    info.declarations.map(|d| (info.name, d))
+                                                })
+                                                .collect();
+                                            drop(sender.send(
+                                                crate::services::async_bridge::AsyncMessage::PluginDeclarationsReady {
+                                                    declarations,
+                                                },
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "plugin-load-forwarder: list_plugins recv failed: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            })
+                            .ok();
+                    }
                 }
-            }
+            } else {
+                // Synchronous (legacy / test) path. Used by `for_test`,
+                // server, GUI: every other code path that wants the
+                // editor fully constructed before the constructor
+                // returns.
+                for plugin_dir in plugin_dirs {
+                    tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
+                    let load_start = std::time::Instant::now();
+                    let (errors, discovered_plugins) = plugin_manager
+                        .load_plugins_from_dir_with_config(&plugin_dir, &config.plugins);
+                    tracing::info!(
+                        "Loaded TypeScript plugins from {:?} in {:?}",
+                        plugin_dir,
+                        load_start.elapsed()
+                    );
 
-            // Collect `.d.ts` emits from every loaded plugin into a
-            // single aggregate under `<config_dir>/types/plugins.d.ts`.
-            // This is what makes `getPluginApi("foo")` typed in the
-            // user's init.ts without a hand-written cast — each plugin
-            // that uses `declare global { interface FreshPluginRegistry }`
-            // contributes its augmentation, and init.ts's tsconfig
-            // picks the aggregate up via `files`.
-            let declarations = plugin_manager.plugin_declarations();
-            crate::init_script::write_plugin_declarations(&dir_context.config_dir, &declarations);
+                    // Merge discovered plugins into config
+                    // discovered_plugins already contains the merged config (saved enabled state + discovered path)
+                    for (name, plugin_config) in discovered_plugins {
+                        config.plugins.insert(name, plugin_config);
+                    }
+
+                    if !errors.is_empty() {
+                        for err in &errors {
+                            tracing::error!("TypeScript plugin load error: {}", err);
+                        }
+                        // In debug/test builds, panic to surface plugin loading errors
+                        #[cfg(debug_assertions)]
+                        panic!(
+                            "TypeScript plugin loading failed with {} error(s): {}",
+                            errors.len(),
+                            errors.join("; ")
+                        );
+                    }
+                }
+
+                // Collect `.d.ts` emits from every loaded plugin into a
+                // single aggregate under `<config_dir>/types/plugins.d.ts`.
+                // This is what makes `getPluginApi("foo")` typed in the
+                // user's init.ts without a hand-written cast — each plugin
+                // that uses `declare global { interface FreshPluginRegistry }`
+                // contributes its augmentation, and init.ts's tsconfig
+                // picks the aggregate up via `files`.
+                let declarations = plugin_manager.plugin_declarations();
+                crate::init_script::write_plugin_declarations(
+                    &dir_context.config_dir,
+                    &declarations,
+                );
+            }
         }
 
         // Extract config values before moving config into the struct
@@ -944,6 +1081,118 @@ impl Editor {
         }
     }
 
+    /// Non-blocking variant of [`Self::load_init_script`] for the TUI
+    /// startup path. Does the synchronous pre-work (types scaffolding
+    /// refresh, syntax check, fuse check), then either submits the
+    /// `LoadPluginFromSource` request to the plugin thread and spawns a
+    /// forwarder that translates the result into
+    /// `AsyncMessage::PluginInitScriptLoaded`, or — for the `Skip(...)`
+    /// outcomes — emits the message directly so the same async-dispatch
+    /// handler logs and applies status. The request goes through the
+    /// same FIFO channel as the startup plugin loads, so by the time the
+    /// plugin thread evaluates init.ts every batch plugin has already
+    /// finished — preserving the original load ordering.
+    pub fn load_init_script_async(&mut self, enabled: bool) {
+        use crate::init_script::{
+            check, decide_load, refresh_types_scaffolding, CheckSeverity, InitOutcome, LoadDecision,
+        };
+        use crate::services::async_bridge::PluginInitScriptOutcome;
+
+        let config_dir = self.dir_context.config_dir.clone();
+
+        if enabled {
+            refresh_types_scaffolding(&config_dir);
+            let report = check(&config_dir);
+            if !report.ok {
+                for d in &report.diagnostics {
+                    let level = match d.severity {
+                        CheckSeverity::Error => "error",
+                        CheckSeverity::Warning => "warning",
+                    };
+                    tracing::warn!(
+                        "init.ts pre-load {level} at {}:{}: {}",
+                        d.line,
+                        d.column,
+                        d.message
+                    );
+                }
+            }
+        }
+
+        let outcome_now: Option<PluginInitScriptOutcome> = match decide_load(&config_dir, enabled) {
+            LoadDecision::Skip(outcome) => Some(match outcome {
+                InitOutcome::NotFound => PluginInitScriptOutcome::NotFound,
+                InitOutcome::Disabled => PluginInitScriptOutcome::Disabled,
+                InitOutcome::CrashFused { failures } => {
+                    PluginInitScriptOutcome::CrashFused { failures }
+                }
+                // decide_load only returns these via Load; keep total to
+                // satisfy the matcher.
+                InitOutcome::Loaded => PluginInitScriptOutcome::Loaded,
+                InitOutcome::Failed { message } => PluginInitScriptOutcome::Failed { message },
+            }),
+            LoadDecision::Load { source } => {
+                if !self.plugin_manager.is_active() {
+                    Some(PluginInitScriptOutcome::Failed {
+                        message: "plugin runtime inactive (--no-plugins); init.ts cannot run"
+                            .into(),
+                    })
+                } else {
+                    self.spawn_init_script_forwarder(source);
+                    None
+                }
+            }
+        };
+
+        if let Some(outcome) = outcome_now {
+            // Skip / fused / inactive paths: emit through the bridge so
+            // the same handler runs them as the success path. Falls back
+            // to direct application if the bridge is missing (test).
+            if let Some(bridge) = &self.async_bridge {
+                drop(bridge.sender().send(
+                    crate::services::async_bridge::AsyncMessage::PluginInitScriptLoaded(outcome),
+                ));
+            } else {
+                self.handle_plugin_init_script_loaded(outcome);
+            }
+        }
+    }
+
+    #[cfg(feature = "plugins")]
+    fn spawn_init_script_forwarder(&self, source: String) {
+        let Some(bridge) = &self.async_bridge else {
+            return;
+        };
+        let Some(rx) = self.plugin_manager.load_plugin_from_source_request(
+            &source,
+            crate::init_script::INIT_PLUGIN_NAME,
+            true,
+        ) else {
+            return;
+        };
+        let sender = bridge.sender();
+        std::thread::Builder::new()
+            .name("plugin-init-forwarder".to_string())
+            .spawn(move || {
+                let outcome = match rx.recv() {
+                    Ok(Ok(())) => crate::services::async_bridge::PluginInitScriptOutcome::Loaded,
+                    Ok(Err(e)) => crate::services::async_bridge::PluginInitScriptOutcome::Failed {
+                        message: format!("{e}"),
+                    },
+                    Err(e) => crate::services::async_bridge::PluginInitScriptOutcome::Failed {
+                        message: format!("plugin thread closed: {e}"),
+                    },
+                };
+                drop(sender.send(
+                    crate::services::async_bridge::AsyncMessage::PluginInitScriptLoaded(outcome),
+                ));
+            })
+            .ok();
+    }
+
+    #[cfg(not(feature = "plugins"))]
+    fn spawn_init_script_forwarder(&self, _source: String) {}
+
     /// Handle `setSetting(path, value)`. Fire-and-forget: patches Config
     /// directly via JSON round-trip. No overlay, no per-plugin tracking,
     /// no revert on unload — same model as Neovim/VS Code/Emacs/Sublime.
@@ -971,6 +1220,77 @@ impl Editor {
             }
             Err(e) => {
                 self.set_status_message(format!("setSetting({path}): {e}"));
+            }
+        }
+    }
+
+    /// Apply the result of one async startup-batch directory load.
+    /// Mirrors the per-iteration body of the legacy synchronous loop in
+    /// `with_options`: merge discovered plugins into config, log errors,
+    /// and panic in debug builds (the legacy behaviour).
+    pub(crate) fn handle_plugins_dir_loaded(
+        &mut self,
+        dir: std::path::PathBuf,
+        errors: Vec<String>,
+        discovered_plugins: std::collections::HashMap<String, fresh_core::config::PluginConfig>,
+    ) {
+        if !discovered_plugins.is_empty() {
+            let cfg = std::sync::Arc::make_mut(&mut self.config);
+            for (name, plugin_config) in discovered_plugins {
+                cfg.plugins.insert(name, plugin_config);
+            }
+        }
+        if !errors.is_empty() {
+            for err in &errors {
+                tracing::error!("TypeScript plugin load error: {}", err);
+            }
+            #[cfg(debug_assertions)]
+            panic!(
+                "TypeScript plugin loading failed for {:?} with {} error(s): {}",
+                dir,
+                errors.len(),
+                errors.join("; ")
+            );
+            #[cfg(not(debug_assertions))]
+            {
+                let _ = dir;
+            }
+        }
+    }
+
+    /// Apply the declarations harvested at the end of the async startup
+    /// batch. Mirrors the synchronous `plugin_declarations` +
+    /// `write_plugin_declarations` pair in `with_options`.
+    pub(crate) fn handle_plugin_declarations_ready(&self, declarations: Vec<(String, String)>) {
+        crate::init_script::write_plugin_declarations(&self.dir_context.config_dir, &declarations);
+    }
+
+    /// Apply the result of the async `init.ts` load. Mirrors the trailing
+    /// `match outcome { ... }` block of the legacy synchronous
+    /// `load_init_script`.
+    pub(crate) fn handle_plugin_init_script_loaded(
+        &mut self,
+        outcome: crate::services::async_bridge::PluginInitScriptOutcome,
+    ) {
+        use crate::init_script::{describe, record_success, InitOutcome};
+        use crate::services::async_bridge::PluginInitScriptOutcome as O;
+        let outcome = match outcome {
+            O::NotFound => InitOutcome::NotFound,
+            O::Disabled => InitOutcome::Disabled,
+            O::CrashFused { failures } => InitOutcome::CrashFused { failures },
+            O::Loaded => {
+                record_success(&self.dir_context.config_dir);
+                InitOutcome::Loaded
+            }
+            O::Failed { message } => InitOutcome::Failed { message },
+        };
+        let summary = describe(&outcome);
+        match outcome {
+            InitOutcome::NotFound | InitOutcome::Disabled => tracing::debug!("{}", summary),
+            InitOutcome::Loaded => tracing::info!("{}", summary),
+            InitOutcome::CrashFused { .. } | InitOutcome::Failed { .. } => {
+                tracing::warn!("{}", summary);
+                self.set_status_message(summary);
             }
         }
     }

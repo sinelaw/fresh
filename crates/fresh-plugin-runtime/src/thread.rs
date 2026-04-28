@@ -35,6 +35,11 @@ fn fire_and_forget<T, E: std::fmt::Debug>(result: std::result::Result<T, E>) {
     }
 }
 
+/// Result type for `LoadPluginsFromDirWithConfig`: `(load errors,
+/// discovered plugins keyed by name)`. Aliased so the non-blocking
+/// `_request` helpers can return a clippy-tractable receiver type.
+pub type PluginsDirLoadResult = (Vec<String>, HashMap<String, PluginConfig>);
+
 /// Request messages sent to the plugin thread
 #[derive(Debug)]
 pub enum PluginRequest {
@@ -655,6 +660,63 @@ impl PluginThreadHandle {
         }
 
         rx.recv().unwrap_or_default()
+    }
+
+    /// Submit a "load plugins from dir with config" request without blocking.
+    /// Returns the response receiver for the caller to await elsewhere
+    /// (typically a forwarder thread that bridges to `AsyncBridge`).
+    pub fn load_plugins_from_dir_with_config_request(
+        &self,
+        dir: &Path,
+        plugin_configs: &HashMap<String, PluginConfig>,
+    ) -> Result<oneshot::Receiver<PluginsDirLoadResult>> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
+            .send(PluginRequest::LoadPluginsFromDirWithConfig {
+                dir: dir.to_path_buf(),
+                plugin_configs: plugin_configs.clone(),
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+        Ok(rx)
+    }
+
+    /// Submit a "load plugin from source" request without blocking.
+    /// Returns the response receiver.
+    pub fn load_plugin_from_source_request(
+        &self,
+        source: &str,
+        name: &str,
+        is_typescript: bool,
+    ) -> Result<oneshot::Receiver<Result<()>>> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
+            .send(PluginRequest::LoadPluginFromSource {
+                source: source.to_string(),
+                name: name.to_string(),
+                is_typescript,
+                response: tx,
+            })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+        Ok(rx)
+    }
+
+    /// Submit a "list plugins" request without blocking. The plugin thread
+    /// processes requests FIFO, so submitting this immediately after a
+    /// batch of `LoadPluginsFromDirWithConfig` guarantees the response
+    /// reflects all of those loads having completed.
+    pub fn list_plugins_request(&self) -> Result<oneshot::Receiver<Vec<TsPluginInfo>>> {
+        let (tx, rx) = oneshot::channel();
+        self.request_sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Plugin thread shut down"))?
+            .send(PluginRequest::ListPlugins { response: tx })
+            .map_err(|_| anyhow!("Plugin thread not responding"))?;
+        Ok(rx)
     }
 
     /// Process pending plugin commands (non-blocking)
