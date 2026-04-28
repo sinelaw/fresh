@@ -304,6 +304,14 @@ A sample project for testing.
         copy_plugin(&plugins_dir, "git_gutter");
     }
 
+    /// Set up live diff plugin for live-diff e2e tests
+    pub fn setup_live_diff_plugin(&self) {
+        let plugins_dir = self.path.join("plugins");
+        fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
+        copy_plugin_lib(&plugins_dir);
+        copy_plugin(&plugins_dir, "live_diff");
+    }
+
     /// Set up git explorer plugin for file explorer decorations
     pub fn setup_git_explorer_plugin(&self) {
         let plugins_dir = self.path.join("plugins");

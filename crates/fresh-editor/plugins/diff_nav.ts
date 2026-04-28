@@ -22,6 +22,13 @@ interface DiffHunk {
   lineCount: number;
 }
 
+/** Hunk shape published by live_diff.ts on `live_diff_hunks` view state. */
+interface LiveDiffHunk {
+  kind: "added" | "removed" | "modified";
+  newStart: number; // 0-indexed
+  newCount: number;
+}
+
 /** A jump target with a byte position for sorting/deduplication */
 interface JumpTarget {
   bytePos: number;
@@ -47,7 +54,19 @@ async function collectTargets(bid: number): Promise<JumpTarget[]> {
     }
   }
 
-  // Source 2: saved-diff (unsaved changes)
+  // Source 2: live-diff hunks (head/disk/branch comparison from live_diff.ts)
+  const liveHunks = editor.getViewState(bid, "live_diff_hunks") as LiveDiffHunk[] | null;
+  if (liveHunks && liveHunks.length > 0) {
+    for (const hunk of liveHunks) {
+      const line = Math.max(0, hunk.newStart);
+      const pos = await editor.getLineStartPosition(line);
+      if (pos !== null) {
+        targets.push({ bytePos: pos, line });
+      }
+    }
+  }
+
+  // Source 3: saved-diff (unsaved changes)
   const diff = editor.getBufferSavedDiff(bid);
   if (diff && !diff.equal) {
     for (const [start, _end] of diff.byte_ranges) {

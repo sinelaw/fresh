@@ -34,6 +34,7 @@ pub mod git_log_split_tab_focus;
 pub mod gutter;
 pub mod init_script;
 pub mod language_pack;
+pub mod live_diff;
 pub mod load_from_buffer;
 pub mod lsp_find_references;
 pub mod markdown_source;
