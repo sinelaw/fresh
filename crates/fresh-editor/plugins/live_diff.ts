@@ -535,7 +535,16 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
         const line = h.newStart + i;
         if (line >= lineCount) break;
         const start = lineStarts[line];
-        const end = lineEndExclusive(line);
+        let end = lineEndExclusive(line);
+        // Empty source lines have lineEndExclusive == lineStart. A
+        // zero-width overlay never enters the renderer's byte sweep
+        // (the chars iter has no chars to advance over), so the
+        // extend_to_line_end fill never fires for empty lines and the
+        // user sees a "skipped" row in the middle of an added block.
+        // Bump the end by one so the range covers the trailing
+        // newline byte; the sweep advances at the next non-empty line
+        // and catches our overlay.
+        if (end <= start) end = start + 1;
         editor.addOverlay(bid, NS_OVERLAY, start, end, {
           bg,
           underline: false,

@@ -266,3 +266,87 @@ fn test_live_diff_handles_surrogate_pair_content() {
         .wait_until(|h| has_glyph(&h.screen_to_string(), '~'))
         .unwrap();
 }
+
+/// Regression: an empty line in the middle of an added block used to
+/// be rendered without a green stripe ("skipped"), while the lines
+/// around it were highlighted. The plugin emitted a zero-width overlay
+/// `[lineStart, lineStart)` for empty lines; the renderer's overlay
+/// sweep is driven by visible chars, of which an empty line has zero,
+/// so a zero-width overlay never enters `line_touched_overlays` and
+/// the trailing-fill path was never invoked. Fix bumps the end by 1
+/// for empty lines so the range covers the trailing newline byte.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_highlights_empty_added_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_live_diff_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // Original utils.rs ends after `validate_config`. Append three new
+    // lines: a blank line, then a function, then another blank line.
+    // The blank lines are the ones that used to be skipped.
+    repo.modify_file(
+        "src/utils.rs",
+        "pub fn format_output(msg: &str) -> String {\n    \
+         format!(\"[INFO] {}\", msg)\n}\n\n\
+         pub fn validate_config(config: &Config) -> bool {\n    \
+         config.port > 0 && !config.host.is_empty()\n}\n\
+         \n\
+         pub fn UNIQUE_NEW_FN_MARKER() {}\n\
+         \n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    // Wait for the new function and a `+` glyph to be visible — that
+    // means live-diff has finished its first recompute.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("UNIQUE_NEW_FN_MARKER") && has_glyph(&s, '+')
+        })
+        .unwrap();
+
+    // Now find the row immediately above `UNIQUE_NEW_FN_MARKER` (the
+    // empty added line) and check that a column well past the gutter
+    // has the bg color the plugin paints for added lines (the
+    // theme-resolved `editor.diff_add_bg`). For the bundled
+    // high-contrast theme that's `Rgb(0, 80, 0)`.
+    let buf = harness.buffer();
+    let mut marker_row: Option<u16> = None;
+    for y in 0..buf.area.height {
+        let mut row = String::new();
+        for x in 0..buf.area.width {
+            row.push_str(buf[(x, y)].symbol());
+        }
+        if row.contains("UNIQUE_NEW_FN_MARKER") {
+            marker_row = Some(y);
+            break;
+        }
+    }
+    let marker_row = marker_row.expect("never found new fn on screen");
+    assert!(
+        marker_row > 0,
+        "expected an empty added line above the new fn",
+    );
+    let empty_row = marker_row - 1;
+    let bg = buf[(40, empty_row)].style().bg;
+    assert_eq!(
+        bg,
+        Some(ratatui::style::Color::Rgb(0, 80, 0)),
+        "empty added line at row {empty_row} should have the green \
+         diff_add_bg out to col 40; saw {bg:?}",
+    );
+}
