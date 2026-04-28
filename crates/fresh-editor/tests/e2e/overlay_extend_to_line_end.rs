@@ -14,16 +14,8 @@ use ratatui::style::Color;
 /// With the default config (`line_wrap = true`) and a short line that
 /// never visually wraps, an overlay covering the line content with
 /// `extend_to_line_end: true` should paint its bg out to the right
-/// edge of the content area. Today only the cells covered by the
-/// overlay's byte range are painted; the trailing cells stay default.
-///
-/// Marked `#[ignore]` because it documents a known renderer bug — the
-/// fill code at `render_line.rs:1086` is gated on `!line_wrap`, so the
-/// trailing-fill never runs under the default config. Drop the
-/// `#[ignore]` once the renderer is updated to honour
-/// `extend_to_line_end` in line-wrap mode.
+/// edge of the content area.
 #[test]
-#[ignore = "known-failing repro: extend_to_line_end gated on !line_wrap in renderer"]
 fn overlay_extend_to_line_end_fills_under_default_line_wrap() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     assert!(

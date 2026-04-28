@@ -1081,9 +1081,19 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             }
         }
 
-        // Fill remaining width for overlays with extend_to_line_end
-        // Only when line wrapping is disabled (side-by-side diff typically disables wrapping)
-        if !line_wrap {
+        // Fill remaining width for overlays with extend_to_line_end.
+        //
+        // Was gated on `!line_wrap` because side-by-side diffs ran with
+        // wrap off; under the default config (`line_wrap = true`) the
+        // gate also suppressed fill for non-wrapping lines, breaking
+        // plugins like live-diff that expect a full-row stripe on
+        // changed lines. The cursor-line bg fill below already runs
+        // unconditionally; aligning extend_to_line_end with it. For
+        // source lines that visually wrap to multiple rows, the fill
+        // applies to the last visual row only — earlier rows stay
+        // bg-default until the wrap loop is taught to emit per-row
+        // fills.
+        {
             // Calculate the content area width (total width minus gutter)
             let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
             let remaining_cols = content_width.saturating_sub(rendered_cols);
