@@ -139,6 +139,7 @@
   "action.popup_page_up": "Vyskakovací okno stránka nahoru",
   "action.popup_select_next": "Vybrat další v okně",
   "action.popup_select_prev": "Vybrat předchozí v okně",
+  "action.popup_focus": "Aktivovat vyskakovací okno",
   "action.prev_buffer": "Předchozí buffer",
   "action.prev_split": "Předchozí rozdělení",
   "action.prompt_accept_suggestion": "Přijmout návrh v příkazovém řádku",

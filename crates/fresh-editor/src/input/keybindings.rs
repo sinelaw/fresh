@@ -553,6 +553,11 @@ pub enum Action {
     PopupPageDown,
     PopupConfirm,
     PopupCancel,
+    /// Transfer keyboard focus to the topmost visible popup. LSP popups
+    /// are shown unfocused (so they don't silently swallow keystrokes);
+    /// this action lets the user grab them with the keyboard. Default
+    /// binding is `Alt+T` and is configurable via the keybinding map.
+    PopupFocus,
 
     // Completion popup actions (override generic Popup keys for PopupKind::Completion)
     CompletionAccept,
@@ -996,6 +1001,7 @@ impl Action {
             "popup_page_down" => PopupPageDown,
             "popup_confirm" => PopupConfirm,
             "popup_cancel" => PopupCancel,
+            "popup_focus" => PopupFocus,
 
             "completion_accept" => CompletionAccept,
             "completion_dismiss" => CompletionDismiss,
@@ -2287,6 +2293,7 @@ impl KeybindingResolver {
             Action::PopupPageDown => t!("action.popup_page_down"),
             Action::PopupConfirm => t!("action.popup_confirm"),
             Action::PopupCancel => t!("action.popup_cancel"),
+            Action::PopupFocus => t!("action.popup_focus"),
             Action::CompletionAccept => t!("action.completion_accept"),
             Action::CompletionDismiss => t!("action.completion_dismiss"),
             Action::ToggleFileExplorer => t!("action.toggle_file_explorer"),

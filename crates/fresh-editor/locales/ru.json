@@ -139,6 +139,7 @@
   "action.popup_page_up": "Всплывающее окно: страница вверх",
   "action.popup_select_next": "Выбрать следующий во всплывающем окне",
   "action.popup_select_prev": "Выбрать предыдущий во всплывающем окне",
+  "action.popup_focus": "Перевести фокус на всплывающее окно",
   "action.prev_buffer": "Предыдущий буфер",
   "action.prev_split": "Предыдущее разделение",
   "action.prompt_accept_suggestion": "Принять предложение в строке ввода",

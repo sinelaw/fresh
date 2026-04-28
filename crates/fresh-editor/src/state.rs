@@ -1080,6 +1080,34 @@ pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         _ => crate::view::popup::PopupResolver::None,
     };
 
+    // Popups that appear under the user's cursor without an explicit
+    // user gesture default to *unfocused* so the next keystroke drives
+    // the buffer rather than the popup. The user grabs focus with
+    // `popup_focus` (default `Alt+T`). Popups that the user
+    // *explicitly* invokes (completion via Tab, list/action choosers
+    // via plugin commands, …) keep the historical focused-on-show
+    // behavior — type-to-filter and arrow-nav need to "just work"
+    // without an extra keystroke.
+    // Only `PopupKindHint` variants reach this path — Completion, List,
+    // Text. Hover/Action popups are constructed directly in editor code
+    // (`lsp_requests.rs`) and set their own `focused` flag.
+    let focused = match kind {
+        // Completion popups are user-invoked (type-to-trigger / explicit
+        // `lsp_completion`), so type-to-filter and arrow-nav need to
+        // "just work" without the user pressing the focus-popup key.
+        PopupKind::Completion => true,
+        // List popups are typically explicit user invocations (plugin
+        // action popups, status-bar menus). Keep them focused on show.
+        PopupKind::List => true,
+        // Text popups are auto-shown informational overlays —
+        // unfocused so they don't swallow the user's next keystroke.
+        PopupKind::Text => false,
+        // Direct-construction kinds (Hover, Action) are not produced by
+        // `Event::ShowPopup`; default to unfocused if ever reached so
+        // an auto-shown overlay doesn't grab the keyboard by accident.
+        PopupKind::Hover | PopupKind::Action => false,
+    };
+
     Popup {
         kind,
         title: data.title.clone(),
@@ -1096,6 +1124,8 @@ pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         text_selection: None,
         accept_key_hint: None,
         resolver,
+        focused,
+        focus_key_hint: None,
     }
 }
 

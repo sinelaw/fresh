@@ -262,6 +262,23 @@ pub struct Popup {
     /// Feature-specific resolver for confirm/cancel dispatch. Default
     /// `None` means "no special handling — just dismiss."
     pub resolver: PopupResolver,
+
+    /// Whether the popup currently has keyboard focus.
+    ///
+    /// LSP-spawned popups (completion, hover, signature help, the
+    /// LSP-server status auto-prompt) are created with `focused = false`
+    /// so a popup that pops up under the user's cursor does not silently
+    /// swallow their next keystroke. The user explicitly transfers
+    /// focus to the popup with the `popup_focus` action (default
+    /// binding `Alt+T`); only then do popup-context bindings apply.
+    pub focused: bool,
+
+    /// Pre-rendered key hint for the `popup_focus` action shown in the
+    /// title when `focused == false` (e.g. `"Alt+T"`). `None` falls back
+    /// to a built-in default at render time. Set by the editor when
+    /// constructing the popup so the hint reflects the user's actual
+    /// keybinding for `popup_focus`.
+    pub focus_key_hint: Option<String>,
 }
 
 impl Popup {
@@ -283,6 +300,8 @@ impl Popup {
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
+            focused: false,
+            focus_key_hint: None,
         }
     }
 
@@ -312,6 +331,8 @@ impl Popup {
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
+            focused: false,
+            focus_key_hint: None,
         }
     }
 
@@ -333,6 +354,8 @@ impl Popup {
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::None,
+            focused: false,
+            focus_key_hint: None,
         }
     }
 
@@ -383,6 +406,46 @@ impl Popup {
     pub fn with_resolver(mut self, resolver: PopupResolver) -> Self {
         self.resolver = resolver;
         self
+    }
+
+    /// Mark the popup as keyboard-focused (so popup-context bindings
+    /// route through it). LSP popups stay unfocused on creation; the
+    /// user toggles focus with the `popup_focus` action.
+    pub fn with_focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
+    }
+
+    /// Pre-render the focus-key hint shown in the popup title when the
+    /// popup is unfocused.
+    pub fn with_focus_key_hint(mut self, hint: String) -> Self {
+        self.focus_key_hint = Some(hint);
+        self
+    }
+
+    /// Compose the title text actually shown on the popup border.
+    ///
+    /// When the popup is unfocused, the focus-key hint (e.g. `"Alt+T"`)
+    /// is appended so the user knows how to grab the popup with the
+    /// keyboard. The hint falls back to a built-in label when no
+    /// `focus_key_hint` is set, so the title never reads as an empty
+    /// parenthetical.
+    pub fn render_title(&self) -> Option<String> {
+        let hint_label = if !self.focused {
+            let hint = self
+                .focus_key_hint
+                .clone()
+                .unwrap_or_else(|| "Alt+T".to_string());
+            Some(format!("[{} to focus]", hint))
+        } else {
+            None
+        };
+        match (&self.title, hint_label) {
+            (Some(title), Some(hint)) => Some(format!("{} {}", title, hint)),
+            (Some(title), None) => Some(title.clone()),
+            (None, Some(hint)) => Some(hint),
+            (None, None) => None,
+        }
     }
 
     /// Get the currently selected item (if this is a list popup)
@@ -954,14 +1017,15 @@ impl Popup {
         // Clear the area behind the popup first to hide underlying text
         frame.render_widget(Clear, area);
 
+        let rendered_title = self.render_title();
         let block = if self.bordered {
             let mut block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(self.border_style)
                 .style(self.background_style);
 
-            if let Some(title) = &self.title {
-                block = block.title(title.as_str());
+            if let Some(title) = rendered_title.as_deref() {
+                block = block.title(title);
             }
 
             block

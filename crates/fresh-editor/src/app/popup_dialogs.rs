@@ -602,6 +602,7 @@ impl Editor {
         use crate::view::popup::{Popup, PopupContent, PopupKind, PopupResolver};
         use ratatui::style::Style;
 
+        let focus_hint = self.popup_focus_key_hint();
         let popup = Popup {
             kind: PopupKind::List,
             title: Some(format!("LSP Servers ({})", language)),
@@ -624,6 +625,11 @@ impl Editor {
             // confirm/cancel routes through handle_lsp_status_action
             // regardless of what other popups are on screen.
             resolver: PopupResolver::LspStatus,
+            // LSP popups appear unfocused so they don't silently swallow
+            // the user's next keystroke; `popup_focus` (default Alt+T)
+            // grabs the keyboard.
+            focused: false,
+            focus_key_hint: focus_hint,
         };
 
         let buffer_id = self.active_buffer();
@@ -876,6 +882,10 @@ impl Editor {
             text_selection: None,
             accept_key_hint: None,
             resolver: PopupResolver::RemoteIndicator,
+            // Explicitly invoked from the status-bar `{remote}` element,
+            // so this popup wants the keyboard immediately.
+            focused: true,
+            focus_key_hint: None,
         };
 
         let buffer_id = self.active_buffer();

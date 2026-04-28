@@ -139,6 +139,7 @@
   "action.popup_page_up": "Popup página arriba",
   "action.popup_select_next": "Seleccionar siguiente en popup",
   "action.popup_select_prev": "Seleccionar anterior en popup",
+  "action.popup_focus": "Enfocar popup",
   "action.prev_buffer": "Buffer anterior",
   "action.prev_split": "División anterior",
   "action.prompt_accept_suggestion": "Aceptar sugerencia en prompt",

@@ -139,6 +139,7 @@
   "action.popup_page_up": "Popup trang lên",
   "action.popup_select_next": "Popup chọn tiếp theo",
   "action.popup_select_prev": "Popup chọn trước đó",
+  "action.popup_focus": "Tập trung vào popup",
   "action.prev_buffer": "Buffer trước đó",
   "action.prev_split": "Chia màn hình trước đó",
   "action.prompt_accept_suggestion": "Chấp nhận gợi ý prompt",

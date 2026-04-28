@@ -139,6 +139,7 @@
   "action.popup_page_up": "Спливаюче вікно: сторінка вгору",
   "action.popup_select_next": "Спливаюче вікно: вибрати наступний",
   "action.popup_select_prev": "Спливаюче вікно: вибрати попередній",
+  "action.popup_focus": "Перевести фокус на спливаюче вікно",
   "action.prev_buffer": "Попередній буфер",
   "action.prev_split": "Попереднє розділення",
   "action.prompt_accept_suggestion": "Прийняти пропозицію",

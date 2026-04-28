@@ -78,6 +78,15 @@ impl Editor {
         let event = Event::ShowPopup { popup };
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
+        // Stamp the freshly-pushed popup with the user's actual
+        // focus-popup keybinding so the title hint reflects the
+        // configured key (default `Alt+T`). The PopupData event itself
+        // doesn't carry this — it's a view-layer concern set after the
+        // converter pushes the Popup onto the active buffer's stack.
+        let hint = self.popup_focus_key_hint();
+        if let Some(top) = self.active_state_mut().popups.top_mut() {
+            top.focus_key_hint = hint;
+        }
     }
 
     /// Show a popup and attach a confirm/cancel resolver to it. The

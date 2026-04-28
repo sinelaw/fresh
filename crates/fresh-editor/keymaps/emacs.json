@@ -133,6 +133,14 @@
       "when": "popup"
     },
     {
+      "comment": "Transfer keyboard focus to the topmost popup (LSP popups appear unfocused so they don't swallow the next keystroke)",
+      "key": "t",
+      "modifiers": ["alt"],
+      "action": "popup_focus",
+      "args": {},
+      "when": "global"
+    },
+    {
       "key": "g",
       "modifiers": ["ctrl"],
       "action": "focus_editor",

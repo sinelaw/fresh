@@ -139,6 +139,7 @@
   "action.popup_page_up": "ป๊อปอัพขึ้นหนึ่งหน้า",
   "action.popup_select_next": "เลือกถัดไปในป๊อปอัพ",
   "action.popup_select_prev": "เลือกก่อนหน้าในป๊อปอัพ",
+  "action.popup_focus": "โฟกัสที่ป๊อปอัพ",
   "action.prev_buffer": "บัฟเฟอร์ก่อนหน้า",
   "action.prev_split": "การแบ่งก่อนหน้า",
   "action.prompt_accept_suggestion": "ยอมรับข้อเสนอในพรอมต์",

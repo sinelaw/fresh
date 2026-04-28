@@ -103,6 +103,7 @@ pub mod lsp_missing_binary_and_dismiss;
 pub mod lsp_multi_semantic_tokens;
 pub mod lsp_no_config;
 pub mod lsp_order;
+pub mod lsp_popup_focus_keybinding;
 pub mod lsp_publish_diagnostics_capability;
 pub mod lsp_server_lifecycle_cleanup;
 pub mod lsp_stop_stale_indicator;

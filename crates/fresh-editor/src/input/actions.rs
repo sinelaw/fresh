@@ -3067,6 +3067,7 @@ pub fn action_to_events(
         | Action::PopupPageDown
         | Action::PopupConfirm
         | Action::PopupCancel
+        | Action::PopupFocus
         | Action::CompletionAccept
         | Action::CompletionDismiss
         | Action::ToggleFileExplorer

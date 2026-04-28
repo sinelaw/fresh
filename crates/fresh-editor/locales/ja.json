@@ -139,6 +139,7 @@
   "action.popup_page_up": "ポップアップをページアップ",
   "action.popup_select_next": "ポップアップで次を選択",
   "action.popup_select_prev": "ポップアップで前を選択",
+  "action.popup_focus": "ポップアップにフォーカス",
   "action.prev_buffer": "前のバッファ",
   "action.prev_split": "前の分割",
   "action.prompt_accept_suggestion": "プロンプトで候補を受け入れ",

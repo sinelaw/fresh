@@ -139,6 +139,7 @@
   "action.popup_page_up": "弹窗向上翻页",
   "action.popup_select_next": "弹窗选择下一个",
   "action.popup_select_prev": "弹窗选择上一个",
+  "action.popup_focus": "聚焦弹窗",
   "action.prev_buffer": "上一个缓冲区",
   "action.prev_split": "上一个分割",
   "action.prompt_accept_suggestion": "提示接受建议",

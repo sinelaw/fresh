@@ -344,6 +344,51 @@ impl Editor {
         Some("Tab".to_string())
     }
 
+    /// Format the keybinding currently bound to `Action::PopupFocus`,
+    /// rendered into popup titles when the popup is unfocused so the
+    /// user can see how to grab the keyboard. Falls back to `Alt+T`
+    /// (the default) when no binding is registered.
+    pub(crate) fn popup_focus_key_hint(&self) -> Option<String> {
+        let kb = self.keybindings.read().ok()?;
+        // The action is meant to fire in any context the user is in
+        // when an unfocused popup is on screen — i.e. Normal,
+        // FileExplorer, Terminal, etc. The keymap registers it under
+        // `KeyContext::Global` so it applies uniformly; look it up
+        // there first, then fall through to `Normal` for users who
+        // override the binding without specifying `when`.
+        kb.get_keybinding_for_action(
+            &crate::input::keybindings::Action::PopupFocus,
+            crate::input::keybindings::KeyContext::Global,
+        )
+        .or_else(|| {
+            kb.get_keybinding_for_action(
+                &crate::input::keybindings::Action::PopupFocus,
+                crate::input::keybindings::KeyContext::Normal,
+            )
+        })
+        .or_else(|| Some("Alt+T".to_string()))
+    }
+
+    /// Mark the topmost visible popup as focused so subsequent key
+    /// events route into the popup's input handler.
+    ///
+    /// Editor-level (global) popups shadow buffer popups for keyboard
+    /// focus, mirroring the priority encoded in `dispatch_modal_input`,
+    /// so we focus whichever popup the user actually sees.
+    ///
+    /// No-op when no popup is visible — the user pressing the
+    /// focus-popup key with nothing to focus shouldn't error or steal
+    /// the keystroke from the buffer.
+    pub fn handle_popup_focus(&mut self) {
+        if let Some(popup) = self.global_popups.top_mut() {
+            popup.focused = true;
+            return;
+        }
+        if let Some(popup) = self.active_state_mut().popups.top_mut() {
+            popup.focused = true;
+        }
+    }
+
     /// Handle typing a character while completion popup is open.
     /// Inserts the character into the buffer and re-filters the completion list.
     pub fn handle_popup_type_char(&mut self, c: char) {

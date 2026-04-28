@@ -139,6 +139,7 @@
   "action.popup_page_up": "Fenêtre contextuelle : page précédente",
   "action.popup_select_next": "Fenêtre contextuelle : sélectionner le suivant",
   "action.popup_select_prev": "Fenêtre contextuelle : sélectionner le précédent",
+  "action.popup_focus": "Focaliser la fenêtre contextuelle",
   "action.prev_buffer": "Tampon précédent",
   "action.prev_split": "Division précédente",
   "action.prompt_accept_suggestion": "Invite : accepter la suggestion",

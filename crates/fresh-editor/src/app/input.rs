@@ -73,11 +73,16 @@ impl Editor {
     /// Whether editor-pane popups (LSP completion, hover, signature help,
     /// global plugin popups, …) should intercept keyboard input.
     ///
-    /// Returns `false` when the user has focus on the file explorer pane:
-    /// popups belong to the editor pane, and the explorer must own its own
-    /// keystrokes — otherwise an LSP completion popup that happened to be
-    /// open would silently swallow Down/Up while the user is browsing the
-    /// tree. Buffer-switch handlers (e.g. `open_file_preview`) clear stale
+    /// Returns `false` when:
+    ///   - the user has focus on the file explorer pane (popups belong
+    ///     to the editor pane, and the explorer must own its own
+    ///     keystrokes), or
+    ///   - the topmost visible popup is unfocused (LSP popups appear
+    ///     unfocused so they don't silently swallow the next keystroke;
+    ///     the user grabs focus explicitly with `popup_focus`,
+    ///     default `Alt+T`).
+    ///
+    /// Buffer-switch handlers (e.g. `open_file_preview`) clear stale
     /// popups so a popup tied to the previous preview doesn't follow the
     /// user across buffers.
     ///
@@ -85,7 +90,65 @@ impl Editor {
     /// and `dispatch_modal_input` (handler routing) so the two cannot drift.
     pub(crate) fn popups_capture_keys(&self) -> bool {
         use crate::input::keybindings::KeyContext;
-        !matches!(self.key_context, KeyContext::FileExplorer)
+        if matches!(self.key_context, KeyContext::FileExplorer) {
+            return false;
+        }
+        self.topmost_popup_focused()
+    }
+
+    /// Whether the topmost visible popup (global stack first, then the
+    /// active buffer's stack) has been marked focused. Returns `false`
+    /// when no popup is visible — the caller is responsible for
+    /// short-circuiting that case.
+    pub(crate) fn topmost_popup_focused(&self) -> bool {
+        if let Some(popup) = self.global_popups.top() {
+            return popup.focused;
+        }
+        if let Some(popup) = self.active_state().popups.top() {
+            return popup.focused;
+        }
+        // No popup → no capture. Returning `false` here is safe because
+        // every caller gates on visibility before reaching this path.
+        false
+    }
+
+    /// When an *unfocused* popup is on screen, resolve the key event
+    /// against `KeyContext::Popup`/`Global` so the user's bound
+    /// `popup_cancel` (default Esc) and `popup_focus` (default Alt+T)
+    /// keys still take effect even though the popup isn't claiming the
+    /// keyboard. Without this, dismissing an LSP auto-prompt with Esc
+    /// would silently fall through to the buffer.
+    ///
+    /// Returns `None` for any other action so type-to-filter, cursor
+    /// motion, etc. continue to drive the buffer.
+    pub(crate) fn resolve_unfocused_popup_action(
+        &self,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::keybindings::Action> {
+        use crate::input::keybindings::{Action, KeyContext};
+
+        let popup_visible =
+            self.global_popups.is_visible() || self.active_state().popups.is_visible();
+        if !popup_visible || self.topmost_popup_focused() {
+            return None;
+        }
+
+        let kb = self.keybindings.read().ok()?;
+        let resolved_popup = kb.resolve_in_context_only(event, KeyContext::Popup);
+        if let Some(action @ Action::PopupCancel) = resolved_popup {
+            return Some(action);
+        }
+        // `popup_focus` lives in the Global context by default so it
+        // works in any UI state; check Global first, then fall through
+        // to Popup for users who scope it explicitly.
+        let resolved_global = kb.resolve_in_context_only(event, KeyContext::Global);
+        if matches!(resolved_global, Some(Action::PopupFocus)) {
+            return resolved_global;
+        }
+        if matches!(resolved_popup, Some(Action::PopupFocus)) {
+            return resolved_popup;
+        }
+        None
     }
 
     /// Resolve a key event against `KeyContext::Completion` when the topmost
@@ -219,8 +282,17 @@ impl Editor {
         let mut context = self.get_key_context();
 
         // Special case: Hover and Signature Help popups should be dismissed on any key press
-        // EXCEPT for Ctrl+C when the popup has a text selection (allow copy first)
-        if matches!(context, crate::input::keybindings::KeyContext::Popup) {
+        // EXCEPT for Ctrl+C when the popup has a text selection (allow copy first).
+        //
+        // Fires for both focused and unfocused popups: an unfocused
+        // hover popup that floats over the buffer must still vanish when
+        // the user starts typing — otherwise it lingers indefinitely
+        // because no key event reaches it. The focused-popup path also
+        // covers the legacy case where a transient popup was given
+        // focus (e.g. via the focus-popup keybinding).
+        let popup_visible_on_screen =
+            self.global_popups.is_visible() || self.active_state().popups.is_visible();
+        if popup_visible_on_screen {
             // Check if the current popup is transient (hover, signature help).
             // Editor-level popups always take precedence over buffer popups
             // when both are visible — they're effectively modal overlays.
@@ -241,13 +313,37 @@ impl Editor {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL);
 
-            if is_transient_popup && !(has_selection && is_copy_key) {
+            // Skip the dismiss when the user is *transferring* focus to
+            // the popup — otherwise pressing the focus-popup key while
+            // a transient popup is on screen would close the popup
+            // before its handler ever sees the focus action.
+            let resolved_action = self
+                .keybindings
+                .read()
+                .ok()
+                .map(|kb| kb.resolve(&key_event, context.clone()));
+            let is_focus_popup_key = matches!(
+                resolved_action,
+                Some(crate::input::keybindings::Action::PopupFocus)
+            );
+
+            if is_transient_popup && !(has_selection && is_copy_key) && !is_focus_popup_key {
                 // Dismiss the popup on any key press (except Ctrl+C with selection)
                 self.hide_popup();
                 tracing::debug!("Dismissed transient popup on key press");
                 // Recalculate context now that popup is gone
                 context = self.get_key_context();
             }
+        }
+
+        // Unfocused popup control: even though an unfocused popup
+        // doesn't claim the keyboard, the user's bound popup-cancel
+        // (default Esc) and popup-focus (default Alt+T) keys must
+        // still affect it. Resolved here, *before* the modal
+        // dispatcher routes the key to the buffer/explorer/etc.
+        if let Some(action) = self.resolve_unfocused_popup_action(&key_event) {
+            self.handle_action(action)?;
+            return Ok(());
         }
 
         // Try hierarchical modal input dispatch first (Settings, Menu, Prompt, Popup)
@@ -1643,6 +1739,9 @@ impl Editor {
             }
             Action::PopupCancel => {
                 self.handle_popup_cancel();
+            }
+            Action::PopupFocus => {
+                self.handle_popup_focus();
             }
             Action::CompletionAccept => {
                 use super::popup_actions::PopupConfirmResult;

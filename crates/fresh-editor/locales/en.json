@@ -136,6 +136,7 @@
   "action.popup_page_up": "Popup page up",
   "action.popup_select_next": "Popup select next",
   "action.popup_select_prev": "Popup select previous",
+  "action.popup_focus": "Focus popup",
   "action.prev_buffer": "Previous buffer",
   "action.prev_split": "Previous split",
   "action.prompt_accept_suggestion": "Prompt accept suggestion",

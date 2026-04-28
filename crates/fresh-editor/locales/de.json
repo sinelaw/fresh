@@ -139,6 +139,7 @@
   "action.popup_page_up": "Popup Seite nach oben",
   "action.popup_select_next": "Popup nächstes auswählen",
   "action.popup_select_prev": "Popup vorheriges auswählen",
+  "action.popup_focus": "Popup fokussieren",
   "action.prev_buffer": "Vorheriger Buffer",
   "action.prev_split": "Vorherige Teilung",
   "action.prompt_accept_suggestion": "Eingabe: Vorschlag annehmen",

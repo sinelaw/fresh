@@ -139,6 +139,7 @@
   "action.popup_page_up": "팝업 페이지 위로",
   "action.popup_select_next": "팝업 다음 선택",
   "action.popup_select_prev": "팝업 이전 선택",
+  "action.popup_focus": "팝업에 포커스",
   "action.prev_buffer": "이전 버퍼",
   "action.prev_split": "이전 분할",
   "action.prompt_accept_suggestion": "프롬프트 제안 수락",

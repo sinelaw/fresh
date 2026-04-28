@@ -171,6 +171,7 @@ impl Editor {
         let popup_data =
             crate::app::popup_actions::build_completion_popup_from_items(all_popup_items, 0);
         let accept_hint = self.completion_accept_key_hint();
+        let focus_hint = self.popup_focus_key_hint();
 
         {
             let buffer_id = self.active_buffer();
@@ -179,6 +180,7 @@ impl Editor {
             let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
             popup_obj.accept_key_hint = accept_hint;
             popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
+            popup_obj.focus_key_hint = focus_hint;
             state.popups.show_or_replace(popup_obj);
         }
 
@@ -642,12 +644,14 @@ impl Editor {
 
         let popup_data = crate::app::popup_actions::build_completion_popup_from_items(items, 0);
         let accept_hint = self.completion_accept_key_hint();
+        let focus_hint = self.popup_focus_key_hint();
 
         let buffer_id = self.active_buffer();
         let state = self.buffers.get_mut(&buffer_id).unwrap();
         let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
         popup_obj.accept_key_hint = accept_hint;
         popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
+        popup_obj.focus_key_hint = focus_hint;
         state.popups.show_or_replace(popup_obj);
     }
 
@@ -1064,6 +1068,7 @@ impl Editor {
         popup.max_height = dynamic_height;
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
+        popup.focus_key_hint = self.popup_focus_key_hint();
 
         // Show the popup
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
@@ -1462,6 +1467,7 @@ impl Editor {
         popup.max_height = 20;
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
+        popup.focus_key_hint = self.popup_focus_key_hint();
 
         // Show the popup
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
@@ -1683,6 +1689,12 @@ impl Editor {
         // `self.pending_code_actions` — the heavy lsp_types payload
         // stays on the Editor to keep the view crate LSP-free.
         popup.resolver = crate::view::popup::PopupResolver::CodeAction;
+        // Code actions are an explicit user invocation (`lsp_code_actions`
+        // command); the user expects to choose immediately, so the popup
+        // grabs focus on creation. Unfocused-by-default behavior applies
+        // only to popups that *appear under the cursor* (completion,
+        // hover, signature help, the LSP-server auto-prompt).
+        popup.focused = true;
 
         // Show the popup, replacing any existing action popup to avoid stacking
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
