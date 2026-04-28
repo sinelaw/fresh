@@ -1156,6 +1156,20 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Startup"))]
     pub restore_previous_session: bool,
 
+    /// When Fresh is launched with one or more file arguments (e.g.
+    /// `fresh src/main.rs README.md`), skip the workspace session restore
+    /// and open only the files passed on the command line. Hot-exit
+    /// content (unsaved modified files and unnamed `[No Name]` buffers
+    /// with content) is still restored so in-progress work is never lost.
+    /// Pure-directory invocations (`fresh some/dir`) and bare invocations
+    /// (`fresh` with no args) still restore the previous session normally.
+    /// Disable this option to keep the legacy behavior of always
+    /// restoring the previous session even when files are passed.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub skip_session_restore_when_files_passed: bool,
+
     /// Whether to auto-create a fresh empty `[No Name]` buffer when the
     /// last open buffer is closed. When `false`, the editor still creates
     /// an internal placeholder buffer (it always needs at least one) but
@@ -1397,6 +1411,7 @@ impl Default for EditorConfig {
             auto_save_interval_secs: default_auto_save_interval(),
             hot_exit: true,
             restore_previous_session: true,
+            skip_session_restore_when_files_passed: true,
             auto_create_empty_buffer_on_last_buffer_close: true,
             recovery_enabled: true,
             auto_recovery_save_interval_secs: default_auto_recovery_save_interval(),

@@ -103,6 +103,7 @@
         "auto_save_interval_secs": 30,
         "hot_exit": true,
         "restore_previous_session": true,
+        "skip_session_restore_when_files_passed": true,
         "auto_create_empty_buffer_on_last_buffer_close": true,
         "recovery_enabled": true,
         "auto_recovery_save_interval_secs": 2,
@@ -644,6 +645,12 @@
         },
         "restore_previous_session": {
           "description": "Whether to auto-open previously opened files (session restore) when\nstarting Fresh in a directory.  When enabled (the default), tabs,\nsplits, cursor positions and the file explorer state are restored\nfrom the last clean exit in the same working directory.  When\ndisabled, Fresh starts with a clean workspace.  The workspace file\non disk is still written on exit, so re-enabling this setting picks\nup whatever state was saved at the most recent clean exit.  The\n`--no-restore` CLI flag is a stronger override: it skips both\nrestoring and saving the workspace.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Startup"
+        },
+        "skip_session_restore_when_files_passed": {
+          "description": "When Fresh is launched with one or more file arguments (e.g.\n`fresh src/main.rs README.md`), skip the workspace session restore\nand open only the files passed on the command line. Hot-exit\ncontent (unsaved modified files and unnamed `[No Name]` buffers\nwith content) is still restored so in-progress work is never lost.\nPure-directory invocations (`fresh some/dir`) and bare invocations\n(`fresh` with no args) still restore the previous session normally.\nDisable this option to keep the legacy behavior of always\nrestoring the previous session even when files are passed.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Startup"

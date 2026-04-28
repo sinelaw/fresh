@@ -803,7 +803,21 @@ fn handle_first_run_setup(
     // here from `tracing_handles`; that wiring now lives in the main
     // loop so it survives editor restarts (e.g. devcontainer attach).
 
+    // If the user passed any file argument on the command line and the
+    // `skip_session_restore_when_files_passed` option is on (default), treat
+    // the launch as a focused "open these files" invocation: skip the full
+    // session restore but still recover hot-exit content. `--restore` (force)
+    // is a deliberate user override that wins.
+    let cli_has_file_args = file_locations.iter().any(|loc| !loc.path.is_dir());
+    let cli_overrides_restore = cli_has_file_args
+        && editor
+            .config()
+            .editor
+            .skip_session_restore_when_files_passed
+        && !args.force_restore;
+
     let restore_full_session = workspace_enabled
+        && !cli_overrides_restore
         && (args.force_restore || editor.config().editor.restore_previous_session);
 
     if restore_full_session {
@@ -821,6 +835,10 @@ fn handle_first_run_setup(
     } else {
         if !workspace_enabled {
             tracing::info!("Skipping workspace restore: --no-restore was specified");
+        } else if cli_overrides_restore {
+            tracing::info!(
+                "Skipping workspace restore: file arguments passed on the command line (editor.skip_session_restore_when_files_passed)"
+            );
         } else {
             tracing::info!(
                 "Skipping workspace restore: editor.restore_previous_session is disabled"
