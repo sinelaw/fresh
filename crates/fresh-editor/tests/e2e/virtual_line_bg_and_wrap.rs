@@ -21,17 +21,10 @@ use tempfile::TempDir;
 
 /// Bug 1: the bg color on a `LineAbove` virtual line should fill the
 /// trailing cells of its visual row, not stop at the end of the literal
-/// text. Live-diff renders deleted-line virtual content in red; the user
-/// sees red only behind the text and default-bg to the right.
-///
-/// Marked `#[ignore]` because it reproduces a known renderer limitation
-/// — virtual lines have no source bytes, so the overlay sweep that
-/// drives the `extend_to_line_end` fill never includes them, and the
-/// virtual line's own bg is only painted on cells covered by its text.
-/// Drop the `#[ignore]` once the renderer is taught to extend a
-/// virtual line's bg to the end of its visual row.
+/// text. Live-diff renders deleted-line virtual content in red; without
+/// the fix the user sees red only behind the text and default-bg to
+/// the right.
 #[test]
-#[ignore = "known-failing repro: virtual-line bg doesn't fill trailing cells"]
 fn virtual_line_bg_fills_to_viewport_edge() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");

@@ -1148,6 +1148,25 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                         None
                     };
 
+                // Virtual lines (LineAbove / LineBelow) have no source
+                // bytes, so the overlay sweep never adds them to
+                // `line_touched_overlays`. Fall back to the virtual
+                // line's own style bg so plugins (live-diff, audit_mode)
+                // can paint a full-row stripe by setting bg on the
+                // virtual line itself, mirroring extend_to_line_end.
+                let fill_style = fill_style.or_else(|| {
+                    if current_view_line.line_start != LineStart::AfterInjectedNewline {
+                        return None;
+                    }
+                    let token_style = current_view_line
+                        .char_styles
+                        .first()
+                        .and_then(|s| s.as_ref())?;
+                    let (r, g, b) = token_style.bg?;
+                    let bg = ratatui::style::Color::Rgb(r, g, b);
+                    Some(ratatui::style::Style::default().fg(bg).bg(bg))
+                });
+
                 if let Some(fill_bg) = fill_style {
                     let fill_text = " ".repeat(remaining_cols);
                     push_span_with_map(

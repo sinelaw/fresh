@@ -443,9 +443,43 @@ function clearDecorations(bufferId: number): void {
   editor.clearNamespace(bufferId, NS_OVERLAY);
 }
 
-async function renderHunks(state: BufferDiffState): Promise<void> {
+/**
+ * Compute byte offsets of every line start in the buffer (and one
+ * extra entry past the last line) so renderHunks can map line indices
+ * to byte ranges synchronously, without awaiting `getLineStartPosition`
+ * per line.
+ *
+ * `getLineStartPosition` is async and yields back to the editor
+ * event loop on every call. With one await per overlay we add, the
+ * editor renders frames mid-render and the user sees green stripes
+ * fill in one line at a time. Computing locally from the buffer text
+ * keeps the whole render in a single JS turn → instant repaint.
+ */
+function computeLineByteStarts(text: string): number[] {
+  const starts = [0];
+  let pos = 0;
+  for (let i = 0; i < text.length; i++) {
+    pos += editor.utf8ByteLength(text[i]);
+    if (text[i] === "\n") starts.push(pos);
+  }
+  return starts;
+}
+
+function renderHunks(state: BufferDiffState, newText: string): void {
   const bid = state.bufferId;
   clearDecorations(bid);
+
+  const lineStarts = computeLineByteStarts(newText);
+  const totalBytes = lineStarts[lineStarts.length - 1] || newText.length;
+  // For line N, lineStarts[N] = byte of first char on line N. lineEnd
+  // before the trailing newline = lineStarts[N+1] - 1 (when a newline
+  // follows) or totalBytes when N is the last line. Empty/last-line
+  // edge cases default to lineStarts[N].
+  const lineEndExclusive = (line: number): number => {
+    if (line + 1 < lineStarts.length) return lineStarts[line + 1] - 1;
+    return totalBytes;
+  };
+  const lineCount = lineStarts.length;
 
   // Group new-side lines per kind for batched setLineIndicators.
   const addedLines: number[] = [];
@@ -454,15 +488,10 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
 
   for (const h of state.hunks) {
     if (h.kind === "removed") {
-      // Anchor on the line that took the deletion's place.  If newStart
-      // is past EOF (`getLineStartPosition` returns null), step back
-      // until we find a real line.
+      // Anchor on the line that took the deletion's place. If newStart
+      // is past EOF, step back to the last real line.
       let anchor = h.newStart;
-      while (anchor > 0) {
-        const pos = await editor.getLineStartPosition(anchor);
-        if (pos !== null) break;
-        anchor--;
-      }
+      if (anchor >= lineCount) anchor = Math.max(0, lineCount - 1);
       removedAnchors.push(anchor);
     } else if (h.kind === "added") {
       for (let i = 0; i < h.newCount; i++) addedLines.push(h.newStart + i);
@@ -490,50 +519,42 @@ async function renderHunks(state: BufferDiffState): Promise<void> {
     );
   }
 
-  // Background highlights and virtual lines need byte positions, so fan
-  // out per-hunk. Each hunk does at most O(oldLines + 1) API calls.
+  // Background highlights and virtual lines, all sync now.
   for (const h of state.hunks) {
     if (h.kind === "added" || h.kind === "modified") {
-      // Per-line overlay with extendToLineEnd to paint a full-row stripe
-      // (same approach as audit_mode.ts's diff/cursor highlights).
       const bg = h.kind === "added" ? THEME.addedBg : THEME.modifiedBg;
       for (let i = 0; i < h.newCount; i++) {
         const line = h.newStart + i;
-        const start = await editor.getLineStartPosition(line);
-        const end = await editor.getLineEndPosition(line);
-        if (start !== null && end !== null) {
-          editor.addOverlay(bid, NS_OVERLAY, start, end, {
-            bg,
-            underline: false,
-            bold: false,
-            italic: false,
-            strikethrough: false,
-            extendToLineEnd: true,
-          });
-        }
+        if (line >= lineCount) break;
+        const start = lineStarts[line];
+        const end = lineEndExclusive(line);
+        editor.addOverlay(bid, NS_OVERLAY, start, end, {
+          bg,
+          underline: false,
+          bold: false,
+          italic: false,
+          strikethrough: false,
+          extendToLineEnd: true,
+        });
       }
     }
 
     if (h.oldLines.length === 0) continue;
 
-    // Anchor: for removed/modified hunks, use the line that follows the
-    // deletion on the new side. If newStart is past EOF (line index out
-    // of range), step back to the last real line and anchor "below" so
-    // the virtual lines appear after the existing tail.
+    // Anchor: line that follows the deletion on the new side. If past
+    // EOF, anchor on the last real line and place "below".
     let anchorLine = h.newStart;
     let above = true;
-    let anchor = await editor.getLineStartPosition(anchorLine);
-    while (anchor === null && anchorLine > 0) {
-      anchorLine--;
+    if (anchorLine >= lineCount) {
+      anchorLine = Math.max(0, lineCount - 1);
       above = false;
-      anchor = await editor.getLineStartPosition(anchorLine);
     }
-    if (anchor === null) continue;
+    const anchor = lineStarts[anchorLine];
 
     for (let i = 0; i < h.oldLines.length; i++) {
-      // No "- " prefix — the red bg/fg is enough of a visual signal,
-      // and the user prefers any "-" indicator to live in the gutter
-      // rather than inside the buffer content.
+      // No "- " prefix — the red bg/fg is the visual signal, and the user
+      // prefers any "-" indicator to live in the gutter rather than
+      // inside the buffer content.
       editor.addVirtualLine(
         bid,
         anchor,
@@ -627,7 +648,7 @@ async function recompute(bufferId: number): Promise<void> {
     state.hunks = hunks;
     state.lastHunksKey = hunksKey;
 
-    await renderHunks(state);
+    renderHunks(state, newText);
 
     editor.setViewState(bufferId, "live_diff_hunks", hunks);
   } finally {
