@@ -15,12 +15,12 @@
     <key>CFBundleExecutable</key>
     <string>fresh</string>
 
-    <!-- Version info (update these when releasing) -->
+    <!-- Version info — substituted by create-app-bundle.sh from the workspace Cargo.toml -->
     <key>CFBundleShortVersionString</key>
-    <string>0.2.5</string>
+    <string>__VERSION__</string>
 
     <key>CFBundleVersion</key>
-    <string>0.2.5</string>
+    <string>__VERSION__</string>
 
     <!-- Bundle type: Application -->
     <key>CFBundlePackageType</key>

@@ -44,8 +44,31 @@ exec "$DIR/fresh" --gui "$@"
 WRAPPER
 chmod +x "${MACOS_DIR}/Fresh"
 
-# Copy Info.plist (update executable name to wrapper)
-sed 's|<string>fresh</string>|<string>Fresh</string>|' \
+# Resolve the workspace version (env var wins so CI can override).
+# Falls back to parsing the [workspace.package] block in the root Cargo.toml.
+if [ -n "${FRESH_VERSION:-}" ]; then
+    VERSION="$FRESH_VERSION"
+else
+    WORKSPACE_TOML="$(cd "$SCRIPT_DIR/../../../.." && pwd)/Cargo.toml"
+    VERSION="$(awk '
+        /^\[workspace\.package\]/ { in_block=1; next }
+        /^\[/ { in_block=0 }
+        in_block && /^version[[:space:]]*=/ {
+            n = split($0, parts, "\"")
+            if (n >= 2) { print parts[2]; exit }
+        }
+    ' "$WORKSPACE_TOML")"
+fi
+
+if [ -z "$VERSION" ]; then
+    echo "Error: could not determine workspace version" >&2
+    exit 1
+fi
+echo "Bundling version: $VERSION"
+
+# Copy Info.plist with version + executable-name substitutions in one pass
+sed -e "s|__VERSION__|${VERSION}|g" \
+    -e 's|<string>fresh</string>|<string>Fresh</string>|' \
     "${RESOURCES_DIR}/Info.plist" > "${CONTENTS_DIR}/Info.plist"
 
 # Copy icon — prefer the pre-built ICNS from docs/icons/macos, fall back

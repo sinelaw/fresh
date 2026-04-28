@@ -81,12 +81,11 @@ jobs:
       # ── macOS: .app bundle → .pkg installer ──────────────────────────
       - name: Package GUI (macOS)
         if: runner.os == 'macOS'
+        env:
+          FRESH_VERSION: ${{ inputs.version }}
         run: |
-          # Update Info.plist version
-          sed -i '' "s|<string>0.2.5</string>|<string>${VERSION}</string>|g" \
-            crates/fresh-gui/resources/macos/Info.plist
-
-          # Create .app bundle
+          # Create .app bundle (version is read from FRESH_VERSION → Info.plist
+          # placeholder, no in-place sed against a hard-coded string)
           cd crates/fresh-gui/resources/macos
           ./create-app-bundle.sh "../../../../target/${{ matrix.target }}/release/fresh"
           cd ../../../..
