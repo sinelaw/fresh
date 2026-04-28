@@ -189,9 +189,7 @@ fn test_live_diff_updates_on_buffer_edit() {
 
     // Type a brand-new line into the buffer; this fires after_insert and
     // forces a recompute against HEAD.
-    harness
-        .type_text("// LIVE_DIFF_TYPED_INSERT\n")
-        .unwrap();
+    harness.type_text("// LIVE_DIFF_TYPED_INSERT\n").unwrap();
     harness.render().unwrap();
 
     // Wait for the new-line glyph to appear and for the typed text to be
