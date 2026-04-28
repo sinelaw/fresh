@@ -1294,8 +1294,10 @@ fn test_settings_file_explorer_width_shows_percent_suffix() {
     // Switch to the settings panel.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    // Width is the last field in the alphabetical listing.
-    for _ in 0..5 {
+    // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
+    // Custom Ignore Patterns, Preview Tabs, Respect Gitignore, Show Gitignored,
+    // Show Hidden, Side, Width.
+    for _ in 0..7 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
@@ -1340,7 +1342,10 @@ fn test_settings_file_explorer_width_applies_live() {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    for _ in 0..6 {
+    // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
+    // Custom Ignore Patterns, Preview Tabs, Respect Gitignore, Show Gitignored,
+    // Show Hidden, Side, Width.
+    for _ in 0..7 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
@@ -1350,8 +1355,6 @@ fn test_settings_file_explorer_width_applies_live() {
     // confirm, then save settings with Ctrl+S. The text input arms
     // replace-on-type when editing starts, so the first printable key
     // clears "30%" automatically — no separate select-all is needed.
-    // Note: Added FileExplorerSide field, so Width is now at position 6 (0-indexed)
-    // instead of 5 in the alphabetical listing.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1449,10 +1452,10 @@ fn test_settings_file_explorer_toggles_propagate_to_runtime() {
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // File Explorer items (alphabetical): Custom Ignore Patterns, Preview Tabs,
-    // Respect Gitignore, Show Gitignored, Show Hidden, Width.
-    // Land on Show Gitignored and toggle.
-    for _ in 0..3 {
+    // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
+    // Custom Ignore Patterns, Preview Tabs, Respect Gitignore, Show Gitignored,
+    // Show Hidden, Side, Width. Land on Show Gitignored and toggle.
+    for _ in 0..4 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness
