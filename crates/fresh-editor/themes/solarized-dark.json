@@ -18,6 +18,8 @@
     "tab_separator_bg": [0, 43, 54],
     "status_bar_fg": [0, 43, 54],
     "status_bar_bg": [147, 161, 161],
+    "status_palette_fg": [253, 246, 227],
+    "status_palette_bg": [38, 139, 210],
     "prompt_fg": [0, 43, 54],
     "prompt_bg": [181, 137, 0],
     "prompt_selection_fg": [253, 246, 227],

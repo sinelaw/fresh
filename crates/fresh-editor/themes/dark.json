@@ -40,6 +40,8 @@
     "menu_disabled_bg": [50, 50, 50],
     "status_bar_fg": "White",
     "status_bar_bg": [30, 30, 30],
+    "status_palette_fg": [255, 255, 255],
+    "status_palette_bg": [70, 130, 180],
     "prompt_fg": "White",
     "prompt_bg": [20, 20, 20],
     "prompt_selection_fg": "White",

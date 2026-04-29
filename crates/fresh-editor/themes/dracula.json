@@ -23,6 +23,8 @@
     "tab_hover_bg": [80, 83, 100],
     "status_bar_fg": [40, 42, 54],
     "status_bar_bg": [189, 147, 249],
+    "status_palette_fg": [40, 42, 54],
+    "status_palette_bg": [139, 233, 253],
     "prompt_fg": [40, 42, 54],
     "prompt_bg": [80, 250, 123],
     "prompt_selection_fg": [248, 248, 242],

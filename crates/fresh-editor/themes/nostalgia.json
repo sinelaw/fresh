@@ -38,6 +38,8 @@
     "menu_disabled_bg": [170, 170, 170],
     "status_bar_fg": [0, 0, 0],
     "status_bar_bg": [0, 170, 170],
+    "status_palette_fg": [255, 255, 255],
+    "status_palette_bg": [0, 170, 0],
     "prompt_fg": [255, 255, 85],
     "prompt_bg": [0, 0, 170],
     "prompt_selection_fg": [0, 0, 0],

@@ -1884,6 +1884,27 @@ mod tests {
     }
 
     #[test]
+    fn test_all_builtin_themes_set_prominent_palette_indicator() {
+        // Issue #1711: the Ctrl+P palette hint should be a *prominent*
+        // accent drawn from each theme's own palette, not the neutral
+        // status-bar colors. The fallback to status_bar_* exists for
+        // user themes that don't opt in, but every shipped theme must
+        // set explicit values that differ from the bar so the hint
+        // pops as intended.
+        for builtin in BUILTIN_THEMES {
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+            assert!(
+                theme.status_palette_fg != theme.status_bar_fg
+                    || theme.status_palette_bg != theme.status_bar_bg,
+                "Theme '{}' must set status_palette_fg/bg to a prominent \
+                 accent distinct from status_bar_fg/bg",
+                builtin.name
+            );
+        }
+    }
+
+    #[test]
     fn test_all_builtin_themes_have_file_status_colors() {
         // Every builtin theme must produce valid file_status colors (via fallback or explicit)
         for builtin in BUILTIN_THEMES {
