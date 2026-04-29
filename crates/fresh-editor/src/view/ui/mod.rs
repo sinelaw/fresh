@@ -22,6 +22,8 @@ pub mod view_pipeline;
 
 // Runtime-only modules (depend on state, services, input, etc.)
 #[cfg(feature = "runtime")]
+pub mod expanded_menus_cache;
+#[cfg(feature = "runtime")]
 pub mod file_browser;
 #[cfg(feature = "runtime")]
 pub mod file_explorer;
@@ -45,6 +47,8 @@ pub use file_browser::{FileBrowserLayout, FileBrowserRenderer};
 pub use file_explorer::FileExplorerRenderer;
 pub use focus::FocusManager;
 pub use layout::point_in_rect;
+#[cfg(feature = "runtime")]
+pub use expanded_menus_cache::ExpandedMenusCache;
 #[cfg(feature = "runtime")]
 pub use menu::{context_keys, MenuContext, MenuHit, MenuLayout, MenuRenderer, MenuState};
 #[cfg(feature = "runtime")]

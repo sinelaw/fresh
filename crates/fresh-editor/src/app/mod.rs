@@ -400,8 +400,13 @@ pub struct Editor {
     /// Active theme
     theme: crate::view::theme::Theme,
 
-    /// All loaded themes (embedded + user)
-    theme_registry: crate::view::theme::ThemeRegistry,
+    /// All loaded themes (embedded + user). Held as `Arc` so
+    /// `expanded_menus_cache` can detect a registry swap via `Arc::ptr_eq`.
+    theme_registry: Arc<crate::view::theme::ThemeRegistry>,
+
+    /// Memoised `MenuConfig` with `DynamicSubmenu` items expanded against
+    /// the current theme registry.
+    expanded_menus_cache: crate::view::ui::ExpandedMenusCache,
 
     /// Shared theme data cache for plugin access (name → JSON value)
     theme_cache: Arc<RwLock<HashMap<String, serde_json::Value>>>,

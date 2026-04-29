@@ -1143,11 +1143,23 @@ impl Editor {
         }
 
         if self.menu_bar_visible {
+            // Pre-expand DynamicSubmenu items once per registry; without this
+            // MenuRenderer::render rescans + reparses every theme JSON file
+            // on every frame.
+            self.expanded_menus_cache.update(
+                &self.theme_registry,
+                &self.menus,
+                &self.menu_state.themes_dir,
+            );
+            let expanded = self
+                .expanded_menus_cache
+                .get()
+                .expect("just updated");
             let keybindings = self.keybindings.read().unwrap();
             self.cached_layout.menu_layout = Some(crate::view::ui::MenuRenderer::render(
                 frame,
                 menu_bar_area,
-                &self.menus,
+                expanded,
                 &self.menu_state,
                 &keybindings,
                 &self.theme,

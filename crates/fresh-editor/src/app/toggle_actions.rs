@@ -416,7 +416,8 @@ impl Editor {
         use crate::view::theme::ThemeLoader;
 
         let theme_loader = ThemeLoader::new(self.dir_context.themes_dir());
-        self.theme_registry = theme_loader.load_all(&[]);
+        self.theme_registry = std::sync::Arc::new(theme_loader.load_all(&[]));
+        self.expanded_menus_cache.invalidate();
 
         // Update shared theme cache for plugin access
         *self.theme_cache.write().unwrap() = self.theme_registry.to_json_map();

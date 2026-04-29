@@ -246,7 +246,7 @@ impl Editor {
                 .or_insert_with(|| LspLanguageConfig::Multi(vec![lsp_config.clone()]));
         }
 
-        let theme_registry = theme_loader.load_all(&scan_result.bundle_theme_dirs);
+        let theme_registry = Arc::new(theme_loader.load_all(&scan_result.bundle_theme_dirs));
         tracing::info!("Themes loaded");
 
         // Get active theme from registry, falling back to default if not found
@@ -710,6 +710,7 @@ impl Editor {
             pending_grammar_callbacks: Vec::new(),
             theme,
             theme_registry,
+            expanded_menus_cache: crate::view::ui::ExpandedMenusCache::default(),
             theme_cache,
             ansi_background: None,
             ansi_background_path: None,
