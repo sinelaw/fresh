@@ -432,6 +432,18 @@ pub struct UiColors {
     /// Status bar background color
     #[serde(default = "default_status_bar_bg")]
     pub status_bar_bg: ColorDef,
+    /// Command palette shortcut hint text color in status bar (falls back to status_bar_fg)
+    #[serde(default)]
+    pub status_palette_fg: Option<ColorDef>,
+    /// Command palette shortcut hint background in status bar (falls back to status_bar_bg)
+    #[serde(default)]
+    pub status_palette_bg: Option<ColorDef>,
+    /// Status bar LSP indicator text color when LSP is running (falls back to status_bar_fg)
+    #[serde(default)]
+    pub status_lsp_on_fg: Option<ColorDef>,
+    /// Status bar LSP indicator background when LSP is running (falls back to status_bar_bg)
+    #[serde(default)]
+    pub status_lsp_on_bg: Option<ColorDef>,
     /// Command prompt text color
     #[serde(default = "default_prompt_fg")]
     pub prompt_fg: ColorDef,
@@ -999,6 +1011,12 @@ pub struct Theme {
 
     pub status_bar_fg: Color,
     pub status_bar_bg: Color,
+    /// Status bar palette shortcut hint colors (default: same as status bar)
+    pub status_palette_fg: Color,
+    pub status_palette_bg: Color,
+    /// Status bar LSP indicator colors when running (default: same as status bar)
+    pub status_lsp_on_fg: Color,
+    pub status_lsp_on_bg: Color,
     pub prompt_fg: Color,
     pub prompt_bg: Color,
     pub prompt_selection_fg: Color,
@@ -1155,8 +1173,32 @@ impl From<ThemeFile> for Theme {
             menu_hover_fg: file.ui.menu_hover_fg.into(),
             menu_disabled_fg: file.ui.menu_disabled_fg.into(),
             menu_disabled_bg: file.ui.menu_disabled_bg.into(),
-            status_bar_fg: file.ui.status_bar_fg.into(),
-            status_bar_bg: file.ui.status_bar_bg.into(),
+            status_bar_fg: file.ui.status_bar_fg.clone().into(),
+            status_bar_bg: file.ui.status_bar_bg.clone().into(),
+            status_palette_fg: file
+                .ui
+                .status_palette_fg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| file.ui.status_bar_fg.clone().into()),
+            status_palette_bg: file
+                .ui
+                .status_palette_bg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| file.ui.status_bar_bg.clone().into()),
+            status_lsp_on_fg: file
+                .ui
+                .status_lsp_on_fg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| file.ui.status_bar_fg.clone().into()),
+            status_lsp_on_bg: file
+                .ui
+                .status_lsp_on_bg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| file.ui.status_bar_bg.clone().into()),
             prompt_fg: file.ui.prompt_fg.into(),
             prompt_bg: file.ui.prompt_bg.into(),
             prompt_selection_fg: file.ui.prompt_selection_fg.into(),
@@ -1299,6 +1341,10 @@ impl From<Theme> for ThemeFile {
                 menu_disabled_bg: theme.menu_disabled_bg.into(),
                 status_bar_fg: theme.status_bar_fg.into(),
                 status_bar_bg: theme.status_bar_bg.into(),
+                status_palette_fg: Some(theme.status_palette_fg.into()),
+                status_palette_bg: Some(theme.status_palette_bg.into()),
+                status_lsp_on_fg: Some(theme.status_lsp_on_fg.into()),
+                status_lsp_on_bg: Some(theme.status_lsp_on_bg.into()),
                 prompt_fg: theme.prompt_fg.into(),
                 prompt_bg: theme.prompt_bg.into(),
                 prompt_selection_fg: theme.prompt_selection_fg.into(),
@@ -1455,6 +1501,10 @@ impl Theme {
                 "tab_inactive_bg" => Some(self.tab_inactive_bg),
                 "status_bar_fg" => Some(self.status_bar_fg),
                 "status_bar_bg" => Some(self.status_bar_bg),
+                "status_palette_fg" => Some(self.status_palette_fg),
+                "status_palette_bg" => Some(self.status_palette_bg),
+                "status_lsp_on_fg" => Some(self.status_lsp_on_fg),
+                "status_lsp_on_bg" => Some(self.status_lsp_on_bg),
                 "prompt_fg" => Some(self.prompt_fg),
                 "prompt_bg" => Some(self.prompt_bg),
                 "prompt_selection_fg" => Some(self.prompt_selection_fg),
@@ -1550,6 +1600,10 @@ impl Theme {
                 "tab_inactive_bg" => Some(&mut self.tab_inactive_bg),
                 "status_bar_fg" => Some(&mut self.status_bar_fg),
                 "status_bar_bg" => Some(&mut self.status_bar_bg),
+                "status_palette_fg" => Some(&mut self.status_palette_fg),
+                "status_palette_bg" => Some(&mut self.status_palette_bg),
+                "status_lsp_on_fg" => Some(&mut self.status_lsp_on_fg),
+                "status_lsp_on_bg" => Some(&mut self.status_lsp_on_bg),
                 "prompt_fg" => Some(&mut self.prompt_fg),
                 "prompt_bg" => Some(&mut self.prompt_bg),
                 "prompt_selection_fg" => Some(&mut self.prompt_selection_fg),

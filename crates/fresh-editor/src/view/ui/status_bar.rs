@@ -1047,13 +1047,19 @@ impl StatusBarRenderer {
                     LspIndicatorState::Off => {
                         (theme.diagnostic_warning_fg, theme.diagnostic_warning_bg)
                     }
-                    LspIndicatorState::On => (theme.diagnostic_info_fg, theme.diagnostic_info_bg),
+                    // On is the expected/healthy case — driven by the
+                    // dedicated `status_lsp_on_*` theme keys (default to
+                    // the neutral status-bar palette so the indicator
+                    // blends into the bar instead of breaking its color
+                    // band).  Error and Off keep their vivid palettes
+                    // above so genuine problems still stand out.
+                    LspIndicatorState::On => (theme.status_lsp_on_fg, theme.status_lsp_on_bg),
                     // Dismissed: fall back to the neutral status-bar
                     // palette so the pill reads as low-priority.  We
                     // intentionally don't introduce a dedicated theme
                     // key — every theme already carries the plain
                     // status-bar fg/bg, which reliably produces a
-                    // "muted" look next to the vivid error/warning/info
+                    // "muted" look next to the vivid error/warning
                     // palettes above.
                     LspIndicatorState::OffDismissed => (theme.status_bar_fg, theme.status_bar_bg),
                     LspIndicatorState::None => (theme.status_bar_fg, theme.status_bar_bg),
@@ -1090,9 +1096,13 @@ impl StatusBarRenderer {
             ElementKind::Update => Style::default()
                 .fg(theme.menu_highlight_fg)
                 .bg(theme.menu_dropdown_bg),
+            // The palette shortcut hint is purely informational — driven
+            // by the dedicated `status_palette_*` theme keys (default
+            // to the neutral status-bar palette so it blends into the
+            // bar instead of breaking the color band at the right edge).
             ElementKind::Palette => Style::default()
-                .fg(theme.help_indicator_fg)
-                .bg(theme.help_indicator_bg),
+                .fg(theme.status_palette_fg)
+                .bg(theme.status_palette_bg),
             ElementKind::RemoteIndicator(state) => {
                 let is_hovering = hover == StatusBarHover::RemoteIndicator;
                 let (fg, bg) = match state {
@@ -1868,6 +1878,102 @@ mod tests {
             "failed with error should include the error, got {:?}",
             failed_detail.label()
         );
+    }
+
+    #[test]
+    fn test_palette_and_lsp_on_use_dedicated_theme_keys() {
+        // Repro for issue #1711: the Palette hint and the "LSP on"
+        // indicator used distinct palettes (help-indicator and
+        // diagnostic-info), causing the status bar's color band to
+        // break at the far right.
+        //
+        // Now they're driven by dedicated theme keys whose defaults
+        // resolve to the status-bar palette, so the bar reads as a
+        // single continuous color out of the box, while still letting
+        // themes override these elements independently. Off / Error
+        // LSP states keep their vivid diagnostic palette so real
+        // problems still pop.
+        let theme = crate::view::theme::Theme::from_json(
+            r#"{"name":"t","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#,
+        )
+        .expect("minimal theme should parse");
+
+        // Defaults: dedicated keys resolve to the status-bar palette.
+        assert_eq!(theme.status_palette_fg, theme.status_bar_fg);
+        assert_eq!(theme.status_palette_bg, theme.status_bar_bg);
+        assert_eq!(theme.status_lsp_on_fg, theme.status_bar_fg);
+        assert_eq!(theme.status_lsp_on_bg, theme.status_bar_bg);
+
+        let palette_style = StatusBarRenderer::element_style(
+            ElementKind::Palette,
+            &theme,
+            StatusBarHover::None,
+            WarningLevel::None,
+            LspIndicatorState::None,
+        );
+        assert_eq!(palette_style.fg, Some(theme.status_palette_fg));
+        assert_eq!(palette_style.bg, Some(theme.status_palette_bg));
+
+        let lsp_on_style = StatusBarRenderer::element_style(
+            ElementKind::Lsp,
+            &theme,
+            StatusBarHover::None,
+            WarningLevel::None,
+            LspIndicatorState::On,
+        );
+        assert_eq!(lsp_on_style.fg, Some(theme.status_lsp_on_fg));
+        assert_eq!(lsp_on_style.bg, Some(theme.status_lsp_on_bg));
+
+        // Sanity: Off / Error must still differ from the status-bar
+        // palette so they remain user-visible signals.
+        let lsp_off_style = StatusBarRenderer::element_style(
+            ElementKind::Lsp,
+            &theme,
+            StatusBarHover::None,
+            WarningLevel::None,
+            LspIndicatorState::Off,
+        );
+        assert_eq!(lsp_off_style.fg, Some(theme.diagnostic_warning_fg));
+        assert_eq!(lsp_off_style.bg, Some(theme.diagnostic_warning_bg));
+
+        let lsp_error_style = StatusBarRenderer::element_style(
+            ElementKind::Lsp,
+            &theme,
+            StatusBarHover::None,
+            WarningLevel::None,
+            LspIndicatorState::Error,
+        );
+        assert_eq!(lsp_error_style.fg, Some(theme.diagnostic_error_fg));
+        assert_eq!(lsp_error_style.bg, Some(theme.diagnostic_error_bg));
+    }
+
+    #[test]
+    fn test_status_palette_and_lsp_on_keys_override_independently() {
+        // A theme that only sets the new keys should produce styles
+        // that follow the override, not the underlying status_bar_*
+        // colors. This is the entire point of introducing dedicated
+        // keys: themes can repaint these specific indicators without
+        // touching the rest of the status bar.
+        let theme_json = r#"{
+            "name":"t",
+            "editor":{},
+            "ui":{
+                "status_bar_fg":"White",
+                "status_bar_bg":"DarkGray",
+                "status_palette_fg":"Black",
+                "status_palette_bg":"Yellow",
+                "status_lsp_on_fg":"Black",
+                "status_lsp_on_bg":"Cyan"
+            },
+            "search":{},
+            "diagnostic":{},
+            "syntax":{}
+        }"#;
+        let theme = crate::view::theme::Theme::from_json(theme_json).expect("theme should parse");
+        assert_ne!(theme.status_palette_fg, theme.status_bar_fg);
+        assert_ne!(theme.status_palette_bg, theme.status_bar_bg);
+        assert_ne!(theme.status_lsp_on_fg, theme.status_bar_fg);
+        assert_ne!(theme.status_lsp_on_bg, theme.status_bar_bg);
     }
 
     #[test]

@@ -411,6 +411,54 @@
           "$ref": "#/$defs/ColorDef",
           "default": "DarkGray"
         },
+        "status_palette_fg": {
+          "description": "Command palette shortcut hint text color in status bar (falls back to status_bar_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_palette_bg": {
+          "description": "Command palette shortcut hint background in status bar (falls back to status_bar_bg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_lsp_on_fg": {
+          "description": "Status bar LSP indicator text color when LSP is running (falls back to status_bar_fg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_lsp_on_bg": {
+          "description": "Status bar LSP indicator background when LSP is running (falls back to status_bar_bg)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "prompt_fg": {
           "description": "Command prompt text color",
           "$ref": "#/$defs/ColorDef",
