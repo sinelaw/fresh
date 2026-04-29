@@ -736,6 +736,8 @@ impl Editor {
                 self.copy_selection()
             }
             Action::CopyWithTheme(theme) => self.copy_selection_with_theme(&theme),
+            Action::CopyFilePath => self.copy_active_buffer_path(false),
+            Action::CopyRelativeFilePath => self.copy_active_buffer_path(true),
             Action::Cut => {
                 if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
                     self.file_explorer_cut();

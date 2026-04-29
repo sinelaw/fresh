@@ -380,6 +380,11 @@ pub enum Action {
     CopyWithTheme(String),
     Cut,
     Paste,
+    /// Copy the absolute filesystem path of the active buffer's file to the clipboard.
+    CopyFilePath,
+    /// Copy the active buffer's file path relative to the workspace root, falling
+    /// back to the absolute path if the file lives outside the workspace.
+    CopyRelativeFilePath,
 
     // Vi-style yank (copy without selection, then restore cursor)
     YankWordForward,
@@ -867,6 +872,8 @@ impl Action {
             "copy" => Copy,
             "cut" => Cut,
             "paste" => Paste,
+            "copy_file_path" => CopyFilePath,
+            "copy_relative_file_path" => CopyRelativeFilePath,
 
             "yank_word_forward" => YankWordForward,
             "yank_word_backward" => YankWordBackward,
@@ -2166,6 +2173,8 @@ impl KeybindingResolver {
             Action::CopyWithTheme(theme) => t!("action.copy_with_theme", theme = theme),
             Action::Cut => t!("action.cut"),
             Action::Paste => t!("action.paste"),
+            Action::CopyFilePath => t!("action.copy_file_path"),
+            Action::CopyRelativeFilePath => t!("action.copy_relative_file_path"),
             Action::YankWordForward => t!("action.yank_word_forward"),
             Action::YankWordBackward => t!("action.yank_word_backward"),
             Action::YankToLineEnd => t!("action.yank_to_line_end"),

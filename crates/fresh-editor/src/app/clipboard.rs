@@ -644,6 +644,34 @@ impl Editor {
         self.clipboard.get_internal().to_string()
     }
 
+    /// Copy the active buffer's file path to the clipboard.
+    ///
+    /// When `relative` is true the path is made relative to the workspace root;
+    /// if the file lives outside the workspace the absolute path is used as a
+    /// safe fallback (the user still gets a usable path rather than nothing).
+    /// When `relative` is false the absolute path is always copied.
+    ///
+    /// If the active buffer has no associated file (unsaved scratch buffer) a
+    /// status message is shown and the clipboard is left untouched.
+    pub fn copy_active_buffer_path(&mut self, relative: bool) {
+        let Some(path) = self.active_state().buffer.file_path() else {
+            self.status_message = Some(t!("clipboard.no_file_path").to_string());
+            return;
+        };
+
+        let path_str = if relative {
+            path.strip_prefix(&self.working_dir)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            path.to_string_lossy().into_owned()
+        };
+
+        self.clipboard.copy(path_str.clone());
+        self.status_message = Some(t!("clipboard.copied_path", path = &path_str).to_string());
+    }
+
     /// Add a cursor at the next occurrence of the selected text
     /// If no selection, first selects the entire word at cursor position
     pub fn add_cursor_at_next_match(&mut self) {

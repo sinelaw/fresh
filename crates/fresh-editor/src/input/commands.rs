@@ -291,6 +291,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.copy_file_path",
+        desc_key: "cmd.copy_file_path_desc",
+        action: || Action::CopyFilePath,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.copy_relative_file_path",
+        desc_key: "cmd.copy_relative_file_path_desc",
+        action: || Action::CopyRelativeFilePath,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.cut",
         desc_key: "cmd.cut_desc",
         action: || Action::Cut,

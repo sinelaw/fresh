@@ -2973,6 +2973,8 @@ pub fn action_to_events(
         | Action::PrevSplit
         | Action::Copy
         | Action::CopyWithTheme(_)
+        | Action::CopyFilePath
+        | Action::CopyRelativeFilePath
         | Action::Cut
         | Action::Paste
         | Action::YankWordForward
