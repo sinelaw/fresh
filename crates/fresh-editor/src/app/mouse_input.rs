@@ -698,6 +698,14 @@ impl Editor {
                 return true;
             }
         }
+        // The prompt's suggestions popup also absorbs clicks across its full
+        // outer rect (border + items): clicking the chrome must not move the
+        // buffer cursor below.
+        if let Some(outer) = self.cached_layout.suggestions_outer_area {
+            if in_rect(col, row, outer) {
+                return true;
+            }
+        }
         let layouts = popup_areas_to_layout_info(&self.cached_layout.popup_areas);
         let hit_tester = PopupHitTester::new(&layouts, &self.active_state().popups);
         hit_tester.is_over_popup(col, row)
@@ -996,6 +1004,13 @@ impl Editor {
     /// Double-click in editor area selects the word under the cursor.
     pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
+
+        // Double-click on a suggestion item commits the choice — even for
+        // prompts whose first click only previews. The first click already
+        // selected the row; the second confirms (#1660).
+        if let Some(r) = self.handle_click_suggestions_confirm(col, row) {
+            return r;
+        }
 
         // Handle popups: dismiss if clicking outside, block if clicking inside
         if self.is_mouse_over_any_popup(col, row) {
@@ -1393,40 +1408,60 @@ impl Editor {
         None
     }
 
-    fn handle_click_suggestions(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+    /// Hit-test (col, row) against the suggestions popup. Returns the index
+    /// of the suggestion under the click, or `None` if the click is outside
+    /// the inner item area or no suggestions are visible.
+    fn suggestion_at(&self, col: u16, row: u16) -> Option<usize> {
         let (inner_rect, start_idx, _visible_count, total_count) =
             self.cached_layout.suggestions_area?;
-        if col >= inner_rect.x
-            && col < inner_rect.x + inner_rect.width
-            && row >= inner_rect.y
-            && row < inner_rect.y + inner_rect.height
+        if col < inner_rect.x
+            || col >= inner_rect.x + inner_rect.width
+            || row < inner_rect.y
+            || row >= inner_rect.y + inner_rect.height
         {
-            let relative_row = (row - inner_rect.y) as usize;
-            let item_idx = start_idx + relative_row;
-            if item_idx < total_count {
-                let click_confirms = if let Some(prompt) = &mut self.prompt {
-                    prompt.selected_suggestion = Some(item_idx);
-                    let confirms = prompt.prompt_type.click_confirms();
-                    if !confirms {
-                        // Mirror keyboard navigation / scroll: sync the input
-                        // to the selected suggestion so the prompt reflects
-                        // what Enter would commit.
-                        if let Some(suggestion) = prompt.suggestions.get(item_idx) {
-                            prompt.input = suggestion.get_value().to_string();
-                            prompt.cursor_pos = prompt.input.len();
-                        }
-                    }
-                    confirms
-                } else {
-                    return None;
-                };
-                if click_confirms {
-                    return Some(self.handle_action(Action::PromptConfirm));
-                }
-                return Some(Ok(()));
+            return None;
+        }
+        let relative_row = (row - inner_rect.y) as usize;
+        let item_idx = start_idx + relative_row;
+        if item_idx < total_count {
+            Some(item_idx)
+        } else {
+            None
+        }
+    }
+
+    fn handle_click_suggestions(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+        let item_idx = self.suggestion_at(col, row)?;
+        let prompt = self.prompt.as_mut()?;
+        prompt.selected_suggestion = Some(item_idx);
+        let confirms = prompt.prompt_type.click_confirms();
+        if !confirms {
+            // Mirror keyboard navigation / scroll: sync the input
+            // to the selected suggestion so the prompt reflects
+            // what Enter would commit.
+            if let Some(suggestion) = prompt.suggestions.get(item_idx) {
+                prompt.input = suggestion.get_value().to_string();
+                prompt.cursor_pos = prompt.input.len();
             }
         }
-        None
+        if confirms {
+            return Some(self.handle_action(Action::PromptConfirm));
+        }
+        Some(Ok(()))
+    }
+
+    /// Click handler that always commits the suggestion under the cursor,
+    /// regardless of `click_confirms`. Used for double-clicks so that
+    /// preview-on-click prompts still have a mouse-only commit path.
+    fn handle_click_suggestions_confirm(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+        let item_idx = self.suggestion_at(col, row)?;
+        let prompt = self.prompt.as_mut()?;
+        prompt.selected_suggestion = Some(item_idx);
+        if let Some(suggestion) = prompt.suggestions.get(item_idx) {
+            prompt.input = suggestion.get_value().to_string();
+            prompt.cursor_pos = prompt.input.len();
+        }
+        Some(self.handle_action(Action::PromptConfirm))
     }
 
     fn handle_click_popup_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {

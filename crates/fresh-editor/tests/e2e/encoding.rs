@@ -2388,22 +2388,29 @@ fn test_reload_with_encoding_menu_item() {
     harness.assert_screen_contains("Reload with Encoding...");
 }
 
-/// Regression for #1660: clicking an encoding in the "Reload with encoding"
-/// prompt must only update the selection, not immediately reload the file.
-/// Confirmation requires Enter (or another explicit commit) so users can
-/// preview options without committing to a destructive reload on every click.
-#[test]
-fn test_reload_with_encoding_click_does_not_confirm() {
-    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
-    let file_path = harness.project_dir().unwrap().join("test_reload_click.txt");
-
-    // Plain ASCII so we know what the buffer should look like before/after.
-    std::fs::write(&file_path, "Hello World\n").unwrap();
-
-    harness.open_file(&file_path).unwrap();
+/// Helper: open the "Reload with encoding" prompt for `file_path`, with the
+/// buffer cursor parked at line 4 column 3 so we can detect any stray
+/// editor-cursor placement caused by clicks on the prompt popup.
+fn open_reload_with_encoding_prompt_at_ln4_col3(
+    harness: &mut EditorTestHarness,
+    file_path: &std::path::Path,
+) {
+    harness.open_file(file_path).unwrap();
     harness.render().unwrap();
 
-    // Open the Reload-with-encoding prompt via the command palette.
+    // Park the cursor at a known position (Ln 4, Col 3) so a stray editor
+    // click would visibly move it.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness.assert_screen_contains("Ln 4, Col 3");
+
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -2416,6 +2423,50 @@ fn test_reload_with_encoding_click_does_not_confirm() {
         .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Reload with encoding:");
+}
+
+fn double_click_at(harness: &mut EditorTestHarness, col: u16, row: u16) {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    // Mock-clock advance to ensure we're outside any previous click's
+    // double-click window before issuing two rapid clicks inside one.
+    let window = std::time::Duration::from_millis(
+        harness
+            .config()
+            .editor
+            .double_click_time_ms
+            .saturating_mul(2),
+    );
+    harness.advance_time(window);
+    let send = |h: &mut EditorTestHarness, kind: MouseEventKind| {
+        h.send_mouse(MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+        .unwrap();
+    };
+    send(harness, MouseEventKind::Down(MouseButton::Left));
+    send(harness, MouseEventKind::Up(MouseButton::Left));
+    send(harness, MouseEventKind::Down(MouseButton::Left));
+    send(harness, MouseEventKind::Up(MouseButton::Left));
+    harness.render().unwrap();
+}
+
+/// Regression for #1660: clicking an encoding in the "Reload with encoding"
+/// prompt must only update the selection, not immediately reload the file.
+/// Confirmation requires Enter (or another explicit commit) so users can
+/// preview options without committing to a destructive reload on every click.
+/// The click must also leave the buffer cursor untouched.
+#[test]
+fn test_reload_with_encoding_click_does_not_confirm() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file_path = harness.project_dir().unwrap().join("test_reload_click.txt");
+
+    // Plain ASCII with several lines so we have room to park the cursor.
+    std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n").unwrap();
+
+    open_reload_with_encoding_prompt_at_ln4_col3(&mut harness, &file_path);
 
     // Find a non-default encoding row to click (Latin-1 is in the list and is
     // not the default UTF-8 selection).
@@ -2435,13 +2486,92 @@ fn test_reload_with_encoding_click_does_not_confirm() {
         !screen.contains("Reloaded with"),
         "Reload must not be triggered by the click. Screen:\n{screen}"
     );
+    // Cancel the prompt so the status bar reverts to showing the buffer
+    // cursor position, then confirm the click did not move it.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Ln 4, Col 3");
 
-    // Pressing Enter on the now-selected suggestion must commit the reload.
+    // Re-open the prompt: keyboard Enter on the (now first) selected
+    // suggestion still commits the reload.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Reload with").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (col, row) = harness
+        .find_text_on_screen("Latin-1")
+        .expect("Latin-1 suggestion should be visible in the encoding list");
+    harness.mouse_click(col, row).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Reloaded with");
+}
+
+/// Regression for #1660: a click on the popup chrome (border row above the
+/// items) must not fall through to the buffer underneath and move the cursor.
+#[test]
+fn test_reload_with_encoding_click_on_popup_border_keeps_cursor() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file_path = harness
+        .project_dir()
+        .unwrap()
+        .join("test_reload_border.txt");
+    std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n").unwrap();
+
+    open_reload_with_encoding_prompt_at_ln4_col3(&mut harness, &file_path);
+
+    // Click on the popup's top border row (the row directly above the first
+    // suggestion). This row is part of the popup chrome — clicks here must be
+    // absorbed, not forwarded to the buffer below.
+    let (_, top_row) = harness
+        .find_text_on_screen("UTF-8 (UTF-8)")
+        .expect("UTF-8 suggestion should be visible in the encoding list");
+    let border_row = top_row.saturating_sub(1);
+    harness.mouse_click(10, border_row).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Reload with encoding:"),
+        "Prompt should still be open after clicking the popup border. Screen:\n{screen}"
+    );
+
+    // Cancel the prompt to surface the buffer cursor in the status bar,
+    // then verify the border-click did not move it.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Ln 4, Col 3");
+}
+
+/// Regression for #1660: double-clicking a suggestion in a preview-on-click
+/// prompt commits the choice (mouse-only confirm path).
+#[test]
+fn test_reload_with_encoding_double_click_confirms() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file_path = harness.project_dir().unwrap().join("test_reload_dbl.txt");
+    std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n").unwrap();
+
+    open_reload_with_encoding_prompt_at_ln4_col3(&mut harness, &file_path);
+
+    let (col, row) = harness
+        .find_text_on_screen("Latin-1")
+        .expect("Latin-1 suggestion should be visible in the encoding list");
+    double_click_at(&mut harness, col, row);
+
+    // Double-click must trigger the reload, just like Enter would.
+    harness.assert_screen_contains("Reloaded with Latin-1");
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Reload with encoding:"),
+        "Prompt should be closed after double-click confirm. Screen:\n{screen}"
+    );
 }
 
 /// Regression: "Hello   é" in Latin-1 was misdetected as UTF-8 because the

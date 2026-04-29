@@ -1112,6 +1112,10 @@ pub(crate) struct CachedLayout {
     /// Suggestions area for mouse hit testing
     /// (inner_rect, scroll_start_idx, visible_count, total_count)
     pub suggestions_area: Option<(Rect, usize, usize, usize)>,
+    /// Full outer rect of the suggestions popup (including borders).
+    /// Used to absorb clicks on the popup chrome so they don't reach the
+    /// buffer below while the prompt is open.
+    pub suggestions_outer_area: Option<Rect>,
     /// Tab layouts per split for mouse interaction
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
     /// Close split button hit areas

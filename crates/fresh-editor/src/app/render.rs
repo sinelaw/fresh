@@ -613,6 +613,7 @@ impl Editor {
 
         // Initialize popup/suggestion layout state (rendered after status bar below)
         self.cached_layout.suggestions_area = None;
+        self.cached_layout.suggestions_outer_area = None;
         self.file_browser_layout = None;
 
         // Clone all immutable values before the mutable borrow
@@ -1470,6 +1471,9 @@ impl Editor {
             &self.theme,
             self.mouse_state.hover_target.as_ref(),
         );
+        if self.cached_layout.suggestions_area.is_some() {
+            self.cached_layout.suggestions_outer_area = Some(suggestions_area);
+        }
 
         if is_quick_open {
             let hints_area = ratatui::layout::Rect {
