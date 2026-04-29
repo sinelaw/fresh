@@ -114,15 +114,16 @@ impl Editor {
 
         // Apply locale change at runtime
         if old_locale != self.config.locale {
-            if let Some(locale) = self.config.locale.as_option() {
-                crate::i18n::set_locale(locale);
+            let locale_owned = self.config.locale.as_option().map(|s| s.to_string());
+            if let Some(locale) = locale_owned {
+                crate::i18n::set_locale(&locale);
                 // Regenerate menus with the new locale
-                self.menus = crate::config::MenuConfig::translated();
+                self.set_menus(crate::config::MenuConfig::translated());
                 tracing::info!("Locale changed to '{}'", locale);
             } else {
                 // Auto-detect from environment
                 crate::i18n::init();
-                self.menus = crate::config::MenuConfig::translated();
+                self.set_menus(crate::config::MenuConfig::translated());
                 tracing::info!("Locale reset to auto-detect");
             }
             // Refresh command palette commands with new locale

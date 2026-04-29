@@ -43,19 +43,6 @@ fn make_search_opts(
 impl Editor {
     // ==================== Menu Helpers ====================
 
-    /// Find a menu by label, searching built-in menus first then plugin menus.
-    fn find_menu_by_label_mut(&mut self, label: &str) -> Option<&mut crate::config::Menu> {
-        // Check built-in menus first
-        if let Some(menu) = self.menus.menus.iter_mut().find(|m| m.label == label) {
-            return Some(menu);
-        }
-        // Then check plugin menus
-        self.menu_state
-            .plugin_menus
-            .iter_mut()
-            .find(|m| m.label == label)
-    }
-
     // ==================== Overlay Commands ====================
 
     /// Handle AddOverlay command
@@ -549,8 +536,7 @@ impl Editor {
         item: crate::config::MenuItem,
         position: MenuPosition,
     ) {
-        if let Some(menu) = self.find_menu_by_label_mut(&menu_label) {
-            // Insert at the specified position
+        let inserted = self.with_menu_by_label(&menu_label, |menu| {
             let insert_idx = match position {
                 MenuPosition::Top => 0,
                 MenuPosition::Bottom => menu.items.len(),
@@ -574,15 +560,17 @@ impl Editor {
                     .map(|i| i + 1)
                     .unwrap_or(menu.items.len()),
             };
-
             menu.items.insert(insert_idx, item);
-            tracing::info!(
+            insert_idx
+        });
+
+        match inserted {
+            Some(idx) => tracing::info!(
                 "Added menu item to '{}' at position {}",
                 menu_label,
-                insert_idx
-            );
-        } else {
-            tracing::warn!("Menu '{}' not found for adding item", menu_label);
+                idx
+            ),
+            None => tracing::warn!("Menu '{}' not found for adding item", menu_label),
         }
     }
 
@@ -651,22 +639,20 @@ impl Editor {
 
     /// Handle RemoveMenuItem command
     pub(super) fn handle_remove_menu_item(&mut self, menu_label: String, item_label: String) {
-        if let Some(menu) = self.find_menu_by_label_mut(&menu_label) {
-            // Remove item with matching label
+        let removed = self.with_menu_by_label(&menu_label, |menu| {
             let original_len = menu.items.len();
             menu.items.retain(|item| match item {
                 crate::config::MenuItem::Action { label, .. }
                 | crate::config::MenuItem::Submenu { label, .. } => label != &item_label,
-                _ => true, // Keep separators
+                _ => true,
             });
+            menu.items.len() < original_len
+        });
 
-            if menu.items.len() < original_len {
-                tracing::info!("Removed menu item '{}' from '{}'", item_label, menu_label);
-            } else {
-                tracing::warn!("Menu item '{}' not found in '{}'", item_label, menu_label);
-            }
-        } else {
-            tracing::warn!("Menu '{}' not found for removing item", menu_label);
+        match removed {
+            Some(true) => tracing::info!("Removed menu item '{}' from '{}'", item_label, menu_label),
+            Some(false) => tracing::warn!("Menu item '{}' not found in '{}'", item_label, menu_label),
+            None => tracing::warn!("Menu '{}' not found for removing item", menu_label),
         }
     }
 

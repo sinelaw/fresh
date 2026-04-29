@@ -871,7 +871,7 @@ impl Editor {
             self.config_mut().locale = crate::config::LocaleName(Some(locale_name.to_string()));
 
             // Regenerate menus with the new locale
-            self.menus = crate::config::MenuConfig::translated();
+            self.set_menus(crate::config::MenuConfig::translated());
 
             // Refresh command palette commands with new locale
             if let Ok(mut registry) = self.command_registry.write() {
