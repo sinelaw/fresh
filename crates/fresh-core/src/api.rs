@@ -914,6 +914,13 @@ pub struct EditorStateSnapshot {
     /// Available grammars with provenance info, updated when grammar registry changes
     #[ts(type = "GrammarInfo[]")]
     pub available_grammars: Vec<GrammarInfoSnapshot>,
+    /// Last-seen grammar registry generation. The state-snapshot updater
+    /// rebuilds `available_grammars` only when this disagrees with the
+    /// registry's current `catalog_gen()`. `#[serde(skip)]` because the
+    /// counter is a host-side detail not exposed to plugins.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub last_grammar_gen: u64,
     /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
     /// When set, this mode's keybindings take precedence over normal key handling
     pub editor_mode: Option<String>,
@@ -968,6 +975,7 @@ impl EditorStateSnapshot {
             config: Arc::new(serde_json::Value::Null),
             user_config: Arc::new(serde_json::Value::Null),
             available_grammars: Vec::new(),
+            last_grammar_gen: 0,
             editor_mode: None,
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,

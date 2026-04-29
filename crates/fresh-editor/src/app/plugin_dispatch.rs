@@ -64,9 +64,13 @@ impl Editor {
             use fresh_core::api::{BufferInfo, CursorInfo, ViewportInfo};
             let mut snapshot = snapshot_handle.write().unwrap();
 
-            // Update grammar info (only rebuild if count changed, cheap check)
-            let grammar_count = self.grammar_registry.available_syntaxes().len();
-            if snapshot.available_grammars.len() != grammar_count {
+            // Rebuild only on registry mutation. Compares the registry's
+            // monotonic catalog_gen against the last-seen value on the
+            // snapshot — a single integer check, no allocation, no
+            // count-mismatch ambiguity between the syntect set and the
+            // unified catalog.
+            let current_gen = self.grammar_registry.catalog_gen();
+            if snapshot.last_grammar_gen != current_gen {
                 snapshot.available_grammars = self
                     .grammar_registry
                     .available_grammar_info()
@@ -78,6 +82,7 @@ impl Editor {
                         short_name: g.short_name,
                     })
                     .collect();
+                snapshot.last_grammar_gen = current_gen;
             }
 
             // Update active buffer ID

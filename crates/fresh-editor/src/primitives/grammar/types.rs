@@ -278,6 +278,10 @@ pub struct GrammarRegistry {
     /// (triggered by e.g. `populate_built_in_aliases`) silently wipes user
     /// `[languages]` config that was merged on top.
     applied_language_config: HashMap<String, crate::config::LanguageConfig>,
+    /// Monotonic generation, bumped on every catalog mutation. Lets
+    /// observers (plugin state snapshot) detect changes with one integer
+    /// compare instead of recounting entries.
+    catalog_gen: u64,
 }
 
 impl GrammarRegistry {
@@ -322,6 +326,7 @@ impl GrammarRegistry {
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
             applied_language_config: HashMap::new(),
+            catalog_gen: 0,
         };
         reg.rebuild_catalog();
         reg
@@ -343,6 +348,7 @@ impl GrammarRegistry {
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
             applied_language_config: HashMap::new(),
+            catalog_gen: 0,
         };
         reg.rebuild_catalog();
         Arc::new(reg)
@@ -382,6 +388,7 @@ impl GrammarRegistry {
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
             applied_language_config: HashMap::new(),
+            catalog_gen: 0,
         };
         registry.populate_built_in_aliases();
         registry.rebuild_catalog();
@@ -1064,11 +1071,19 @@ impl GrammarRegistry {
             self.apply_language_config_inner(&cfg);
             self.applied_language_config = cfg;
         }
+        self.catalog_gen = self.catalog_gen.wrapping_add(1);
     }
 
     /// Return the full catalog of grammar entries.
     pub fn catalog(&self) -> &[GrammarEntry] {
         &self.catalog
+    }
+
+    /// Monotonic generation, bumped on every catalog mutation. Compare against
+    /// a previously-observed value to decide whether to recompute derived
+    /// state.
+    pub fn catalog_gen(&self) -> u64 {
+        self.catalog_gen
     }
 
     /// Look up a grammar entry by display name, language ID, or short alias
@@ -1168,6 +1183,7 @@ impl GrammarRegistry {
     ) {
         self.applied_language_config = languages.clone();
         self.apply_language_config_inner(languages);
+        self.catalog_gen = self.catalog_gen.wrapping_add(1);
     }
 
     /// Do the actual catalog splicing without touching
@@ -1422,6 +1438,7 @@ impl GrammarRegistry {
             catalog_by_extension: HashMap::new(),
             catalog_by_filename: HashMap::new(),
             applied_language_config: HashMap::new(),
+            catalog_gen: 0,
         };
         reg.rebuild_catalog();
         Some(reg)
