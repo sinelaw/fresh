@@ -28,81 +28,22 @@ use std::{
 
 /// English `before_help` banner. Always shown above the auto-generated help so
 /// `--locale` is discoverable even when the editor is otherwise running in a
-/// language the user can't read. Keep this short, plain ASCII, and English.
+/// language the user can't read. Keep this short, plain ASCII, and English —
+/// it is the user's escape hatch when the rest of the help is localized.
 const BEFORE_HELP_EN: &str =
     "Tip: use --locale <CODE> to change the interface language (e.g. en, es, fr, ja, zh-CN).";
 
-/// English `after_help` text. Held in a const so we can append a translated
-/// supplement at runtime (see `apply_localized_help` in `real_main`) without
-/// losing the comprehensive English help that always serves as the "header".
-const AFTER_HELP_EN: &str = concat!(
-    "Commands (use --cmd):\n",
-    "  config show               Print effective configuration\n",
-    "  config paths              Show directories used by Fresh\n",
-    "  grammar list              List all available grammars (with source info)\n",
-    "  init                      Initialize a new plugin/theme/language\n",
-    "\n",
-    "Session commands:\n",
-    "  session list              List active sessions\n",
-    "  session attach [NAME]     Attach to a session (NAME or current dir)\n",
-    "  session new NAME          Start a new named session\n",
-    "  session kill [NAME]       Terminate a session\n",
-    "  session open-file NAME FILES [--wait]   Open files in session (--wait blocks until done)\n",
-    "\n",
-    "File location syntax:\n",
-    "  file.txt:10                  Open at line 10\n",
-    "  file.txt:10:5                Open at line 10, column 5\n",
-    "  file.txt:10-20               Select lines 10 to 20\n",
-    "  file.txt:10:5-20:1           Select from line 10 col 5 to line 20 col 1\n",
-    "  file.txt:10@\"msg\"            Open at line 10 with markdown popup message\n",
-    "  file.txt:10-20@\"msg\"         Select range with markdown popup message\n",
-    "  Tip: use single quotes to avoid shell expansion, e.g. 'file.txt:10@\"msg\"'\n",
-    "\n",
-    "Examples:\n",
-    "  fresh file.txt                               Open a file\n",
-    "  fresh 'file.txt:10-20@\"Check this code\"'     Open with range selected and popup\n",
-    "  fresh -a                                     Attach to session (current dir)\n",
-    "  fresh -a mysession                           Attach to named session\n",
-    "  fresh --cmd session new proj                 Start session named 'proj'\n",
-    "  fresh --cmd session open-file . main.rs     Open file in current dir session\n",
-    "  fresh --cmd session open-file proj a.rs     Open file in 'proj' session\n",
-    "\n",
-    "Guided walkthrough with --wait:\n",
-    "  The --wait flag blocks the CLI process until the user dismisses the popup\n",
-    "  (if @\"message\" was given) or closes the buffer (if no message). This lets\n",
-    "  a script or tool open files sequentially, waiting for the user to finish\n",
-    "  with each one before moving on.\n",
-    "\n",
-    "  Use NAME '.' to target the session for the current working directory.\n",
-    "  A session is started automatically if one isn't already running. When a\n",
-    "  new session is started, the client attaches interactively (--wait is ignored).\n",
-    "\n",
-    "  To show a file with an annotation, combine range selection with @\"msg\":\n",
-    "    fresh --cmd session open-file . 'src/main.rs:10-25@\"msg\"' --wait\n",
-    "\n",
-    "  The message supports markdown. Use real newlines (not \\n literals) in\n",
-    "  the shell string for multi-line messages. For example with $'...':\n",
-    "    fresh --cmd session open-file . \\\n",
-    "      $'src/main.rs:10-25@\"**Title**\\nBody text here\"' --wait\n",
-    "\n",
-    "  To walk through multiple locations, run commands sequentially — each\n",
-    "  one blocks until the user presses Escape (popup) or closes the buffer:\n",
-    "    fresh --cmd session open-file . 'a.rs:1-10@\"Step 1\"' --wait\n",
-    "    fresh --cmd session open-file . 'b.rs:5-20@\"Step 2\"' --wait\n",
-    "    fresh --cmd session open-file . 'c.rs:30@\"Step 3\"'   --wait\n",
-    "\n",
-    "  Use as git's editor:\n",
-    "    git config core.editor 'fresh --cmd session open-file . --wait'\n",
-    "\n",
-    "Documentation: https://getfresh.dev/docs"
-);
-
-/// A terminal text editor with multi-cursor support
+// All user-visible help strings on `Cli` (struct `about` / `long_about`
+// and per-arg `help`) are overridden at runtime by
+// `build_localized_cli_command` so they go through the i18n backend.
+// The doc comments on `Cli` and its fields are intentionally short and
+// only used by the derive — the English `before_help` banner below is
+// the user's escape hatch back to a known language.
+/// fresh
 #[derive(Parser, Debug)]
 #[command(name = "fresh")]
 #[command(version, propagate_version = true)]
 #[command(before_help = BEFORE_HELP_EN)]
-#[command(after_help = AFTER_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
     /// Commands: session (list|attach|new|kill|open-file), config (show|paths), grammar (list), init
@@ -3332,19 +3273,173 @@ fn pre_clap_locale_override() -> Option<String> {
     None
 }
 
-/// Build the runtime clap `Command`, appending a localized supplement to
-/// `after_help` when the active locale is not English.  The English
-/// `before_help` / `after_help` configured on `Cli` is left untouched and
-/// always shown so the user can find the `--locale` flag.
+/// Render the localized `after_help` block from translation keys.
+///
+/// Section headers and prose are translated via `i18n::t`; literal
+/// CLI invocations (e.g. `fresh -a mysession`) are kept verbatim
+/// because they are commands the user would actually type.
+fn build_localized_after_help() -> String {
+    use fresh::i18n::t;
+    let mut out = String::new();
+
+    out.push_str(&format!("{}\n", t("cli.section.commands")));
+    out.push_str(&format!(
+        "  config show               {}\n",
+        t("cli.cmd.config_show")
+    ));
+    out.push_str(&format!(
+        "  config paths              {}\n",
+        t("cli.cmd.config_paths")
+    ));
+    out.push_str(&format!(
+        "  grammar list              {}\n",
+        t("cli.cmd.grammar_list")
+    ));
+    out.push_str(&format!(
+        "  init                      {}\n",
+        t("cli.cmd.init")
+    ));
+    out.push('\n');
+
+    out.push_str(&format!("{}\n", t("cli.section.session")));
+    out.push_str(&format!(
+        "  session list              {}\n",
+        t("cli.cmd.session_list")
+    ));
+    out.push_str(&format!(
+        "  session attach [NAME]     {}\n",
+        t("cli.cmd.session_attach")
+    ));
+    out.push_str(&format!(
+        "  session new NAME          {}\n",
+        t("cli.cmd.session_new")
+    ));
+    out.push_str(&format!(
+        "  session kill [NAME]       {}\n",
+        t("cli.cmd.session_kill")
+    ));
+    out.push_str(&format!(
+        "  session open-file NAME FILES [--wait]   {}\n",
+        t("cli.cmd.session_open_file")
+    ));
+    out.push('\n');
+
+    out.push_str(&format!("{}\n", t("cli.section.file_syntax")));
+    out.push_str(&format!(
+        "  file.txt:10                  {}\n",
+        t("cli.file_syntax.line")
+    ));
+    out.push_str(&format!(
+        "  file.txt:10:5                {}\n",
+        t("cli.file_syntax.line_col")
+    ));
+    out.push_str(&format!(
+        "  file.txt:10-20               {}\n",
+        t("cli.file_syntax.range")
+    ));
+    out.push_str(&format!(
+        "  file.txt:10:5-20:1           {}\n",
+        t("cli.file_syntax.range_col")
+    ));
+    out.push_str(&format!(
+        "  file.txt:10@\"msg\"            {}\n",
+        t("cli.file_syntax.line_msg")
+    ));
+    out.push_str(&format!(
+        "  file.txt:10-20@\"msg\"         {}\n",
+        t("cli.file_syntax.range_msg")
+    ));
+    out.push_str(&format!("  {}\n", t("cli.file_syntax.tip")));
+    out.push('\n');
+
+    out.push_str(&format!("{}\n", t("cli.section.examples")));
+    out.push_str(&format!(
+        "  fresh file.txt                               {}\n",
+        t("cli.example.open")
+    ));
+    out.push_str(&format!(
+        "  fresh 'file.txt:10-20@\"Check this code\"'     {}\n",
+        t("cli.example.range_msg")
+    ));
+    out.push_str(&format!(
+        "  fresh -a                                     {}\n",
+        t("cli.example.attach")
+    ));
+    out.push_str(&format!(
+        "  fresh -a mysession                           {}\n",
+        t("cli.example.attach_name")
+    ));
+    out.push_str(&format!(
+        "  fresh --cmd session new proj                 {}\n",
+        t("cli.example.new_session")
+    ));
+    out.push_str(&format!(
+        "  fresh --cmd session open-file . main.rs     {}\n",
+        t("cli.example.open_in_dir")
+    ));
+    out.push_str(&format!(
+        "  fresh --cmd session open-file proj a.rs     {}\n",
+        t("cli.example.open_in_named")
+    ));
+    out.push('\n');
+
+    out.push_str(&format!("{}\n", t("cli.section.guided")));
+    out.push_str(&format!("  {}\n\n", t("cli.guided.wait_intro")));
+    out.push_str(&format!("  {}\n\n", t("cli.guided.session_dot")));
+    out.push_str(&format!("  {}\n", t("cli.guided.annotation")));
+    out.push_str("    fresh --cmd session open-file . 'src/main.rs:10-25@\"msg\"' --wait\n\n");
+    out.push_str(&format!("  {}\n", t("cli.guided.markdown")));
+    out.push_str(
+        "    fresh --cmd session open-file . \\\n      $'src/main.rs:10-25@\"**Title**\\nBody text here\"' --wait\n\n",
+    );
+    out.push_str(&format!("  {}\n", t("cli.guided.walkthrough")));
+    out.push_str("    fresh --cmd session open-file . 'a.rs:1-10@\"Step 1\"' --wait\n");
+    out.push_str("    fresh --cmd session open-file . 'b.rs:5-20@\"Step 2\"' --wait\n");
+    out.push_str("    fresh --cmd session open-file . 'c.rs:30@\"Step 3\"'   --wait\n\n");
+    out.push_str(&format!("  {}\n", t("cli.guided.git_editor")));
+    out.push_str("    git config core.editor 'fresh --cmd session open-file . --wait'\n\n");
+
+    out.push_str(&format!(
+        "{}: https://getfresh.dev/docs",
+        t("cli.documentation")
+    ));
+    out
+}
+
+/// Build the runtime clap `Command` with every help string resolved
+/// through the i18n backend.  The English `before_help` banner with
+/// the `--locale` tip is always shown — even when a user has set a
+/// locale they cannot read — so they can find their way back to
+/// English help.
 fn build_localized_cli_command() -> clap::Command {
-    let cmd = Cli::command();
-    let appendix = fresh::i18n::cli_help_appendix();
-    if appendix.is_empty() {
-        cmd
-    } else {
-        let combined = format!("{AFTER_HELP_EN}{appendix}");
-        cmd.after_help(combined)
-    }
+    use fresh::i18n::t;
+
+    let cmd = Cli::command()
+        .about(t("cli.about"))
+        .long_about(t("cli.about"))
+        .before_help(BEFORE_HELP_EN)
+        .after_help(build_localized_after_help())
+        .mut_arg("cmd", |a| a.help(t("cli.arg.cmd")))
+        .mut_arg("files", |a| a.help(t("cli.arg.files")))
+        .mut_arg("attach", |a| a.help(t("cli.arg.attach")))
+        .mut_arg("stdin", |a| a.help(t("cli.arg.stdin")))
+        .mut_arg("no_plugins", |a| a.help(t("cli.arg.no_plugins")))
+        .mut_arg("no_init", |a| a.help(t("cli.arg.no_init")))
+        .mut_arg("safe", |a| a.help(t("cli.arg.safe")))
+        .mut_arg("config", |a| a.help(t("cli.arg.config")))
+        .mut_arg("log_file", |a| a.help(t("cli.arg.log_file")))
+        .mut_arg("event_log", |a| a.help(t("cli.arg.event_log")))
+        .mut_arg("no_restore", |a| a.help(t("cli.arg.no_restore")))
+        .mut_arg("restore", |a| a.help(t("cli.arg.restore")))
+        .mut_arg("no_upgrade_check", |a| {
+            a.help(t("cli.arg.no_upgrade_check"))
+        })
+        .mut_arg("locale", |a| a.help(t("cli.arg.locale")));
+
+    #[cfg(feature = "gui")]
+    let cmd = cmd.mut_arg("gui", |a| a.help(t("cli.arg.gui")));
+
+    cmd
 }
 
 fn real_main() -> AnyhowResult<()> {

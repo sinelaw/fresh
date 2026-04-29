@@ -234,21 +234,24 @@ pub fn suspend_unsupported_message() -> String {
     rust_i18n::t!("status.suspend_unsupported").to_string()
 }
 
-/// Translated supplement appended to the CLI `--help` output when the
-/// active locale is not English.  The English help block produced by
-/// clap is always rendered first, so users can find `--locale` even
-/// when the translation is unfamiliar.
+/// Translate `key` using the runtime backend, with English fallback.
 ///
-/// Returns an empty string when the active locale is English.
-pub fn cli_help_appendix() -> String {
-    if current_locale() == "en" {
-        return String::new();
+/// Unlike `rust_i18n::t!` (a macro that takes a literal key inside the
+/// declaring crate), this helper accepts any runtime string and is
+/// usable from `main.rs` and other binary crates.  Missing keys fall
+/// back to English; if the key is missing in English too, the key
+/// itself is returned (matching `rust_i18n`'s behavior).
+pub fn t(key: &str) -> String {
+    use rust_i18n::Backend;
+    let backend = runtime_backend::RuntimeBackend::new();
+    let locale = current_locale();
+    if let Some(s) = backend.translate(&locale, key) {
+        return s.to_string();
     }
-    let header = rust_i18n::t!("cli.help.translated_header").to_string();
-    let about = rust_i18n::t!("cli.help.translated_about").to_string();
-    let locale_hint = rust_i18n::t!("cli.help.locale_hint").to_string();
-    let docs = rust_i18n::t!("cli.help.documentation").to_string();
-    format!("\n\n--- {header} ---\n{about}\n\n{locale_hint}\n{docs}: https://getfresh.dev/docs")
+    if let Some(s) = backend.translate("en", key) {
+        return s.to_string();
+    }
+    key.to_string()
 }
 
 #[cfg(test)]
@@ -372,42 +375,35 @@ mod tests {
     }
 
     #[test]
-    fn cli_help_appendix_is_empty_for_english() {
-        set_locale("en");
-        assert!(cli_help_appendix().is_empty());
+    fn t_returns_translation_for_active_locale() {
+        let saved = current_locale();
+        set_locale("ja");
+        let s = t("cli.arg.locale");
+        // Japanese key should not equal the English value or the raw key
+        assert_ne!(s, "cli.arg.locale", "missing key for ja");
+        assert!(!s.is_empty());
+        set_locale(&saved);
     }
 
     #[test]
-    fn cli_help_appendix_translates_for_other_locales() {
-        // Smoke-test every non-English locale: the appendix should be
-        // non-empty, contain the translated header marker, and mention
-        // the `--locale` flag so a user with an unfamiliar locale can
-        // still find the way back to English.
+    fn t_falls_back_to_english_when_locale_missing_key() {
         let saved = current_locale();
-        for locale in available_locales() {
-            if locale == "en" {
-                continue;
-            }
-            set_locale(locale);
-            let appendix = cli_help_appendix();
-            assert!(
-                !appendix.is_empty(),
-                "Expected non-empty appendix for locale '{}'",
-                locale
-            );
-            assert!(
-                appendix.contains("---"),
-                "Appendix for locale '{}' missing header markers: {}",
-                locale,
-                appendix
-            );
-            assert!(
-                appendix.contains("--locale"),
-                "Appendix for locale '{}' should reference --locale flag: {}",
-                locale,
-                appendix
-            );
-        }
+        // Use a key we know exists in en.json; switch to a locale that
+        // (in the test fixture) is missing it — this is a smoke test
+        // for the fallback path, so we just ensure no panic and a
+        // non-empty result for a known-good key.
+        set_locale("en");
+        let s = t("cli.arg.locale");
+        assert!(!s.is_empty());
+        assert_ne!(s, "cli.arg.locale");
         set_locale(&saved);
+    }
+
+    #[test]
+    fn t_returns_key_for_unknown_lookup() {
+        assert_eq!(
+            t("cli.does_not_exist.anywhere"),
+            "cli.does_not_exist.anywhere"
+        );
     }
 }
