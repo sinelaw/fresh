@@ -1,6 +1,23 @@
 # Scrolling-Friendly Highlight Cache
 
-## Status: design
+## Status: Phase 1 shipped; Phase 2 deferred; Phases 3/4 in progress
+
+**Phase 1 (whole-file cache for small files)** is implemented and eliminates
+the original bottleneck (63 % of P-core cycles in `full_parse` per scroll
+frame on small files). After the first parse, scrolling is filter-only.
+
+**Phase 2 (worker thread + atomic snapshot)** is deferred. The synchronous
+implementation in Phase 1 already gives ~zero render-thread CPU on
+steady-state scroll for small files. Moving parsing off-thread further
+would require either making `Buffer` cross-thread shareable or copying
+bytes per parse pass — both substantive architectural changes whose
+marginal benefit (smoother first-paint, no jank during pathological edits)
+doesn't currently justify the concurrency surface area. Revisit when:
+- File-open latency on large files becomes a user-visible problem.
+- Pathological-edit jank is reported in practice.
+
+**Phase 3 (large-file unification)** and **Phase 4** (scope cache, grammar
+gen counter) build directly on Phase 1.
 
 Successor to `syntax-highlighting-checkpoint-design.md`. The checkpoint
 machinery (markers + saved `(ParseState, ScopeStack)`) stays. What changes is
