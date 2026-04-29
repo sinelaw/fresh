@@ -451,7 +451,13 @@ impl TextMateEngine {
                 .as_ref()
                 .is_some_and(|c| c.range.end < parse_end && c.tail_state.is_some())
         {
-            return self.extend_cache_forward(buffer, parse_end, viewport_start, viewport_end, theme);
+            return self.extend_cache_forward(
+                buffer,
+                parse_end,
+                viewport_start,
+                viewport_end,
+                theme,
+            );
         }
 
         // Partial update.
@@ -1863,7 +1869,10 @@ mod tests {
         // First call: cold start, full parse.
         let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
         let stats_after_first = tm.stats().clone();
-        assert_eq!(stats_after_first.cache_hits, 0, "first call cannot hit cache");
+        assert_eq!(
+            stats_after_first.cache_hits, 0,
+            "first call cannot hit cache"
+        );
         assert_eq!(
             stats_after_first.cache_misses, 1,
             "first call must be a miss"
@@ -1879,7 +1888,8 @@ mod tests {
 
         let stats_after_scroll = tm.stats().clone();
         assert_eq!(
-            stats_after_scroll.cache_misses, 1,
+            stats_after_scroll.cache_misses,
+            1,
             "scrolling must not add cache misses (got extra: {})",
             stats_after_scroll.cache_misses - 1
         );
@@ -1917,7 +1927,10 @@ mod tests {
         let _ = tm.highlight_viewport(&buffer, 0, 100, &theme, 10_000);
         let bytes_before_edit = tm.stats().bytes_parsed;
         let buf_len = buffer.len();
-        assert!(buf_len > 4000, "test needs a buffer larger than the partial-update region");
+        assert!(
+            buf_len > 4000,
+            "test needs a buffer larger than the partial-update region"
+        );
 
         // Simulate an edit deep in the file.
         let edit_pos = buf_len / 2;
