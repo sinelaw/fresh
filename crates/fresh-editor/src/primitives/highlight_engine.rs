@@ -249,6 +249,9 @@ pub struct TextMateEngine {
     last_buffer_len: usize,
     ts_language: Option<Language>,
     stats: HighlightStats,
+    // Scope→Category memo. Syntect Scope atoms are append-only-interned
+    // globally, so entries never need invalidation.
+    scope_category_cache: HashMap<syntect::parsing::Scope, Option<HighlightCategory>>,
 }
 
 /// Counters for monitoring highlighting performance in tests.
@@ -304,6 +307,7 @@ impl TextMateEngine {
             last_buffer_len: 0,
             ts_language: None,
             stats: HighlightStats::default(),
+            scope_category_cache: HashMap::new(),
         }
     }
 
@@ -323,6 +327,7 @@ impl TextMateEngine {
             last_buffer_len: 0,
             ts_language,
             stats: HighlightStats::default(),
+            scope_category_cache: HashMap::new(),
         }
     }
 
@@ -645,7 +650,7 @@ impl TextMateEngine {
             for (op_offset, op) in ops {
                 let clamped_op_offset = op_offset.min(line_content_len);
                 if collect_spans && clamped_op_offset > syntect_offset {
-                    if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                    if let Some(category) = self.scope_stack_to_category(&current_scopes) {
                         let byte_start = current_offset + syntect_offset;
                         let byte_end = current_offset + clamped_op_offset;
                         let clamped_start = byte_start.max(actual_start);
@@ -663,7 +668,7 @@ impl TextMateEngine {
             }
 
             if collect_spans && syntect_offset < line_content_len {
-                if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                if let Some(category) = self.scope_stack_to_category(&current_scopes) {
                     let byte_start = current_offset + syntect_offset;
                     let byte_end = current_offset + line_content_len;
                     let clamped_start = byte_start.max(actual_start);
@@ -857,7 +862,7 @@ impl TextMateEngine {
             for (op_offset, op) in ops {
                 let clamped_op_offset = op_offset.min(line_content_len);
                 if clamped_op_offset > syntect_offset {
-                    if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                    if let Some(category) = self.scope_stack_to_category(&current_scopes) {
                         let byte_start = current_offset + syntect_offset;
                         let byte_end = current_offset + clamped_op_offset;
                         if byte_start < byte_end {
@@ -874,7 +879,7 @@ impl TextMateEngine {
             }
 
             if syntect_offset < line_content_len {
-                if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                if let Some(category) = self.scope_stack_to_category(&current_scopes) {
                     let byte_start = current_offset + syntect_offset;
                     let byte_end = current_offset + line_content_len;
                     if byte_start < byte_end {
@@ -1013,7 +1018,7 @@ impl TextMateEngine {
             for (op_offset, op) in ops {
                 let clamped_op_offset = op_offset.min(line_content_len);
                 if collect_spans && clamped_op_offset > syntect_offset {
-                    if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                    if let Some(category) = self.scope_stack_to_category(&current_scopes) {
                         let byte_start = current_offset + syntect_offset;
                         let byte_end = current_offset + clamped_op_offset;
                         let clamped_start = byte_start.max(desired_parse_start);
@@ -1031,7 +1036,7 @@ impl TextMateEngine {
             }
 
             if collect_spans && syntect_offset < line_content_len {
-                if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                if let Some(category) = self.scope_stack_to_category(&current_scopes) {
                     let byte_start = current_offset + syntect_offset;
                     let byte_end = current_offset + line_content_len;
                     let clamped_start = byte_start.max(desired_parse_start);
@@ -1133,12 +1138,24 @@ impl TextMateEngine {
         }
     }
 
-    /// Map scope stack to highlight category
-    fn scope_stack_to_category(scopes: &syntect::parsing::ScopeStack) -> Option<HighlightCategory> {
+    /// Map scope stack to highlight category, memoising per-scope lookups.
+    /// `scope.build_string()` is the costly step; the cache hides it after
+    /// each scope atom has been seen once.
+    fn scope_stack_to_category(
+        &mut self,
+        scopes: &syntect::parsing::ScopeStack,
+    ) -> Option<HighlightCategory> {
         for scope in scopes.as_slice().iter().rev() {
-            let scope_str = scope.build_string();
-            if let Some(cat) = scope_to_category(&scope_str) {
-                return Some(cat);
+            let cat = match self.scope_category_cache.get(scope) {
+                Some(c) => *c,
+                None => {
+                    let computed = scope_to_category(&scope.build_string());
+                    self.scope_category_cache.insert(*scope, computed);
+                    computed
+                }
+            };
+            if let Some(c) = cat {
+                return Some(c);
             }
         }
         None
