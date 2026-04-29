@@ -70,17 +70,6 @@ impl VisualRowIndexKey {
             line_wrap_enabled: self.line_wrap_enabled,
         }
     }
-
-    fn geom(&self) -> WrapGeometry {
-        WrapGeometry {
-            effective_width: self.effective_width as usize,
-            gutter_width: self.gutter_width as usize,
-            hanging_indent: self.hanging_indent,
-            wrap_column: self.wrap_column,
-            line_wrap_enabled: self.line_wrap_enabled,
-            view_mode: self.view_mode,
-        }
-    }
 }
 
 /// The index itself: prefix sums + line-start byte offsets, plus the
