@@ -225,30 +225,25 @@ impl Editor {
         }
 
         // Live preview for the goto-line provider: if the input is ":<N>" for a
-        // valid line N, jump there now so the user sees the target as they type
-        // (matches VSCode's Ctrl+P :<N> behavior). Otherwise, restore the
-        // cursor to its pre-preview position.
+        // valid absolute line N, jump there now so the user sees the target as
+        // they type (matches VSCode's Ctrl+P :<N> behavior). Otherwise, restore
+        // the cursor to its pre-preview position.
         //
-        // Skip preview when relative_line_numbers is enabled in config, OR when
-        // input uses relative syntax (:-/:+), as preview jumps as user
-        // types each digit, which is confusing.
+        // Relative input (`:+N`/`:-N`) is intentionally not previewed: the
+        // target shifts on every digit typed, which is disorienting.
         let input = input.trim();
-        let is_relative_syntax = input == ":" || input.starts_with(":-") || input.starts_with(":+");
-        let is_relative_config = self.config.editor.relative_line_numbers;
-        let target = if is_relative_syntax || is_relative_config {
-            None
-        } else {
-            Self::parse_quick_open_goto_line_target(input)
-        };
+        let target = Self::parse_quick_open_goto_line_target(input);
         self.apply_goto_line_preview(target);
     }
 
-    /// Parse a Quick Open input string for a `:<N>` goto-line target.
+    /// Parse a Quick Open input string for a `:<N>` goto-line preview target.
+    /// Only absolute inputs are previewed; relative inputs return `None`.
     pub(super) fn parse_quick_open_goto_line_target(input: &str) -> Option<usize> {
-        input
-            .strip_prefix(':')
-            .and_then(|rest| rest.trim().parse::<usize>().ok())
-            .filter(|&n| n > 0)
+        let rest = input.strip_prefix(':')?;
+        match crate::input::quick_open::parse_goto_line_input(rest) {
+            Some(crate::input::quick_open::GotoLineTarget::Absolute(n)) => Some(n),
+            _ => None,
+        }
     }
 
     /// Apply a live goto-line preview: jump to `target_line` (saving the
@@ -954,14 +949,13 @@ impl Editor {
                 if let Some(history) = self.prompt_histories.get_mut("goto_line") {
                     history.reset_navigation();
                 }
-                // Live preview for absolute line numbers only. For relative numbers,
-                // preview jumps as user types each digit (confusing),
-                // so skip preview and jump on Enter only.
-                let input = input.trim();
-                let target = if self.config.editor.relative_line_numbers {
-                    None
-                } else {
-                    input.parse::<usize>().ok().filter(|&n| n > 0)
+                // Live preview for absolute line numbers only. Signed
+                // (`+N`/`-N`) inputs are relative, and previewing them as the
+                // user types each digit is disorienting — preview only on
+                // Enter for those.
+                let target = match crate::input::quick_open::parse_goto_line_input(input.trim()) {
+                    Some(crate::input::quick_open::GotoLineTarget::Absolute(n)) => Some(n),
+                    _ => None,
                 };
                 self.apply_goto_line_preview(target);
             }

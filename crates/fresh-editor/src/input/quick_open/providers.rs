@@ -6,7 +6,9 @@
 //! - BufferProvider: Switch between open buffers (prefix: "#")
 //! - GotoLineProvider: Go to a specific line (prefix: ":")
 
-use super::{QuickOpenContext, QuickOpenProvider, QuickOpenResult};
+use super::{
+    parse_goto_line_input, GotoLineTarget, QuickOpenContext, QuickOpenProvider, QuickOpenResult,
+};
 use crate::input::commands::Suggestion;
 use crate::input::fuzzy::FuzzyMatcher;
 use rust_i18n::t;
@@ -197,7 +199,7 @@ impl QuickOpenProvider for GotoLineProvider {
         ":"
     }
 
-    fn suggestions(&self, query: &str, context: &QuickOpenContext) -> Vec<Suggestion> {
+    fn suggestions(&self, query: &str, _context: &QuickOpenContext) -> Vec<Suggestion> {
         if query.is_empty() {
             return vec![
                 Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
@@ -205,46 +207,33 @@ impl QuickOpenProvider for GotoLineProvider {
             ];
         }
 
-        if context.relative_line_numbers {
-            if query == "-" || query == "+" {
-                return vec![
-                    Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
-                        .with_description(t!("quick_open.relative_line_desc").to_string()),
-                ];
-            }
+        // A bare sign isn't yet a valid number — show a hint and wait for digits.
+        if query == "-" || query == "+" {
+            return vec![
+                Suggestion::disabled(t!("quick_open.goto_line_hint").to_string())
+                    .with_description(t!("quick_open.relative_line_desc").to_string()),
+            ];
+        }
 
-            match query.parse::<isize>() {
-                Ok(n) if n != 0 => {
-                    vec![Suggestion::new(
-                        t!("quick_open.goto_line", line = n.to_string()).to_string(),
-                    )
+        match parse_goto_line_input(query) {
+            Some(target) => {
+                let label = match target {
+                    GotoLineTarget::Absolute(n) => {
+                        t!("quick_open.goto_line", line = n.to_string()).to_string()
+                    }
+                    GotoLineTarget::Relative(d) => {
+                        // Format with explicit sign so "+3" reads back as "+3", not "3".
+                        t!("quick_open.goto_line", line = format!("{:+}", d)).to_string()
+                    }
+                };
+                vec![Suggestion::new(label)
                     .with_description(t!("quick_open.press_enter").to_string())
-                    .with_value(n.to_string())]
-                }
-                _ => vec![
-                    Suggestion::disabled(t!("quick_open.invalid_line").to_string())
-                        .with_description(query.to_string()),
-                ],
+                    .with_value(query.to_string())]
             }
-        } else if query.starts_with('-') || query.starts_with('+') {
-            vec![
-                Suggestion::disabled(t!("quick_open.requires_relative").to_string())
-                    .with_description(t!("quick_open.negative_requires_relative").to_string()),
-            ]
-        } else {
-            match query.parse::<usize>() {
-                Ok(n) if n > 0 => {
-                    vec![Suggestion::new(
-                        t!("quick_open.goto_line", line = n.to_string()).to_string(),
-                    )
-                    .with_description(t!("quick_open.press_enter").to_string())
-                    .with_value(n.to_string())]
-                }
-                _ => vec![
-                    Suggestion::disabled(t!("quick_open.invalid_line").to_string())
-                        .with_description(query.to_string()),
-                ],
-            }
+            None => vec![
+                Suggestion::disabled(t!("quick_open.invalid_line").to_string())
+                    .with_description(query.to_string()),
+            ],
         }
     }
 
@@ -252,22 +241,13 @@ impl QuickOpenProvider for GotoLineProvider {
         &self,
         suggestion: Option<&Suggestion>,
         _query: &str,
-        context: &QuickOpenContext,
+        _context: &QuickOpenContext,
     ) -> QuickOpenResult {
-        if context.relative_line_numbers {
-            suggestion
-                .and_then(|s| s.value.as_deref())
-                .and_then(|v| v.parse::<isize>().ok())
-                .map(QuickOpenResult::GotoLine)
-                .unwrap_or(QuickOpenResult::None)
-        } else {
-            suggestion
-                .and_then(|s| s.value.as_deref())
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|&n| n > 0)
-                .map(|n| QuickOpenResult::GotoLine(n as isize))
-                .unwrap_or(QuickOpenResult::None)
-        }
+        suggestion
+            .and_then(|s| s.value.as_deref())
+            .and_then(parse_goto_line_input)
+            .map(QuickOpenResult::GotoLine)
+            .unwrap_or(QuickOpenResult::None)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1045,45 +1025,65 @@ mod tests {
         let suggestions = provider.suggestions("42", &context);
         let result = provider.on_select(suggestions.first(), "42", &context);
         match result {
-            QuickOpenResult::GotoLine(line) => assert_eq!(line, 42),
-            _ => panic!("Expected GotoLine result"),
+            QuickOpenResult::GotoLine(GotoLineTarget::Absolute(line)) => assert_eq!(line, 42),
+            other => panic!("expected absolute GotoLine result, got {:?}", other),
         }
     }
 
+    /// Signed input is always interpreted as relative — independent of the
+    /// `relative_line_numbers` display setting.
     #[test]
-    fn test_goto_line_relative_mode() {
+    fn test_goto_line_signed_is_relative_regardless_of_setting() {
         let provider = GotoLineProvider::new();
 
-        let mut context = make_test_context("/tmp");
-        context.relative_line_numbers = true;
+        for relative_setting in [false, true] {
+            let mut context = make_test_context("/tmp");
+            context.relative_line_numbers = relative_setting;
 
-        let suggestions = provider.suggestions("-5", &context);
-        assert_eq!(suggestions.len(), 1);
-        assert!(!suggestions[0].disabled);
+            for query in ["-5", "+3"] {
+                let suggestions = provider.suggestions(query, &context);
+                assert_eq!(suggestions.len(), 1, "query {query:?}");
+                assert!(!suggestions[0].disabled, "query {query:?}");
+            }
 
-        let suggestions = provider.suggestions("+3", &context);
-        assert_eq!(suggestions.len(), 1);
-        assert!(!suggestions[0].disabled);
+            let suggestions = provider.suggestions("+3", &context);
+            match provider.on_select(suggestions.first(), "+3", &context) {
+                QuickOpenResult::GotoLine(GotoLineTarget::Relative(d)) => assert_eq!(d, 3),
+                other => panic!("expected relative GotoLine, got {:?}", other),
+            }
 
-        let suggestions = provider.suggestions("-", &context);
-        assert_eq!(suggestions.len(), 1);
-        assert!(suggestions[0].disabled);
+            let suggestions = provider.suggestions("-7", &context);
+            match provider.on_select(suggestions.first(), "-7", &context) {
+                QuickOpenResult::GotoLine(GotoLineTarget::Relative(d)) => assert_eq!(d, -7),
+                other => panic!("expected relative GotoLine, got {:?}", other),
+            }
 
-        let suggestions = provider.suggestions("+", &context);
-        assert_eq!(suggestions.len(), 1);
-        assert!(suggestions[0].disabled);
+            for bare in ["-", "+"] {
+                let suggestions = provider.suggestions(bare, &context);
+                assert_eq!(suggestions.len(), 1);
+                assert!(suggestions[0].disabled);
+            }
+        }
     }
 
+    /// Unsigned input is always interpreted as absolute — independent of the
+    /// `relative_line_numbers` display setting.
     #[test]
-    fn test_goto_line_relative_negative_without_mode() {
+    fn test_goto_line_unsigned_is_absolute_regardless_of_setting() {
         let provider = GotoLineProvider::new();
 
-        let context = make_test_context("/tmp");
+        for relative_setting in [false, true] {
+            let mut context = make_test_context("/tmp");
+            context.relative_line_numbers = relative_setting;
 
-        let suggestions = provider.suggestions("-5", &context);
-        assert_eq!(suggestions.len(), 1);
-        assert!(suggestions[0].disabled);
-        assert!(suggestions[0].text.contains("relative"));
+            let suggestions = provider.suggestions("42", &context);
+            assert_eq!(suggestions.len(), 1);
+            assert!(!suggestions[0].disabled);
+            match provider.on_select(suggestions.first(), "42", &context) {
+                QuickOpenResult::GotoLine(GotoLineTarget::Absolute(n)) => assert_eq!(n, 42),
+                other => panic!("expected absolute GotoLine, got {:?}", other),
+            }
+        }
     }
 
     // ====================================================================

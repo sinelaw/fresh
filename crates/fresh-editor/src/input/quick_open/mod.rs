@@ -32,12 +32,59 @@ pub enum QuickOpenResult {
     },
     /// Show a buffer by ID
     ShowBuffer(usize),
-    /// Go to a line in the current buffer (positive = absolute line, negative = relative to current)
-    GotoLine(isize),
+    /// Go to a line in the current buffer
+    GotoLine(GotoLineTarget),
     /// Do nothing (provider handled it internally)
     None,
     /// Show an error message
     Error(String),
+}
+
+/// A parsed goto-line target. The presence of an explicit sign in the user's
+/// input chooses between absolute and relative jumps independently of the
+/// `relative_line_numbers` display setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GotoLineTarget {
+    /// Absolute 1-based line number (input had no leading sign).
+    Absolute(usize),
+    /// Signed offset from the current cursor line (input had `+`/`-` prefix).
+    Relative(isize),
+}
+
+/// Parse a goto-line input string.
+///
+/// - `"500"` → `Absolute(500)`
+/// - `"+3"` → `Relative(3)`
+/// - `"-3"` → `Relative(-3)`
+/// - `"0"`, `"+0"`, `"-0"`, `""`, `"abc"` → `None`
+///
+/// Whitespace around the input is ignored. The leading-sign convention is
+/// independent of any display setting: the user's literal input decides.
+pub fn parse_goto_line_input(input: &str) -> Option<GotoLineTarget> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix('+')
+        .or_else(|| trimmed.strip_prefix('-'))
+    {
+        // Reject bare "+"/"-" and avoid double signs like "++3" or "+-3".
+        if rest.is_empty() || rest.starts_with('+') || rest.starts_with('-') {
+            return None;
+        }
+        let delta = trimmed.parse::<isize>().ok()?;
+        if delta == 0 {
+            return None;
+        }
+        Some(GotoLineTarget::Relative(delta))
+    } else {
+        let n = trimmed.parse::<usize>().ok()?;
+        if n == 0 {
+            return None;
+        }
+        Some(GotoLineTarget::Absolute(n))
+    }
 }
 
 /// Context provided to providers when generating suggestions
@@ -238,6 +285,49 @@ mod tests {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
+    }
+
+    #[test]
+    fn parse_goto_line_input_absolute() {
+        assert_eq!(
+            parse_goto_line_input("500"),
+            Some(GotoLineTarget::Absolute(500))
+        );
+        assert_eq!(
+            parse_goto_line_input("  42 "),
+            Some(GotoLineTarget::Absolute(42))
+        );
+    }
+
+    #[test]
+    fn parse_goto_line_input_relative() {
+        assert_eq!(
+            parse_goto_line_input("+3"),
+            Some(GotoLineTarget::Relative(3))
+        );
+        assert_eq!(
+            parse_goto_line_input("-3"),
+            Some(GotoLineTarget::Relative(-3))
+        );
+        assert_eq!(
+            parse_goto_line_input(" -10 "),
+            Some(GotoLineTarget::Relative(-10))
+        );
+    }
+
+    #[test]
+    fn parse_goto_line_input_rejects_invalid() {
+        assert_eq!(parse_goto_line_input(""), None);
+        assert_eq!(parse_goto_line_input("   "), None);
+        assert_eq!(parse_goto_line_input("0"), None);
+        assert_eq!(parse_goto_line_input("+0"), None);
+        assert_eq!(parse_goto_line_input("-0"), None);
+        assert_eq!(parse_goto_line_input("+"), None);
+        assert_eq!(parse_goto_line_input("-"), None);
+        assert_eq!(parse_goto_line_input("++3"), None);
+        assert_eq!(parse_goto_line_input("+-3"), None);
+        assert_eq!(parse_goto_line_input("abc"), None);
+        assert_eq!(parse_goto_line_input("3a"), None);
     }
 
     #[test]

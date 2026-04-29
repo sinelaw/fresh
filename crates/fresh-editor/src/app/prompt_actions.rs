@@ -28,6 +28,28 @@ pub(super) fn parse_path_line_col(input: &str) -> (String, Option<usize>, Option
     crate::input::quick_open::parse_path_line_col(input)
 }
 
+/// Convert a parsed goto-line target into a concrete 1-based line number,
+/// clamped into `1..=max_line`. Relative offsets are applied to `current_line`
+/// with saturating arithmetic so users can't underflow past line 1.
+pub(super) fn resolve_goto_line_target(
+    target: crate::input::quick_open::GotoLineTarget,
+    current_line: usize,
+    max_line: usize,
+) -> usize {
+    use crate::input::quick_open::GotoLineTarget;
+    let raw = match target {
+        GotoLineTarget::Absolute(n) => n,
+        GotoLineTarget::Relative(delta) => {
+            if delta >= 0 {
+                current_line.saturating_add(delta as usize)
+            } else {
+                current_line.saturating_sub(delta.unsigned_abs())
+            }
+        }
+    };
+    raw.clamp(1, max_line.max(1))
+}
+
 impl Editor {
     /// Handle prompt confirmation based on the prompt type.
     ///
@@ -117,55 +139,20 @@ impl Editor {
                 }
             }
             PromptType::GotoLine => {
-                let input = input.trim();
                 let buffer_id = self.active_buffer();
                 if let Some(state) = self.buffers.get(&buffer_id) {
                     let max_line = state.buffer.line_count().unwrap_or(1);
-                    if self.config.editor.relative_line_numbers {
-                        match input.parse::<isize>() {
-                            Ok(delta) if delta != 0 => {
-                                let current_line = state.primary_cursor_line_number.value() + 1;
-                                let target = if delta >= 0 {
-                                    current_line.saturating_add(delta as usize)
-                                } else {
-                                    current_line.saturating_sub(delta.unsigned_abs())
-                                };
-                                let target = target.clamp(1, max_line);
-                                self.goto_line_col(target, None);
-                                self.set_status_message(
-                                    t!("goto.jumped", line = target).to_string(),
-                                );
-                            }
-                            Ok(_) => {
-                                self.set_status_message(
-                                    t!("goto.line_must_be_positive").to_string(),
-                                );
-                            }
-                            Err(_) => {
-                                self.set_status_message(
-                                    t!("error.invalid_line", input = input).to_string(),
-                                );
-                            }
+                    let current_line = state.primary_cursor_line_number.value() + 1;
+                    match crate::input::quick_open::parse_goto_line_input(&input) {
+                        Some(target) => {
+                            let line = resolve_goto_line_target(target, current_line, max_line);
+                            self.goto_line_col(line, None);
+                            self.set_status_message(t!("goto.jumped", line = line).to_string());
                         }
-                    } else {
-                        match input.parse::<usize>() {
-                            Ok(line_num) if line_num > 0 => {
-                                let target = line_num.clamp(1, max_line);
-                                self.goto_line_col(target, None);
-                                self.set_status_message(
-                                    t!("goto.jumped", line = target).to_string(),
-                                );
-                            }
-                            Ok(_) => {
-                                self.set_status_message(
-                                    t!("goto.line_must_be_positive").to_string(),
-                                );
-                            }
-                            Err(_) => {
-                                self.set_status_message(
-                                    t!("error.invalid_line", input = input).to_string(),
-                                );
-                            }
+                        None => {
+                            self.set_status_message(
+                                t!("error.invalid_line", input = input.trim()).to_string(),
+                            );
                         }
                     }
                 } else {
@@ -1493,26 +1480,14 @@ impl Editor {
                 }
                 PromptResult::Done
             }
-            QuickOpenResult::GotoLine(line) => {
+            QuickOpenResult::GotoLine(target) => {
                 let buffer_id = self.active_buffer();
                 if let Some(state) = self.buffers.get(&buffer_id) {
                     let max_line = state.buffer.line_count().unwrap_or(1);
-                    if self.config.editor.relative_line_numbers {
-                        let current_line = state.primary_cursor_line_number.value() + 1;
-                        let delta = line;
-                        let target = if delta >= 0 {
-                            current_line.saturating_add(delta as usize)
-                        } else {
-                            current_line.saturating_sub(delta.unsigned_abs())
-                        };
-                        let target = target.clamp(1, max_line);
-                        self.goto_line_col(target, None);
-                        self.set_status_message(t!("goto.jumped", line = target).to_string());
-                    } else {
-                        let target = line.unsigned_abs().clamp(1, max_line);
-                        self.goto_line_col(target, None);
-                        self.set_status_message(t!("goto.jumped", line = target).to_string());
-                    }
+                    let current_line = state.primary_cursor_line_number.value() + 1;
+                    let line = resolve_goto_line_target(target, current_line, max_line);
+                    self.goto_line_col(line, None);
+                    self.set_status_message(t!("goto.jumped", line = line).to_string());
                 } else {
                     self.set_status_message(t!("status.no_selection").to_string());
                 }

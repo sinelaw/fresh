@@ -337,34 +337,65 @@ fn test_quick_open_goto_line_relative_positive_offset() {
         .expect(":+20 should jump to line 21 (relative to cursor)");
 }
 
-/// Without relative_line_numbers, Quick Open negative line numbers show error hint.
+/// Issue #1750: Quick Open `:+N`/`:-N` should always be a relative jump,
+/// independent of the `relative_line_numbers` display setting.
 #[test]
-fn test_quick_open_goto_line_without_relative_rejects_negative() {
+fn test_quick_open_goto_line_signed_is_relative_without_setting() {
     let mut harness =
         EditorTestHarness::with_temp_project_and_config(100, 30, Default::default()).unwrap();
     let project_root = harness.project_dir().unwrap();
 
-    let test_file = project_root.join("test.txt");
-    fs::write(&test_file, "Line 1\nLine 2\nLine 3\n").unwrap();
+    let test_file = project_root.join("multiline.txt");
+    let content = (1..=50)
+        .map(|i| format!("Line number {}\n", i))
+        .collect::<String>();
+    fs::write(&test_file, &content).unwrap();
+
     harness.open_file(&test_file).unwrap();
     harness.render().unwrap();
 
-    // Open Quick Open and try negative line without relative mode
+    // First jump to line 10 absolutely, then move +5 lines, then -3.
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
-    harness.type_text(":-5").unwrap();
-
-    // Should show error hint about needing relative mode
+    harness.type_text(":10").unwrap();
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("requires") || s.contains("relative")
-        })
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 10,"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":+5").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 15,"))
+        .expect("`:+5` should jump 5 lines forward regardless of the setting");
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":-3").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 12,"))
+        .expect("`:-3` should jump 3 lines backward regardless of the setting");
 }
 
 // ============================================================================

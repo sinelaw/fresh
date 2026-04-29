@@ -819,9 +819,10 @@ fn test_goto_line_prompt_relative_positive_offset() {
         .expect("+20 should jump to line 21 (relative to cursor)");
 }
 
-/// Without relative_line_numbers, negative numbers in goto line prompt show error.
+/// Issue #1750: a `+N`/`-N` in the Go to Line prompt should always be a
+/// relative jump, regardless of the `relative_line_numbers` display setting.
 #[test]
-fn test_goto_line_prompt_without_relative_rejects_negative() {
+fn test_goto_line_prompt_signed_input_is_relative_without_setting() {
     use crossterm::event::{KeyCode, KeyModifiers};
 
     let mut harness =
@@ -834,19 +835,76 @@ fn test_goto_line_prompt_without_relative_rejects_negative() {
     harness.open_file(&jump_path).unwrap();
     harness.render().unwrap();
 
-    // Open the Goto Line prompt (Ctrl+G) and type -5 without relative mode
+    // Jump to an absolute line first, so a relative offset has somewhere to
+    // start from. Default config has relative_line_numbers = false.
     harness
         .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.type_text("-5").unwrap();
+    harness.type_text("10").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 10,"))
+        .expect("Absolute `10` should jump to line 10 even without relative_line_numbers");
+
+    // `+5` from line 10 should land on line 15.
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("+5").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 15,"))
+        .expect("`+5` should be a relative jump regardless of the setting");
+
+    // `-3` from line 15 should land on line 12.
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("-3").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 12,"))
+        .expect("`-3` should be a relative jump regardless of the setting");
+}
+
+/// Issue #1750: an unsigned line number is always absolute, even when the
+/// `relative_line_numbers` display setting is enabled.
+#[test]
+fn test_goto_line_prompt_unsigned_input_is_absolute_with_relative_setting() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut config = fresh::config::Config::default();
+    config.editor.relative_line_numbers = true;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(100, 24, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    let jump_path = project_root.join("jump.txt");
+    write_numbered_lines(&jump_path, 50);
+
+    harness.open_file(&jump_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Ln 1");
+
+    // Even with relative line numbers shown in the gutter, typing `25` (no
+    // sign) means absolute line 25 — not "25 lines down from the cursor".
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("25").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Should stay at line 1 (no jump happened) and show error in status
     harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 1,"))
-        .expect("Negative should be rejected without relative mode");
+        .wait_until(|h| h.screen_to_string().contains("Ln 25,"))
+        .expect("Unsigned `25` should jump to absolute line 25 regardless of the setting");
 }
 
 /// Test command palette fuzzy matching
