@@ -1309,6 +1309,8 @@
   "tab.close_others": "Close Others",
   "tab.close_to_left": "Close to the Left",
   "tab.close_to_right": "Close to the Right",
+  "tab.copy_full_path": "Copy Full Path",
+  "tab.copy_relative_path": "Copy Relative Path",
   "terminal.closed": "Terminal %{id} closed",
   "terminal.exited": "Terminal %{id} exited",
   "terminal.failed_to_open": "Failed to open terminal: %{error}",

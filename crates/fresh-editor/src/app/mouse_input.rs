@@ -2530,6 +2530,12 @@ impl Editor {
             TabContextMenuItem::CloseAll => {
                 self.close_all_tabs_in_split(leaf_id);
             }
+            TabContextMenuItem::CopyRelativePath => {
+                self.copy_buffer_path(buffer_id, true);
+            }
+            TabContextMenuItem::CopyFullPath => {
+                self.copy_buffer_path(buffer_id, false);
+            }
         }
 
         Ok(())

@@ -1305,6 +1305,8 @@
   "tab.close_others": "Закрыть другие",
   "tab.close_to_left": "Закрыть слева",
   "tab.close_to_right": "Закрыть справа",
+  "tab.copy_full_path": "Копировать полный путь",
+  "tab.copy_relative_path": "Копировать относительный путь",
   "terminal.closed": "Терминал %{id} закрыт",
   "terminal.exited": "Терминал %{id} завершён",
   "terminal.failed_to_open": "Не удалось открыть терминал: %{error}",

@@ -1305,6 +1305,8 @@
   "tab.close_others": "Đóng các thẻ khác",
   "tab.close_to_left": "Đóng bên trái",
   "tab.close_to_right": "Đóng bên phải",
+  "tab.copy_full_path": "Sao chép đường dẫn đầy đủ",
+  "tab.copy_relative_path": "Sao chép đường dẫn tương đối",
   "terminal.closed": "Đã đóng terminal %{id}",
   "terminal.exited": "Terminal %{id} đã thoát",
   "terminal.failed_to_open": "Mở terminal thất bại: %{error}",

@@ -1305,6 +1305,8 @@
   "tab.close_others": "Cerrar otros",
   "tab.close_to_left": "Cerrar a la izquierda",
   "tab.close_to_right": "Cerrar a la derecha",
+  "tab.copy_full_path": "Copiar ruta completa",
+  "tab.copy_relative_path": "Copiar ruta relativa",
   "terminal.closed": "Terminal %{id} cerrado",
   "terminal.exited": "Terminal %{id} finalizado",
   "terminal.failed_to_open": "Error al abrir terminal: %{error}",

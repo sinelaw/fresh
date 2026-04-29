@@ -1305,6 +1305,8 @@
   "tab.close_others": "Закрити інші",
   "tab.close_to_left": "Закрити ліворуч",
   "tab.close_to_right": "Закрити праворуч",
+  "tab.copy_full_path": "Копіювати повний шлях",
+  "tab.copy_relative_path": "Копіювати відносний шлях",
   "terminal.closed": "Термінал %{id} закрито",
   "terminal.exited": "Термінал %{id} завершено",
   "terminal.failed_to_open": "Не вдалося відкрити термінал: %{error}",

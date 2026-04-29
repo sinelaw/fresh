@@ -1305,6 +1305,8 @@
   "tab.close_others": "Zavřít ostatní",
   "tab.close_to_left": "Zavřít vlevo",
   "tab.close_to_right": "Zavřít vpravo",
+  "tab.copy_full_path": "Kopírovat úplnou cestu",
+  "tab.copy_relative_path": "Kopírovat relativní cestu",
   "terminal.closed": "Terminál %{id} zavřen",
   "terminal.exited": "Terminál %{id} ukončen",
   "terminal.failed_to_open": "Otevření terminálu selhalo: %{error}",

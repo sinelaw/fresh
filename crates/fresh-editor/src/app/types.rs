@@ -656,6 +656,10 @@ pub enum TabContextMenuItem {
     CloseToLeft,
     /// Close all tabs
     CloseAll,
+    /// Copy the tab's file path relative to the workspace root
+    CopyRelativePath,
+    /// Copy the tab's absolute file path
+    CopyFullPath,
 }
 
 impl TabContextMenuItem {
@@ -667,6 +671,8 @@ impl TabContextMenuItem {
             Self::CloseToRight,
             Self::CloseToLeft,
             Self::CloseAll,
+            Self::CopyRelativePath,
+            Self::CopyFullPath,
         ]
     }
 
@@ -678,6 +684,8 @@ impl TabContextMenuItem {
             Self::CloseToRight => t!("tab.close_to_right").to_string(),
             Self::CloseToLeft => t!("tab.close_to_left").to_string(),
             Self::CloseAll => t!("tab.close_all").to_string(),
+            Self::CopyRelativePath => t!("tab.copy_relative_path").to_string(),
+            Self::CopyFullPath => t!("tab.copy_full_path").to_string(),
         }
     }
 }

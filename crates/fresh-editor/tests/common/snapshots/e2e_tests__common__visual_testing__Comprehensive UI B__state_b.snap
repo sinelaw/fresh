@@ -1,5 +1,6 @@
 ---
 source: crates/fresh-editor/tests/common/visual_testing.rs
+assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   LSP   Help                                                                       
@@ -27,8 +28,8 @@ expression: "&screen_text"
 │  Git Log: Close                                     Close the git log panel                                   git_log│
 │  Toggle Inlay Hints                                 Show or hide LSP inlay hints (type hints, par...          builtin│
 │  Start/Restart LSP Server                           Start or restart the LSP server for the curre...          builtin│
+│  Copy File Path                                     Copy the absolute path of the current buffer'...          builtin│
 │  Git Blame: Close                                   Close the git blame panel                               git_blame│
-│  Next Split                           Alt+]         Move focus to the next split pane                         builtin│
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   file  |  >command  |  :line  |  #buffer                                                                               
 >help
