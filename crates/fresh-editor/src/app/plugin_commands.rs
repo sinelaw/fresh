@@ -565,11 +565,7 @@ impl Editor {
         });
 
         match inserted {
-            Some(idx) => tracing::info!(
-                "Added menu item to '{}' at position {}",
-                menu_label,
-                idx
-            ),
+            Some(idx) => tracing::info!("Added menu item to '{}' at position {}", menu_label, idx),
             None => tracing::warn!("Menu '{}' not found for adding item", menu_label),
         }
     }
@@ -650,8 +646,12 @@ impl Editor {
         });
 
         match removed {
-            Some(true) => tracing::info!("Removed menu item '{}' from '{}'", item_label, menu_label),
-            Some(false) => tracing::warn!("Menu item '{}' not found in '{}'", item_label, menu_label),
+            Some(true) => {
+                tracing::info!("Removed menu item '{}' from '{}'", item_label, menu_label)
+            }
+            Some(false) => {
+                tracing::warn!("Menu item '{}' not found in '{}'", item_label, menu_label)
+            }
             None => tracing::warn!("Menu '{}' not found for removing item", menu_label),
         }
     }
