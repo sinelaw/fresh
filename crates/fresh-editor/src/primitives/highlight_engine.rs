@@ -1,20 +1,39 @@
-//! Unified highlighting engine
+//! Unified highlighting engine over syntect (TextMate grammars) and
+//! tree-sitter. Syntect is the default; tree-sitter `Language` is still
+//! detected for non-highlighting features (indentation, semantic highlighting).
 //!
-//! This module provides a unified abstraction over different highlighting backends:
-//! - TextMate grammars via syntect (default for highlighting)
-//! - Tree-sitter (available via explicit preference, also used for non-highlighting features)
+//! # TextMate cache design
 //!
-//! # Backend Selection
-//! By default, syntect/TextMate is used for syntax highlighting because it provides
-//! broader language coverage. Tree-sitter language detection is still performed
-//! to support non-highlighting features like auto-indentation and semantic highlighting.
+//! Syntect's parser is a sequential state machine — it must process bytes
+//! in order from a known parse state to track multi-line constructs and
+//! embedded language transitions. To make scrolling cheap, the engine keeps
+//! a span cache, a `(ParseState, ScopeStack)` snapshot at the cache tail,
+//! and periodic checkpoint anchors to support resume-from-anywhere.
 //!
-//! # Non-Highlighting Features
-//! Even when using TextMate for highlighting, tree-sitter `Language` is detected
-//! and available via `.language()` for:
-//! - Auto-indentation (via IndentCalculator)
-//! - Semantic highlighting (variable scope tracking)
-//! - Other syntax-aware features
+//! Three render-time paths, gated by what the cache covers:
+//!
+//! - **Cache hit** — cache fully covers the parse range and there's no
+//!   pending edit; filter cached spans for the viewport. Zero parse work.
+//! - **Forward extension** — cache covers the start of the parse range but
+//!   not its end; resume from `tail_state` and parse only the uncovered
+//!   tail bytes. Steady-state scroll path.
+//! - **Partial update** — there's a pending edit; resume from the nearest
+//!   checkpoint before the dirty point and parse forward looking for
+//!   convergence (state matches an existing checkpoint), bounded by a
+//!   per-pass byte budget so pathological edits can't degenerate into
+//!   whole-file reparses.
+//! - **Cold start / fallback** — no cache, or none of the above applies;
+//!   parse the appropriate range from a fresh state or nearest checkpoint.
+//!
+//! For files at or below `MAX_PARSE_BYTES` the parse range is the whole
+//! file, so the cache is whole-file after the first parse and scrolling
+//! becomes filter-only. Larger files use a viewport-centred window of
+//! `±context_bytes` and rely on the forward-extension path to keep
+//! scroll-cost bounded.
+//!
+//! Edits go through `notify_insert` / `notify_delete`, which shift cached
+//! span byte offsets in place, set `dirty_from`, and invalidate `tail_state`
+//! when the edit lies inside the cached range.
 
 use crate::model::buffer::Buffer;
 use crate::model::marker::{MarkerId, MarkerList};
@@ -218,41 +237,17 @@ pub enum HighlightEngine {
     None,
 }
 
-/// TextMate highlighting engine with marker-based parse state checkpoints.
-///
-/// Syntect's parser is a sequential state machine that must process text from the
-/// start of the file to correctly track embedded language transitions (e.g. CSS
-/// inside HTML `<style>` tags).
-///
-/// Checkpoint positions are stored as markers in an internal `MarkerList` which
-/// automatically adjusts byte offsets when the buffer is edited. The associated
-/// `ParseState` + `ScopeStack` are stored in a side `HashMap`.
-///
-/// On edit, checkpoint positions auto-adjust and a `dirty_from` marker is set.
-/// On the next render, a convergence walk re-parses from the checkpoint before
-/// the dirty point forward, stopping as soon as the new parse state matches an
-/// existing checkpoint's stored state (VSCode-style convergence). This means
-/// most single-character edits only re-parse 1-2 checkpoints (~500 bytes).
-///
-/// For large files where no checkpoint reaches the viewport, we fall back to a
-/// fresh `ParseState` from `context_bytes` before the viewport.
+/// TextMate highlighting engine. See module docs for the cache design.
 pub struct TextMateEngine {
     syntax_set: Arc<SyntaxSet>,
     syntax_index: usize,
-    /// Marker-based checkpoint positions. Markers auto-adjust on buffer edits.
     checkpoint_markers: MarkerList,
-    /// Parse state stored per checkpoint marker.
     checkpoint_states:
         HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
-    /// Earliest byte offset where an edit may have invalidated parse state.
-    /// Consumed during the next highlight_viewport call.
     dirty_from: Option<usize>,
-    /// Cached highlight spans for the last rendered viewport.
     cache: Option<TextMateCache>,
     last_buffer_len: usize,
-    /// Tree-sitter language for non-highlighting features (indentation, semantic highlighting)
     ts_language: Option<Language>,
-    /// Performance counters for testing and diagnostics.
     stats: HighlightStats,
 }
 
@@ -275,6 +270,9 @@ pub struct HighlightStats {
 struct TextMateCache {
     range: Range<usize>,
     spans: Vec<CachedSpan>,
+    // Parse state at `range.end`; powers forward extension. None when the
+    // last mutation didn't end at `range.end`.
+    tail_state: Option<(syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
 }
 
 #[derive(Debug, Clone)]
@@ -283,22 +281,14 @@ struct CachedSpan {
     category: crate::primitives::highlighter::HighlightCategory,
 }
 
-/// Buffer-size threshold separating "small" (whole-file cached) from "large"
-/// (viewport-windowed) files. Files at or below this size get a full-file
-/// span cache; above it, we fall back to a window centred on the viewport.
+/// Small/large file threshold (whole-file cache vs viewport window).
 const MAX_PARSE_BYTES: usize = 1024 * 1024;
 
-/// Interval between parse state checkpoints (in bytes).
-/// 256 bytes ≈ every 4-8 lines of code. Convergence checks happen at each
-/// checkpoint, so smaller intervals mean faster convergence after edits.
-/// A 200KB file produces ~800 markers — well within MarkerList's O(log n) range.
+/// Distance between checkpoint anchors. Smaller = faster convergence on edit.
 const CHECKPOINT_INTERVAL: usize = 256;
 
-/// Cap on bytes parsed past `dirty_pos` while looking for convergence in a
-/// partial update. Exceeding this means the edit changed parse state for an
-/// unbounded tail (e.g. an unclosed `/*` re-scoping the rest of the file).
-/// Stop, splice what we have, and let the next render pick up where we left
-/// off via `dirty_from`. 64 KB ≈ one viewport plus ample slack.
+/// Per-pass cap on partial-update parsing past `dirty_pos`. Bounds work for
+/// pathological edits whose effect doesn't converge.
 const CONVERGENCE_BUDGET: usize = 64 * 1024;
 
 impl TextMateEngine {
@@ -351,51 +341,45 @@ impl TextMateEngine {
         self.ts_language.as_ref()
     }
 
-    /// Notify the checkpoint system of a buffer insert. Markers auto-adjust positions.
-    /// Also shifts cached span byte offsets after the insert point so the span cache
-    /// remains valid for the partial-update / convergence path.
+    /// Buffer-insert notification. Shifts span offsets in place and marks
+    /// the cache dirty so the partial-update path runs on next render.
     pub fn notify_insert(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_insert(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
-        // Shift cached spans after the insert point
         if let Some(cache) = &mut self.cache {
             for span in &mut cache.spans {
                 if span.range.start >= position {
                     span.range.start += length;
                     span.range.end += length;
                 } else if span.range.end > position {
-                    // Span straddles the insert point — extend its end
                     span.range.end += length;
                 }
             }
             if cache.range.end >= position {
                 cache.range.end += length;
+                if position < cache.range.end {
+                    cache.tail_state = None;
+                }
             }
         }
     }
 
-    /// Notify the checkpoint system of a buffer delete. Markers auto-adjust positions.
-    /// Also adjusts cached span byte offsets after the delete point.
+    /// Buffer-delete notification. Mirror of `notify_insert`.
     pub fn notify_delete(&mut self, position: usize, length: usize) {
         self.checkpoint_markers.adjust_for_delete(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
-        // Adjust cached spans after the delete point
         if let Some(cache) = &mut self.cache {
             let delete_end = position + length;
             cache.spans.retain_mut(|span| {
                 if span.range.start >= delete_end {
-                    // Span is entirely after the delete — shift back
                     span.range.start -= length;
                     span.range.end -= length;
                     true
                 } else if span.range.end <= position {
-                    // Span is entirely before the delete — unchanged
                     true
                 } else if span.range.start >= position && span.range.end <= delete_end {
-                    // Span is entirely within the deleted region — remove it
                     false
                 } else {
-                    // Span partially overlaps — clamp and adjust
                     if span.range.start < position {
                         span.range.end = position.min(span.range.end);
                     } else {
@@ -410,19 +394,14 @@ impl TextMateEngine {
             } else if cache.range.end > position {
                 cache.range.end = position;
             }
+            if position < cache.range.end {
+                cache.tail_state = None;
+            }
         }
     }
 
-    /// Highlight the visible viewport range.
-    ///
-    /// If the span cache is valid and there are no dirty edits, returns cached spans.
-    /// If there are dirty edits, re-parses only from the dirty point until convergence
-    /// (parse state matches an existing checkpoint), then splices the new spans into
-    /// the cache. This means most single-character edits only re-parse ~256-512 bytes.
-    ///
-    /// Files at or below `MAX_PARSE_BYTES` are cached whole-file: scrolling within
-    /// the file is filter-only after the first parse. Larger files use a
-    /// viewport-centred window of `±context_bytes`.
+    /// Highlight the visible viewport. Path selection is documented in the
+    /// module-level docs ("TextMate cache design").
     pub fn highlight_viewport(
         &mut self,
         buffer: &Buffer,
@@ -440,10 +419,6 @@ impl TextMateEngine {
             (s, e)
         };
 
-        // Check cache state. For a pure cache hit (no dirty edits), we also
-        // require buffer length to match. For partial updates (dirty_from set),
-        // we only need the cache to cover the viewport — the buffer length
-        // changed due to the edit, but we'll splice the dirty region.
         let dirty = self.dirty_from.take();
         let cache_covers_viewport = self.cache.as_ref().is_some_and(|c| {
             c.range.start <= desired_parse_start && c.range.end >= desired_parse_start
@@ -456,17 +431,28 @@ impl TextMateEngine {
                 .as_ref()
                 .is_some_and(|c| c.range.end >= parse_end);
 
+        // Cache hit.
         if exact_cache_hit {
-            // Pure cache hit — no dirty edits, cache covers viewport
             self.stats.cache_hits += 1;
             return self.filter_cached_spans(viewport_start, viewport_end, theme);
         }
 
+        // Forward extension.
+        if dirty.is_none()
+            && cache_covers_viewport
+            && self.last_buffer_len == buffer.len()
+            && self
+                .cache
+                .as_ref()
+                .is_some_and(|c| c.range.end < parse_end && c.tail_state.is_some())
+        {
+            return self.extend_cache_forward(buffer, parse_end, viewport_start, viewport_end, theme);
+        }
+
+        // Partial update.
         if cache_covers_viewport && dirty.is_some() {
             if let Some(dirty_pos) = dirty {
                 if dirty_pos < parse_end {
-                    // Partial update: re-parse from dirty point until convergence,
-                    // splice new spans into existing cache
                     if let Some(result) = self.try_partial_update(
                         buffer,
                         dirty_pos,
@@ -478,20 +464,18 @@ impl TextMateEngine {
                     ) {
                         return result;
                     }
-                    // Convergence failed within parse range — fall through to full re-parse
                 } else {
-                    // Dirty region beyond viewport — cache is still valid
+                    // Dirty region past viewport: cached spans are still valid.
                     self.dirty_from = Some(dirty_pos);
                     self.stats.cache_hits += 1;
                     return self.filter_cached_spans(viewport_start, viewport_end, theme);
                 }
             }
         } else if let Some(d) = dirty {
-            // No usable cache and dirty — put dirty back, will do full parse
             self.dirty_from = Some(d);
         }
 
-        // Full re-parse (cold start or convergence failed)
+        // Cold start / fallback.
         self.full_parse(
             buffer,
             desired_parse_start,
@@ -523,14 +507,9 @@ impl TextMateEngine {
             .collect()
     }
 
-    /// Try to do a partial update: re-parse from the dirty point until convergence,
-    /// then splice new spans into the cache.
-    ///
-    /// Returns `Some(spans)` whenever a checkpoint anchor was available, even if
-    /// convergence didn't occur — see the budget and EOF cases at the bottom.
-    /// Returns `None` only when no anchor exists (orphaned cache state or large
-    /// file beyond reach of any checkpoint), in which case the caller falls
-    /// back to `full_parse`.
+    /// Partial update path. Returns `Some` whenever an anchor was available,
+    /// even on budget hit or EOF (see post-loop classification). `None` only
+    /// when no checkpoint anchor reaches the dirty point.
     #[allow(clippy::too_many_arguments)]
     fn try_partial_update(
         &mut self,
@@ -733,12 +712,8 @@ impl TextMateEngine {
 
         self.stats.bytes_parsed += current_offset.saturating_sub(actual_start);
 
-        // Decide what we accomplished:
-        // - converged: splice up to convergence point, clear dirty.
-        // - budget hit: splice up to current_offset, leave dirty so the next
-        //   render continues from there.
-        // - reached EOF without convergence: splice up to current_offset, no
-        //   later state to disagree with, clear dirty.
+        // Splice classification: converged → clear dirty; budget hit → keep
+        // dirty for next pass; EOF → clear dirty.
         let (splice_end, dirty_after) = if let Some(c) = converged_at {
             (c, None)
         } else if let Some(b) = budget_hit_at {
@@ -759,12 +734,178 @@ impl TextMateEngine {
             cache.spans.extend(new_spans);
             cache.spans.sort_by_key(|s| s.range.start);
             Self::merge_adjacent_spans(&mut cache.spans);
+            if splice_end > cache.range.end {
+                cache.range.end = splice_end;
+            }
+            cache.tail_state = None;
         }
 
         self.last_buffer_len = buffer.len();
         self.dirty_from = dirty_after;
 
         Some(self.filter_cached_spans(viewport_start, viewport_end, theme))
+    }
+
+    /// Forward extension path (see module docs). Caller checks the cache
+    /// exists, has a `tail_state`, has no dirty edits, and `cache.range.end
+    /// < parse_end`.
+    fn extend_cache_forward(
+        &mut self,
+        buffer: &Buffer,
+        parse_end: usize,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &Theme,
+    ) -> Vec<HighlightSpan> {
+        self.stats.cache_misses += 1;
+        let buf_len = buffer.len();
+        let parse_end = parse_end.min(buf_len);
+
+        let (extension_start, mut state, mut current_scopes) = {
+            let cache = self
+                .cache
+                .as_ref()
+                .expect("extend_cache_forward: cache must exist");
+            let (s, sc) = cache
+                .tail_state
+                .as_ref()
+                .expect("extend_cache_forward: tail_state must exist")
+                .clone();
+            (cache.range.end, s, sc)
+        };
+
+        if parse_end <= extension_start {
+            return self.filter_cached_spans(viewport_start, viewport_end, theme);
+        }
+
+        let content = buffer.slice_bytes(extension_start..parse_end);
+        let content_str = match std::str::from_utf8(&content) {
+            Ok(s) => s,
+            Err(_) => return self.filter_cached_spans(viewport_start, viewport_end, theme),
+        };
+
+        let mut new_spans = Vec::new();
+        let content_bytes = content_str.as_bytes();
+        let mut pos = 0;
+        let mut current_offset = extension_start;
+        let mut bytes_since_checkpoint: usize = 0;
+
+        while pos < content_bytes.len() {
+            if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
+                let nearby = self.checkpoint_markers.query_range(
+                    current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
+                    current_offset + CHECKPOINT_INTERVAL / 2,
+                );
+                if nearby.is_empty() {
+                    let marker_id = self.checkpoint_markers.create(current_offset, true);
+                    self.checkpoint_states
+                        .insert(marker_id, (state.clone(), current_scopes.clone()));
+                }
+                bytes_since_checkpoint = 0;
+            }
+
+            let line_start = pos;
+            let mut line_end = pos;
+            while line_end < content_bytes.len() {
+                if content_bytes[line_end] == b'\n' {
+                    line_end += 1;
+                    break;
+                } else if content_bytes[line_end] == b'\r' {
+                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                        line_end += 2;
+                    } else {
+                        line_end += 1;
+                    }
+                    break;
+                }
+                line_end += 1;
+            }
+
+            let line_bytes = &content_bytes[line_start..line_end];
+            let actual_line_byte_len = line_bytes.len();
+
+            let line_str = match std::str::from_utf8(line_bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
+                    continue;
+                }
+            };
+
+            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
+            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
+                format!("{}\n", line_content)
+            } else {
+                line_content.to_string()
+            };
+
+            let ops = match state.parse_line(&line_for_syntect, &self.syntax_set) {
+                Ok(ops) => ops,
+                Err(_) => {
+                    pos = line_end;
+                    current_offset += actual_line_byte_len;
+                    bytes_since_checkpoint += actual_line_byte_len;
+                    continue;
+                }
+            };
+
+            let mut syntect_offset = 0;
+            let line_content_len = line_content.len();
+
+            for (op_offset, op) in ops {
+                let clamped_op_offset = op_offset.min(line_content_len);
+                if clamped_op_offset > syntect_offset {
+                    if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                        let byte_start = current_offset + syntect_offset;
+                        let byte_end = current_offset + clamped_op_offset;
+                        if byte_start < byte_end {
+                            new_spans.push(CachedSpan {
+                                range: byte_start..byte_end,
+                                category,
+                            });
+                        }
+                    }
+                }
+                syntect_offset = clamped_op_offset;
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = current_scopes.apply(&op);
+            }
+
+            if syntect_offset < line_content_len {
+                if let Some(category) = Self::scope_stack_to_category(&current_scopes) {
+                    let byte_start = current_offset + syntect_offset;
+                    let byte_end = current_offset + line_content_len;
+                    if byte_start < byte_end {
+                        new_spans.push(CachedSpan {
+                            range: byte_start..byte_end,
+                            category,
+                        });
+                    }
+                }
+            }
+
+            pos = line_end;
+            current_offset += actual_line_byte_len;
+            bytes_since_checkpoint += actual_line_byte_len;
+        }
+
+        self.stats.bytes_parsed += parse_end - extension_start;
+
+        Self::merge_adjacent_spans(&mut new_spans);
+
+        let cache = self
+            .cache
+            .as_mut()
+            .expect("extend_cache_forward: cache must still exist");
+        cache.spans.extend(new_spans);
+        Self::merge_adjacent_spans(&mut cache.spans);
+        cache.range.end = parse_end;
+        cache.tail_state = Some((state, current_scopes));
+        self.last_buffer_len = buf_len;
+
+        self.filter_cached_spans(viewport_start, viewport_end, theme)
     }
 
     /// Full re-parse from desired_parse_start to parse_end. Used on cold start
@@ -930,6 +1071,7 @@ impl TextMateEngine {
         self.cache = Some(TextMateCache {
             range: desired_parse_start..parse_end,
             spans: spans.clone(),
+            tail_state: Some((state, current_scopes)),
         });
         self.last_buffer_len = buffer.len();
 
