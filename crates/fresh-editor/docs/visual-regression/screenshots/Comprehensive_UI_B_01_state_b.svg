@@ -2717,11 +2717,11 @@
   <rect x="153" y="324" width="9" height="18" fill="#000000"/>
   <rect x="162" y="324" width="9" height="18" fill="#000000"/>
   <text x="163" y="338" fill="#ffffff" class="terminal" style="">H</text>
-  <rect x="171" y="324" width="9" height="18" fill="#202020"/>
+  <rect x="171" y="324" width="9" height="18" fill="#000000"/>
   <text x="172" y="338" fill="#ffffff" class="terminal" style="">e</text>
-  <rect x="180" y="324" width="9" height="18" fill="#606060"/>
+  <rect x="180" y="324" width="9" height="18" fill="#000000"/>
   <text x="181" y="338" fill="#ffffff" class="terminal" style="">l</text>
-  <rect x="189" y="324" width="9" height="18" fill="#ffffff"/>
+  <rect x="189" y="324" width="9" height="18" fill="#000000"/>
   <text x="190" y="338" fill="#ffffff" class="terminal" style="">p</text>
   <rect x="198" y="324" width="9" height="18" fill="#000000"/>
   <rect x="207" y="324" width="9" height="18" fill="#000000"/>
