@@ -164,6 +164,18 @@ pub enum PromptType {
     AsyncPrompt,
 }
 
+impl PromptType {
+    /// Whether a mouse click on a suggestion should immediately confirm.
+    ///
+    /// Defaults to `true` (matches command palette / file finder UX). Returns
+    /// `false` for prompts that pick from a small fixed list and trigger an
+    /// expensive or destructive action — there, click should preview the
+    /// selection and Enter should commit (issue #1660).
+    pub fn click_confirms(&self) -> bool {
+        !matches!(self, PromptType::ReloadWithEncoding)
+    }
+}
+
 /// Prompt state for the minibuffer
 #[derive(Debug, Clone)]
 pub struct Prompt {

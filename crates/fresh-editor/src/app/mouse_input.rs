@@ -1404,10 +1404,26 @@ impl Editor {
             let relative_row = (row - inner_rect.y) as usize;
             let item_idx = start_idx + relative_row;
             if item_idx < total_count {
-                if let Some(prompt) = &mut self.prompt {
+                let click_confirms = if let Some(prompt) = &mut self.prompt {
                     prompt.selected_suggestion = Some(item_idx);
+                    let confirms = prompt.prompt_type.click_confirms();
+                    if !confirms {
+                        // Mirror keyboard navigation / scroll: sync the input
+                        // to the selected suggestion so the prompt reflects
+                        // what Enter would commit.
+                        if let Some(suggestion) = prompt.suggestions.get(item_idx) {
+                            prompt.input = suggestion.get_value().to_string();
+                            prompt.cursor_pos = prompt.input.len();
+                        }
+                    }
+                    confirms
+                } else {
+                    return None;
+                };
+                if click_confirms {
+                    return Some(self.handle_action(Action::PromptConfirm));
                 }
-                return Some(self.handle_action(Action::PromptConfirm));
+                return Some(Ok(()));
             }
         }
         None

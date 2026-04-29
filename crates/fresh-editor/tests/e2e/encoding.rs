@@ -2388,6 +2388,62 @@ fn test_reload_with_encoding_menu_item() {
     harness.assert_screen_contains("Reload with Encoding...");
 }
 
+/// Regression for #1660: clicking an encoding in the "Reload with encoding"
+/// prompt must only update the selection, not immediately reload the file.
+/// Confirmation requires Enter (or another explicit commit) so users can
+/// preview options without committing to a destructive reload on every click.
+#[test]
+fn test_reload_with_encoding_click_does_not_confirm() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file_path = harness.project_dir().unwrap().join("test_reload_click.txt");
+
+    // Plain ASCII so we know what the buffer should look like before/after.
+    std::fs::write(&file_path, "Hello World\n").unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Open the Reload-with-encoding prompt via the command palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Reload with").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Reload with Encoding");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Reload with encoding:");
+
+    // Find a non-default encoding row to click (Latin-1 is in the list and is
+    // not the default UTF-8 selection).
+    let (col, row) = harness
+        .find_text_on_screen("Latin-1")
+        .expect("Latin-1 suggestion should be visible in the encoding list");
+    harness.mouse_click(col, row).unwrap();
+    harness.render().unwrap();
+
+    // Prompt must still be open (no reload happened on the click).
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Reload with encoding:"),
+        "Prompt should remain open after a single click. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("Reloaded with"),
+        "Reload must not be triggered by the click. Screen:\n{screen}"
+    );
+
+    // Pressing Enter on the now-selected suggestion must commit the reload.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Reloaded with");
+}
+
 /// Regression: "Hello   é" in Latin-1 was misdetected as UTF-8 because the
 /// trailing 0xE9 byte was treated as a truncated multi-byte sequence.
 /// See proptest seed cc 4ada1874c158006a95ed15263e1dcc5aff614bd1938e47260bb970b166bcf1c4
