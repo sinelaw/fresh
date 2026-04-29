@@ -1082,6 +1082,49 @@ fn test_command_palette_scroll_beyond_visible() {
     harness.assert_screen_not_contains("Unknown command");
 }
 
+/// Regression for #1660: keyboard navigation must only scroll the suggestion
+/// list when the selection moves out of the viewport. While the selection
+/// stays inside the visible window, the popup contents must not shift — a
+/// recenter on every Down keystroke breaks the "click on a near-bottom item"
+/// flow because the item ends up under a different mouse position.
+#[test]
+fn test_command_palette_keyboard_nav_inside_viewport_does_not_scroll() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The first command (alphabetically) — anchored on row 0 of the list.
+    let initial_top = harness
+        .find_text_on_screen("Add Cursor Above")
+        .expect("Top item should be visible when popup opens")
+        .1;
+
+    // 9 Down keys take selection from row 0 to row 9 — still inside the
+    // 10-row viewport, so the top item must not have scrolled away.
+    for _ in 0..9 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    let still_top = harness
+        .find_text_on_screen("Add Cursor Above")
+        .expect("Top item should still be on the same row — no scroll yet");
+    assert_eq!(
+        still_top.1, initial_top,
+        "Top suggestion row must not have moved while selection stays inside the viewport"
+    );
+
+    // 10th Down moves selection past the viewport; only now should the list
+    // scroll so the top item disappears.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Add Cursor Above");
+}
+
 /// Test that "New File" command actually switches to the new buffer
 #[test]
 fn test_command_palette_new_file_switches_buffer() {

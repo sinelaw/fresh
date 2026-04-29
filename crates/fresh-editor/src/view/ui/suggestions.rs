@@ -60,23 +60,13 @@ impl SuggestionsRenderer {
         let mut lines = Vec::new();
         let visible_count = inner_area.height as usize;
 
-        // Calculate scroll position to keep selected item visible
-        let start_idx = if let Some(selected) = prompt.selected_suggestion {
-            // Try to center the selected item, or at least keep it visible
-            if selected < visible_count / 2 {
-                // Near the top, start from beginning
-                0
-            } else if selected >= prompt.suggestions.len() - visible_count / 2 {
-                // Near the bottom, show last page
-                prompt.suggestions.len().saturating_sub(visible_count)
-            } else {
-                // In the middle, center the selected item
-                selected.saturating_sub(visible_count / 2)
-            }
-        } else {
-            0
-        };
-
+        // The scroll position is owned by the Prompt itself and only adjusted
+        // when the selection moves out of the viewport (see
+        // `Prompt::ensure_selected_visible`, called once before render). This
+        // keeps a stable list under the cursor so a click near the bottom
+        // doesn't trigger a recenter that shifts items mid-double-click.
+        let max_offset = prompt.suggestions.len().saturating_sub(visible_count);
+        let start_idx = prompt.scroll_offset.min(max_offset);
         let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
 
         let visible_suggestions = &prompt.suggestions[start_idx..end_idx];

@@ -1464,6 +1464,13 @@ impl Editor {
 
         frame.render_widget(ratatui::widgets::Clear, suggestions_area);
 
+        // Adjust the prompt's scroll position to keep the selected item
+        // visible, scrolling the minimum amount required.
+        if let Some(prompt) = self.prompt.as_mut() {
+            prompt.ensure_selected_visible();
+        }
+        let Some(prompt) = &self.prompt else { return };
+
         self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
             frame,
             suggestions_area,

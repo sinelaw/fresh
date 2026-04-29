@@ -2574,6 +2574,41 @@ fn test_reload_with_encoding_double_click_confirms() {
     );
 }
 
+/// Regression for #1660: a mouse click on a near-bottom suggestion must not
+/// scroll the list. If the list shifted under the cursor, the second click
+/// of a double-click would land on a different item from the first.
+#[test]
+fn test_reload_with_encoding_click_does_not_scroll_list() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 30).unwrap();
+    let file_path = harness
+        .project_dir()
+        .unwrap()
+        .join("test_reload_noscroll.txt");
+    std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n").unwrap();
+
+    open_reload_with_encoding_prompt_at_ln4_col3(&mut harness, &file_path);
+
+    // Pick an item near the bottom of the visible 10-row viewport. The old
+    // centering renderer would push such an item upward when it became the
+    // selection, causing the popup to scroll under the cursor.
+    let (col, row_before) = harness
+        .find_text_on_screen("GB18030")
+        .expect("GB18030 suggestion should be visible");
+
+    harness.mouse_click(col, row_before).unwrap();
+    harness.render().unwrap();
+
+    // GB18030 must still be on the same screen row after the click — i.e.
+    // the popup did not scroll under the cursor.
+    let (_, row_after) = harness
+        .find_text_on_screen("GB18030")
+        .expect("GB18030 should still be visible after click");
+    assert_eq!(
+        row_after, row_before,
+        "Clicking a suggestion must not scroll the list. GB18030 moved from row {row_before} to row {row_after}"
+    );
+}
+
 /// Regression: "Hello   é" in Latin-1 was misdetected as UTF-8 because the
 /// trailing 0xE9 byte was treated as a truncated multi-byte sequence.
 /// See proptest seed cc 4ada1874c158006a95ed15263e1dcc5aff614bd1938e47260bb970b166bcf1c4

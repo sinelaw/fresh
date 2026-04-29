@@ -193,6 +193,11 @@ pub struct Prompt {
     pub original_suggestions: Option<Vec<Suggestion>>,
     /// Currently selected suggestion index
     pub selected_suggestion: Option<usize>,
+    /// Index of the first suggestion shown in the popup viewport.
+    /// Updated minimally by the renderer to keep `selected_suggestion`
+    /// visible — selection changes inside the viewport never scroll
+    /// (issue #1660).
+    pub scroll_offset: usize,
     /// Selection anchor position (for Shift+Arrow selection)
     /// When Some(pos), there's a selection from anchor to cursor_pos
     pub selection_anchor: Option<usize>,
@@ -203,6 +208,11 @@ pub struct Prompt {
     /// Used by plugin prompts that want picker-like behavior (e.g. compose width).
     pub sync_input_on_navigate: bool,
 }
+
+/// Maximum number of suggestion rows shown at once. Mirrors the cap used by
+/// `SuggestionsRenderer` so `Prompt::ensure_selected_visible` can compute the
+/// viewport size without inspecting render state.
+pub const MAX_VISIBLE_SUGGESTIONS: usize = 10;
 
 impl Prompt {
     /// Create a new prompt
@@ -215,6 +225,7 @@ impl Prompt {
             suggestions: Vec::new(),
             original_suggestions: None,
             selected_suggestion: None,
+            scroll_offset: 0,
             selection_anchor: None,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
@@ -243,6 +254,7 @@ impl Prompt {
             original_suggestions: Some(suggestions.clone()),
             suggestions,
             selected_suggestion,
+            scroll_offset: 0,
             selection_anchor: None,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
@@ -290,6 +302,7 @@ impl Prompt {
             suggestions: Vec::new(),
             original_suggestions: None,
             selected_suggestion: None,
+            scroll_offset: 0,
             selection_anchor,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
@@ -465,6 +478,32 @@ impl Prompt {
         } else {
             Some(0)
         };
+        self.scroll_offset = 0;
+    }
+
+    /// Adjust `scroll_offset` so that `selected_suggestion` is inside the
+    /// viewport, scrolling the minimum amount required. A selection that's
+    /// already on-screen leaves the viewport untouched — this is what stops
+    /// a click on a near-bottom item from snapping the list upward and
+    /// recentering under the cursor (issue #1660).
+    pub fn ensure_selected_visible(&mut self) {
+        let total = self.suggestions.len();
+        let visible = total.min(MAX_VISIBLE_SUGGESTIONS);
+        let max_offset = total.saturating_sub(visible);
+        if visible == 0 {
+            self.scroll_offset = 0;
+            return;
+        }
+        if let Some(selected) = self.selected_suggestion {
+            if selected < self.scroll_offset {
+                self.scroll_offset = selected;
+            } else if selected >= self.scroll_offset + visible {
+                self.scroll_offset = selected + 1 - visible;
+            }
+        }
+        if self.scroll_offset > max_offset {
+            self.scroll_offset = max_offset;
+        }
     }
 
     // ========================================================================
