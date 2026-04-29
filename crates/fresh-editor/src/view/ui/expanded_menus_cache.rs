@@ -22,12 +22,7 @@ impl ExpandedMenusCache {
     /// Ensure the cache holds an expansion built against `registry`. No-op
     /// when the cached entry was already built against the same `Arc`
     /// instance (compared via `Arc::ptr_eq`).
-    pub fn update(
-        &mut self,
-        registry: &Arc<ThemeRegistry>,
-        base: &MenuConfig,
-        themes_dir: &Path,
-    ) {
+    pub fn update(&mut self, registry: &Arc<ThemeRegistry>, base: &MenuConfig, themes_dir: &Path) {
         if let Some((cached_reg, _)) = &self.cached {
             if Arc::ptr_eq(cached_reg, registry) {
                 return;

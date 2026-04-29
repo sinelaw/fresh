@@ -1151,10 +1151,7 @@ impl Editor {
                 &self.menus,
                 &self.menu_state.themes_dir,
             );
-            let expanded = self
-                .expanded_menus_cache
-                .get()
-                .expect("just updated");
+            let expanded = self.expanded_menus_cache.get().expect("just updated");
             let keybindings = self.keybindings.read().unwrap();
             self.cached_layout.menu_layout = Some(crate::view::ui::MenuRenderer::render(
                 frame,
