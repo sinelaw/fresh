@@ -1,6 +1,8 @@
-use crate::common::harness::{layout, EditorTestHarness};
+use crate::common::harness::{layout, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
+use tempfile::TempDir;
 
 /// Test that the tab bar is visible by default
 #[test]
@@ -513,4 +515,115 @@ fn test_toggle_prompt_line_via_command_palette() {
     // Prompt line should be visible again
     harness.assert_screen_contains("Prompt line shown");
     assert!(harness.editor().prompt_line_visible());
+}
+
+/// Regression test for issue #1156: toggling the menu bar via the View menu /
+/// command palette should persist to the global user config so the change is
+/// truly global (every workspace picks it up on next launch), not a per-
+/// workspace override.
+#[test]
+fn test_toggle_menu_bar_persists_to_global_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: open the editor and toggle the menu bar off via the runtime
+    // action (same code path used by the View menu and the "Toggle Menu Bar"
+    // command-palette entry).
+    {
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.render().unwrap();
+
+        // Sanity: the global default is "show menu bar" = true.
+        assert!(harness.editor().config().editor.show_menu_bar);
+
+        harness.editor_mut().toggle_menu_bar();
+
+        // After toggling, the runtime config must reflect the new value.
+        assert!(
+            !harness.editor().config().editor.show_menu_bar,
+            "toggle_menu_bar should update show_menu_bar in the global config"
+        );
+    }
+
+    // Session 2: a different working directory using the same user config
+    // dir. Loading the config layers from disk must reflect the persisted
+    // change — otherwise the toggle was per-workspace, not global.
+    let other_project = temp_dir.path().join("other_project");
+    std::fs::create_dir(&other_project).unwrap();
+    let loaded = Config::load_with_layers(&dir_context, &other_project);
+    assert!(
+        !loaded.editor.show_menu_bar,
+        "Toggle should persist to user config so unrelated workspaces inherit it"
+    );
+}
+
+/// Regression test for issue #1156: a stale `menu_bar_hidden` workspace
+/// override from an older Fresh release must not silently win over the
+/// current global `editor.show_menu_bar` setting. The setting is global,
+/// so the override is treated as legacy and ignored on restore.
+#[test]
+fn test_workspace_override_does_not_shadow_global_show_menu_bar() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: hide the menu bar (toggle persists to global user config)
+    // and save the workspace. Older builds also wrote a per-workspace
+    // `menu_bar_hidden=true` override here.
+    {
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.render().unwrap();
+        harness.editor_mut().toggle_menu_bar();
+        harness.shutdown(true).unwrap();
+    }
+
+    // Session 2: the user re-enables the menu bar globally before reopening
+    // (e.g. via the Settings UI on a different machine, or by editing the
+    // config file). Now reopen the same workspace — the global setting
+    // must win.
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config({
+                let mut c = Config::default();
+                c.editor.show_menu_bar = true;
+                c
+            })
+            .with_working_dir(project_dir.clone())
+            .with_shared_dir_context(dir_context.clone())
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.editor_mut().try_restore_workspace().unwrap();
+    harness.render().unwrap();
+
+    let menu_bar_row = harness.get_screen_row(0);
+    assert!(
+        menu_bar_row.contains("File"),
+        "Global show_menu_bar=true must take precedence over a stale \
+         workspace override. Got row 0: {:?}",
+        menu_bar_row
+    );
 }

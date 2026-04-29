@@ -57,15 +57,22 @@ impl Editor {
         }
     }
 
-    /// Toggle menu bar visibility
+    /// Toggle menu bar visibility.
+    ///
+    /// `editor.show_menu_bar` is a global preference, so the toggle updates the
+    /// runtime config and persists the change to the user config layer (same
+    /// pattern as the file-explorer toggles). See issue #1156.
     pub fn toggle_menu_bar(&mut self) {
-        self.menu_bar_visible = !self.menu_bar_visible;
+        let new_value = !self.menu_bar_visible;
+        self.config_mut().editor.show_menu_bar = new_value;
+        self.menu_bar_visible = new_value;
         // When explicitly toggling, clear auto-show state
         self.menu_bar_auto_shown = false;
         // Close any open menu when hiding the menu bar
         if !self.menu_bar_visible {
             self.menu_state.close_menu();
         }
+        self.persist_config_change("/editor/show_menu_bar", serde_json::Value::Bool(new_value));
         let status = if self.menu_bar_visible {
             t!("toggle.menu_bar_shown")
         } else {

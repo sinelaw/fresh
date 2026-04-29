@@ -285,6 +285,11 @@ pub struct WorkspaceConfigOverrides {
     pub enable_inlay_hints: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mouse_enabled: Option<bool>,
+    /// Legacy: menu bar visibility was once stored as a per-workspace
+    /// override here. It is now a global preference (`editor.show_menu_bar`),
+    /// so this field is no longer written and is ignored on restore. Kept
+    /// only for serde compatibility with workspaces saved by older builds.
+    /// See issue #1156.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu_bar_hidden: Option<bool>,
 }

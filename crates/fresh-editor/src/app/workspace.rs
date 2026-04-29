@@ -277,7 +277,10 @@ impl Editor {
             }
         };
 
-        // Capture config overrides (only store deviations from defaults)
+        // Capture config overrides (only store deviations from defaults).
+        // `menu_bar_hidden` is intentionally left unset: menu bar visibility
+        // is a global preference (`editor.show_menu_bar`), not a per-workspace
+        // override. See issue #1156.
         let config_overrides = WorkspaceConfigOverrides {
             line_numbers: Some(self.config.editor.line_numbers),
             relative_line_numbers: Some(self.config.editor.relative_line_numbers),
@@ -285,7 +288,7 @@ impl Editor {
             syntax_highlighting: Some(self.config.editor.syntax_highlighting),
             enable_inlay_hints: Some(self.config.editor.enable_inlay_hints),
             mouse_enabled: Some(self.mouse_enabled),
-            menu_bar_hidden: Some(!self.menu_bar_visible),
+            menu_bar_hidden: None,
         };
 
         // Capture histories using the items() accessor from the prompt_histories HashMap
@@ -779,9 +782,10 @@ impl Editor {
         if let Some(mouse_enabled) = overrides.mouse_enabled {
             self.mouse_enabled = mouse_enabled;
         }
-        if let Some(menu_bar_hidden) = overrides.menu_bar_hidden {
-            self.menu_bar_visible = !menu_bar_hidden;
-        }
+        // `overrides.menu_bar_hidden` is a legacy field — kept for serde
+        // compatibility with workspaces written by older builds, but no
+        // longer applied: menu bar visibility is now a global preference.
+        // See issue #1156.
     }
 
     fn restore_search_options(&mut self, opts: &SearchOptions) {
