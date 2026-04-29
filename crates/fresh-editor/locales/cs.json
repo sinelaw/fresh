@@ -1,5 +1,9 @@
 {
   "_version": 1,
+  "cli.help.translated_header": "Nápověda (přeloženo)",
+  "cli.help.translated_about": "Fresh je moderní terminálový textový editor s podporou více kurzorů, klientem LSP a běhovým prostředím pro pluginy.",
+  "cli.help.locale_hint": "Použijte --locale <KÓD> ke změně jazyka rozhraní (en, cs, de, es, fr, it, ja, ko, pt-BR, ru, th, uk, vi, zh-CN).",
+  "cli.help.documentation": "Dokumentace",
   "action.add_cursor_above": "Přidat kurzor výše",
   "action.add_cursor_below": "Přidat kurzor níže",
   "action.add_cursor_next_match": "Přidat kurzor na další shodu",

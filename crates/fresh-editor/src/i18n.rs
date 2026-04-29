@@ -234,6 +234,23 @@ pub fn suspend_unsupported_message() -> String {
     rust_i18n::t!("status.suspend_unsupported").to_string()
 }
 
+/// Translated supplement appended to the CLI `--help` output when the
+/// active locale is not English.  The English help block produced by
+/// clap is always rendered first, so users can find `--locale` even
+/// when the translation is unfamiliar.
+///
+/// Returns an empty string when the active locale is English.
+pub fn cli_help_appendix() -> String {
+    if current_locale() == "en" {
+        return String::new();
+    }
+    let header = rust_i18n::t!("cli.help.translated_header").to_string();
+    let about = rust_i18n::t!("cli.help.translated_about").to_string();
+    let locale_hint = rust_i18n::t!("cli.help.locale_hint").to_string();
+    let docs = rust_i18n::t!("cli.help.documentation").to_string();
+    format!("\n\n--- {header} ---\n{about}\n\n{locale_hint}\n{docs}: https://getfresh.dev/docs")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +369,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn cli_help_appendix_is_empty_for_english() {
+        set_locale("en");
+        assert!(cli_help_appendix().is_empty());
+    }
+
+    #[test]
+    fn cli_help_appendix_translates_for_other_locales() {
+        // Smoke-test every non-English locale: the appendix should be
+        // non-empty, contain the translated header marker, and mention
+        // the `--locale` flag so a user with an unfamiliar locale can
+        // still find the way back to English.
+        let saved = current_locale();
+        for locale in available_locales() {
+            if locale == "en" {
+                continue;
+            }
+            set_locale(locale);
+            let appendix = cli_help_appendix();
+            assert!(
+                !appendix.is_empty(),
+                "Expected non-empty appendix for locale '{}'",
+                locale
+            );
+            assert!(
+                appendix.contains("---"),
+                "Appendix for locale '{}' missing header markers: {}",
+                locale,
+                appendix
+            );
+            assert!(
+                appendix.contains("--locale"),
+                "Appendix for locale '{}' should reference --locale flag: {}",
+                locale,
+                appendix
+            );
+        }
+        set_locale(&saved);
     }
 }

@@ -1,5 +1,9 @@
 {
   "_version": 1,
+  "cli.help.translated_header": "도움말 (번역됨)",
+  "cli.help.translated_about": "Fresh 는 멀티커서, LSP 클라이언트, 플러그인 런타임을 갖춘 현대적인 터미널 텍스트 편집기입니다.",
+  "cli.help.locale_hint": "인터페이스 언어를 바꾸려면 --locale <CODE> 를 사용하세요 (en, cs, de, es, fr, it, ja, ko, pt-BR, ru, th, uk, vi, zh-CN).",
+  "cli.help.documentation": "문서",
   "action.add_cursor_above": "위에 커서 추가",
   "action.add_cursor_below": "아래에 커서 추가",
   "action.add_cursor_next_match": "다음 일치에 커서 추가",

@@ -1,5 +1,9 @@
 {
   "_version": 1,
+  "cli.help.translated_header": "ヘルプ（翻訳）",
+  "cli.help.translated_about": "Fresh はマルチカーソルに対応したモダンなターミナル向けテキストエディタで、LSP クライアントとプラグインランタイムを内蔵しています。",
+  "cli.help.locale_hint": "インターフェイスの言語を切り替えるには --locale <CODE> を指定してください（en, cs, de, es, fr, it, ja, ko, pt-BR, ru, th, uk, vi, zh-CN）。",
+  "cli.help.documentation": "ドキュメント",
   "action.add_cursor_above": "上にカーソルを追加",
   "action.add_cursor_below": "下にカーソルを追加",
   "action.add_cursor_next_match": "次の一致にカーソルを追加",

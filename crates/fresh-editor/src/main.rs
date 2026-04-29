@@ -4,7 +4,7 @@
 #![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
 
 use anyhow::{Context, Result as AnyhowResult};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use crossterm::event::{
     poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, KeyEventKind,
     MouseEvent,
@@ -26,11 +26,16 @@ use std::{
     time::Duration,
 };
 
-/// A terminal text editor with multi-cursor support
-#[derive(Parser, Debug)]
-#[command(name = "fresh")]
-#[command(version, propagate_version = true)]
-#[command(after_help = concat!(
+/// English `before_help` banner. Always shown above the auto-generated help so
+/// `--locale` is discoverable even when the editor is otherwise running in a
+/// language the user can't read. Keep this short, plain ASCII, and English.
+const BEFORE_HELP_EN: &str =
+    "Tip: use --locale <CODE> to change the interface language (e.g. en, es, fr, ja, zh-CN).";
+
+/// English `after_help` text. Held in a const so we can append a translated
+/// supplement at runtime (see `apply_localized_help` in `real_main`) without
+/// losing the comprehensive English help that always serves as the "header".
+const AFTER_HELP_EN: &str = concat!(
     "Commands (use --cmd):\n",
     "  config show               Print effective configuration\n",
     "  config paths              Show directories used by Fresh\n",
@@ -90,7 +95,14 @@ use std::{
     "    git config core.editor 'fresh --cmd session open-file . --wait'\n",
     "\n",
     "Documentation: https://getfresh.dev/docs"
-))]
+);
+
+/// A terminal text editor with multi-cursor support
+#[derive(Parser, Debug)]
+#[command(name = "fresh")]
+#[command(version, propagate_version = true)]
+#[command(before_help = BEFORE_HELP_EN)]
+#[command(after_help = AFTER_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
     /// Commands: session (list|attach|new|kill|open-file), config (show|paths), grammar (list), init
@@ -3303,6 +3315,38 @@ fn main() -> AnyhowResult<()> {
     }
 }
 
+/// Scan raw CLI arguments for `--locale <X>` / `--locale=X` so we can
+/// initialize i18n *before* clap parses (and potentially exits on
+/// `--help` / `--version`).  Returns the user-supplied locale string,
+/// if any.
+fn pre_clap_locale_override() -> Option<String> {
+    let mut iter = std::env::args().skip(1);
+    while let Some(arg) = iter.next() {
+        if arg == "--locale" {
+            return iter.next();
+        }
+        if let Some(rest) = arg.strip_prefix("--locale=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Build the runtime clap `Command`, appending a localized supplement to
+/// `after_help` when the active locale is not English.  The English
+/// `before_help` / `after_help` configured on `Cli` is left untouched and
+/// always shown so the user can find the `--locale` flag.
+fn build_localized_cli_command() -> clap::Command {
+    let cmd = Cli::command();
+    let appendix = fresh::i18n::cli_help_appendix();
+    if appendix.is_empty() {
+        cmd
+    } else {
+        let combined = format!("{AFTER_HELP_EN}{appendix}");
+        cmd.after_help(combined)
+    }
+}
+
 fn real_main() -> AnyhowResult<()> {
     // Enable backtraces for error reporting if not already set.
     // Errors that crash the editor are bugs — backtraces help diagnose them.
@@ -3310,7 +3354,18 @@ fn real_main() -> AnyhowResult<()> {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
 
-    let cli = Cli::parse();
+    // Initialize i18n before clap parses, so `--help` (which exits inside
+    // clap before we read the config) is rendered with a localized
+    // supplement when the user has set `--locale` or `LANG`.  This is a
+    // best-effort detection: it uses only the raw `--locale` arg and the
+    // environment.  Once we've loaded the config we re-init with the
+    // resolved locale (CLI > config > env).
+    fresh::i18n::init_with_config(pre_clap_locale_override().as_deref());
+
+    let cli = match Cli::from_arg_matches(&build_localized_cli_command().get_matches()) {
+        Ok(cli) => cli,
+        Err(e) => e.exit(),
+    };
 
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);

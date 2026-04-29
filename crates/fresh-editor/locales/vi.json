@@ -1,5 +1,9 @@
 {
   "_version": 1,
+  "cli.help.translated_header": "Trợ giúp (đã dịch)",
+  "cli.help.translated_about": "Fresh là trình soạn thảo văn bản hiện đại cho terminal, hỗ trợ nhiều con trỏ, có sẵn ứng dụng LSP và trình chạy plugin.",
+  "cli.help.locale_hint": "Dùng --locale <MÃ> để đổi ngôn ngữ giao diện (en, cs, de, es, fr, it, ja, ko, pt-BR, ru, th, uk, vi, zh-CN).",
+  "cli.help.documentation": "Tài liệu",
   "action.add_cursor_above": "Thêm con trỏ phía trên",
   "action.add_cursor_below": "Thêm con trỏ phía dưới",
   "action.add_cursor_next_match": "Thêm con trỏ tại kết quả tiếp theo",

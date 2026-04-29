@@ -1,5 +1,9 @@
 {
   "_version": 1,
+  "cli.help.translated_header": "Ajuda (traduzida)",
+  "cli.help.translated_about": "O Fresh é um editor de texto moderno para terminal com suporte a múltiplos cursores, cliente LSP e runtime de plugins.",
+  "cli.help.locale_hint": "Use --locale <CÓDIGO> para mudar o idioma da interface (en, cs, de, es, fr, it, ja, ko, pt-BR, ru, th, uk, vi, zh-CN).",
+  "cli.help.documentation": "Documentação",
   "action.add_cursor_above": "Adicionar cursor acima",
   "action.add_cursor_below": "Adicionar cursor abaixo",
   "action.add_cursor_next_match": "Adicionar cursor na próxima correspondência",

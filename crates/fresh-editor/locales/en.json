@@ -1,5 +1,9 @@
 {
   "_version": 1,
+  "cli.help.translated_header": "Help (translated)",
+  "cli.help.translated_about": "Fresh is a modern terminal text editor with multi-cursor support, an LSP client, and a plugin runtime.",
+  "cli.help.locale_hint": "Use --locale <CODE> to change the interface language (en, cs, de, es, fr, it, ja, ko, pt-BR, ru, th, uk, vi, zh-CN).",
+  "cli.help.documentation": "Documentation",
   "action.add_cursor_above": "Add cursor above",
   "action.add_ruler": "Add ruler",
   "action.add_cursor_below": "Add cursor below",
