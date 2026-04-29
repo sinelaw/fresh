@@ -283,7 +283,9 @@ struct CachedSpan {
     category: crate::primitives::highlighter::HighlightCategory,
 }
 
-/// Maximum bytes to parse in a single operation
+/// Buffer-size threshold separating "small" (whole-file cached) from "large"
+/// (viewport-windowed) files. Files at or below this size get a full-file
+/// span cache; above it, we fall back to a window centred on the viewport.
 const MAX_PARSE_BYTES: usize = 1024 * 1024;
 
 /// Interval between parse state checkpoints (in bytes).
@@ -291,6 +293,13 @@ const MAX_PARSE_BYTES: usize = 1024 * 1024;
 /// checkpoint, so smaller intervals mean faster convergence after edits.
 /// A 200KB file produces ~800 markers — well within MarkerList's O(log n) range.
 const CHECKPOINT_INTERVAL: usize = 256;
+
+/// Cap on bytes parsed past `dirty_pos` while looking for convergence in a
+/// partial update. Exceeding this means the edit changed parse state for an
+/// unbounded tail (e.g. an unclosed `/*` re-scoping the rest of the file).
+/// Stop, splice what we have, and let the next render pick up where we left
+/// off via `dirty_from`. 64 KB ≈ one viewport plus ample slack.
+const CONVERGENCE_BUDGET: usize = 64 * 1024;
 
 impl TextMateEngine {
     /// Create a new TextMate engine for the given syntax
@@ -410,6 +419,10 @@ impl TextMateEngine {
     /// If there are dirty edits, re-parses only from the dirty point until convergence
     /// (parse state matches an existing checkpoint), then splices the new spans into
     /// the cache. This means most single-character edits only re-parse ~256-512 bytes.
+    ///
+    /// Files at or below `MAX_PARSE_BYTES` are cached whole-file: scrolling within
+    /// the file is filter-only after the first parse. Larger files use a
+    /// viewport-centred window of `±context_bytes`.
     pub fn highlight_viewport(
         &mut self,
         buffer: &Buffer,
@@ -418,8 +431,14 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-        let desired_parse_start = viewport_start.saturating_sub(context_bytes);
-        let parse_end = (viewport_end + context_bytes).min(buffer.len());
+        let buf_len = buffer.len();
+        let (desired_parse_start, parse_end) = if buf_len <= MAX_PARSE_BYTES {
+            (0, buf_len)
+        } else {
+            let s = viewport_start.saturating_sub(context_bytes);
+            let e = (viewport_end + context_bytes).min(buf_len);
+            (s, e)
+        };
 
         // Check cache state. For a pure cache hit (no dirty edits), we also
         // require buffer length to match. For partial updates (dirty_from set),
@@ -505,8 +524,13 @@ impl TextMateEngine {
     }
 
     /// Try to do a partial update: re-parse from the dirty point until convergence,
-    /// then splice new spans into the cache. Returns None if convergence doesn't
-    /// happen within parse_end (caller should fall back to full re-parse).
+    /// then splice new spans into the cache.
+    ///
+    /// Returns `Some(spans)` whenever a checkpoint anchor was available, even if
+    /// convergence didn't occur — see the budget and EOF cases at the bottom.
+    /// Returns `None` only when no anchor exists (orphaned cache state or large
+    /// file beyond reach of any checkpoint), in which case the caller falls
+    /// back to `full_parse`.
     #[allow(clippy::too_many_arguments)]
     fn try_partial_update(
         &mut self,
@@ -568,6 +592,7 @@ impl TextMateEngine {
         let mut pos = 0;
         let mut current_offset = actual_start;
         let mut converged_at: Option<usize> = None;
+        let mut budget_hit_at: Option<usize> = None;
         let mut bytes_since_checkpoint: usize = 0;
 
         while pos < content_bytes.len() {
@@ -696,32 +721,48 @@ impl TextMateEngine {
             if converged_at.is_some() {
                 break;
             }
+
+            // Bound work per pass: pathological edits (e.g. unclosed `/*`
+            // re-scoping the rest of the file) can never converge. Stop here
+            // and resume from `current_offset` on the next render.
+            if current_offset.saturating_sub(dirty_pos) >= CONVERGENCE_BUDGET {
+                budget_hit_at = Some(current_offset);
+                break;
+            }
         }
 
         self.stats.bytes_parsed += current_offset.saturating_sub(actual_start);
 
-        let convergence_point = converged_at?; // None → fall back to full parse
+        // Decide what we accomplished:
+        // - converged: splice up to convergence point, clear dirty.
+        // - budget hit: splice up to current_offset, leave dirty so the next
+        //   render continues from there.
+        // - reached EOF without convergence: splice up to current_offset, no
+        //   later state to disagree with, clear dirty.
+        let (splice_end, dirty_after) = if let Some(c) = converged_at {
+            (c, None)
+        } else if let Some(b) = budget_hit_at {
+            (b, Some(b))
+        } else {
+            (current_offset, None)
+        };
 
         self.stats.cache_misses += 1; // partial update counts as a miss
 
-        // Splice: replace spans in [actual_start..convergence_point] with new_spans,
-        // keep everything outside that range from the existing cache.
         Self::merge_adjacent_spans(&mut new_spans);
 
         if let Some(cache) = &mut self.cache {
-            // Remove old spans that overlap the re-parsed region
             let splice_start = actual_start;
-            let splice_end = convergence_point;
             cache
                 .spans
                 .retain(|span| span.range.end <= splice_start || span.range.start >= splice_end);
-            // Insert new spans and re-sort by range start
             cache.spans.extend(new_spans);
             cache.spans.sort_by_key(|s| s.range.start);
             Self::merge_adjacent_spans(&mut cache.spans);
         }
 
         self.last_buffer_len = buffer.len();
+        self.dirty_from = dirty_after;
 
         Some(self.filter_cached_spans(viewport_start, viewport_end, theme))
     }
@@ -1637,6 +1678,204 @@ mod tests {
         assert_eq!(
             scope_to_category("punctuation.accessor"),
             Some(HighlightCategory::PunctuationDelimiter)
+        );
+    }
+
+    /// First parse of a small file populates a whole-file cache; subsequent
+    /// scrolls anywhere in the file are exact cache hits with no extra parse
+    /// work.
+    #[test]
+    fn test_small_file_scroll_is_cache_hit() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), None, &registry);
+
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!("fn f_{i}() {{ let x = {i}; }}\n"));
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("expected TextMate engine for .rs");
+        };
+
+        // First call: cold start, full parse.
+        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
+        let stats_after_first = tm.stats().clone();
+        assert_eq!(stats_after_first.cache_hits, 0, "first call cannot hit cache");
+        assert_eq!(
+            stats_after_first.cache_misses, 1,
+            "first call must be a miss"
+        );
+
+        // Scroll anywhere — top, middle, end. All must be cache hits.
+        let mid = buffer.len() / 2;
+        let near_end = buffer.len().saturating_sub(200);
+        let probes = [(0, 200), (mid, mid + 200), (near_end, buffer.len())];
+        for (vs, ve) in probes {
+            let _ = tm.highlight_viewport(&buffer, vs, ve, &theme, 10_000);
+        }
+
+        let stats_after_scroll = tm.stats().clone();
+        assert_eq!(
+            stats_after_scroll.cache_misses, 1,
+            "scrolling must not add cache misses (got extra: {})",
+            stats_after_scroll.cache_misses - 1
+        );
+        assert_eq!(
+            stats_after_scroll.cache_hits, 3,
+            "all three scroll probes must hit the cache"
+        );
+        assert_eq!(
+            stats_after_scroll.bytes_parsed, stats_after_first.bytes_parsed,
+            "scrolling must not parse any new bytes"
+        );
+    }
+
+    /// After a small edit, the next render takes the partial-update path
+    /// (convergence) and continues to serve cache hits afterwards. Crucially:
+    /// the partial update parses far fewer bytes than the file is long.
+    #[test]
+    fn test_small_file_edit_uses_partial_update() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), None, &registry);
+
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!("fn f_{i}() {{ let x = {i}; }}\n"));
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("expected TextMate engine for .rs");
+        };
+
+        // Warm cache.
+        let _ = tm.highlight_viewport(&buffer, 0, 100, &theme, 10_000);
+        let bytes_before_edit = tm.stats().bytes_parsed;
+        let buf_len = buffer.len();
+        assert!(buf_len > 4000, "test needs a buffer larger than the partial-update region");
+
+        // Simulate an edit deep in the file.
+        let edit_pos = buf_len / 2;
+        tm.notify_insert(edit_pos, 1);
+        // The buffer itself doesn't change here (we test the engine in isolation),
+        // but notify_insert sets dirty_from and shifts spans, which is what the
+        // partial-update path consumes.
+
+        let _ = tm.highlight_viewport(&buffer, 0, 100, &theme, 10_000);
+        let bytes_after_edit = tm.stats().bytes_parsed;
+        let parsed = bytes_after_edit - bytes_before_edit;
+
+        assert!(
+            parsed < buf_len,
+            "edit must not trigger a whole-file reparse (parsed {parsed}, file {buf_len})"
+        );
+    }
+
+    /// Convergence budget caps per-pass work even when the parse state never
+    /// agrees with any existing checkpoint. Without the cap, a non-converging
+    /// edit would parse the rest of the file on every keystroke.
+    #[test]
+    fn test_partial_update_budget_caps_work() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), None, &registry);
+
+        // Build a buffer comfortably larger than CONVERGENCE_BUDGET.
+        let mut content = String::new();
+        while content.len() < (CONVERGENCE_BUDGET * 4) {
+            content.push_str("fn name() { let mut v = 0; v += 1; }\n");
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("expected TextMate engine for .rs");
+        };
+
+        // Warm cache (whole-file parse).
+        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
+        // Simulate an edit and force every checkpoint to disagree by clearing
+        // their stored states. The convergence loop will look at each marker,
+        // find the slot empty, and never converge.
+        tm.notify_insert(100, 0);
+        tm.checkpoint_states.clear();
+
+        let bytes_before = tm.stats().bytes_parsed;
+        let _ = tm.highlight_viewport(&buffer, 0, 200, &theme, 10_000);
+        let parsed = tm.stats().bytes_parsed - bytes_before;
+
+        // Budget bounds the work to roughly CONVERGENCE_BUDGET past the dirty
+        // point (plus the prefix back to the resume checkpoint). Allow a small
+        // overshoot for the line that crossed the budget threshold.
+        assert!(
+            parsed <= CONVERGENCE_BUDGET + 4096,
+            "partial update parsed {parsed}, expected <= {} \
+             (budget {CONVERGENCE_BUDGET} + slack)",
+            CONVERGENCE_BUDGET + 4096
+        );
+
+        // Budget hit must leave dirty_from set for follow-up passes.
+        assert!(
+            tm.dirty_from.is_some(),
+            "budget exit must keep dirty_from set"
+        );
+    }
+
+    /// Large files (above MAX_PARSE_BYTES) keep the existing windowed
+    /// behaviour: parse range is bounded by ±context_bytes around the
+    /// viewport, not the whole file.
+    ///
+    /// The viewport is placed past `MAX_PARSE_BYTES` so we exercise the
+    /// "large file, no nearby checkpoint" branch in `find_parse_resume_point`
+    /// — the symmetric branch that fires when `parse_end <= MAX_PARSE_BYTES`
+    /// still parses from byte 0 even on big files (pre-existing behaviour,
+    /// addressed in a later phase).
+    #[test]
+    fn test_large_file_uses_windowed_parse() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), None, &registry);
+
+        // Build content well past MAX_PARSE_BYTES so we can put the viewport
+        // beyond it.
+        let line = "fn long_name_for_padding() { let v = 1; v + 1; }\n";
+        let bytes_needed = MAX_PARSE_BYTES * 2;
+        let lines_needed = bytes_needed / line.len() + 100;
+        let mut content = String::with_capacity(lines_needed * line.len());
+        for _ in 0..lines_needed {
+            content.push_str(line);
+        }
+        assert!(content.len() > MAX_PARSE_BYTES * 2);
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("expected TextMate engine for .rs");
+        };
+
+        // Viewport past MAX_PARSE_BYTES: parse_end > MAX_PARSE_BYTES, so the
+        // resume-from-byte-0 fallback in find_parse_resume_point doesn't fire.
+        let context_bytes = 10_000usize;
+        let viewport_start = MAX_PARSE_BYTES + 200_000;
+        let viewport_end = viewport_start + 1000;
+        let _ = tm.highlight_viewport(&buffer, viewport_start, viewport_end, &theme, context_bytes);
+        let parsed = tm.stats().bytes_parsed;
+
+        // Windowed parse covers viewport ± context_bytes plus a tiny prefix
+        // for the resume anchor. Allow generous slack (4×) but reject
+        // anything close to whole-file.
+        let window = (viewport_end - viewport_start) + 2 * context_bytes;
+        assert!(
+            parsed <= window * 4,
+            "large file windowed parse should be ~{window} bytes, got {parsed} \
+             (file {})",
+            buffer.len()
         );
     }
 }
