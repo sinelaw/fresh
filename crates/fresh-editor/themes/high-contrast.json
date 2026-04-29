@@ -41,7 +41,7 @@
     "status_bar_fg": [255, 255, 255],
     "status_bar_bg": [20, 20, 20],
     "status_palette_fg": [0, 0, 0],
-    "status_palette_bg": [255, 255, 0],
+    "status_palette_bg": [0, 255, 255],
     "prompt_fg": [255, 255, 255],
     "prompt_bg": [10, 10, 10],
     "prompt_selection_fg": [255, 255, 255],
