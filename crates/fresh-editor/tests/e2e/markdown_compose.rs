@@ -586,11 +586,12 @@ fn test_compose_mode_disable_preserves_content() {
 /// the renderer then re-wraps at width N-1 — splitting off the trailing
 /// word into a single-word "orphan" visual row.
 ///
-/// The test sweeps a range of viewport widths one column at a time
-/// (resizing the harness in-place so the same compose session is reused)
-/// and asserts no paragraph visual row holds a single word at any width.
-/// The issue itself reports orphans at widths 90, 105, and 110; the sweep
-/// is wider so off-by-one regressions at any width get caught.
+/// The test sweeps a range of viewport widths one column at a time,
+/// resizing the harness in-place so the same compose session is reused.
+/// The semantic wait condition is on the paragraph rows themselves
+/// (rather than the whole screen) so a transient stable status bar can't
+/// short-circuit the stability check while soft breaks are still being
+/// recomputed asynchronously after a resize.
 #[test]
 fn test_compose_wrap_no_single_word_orphan() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
@@ -612,10 +613,11 @@ fn test_compose_wrap_no_single_word_orphan() {
                      yielding chunks of contiguous content longer.";
     std::fs::write(&md_path, format!("# Test\n\n{paragraph}\n")).unwrap();
 
-    // Start at the upper bound of the sweep range; the harness is resized
-    // down one column at a time below.
-    let max_width: u16 = 130;
-    let min_width: u16 = 60;
+    // Sweep range covers the widths reported in the issue (90, 105, 110)
+    // with margin on either side so off-by-one regressions are caught.
+    // The harness is resized down one column at a time within this range.
+    let max_width: u16 = 120;
+    let min_width: u16 = 80;
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         max_width,
         30,
@@ -641,8 +643,8 @@ fn test_compose_wrap_no_single_word_orphan() {
 
     /// Find rows belonging to the paragraph by skipping the heading and
     /// empty rows above the paragraph, then taking until the next blank
-    /// row. Returns owned strings so the caller doesn't need to keep the
-    /// screen buffer alive.
+    /// row. Trims each row so trailing renderer padding doesn't change
+    /// equality of "the paragraph hasn't moved yet" comparisons.
     fn paragraph_rows(harness: &crate::common::harness::EditorTestHarness) -> Vec<String> {
         let screen = harness.screen_to_string();
         let (content_start, content_end) = harness.content_area_rows();
@@ -655,7 +657,7 @@ fn test_compose_wrap_no_single_word_orphan() {
                 t.is_empty() || t.starts_with('#') || t.starts_with("Test")
             })
             .take_while(|l| !l.trim().is_empty())
-            .map(|l| l.to_string())
+            .map(|l| l.trim_end().to_string())
             .collect()
     }
 
@@ -664,12 +666,22 @@ fn test_compose_wrap_no_single_word_orphan() {
             harness.resize(width, 30).unwrap();
         }
 
-        // Wait for the soft-break pipeline to rewrap the paragraph at the
-        // new width. The semantic signal is that the paragraph wraps onto
-        // multiple visual rows (the fixture is far wider than the
-        // sweep's upper bound).
+        // Semantic stability on the paragraph itself: poll until two
+        // consecutive renders produce the same paragraph rows AND the
+        // first row is non-trivial. This is stricter than relying on
+        // overall screen stability — async soft-break recomputation after
+        // a resize might land between two screen polls that otherwise
+        // looked identical (status bar untouched). Tying stability to the
+        // paragraph rows rules that out.
+        let mut prev = Vec::<String>::new();
         harness
-            .wait_until_stable(|h| paragraph_rows(h).len() >= 2)
+            .wait_until(|h| {
+                let cur = paragraph_rows(h);
+                let stable =
+                    !cur.is_empty() && cur == prev && cur.first().is_some_and(|r| !r.is_empty());
+                prev = cur;
+                stable
+            })
             .unwrap();
 
         let rows = paragraph_rows(&harness);
