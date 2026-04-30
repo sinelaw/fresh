@@ -31,25 +31,55 @@ mathematically pinning down behavior the imperative originals were
 silent or vague about (selection clearing, cursor position after
 sort, exact byte ranges of select-to-paragraph).
 
-**Two real production bugs found by the property tests:**
+**Two latent production bugs found by the property tests:**
 
-1. `actions.rs:1613` — smart-dedent panics on phantom line.
-   Discovered by `property_arbitrary_actions_do_not_panic` in 70s.
-   Shrunk to 4 actions on a 4-byte buffer. Repro:
-   `regression_smart_dedent_panic_on_phantom_line`.
-
-2. `state.rs:462` — `DeleteBackward` over a whitespace-only buffer
-   indexes past slice. Discovered by
-   `property_dispatch_is_deterministic` during routine post-Track-B
-   verification. Shrunk to 4 actions on a 3-byte buffer. Repro:
-   `regression_delete_backward_panic_on_whitespace_only_buffer`.
+1. `actions.rs:1613` — smart-dedent panics when the cursor's
+   recorded line_start is out of sync with the buffer.
+2. `state.rs:462` — `DeleteBackward`'s deleted-newline-counting
+   code indexes past `deleted_text.len()`.
 
 Both are the same family — cursor position out of sync with buffer
-state after a deletion chain — suggesting a single underlying
-invariant violation. This validates the framework's premise:
-declarative theorem testing with a typed-failure external driver is
-materially better at finding bugs than imperative E2E. Two
-ship-blocking panics found in <2 minutes of fuzzing.
+state after a chain of selection-replace + deletion actions on
+whitespace-only content.
+
+**Reachability verified empirically:**
+
+| Path | Renders / reconciles between actions? | Crashes? |
+|---|---|---|
+| Interactive keystrokes (verified in tmux on the release binary) | yes (per keystroke) | no |
+| Macro replay (`play_macro` calls `recompute_layout` per action) | yes | no |
+| Property test `dispatch_seq` (no render between) | no | **yes** |
+| `handle_execute_actions` in `app/plugin_dispatch.rs` (vi-mode count prefixes like `3dw`, plugin-driven action batches) | **no** | **likely yes** |
+
+The bugs are *latent* in the sense that the only production path
+that reaches them is the plugin/vi-count-prefix dispatch loop. The
+property tests' `evaluate_actions` mimics that path exactly — no
+render reconciliation between actions — which is what made them
+findable. The `play_macro` implementation in `app/macro_actions.rs`
+already calls `recompute_layout` between every action specifically
+to avoid this class of bug; that load-bearing comment was the
+first hint that the underlying invariant violation was real and
+known to be fragile.
+
+`diagnosis_bug{1,2}_does_not_panic_with_render_between` in
+`tests/semantic/regressions.rs` confirm the diagnosis: the same
+shrunk repros pass cleanly when `harness.render()` is called between
+every action.
+
+**Recommended fix:** either (a) make `handle_execute_actions` call
+`recompute_layout` between actions just like `play_macro` does
+(treats the symptom — same paper-over as macros use), or (b) audit
+`actions.rs:1613` and `state.rs:462` to recompute their cached
+line_start / bytes_before_cursor values from the live buffer instead
+of cursor state (treats the cause — but each callsite is a separate
+audit).
+
+This validates the framework's premise: declarative theorem testing
+with a typed-failure external driver is materially better at finding
+bugs than imperative E2E. The two bugs found here are the kind that
+*cannot* be reached by typing on the keyboard — they live behind
+plugin and vi-mode dispatch — so even an exhaustive imperative suite
+that drives every keystroke would never have surfaced them.
 
 **Deferred deliberately:** the full `RenderSnapshot` design from §9.1
 and the issue-#1147-style Class B rewrites that depend on it; the
