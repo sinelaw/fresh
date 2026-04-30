@@ -1,0 +1,172 @@
+//! Meta-tests: prove that the theorem runners actually fail when the
+//! expectations are wrong.
+//!
+//! Each test in this file is paired with one of the "positive" theorems
+//! elsewhere under `tests/semantic/`. The positive version asserts a
+//! correct expectation and passes. The version here corrupts exactly
+//! one field of the same theorem and confirms the runner panics with
+//! the message that field is supposed to produce.
+//!
+//! Without these, a silently-broken assertion (e.g., `assert_eq!`
+//! accidentally comparing two clones of the same value) would let
+//! every theorem appear to pass for the wrong reason. Every runner
+//! assertion path should have a `#[should_panic]` twin in this file.
+//!
+//! The expected-substring is matched as a prefix of the panic
+//! message; the format strings in the runners are stable.
+
+use crate::common::theorem::buffer_theorem::{assert_buffer_theorem, BufferTheorem, CursorExpect};
+use crate::common::theorem::layout_theorem::{assert_layout_theorem, LayoutTheorem};
+use crate::common::theorem::trace_theorem::{assert_trace_theorem, TraceTheorem};
+use fresh::test_api::Action;
+
+// ─────────────────────────────────────────────────────────────────────────
+// BufferTheorem — one negative twin per assertion path.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Reference: `case_conversion::theorem_to_uppercase_selection` (positive).
+/// Confirms the *positive* shape passes when re-run from this module —
+/// that proves the negative twins below differ from the positive only
+/// in the single corrupted expectation.
+#[test]
+fn metatheorem_correct_buffer_theorem_passes() {
+    assert_buffer_theorem(BufferTheorem {
+        description: "control",
+        initial_text: "hello world",
+        actions: vec![
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::ToUpperCase,
+        ],
+        expected_text: "HELLO world",
+        expected_primary: CursorExpect::at(5),
+        expected_extra_cursors: vec![],
+        expected_selection_text: Some(""),
+    });
+}
+
+#[test]
+#[should_panic(expected = "buffer text mismatch")]
+fn metatheorem_wrong_expected_text_panics() {
+    assert_buffer_theorem(BufferTheorem {
+        description: "should_panic: wrong text",
+        initial_text: "hello world",
+        actions: vec![Action::ToUpperCase],
+        expected_text: "DEFINITELY WRONG",
+        expected_primary: CursorExpect::at(0),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+    });
+}
+
+#[test]
+#[should_panic(expected = "primary cursor mismatch")]
+fn metatheorem_wrong_primary_cursor_panics() {
+    // Correct end state: cursor at 5 with no selection (after collapse).
+    // We claim the cursor sits at 999, which is impossible.
+    assert_buffer_theorem(BufferTheorem {
+        description: "should_panic: wrong primary",
+        initial_text: "hello world",
+        actions: vec![
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::ToUpperCase,
+        ],
+        expected_text: "HELLO world",
+        expected_primary: CursorExpect::at(999),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+    });
+}
+
+#[test]
+#[should_panic(expected = "cursor count mismatch")]
+fn metatheorem_wrong_cursor_count_panics() {
+    // Single-cursor reality, but we claim two extras → 3 total expected.
+    assert_buffer_theorem(BufferTheorem {
+        description: "should_panic: wrong count",
+        initial_text: "hello",
+        actions: vec![],
+        expected_text: "hello",
+        expected_primary: CursorExpect::at(0),
+        expected_extra_cursors: vec![CursorExpect::at(1), CursorExpect::at(2)],
+        expected_selection_text: None,
+    });
+}
+
+#[test]
+#[should_panic(expected = "selection text mismatch")]
+fn metatheorem_wrong_selection_text_panics() {
+    // SelectRight ×3 from byte 0 selects "hel"; we claim "xxx".
+    assert_buffer_theorem(BufferTheorem {
+        description: "should_panic: wrong selection text",
+        initial_text: "hello world",
+        actions: vec![
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+        ],
+        expected_text: "hello world",
+        expected_primary: CursorExpect::range(0, 3),
+        expected_extra_cursors: vec![],
+        expected_selection_text: Some("xxx"),
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// TraceTheorem — one twin per assertion path (forward + reverse).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "forward trace failed")]
+fn metatheorem_trace_wrong_forward_panics() {
+    assert_trace_theorem(TraceTheorem {
+        description: "should_panic: wrong forward",
+        initial_text: "abc",
+        actions: vec![Action::InsertChar('Z')],
+        expected_text: "this is not what InsertChar('Z') produces",
+        undo_count: 1,
+    });
+}
+
+#[test]
+#[should_panic(expected = "reverse trace failed")]
+fn metatheorem_trace_wrong_undo_count_panics() {
+    // Forward trace inserts 3 chars (3 undo units). Claiming undo_count
+    // = 1 leaves the buffer with 2 chars still inserted, so reverse
+    // trace fails its equality.
+    assert_trace_theorem(TraceTheorem {
+        description: "should_panic: too few undos",
+        initial_text: "",
+        actions: vec![
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::InsertChar('c'),
+        ],
+        expected_text: "abc",
+        undo_count: 1,
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LayoutTheorem — twin for the single layout assertion path.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "viewport_top_byte mismatch")]
+fn metatheorem_layout_wrong_top_byte_panics() {
+    assert_layout_theorem(LayoutTheorem {
+        description: "should_panic: wrong top_byte",
+        initial_text: "alpha\nbravo\n",
+        width: 80,
+        height: 24,
+        actions: vec![],
+        expected_top_byte: 999_999,
+    });
+}
