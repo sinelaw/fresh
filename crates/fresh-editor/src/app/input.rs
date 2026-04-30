@@ -70,6 +70,128 @@ impl Editor {
 }
 
 impl Editor {
+    /// Install (or update) a Quickfix list inside the Utility Dock.
+    ///
+    /// One global Quickfix buffer per workspace, keyed by
+    /// `panel_id = "quickfix"`. Subsequent exports replace its
+    /// content. The buffer is parked in the dock leaf via
+    /// `role = "utility_dock"` so it shares the dock with diagnostics,
+    /// search-replace, etc. — exactly one bottom-strip leaf for all
+    /// dock-aware utilities.
+    fn install_quickfix_in_dock(
+        &mut self,
+        query: String,
+        matches: Vec<crate::services::live_grep_state::GrepMatch>,
+    ) {
+        use crate::model::event::SplitDirection;
+        use crate::primitives::text_property::TextPropertyEntry;
+        use crate::view::split::SplitRole;
+
+        // Build the buffer's text content. One match per line:
+        //   path:line:col  ⎯  context
+        let mut entries = Vec::with_capacity(matches.len() + 2);
+        let header = format!("Quickfix: {} ({} matches)\n", query, matches.len());
+        entries.push(TextPropertyEntry::text(header));
+        for m in &matches {
+            let line = format!(
+                "{}:{}:{}  {}\n",
+                m.file,
+                m.line,
+                m.column,
+                m.content.trim()
+            );
+            entries.push(TextPropertyEntry::text(line));
+        }
+
+        // If a Quickfix buffer already exists (panel_id "quickfix"),
+        // update its content in place. Otherwise create one.
+        let panel_key = "quickfix".to_string();
+        if let Some(&existing) = self.panel_ids.get(&panel_key) {
+            if self.buffers.contains_key(&existing) {
+                if let Err(e) = self.set_virtual_buffer_content(existing, entries) {
+                    tracing::error!("Failed to update quickfix buffer: {}", e);
+                    return;
+                }
+                // Make sure the dock displays the quickfix buffer.
+                if let Some(dock_leaf) =
+                    self.split_manager.find_leaf_by_role(SplitRole::UtilityDock)
+                {
+                    self.split_manager.set_active_split(dock_leaf);
+                    self.set_pane_buffer(dock_leaf, existing);
+                }
+                self.set_status_message(format!(
+                    "Quickfix updated: {} matches",
+                    matches.len()
+                ));
+                return;
+            }
+            // Stale entry — remove and fall through to create.
+            self.panel_ids.remove(&panel_key);
+        }
+
+        // Create the virtual buffer for the Quickfix list.
+        let buffer_id = self.create_virtual_buffer(
+            "*Quickfix*".to_string(),
+            "quickfix-list".to_string(),
+            true,
+        );
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.margins.configure_for_line_numbers(false);
+            state.show_cursors = true;
+            state.editing_disabled = true;
+        }
+        self.panel_ids.insert(panel_key, buffer_id);
+        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+            tracing::error!("Failed to set quickfix buffer content: {}", e);
+            return;
+        }
+
+        // Place the buffer in the dock — reuse the existing dock leaf
+        // if any; otherwise create one at the bottom (horizontal,
+        // ratio 0.3) and tag it as the dock.
+        if let Some(dock_leaf) = self.split_manager.find_leaf_by_role(SplitRole::UtilityDock) {
+            self.split_manager.set_active_split(dock_leaf);
+            self.set_pane_buffer(dock_leaf, buffer_id);
+        } else {
+            match self.split_manager.split_active_positioned(
+                SplitDirection::Horizontal,
+                buffer_id,
+                0.7,
+                false, /* place dock after = bottom */
+            ) {
+                Ok(new_leaf) => {
+                    let mut view_state =
+                        crate::view::split::SplitViewState::with_buffer(
+                            self.terminal_width,
+                            self.terminal_height,
+                            buffer_id,
+                        );
+                    view_state.apply_config_defaults(
+                        self.config.editor.line_numbers,
+                        self.config.editor.highlight_current_line,
+                        self.resolve_line_wrap_for_buffer(buffer_id),
+                        self.config.editor.wrap_indent,
+                        self.resolve_wrap_column_for_buffer(buffer_id),
+                        self.config.editor.rulers.clone(),
+                    );
+                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = false;
+                    self.split_view_states.insert(new_leaf, view_state);
+                    self.split_manager
+                        .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
+                    self.split_manager.set_active_split(new_leaf);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create dock split for quickfix: {}", e);
+                    return;
+                }
+            }
+        }
+        self.set_status_message(format!(
+            "Quickfix exported: {} matches in dock",
+            matches.len()
+        ));
+    }
+
     /// Whether editor-pane popups (LSP completion, hover, signature help,
     /// global plugin popups, …) should intercept keyboard input.
     ///
@@ -870,43 +992,112 @@ impl Editor {
                 }
             }
             Action::ResumeLiveGrep => {
-                // Stub: replay the last-known query through the
-                // palette path until the floating overlay lands.
-                let last_query = self
-                    .live_grep_last_state
-                    .as_ref()
-                    .map(|s| s.query.clone())
-                    .unwrap_or_default();
-                if last_query.is_empty() {
-                    self.start_quick_open_with_prefix(">live grep");
-                } else {
-                    // Future: open overlay seeded with `last_query` and
-                    // `selected_index`. For now, surface a status hint.
-                    self.set_status_message(format!(
-                        "Resume Live Grep: previous query was \"{}\" (overlay not yet wired — open via Ctrl+P)",
-                        last_query
-                    ));
+                // Re-open Live Grep with the cached query and the
+                // suggestions snapshot — does NOT re-run ripgrep
+                // (issue #1796: "restore / re-show without re-running
+                // the search"). If no cache exists, fall through to a
+                // fresh Live Grep invocation.
+                let cached = self.live_grep_last_state.clone();
+                match cached {
+                    Some(state) if state.cached_results.is_some() => {
+                        let results = state.cached_results.unwrap_or_default();
+                        // Map cached GrepMatch records back into prompt
+                        // Suggestions. The text is "file:line", the
+                        // value carries "file:line:column" for the
+                        // PromptType::LiveGrep confirm handler.
+                        let suggestions: Vec<crate::input::commands::Suggestion> = results
+                            .into_iter()
+                            .map(|m| {
+                                let label = format!("{}:{}", m.file, m.line);
+                                let value = format!("{}:{}:{}", m.file, m.line, m.column);
+                                let mut s = crate::input::commands::Suggestion::new(label);
+                                s.description = Some(m.content);
+                                s.value = Some(value);
+                                s
+                            })
+                            .collect();
+                        // Build the prompt directly so we can seed
+                        // input + selection + suggestions in one shot.
+                        // Label string mirrors the live_grep plugin's
+                        // i18n bundle. Resume is core-driven (no
+                        // plugin), so we hardcode rather than route
+                        // through plugin-scoped translations.
+                        let mut prompt = crate::view::prompt::Prompt::with_suggestions(
+                            "Live grep: ".to_string(),
+                            PromptType::LiveGrep,
+                            suggestions,
+                        );
+                        prompt.input = state.query;
+                        prompt.cursor_pos = prompt.input.len();
+                        if let Some(idx) = state.selected_index {
+                            if idx < prompt.suggestions.len() {
+                                prompt.selected_suggestion = Some(idx);
+                            }
+                        }
+                        prompt.suggestions_set_for_input = Some(prompt.input.clone());
+                        // Render Resume in the floating overlay too.
+                        prompt.overlay = true;
+                        self.prompt = Some(prompt);
+                    }
+                    _ => {
+                        // No cache — kick off a fresh Live Grep.
+                        #[cfg(feature = "plugins")]
+                        if let Some(result) =
+                            self.plugin_manager.execute_action_async("start_live_grep")
+                        {
+                            match result {
+                                Ok(receiver) => {
+                                    self.pending_plugin_actions
+                                        .push(("start_live_grep".to_string(), receiver));
+                                }
+                                Err(e) => {
+                                    self.set_status_message(format!(
+                                        "Live Grep unavailable: {}",
+                                        e
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Action::LiveGrepExportQuickfix => {
-                // Stub: only meaningful when the active prompt is the
-                // Live Grep overlay. Until the overlay lands the active
-                // prompt is `QuickOpen`, so just no-op with a status.
-                let in_live_grep = self
+                // Snapshot the current Live Grep prompt's suggestions
+                // into a virtual buffer parked in the Utility Dock.
+                // Active when the prompt is either PromptType::LiveGrep
+                // or the live_grep plugin's Plugin{custom_type}.
+                let is_grep = self
                     .prompt
                     .as_ref()
-                    .map(|p| p.prompt_type == PromptType::LiveGrep)
+                    .map(|p| match &p.prompt_type {
+                        PromptType::LiveGrep => true,
+                        PromptType::Plugin { custom_type } => custom_type == "live-grep",
+                        _ => false,
+                    })
                     .unwrap_or(false);
-                if !in_live_grep {
+                if !is_grep {
                     self.set_status_message(
-                        "Quickfix export is only available inside the Live Grep overlay".to_string(),
+                        "Quickfix export is only available inside Live Grep".to_string(),
                     );
                     return Ok(());
                 }
-                // TODO(#1796 Phase 6): snapshot prompt.suggestions ->
-                // Vec<GrepMatch>, dismiss prompt, push into Utility
-                // Dock as a virtual buffer with role=utility_dock.
-                self.set_status_message("Quickfix export not yet implemented".to_string());
+                let (query, matches) = {
+                    let prompt = self.prompt.as_ref().unwrap();
+                    (
+                        prompt.input.clone(),
+                        self.snapshot_prompt_results_for_grep(prompt),
+                    )
+                };
+                if matches.is_empty() {
+                    self.set_status_message(
+                        "No Live Grep results to export".to_string(),
+                    );
+                    return Ok(());
+                }
+                // Dismiss the prompt before mutating split tree.
+                self.cancel_prompt();
+                // Hand off to the dock-installer.
+                self.install_quickfix_in_dock(query, matches);
             }
             Action::ToggleUtilityDock => {
                 use crate::view::split::SplitRole;
@@ -932,10 +1123,58 @@ impl Editor {
                 }
             }
             Action::OpenTerminalInDock => {
-                // TODO(#1796 Phase 5/7): route through the dock
-                // dispatcher so the terminal lands in the dock leaf
-                // (creating it if absent). Until that wiring is in
-                // place, fall back to the existing standalone path.
+                use crate::model::event::SplitDirection;
+                use crate::view::split::SplitRole;
+                // Ensure a dock leaf exists, creating one if needed.
+                let dock_leaf = self
+                    .split_manager
+                    .find_leaf_by_role(SplitRole::UtilityDock);
+                let dock_leaf = match dock_leaf {
+                    Some(leaf) => leaf,
+                    None => {
+                        // Seed the dock with the currently active
+                        // buffer as a placeholder; the terminal we
+                        // open right after will swap into it.
+                        let seed_buffer = self.active_buffer();
+                        match self.split_manager.split_active_positioned(
+                            SplitDirection::Horizontal,
+                            seed_buffer,
+                            0.7,
+                            false,
+                        ) {
+                            Ok(new_leaf) => {
+                                let mut view_state =
+                                    crate::view::split::SplitViewState::with_buffer(
+                                        self.terminal_width,
+                                        self.terminal_height,
+                                        seed_buffer,
+                                    );
+                                view_state.apply_config_defaults(
+                                    self.config.editor.line_numbers,
+                                    self.config.editor.highlight_current_line,
+                                    self.resolve_line_wrap_for_buffer(seed_buffer),
+                                    self.config.editor.wrap_indent,
+                                    self.resolve_wrap_column_for_buffer(seed_buffer),
+                                    self.config.editor.rulers.clone(),
+                                );
+                                self.split_view_states.insert(new_leaf, view_state);
+                                self.split_manager
+                                    .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
+                                new_leaf
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!(
+                                    "Failed to create dock for terminal: {}",
+                                    e
+                                ));
+                                return Ok(());
+                            }
+                        }
+                    }
+                };
+                // Focus the dock so open_terminal() attaches the new
+                // terminal buffer there.
+                self.split_manager.set_active_split(dock_leaf);
                 self.open_terminal();
             }
             Action::ToggleLineWrap => {

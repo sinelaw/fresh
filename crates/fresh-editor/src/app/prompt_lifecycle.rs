@@ -573,6 +573,49 @@ impl Editor {
         }
     }
 
+    /// Snapshot the current prompt's suggestions as a list of
+    /// `GrepMatch` records, so Resume can re-display them without
+    /// re-running ripgrep and Quickfix export can hand them to the
+    /// Utility Dock. Parses each suggestion's text as
+    /// `path:line[:col]` (the format the live_grep finder emits).
+    pub(crate) fn snapshot_prompt_results_for_grep(
+        &self,
+        prompt: &crate::view::prompt::Prompt,
+    ) -> Vec<crate::services::live_grep_state::GrepMatch> {
+        use crate::input::quick_open::parse_path_line_col;
+        // Suggestions emitted by the Finder library use `value` as an
+        // opaque index (`"0"`, `"1"`, …) and put `path:line[:col]` in
+        // `text`. Parse `text` first; fall back to `value` only if
+        // `text` lacks a path-shaped segment (a Resume-replay where
+        // we previously stored `path:line:col` in `value` directly).
+        prompt
+            .suggestions
+            .iter()
+            .filter(|s| !s.disabled)
+            .filter_map(|s| {
+                let from_text = parse_path_line_col(&s.text);
+                let (file, line, column) = if !from_text.0.is_empty()
+                    && from_text.1.is_some()
+                {
+                    from_text
+                } else if let Some(v) = s.value.as_deref() {
+                    parse_path_line_col(v)
+                } else {
+                    from_text
+                };
+                if file.is_empty() {
+                    return None;
+                }
+                Some(crate::services::live_grep_state::GrepMatch {
+                    file,
+                    line: line.unwrap_or(1),
+                    column: column.unwrap_or(1),
+                    content: s.description.clone().unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
         // Extract theme to restore if this is a SelectTheme prompt
@@ -608,6 +651,33 @@ impl Editor {
                             input: prompt.input.clone(),
                         },
                     );
+                    // Capture Live Grep state on cancel for Resume
+                    // (Action::ResumeLiveGrep) — reads from
+                    // editor.live_grep_last_state. Detection by
+                    // custom_type rather than dedicated PromptType
+                    // because the live_grep plugin drives the prompt.
+                    if custom_type == "live-grep" {
+                        let cached = self.snapshot_prompt_results_for_grep(prompt);
+                        self.live_grep_last_state =
+                            Some(crate::services::live_grep_state::LiveGrepLastState {
+                                query: prompt.input.clone(),
+                                selected_index: prompt.selected_suggestion,
+                                cached_results: Some(cached),
+                                cached_at: Some(std::time::Instant::now()),
+                                last_results_snapshot_id: None,
+                            });
+                    }
+                }
+                PromptType::LiveGrep => {
+                    let cached = self.snapshot_prompt_results_for_grep(prompt);
+                    self.live_grep_last_state =
+                        Some(crate::services::live_grep_state::LiveGrepLastState {
+                            query: prompt.input.clone(),
+                            selected_index: prompt.selected_suggestion,
+                            cached_results: Some(cached),
+                            cached_at: Some(std::time::Instant::now()),
+                            last_results_snapshot_id: None,
+                        });
                 }
                 PromptType::LspRename { overlay_handle, .. } => {
                     // Remove the rename overlay when cancelling

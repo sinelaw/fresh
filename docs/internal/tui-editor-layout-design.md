@@ -226,9 +226,8 @@ command palette uses already proves Prompt+Popup can coexist.
 
 | Action                       | Binding                | Context     | Notes |
 |------------------------------|------------------------|-------------|-------|
-| Open Live Grep               | `Ctrl+Shift+F`         | Normal      | Primary. `Ctrl+F` stays buffer-local search. |
-| Open Live Grep (alt)         | `Alt+S`                | Normal      | Mnemonic "Search". Mirrors the spec; secondary so muscle memory survives terminals that mangle Shift+modifier combos. |
-| Resume last grep             | `Alt+Shift+S`          | Normal      | Reopens the overlay with the prior query and selected index. |
+| Open Live Grep               | `Alt+/`                | Normal      | Primary. `Ctrl+F` stays buffer-local search. `Ctrl+Shift+F` was rejected because most terminals collapse it to `Ctrl+F`. The `/` mnemonic mirrors the search character in many editors. |
+| Resume last grep             | `Alt+r`                | Normal      | Reopens the overlay with the prior query, selected index, and cached results — no re-run. The same key is `toggle_search_regex` in `prompt` context (disjoint, no conflict). |
 | Move selection ↓ / ↑         | `Down` / `Up`          | Prompt (`prompt_type == LiveGrep`) | Reuses `prompt_select_next` / `prompt_select_prev`. |
 | Confirm — open in active split | `Enter`              | Prompt      | Reuses `prompt_confirm`. |
 | Cancel                       | `Esc`                  | Prompt      | Reuses `prompt_cancel`. |

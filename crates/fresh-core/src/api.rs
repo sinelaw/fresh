@@ -1439,6 +1439,12 @@ pub enum PluginCommand {
     StartPrompt {
         label: String,
         prompt_type: String, // e.g., "git-grep", "git-find-file"
+        /// When true, the prompt renders as a centred floating
+        /// overlay rather than a bottom-row minibuffer. Used for
+        /// Live Grep (issue #1796). Defaults to false at the wire
+        /// level via `#[serde(default)]`.
+        #[serde(default)]
+        floating_overlay: bool,
     },
 
     /// Start a prompt with pre-filled initial value
@@ -1446,6 +1452,9 @@ pub enum PluginCommand {
         label: String,
         prompt_type: String,
         initial_value: String,
+        /// See `StartPrompt::floating_overlay`.
+        #[serde(default)]
+        floating_overlay: bool,
     },
 
     /// Start an async prompt that returns result via callback
@@ -3164,7 +3173,11 @@ impl PluginApi {
     /// Start a prompt (minibuffer) with a custom type identifier
     /// The prompt_type is used to filter hooks in plugin code
     pub fn start_prompt(&self, label: String, prompt_type: String) -> Result<(), String> {
-        self.send_command(PluginCommand::StartPrompt { label, prompt_type })
+        self.send_command(PluginCommand::StartPrompt {
+            label,
+            prompt_type,
+            floating_overlay: false,
+        })
     }
 
     /// Set the suggestions for the current prompt
@@ -4230,8 +4243,8 @@ mod tests {
         // start_prompt
         assert_dispatches!(
             |a: &PluginApi| a.start_prompt("label".into(), "cmd".into()),
-            PluginCommand::StartPrompt { label, prompt_type }
-                if label == "label" && prompt_type == "cmd"
+            PluginCommand::StartPrompt { label, prompt_type, floating_overlay }
+                if label == "label" && prompt_type == "cmd" && !floating_overlay
         );
 
         // set_prompt_suggestions

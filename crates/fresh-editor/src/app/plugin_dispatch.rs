@@ -757,15 +757,25 @@ impl Editor {
             PluginCommand::ReloadGrammars { callback_id } => {
                 self.handle_reload_grammars(callback_id);
             }
-            PluginCommand::StartPrompt { label, prompt_type } => {
-                self.handle_start_prompt(label, prompt_type);
+            PluginCommand::StartPrompt {
+                label,
+                prompt_type,
+                floating_overlay,
+            } => {
+                self.handle_start_prompt(label, prompt_type, floating_overlay);
             }
             PluginCommand::StartPromptWithInitial {
                 label,
                 prompt_type,
                 initial_value,
+                floating_overlay,
             } => {
-                self.handle_start_prompt_with_initial(label, prompt_type, initial_value);
+                self.handle_start_prompt_with_initial(
+                    label,
+                    prompt_type,
+                    initial_value,
+                    floating_overlay,
+                );
             }
             PluginCommand::StartPromptAsync {
                 label,

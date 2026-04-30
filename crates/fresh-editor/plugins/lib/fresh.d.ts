@@ -1675,9 +1675,15 @@ interface EditorAPI {
 	*/
 	prompt(label: string, initialValue: string): Promise<string | null>;
 	/**
-	* Start an interactive prompt
+	* Start an interactive prompt.
+	*
+	* When `floatingOverlay` is true, the editor renders the prompt
+	* and its suggestions inside a centred floating frame instead of
+	* the bottom minibuffer row (issue #1796 — Live Grep). The flag
+	* is rendering-only; confirm/cancel/hooks behave identically to a
+	* non-overlay prompt of the same `promptType`.
 	*/
-	startPrompt(label: string, promptType: string): boolean;
+	startPrompt(label: string, promptType: string, floatingOverlay?: boolean): boolean;
 	/**
 	* Begin a key-capture window for the calling plugin.
 	* 
@@ -1711,9 +1717,10 @@ interface EditorAPI {
 	*/
 	getNextKey(): Promise<KeyEventPayload>;
 	/**
-	* Start a prompt with initial value
+	* Start a prompt with initial value. See `startPrompt` for the
+	* meaning of `floatingOverlay`.
 	*/
-	startPromptWithInitial(label: string, promptType: string, initialValue: string): boolean;
+	startPromptWithInitial(label: string, promptType: string, initialValue: string, floatingOverlay?: boolean): boolean;
 	/**
 	* Set suggestions for the current prompt
 	* 

@@ -200,11 +200,31 @@ impl Editor {
                 return self.handle_quick_open_confirm(&input, selected_index);
             }
             PromptType::LiveGrep => {
-                // Phase 2/3 of issue #1796 will route this through the
-                // floating overlay's confirm-in-active-split flow.
-                // Until then, defer to the same handler the
-                // QuickOpen-piped Live Grep palette command uses.
-                return self.handle_quick_open_confirm(&input, selected_index);
+                // Confirm navigates to the selected suggestion's
+                // file:line:col. Suggestions for LiveGrep prompts pack
+                // location info into the suggestion text using the
+                // standard "path:line:col" format used elsewhere
+                // (parse_path_line_col).
+                use crate::input::quick_open::parse_path_line_col;
+                let target = if let Some(idx) = selected_index {
+                    self.prompt
+                        .as_ref()
+                        .and_then(|p| p.suggestions.get(idx))
+                        .map(|s| s.value.clone().unwrap_or_else(|| s.text.clone()))
+                        .unwrap_or_else(|| input.clone())
+                } else {
+                    input.clone()
+                };
+                let (path_str, line, column) = parse_path_line_col(&target);
+                if !path_str.is_empty() {
+                    let expanded = expand_tilde(&path_str);
+                    let resolved = if expanded.is_absolute() {
+                        normalize_path(&expanded)
+                    } else {
+                        normalize_path(&self.working_dir.join(&expanded))
+                    };
+                    self.open_file_with_jump(resolved, line, column);
+                }
             }
             PromptType::SetBackgroundFile => {
                 if let Err(e) = self.load_ansi_background(&input) {

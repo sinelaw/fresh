@@ -3058,9 +3058,18 @@ impl JsEditorApi {
     }
 
     /// Start an interactive prompt
-    pub fn start_prompt(&self, label: String, prompt_type: String) -> bool {
+    pub fn start_prompt(
+        &self,
+        label: String,
+        prompt_type: String,
+        floating_overlay: Option<bool>,
+    ) -> bool {
         self.command_sender
-            .send(PluginCommand::StartPrompt { label, prompt_type })
+            .send(PluginCommand::StartPrompt {
+                label,
+                prompt_type,
+                floating_overlay: floating_overlay.unwrap_or(false),
+            })
             .is_ok()
     }
 
@@ -3115,12 +3124,14 @@ impl JsEditorApi {
         label: String,
         prompt_type: String,
         initial_value: String,
+        floating_overlay: Option<bool>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::StartPromptWithInitial {
                 label,
                 prompt_type,
                 initial_value,
+                floating_overlay: floating_overlay.unwrap_or(false),
             })
             .is_ok()
     }
@@ -7766,9 +7777,14 @@ mod tests {
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
-            PluginCommand::StartPrompt { label, prompt_type } => {
+            PluginCommand::StartPrompt {
+                label,
+                prompt_type,
+                floating_overlay,
+            } => {
                 assert_eq!(label, "Enter value:");
                 assert_eq!(prompt_type, "test-prompt");
+                assert!(!floating_overlay);
             }
             _ => panic!("Expected StartPrompt, got {:?}", cmd),
         }
@@ -7794,10 +7810,12 @@ mod tests {
                 label,
                 prompt_type,
                 initial_value,
+                floating_overlay,
             } => {
                 assert_eq!(label, "Enter value:");
                 assert_eq!(prompt_type, "test-prompt");
                 assert_eq!(initial_value, "default");
+                assert!(!floating_overlay);
             }
             _ => panic!("Expected StartPromptWithInitial, got {:?}", cmd),
         }

@@ -214,6 +214,13 @@ pub struct Prompt {
     /// When true, navigating suggestions updates the input text (selected) to match.
     /// Used by plugin prompts that want picker-like behavior (e.g. compose width).
     pub sync_input_on_navigate: bool,
+    /// When true, the renderer draws the prompt inside a centred
+    /// floating overlay (PopupPosition::CenteredOverlay) instead of
+    /// the bottom minibuffer row. Set by the live-grep plugin via the
+    /// `floatingOverlay` flag on `editor.startPrompt(...)`. The flag
+    /// is rendering-only — confirm/cancel/hooks behave identically to
+    /// a non-overlay prompt of the same `prompt_type`.
+    pub overlay: bool,
 }
 
 /// Maximum number of suggestion rows shown at once. Mirrors the cap used by
@@ -236,6 +243,7 @@ impl Prompt {
             selection_anchor: None,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
+            overlay: false,
         }
     }
 
@@ -265,6 +273,7 @@ impl Prompt {
             selection_anchor: None,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
+            overlay: false,
         }
     }
 
@@ -313,6 +322,7 @@ impl Prompt {
             selection_anchor,
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
+            overlay: false,
         }
     }
 

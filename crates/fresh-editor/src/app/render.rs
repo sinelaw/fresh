@@ -837,22 +837,34 @@ impl Editor {
             self.cached_layout.search_options_layout = None;
         }
 
-        // Render prompt line if active
+        // Render prompt line if active. Overlay prompts (Live Grep)
+        // skip the bottom-row render entirely — they paint their own
+        // input row inside the centred overlay frame, so the user's
+        // editor view stays unobstructed at the bottom.
         if let Some(prompt) = &prompt {
-            // Use specialized renderer for file/folder open prompt to show colorized path
-            if matches!(
-                prompt.prompt_type,
-                crate::view::prompt::PromptType::OpenFile
-                    | crate::view::prompt::PromptType::SwitchProject
-            ) {
-                if let Some(file_open_state) = &self.file_open_state {
-                    StatusBarRenderer::render_file_open_prompt(
-                        frame,
-                        main_chunks[prompt_line_idx],
-                        prompt,
-                        file_open_state,
-                        &theme,
-                    );
+            if !prompt.overlay {
+                // Use specialized renderer for file/folder open prompt to show colorized path
+                if matches!(
+                    prompt.prompt_type,
+                    crate::view::prompt::PromptType::OpenFile
+                        | crate::view::prompt::PromptType::SwitchProject
+                ) {
+                    if let Some(file_open_state) = &self.file_open_state {
+                        StatusBarRenderer::render_file_open_prompt(
+                            frame,
+                            main_chunks[prompt_line_idx],
+                            prompt,
+                            file_open_state,
+                            &theme,
+                        );
+                    } else {
+                        StatusBarRenderer::render_prompt(
+                            frame,
+                            main_chunks[prompt_line_idx],
+                            prompt,
+                            &theme,
+                        );
+                    }
                 } else {
                     StatusBarRenderer::render_prompt(
                         frame,
@@ -861,13 +873,6 @@ impl Editor {
                         &theme,
                     );
                 }
-            } else {
-                StatusBarRenderer::render_prompt(
-                    frame,
-                    main_chunks[prompt_line_idx],
-                    prompt,
-                    &theme,
-                );
             }
         }
 
@@ -1429,6 +1434,14 @@ impl Editor {
     ) {
         let Some(prompt) = &self.prompt else { return };
 
+        // Overlay prompts (Live Grep, issue #1796) get a dedicated
+        // centred floating frame instead of the bottom-anchored popup.
+        if prompt.overlay {
+            let frame_area = frame.area();
+            self.render_overlay_prompt(frame, frame_area);
+            return;
+        }
+
         if matches!(
             prompt.prompt_type,
             PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
@@ -1501,6 +1514,320 @@ impl Editor {
             frame.render_widget(ratatui::widgets::Clear, hints_area);
             Self::render_quick_open_hints(frame, hints_area, &self.theme);
         }
+    }
+
+    /// Render the active prompt as a centred floating overlay
+    /// (issue #1796). Layout, top-down inside the overlay frame:
+    ///
+    /// ```text
+    /// ┌─ Live Grep ──────────────────────────────────[Esc to close]┐
+    /// │ Search: split_active|                           12 / 142    │  ← input row
+    /// │ ─────────────────────────────────────────────────────────── │
+    /// │  src/view/split.rs:1117  pub fn split_active(    │ preview │  ← results
+    /// │  src/view/split.rs:1123  self.split_active_pos…  │  pane   │     (+ optional
+    /// │ …                                                │         │      preview)
+    /// └────────────────────────────────────────────────────────────┘
+    /// ```
+    ///
+    /// The overlay does *not* mutate the split tree; it is a pure
+    /// `ratatui` overdraw, so dismissing leaves the user's underlying
+    /// layout exactly as it was (the issue-#1796 acceptance test).
+    fn render_overlay_prompt(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        use crate::view::popup::PopupPosition;
+        use ratatui::layout::Rect;
+        use ratatui::style::{Modifier, Style};
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+        // Compute the overlay rect via the same percentage logic the
+        // popup engine uses. 80% × 80% of the terminal, centred.
+        let overlay_pos = PopupPosition::CenteredOverlay {
+            width_pct: 80,
+            height_pct: 80,
+        };
+        let overlay_rect = match overlay_pos {
+            PopupPosition::CenteredOverlay {
+                width_pct,
+                height_pct,
+            } => {
+                let w_pct = width_pct.clamp(1, 100) as u32;
+                let h_pct = height_pct.clamp(1, 100) as u32;
+                let w = ((area.width as u32 * w_pct) / 100) as u16;
+                let h = ((area.height as u32 * h_pct) / 100) as u16;
+                let w = w.max(20).min(area.width);
+                let h = h.max(8).min(area.height);
+                Rect {
+                    x: (area.width.saturating_sub(w)) / 2,
+                    y: (area.height.saturating_sub(h)) / 2,
+                    width: w,
+                    height: h,
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        // Snapshot view-relevant state before any mutable borrows.
+        let theme = self.theme.clone();
+        if let Some(prompt) = self.prompt.as_mut() {
+            prompt.ensure_selected_visible();
+        }
+        let Some(prompt) = self.prompt.as_ref() else {
+            return;
+        };
+        let prompt = prompt.clone();
+
+        // Clear and frame.
+        frame.render_widget(Clear, overlay_rect);
+        let title = " Live Grep ";
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.popup_border_fg))
+            .style(Style::default().bg(theme.suggestion_bg))
+            .title(Span::styled(
+                title,
+                Style::default()
+                    .fg(theme.prompt_fg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        let inner = block.inner(overlay_rect);
+        frame.render_widget(block, overlay_rect);
+
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+
+        // Decide whether to split the inner area into results | preview.
+        // Below ~120 cols, stack results-only (preview hidden — see
+        // design doc §5 "preview pane size when terminal is narrow").
+        let preview_min_cols: u16 = 120;
+        let show_preview = overlay_rect.width >= preview_min_cols;
+        let (results_area, preview_area) = if show_preview {
+            let results_w = inner.width / 2;
+            (
+                Rect {
+                    x: inner.x,
+                    y: inner.y,
+                    width: results_w,
+                    height: inner.height,
+                },
+                Some(Rect {
+                    x: inner.x + results_w,
+                    y: inner.y,
+                    width: inner.width - results_w,
+                    height: inner.height,
+                }),
+            )
+        } else {
+            (inner, None)
+        };
+
+        // Top row of `results_area` is the prompt input.
+        let input_row = Rect {
+            x: results_area.x,
+            y: results_area.y,
+            width: results_area.width,
+            height: 1,
+        };
+        let input_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
+        let count_str = if prompt.suggestions.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "  {} / {}",
+                prompt.selected_suggestion.map(|i| i + 1).unwrap_or(0),
+                prompt.suggestions.len()
+            )
+        };
+        let visible_input_width =
+            results_area.width.saturating_sub(count_str.len() as u16) as usize;
+        let truncated_input: String = prompt
+            .input
+            .chars()
+            .take(visible_input_width.saturating_sub(prompt.message.len()))
+            .collect();
+        let line = Line::from(vec![
+            Span::styled(prompt.message.clone(), input_style),
+            Span::styled(truncated_input, input_style),
+            Span::styled(
+                count_str,
+                Style::default()
+                    .fg(theme.popup_border_fg)
+                    .bg(theme.suggestion_bg),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(line).style(input_style), input_row);
+
+        // Cursor position on the input row.
+        use crate::primitives::display_width::str_width;
+        let cursor_x = (str_width(&prompt.message)
+            + str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]))
+            as u16;
+        if cursor_x < input_row.width {
+            frame.set_cursor_position((input_row.x + cursor_x, input_row.y));
+        }
+
+        // Separator row.
+        if results_area.height >= 2 {
+            let sep = Rect {
+                x: results_area.x,
+                y: results_area.y + 1,
+                width: results_area.width,
+                height: 1,
+            };
+            let sep_style = Style::default()
+                .fg(theme.popup_border_fg)
+                .bg(theme.suggestion_bg);
+            let sep_text = "─".repeat(results_area.width as usize);
+            frame.render_widget(Paragraph::new(sep_text).style(sep_style), sep);
+        }
+
+        // Suggestions list fills the rest of `results_area`.
+        if results_area.height > 2 {
+            let list_area = Rect {
+                x: results_area.x,
+                y: results_area.y + 2,
+                width: results_area.width,
+                height: results_area.height - 2,
+            };
+            self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
+                frame,
+                list_area,
+                &prompt,
+                &theme,
+                self.mouse_state.hover_target.as_ref(),
+            );
+            if self.cached_layout.suggestions_area.is_some() {
+                self.cached_layout.suggestions_outer_area = Some(list_area);
+            }
+        }
+
+        // Right-half preview pane.
+        if let Some(preview_rect) = preview_area {
+            self.render_overlay_preview(frame, preview_rect, &prompt, &theme);
+        }
+    }
+
+    /// Render the preview half of the Live Grep overlay. Shows the
+    /// content of the currently selected match's file, scrolled to the
+    /// match line. Falls back to a placeholder when no match is
+    /// selected. Read-only — purely visual.
+    fn render_overlay_preview(
+        &self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        prompt: &crate::view::prompt::Prompt,
+        theme: &crate::view::theme::Theme,
+    ) {
+        use crate::input::quick_open::parse_path_line_col;
+        use ratatui::style::{Modifier, Style};
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .borders(Borders::LEFT)
+            .border_style(Style::default().fg(theme.popup_border_fg))
+            .style(Style::default().bg(theme.suggestion_bg));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+
+        // Resolve selection -> file path + line.
+        let selection = prompt
+            .selected_suggestion
+            .and_then(|i| prompt.suggestions.get(i));
+        let Some(s) = selection else {
+            let hint =
+                Paragraph::new("(no match selected)")
+                    .style(Style::default().fg(theme.popup_border_fg));
+            frame.render_widget(hint, inner);
+            return;
+        };
+        // Suggestions emitted by the Finder library use `value` as
+        // an opaque index (`"0"`, `"1"`, …) and put the
+        // `path:line[:col]` label in `text`. Parse `text` first; only
+        // fall back to `value` when `text` lacks any path-shaped
+        // segment (e.g. a Resume-replay where `value` carries
+        // `path:line:col` directly).
+        let from_text = parse_path_line_col(&s.text);
+        let (path, line, _col) = if !from_text.0.is_empty() && from_text.1.is_some() {
+            from_text
+        } else if let Some(v) = s.value.as_deref() {
+            parse_path_line_col(v)
+        } else {
+            from_text
+        };
+        if path.is_empty() {
+            return;
+        }
+        let target_line = line.unwrap_or(1).saturating_sub(1);
+
+        // Resolve to absolute path against working_dir if relative.
+        let path_buf = std::path::PathBuf::from(&path);
+        let abs = if path_buf.is_absolute() {
+            path_buf
+        } else {
+            self.working_dir.join(&path_buf)
+        };
+
+        // Read the file directly (the existing FileSystem trait would
+        // be more honest, but for read-only preview a synchronous
+        // std::fs::read_to_string is acceptable on file sizes within
+        // an editor's typical workspace and avoids tying the renderer
+        // to async machinery).
+        let content = match std::fs::read_to_string(&abs) {
+            Ok(s) => s,
+            Err(_) => {
+                let msg = format!("(unable to read {})", path);
+                frame.render_widget(
+                    Paragraph::new(msg).style(Style::default().fg(theme.popup_border_fg)),
+                    inner,
+                );
+                return;
+            }
+        };
+
+        // Render a window of lines around the target.
+        let half = inner.height as usize / 2;
+        let total = content.lines().count();
+        let start = target_line.saturating_sub(half).min(total.saturating_sub(1));
+        let end = (start + inner.height as usize).min(total);
+
+        let mut lines: Vec<Line> = Vec::with_capacity(end - start);
+        for (idx, src) in content.lines().enumerate().skip(start).take(end - start) {
+            let is_target = idx == target_line;
+            let prefix = format!(
+                "{:>4} {} ",
+                idx + 1,
+                if is_target { '\u{25B6}' } else { ' ' }
+            );
+            let row_style = if is_target {
+                Style::default()
+                    .fg(theme.prompt_fg)
+                    .bg(theme.prompt_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.prompt_fg).bg(theme.suggestion_bg)
+            };
+            let prefix_style = Style::default()
+                .fg(theme.popup_border_fg)
+                .bg(if is_target {
+                    theme.prompt_bg
+                } else {
+                    theme.suggestion_bg
+                });
+            // Truncate src to fit width.
+            let max_src_len = (inner.width as usize).saturating_sub(prefix.len()).max(1);
+            let trimmed: String = src.chars().take(max_src_len).collect();
+            lines.push(Line::from(vec![
+                Span::styled(prefix, prefix_style),
+                Span::styled(trimmed, row_style),
+            ]));
+        }
+        let para = Paragraph::new(lines).style(Style::default().bg(theme.suggestion_bg));
+        frame.render_widget(para, inner);
     }
 
     /// Render hover highlights for interactive elements (separators, scrollbars)

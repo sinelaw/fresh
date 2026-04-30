@@ -1754,9 +1754,9 @@
       "when": "normal"
     },
     {
-      "comment": "Live Grep — Resume with prior query and selection without re-running ripgrep",
-      "key": "s",
-      "modifiers": ["alt", "shift"],
+      "comment": "Live Grep — Resume with prior query, selection, and cached results without re-running ripgrep (issue #1796). Mnemonic: 'r' for Resume. The same physical key is `toggle_search_regex` in `prompt` context — disjoint contexts, no conflict.",
+      "key": "r",
+      "modifiers": ["alt"],
       "action": "resume_live_grep",
       "args": {},
       "when": "normal"

@@ -1441,15 +1441,22 @@ impl Editor {
     }
 
     /// Handle StartPrompt command
-    pub(super) fn handle_start_prompt(&mut self, label: String, prompt_type: String) {
+    pub(super) fn handle_start_prompt(
+        &mut self,
+        label: String,
+        prompt_type: String,
+        floating_overlay: bool,
+    ) {
         // Create a plugin-controlled prompt
         use crate::view::prompt::{Prompt, PromptType};
-        self.prompt = Some(Prompt::new(
+        let mut prompt = Prompt::new(
             label,
             PromptType::Plugin {
                 custom_type: prompt_type.clone(),
             },
-        ));
+        );
+        prompt.overlay = floating_overlay;
+        self.prompt = Some(prompt);
 
         // Fire the prompt_changed hook immediately with empty input
         // This allows plugins to initialize the prompt state
@@ -1469,16 +1476,19 @@ impl Editor {
         label: String,
         prompt_type: String,
         initial_value: String,
+        floating_overlay: bool,
     ) {
         // Create a plugin-controlled prompt with initial text
         use crate::view::prompt::{Prompt, PromptType};
-        self.prompt = Some(Prompt::with_initial_text(
+        let mut prompt = Prompt::with_initial_text(
             label,
             PromptType::Plugin {
                 custom_type: prompt_type.clone(),
             },
             initial_value.clone(),
-        ));
+        );
+        prompt.overlay = floating_overlay;
+        self.prompt = Some(prompt);
 
         // Fire the prompt_changed hook immediately with the initial value
         use crate::services::plugins::hooks::HookArgs;

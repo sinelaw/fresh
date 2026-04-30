@@ -128,6 +128,14 @@ export interface PromptOptions<T> {
   source: SearchSource<T> | FilterSource<T>;
   /** Initial query value */
   initialQuery?: string;
+  /**
+   * Render the prompt as a centred floating overlay with an
+   * embedded preview pane (issue #1796). When true, the editor
+   * draws the input + results + preview inside one floating frame
+   * over the editor area; the underlying split tree is not
+   * mutated. Defaults to false.
+   */
+  floatingOverlay?: boolean;
 }
 
 /**
@@ -465,15 +473,17 @@ export class Finder<T> {
     }
 
     // Start the prompt
+    const overlay = options.floatingOverlay === true;
     if (options.initialQuery) {
       this.editor.startPromptWithInitial(
         options.title,
         this.config.id,
-        options.initialQuery
+        options.initialQuery,
+        overlay
       );
     } else {
-      this.editor.debug(`[Finder] calling startPrompt with title="${options.title}", id="${this.config.id}"`);
-      const result = this.editor.startPrompt(options.title, this.config.id);
+      this.editor.debug(`[Finder] calling startPrompt with title="${options.title}", id="${this.config.id}", overlay=${overlay}`);
+      const result = this.editor.startPrompt(options.title, this.config.id, overlay);
       this.editor.debug(`[Finder] startPrompt returned: ${result}`);
     }
     this.editor.setStatus("Type to search...");

@@ -23,7 +23,11 @@ interface GrepMatch {
   content: string;
 }
 
-// Create the finder instance
+// Create the finder instance. The editor renders the prompt + results
+// + preview inside a single floating overlay (issue #1796), so we
+// turn the Finder's standalone preview split off — the overlay's
+// right-half pane handles preview directly without mutating the user's
+// split layout.
 const finder = new Finder<GrepMatch>(editor, {
   id: "live-grep",
   format: (match) => ({
@@ -38,7 +42,7 @@ const finder = new Finder<GrepMatch>(editor, {
       column: match.column,
     },
   }),
-  preview: true,
+  preview: false,
   maxResults: 100,
 });
 
@@ -84,6 +88,8 @@ function start_live_grep() : void {
       debounceMs: 150,
       minQueryLength: 2,
     },
+    // Render as a centred floating overlay (issue #1796).
+    floatingOverlay: true,
   });
 }
 registerHandler("start_live_grep", start_live_grep);

@@ -257,6 +257,21 @@ impl Editor {
             .map(|vs| vs.open_buffers.len() == 1 && vs.has_buffer(buffer_id))
             .unwrap_or(false);
 
+        // If the source leaf is being absorbed (its last tab is moving
+        // out) and it carries a SplitRole, the role transfers to the
+        // target leaf so the user can physically relocate the dock by
+        // dragging out its only tab. This implements the
+        // "role follows the window" rule from
+        // docs/internal/tui-editor-layout-design.md Section 2.
+        let role_to_transfer = if source_becomes_empty {
+            self.split_manager
+                .root()
+                .find(source_split_id.into())
+                .and_then(|n| n.role())
+        } else {
+            None
+        };
+
         // Remove from source split's tab bar
         if let Some(source_view_state) = self.split_view_states.get_mut(&source_split_id) {
             source_view_state
@@ -295,6 +310,20 @@ impl Editor {
             self.split_view_states.remove(&source_split_id);
             if let Err(e) = self.split_manager.close_split(source_split_id) {
                 tracing::warn!("Failed to close empty split: {}", e);
+            }
+            // Transfer the absorbed leaf's role to the destination so
+            // utility-dock placement follows the window the user just
+            // moved into.
+            if let Some(role) = role_to_transfer {
+                self.split_manager.clear_role(role);
+                self.split_manager
+                    .set_leaf_role(target_split_id, Some(role));
+                tracing::info!(
+                    "Transferred role {:?} from absorbed leaf {:?} to {:?}",
+                    role,
+                    source_split_id,
+                    target_split_id
+                );
             }
             self.set_status_message(t!("status.moved_tab_split_closed").to_string());
         } else {
