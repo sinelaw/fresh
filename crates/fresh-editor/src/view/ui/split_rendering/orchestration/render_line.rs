@@ -147,6 +147,17 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     let cursor_line_start_byte =
         indent_folding::find_line_start_byte(&state.buffer, primary_cursor_position);
 
+    // Exclusive end of the cursor's logical line. A view sub-row whose first
+    // source byte falls in `[cursor_line_start_byte, cursor_line_end_byte)`
+    // belongs to the same logical line as the cursor — even if a plugin
+    // soft-break (compose-mode wrapping) put the sub-row's start mid-line.
+    // Without this, the highlight only landed on the *first* visual sub-row
+    // of a soft-wrapped paragraph (issue #1790).
+    let cursor_line_end_byte = state
+        .buffer
+        .line_start_offset(state.primary_cursor_line_number.value() + 1)
+        .unwrap_or_else(|| state.buffer.len().saturating_add(1));
+
     let highlight_spans = &decorations.highlight_spans;
     let semantic_token_spans = &decorations.semantic_token_spans;
     let viewport_overlays = &decorations.viewport_overlays;
@@ -307,8 +318,13 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
         // Track whether this line is the cursor line (for current line highlighting).
         // Non-continuation lines check their start byte; continuation lines inherit.
+        // We use a range check (rather than equality with the logical-line start)
+        // so plugin-injected soft-break sub-rows — whose first source byte lands
+        // mid-line — are still recognised as belonging to the cursor's logical
+        // line (issue #1790).
         if !is_continuation {
-            is_on_cursor_line = line_start_byte.is_some_and(|b| b == cursor_line_start_byte);
+            is_on_cursor_line = line_start_byte
+                .is_some_and(|b| b >= cursor_line_start_byte && b < cursor_line_end_byte);
         }
 
         // Gutter display number — line number for small files, byte offset for large files

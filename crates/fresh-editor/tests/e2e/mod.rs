@@ -65,6 +65,7 @@ pub mod issue_1577_unicode_width;
 pub mod issue_1598_shebang_detection;
 pub mod issue_1620_split_terminal_click_panic;
 pub mod issue_1718_settings_search_utf8_panic;
+pub mod issue_1790_compose_wrap_highlight;
 pub mod issue_779_after_eof_shade;
 pub mod redraw_screen;
 pub mod suspend_process;
