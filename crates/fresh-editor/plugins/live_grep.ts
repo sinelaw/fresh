@@ -180,7 +180,7 @@ async function selectProvider(): Promise<LiveGrepProvider | null> {
 
 registerProvider({
   name: "ripgrep",
-  priority: 0,
+  priority: -1,
   isAvailable: async () => {
     try {
       const r = await editor.spawnProcess("rg", ["--version"], editor.getCwd());
@@ -217,7 +217,7 @@ registerProvider({
 
 registerProvider({
   name: "ag",
-  priority: -1,
+  priority: -2,
   isAvailable: async () => {
     try {
       const r = await editor.spawnProcess("ag", ["--version"], editor.getCwd());
@@ -253,7 +253,11 @@ registerProvider({
 
 registerProvider({
   name: "git-grep",
-  priority: -2,
+  // Top priority. git grep is the default *when available* — i.e.
+  // when the working directory is inside a git repo with `git`
+  // installed. `isAvailable` checks both, and outside a repo the
+  // registry falls through to ripgrep / ag / ack / grep in order.
+  priority: 0,
   isAvailable: async () => {
     try {
       // git grep needs both `git` on PATH and to be inside a repo.
@@ -287,6 +291,9 @@ registerProvider({
 registerProvider({
   name: "ack",
   priority: -3,
+  // Note: ack/grep are kept at lower priority than ripgrep/ag/
+  // git-grep because they're slower on large trees; the cycler
+  // skips them automatically when a faster backend is available.
   isAvailable: async () => {
     try {
       const r = await editor.spawnProcess("ack", ["--version"], editor.getCwd());
