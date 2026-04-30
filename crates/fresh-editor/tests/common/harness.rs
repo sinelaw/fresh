@@ -925,12 +925,19 @@ impl EditorTestHarness {
             .map(|h| h.state_path.as_path())
     }
 
-    /// Get the recovery directory path for this test harness
-    /// The recovery directory is isolated per-test under the temp directory
+    /// Get the recovery directory path for this test harness.
+    ///
+    /// Returns the *scoped* directory where the editor actually writes
+    /// recovery files. In standalone mode (no `set_session_name`) the path
+    /// is `<base>/default/<encoded_working_dir>/`, so each working directory
+    /// keeps its own recovery files (issue #1550).
     pub fn recovery_dir(&self) -> Option<PathBuf> {
-        self._temp_dir
+        let base = self
+            ._temp_dir
             .as_ref()
-            .map(|d| d.path().join("data").join("recovery"))
+            .map(|d| d.path().join("data").join("recovery"))?;
+        let hash = fresh::workspace::encode_path_for_filename(self.editor.working_dir());
+        Some(base.join("default").join(hash))
     }
 
     /// Take ownership of the temp directory, preventing it from being cleaned up

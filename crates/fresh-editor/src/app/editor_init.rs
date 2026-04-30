@@ -770,7 +770,7 @@ impl Editor {
             key_context: KeyContext::Normal,
             menu_state: crate::view::ui::MenuState::new(dir_context.themes_dir()),
             menus: crate::config::MenuConfig::translated(),
-            working_dir,
+            working_dir: working_dir.clone(),
             position_history: PositionHistory::new(),
             in_navigation: false,
             next_lsp_request_id: 0,
@@ -887,7 +887,17 @@ impl Editor {
                     enabled: recovery_enabled,
                     ..RecoveryConfig::default()
                 };
-                RecoveryService::with_config_and_dir(recovery_config, dir_context.recovery_dir())
+                // Default to a CWD-scoped recovery directory so each working
+                // directory keeps its own hot-exit recovery files. If this
+                // editor is later promoted to session mode, `set_session_name`
+                // re-creates the service with `RecoveryScope::Session`.
+                // Issue #1550: without per-CWD scoping, opening Fresh in a
+                // second folder would clobber the first folder's unsaved
+                // unnamed buffers on shutdown.
+                let scope = crate::services::recovery::RecoveryScope::Standalone {
+                    working_dir: working_dir.clone(),
+                };
+                RecoveryService::with_scope(recovery_config, &dir_context.recovery_dir(), &scope)
             },
             full_redraw_requested: false,
             suspend_requested: false,
