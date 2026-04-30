@@ -590,7 +590,9 @@ impl Editor {
             // / unmodified by definition, so this should always
             // succeed. Tolerate failure silently — leaving an extra
             // hidden buffer around is preferable to crashing.
-            let _ = self.close_buffer(buffer_id);
+            if let Err(e) = self.close_buffer(buffer_id) {
+                tracing::warn!("Failed to close overlay preview buffer: {}", e);
+            }
         }
     }
 
