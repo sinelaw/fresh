@@ -1795,8 +1795,21 @@ impl Editor {
 
         // Snapshot view-relevant state before any mutable borrows.
         let theme = self.theme.clone();
+        // The suggestion list inside the overlay can be ~30 rows
+        // tall on a typical terminal. Pass the *actual* visible
+        // count to `ensure_selected_visible_within` so the scroll
+        // offset only advances when the selection genuinely passes
+        // the bottom of the visible window — not when it crosses
+        // the bottom-popup default cap of `MAX_VISIBLE_SUGGESTIONS`
+        // (= 10), which would scroll prematurely.
+        //
+        // Geometry: overlay frame border (2) + input row (1) +
+        // separator (1) + suggestions-popup own border (2) = 6
+        // rows of chrome above the suggestion items themselves.
+        // The popup's inner content height is `overlay.height - 6`.
+        let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(6);
         if let Some(prompt) = self.prompt.as_mut() {
-            prompt.ensure_selected_visible();
+            prompt.ensure_selected_visible_within(suggestions_visible_rows);
         }
         let Some(prompt) = self.prompt.as_ref() else {
             return;
@@ -1921,12 +1934,21 @@ impl Editor {
             frame.render_widget(Paragraph::new(sep_text).style(sep_style), sep);
         }
 
-        // Suggestions list fills the rest of `results_area`.
+        // Suggestions list fills the rest of `results_area`. Carve
+        // off the rightmost 1-column lane for a scrollbar so the
+        // user can see how far through the result set the selection
+        // is — important when the visible area only fits ~30 of
+        // 100+ matches. Only carve when the result set actually
+        // exceeds the visible rows; otherwise the scrollbar is
+        // visual noise.
         if results_area.height > 2 {
+            let inner_rows = (results_area.height - 2).saturating_sub(2) as usize; // popup own border
+            let needs_scrollbar = prompt.suggestions.len() > inner_rows.max(1);
+            let scrollbar_w: u16 = if needs_scrollbar { 1 } else { 0 };
             let list_area = Rect {
                 x: results_area.x,
                 y: results_area.y + 2,
-                width: results_area.width,
+                width: results_area.width.saturating_sub(scrollbar_w),
                 height: results_area.height - 2,
             };
             self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
@@ -1938,6 +1960,36 @@ impl Editor {
             );
             if self.cached_layout.suggestions_area.is_some() {
                 self.cached_layout.suggestions_outer_area = Some(list_area);
+            }
+            // Render the scrollbar in the carved lane. Reuses the
+            // shared `view::ui::scrollbar` widget so thumb sizing
+            // and theme colours match scrollbars elsewhere in the
+            // editor (split rendering, file explorer, …).
+            if needs_scrollbar {
+                use crate::view::ui::scrollbar::{
+                    render_scrollbar, ScrollbarColors, ScrollbarState,
+                };
+                // Scrollbar rect aligns with the suggestions popup's
+                // *inner* area (skipping the popup's own top/bottom
+                // border) so the thumb tracks the visible items
+                // exactly.
+                let scrollbar_rect = Rect {
+                    x: results_area.x + results_area.width - 1,
+                    y: list_area.y + 1,
+                    width: 1,
+                    height: list_area.height.saturating_sub(2),
+                };
+                let state = ScrollbarState::new(
+                    prompt.suggestions.len(),
+                    inner_rows.max(1),
+                    prompt.scroll_offset,
+                );
+                render_scrollbar(
+                    frame,
+                    scrollbar_rect,
+                    &state,
+                    &ScrollbarColors::from_theme(&theme),
+                );
             }
         }
 

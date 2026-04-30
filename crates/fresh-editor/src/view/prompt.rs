@@ -512,9 +512,26 @@ impl Prompt {
     /// already on-screen leaves the viewport untouched — this is what stops
     /// a click on a near-bottom item from snapping the list upward and
     /// recentering under the cursor (issue #1660).
+    ///
+    /// Uses the bottom-popup default cap (`MAX_VISIBLE_SUGGESTIONS`).
+    /// Callers rendering into a different-sized area (e.g. the
+    /// floating Live Grep overlay, where the suggestion list can be
+    /// 30+ rows tall) should call
+    /// [`ensure_selected_visible_within`] with the actual height
+    /// instead — otherwise the scroll moves prematurely once the
+    /// selection passes the 10th row even though the rest of the
+    /// list is still visible on-screen.
     pub fn ensure_selected_visible(&mut self) {
+        self.ensure_selected_visible_within(MAX_VISIBLE_SUGGESTIONS);
+    }
+
+    /// Like [`ensure_selected_visible`] but with an explicit
+    /// `visible_count` argument, so renderers in differently-sized
+    /// frames don't all share the bottom-popup `MAX_VISIBLE_SUGGESTIONS`
+    /// assumption.
+    pub fn ensure_selected_visible_within(&mut self, visible_count: usize) {
         let total = self.suggestions.len();
-        let visible = total.min(MAX_VISIBLE_SUGGESTIONS);
+        let visible = total.min(visible_count.max(1));
         let max_offset = total.saturating_sub(visible);
         if visible == 0 {
             self.scroll_offset = 0;
