@@ -1990,7 +1990,14 @@ impl Editor {
                     &state,
                     &ScrollbarColors::from_theme(&theme),
                 );
+                // Cache the rect for mouse hit testing in
+                // `mouse_input.rs::handle_click_prompt_scrollbar`.
+                self.cached_layout.suggestions_scrollbar_rect = Some(scrollbar_rect);
+            } else {
+                self.cached_layout.suggestions_scrollbar_rect = None;
             }
+        } else {
+            self.cached_layout.suggestions_scrollbar_rect = None;
         }
 
         // Right-half preview pane: a real Buffer rendered via the

@@ -178,6 +178,8 @@ impl Editor {
                 // Clear popup scrollbar drag state
                 self.mouse_state.dragging_popup_scrollbar = None;
                 self.mouse_state.drag_start_popup_scroll = None;
+                // Clear prompt scrollbar drag state (issue #1796)
+                self.mouse_state.dragging_prompt_scrollbar = false;
                 // Clear popup text selection drag state (selection remains in popup)
                 self.mouse_state.selecting_in_popup = None;
 
@@ -1311,6 +1313,9 @@ impl Editor {
         if let Some(r) = self.handle_click_suggestions(col, row) {
             return r;
         }
+        if let Some(r) = self.handle_click_prompt_scrollbar(col, row) {
+            return r;
+        }
         if let Some(r) = self.handle_click_popup_scrollbar(col, row) {
             return r;
         }
@@ -1462,6 +1467,41 @@ impl Editor {
             prompt.cursor_pos = prompt.input.len();
         }
         Some(self.handle_action(Action::PromptConfirm))
+    }
+
+    /// Click/drag on the floating-overlay prompt's scrollbar
+    /// (issue #1796). Reuses
+    /// `view::ui::scrollbar::ScrollbarState::click_to_offset` for
+    /// the same math the popup-scrollbar handler uses, so thumb
+    /// behaviour is consistent across the editor.
+    fn handle_click_prompt_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
+        use crate::view::ui::scrollbar::ScrollbarState;
+        let sb_rect = self.cached_layout.suggestions_scrollbar_rect?;
+        if col < sb_rect.x
+            || col >= sb_rect.x + sb_rect.width
+            || row < sb_rect.y
+            || row >= sb_rect.y + sb_rect.height
+        {
+            return None;
+        }
+        let prompt = self.prompt.as_mut()?;
+        // Read what the renderer drew so the drag math matches what
+        // the user sees. `suggestions_area` carries
+        // (inner_rect, scroll_start_idx, visible_count, total_count).
+        let visible = self
+            .cached_layout
+            .suggestions_area
+            .map(|(_, _, v, _)| v)
+            .unwrap_or(prompt.suggestions.len().min(10));
+        let total = prompt.suggestions.len();
+        let track_height = sb_rect.height as usize;
+        let click_row = row.saturating_sub(sb_rect.y) as usize;
+        let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
+        prompt.scroll_offset = state.click_to_offset(track_height, click_row);
+        // Hand off to the drag follow-up so subsequent mouse moves
+        // keep tracking the thumb.
+        self.mouse_state.dragging_prompt_scrollbar = true;
+        Some(Ok(()))
     }
 
     fn handle_click_popup_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
@@ -2139,6 +2179,35 @@ impl Editor {
                         popup.extend_selection(line, relative_col);
                     }
                 }
+            }
+            return Ok(());
+        }
+
+        // If dragging the floating-overlay prompt's scrollbar
+        // (issue #1796), update its scroll_offset using the same
+        // math as the click handler. Same shared-widget logic the
+        // popup-scrollbar drag uses below.
+        if self.mouse_state.dragging_prompt_scrollbar {
+            use crate::view::ui::scrollbar::ScrollbarState;
+            if let (Some(sb_rect), Some(prompt)) = (
+                self.cached_layout.suggestions_scrollbar_rect,
+                self.prompt.as_mut(),
+            ) {
+                let visible = self
+                    .cached_layout
+                    .suggestions_area
+                    .map(|(_, _, v, _)| v)
+                    .unwrap_or(prompt.suggestions.len().min(10));
+                let total = prompt.suggestions.len();
+                let track_height = sb_rect.height as usize;
+                // Allow dragging slightly past the top/bottom; clamp
+                // here rather than rejecting so the thumb keeps up
+                // with a fast mouse.
+                let clamped_row =
+                    row.clamp(sb_rect.y, sb_rect.y + sb_rect.height.saturating_sub(1));
+                let click_row = clamped_row.saturating_sub(sb_rect.y) as usize;
+                let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
+                prompt.scroll_offset = state.click_to_offset(track_height, click_row);
             }
             return Ok(());
         }

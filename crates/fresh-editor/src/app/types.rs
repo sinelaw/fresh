@@ -1018,6 +1018,12 @@ pub(super) struct MouseState {
     pub dragging_popup_scrollbar: Option<usize>,
     /// Initial scroll offset when starting to drag popup scrollbar
     pub drag_start_popup_scroll: Option<usize>,
+    /// Whether we're currently dragging the prompt's suggestion-list
+    /// scrollbar (Live Grep floating overlay, issue #1796). The
+    /// rect is held in `cached_layout.suggestions_scrollbar_rect`
+    /// and the math is shared with the buffer-popup scrollbar via
+    /// `view::ui::scrollbar::ScrollbarState::click_to_offset`.
+    pub dragging_prompt_scrollbar: bool,
     /// Whether we're currently selecting text in a popup (popup index)
     pub selecting_in_popup: Option<usize>,
     /// Initial composite scroll_row when starting to drag the scrollbar thumb
@@ -1124,6 +1130,11 @@ pub(crate) struct CachedLayout {
     /// Used to absorb clicks on the popup chrome so they don't reach the
     /// buffer below while the prompt is open.
     pub suggestions_outer_area: Option<Rect>,
+    /// Hit-test rect for the floating-overlay prompt's scrollbar
+    /// (issue #1796). `None` when no overlay is open or the result
+    /// list fits in the visible window. Click/drag handlers in
+    /// `mouse_input.rs` read this to update `prompt.scroll_offset`.
+    pub suggestions_scrollbar_rect: Option<Rect>,
     /// Tab layouts per split for mouse interaction
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
     /// Close split button hit areas
