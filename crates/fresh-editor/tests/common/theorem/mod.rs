@@ -11,4 +11,5 @@
 pub mod buffer_theorem;
 pub mod failure;
 pub mod layout_theorem;
+pub mod property;
 pub mod trace_theorem;

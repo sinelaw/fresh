@@ -4,4 +4,6 @@
 pub mod case_conversion;
 pub mod layout;
 pub mod multicursor;
+pub mod properties;
+pub mod regressions;
 pub mod selftest;
