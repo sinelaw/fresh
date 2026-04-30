@@ -1579,17 +1579,17 @@ impl Editor {
             .canonicalize(&abs_path)
             .unwrap_or(abs_path);
 
-        // If the leaf already shows this path, only need to re-seed
-        // the cursor — skip the file-load roundtrip.
-        let already_target = self.overlay_preview_buffer.is_some_and(|bid| {
+        // If the standalone state already targets this path, just
+        // re-seed the cursor and skip the file-load roundtrip.
+        let already_target = self.overlay_preview_state.as_ref().is_some_and(|st| {
             self.buffers
-                .get(&bid)
+                .get(&st.buffer_id)
                 .and_then(|s| s.buffer.file_path())
                 .is_some_and(|p| p == abs_path.as_path())
         });
 
         let buffer_id = if already_target {
-            self.overlay_preview_buffer.unwrap()
+            self.overlay_preview_state.as_ref().unwrap().buffer_id
         } else {
             // Snapshot whether this path was already known so we can
             // tell "I just loaded it for preview" from "the user had
@@ -1598,31 +1598,24 @@ impl Editor {
                 .buffers
                 .iter()
                 .any(|(_, s)| s.buffer.file_path() == Some(abs_path.as_path()));
-            // Capture the active split so we can remove the phantom
-            // tab `open_file_no_focus` will add to it.
+            // Capture the active split so we can undo the side
+            // effects of `open_file_no_focus` (it adds the buffer to
+            // the active split's tabs and may switch its active
+            // buffer to the loaded file).
             let source_split = self.split_manager.active_split();
             let buffer_id = match self.open_file_no_focus(abs_path.as_path()) {
                 Ok(id) => id,
                 Err(_e) => return,
             };
-            // Make the buffer invisible in any tab bar so the user
-            // doesn't see a phantom preview tab. Done unconditionally
-            // — we re-clear hidden_from_tabs in cleanup if we ourselves
-            // loaded it; user-loaded buffers stay flagged for the
-            // duration of the overlay only when we mark them, which
-            // we don't (the flag is reset on overlay close).
             if !was_open {
                 if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
                     meta.hidden_from_tabs = true;
                 }
-                self.overlay_preview_loaded_buffers.insert(buffer_id);
-            }
-            // Drop the buffer from every split's `open_buffers` list
-            // so it doesn't surface as a tab anywhere. This is safe
-            // because the phantom leaf displays the buffer directly
-            // via its own `SplitViewState::active_buffer`, which does
-            // not require the buffer to be in `open_buffers`.
-            if !was_open {
+                // Drop the buffer from every split's `open_buffers`
+                // list so it doesn't surface as a tab anywhere. The
+                // phantom buffer is rendered exclusively via the
+                // overlay's standalone view-state — it doesn't need
+                // to be in `open_buffers`.
                 let leaf_ids: Vec<_> = self.split_view_states.keys().copied().collect();
                 for leaf_id in leaf_ids {
                     if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
@@ -1630,27 +1623,22 @@ impl Editor {
                     }
                 }
                 // open_file_no_focus may have switched the active
-                // buffer of the source split to the new buffer (it
-                // calls set_pane_buffer). Switch it back.
+                // buffer of the source split. Restore it.
                 if let Some(source_state) = self.split_view_states.get_mut(&source_split) {
                     if source_state.active_buffer == buffer_id {
-                        // Pick any other buffer the source has, or
-                        // fall back to the first non-preview buffer
-                        // we know about.
+                        let preview_loaded: std::collections::HashSet<BufferId> = self
+                            .overlay_preview_state
+                            .as_ref()
+                            .map(|st| st.loaded_buffers.clone())
+                            .unwrap_or_default();
                         let fallback = source_state
                             .open_buffers
                             .iter()
                             .find_map(|t| t.as_buffer())
                             .or_else(|| {
-                                self.buffers
-                                    .keys()
-                                    .copied()
-                                    .find(|b| {
-                                        *b != buffer_id
-                                            && !self
-                                                .overlay_preview_loaded_buffers
-                                                .contains(b)
-                                    })
+                                self.buffers.keys().copied().find(|b| {
+                                    *b != buffer_id && !preview_loaded.contains(b)
+                                })
                             });
                         if let Some(fb) = fallback {
                             source_state.switch_buffer(fb);
@@ -1658,27 +1646,15 @@ impl Editor {
                         }
                     }
                 }
-                // Restore active split focus (open_file_no_focus may
-                // have moved it).
                 self.split_manager.set_active_split(source_split);
             }
             buffer_id
         };
 
-        // Lazily allocate the phantom leaf id.
-        let leaf_id = match self.overlay_preview_leaf {
-            Some(id) => id,
-            None => {
-                let raw = self.split_manager.allocate_split_id();
-                let leaf = crate::model::event::LeafId(raw);
-                self.overlay_preview_leaf = Some(leaf);
-                leaf
-            }
-        };
-
-        // Ensure the phantom leaf has a SplitViewState pointed at the
-        // current preview buffer.
-        let need_init = !self.split_view_states.contains_key(&leaf_id);
+        // Build (or update) the standalone preview state. Held off
+        // `split_view_states` so cross-cutting iteration never touches
+        // it.
+        let need_init = self.overlay_preview_state.is_none();
         if need_init {
             let mut view_state = crate::view::split::SplitViewState::with_buffer(
                 self.terminal_width,
@@ -1693,49 +1669,65 @@ impl Editor {
                 self.resolve_wrap_column_for_buffer(buffer_id),
                 self.config.editor.rulers.clone(),
             );
-            self.split_view_states.insert(leaf_id, view_state);
-        } else if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
-            if view_state.active_buffer != buffer_id {
-                view_state.switch_buffer(buffer_id);
+            let mut loaded_buffers = std::collections::HashSet::new();
+            // Whether this *first* preview buffer was newly loaded.
+            // The pre-existing case skips the `was_open` branch so
+            // we re-derive it from buffer_metadata: a buffer with
+            // hidden_from_tabs=true that we just touched is one we
+            // owned. Simpler: track via the existing-target check:
+            // if `already_target` was false above, the buffer was
+            // either pre-open (we left meta alone) or freshly
+            // loaded (we set hidden_from_tabs=true). Re-check.
+            if let Some(meta) = self.buffer_metadata.get(&buffer_id) {
+                if meta.hidden_from_tabs {
+                    loaded_buffers.insert(buffer_id);
+                }
+            }
+            self.overlay_preview_state =
+                Some(crate::app::types::OverlayPreviewState {
+                    buffer_id,
+                    view_state,
+                    loaded_buffers,
+                });
+        } else if let Some(state) = self.overlay_preview_state.as_mut() {
+            if state.buffer_id != buffer_id {
+                state.view_state.switch_buffer(buffer_id);
+                state.buffer_id = buffer_id;
+                if let Some(meta) = self.buffer_metadata.get(&buffer_id) {
+                    if meta.hidden_from_tabs {
+                        state.loaded_buffers.insert(buffer_id);
+                    }
+                }
             }
         }
-        self.overlay_preview_buffer = Some(buffer_id);
 
         // Set the cursor to the match position and centre the line.
-        let byte_offset = {
-            let Some(state) = self.buffers.get(&buffer_id) else {
-                return;
-            };
-            // line/col are 0-based; convert to a byte offset via the
-            // buffer's piece-tree position-to-offset helper.
-            state.buffer.position_to_offset(crate::model::piece_tree::Position {
-                line,
-                column: col,
+        let byte_offset = self
+            .buffers
+            .get(&buffer_id)
+            .map(|s| {
+                s.buffer.position_to_offset(crate::model::piece_tree::Position {
+                    line,
+                    column: col,
+                })
             })
-        };
-        // line_start byte for the centred-on scroll target.
+            .unwrap_or(0);
         let line_start = self
             .buffers
             .get(&buffer_id)
             .and_then(|s| s.buffer.line_start_offset(line))
             .unwrap_or(byte_offset);
-        if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
-            // Move primary cursor to the match. Use primary_mut and
-            // overwrite the position field directly.
-            view_state.cursors.primary_mut().position = byte_offset;
-            // Centre the match line: set top_byte so the cursor sits
-            // around the middle of the viewport. The viewport's
-            // scroll machinery clamps to bounds on the next render.
-            let h = view_state.viewport.height.max(1) as usize;
+        if let Some(state) = self.overlay_preview_state.as_mut() {
+            state.view_state.cursors.primary_mut().position = byte_offset;
+            let h = state.view_state.viewport.height.max(1) as usize;
             let half = h / 2;
             let target_top_line = line.saturating_sub(half);
-            // Translate top line -> top byte via the buffer.
             let top_byte = self
                 .buffers
                 .get(&buffer_id)
                 .and_then(|s| s.buffer.line_start_offset(target_top_line))
                 .unwrap_or(line_start);
-            view_state.viewport.top_byte = top_byte;
+            state.view_state.viewport.top_byte = top_byte;
         }
     }
 
@@ -1943,14 +1935,12 @@ impl Editor {
             frame.render_widget(block, preview_rect);
 
             if inner.height > 0 && inner.width > 0 {
-                let leaf = self.overlay_preview_leaf;
-                let buffer_id = self.overlay_preview_buffer;
-                if let (Some(leaf), Some(buffer_id)) = (leaf, buffer_id) {
-                    // Resize the phantom viewport to match the
+                if self.overlay_preview_state.is_some() {
+                    // Resize the standalone viewport to match the
                     // current preview rect so layout/scrollbars are
                     // computed against the right size.
-                    if let Some(view_state) = self.split_view_states.get_mut(&leaf) {
-                        view_state.viewport.resize(inner.width, inner.height);
+                    if let Some(state) = self.overlay_preview_state.as_mut() {
+                        state.view_state.viewport.resize(inner.width, inner.height);
                     }
                     // Snapshot scalar values from self before splitting
                     // mutable borrows. AnsiBackground isn't Clone, so
@@ -1977,21 +1967,17 @@ impl Editor {
 
                     let ansi_ref = self.ansi_background.as_ref();
                     let buffers = &mut self.buffers;
-                    let split_view_states = &mut self.split_view_states;
                     let event_logs = &mut self.event_logs;
                     let cell_theme_map = &mut self.cached_layout.cell_theme_map;
+                    let preview_state = self.overlay_preview_state.as_mut().unwrap();
+                    let buffer_id = preview_state.buffer_id;
 
-                    if let (Some(state), Some(view_state)) =
-                        (buffers.get_mut(&buffer_id), split_view_states.get_mut(&leaf))
-                    {
-                        // SplitViewState reaches its inner fields via
-                        // DerefMut → BufferViewState. Multiple
-                        // `&mut view_state.<field>` accesses confuse
-                        // disjoint-borrow analysis because each goes
-                        // through DerefMut. Deref once to a concrete
+                    if let Some(state) = buffers.get_mut(&buffer_id) {
+                        // Deref the SplitViewState once to a concrete
                         // `&mut BufferViewState` so disjoint field
-                        // splits are obvious to the borrow checker.
-                        let buf_state = view_state.active_state_mut();
+                        // splits (`viewport` + `folds`) are visible
+                        // to the borrow checker.
+                        let buf_state = preview_state.view_state.active_state_mut();
                         let cursors = buf_state.cursors.clone();
                         let view_mode = buf_state.view_mode.clone();
                         let compose_width = buf_state.compose_width;

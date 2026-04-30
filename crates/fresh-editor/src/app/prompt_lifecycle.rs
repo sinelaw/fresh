@@ -573,19 +573,17 @@ impl Editor {
         }
     }
 
-    /// Tear down the phantom preview leaf used by the Live Grep
-    /// floating overlay (issue #1796). Drops the leaf's
-    /// `SplitViewState`, closes any buffers we loaded purely for
-    /// preview (buffers the user already had open are left
-    /// untouched), and clears the cached pointers so the next overlay
-    /// session starts fresh.
+    /// Tear down the standalone preview state used by the Live Grep
+    /// floating overlay (issue #1796). Drops the inline view state
+    /// and closes any buffers we loaded purely for preview (buffers
+    /// the user already had open are left untouched).
     pub(crate) fn cleanup_overlay_preview(&mut self) {
-        if let Some(leaf) = self.overlay_preview_leaf.take() {
-            self.split_view_states.remove(&leaf);
-        }
-        self.overlay_preview_buffer = None;
         let to_close: Vec<crate::model::event::BufferId> =
-            self.overlay_preview_loaded_buffers.drain().collect();
+            if let Some(state) = self.overlay_preview_state.take() {
+                state.loaded_buffers.into_iter().collect()
+            } else {
+                Vec::new()
+            };
         for buffer_id in to_close {
             // close_buffer is the user-facing close (errors on
             // unsaved changes). Preview-loaded buffers are read-only

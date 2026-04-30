@@ -1538,6 +1538,34 @@ mod lsp_uri_tests {
     }
 }
 
+/// Self-contained state for the Live Grep floating overlay's preview
+/// pane (issue #1796).
+///
+/// Owned directly by `Editor::overlay_preview_state` rather than
+/// living in `Editor::split_view_states` keyed by a synthetic
+/// `LeafId`. This isolation matters because ~20 sites across the
+/// editor iterate `split_view_states` for cross-cutting work
+/// (workspace save, viewport hooks, settings broadcasts, buffer
+/// close cascades). The preview is a *transient render artefact*,
+/// not a real split — none of those code paths should see it.
+///
+/// The phantom buffer is not in `SplitManager`'s tree either, so
+/// it's invisible to focus rotation (`Alt+]`/`Alt+[`), tab drag
+/// drop zones, hit testing, and `find_leaf_by_role` queries.
+#[derive(Debug)]
+pub struct OverlayPreviewState {
+    /// Buffer currently displayed in the preview pane.
+    pub buffer_id: BufferId,
+    /// View state (cursor, viewport, folds, view mode, …) used by
+    /// the renderer's per-leaf pipeline.
+    pub view_state: crate::view::split::SplitViewState,
+    /// Buffers we loaded only to feed the preview pane. On overlay
+    /// close we close these via the standard `close_buffer` path.
+    /// Buffers the user already had open are *not* in this set —
+    /// dismissing the overlay never disturbs them.
+    pub loaded_buffers: HashSet<BufferId>,
+}
+
 #[cfg(test)]
 mod uri_encoding_tests {
     use super::*;
