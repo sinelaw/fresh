@@ -128,6 +128,16 @@ pub trait EditorTestApi {
     /// scroll position. Without a render, this reflects the last
     /// reconciliation point.
     fn viewport_top_byte(&self) -> usize;
+
+    /// `true` if the active buffer has unsaved changes since it was
+    /// last loaded from / saved to disk. The "save point" is the
+    /// commit in the undo/redo log at which the buffer's on-disk
+    /// representation matches its in-memory state. After loading a
+    /// fresh file (no edits applied), this is `false`. After any
+    /// edit it becomes `true`. Undoing back to the save point flips
+    /// it back to `false` — the property under test in
+    /// `tests/semantic/undo_redo.rs::theorem_undo_to_save_point_*`.
+    fn is_modified(&self) -> bool;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -204,5 +214,9 @@ impl EditorTestApi for crate::app::Editor {
 
     fn viewport_top_byte(&self) -> usize {
         self.active_viewport().top_byte
+    }
+
+    fn is_modified(&self) -> bool {
+        self.active_state().buffer.is_modified()
     }
 }
