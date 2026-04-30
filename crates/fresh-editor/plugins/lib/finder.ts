@@ -300,7 +300,16 @@ export function defaultFuzzyFilter<T>(
 // ============================================================================
 
 /**
- * Parse a grep-style output line (file:line:column:content)
+ * Parse a grep-style output line.
+ *
+ * Accepts both `file:line:column:content` (ripgrep, ag, git-grep with
+ * `--column`, GNU grep with `--column`) and `file:line:content`
+ * (POSIX grep, BSD grep, plenty of custom wrappers that omit the
+ * column). When the column is missing it defaults to 1.
+ *
+ * Returns null only if the line lacks even a `file:line:` prefix —
+ * pure header lines (ripgrep without `--no-heading`, blank lines)
+ * are filtered upstream by the caller's `if (!line.trim()) continue`.
  */
 export function parseGrepLine(line: string): {
   file: string;
@@ -308,13 +317,25 @@ export function parseGrepLine(line: string): {
   column: number;
   content: string;
 } | null {
-  const match = line.match(/^([^:]+):(\d+):(\d+):(.*)$/);
-  if (match) {
+  // Try the four-field shape first so a content payload that
+  // happens to start with digits (e.g. `42 = solve(...)`) doesn't
+  // get mistaken for a column number under the three-field path.
+  const four = line.match(/^([^:]+):(\d+):(\d+):(.*)$/);
+  if (four) {
     return {
-      file: match[1],
-      line: parseInt(match[2], 10),
-      column: parseInt(match[3], 10),
-      content: match[4],
+      file: four[1],
+      line: parseInt(four[2], 10),
+      column: parseInt(four[3], 10),
+      content: four[4],
+    };
+  }
+  const three = line.match(/^([^:]+):(\d+):(.*)$/);
+  if (three) {
+    return {
+      file: three[1],
+      line: parseInt(three[2], 10),
+      column: 1,
+      content: three[3],
     };
   }
   return null;
