@@ -880,11 +880,7 @@ impl Editor {
         // the file changed) and seed the phantom leaf's cursor before
         // the renderer reaches it. Done before render_prompt_popups
         // because that path immediately needs the leaf's view state.
-        if self
-            .prompt
-            .as_ref()
-            .is_some_and(|p| p.overlay)
-        {
+        if self.prompt.as_ref().is_some_and(|p| p.overlay) {
             self.prepare_overlay_preview();
         }
 
@@ -1636,9 +1632,10 @@ impl Editor {
                             .iter()
                             .find_map(|t| t.as_buffer())
                             .or_else(|| {
-                                self.buffers.keys().copied().find(|b| {
-                                    *b != buffer_id && !preview_loaded.contains(b)
-                                })
+                                self.buffers
+                                    .keys()
+                                    .copied()
+                                    .find(|b| *b != buffer_id && !preview_loaded.contains(b))
                             });
                         if let Some(fb) = fallback {
                             source_state.switch_buffer(fb);
@@ -1683,12 +1680,11 @@ impl Editor {
                     loaded_buffers.insert(buffer_id);
                 }
             }
-            self.overlay_preview_state =
-                Some(crate::app::types::OverlayPreviewState {
-                    buffer_id,
-                    view_state,
-                    loaded_buffers,
-                });
+            self.overlay_preview_state = Some(crate::app::types::OverlayPreviewState {
+                buffer_id,
+                view_state,
+                loaded_buffers,
+            });
         } else if let Some(state) = self.overlay_preview_state.as_mut() {
             if state.buffer_id != buffer_id {
                 state.view_state.switch_buffer(buffer_id);
@@ -1706,10 +1702,8 @@ impl Editor {
             .buffers
             .get(&buffer_id)
             .map(|s| {
-                s.buffer.position_to_offset(crate::model::piece_tree::Position {
-                    line,
-                    column: col,
-                })
+                s.buffer
+                    .position_to_offset(crate::model::piece_tree::Position { line, column: col })
             })
             .unwrap_or(0);
         let line_start = self
@@ -1948,21 +1942,15 @@ impl Editor {
                     // splitting between &self.ansi_background and
                     // &mut self.buffers et al. since they don't alias.
                     let bg_fade = self.background_fade;
-                    let estimated_line_length =
-                        self.config.editor.estimated_line_length;
-                    let highlight_context_bytes =
-                        self.config.editor.highlight_context_bytes;
-                    let relative_line_numbers =
-                        self.config.editor.relative_line_numbers;
+                    let estimated_line_length = self.config.editor.estimated_line_length;
+                    let highlight_context_bytes = self.config.editor.highlight_context_bytes;
+                    let relative_line_numbers = self.config.editor.relative_line_numbers;
                     let use_terminal_bg = self.config.editor.use_terminal_bg;
-                    let session_mode =
-                        self.session_mode || !self.software_cursor_only;
+                    let session_mode = self.session_mode || !self.software_cursor_only;
                     let software_cursor_only = self.software_cursor_only;
-                    let diagnostics_inline_text =
-                        self.config.editor.diagnostics_inline_text;
+                    let diagnostics_inline_text = self.config.editor.diagnostics_inline_text;
                     let show_tilde = false; // preview hides tilde markers
-                    let highlight_current_column =
-                        self.config.editor.highlight_current_column;
+                    let highlight_current_column = self.config.editor.highlight_current_column;
                     let screen_width = frame.area().width;
 
                     let ansi_ref = self.ansi_background.as_ref();
@@ -1981,8 +1969,7 @@ impl Editor {
                         let cursors = buf_state.cursors.clone();
                         let view_mode = buf_state.view_mode.clone();
                         let compose_width = buf_state.compose_width;
-                        let compose_column_guides =
-                            buf_state.compose_column_guides.clone();
+                        let compose_column_guides = buf_state.compose_column_guides.clone();
                         let view_transform = buf_state.view_transform.clone();
                         let rulers = buf_state.rulers.clone();
                         let show_line_numbers = buf_state.show_line_numbers;

@@ -615,9 +615,7 @@ impl Editor {
             .filter(|s| !s.disabled)
             .filter_map(|s| {
                 let from_text = parse_path_line_col(&s.text);
-                let (file, line, column) = if !from_text.0.is_empty()
-                    && from_text.1.is_some()
-                {
+                let (file, line, column) = if !from_text.0.is_empty() && from_text.1.is_some() {
                     from_text
                 } else if let Some(v) = s.value.as_deref() {
                     parse_path_line_col(v)

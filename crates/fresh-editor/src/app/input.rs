@@ -93,13 +93,7 @@ impl Editor {
         let header = format!("Quickfix: {} ({} matches)\n", query, matches.len());
         entries.push(TextPropertyEntry::text(header));
         for m in &matches {
-            let line = format!(
-                "{}:{}:{}  {}\n",
-                m.file,
-                m.line,
-                m.column,
-                m.content.trim()
-            );
+            let line = format!("{}:{}:{}  {}\n", m.file, m.line, m.column, m.content.trim());
             entries.push(TextPropertyEntry::text(line));
         }
 
@@ -119,10 +113,7 @@ impl Editor {
                     self.split_manager.set_active_split(dock_leaf);
                     self.set_pane_buffer(dock_leaf, existing);
                 }
-                self.set_status_message(format!(
-                    "Quickfix updated: {} matches",
-                    matches.len()
-                ));
+                self.set_status_message(format!("Quickfix updated: {} matches", matches.len()));
                 return;
             }
             // Stale entry — remove and fall through to create.
@@ -136,11 +127,8 @@ impl Editor {
         let source_split_before_create = self.split_manager.active_split();
 
         // Create the virtual buffer for the Quickfix list.
-        let buffer_id = self.create_virtual_buffer(
-            "*Quickfix*".to_string(),
-            "quickfix-list".to_string(),
-            true,
-        );
+        let buffer_id =
+            self.create_virtual_buffer("*Quickfix*".to_string(), "quickfix-list".to_string(), true);
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.margins.configure_for_line_numbers(false);
             state.show_cursors = true;
@@ -155,47 +143,45 @@ impl Editor {
         // Place the buffer in the dock — reuse the existing dock leaf
         // if any; otherwise create one at the bottom (horizontal,
         // ratio 0.3) and tag it as the dock.
-        let dock_leaf = if let Some(dock_leaf) =
-            self.split_manager.find_leaf_by_role(SplitRole::UtilityDock)
-        {
-            self.split_manager.set_active_split(dock_leaf);
-            self.set_pane_buffer(dock_leaf, buffer_id);
-            Some(dock_leaf)
-        } else {
-            match self.split_manager.split_active_positioned(
-                SplitDirection::Horizontal,
-                buffer_id,
-                0.7,
-                false, /* place dock after = bottom */
-            ) {
-                Ok(new_leaf) => {
-                    let mut view_state =
-                        crate::view::split::SplitViewState::with_buffer(
+        let dock_leaf =
+            if let Some(dock_leaf) = self.split_manager.find_leaf_by_role(SplitRole::UtilityDock) {
+                self.split_manager.set_active_split(dock_leaf);
+                self.set_pane_buffer(dock_leaf, buffer_id);
+                Some(dock_leaf)
+            } else {
+                match self.split_manager.split_active_positioned(
+                    SplitDirection::Horizontal,
+                    buffer_id,
+                    0.7,
+                    false, /* place dock after = bottom */
+                ) {
+                    Ok(new_leaf) => {
+                        let mut view_state = crate::view::split::SplitViewState::with_buffer(
                             self.terminal_width,
                             self.terminal_height,
                             buffer_id,
                         );
-                    view_state.apply_config_defaults(
-                        self.config.editor.line_numbers,
-                        self.config.editor.highlight_current_line,
-                        self.resolve_line_wrap_for_buffer(buffer_id),
-                        self.config.editor.wrap_indent,
-                        self.resolve_wrap_column_for_buffer(buffer_id),
-                        self.config.editor.rulers.clone(),
-                    );
-                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = false;
-                    self.split_view_states.insert(new_leaf, view_state);
-                    self.split_manager
-                        .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
-                    self.split_manager.set_active_split(new_leaf);
-                    Some(new_leaf)
+                        view_state.apply_config_defaults(
+                            self.config.editor.line_numbers,
+                            self.config.editor.highlight_current_line,
+                            self.resolve_line_wrap_for_buffer(buffer_id),
+                            self.config.editor.wrap_indent,
+                            self.resolve_wrap_column_for_buffer(buffer_id),
+                            self.config.editor.rulers.clone(),
+                        );
+                        view_state.ensure_buffer_state(buffer_id).show_line_numbers = false;
+                        self.split_view_states.insert(new_leaf, view_state);
+                        self.split_manager
+                            .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
+                        self.split_manager.set_active_split(new_leaf);
+                        Some(new_leaf)
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create dock split for quickfix: {}", e);
+                        return;
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Failed to create dock split for quickfix: {}", e);
-                    return;
-                }
-            }
-        };
+            };
 
         // Drop the phantom tab from the source split so the Quickfix
         // buffer only appears in the dock. Skip if (somehow) the dock
@@ -996,23 +982,16 @@ impl Editor {
                                     .push(("start_live_grep".to_string(), receiver));
                             }
                             Err(e) => {
-                                self.set_status_message(format!(
-                                    "Live Grep unavailable: {}",
-                                    e
-                                ));
+                                self.set_status_message(format!("Live Grep unavailable: {}", e));
                             }
                         }
                     } else {
-                        self.set_status_message(
-                            "Live Grep plugin not loaded".to_string(),
-                        );
+                        self.set_status_message("Live Grep plugin not loaded".to_string());
                     }
                 }
                 #[cfg(not(feature = "plugins"))]
                 {
-                    self.set_status_message(
-                        "Live Grep requires the plugins feature".to_string(),
-                    );
+                    self.set_status_message("Live Grep requires the plugins feature".to_string());
                 }
             }
             Action::ResumeLiveGrep => {
@@ -1113,9 +1092,7 @@ impl Editor {
                     )
                 };
                 if matches.is_empty() {
-                    self.set_status_message(
-                        "No Live Grep results to export".to_string(),
-                    );
+                    self.set_status_message("No Live Grep results to export".to_string());
                     return Ok(());
                 }
                 // Dismiss the prompt before mutating split tree.
@@ -1125,9 +1102,8 @@ impl Editor {
             }
             Action::ToggleUtilityDock => {
                 use crate::view::split::SplitRole;
-                if let Some(dock_leaf) = self
-                    .split_manager
-                    .find_leaf_by_role(SplitRole::UtilityDock)
+                if let Some(dock_leaf) =
+                    self.split_manager.find_leaf_by_role(SplitRole::UtilityDock)
                 {
                     let active = self.split_manager.active_split();
                     if active == dock_leaf {
@@ -1150,9 +1126,7 @@ impl Editor {
                 use crate::model::event::SplitDirection;
                 use crate::view::split::SplitRole;
                 // Ensure a dock leaf exists, creating one if needed.
-                let dock_leaf = self
-                    .split_manager
-                    .find_leaf_by_role(SplitRole::UtilityDock);
+                let dock_leaf = self.split_manager.find_leaf_by_role(SplitRole::UtilityDock);
                 let dock_leaf = match dock_leaf {
                     Some(leaf) => leaf,
                     None => {

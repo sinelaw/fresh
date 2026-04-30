@@ -213,9 +213,7 @@ impl SplitRenderer {
         view_mode: crate::state::ViewMode,
         compose_width: Option<u16>,
         compose_column_guides: Option<Vec<u16>>,
-        view_transform: Option<
-            crate::services::plugins::api::ViewTransformPayload,
-        >,
+        view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
         estimated_line_length: usize,
         highlight_context_bytes: usize,
         buffer_id: BufferId,

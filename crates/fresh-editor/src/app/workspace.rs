@@ -1390,7 +1390,8 @@ impl Editor {
                 // first to preserve the at-most-one-leaf-per-role invariant).
                 if let Some(role) = role {
                     self.split_manager.clear_role(*role);
-                    self.split_manager.set_leaf_role(current_leaf_id, Some(*role));
+                    self.split_manager
+                        .set_leaf_role(current_leaf_id, Some(*role));
                 }
 
                 // Restore the view state for this split
@@ -1433,7 +1434,8 @@ impl Editor {
                 // invariant as the file-leaf branch above).
                 if let Some(role) = role {
                     self.split_manager.clear_role(*role);
-                    self.split_manager.set_leaf_role(current_leaf_id, Some(*role));
+                    self.split_manager
+                        .set_leaf_role(current_leaf_id, Some(*role));
                 }
 
                 self.split_manager
