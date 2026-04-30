@@ -83,6 +83,26 @@ impl Default for BufferTheorem {
     }
 }
 
+/// Wrap-sensitive theorems need a tighter terminal to actually
+/// trigger wrapping. Use this struct when the default 80×24 won't
+/// produce the layout you need. The default runner
+/// `assert_buffer_theorem` always uses 80×24; for custom dimensions
+/// use [`assert_buffer_theorem_with_terminal`].
+#[derive(Debug, Clone, Copy)]
+pub struct TerminalSize {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl Default for TerminalSize {
+    fn default() -> Self {
+        Self {
+            width: 80,
+            height: 24,
+        }
+    }
+}
+
 /// Apply `action` `n` times. Useful for lifting `for _ in 0..n
 /// { send_key(...) }` into a single declarative repetition.
 pub fn repeat(action: Action, n: usize) -> impl Iterator<Item = Action> {
@@ -103,15 +123,25 @@ pub fn repeat(action: Action, n: usize) -> impl Iterator<Item = Action> {
 /// it depends on layout state (e.g. viewport scroll), it is in the wrong
 /// domain — use `LayoutTheorem` or keep the test imperative.
 pub fn check_buffer_theorem(t: BufferTheorem) -> Result<(), TheoremFailure> {
-    // 80×24 is the default; layout dimensions are irrelevant because
-    // the renderer never runs. We use `with_temp_project` so the test
-    // gets an isolated working directory (per CONTRIBUTING.md §3.4).
+    check_buffer_theorem_with_terminal(t, TerminalSize::default())
+}
+
+/// Same as [`check_buffer_theorem`] but with custom terminal
+/// dimensions. Use this for wrap-sensitive theorems where the
+/// default 80×24 doesn't produce the layout you need (e.g.,
+/// SmartHome over a soft-wrapped continuation line).
+pub fn check_buffer_theorem_with_terminal(
+    t: BufferTheorem,
+    term: TerminalSize,
+) -> Result<(), TheoremFailure> {
+    // We use `with_temp_project` so the test gets an isolated working
+    // directory (per CONTRIBUTING.md §3.4).
     //
     // Harness construction failures are infrastructure-level (no
     // disk, no temp dir) and are not theorem failures — they bubble
     // up as panics from the helper. An external driver running this
     // in a tight loop should already trust its environment.
-    let mut harness = EditorTestHarness::with_temp_project(80, 24)
+    let mut harness = EditorTestHarness::with_temp_project(term.width, term.height)
         .expect("EditorTestHarness::with_temp_project failed");
     let _fixture = harness
         .load_buffer_from_text(t.initial_text)
@@ -199,6 +229,13 @@ pub fn check_buffer_theorem(t: BufferTheorem) -> Result<(), TheoremFailure> {
 /// `#[should_panic(expected = "…")]` meta-tests continue to work.
 pub fn assert_buffer_theorem(t: BufferTheorem) {
     if let Err(f) = check_buffer_theorem(t) {
+        panic!("{f}");
+    }
+}
+
+/// Panicking wrapper around [`check_buffer_theorem_with_terminal`].
+pub fn assert_buffer_theorem_with_terminal(t: BufferTheorem, term: TerminalSize) {
+    if let Err(f) = check_buffer_theorem_with_terminal(t, term) {
         panic!("{f}");
     }
 }
