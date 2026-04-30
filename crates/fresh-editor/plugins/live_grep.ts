@@ -431,11 +431,13 @@ async function cycleProvider(): Promise<void> {
     }
     if (!ok) continue;
     cachedSelected = candidate;
-    editor.setStatus(`Live Grep: switched to ${candidate.name}`);
     // Re-run the current query through the new provider so the
     // result list updates without the user having to type a
-    // throwaway character.
+    // throwaway character. `refresh()` itself sets status to
+    // "Found N matches" — we want the user to see the *cycle*
+    // result, so re-set the status afterwards.
     await finder.refresh();
+    editor.setStatus(`Live Grep: switched to ${candidate.name}`);
     return;
   }
   editor.setStatus("Live Grep: no available providers");
