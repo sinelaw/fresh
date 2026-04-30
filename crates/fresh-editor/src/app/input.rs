@@ -1002,7 +1002,7 @@ impl Editor {
                 // fresh Live Grep invocation.
                 let cached = self.live_grep_last_state.clone();
                 match cached {
-                    Some(state) if state.cached_results.is_some() => {
+                    Some(state) if state.cached_results.as_ref().is_some_and(|r| !r.is_empty()) => {
                         let results = state.cached_results.unwrap_or_default();
                         // Map cached GrepMatch records back into prompt
                         // Suggestions. The text is "file:line", the

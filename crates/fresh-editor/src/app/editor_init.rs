@@ -1340,6 +1340,23 @@ impl Editor {
         }
     }
 
+    /// Test-only accessor for the Live Grep Resume cache (issue #1796).
+    #[doc(hidden)]
+    pub fn live_grep_last_state_for_tests(
+        &self,
+    ) -> Option<&crate::services::live_grep_state::LiveGrepLastState> {
+        self.live_grep_last_state.as_ref()
+    }
+
+    /// Test-only setter for the Live Grep Resume cache.
+    #[doc(hidden)]
+    pub fn set_live_grep_last_state_for_tests(
+        &mut self,
+        state: Option<crate::services::live_grep_state::LiveGrepLastState>,
+    ) {
+        self.live_grep_last_state = state;
+    }
+
     /// Refresh the plugin-readable keybinding-label snapshot from
     /// the current keymap. Call this whenever a plugin is about to
     /// surface key hints in its UI (overlay headers, tooltips,

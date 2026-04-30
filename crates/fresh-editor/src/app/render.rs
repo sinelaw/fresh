@@ -1818,10 +1818,35 @@ impl Editor {
 
         // Clear and frame. Plugin-owned prompts can publish their
         // own title via `editor.setPromptTitle(...)`; falls back to
-        // " Live Grep " when unset (so a Resume-replay prompt and
-        // freshly-opened plugin prompt look the same).
+        // " Live Grep " plus shortcut hints when unset (so a
+        // Resume-replay prompt and freshly-opened plugin prompt look
+        // similar even though they take different code paths).
         frame.render_widget(Clear, overlay_rect);
-        let default_title = " Live Grep ";
+        let default_title_owned: String = {
+            use crate::input::keybindings::KeyContext;
+            let keybindings = self.keybindings.read().unwrap();
+            let mut hints: Vec<String> = Vec::new();
+            if let Some(k) = keybindings
+                .find_keybinding_for_action("cycle_live_grep_provider", KeyContext::Prompt)
+            {
+                hints.push(format!("{k} cycle"));
+            }
+            if let Some(k) = keybindings
+                .find_keybinding_for_action("live_grep_export_quickfix", KeyContext::Prompt)
+            {
+                hints.push(format!("{k} → Quickfix"));
+            }
+            if let Some(k) =
+                keybindings.find_keybinding_for_action("resume_live_grep", KeyContext::Normal)
+            {
+                hints.push(format!("{k} resume"));
+            }
+            if hints.is_empty() {
+                " Live Grep ".to_string()
+            } else {
+                format!(" Live Grep · {} ", hints.join(" · "))
+            }
+        };
         let title_owned: String;
         let title: &str = match prompt.title.as_deref() {
             Some(t) if !t.is_empty() => {
@@ -1830,7 +1855,7 @@ impl Editor {
                 title_owned = format!(" {} ", t.trim());
                 &title_owned
             }
-            _ => default_title,
+            _ => &default_title_owned,
         };
         let block = Block::default()
             .borders(Borders::ALL)

@@ -149,17 +149,26 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
   // header so the user always knows which backend is producing
   // the results, even after the search-result status overwrites
   // any one-shot "switched to" message. Append the actual bound
-  // cycle key (Alt+P by default; whatever the user remapped to)
-  // as a hint — pulled from the editor's keybinding registry, not
-  // hardcoded, so it always matches the user's actual config.
+  // shortcuts (whatever the user remapped to) as hints — pulled
+  // from the editor's keybinding registry, not hardcoded, so they
+  // always match the user's actual config.
+  const hints: string[] = [];
   const cycleKey = editor.getKeybindingLabel(
     "cycle_live_grep_provider",
     "prompt"
   );
-  const cycleHint = cycleKey ? ` · ${cycleKey} to cycle` : "";
+  if (cycleKey) hints.push(`${cycleKey} cycle`);
+  const exportKey = editor.getKeybindingLabel(
+    "live_grep_export_quickfix",
+    "prompt"
+  );
+  if (exportKey) hints.push(`${exportKey} → Quickfix`);
+  const resumeKey = editor.getKeybindingLabel("resume_live_grep", "normal");
+  if (resumeKey) hints.push(`${resumeKey} resume`);
+  const hintSuffix = hints.length > 0 ? ` · ${hints.join(" · ")}` : "";
   const label = provider
-    ? `Live Grep · ${provider.name}${cycleHint}`
-    : `Live Grep${cycleHint}`;
+    ? `Live Grep · ${provider.name}${hintSuffix}`
+    : `Live Grep${hintSuffix}`;
   editor.setPromptTitle(label);
 }
 

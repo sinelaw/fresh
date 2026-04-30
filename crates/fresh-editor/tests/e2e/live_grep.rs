@@ -1,6 +1,9 @@
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::input::keybindings::Action;
+use fresh::services::live_grep_state::{GrepMatch, LiveGrepLastState};
+use fresh::view::prompt::PromptType;
 use std::fs;
 
 /// Test Live Grep plugin - basic search and preview functionality
@@ -414,5 +417,95 @@ fn test_live_grep_uses_working_dir() {
         status_bar.contains("Ln 1"),
         "Cursor should be on line 1 (the match line). Status bar: {}",
         status_bar
+    );
+}
+
+/// Regression test for issue #1796 (capture side): cancelling the
+/// Live Grep prompt with no input and no streamed results must NOT
+/// populate the Resume cache. Pre-fix, `cancel_prompt` stored
+/// `Some(LiveGrepLastState { cached_results: Some(vec![]), .. })`,
+/// which combined with the Resume gate's `cached_results.is_some()`
+/// check caused Resume to open an empty static popup.
+#[test]
+fn test_resume_live_grep_capture_skips_empty_dismissal() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness
+        .editor_mut()
+        .start_prompt("Live grep: ".to_string(), PromptType::LiveGrep);
+    // Press Esc immediately — no input typed, no results seeded.
+    harness.editor_mut().cancel_prompt();
+
+    assert!(
+        harness.editor().live_grep_last_state_for_tests().is_none(),
+        "Cancelling Live Grep with empty input must not populate the Resume cache; \
+         pre-fix this stored Some(LiveGrepLastState {{ cached_results: Some(vec![]), .. }}) \
+         which made Resume open an empty popup."
+    );
+}
+
+/// Regression test for issue #1796 (replay side): even if a degenerate
+/// `Some(empty Vec)` cache is somehow present, `ResumeLiveGrep` must
+/// fall through to the fresh-start path rather than seeding an empty
+/// `PromptType::LiveGrep` overlay. Defends against any future code
+/// path that writes such a state, independent of the capture-side gate.
+#[test]
+fn test_resume_live_grep_replay_skips_empty_cache() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness
+        .editor_mut()
+        .set_live_grep_last_state_for_tests(Some(LiveGrepLastState {
+            query: String::new(),
+            selected_index: None,
+            cached_results: Some(Vec::<GrepMatch>::new()),
+            cached_at: None,
+            last_results_snapshot_id: None,
+        }));
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::ResumeLiveGrep);
+
+    // Plugins aren't loaded in this minimal harness, so the fresh-start
+    // path can't create a plugin prompt. Pre-fix the replay branch would
+    // still seed a PromptType::LiveGrep overlay from the empty cache —
+    // post-fix the gate rejects empty results so no prompt opens.
+    let prompt_input = harness.editor().prompt_input();
+    assert!(
+        prompt_input.is_none(),
+        "Resume with an empty cached_results must fall through to the fresh-start \
+         path, not seed a PromptType::LiveGrep overlay from the empty cache. \
+         Got prompt_input = {:?}",
+        prompt_input
+    );
+}
+
+/// Companion test: when there *is* a real cached state (non-empty
+/// query and non-empty results), Resume must restore it.
+#[test]
+fn test_resume_live_grep_restores_real_cached_state() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness
+        .editor_mut()
+        .set_live_grep_last_state_for_tests(Some(LiveGrepLastState {
+            query: "cached_query".to_string(),
+            selected_index: Some(0),
+            cached_results: Some(vec![GrepMatch {
+                file: "src/foo.rs".to_string(),
+                line: 42,
+                column: 1,
+                content: "fn cached_query() {}".to_string(),
+            }]),
+            cached_at: None,
+            last_results_snapshot_id: None,
+        }));
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::ResumeLiveGrep);
+    assert_eq!(
+        harness.editor().prompt_input(),
+        Some("cached_query"),
+        "Resume with a real cached state must restore the prior query"
     );
 }

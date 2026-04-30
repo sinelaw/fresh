@@ -679,6 +679,29 @@ impl Editor {
                     // because the live_grep plugin drives the prompt.
                     if custom_type == "live-grep" {
                         let cached = self.snapshot_prompt_results_for_grep(prompt);
+                        // Only cache when there's something useful to
+                        // resume — dismissing the prompt before
+                        // typing or before any results streamed in
+                        // shouldn't mark the cache as "valid", or
+                        // Resume sees `cached_results.is_some()`
+                        // (empty Vec) and enters the restore branch
+                        // with zero entries, producing an empty
+                        // popup.
+                        if !prompt.input.is_empty() && !cached.is_empty() {
+                            self.live_grep_last_state =
+                                Some(crate::services::live_grep_state::LiveGrepLastState {
+                                    query: prompt.input.clone(),
+                                    selected_index: prompt.selected_suggestion,
+                                    cached_results: Some(cached),
+                                    cached_at: Some(std::time::Instant::now()),
+                                    last_results_snapshot_id: None,
+                                });
+                        }
+                    }
+                }
+                PromptType::LiveGrep => {
+                    let cached = self.snapshot_prompt_results_for_grep(prompt);
+                    if !prompt.input.is_empty() && !cached.is_empty() {
                         self.live_grep_last_state =
                             Some(crate::services::live_grep_state::LiveGrepLastState {
                                 query: prompt.input.clone(),
@@ -688,17 +711,6 @@ impl Editor {
                                 last_results_snapshot_id: None,
                             });
                     }
-                }
-                PromptType::LiveGrep => {
-                    let cached = self.snapshot_prompt_results_for_grep(prompt);
-                    self.live_grep_last_state =
-                        Some(crate::services::live_grep_state::LiveGrepLastState {
-                            query: prompt.input.clone(),
-                            selected_index: prompt.selected_suggestion,
-                            cached_results: Some(cached),
-                            cached_at: Some(std::time::Instant::now()),
-                            last_results_snapshot_id: None,
-                        });
                 }
                 PromptType::LspRename { overlay_handle, .. } => {
                     // Remove the rename overlay when cancelling
