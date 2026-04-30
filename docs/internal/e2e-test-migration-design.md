@@ -1,9 +1,9 @@
 # E2E Test Migration — From Imperative Harness to Declarative Theorems
 
 **Status:** Phases 1, 2, 3, A, B, C, D all landed on
-`claude/e2e-test-migration-design-HxHlO`. Test suite green (53 passing,
-0 ignored). Framework proven by finding *and fixing* two real
-production bugs (track A → fixed in `d95b9d1`).
+`claude/e2e-test-migration-design-HxHlO`. Test suite green (67 passing,
+0 ignored). Framework proven by finding *and fixing* three real
+production bugs (proptest found two; theorem migration found a third).
 **Branch:** `claude/e2e-test-migration-design-HxHlO`
 **Owner:** TBD
 **Scope:** `crates/fresh-editor/tests/e2e/*` (~220 files)
@@ -21,11 +21,12 @@ production bugs (track A → fixed in `d95b9d1`).
 | B — E2E migrations | `9de5787` | +302 | sort_lines (3), indent_dedent (3), select_to_paragraph (2), smart_home (2). Theorem revealed an unstated `SortLines` selection-clearing asymmetry. |
 | C — observables on demand | (in B commit) | — | `TerminalSize` + `assert_buffer_theorem_with_terminal` added because smart_home's wrap variant needs custom dimensions |
 | D1 — serde failures | `4925f8a` | ~40 | `TheoremFailure: Serialize + Deserialize`; JSON round-trip meta-test. External drivers can write to dashboards / CI artifacts / replay logs without string parsing. |
-| **Bug fixes** | `d95b9d1` | +13/-21 | Both latent bugs fixed: `prefix_bytes.last()` instead of OOB indexing in actions.rs; `.min(deleted_text.len())` clamp in state.rs. All `#[ignore]` annotations removed. |
+| **Bug fixes (1)** | `d95b9d1` | +13/-21 | Both latent bugs fixed: `prefix_bytes.last()` instead of OOB indexing in actions.rs; `.min(deleted_text.len())` clamp in state.rs. All `#[ignore]` annotations removed. |
+| **Track B (continued)** | `ad4887a` | +364/-30 | `duplicate_line` (5 theorems), `emacs_actions` (8 + 1 #[ignore]'d bug). Theorem migration of `test_open_line_basic` revealed a 3rd bug: `Action::OpenLine` advances the cursor instead of staying put (Emacs C-o intent). |
+| **Bug fixes (2)** | (next commit) | small | OpenLine handler emits a follow-up `Event::MoveCursor` to restore the cursor position. The `#[ignore]`'d theorem flips to a passing regression test plus a "type-after-OpenLine inserts on the original line" companion. |
 
-**Final test count:** 53 passing, 0 ignored, 0 failing. The previously
-ignored property tests and regression repros now run as permanent
-coverage.
+**Final test count:** 67 passing, 0 ignored, 0 failing. Every formerly-
+`#[ignore]`d property and regression repro is now permanent coverage.
 
 **13 declarative theorems** under `tests/semantic/`, each one
 mathematically pinning down behavior the imperative originals were

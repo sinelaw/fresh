@@ -2883,14 +2883,28 @@ pub fn action_to_events(
         }
 
         Action::OpenLine => {
-            // Insert a newline at cursor position but don't move cursor
-            // (like pressing Enter but staying on current line)
+            // Insert a newline at the cursor position and immediately
+            // move the cursor back — Emacs C-o semantics ("open a
+            // blank line after the cursor without advancing it").
+            // Without the follow-up MoveCursor, `apply_insert`
+            // advances the cursor by `text.len()` and OpenLine becomes
+            // indistinguishable from Enter.
             let line_ending = state.buffer.line_ending().as_str();
+            let len = line_ending.len();
             for (cursor_id, cursor) in cursors.iter() {
                 events.push(Event::Insert {
                     position: cursor.position,
                     text: line_ending.to_string(),
                     cursor_id,
+                });
+                events.push(Event::MoveCursor {
+                    cursor_id,
+                    old_position: cursor.position + len,
+                    new_position: cursor.position,
+                    old_anchor: cursor.anchor,
+                    new_anchor: cursor.anchor,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: cursor.sticky_column,
                 });
             }
         }

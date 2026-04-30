@@ -78,27 +78,13 @@ fn theorem_transpose_chars_at_end_is_noop() {
 // OpenLine (Emacs C-o)
 // ─────────────────────────────────────────────────────────────────────────
 
-// FINDING: `Action::OpenLine`'s source comment in
-// `src/input/actions.rs:2885-2887` says "Insert a newline at cursor
-// position but don't move cursor". The implementation just emits an
-// `Event::Insert("\n")`, and `apply_insert` advances the cursor by
-// `text.len()` — so OpenLine *does* advance the cursor past the
-// inserted newline. The original e2e tests `test_open_line_basic` /
-// `test_open_line_at_beginning` were silent about cursor position
-// (they captured `cursor_before` and never compared it), so this
-// divergence between intent and behavior was invisible.
-//
-// The theorems below pin the *actual* behavior. The intent is
-// captured separately as `#[ignore]`d theorems below to make the gap
-// visible. Removing the `#[ignore]` once OpenLine is fixed will
-// upgrade those theorems to permanent regression coverage.
-
 #[test]
-fn theorem_open_line_inserts_newline_actual_behavior() {
-    // Pins the *actual* current behavior (cursor advances past the
-    // inserted newline, like Enter). See the FINDING block above.
+fn theorem_open_line_inserts_newline_without_advancing_cursor() {
+    // Emacs C-o semantics: insert a newline AT the cursor and leave
+    // the cursor where it was. A subsequent type appears on the
+    // original (upper) line, not the new (lower) one.
     assert_buffer_theorem(BufferTheorem {
-        description: "OpenLine inserts a newline (cursor advances past it — actual behavior)",
+        description: "OpenLine inserts a newline; cursor stays at insertion point",
         initial_text: "hello",
         // Move to position 3 ("hel|lo") then OpenLine.
         actions: vec![
@@ -108,43 +94,45 @@ fn theorem_open_line_inserts_newline_actual_behavior() {
             Action::OpenLine,
         ],
         expected_text: "hel\nlo",
-        expected_primary: CursorExpect::at(4),
+        expected_primary: CursorExpect::at(3),
         expected_extra_cursors: vec![],
         expected_selection_text: None,
     });
 }
 
 #[test]
-fn theorem_open_line_at_beginning_actual_behavior() {
-    // Pins the *actual* behavior at position 0.
+fn theorem_open_line_at_beginning_inserts_leading_newline() {
+    // Replaces test_open_line_at_beginning. Cursor at position 0
+    // before AND after — the inserted newline ends up *after* the
+    // cursor.
     assert_buffer_theorem(BufferTheorem {
-        description: "OpenLine at beginning inserts a leading newline (cursor advances)",
+        description: "OpenLine at beginning inserts a leading newline; cursor stays at 0",
         initial_text: "hello",
         actions: vec![Action::MoveDocumentStart, Action::OpenLine],
         expected_text: "\nhello",
-        expected_primary: CursorExpect::at(1),
+        expected_primary: CursorExpect::at(0),
         expected_extra_cursors: vec![],
         expected_selection_text: None,
     });
 }
 
 #[test]
-#[ignore = "BUG: actions.rs:2885 — OpenLine advances cursor; comment says it shouldn't (Emacs C-o intent)"]
-fn theorem_open_line_intended_behavior_cursor_stays_put() {
-    // The intended behavior per the source comment and Emacs C-o
-    // semantics: cursor stays at the insertion point so subsequent
-    // typing appears on the original (upper) line.
+fn theorem_open_line_then_typing_inserts_on_original_line() {
+    // Regression test for the bug fixed in the OpenLine handler:
+    // before the fix, the cursor advanced past the newline so this
+    // sequence produced "hel\nXlo" instead of "helX\nlo".
     assert_buffer_theorem(BufferTheorem {
-        description: "OpenLine should leave cursor at insertion point (intended)",
+        description: "After OpenLine, typing inserts on the original (upper) line",
         initial_text: "hello",
         actions: vec![
             Action::MoveDocumentEnd,
             Action::MoveLeft,
             Action::MoveLeft,
             Action::OpenLine,
+            Action::InsertChar('X'),
         ],
-        expected_text: "hel\nlo",
-        expected_primary: CursorExpect::at(3),
+        expected_text: "helX\nlo",
+        expected_primary: CursorExpect::at(4),
         expected_extra_cursors: vec![],
         expected_selection_text: None,
     });
