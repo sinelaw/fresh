@@ -2,6 +2,8 @@
 // failures grouped and discoverable.
 
 pub mod case_conversion;
+pub mod duplicate_line;
+pub mod emacs_actions;
 pub mod indent_dedent;
 pub mod layout;
 pub mod multicursor;

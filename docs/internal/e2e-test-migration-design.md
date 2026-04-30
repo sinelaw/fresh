@@ -1,8 +1,9 @@
 # E2E Test Migration — From Imperative Harness to Declarative Theorems
 
 **Status:** Phases 1, 2, 3, A, B, C, D all landed on
-`claude/e2e-test-migration-design-HxHlO`. Test suite green, framework
-proven by finding a real production bug (track A).
+`claude/e2e-test-migration-design-HxHlO`. Test suite green (53 passing,
+0 ignored). Framework proven by finding *and fixing* two real
+production bugs (track A → fixed in `d95b9d1`).
 **Branch:** `claude/e2e-test-migration-design-HxHlO`
 **Owner:** TBD
 **Scope:** `crates/fresh-editor/tests/e2e/*` (~220 files)
@@ -16,43 +17,52 @@ proven by finding a real production bug (track A).
 | 2 — `BufferTheorem` + PoC | `448fd4f` | +245 | Runner framework, `tests/semantic/case_conversion.rs` rewritten as a 12-line theorem |
 | 3 — Multi-cursor + Trace + minimal Layout | `d93d483` | +298 | Multi-cursor coverage, undo-roundtrip runner, viewport_top_byte observable |
 | Result-shape refactor | `a22a47d` | +388 | `check_*` returns `Result<(), TheoremFailure>`; `assert_*` is a thin panicking wrapper. Enables external drivers (fuzzers, generators, proof-search) without `catch_unwind` |
-| A — proptest properties | `53ec62c` | +356 | 3 properties driven by `check_*`; **found a real production bug** (`actions.rs:1613` smart-dedent panic on phantom line) in 70s of fuzzing |
+| A — proptest properties | `53ec62c` | +356 | 3 properties driven by `check_*`; **found two real production bugs** (`actions.rs:1613` smart-dedent panic, `state.rs:462` delete-backward OOB) in 70s of fuzzing |
 | B — E2E migrations | `9de5787` | +302 | sort_lines (3), indent_dedent (3), select_to_paragraph (2), smart_home (2). Theorem revealed an unstated `SortLines` selection-clearing asymmetry. |
 | C — observables on demand | (in B commit) | — | `TerminalSize` + `assert_buffer_theorem_with_terminal` added because smart_home's wrap variant needs custom dimensions |
-| D1 — serde failures | (next commit) | ~40 | `TheoremFailure: Serialize + Deserialize`; JSON round-trip meta-test. External drivers can write to dashboards / CI artifacts / replay logs without string parsing. |
-| D2 — this doc update | (next commit) | this section | — |
+| D1 — serde failures | `4925f8a` | ~40 | `TheoremFailure: Serialize + Deserialize`; JSON round-trip meta-test. External drivers can write to dashboards / CI artifacts / replay logs without string parsing. |
+| **Bug fixes** | `d95b9d1` | +13/-21 | Both latent bugs fixed: `prefix_bytes.last()` instead of OOB indexing in actions.rs; `.min(deleted_text.len())` clamp in state.rs. All `#[ignore]` annotations removed. |
 
-**Final test count:** 47 passing, 4 deliberately ignored (2 bug-finding
-properties + 2 minimal regression repros), 0 failing. Insert-only
-undo-identity property runs in ~30s for 32 cases.
+**Final test count:** 53 passing, 0 ignored, 0 failing. The previously
+ignored property tests and regression repros now run as permanent
+coverage.
 
 **13 declarative theorems** under `tests/semantic/`, each one
 mathematically pinning down behavior the imperative originals were
 silent or vague about (selection clearing, cursor position after
 sort, exact byte ranges of select-to-paragraph).
 
-**Two latent production bugs found by the property tests:**
+**Two latent production bugs found by the property tests, now fixed in `d95b9d1`:**
 
-1. `actions.rs:1613` — smart-dedent panics when the cursor's
-   recorded line_start is out of sync with the buffer.
-2. `state.rs:462` — `DeleteBackward`'s deleted-newline-counting
-   code indexes past `deleted_text.len()`.
+1. `actions.rs:1613` — smart-dedent: `prefix_bytes[prefix_len - 1]`
+   panicked when `cursor.position` was stale (past buffer end) so
+   `slice_bytes(line_start..cursor.position)` returned fewer bytes
+   than `prefix_len` implied. **Fix:** use `prefix_bytes.last()` and
+   guard on `!prefix_bytes.is_empty()`.
+2. `state.rs:462` — `DeleteBackward`'s newline-counter:
+   `deleted_text[..bytes_before_cursor]` panicked when `range.len()`
+   exceeded `deleted_text.len()` (stale range end past buffer).
+   **Fix:** also clamp with `.min(deleted_text.len())`.
 
-Both are the same family — cursor position out of sync with buffer
+Both were the same family — cursor position out of sync with buffer
 state after a chain of selection-replace + deletion actions on
-whitespace-only content.
+whitespace-only content. Option (b) from the original recommendation
+(fix the call sites) was chosen over option (a) (force layout
+reconciliation between actions in `handle_execute_actions`) because
+the call-site fixes are local, defensive, and don't slow down the
+batch dispatch path.
 
-**Reachability verified empirically:**
+**Reachability that motivated the fix:**
 
-| Path | Renders / reconciles between actions? | Crashes? |
+| Path | Renders / reconciles between actions? | Crashed before fix? |
 |---|---|---|
 | Interactive keystrokes (verified in tmux on the release binary) | yes (per keystroke) | no |
 | Macro replay (`play_macro` calls `recompute_layout` per action) | yes | no |
 | Property test `dispatch_seq` (no render between) | no | **yes** |
-| `handle_execute_actions` in `app/plugin_dispatch.rs` (vi-mode count prefixes like `3dw`, plugin-driven action batches) | **no** | **likely yes** |
+| `handle_execute_actions` in `app/plugin_dispatch.rs` (vi-mode count prefixes like `3dw`, plugin-driven action batches) | **no** | **yes** |
 
-The bugs are *latent* in the sense that the only production path
-that reaches them is the plugin/vi-count-prefix dispatch loop. The
+The bugs were *latent* in the sense that the only production path
+that reached them was the plugin/vi-count-prefix dispatch loop. The
 property tests' `evaluate_actions` mimics that path exactly — no
 render reconciliation between actions — which is what made them
 findable. The `play_macro` implementation in `app/macro_actions.rs`
@@ -62,17 +72,10 @@ first hint that the underlying invariant violation was real and
 known to be fragile.
 
 `diagnosis_bug{1,2}_does_not_panic_with_render_between` in
-`tests/semantic/regressions.rs` confirm the diagnosis: the same
+`tests/semantic/regressions.rs` confirmed the diagnosis: the same
 shrunk repros pass cleanly when `harness.render()` is called between
-every action.
-
-**Recommended fix:** either (a) make `handle_execute_actions` call
-`recompute_layout` between actions just like `play_macro` does
-(treats the symptom — same paper-over as macros use), or (b) audit
-`actions.rs:1613` and `state.rs:462` to recompute their cached
-line_start / bytes_before_cursor values from the live buffer instead
-of cursor state (treats the cause — but each callsite is a separate
-audit).
+every action. They remain in the suite as permanent guards against
+regression of the layout-reconciliation invariant.
 
 This validates the framework's premise: declarative theorem testing
 with a typed-failure external driver is materially better at finding
