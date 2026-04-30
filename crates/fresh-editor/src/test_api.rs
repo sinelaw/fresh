@@ -23,7 +23,11 @@
 //! tests don't depend on `HashMap` iteration order (cursors are stored in
 //! a hashmap internally).
 
-use crate::input::keybindings::Action;
+// Re-export Action so semantic tests can `use fresh::test_api::Action`
+// without reaching into `fresh::input::keybindings` directly. Keeping
+// the action alphabet behind the test_api module is part of the
+// one-directional contract documented in §2.1 of the design doc.
+pub use crate::input::keybindings::Action;
 
 /// A test-side projection of `crate::model::cursor::Cursor`.
 ///
