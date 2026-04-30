@@ -1336,6 +1336,31 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
+    // Live Grep (issue #1796) — `cmd.live_grep` itself is registered
+    // by the live_grep plugin (palette title is plugin-controlled);
+    // these are the editor-side actions that should also be palette-
+    // discoverable so the user can find them by name.
+    CommandDef {
+        name_key: "cmd.resume_live_grep",
+        desc_key: "cmd.resume_live_grep_desc",
+        action: || Action::ResumeLiveGrep,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_utility_dock",
+        desc_key: "cmd.toggle_utility_dock_desc",
+        action: || Action::ToggleUtilityDock,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.open_terminal_in_dock",
+        desc_key: "cmd.open_terminal_in_dock_desc",
+        action: || Action::OpenTerminalInDock,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
 ];
 
 /// Get all available commands for the command palette

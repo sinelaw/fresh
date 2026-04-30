@@ -1440,5 +1440,11 @@
   "action.live_grep_export_quickfix": "Export Live Grep results to Quickfix",
   "action.toggle_utility_dock": "Toggle Utility Dock focus",
   "action.open_terminal_in_dock": "Open terminal in Utility Dock",
-  "action.cycle_live_grep_provider": "Cycle Live Grep provider"
+  "action.cycle_live_grep_provider": "Cycle Live Grep provider",
+  "cmd.resume_live_grep": "Resume Live Grep",
+  "cmd.resume_live_grep_desc": "Reopen Live Grep with prior query",
+  "cmd.toggle_utility_dock": "Toggle Utility Dock focus",
+  "cmd.toggle_utility_dock_desc": "Move focus to/from the Utility Dock",
+  "cmd.open_terminal_in_dock": "Open Terminal in Utility Dock",
+  "cmd.open_terminal_in_dock_desc": "Open a new terminal inside the dock"
 }

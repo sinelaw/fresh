@@ -323,12 +323,23 @@ registerProvider({
 //
 //     editor.getPluginApi("live-grep")?.unregisterProvider("fff");
 //     editor.getPluginApi("live-grep")?.registerProvider({ ... });
+//
+// The probe uses `sh -c "command -v fff"` rather than `fff --version`
+// because not every tool packaged as "fff" implements `--version`
+// (the popular bash file-manager `fff` doesn't, for example, and
+// users may alias the name to a custom script). `command -v` is
+// POSIX-portable and only checks PATH membership, so isAvailable
+// is true iff the binary is reachable.
 registerProvider({
   name: "fff",
   priority: -4,
   isAvailable: async () => {
     try {
-      const r = await editor.spawnProcess("fff", ["--version"], editor.getCwd());
+      const r = await editor.spawnProcess(
+        "sh",
+        ["-c", "command -v fff"],
+        editor.getCwd()
+      );
       return r.exit_code === 0;
     } catch {
       return false;
