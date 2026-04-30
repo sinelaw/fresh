@@ -598,11 +598,12 @@ impl Editor {
             false, // Don't include gutter
             compose_width,
         ) else {
-            // Mouse is in gutter - clear hover state
+            // Mouse is in the gutter — stop tracking a pending request but keep
+            // any existing popup visible. The popup is only dismissed when the
+            // mouse leaves the editor area entirely (see docstring).
             if self.mouse_state.lsp_hover_state.is_some() {
                 self.mouse_state.lsp_hover_state = None;
                 self.mouse_state.lsp_hover_request_sent = false;
-                self.dismiss_transient_popups();
             }
             return;
         };
@@ -650,11 +651,13 @@ impl Editor {
             tracing::trace!(
                 "update_lsp_hover_state: mouse past line end or empty line, clearing hover"
             );
-            // Mouse is past end of line content - clear hover state and don't trigger new hover
+            // Mouse is past end of line content — stop tracking a pending
+            // request but keep any existing popup visible. The popup is only
+            // dismissed when the mouse leaves the editor area entirely
+            // (see docstring).
             if self.mouse_state.lsp_hover_state.is_some() {
                 self.mouse_state.lsp_hover_state = None;
                 self.mouse_state.lsp_hover_request_sent = false;
-                self.dismiss_transient_popups();
             }
             return;
         }
@@ -673,8 +676,11 @@ impl Editor {
                 // Same position - keep existing state
                 return;
             }
-            // Position changed outside symbol range - reset state and dismiss popup
-            self.dismiss_transient_popups();
+            // Position changed outside the hovered symbol range. Don't dismiss
+            // the popup here: a new hover request will fire after the debounce
+            // and replace the popup naturally if the mouse settles on another
+            // symbol. Dismissing eagerly tore the popup down whenever the
+            // mouse passed through whitespace between two words (issue #692).
         }
 
         // Start tracking new hover position

@@ -4247,6 +4247,105 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Regression test for issue #692.
+///
+/// When the user moves the mouse outside the hover popup, then back inside
+/// it, and then clicks inside the popup, the popup must stay visible (clicks
+/// inside a hover popup start a text selection — they are not a "dismiss"
+/// gesture). Previously the popup was torn down by the click in this
+/// sequence even though clicking without moving outside first kept it open.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_hover_popup_persists_through_click_after_outside_move() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn example_function() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Trigger the hover popup over the function name.
+    harness.mouse_move(10, 2)?;
+    harness.render()?;
+    harness.editor_mut().force_check_mouse_hover();
+    harness.wait_until(|h| h.editor().active_state().popups.is_visible())?;
+
+    // The popup is anchored below the hover point. The persistence test
+    // demonstrates (12, 5) is over the popup body when the source line is
+    // at row 2 in this layout.
+    let popup_col: u16 = 12;
+    let popup_row: u16 = 5;
+
+    // 1. Move into the popup body — popup should stay visible.
+    harness.mouse_move(popup_col, popup_row)?;
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should stay visible while mouse is over it"
+    );
+
+    // 2. Move "around" outside the popup but still in the editor. Each of
+    //    these positions previously dismissed the popup independently
+    //    (different byte-position, gutter cell, empty line-end), so this is
+    //    where the hover would disappear before the user gets to click.
+    harness.mouse_move(2, 2)?; // gutter / line-number area
+    harness.mouse_move(2, 4)?; // empty editor row
+    harness.mouse_move(40, 4)?; // empty cell past line end on another row
+    harness.mouse_move(10, 2)?; // back over the hovered symbol
+
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should stay visible while the mouse moves through gutter, \
+         empty rows, and past-end-of-line space within the editor"
+    );
+
+    // 3. Move into the popup again and click — popup must NOT be dismissed.
+    harness.mouse_move(popup_col, popup_row)?;
+    harness.mouse_click(popup_col, popup_row)?;
+
+    assert!(
+        harness.editor().active_state().popups.is_visible(),
+        "Hover popup should stay visible after clicking inside it, even when the \
+         mouse first moved outside the popup (issue #692)"
+    );
+
+    Ok(())
+}
+
 /// Test that hover popup shows scrollbar when content exceeds visible area
 ///
 /// When the hover documentation is longer than the popup's max_height,
