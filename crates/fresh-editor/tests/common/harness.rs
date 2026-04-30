@@ -1628,6 +1628,16 @@ impl EditorTestHarness {
         &mut self.editor
     }
 
+    /// Access the editor through the semantic test API.
+    ///
+    /// This is the entry point used by theorem-style tests under
+    /// `tests/semantic/`. Those tests deliberately do not use
+    /// `editor_mut()` or any other internal accessor — see
+    /// `docs/internal/e2e-test-migration-design.md` §2.1.
+    pub fn api_mut(&mut self) -> &mut dyn fresh::test_api::EditorTestApi {
+        &mut self.editor
+    }
+
     /// Check if editor wants to quit
     pub fn should_quit(&self) -> bool {
         self.editor.should_quit()
