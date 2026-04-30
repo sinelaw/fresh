@@ -1364,6 +1364,18 @@ impl Editor {
         &self.split_manager
     }
 
+    /// Test-only accessor for a leaf's `SplitViewState`, so tab-list
+    /// regression tests can verify which buffers are open in a given
+    /// pane (the dock should only contain the buffer the user
+    /// actually asked for, not phantom placeholders).
+    #[doc(hidden)]
+    pub fn split_view_state_for_tests(
+        &self,
+        leaf: crate::model::event::LeafId,
+    ) -> Option<&crate::view::split::SplitViewState> {
+        self.split_view_states.get(&leaf)
+    }
+
     /// Refresh the plugin-readable keybinding-label snapshot from
     /// the current keymap. Call this whenever a plugin is about to
     /// surface key hints in its UI (overlay headers, tooltips,

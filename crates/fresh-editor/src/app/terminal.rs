@@ -44,9 +44,25 @@ impl Editor {
             .with_user_shell_override(self.config.terminal.shell.as_ref())
     }
 
-    /// Open a new terminal in the current split
-    pub fn open_terminal(&mut self) {
-        // Get the current split dimensions for the terminal size
+    /// Spawn a new PTY-backed terminal session and record its
+    /// log/backing files. Returns the terminal id on success — does
+    /// **not** create a buffer or attach to any split. Callers are
+    /// responsible for the rest of the wiring (creating the terminal
+    /// buffer via `create_terminal_buffer_attached` /
+    /// `create_terminal_buffer_detached`, switching active buffer,
+    /// flipping terminal mode, etc.).
+    ///
+    /// Used by `open_terminal` (regular spawn into the active split)
+    /// and by `Action::OpenTerminalInDock` (which needs the buffer
+    /// id *before* it has a split to attach to, so the dock leaf can
+    /// be seeded with the terminal directly rather than with a
+    /// placeholder buffer that would linger as a phantom tab).
+    pub(crate) fn spawn_terminal_session(&mut self) -> Option<TerminalId> {
+        // Get the current split dimensions for the terminal size.
+        // For dock-creation callers the dock doesn't exist yet, so
+        // these dimensions are an initial guess — `resize_visible_terminals`
+        // (called after attach) will correct it once the dock split
+        // has actual rect dimensions.
         let (cols, rows) = self.get_terminal_dimensions();
 
         // Set up async bridge for terminal manager if not already done
@@ -84,9 +100,8 @@ impl Editor {
         ) {
             Ok(terminal_id) => {
                 // Track log file path (use actual ID in case it differs)
-                let actual_log_path = log_path.clone();
                 self.terminal_log_files
-                    .insert(terminal_id, actual_log_path.clone());
+                    .insert(terminal_id, log_path.clone());
                 // If predicted differs, move backing path entry
                 if terminal_id != predicted_terminal_id {
                     self.terminal_backing_files.remove(&predicted_terminal_id);
@@ -95,49 +110,56 @@ impl Editor {
                     self.terminal_backing_files
                         .insert(terminal_id, backing_path);
                 }
-
-                // Create a buffer for this terminal
-                let buffer_id = self.create_terminal_buffer_attached(
-                    terminal_id,
-                    self.split_manager.active_split(),
-                );
-
-                // Switch to the terminal buffer
-                self.set_active_buffer(buffer_id);
-
-                // Enable terminal mode
-                self.terminal_mode = true;
-                self.key_context = crate::input::keybindings::KeyContext::Terminal;
-
-                // Resize terminal to match actual split content area
-                self.resize_visible_terminals();
-
-                // Get the terminal escape keybinding dynamically
-                let exit_key = self
-                    .keybindings
-                    .read()
-                    .unwrap()
-                    .find_keybinding_for_action(
-                        "terminal_escape",
-                        crate::input::keybindings::KeyContext::Terminal,
-                    )
-                    .unwrap_or_else(|| "Ctrl+Space".to_string());
-                self.set_status_message(
-                    t!("terminal.opened", id = terminal_id.0, exit_key = exit_key).to_string(),
-                );
-                tracing::info!(
-                    "Opened terminal {:?} with buffer {:?}",
-                    terminal_id,
-                    buffer_id
-                );
+                Some(terminal_id)
             }
             Err(e) => {
                 self.set_status_message(
                     t!("terminal.failed_to_open", error = e.to_string()).to_string(),
                 );
                 tracing::error!("Failed to open terminal: {}", e);
+                None
             }
         }
+    }
+
+    /// Open a new terminal in the current split
+    pub fn open_terminal(&mut self) {
+        let Some(terminal_id) = self.spawn_terminal_session() else {
+            return;
+        };
+
+        // Create a buffer for this terminal, attached to the active split
+        let buffer_id =
+            self.create_terminal_buffer_attached(terminal_id, self.split_manager.active_split());
+
+        // Switch to the terminal buffer
+        self.set_active_buffer(buffer_id);
+
+        // Enable terminal mode
+        self.terminal_mode = true;
+        self.key_context = crate::input::keybindings::KeyContext::Terminal;
+
+        // Resize terminal to match actual split content area
+        self.resize_visible_terminals();
+
+        // Get the terminal escape keybinding dynamically
+        let exit_key = self
+            .keybindings
+            .read()
+            .unwrap()
+            .find_keybinding_for_action(
+                "terminal_escape",
+                crate::input::keybindings::KeyContext::Terminal,
+            )
+            .unwrap_or_else(|| "Ctrl+Space".to_string());
+        self.set_status_message(
+            t!("terminal.opened", id = terminal_id.0, exit_key = exit_key).to_string(),
+        );
+        tracing::info!(
+            "Opened terminal {:?} with buffer {:?}",
+            terminal_id,
+            buffer_id
+        );
     }
 
     /// Create a buffer for a terminal session

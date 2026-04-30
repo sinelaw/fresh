@@ -629,3 +629,48 @@ fn test_open_terminal_in_dock_spans_full_width_with_existing_vsplit() {
         sm.root()
     );
 }
+
+/// Regression test: a freshly-created Utility Dock must contain only
+/// the buffer that triggered its creation (the terminal). Pre-fix
+/// the dock was seeded with the user's previously-active buffer as a
+/// placeholder, and `open_terminal()` then added the terminal as a
+/// second tab — leaving a phantom tab for whatever the user had been
+/// editing alongside the terminal in the dock.
+#[test]
+fn test_open_terminal_in_dock_has_only_terminal_tab() {
+    use fresh::view::split::SplitRole;
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    let initial_buffer = harness.editor().active_buffer();
+
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::OpenTerminalInDock);
+
+    let sm = harness.editor().split_manager_for_tests();
+    let dock_leaf = sm
+        .find_leaf_by_role(SplitRole::UtilityDock)
+        .expect("dock leaf must be created by OpenTerminalInDock");
+    let view_state = harness
+        .editor()
+        .split_view_state_for_tests(dock_leaf)
+        .expect("dock leaf must have a SplitViewState");
+    let tabs: Vec<_> = view_state.buffer_tab_ids_vec();
+
+    assert_eq!(
+        tabs.len(),
+        1,
+        "fresh dock must contain exactly one tab (the terminal); got {:?}",
+        tabs
+    );
+    assert_ne!(
+        tabs[0], initial_buffer,
+        "the single tab must NOT be the user's previously-active buffer — \
+         pre-fix the dock was seeded with that buffer as a placeholder."
+    );
+    // The lone tab is the terminal: the leaf's buffer_id and the
+    // editor's active_buffer should both point at it (open_terminal
+    // sets terminal mode and makes the terminal active).
+    let leaf_buffer = sm.get_buffer_id(dock_leaf.into()).expect("leaf has buffer");
+    assert_eq!(tabs[0], leaf_buffer);
+}

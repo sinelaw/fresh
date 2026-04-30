@@ -241,6 +241,47 @@ impl Editor {
     ///
     /// # Returns
     /// The BufferId of the created virtual buffer
+    ///
+    /// Like [`Self::create_virtual_buffer`] but does **not** add the
+    /// new buffer to any split's tab list. Use this when the caller
+    /// is going to seed a freshly-created split (e.g. the Utility
+    /// Dock leaf) with the new buffer directly — without it, the
+    /// buffer would briefly appear as a phantom tab in whatever the
+    /// previously-active split was, requiring a separate cleanup
+    /// pass to remove it.
+    pub fn create_virtual_buffer_detached(
+        &mut self,
+        name: String,
+        mode: String,
+        read_only: bool,
+    ) -> BufferId {
+        let buffer_id = BufferId(self.next_buffer_id);
+        self.next_buffer_id += 1;
+
+        let mut state = EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            self.config.editor.large_file_threshold_bytes as usize,
+            Arc::clone(&self.authority.filesystem),
+        );
+        // Set syntax highlighting based on buffer name (e.g., "*OURS*.c"
+        // gets C highlighting). Mirrors create_virtual_buffer.
+        state.set_language_from_name(&name, &self.grammar_registry);
+        state
+            .margins
+            .configure_for_line_numbers(self.config.editor.line_numbers);
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        // Set virtual buffer metadata
+        let metadata = super::types::BufferMetadata::virtual_buffer(name, mode, read_only);
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        buffer_id
+    }
+
     pub fn create_virtual_buffer(
         &mut self,
         name: String,

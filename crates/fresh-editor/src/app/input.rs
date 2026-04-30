@@ -120,15 +120,16 @@ impl Editor {
             self.panel_ids.remove(&panel_key);
         }
 
-        // Capture the source split before creating the buffer —
-        // create_virtual_buffer adds the new buffer as a tab to the
-        // currently active split, which leaves a phantom tab in the
-        // editor split after we move the buffer to the dock.
-        let source_split_before_create = self.split_manager.active_split();
-
-        // Create the virtual buffer for the Quickfix list.
-        let buffer_id =
-            self.create_virtual_buffer("*Quickfix*".to_string(), "quickfix-list".to_string(), true);
+        // Create the virtual buffer detached — `create_virtual_buffer`
+        // would add the buffer as a tab to whatever the currently
+        // active split is (the user's editor pane), and we'd then
+        // have to clean up that phantom tab after moving the buffer
+        // to the dock. Detached creation skips the phantom entirely.
+        let buffer_id = self.create_virtual_buffer_detached(
+            "*Quickfix*".to_string(),
+            "quickfix-list".to_string(),
+            true,
+        );
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.margins.configure_for_line_numbers(false);
             state.show_cursors = true;
@@ -143,57 +144,66 @@ impl Editor {
         // Place the buffer in the dock — reuse the existing dock leaf
         // if any; otherwise create one at the bottom (horizontal,
         // ratio 0.3) and tag it as the dock.
-        let dock_leaf =
-            if let Some(dock_leaf) = self.split_manager.find_leaf_by_role(SplitRole::UtilityDock) {
-                self.split_manager.set_active_split(dock_leaf);
-                self.set_pane_buffer(dock_leaf, buffer_id);
-                Some(dock_leaf)
-            } else {
-                // Split at the root so the dock spans the full width
-                // below any pre-existing side-by-side panes.
-                match self.split_manager.split_root_positioned(
-                    SplitDirection::Horizontal,
-                    buffer_id,
-                    0.7,
-                    false, /* place dock after = bottom */
-                ) {
-                    Ok(new_leaf) => {
-                        let mut view_state = crate::view::split::SplitViewState::with_buffer(
-                            self.terminal_width,
-                            self.terminal_height,
-                            buffer_id,
-                        );
-                        view_state.apply_config_defaults(
-                            self.config.editor.line_numbers,
-                            self.config.editor.highlight_current_line,
-                            self.resolve_line_wrap_for_buffer(buffer_id),
-                            self.config.editor.wrap_indent,
-                            self.resolve_wrap_column_for_buffer(buffer_id),
-                            self.config.editor.rulers.clone(),
-                        );
-                        view_state.ensure_buffer_state(buffer_id).show_line_numbers = false;
-                        self.split_view_states.insert(new_leaf, view_state);
-                        self.split_manager
-                            .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
-                        self.split_manager.set_active_split(new_leaf);
-                        Some(new_leaf)
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to create dock split for quickfix: {}", e);
-                        return;
-                    }
+        if let Some(dock_leaf) = self.split_manager.find_leaf_by_role(SplitRole::UtilityDock) {
+            self.split_manager.set_active_split(dock_leaf);
+            self.set_pane_buffer(dock_leaf, buffer_id);
+            // The buffer was created detached, so its per-split view
+            // state hasn't been initialized in the dock's view_state
+            // yet. set_pane_buffer adds the buffer as a tab and sets
+            // it active; we still need to apply defaults for line
+            // numbers / wrap / rulers / etc. to its keyed state.
+            // Resolve config values up front so the &self lookups
+            // don't conflict with the &mut view_state borrow.
+            let line_numbers = self.config.editor.line_numbers;
+            let highlight_current_line = self.config.editor.highlight_current_line;
+            let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+            let wrap_indent = self.config.editor.wrap_indent;
+            let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+            let rulers = self.config.editor.rulers.clone();
+            if let Some(view_state) = self.split_view_states.get_mut(&dock_leaf) {
+                let buf_state = view_state.ensure_buffer_state(buffer_id);
+                buf_state.apply_config_defaults(
+                    line_numbers,
+                    highlight_current_line,
+                    line_wrap,
+                    wrap_indent,
+                    wrap_column,
+                    rulers,
+                );
+                buf_state.show_line_numbers = false;
+            }
+        } else {
+            // Split at the root so the dock spans the full width
+            // below any pre-existing side-by-side panes.
+            match self.split_manager.split_root_positioned(
+                SplitDirection::Horizontal,
+                buffer_id,
+                0.7,
+                false, /* place dock after = bottom */
+            ) {
+                Ok(new_leaf) => {
+                    let mut view_state = crate::view::split::SplitViewState::with_buffer(
+                        self.terminal_width,
+                        self.terminal_height,
+                        buffer_id,
+                    );
+                    view_state.apply_config_defaults(
+                        self.config.editor.line_numbers,
+                        self.config.editor.highlight_current_line,
+                        self.resolve_line_wrap_for_buffer(buffer_id),
+                        self.config.editor.wrap_indent,
+                        self.resolve_wrap_column_for_buffer(buffer_id),
+                        self.config.editor.rulers.clone(),
+                    );
+                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = false;
+                    self.split_view_states.insert(new_leaf, view_state);
+                    self.split_manager
+                        .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
+                    self.split_manager.set_active_split(new_leaf);
                 }
-            };
-
-        // Drop the phantom tab from the source split so the Quickfix
-        // buffer only appears in the dock. Skip if (somehow) the dock
-        // is the source split — we'd leave the buffer with no host.
-        if let Some(dock) = dock_leaf {
-            if dock != source_split_before_create {
-                if let Some(source_view_state) =
-                    self.split_view_states.get_mut(&source_split_before_create)
-                {
-                    source_view_state.remove_buffer(buffer_id);
+                Err(e) => {
+                    tracing::error!("Failed to create dock split for quickfix: {}", e);
+                    return;
                 }
             }
         }
@@ -1174,60 +1184,95 @@ impl Editor {
             Action::OpenTerminalInDock => {
                 use crate::model::event::SplitDirection;
                 use crate::view::split::SplitRole;
-                // Ensure a dock leaf exists, creating one if needed.
-                let dock_leaf = self.split_manager.find_leaf_by_role(SplitRole::UtilityDock);
-                let dock_leaf = match dock_leaf {
-                    Some(leaf) => leaf,
-                    None => {
-                        // Seed the dock with the currently active
-                        // buffer as a placeholder; the terminal we
-                        // open right after will swap into it.
-                        // Split at the root so the dock spans the full
-                        // width below any pre-existing side-by-side
-                        // panes — splitting the active leaf instead
-                        // would nest the dock under whichever pane was
-                        // focused.
-                        let seed_buffer = self.active_buffer();
-                        match self.split_manager.split_root_positioned(
-                            SplitDirection::Horizontal,
-                            seed_buffer,
-                            0.7,
-                            false,
-                        ) {
-                            Ok(new_leaf) => {
-                                let mut view_state =
-                                    crate::view::split::SplitViewState::with_buffer(
-                                        self.terminal_width,
-                                        self.terminal_height,
-                                        seed_buffer,
-                                    );
-                                view_state.apply_config_defaults(
-                                    self.config.editor.line_numbers,
-                                    self.config.editor.highlight_current_line,
-                                    self.resolve_line_wrap_for_buffer(seed_buffer),
-                                    self.config.editor.wrap_indent,
-                                    self.resolve_wrap_column_for_buffer(seed_buffer),
-                                    self.config.editor.rulers.clone(),
-                                );
-                                self.split_view_states.insert(new_leaf, view_state);
-                                self.split_manager
-                                    .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
-                                new_leaf
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!(
-                                    "Failed to create dock for terminal: {}",
-                                    e
-                                ));
-                                return Ok(());
-                            }
+                if let Some(dock_leaf) =
+                    self.split_manager.find_leaf_by_role(SplitRole::UtilityDock)
+                {
+                    // Existing dock — focus it and let the regular
+                    // open_terminal path attach a new terminal tab.
+                    self.split_manager.set_active_split(dock_leaf);
+                    self.open_terminal();
+                } else {
+                    // No dock yet. Spawn the PTY first so we have a
+                    // real terminal buffer to seed the new dock leaf
+                    // with — otherwise the leaf would carry the
+                    // user's previously-active buffer as a placeholder
+                    // and that buffer would linger as a phantom tab in
+                    // the dock alongside the terminal.
+                    let Some(terminal_id) = self.spawn_terminal_session() else {
+                        return Ok(());
+                    };
+                    let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+                    // Split at the root so the dock spans the full
+                    // width below any pre-existing side-by-side panes.
+                    match self.split_manager.split_root_positioned(
+                        SplitDirection::Horizontal,
+                        buffer_id,
+                        0.7,
+                        false,
+                    ) {
+                        Ok(new_leaf) => {
+                            let mut view_state = crate::view::split::SplitViewState::with_buffer(
+                                self.terminal_width,
+                                self.terminal_height,
+                                buffer_id,
+                            );
+                            view_state.apply_config_defaults(
+                                self.config.editor.line_numbers,
+                                self.config.editor.highlight_current_line,
+                                self.resolve_line_wrap_for_buffer(buffer_id),
+                                self.config.editor.wrap_indent,
+                                self.resolve_wrap_column_for_buffer(buffer_id),
+                                self.config.editor.rulers.clone(),
+                            );
+                            // Terminals don't wrap — keep escape
+                            // sequences intact, mirroring the regular
+                            // open_terminal path.
+                            view_state.viewport.line_wrap_enabled = false;
+                            self.split_view_states.insert(new_leaf, view_state);
+                            self.split_manager
+                                .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
+                            self.split_manager.set_active_split(new_leaf);
+                            // Mirror open_terminal's post-attach
+                            // bookkeeping. Skip set_active_buffer —
+                            // the leaf already shows the terminal and
+                            // its tab list contains only the terminal,
+                            // exactly the desired final state.
+                            self.terminal_mode = true;
+                            self.key_context = crate::input::keybindings::KeyContext::Terminal;
+                            self.resize_visible_terminals();
+                            let exit_key = self
+                                .keybindings
+                                .read()
+                                .unwrap()
+                                .find_keybinding_for_action(
+                                    "terminal_escape",
+                                    crate::input::keybindings::KeyContext::Terminal,
+                                )
+                                .unwrap_or_else(|| "Ctrl+Space".to_string());
+                            self.set_status_message(
+                                rust_i18n::t!(
+                                    "terminal.opened",
+                                    id = terminal_id.0,
+                                    exit_key = exit_key
+                                )
+                                .to_string(),
+                            );
+                            tracing::info!(
+                                "Opened terminal {:?} into new dock leaf {:?} (buffer {:?})",
+                                terminal_id,
+                                new_leaf,
+                                buffer_id
+                            );
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!(
+                                "Failed to create dock for terminal: {}",
+                                e
+                            ));
+                            return Ok(());
                         }
                     }
-                };
-                // Focus the dock so open_terminal() attaches the new
-                // terminal buffer there.
-                self.split_manager.set_active_split(dock_leaf);
-                self.open_terminal();
+                }
             }
             Action::ToggleLineWrap => {
                 let new_value = !self.config.editor.line_wrap;
