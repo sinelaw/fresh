@@ -148,8 +148,18 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
   // Reflect the active provider in the floating overlay's frame
   // header so the user always knows which backend is producing
   // the results, even after the search-result status overwrites
-  // any one-shot "switched to" message.
-  const label = provider ? `Live Grep · ${provider.name}` : "Live Grep";
+  // any one-shot "switched to" message. Append the actual bound
+  // cycle key (Alt+P by default; whatever the user remapped to)
+  // as a hint — pulled from the editor's keybinding registry, not
+  // hardcoded, so it always matches the user's actual config.
+  const cycleKey = editor.getKeybindingLabel(
+    "cycle_live_grep_provider",
+    "prompt"
+  );
+  const cycleHint = cycleKey ? ` · ${cycleKey} to cycle` : "";
+  const label = provider
+    ? `Live Grep · ${provider.name}${cycleHint}`
+    : `Live Grep${cycleHint}`;
   editor.setPromptTitle(label);
 }
 

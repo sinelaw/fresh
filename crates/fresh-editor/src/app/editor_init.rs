@@ -420,6 +420,14 @@ impl Editor {
         if let Some(snapshot_handle) = plugin_manager.state_snapshot_handle() {
             let mut snapshot = snapshot_handle.write().unwrap();
             snapshot.working_dir = working_dir.clone();
+            // Pre-populate keybinding labels for the static built-in
+            // keymap so `editor.getKeybindingLabel(action, context)`
+            // works for actions that aren't behind a plugin-defined
+            // buffer mode. Without this, a plugin asking
+            // `getKeybindingLabel("cycle_live_grep_provider",
+            // "prompt")` gets null even though Alt+P is bound, and
+            // ends up hardcoding the key in its UI.
+            populate_builtin_keybinding_labels(&mut snapshot, &keybindings);
         }
 
         // Load TypeScript plugins from multiple directories:
@@ -1329,6 +1337,51 @@ impl Editor {
     pub fn dispatch_action_for_tests(&mut self, action: crate::input::keybindings::Action) {
         if let Err(e) = self.handle_action(action) {
             tracing::warn!("dispatch_action_for_tests: {e}");
+        }
+    }
+}
+
+/// Walk every typed `Action` and the contexts most relevant to UI
+/// labels (`Normal`, `Prompt`, `Popup`, `FileExplorer`,
+/// `CompositeBuffer`, `Settings`, `Terminal`), and populate the
+/// snapshot's `keybinding_labels` map with `<action>\0<context>` →
+/// formatted label (e.g. `"cycle_live_grep_provider\0prompt"` →
+/// `"Alt+P"`). The plugin-side `editor.getKeybindingLabel(action,
+/// mode)` API reads from this map, so plugins displaying hints in
+/// their UIs (overlay headers, status messages) can look up the
+/// user's *actual* binding rather than hardcoding a key string.
+///
+/// This runs once at startup. If the user later edits their keymap
+/// without restarting fresh, the labels go stale. That's acceptable
+/// for v1 — keymap edits today already require a restart for full
+/// effect; a subsequent commit can wire snapshot refresh into the
+/// keymap-reload path.
+#[cfg(feature = "plugins")]
+fn populate_builtin_keybinding_labels(
+    snapshot: &mut crate::services::plugins::api::EditorStateSnapshot,
+    keybindings: &std::sync::Arc<std::sync::RwLock<crate::input::keybindings::KeybindingResolver>>,
+) {
+    use crate::input::keybindings::{Action, KeyContext};
+    let Ok(resolver) = keybindings.read() else {
+        return;
+    };
+    let contexts = [
+        KeyContext::Normal,
+        KeyContext::Prompt,
+        KeyContext::Popup,
+        KeyContext::Completion,
+        KeyContext::FileExplorer,
+        KeyContext::Menu,
+        KeyContext::Terminal,
+        KeyContext::Settings,
+        KeyContext::CompositeBuffer,
+    ];
+    for action_name in Action::all_action_names() {
+        for ctx in &contexts {
+            if let Some(label) = resolver.find_keybinding_for_action(&action_name, ctx.clone()) {
+                let key = format!("{}\0{}", action_name, ctx.to_when_clause());
+                snapshot.keybinding_labels.insert(key, label);
+            }
         }
     }
 }
