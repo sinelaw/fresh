@@ -17,7 +17,7 @@ use fresh::test_api::{Action, Caret};
 /// Wrapper around the test-API `Caret` so test code can spell
 /// expectations as `CursorExpect::at(5)` and `CursorExpect::range(0, 5)`
 /// instead of building a `Caret` with `Some` / `None`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CursorExpect {
     pub position: usize,
     pub anchor: Option<usize>,

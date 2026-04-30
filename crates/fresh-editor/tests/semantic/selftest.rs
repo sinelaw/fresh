@@ -308,3 +308,57 @@ fn metatheorem_check_can_be_called_in_a_loop_without_panic() {
     assert_eq!(pass_count, 2);
     assert_eq!(fail_count, 2);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Track D1: TheoremFailure is JSON-serializable.
+//
+// External drivers can write failures to a CI artifact, dashboard,
+// or replay log without ad-hoc string parsing.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn metatheorem_failure_serializes_to_json() {
+    let r = check_buffer_theorem(BufferTheorem {
+        description: "for serde",
+        initial_text: "abc",
+        actions: vec![],
+        expected_text: "WRONG",
+        expected_primary: CursorExpect::at(0),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+    });
+    let failure = r.expect_err("expected an Err");
+
+    let json = serde_json::to_string(&failure).expect("serialize");
+    assert!(
+        json.contains("\"kind\":\"buffer_text_mismatch\""),
+        "kind tag missing: {json}"
+    );
+    assert!(
+        json.contains("\"description\":\"for serde\""),
+        "description missing: {json}"
+    );
+    assert!(
+        json.contains("\"expected\":\"WRONG\""),
+        "expected missing: {json}"
+    );
+    assert!(
+        json.contains("\"actual\":\"abc\""),
+        "actual missing: {json}"
+    );
+
+    // Round-trip back through deserialization.
+    let parsed: TheoremFailure = serde_json::from_str(&json).expect("deserialize");
+    match parsed {
+        TheoremFailure::BufferTextMismatch {
+            description,
+            expected,
+            actual,
+        } => {
+            assert_eq!(description, "for serde");
+            assert_eq!(expected, "WRONG");
+            assert_eq!(actual, "abc");
+        }
+        other => panic!("wrong variant after round-trip: {other:?}"),
+    }
+}

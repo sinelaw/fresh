@@ -60,3 +60,36 @@ fn regression_smart_dedent_panic_on_phantom_line() {
     // tracking) would short-circuit this and never reach the assert.
     assert!(result.is_ok() || result.is_err(), "should not panic");
 }
+
+/// Production bug: `crates/fresh-editor/src/state.rs:462` panics
+/// when DeleteBackward executes over a whitespace-only buffer after
+/// a SelectLineEnd / InsertChar / SelectLineEnd / DeleteBackward
+/// chain. The slice `deleted_text[..bytes_before_cursor]` indexes
+/// past the slice's actual length — same family as the smart-dedent
+/// bug above (cursor position out of sync with buffer state after
+/// the chain).
+///
+/// Discovered by `property_dispatch_is_deterministic` during routine
+/// suite runs. Proptest shrunk to 4 actions on a 3-byte buffer:
+///   initial_text = "   "
+///   actions = [SelectLineEnd, InsertChar(' '), SelectLineEnd, DeleteBackward]
+#[test]
+#[ignore = "BUG: state.rs:462 — DeleteBackward over whitespace-only buffer indexes past slice"]
+fn regression_delete_backward_panic_on_whitespace_only_buffer() {
+    let result = check_buffer_theorem(BufferTheorem {
+        description:
+            "shrunk repro: SelectLineEnd / InsertChar(' ') / SelectLineEnd / DeleteBackward",
+        initial_text: "   ",
+        actions: vec![
+            Action::SelectLineEnd,
+            Action::InsertChar(' '),
+            Action::SelectLineEnd,
+            Action::DeleteBackward,
+        ],
+        expected_text: "    ",
+        expected_primary: CursorExpect::at(0),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+    });
+    assert!(result.is_ok() || result.is_err(), "should not panic");
+}

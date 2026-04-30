@@ -36,7 +36,7 @@ pub use crate::input::keybindings::Action;
 /// `deselect_on_move`, and `block_anchor` are intentionally hidden — if a
 /// test needs them, the right fix is to extend this projection (with
 /// review) rather than reach past it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Caret {
     /// Byte offset where edits happen.
     pub position: usize,

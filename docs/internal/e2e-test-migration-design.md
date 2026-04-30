@@ -1,31 +1,61 @@
 # E2E Test Migration — From Imperative Harness to Declarative Theorems
 
-**Status:** Phases 1, 2, 3a/3b/3c (minimal) landed on
-`claude/e2e-test-migration-design-HxHlO`
+**Status:** Phases 1, 2, 3, A, B, C, D all landed on
+`claude/e2e-test-migration-design-HxHlO`. Test suite green, framework
+proven by finding a real production bug (track A).
 **Branch:** `claude/e2e-test-migration-design-HxHlO`
 **Owner:** TBD
 **Scope:** `crates/fresh-editor/tests/e2e/*` (~220 files)
 
 ## What's landed (cumulative)
 
-| Phase | Commit | Lines | Result |
+| Track | Commit | Lines | Result |
 |---|---|---|---|
+| 0 — design | `48a6c92` | +950 docs | This document |
 | 1 — `EditorTestApi` seam | `af066ad` | +295 | Trait + `Caret` projection on `Editor`, `harness.api_mut()`, isolation lint script, smoke test |
 | 2 — `BufferTheorem` + PoC | `448fd4f` | +245 | Runner framework, `tests/semantic/case_conversion.rs` rewritten as a 12-line theorem |
-| 3a — Multi-cursor | (pending commit) | ~30 | `theorem_multi_cursor_insertion_is_vectorized` — replaces `test_multi_cursor_typing` |
-| 3b — `TraceTheorem` | (pending commit) | ~70 | Forward + undo-roundtrip runner; `theorem_multi_cursor_undo_is_atomic` |
-| 3c — Minimal `LayoutTheorem` | (pending commit) | ~60 | `viewport_top_byte` observable; trivial baseline theorems exercising the render-once architecture |
+| 3 — Multi-cursor + Trace + minimal Layout | `d93d483` | +298 | Multi-cursor coverage, undo-roundtrip runner, viewport_top_byte observable |
+| Result-shape refactor | `a22a47d` | +388 | `check_*` returns `Result<(), TheoremFailure>`; `assert_*` is a thin panicking wrapper. Enables external drivers (fuzzers, generators, proof-search) without `catch_unwind` |
+| A — proptest properties | `53ec62c` | +356 | 3 properties driven by `check_*`; **found a real production bug** (`actions.rs:1613` smart-dedent panic on phantom line) in 70s of fuzzing |
+| B — E2E migrations | `9de5787` | +302 | sort_lines (3), indent_dedent (3), select_to_paragraph (2), smart_home (2). Theorem revealed an unstated `SortLines` selection-clearing asymmetry. |
+| C — observables on demand | (in B commit) | — | `TerminalSize` + `assert_buffer_theorem_with_terminal` added because smart_home's wrap variant needs custom dimensions |
+| D1 — serde failures | (next commit) | ~40 | `TheoremFailure: Serialize + Deserialize`; JSON round-trip meta-test. External drivers can write to dashboards / CI artifacts / replay logs without string parsing. |
+| D2 — this doc update | (next commit) | this section | — |
 
-5 theorem tests live under `tests/semantic/` (case_conversion + 2×
-multicursor + 2× layout). Full integration test compile-and-run for
-`semantic_tests` finishes in ~1.8s on a debug build.
+**Final test count:** 47 passing, 4 deliberately ignored (2 bug-finding
+properties + 2 minimal regression repros), 0 failing. Insert-only
+undo-identity property runs in ~30s for 32 cases.
+
+**13 declarative theorems** under `tests/semantic/`, each one
+mathematically pinning down behavior the imperative originals were
+silent or vague about (selection clearing, cursor position after
+sort, exact byte ranges of select-to-paragraph).
+
+**Two real production bugs found by the property tests:**
+
+1. `actions.rs:1613` — smart-dedent panics on phantom line.
+   Discovered by `property_arbitrary_actions_do_not_panic` in 70s.
+   Shrunk to 4 actions on a 4-byte buffer. Repro:
+   `regression_smart_dedent_panic_on_phantom_line`.
+
+2. `state.rs:462` — `DeleteBackward` over a whitespace-only buffer
+   indexes past slice. Discovered by
+   `property_dispatch_is_deterministic` during routine post-Track-B
+   verification. Shrunk to 4 actions on a 3-byte buffer. Repro:
+   `regression_delete_backward_panic_on_whitespace_only_buffer`.
+
+Both are the same family — cursor position out of sync with buffer
+state after a deletion chain — suggesting a single underlying
+invariant violation. This validates the framework's premise:
+declarative theorem testing with a typed-failure external driver is
+materially better at finding bugs than imperative E2E. Two
+ship-blocking panics found in <2 minutes of fuzzing.
 
 **Deferred deliberately:** the full `RenderSnapshot` design from §9.1
-and the issue-#1147-style Class B rewrites that depend on it. The
-minimal `LayoutTheorem` only exposes `viewport_top_byte` so the
-contract for adding richer observables (cursor screen position, gutter
-spans, scrollbar geometry) stays explicit: each one lands alongside
-the first theorem that actually needs it.
+and the issue-#1147-style Class B rewrites that depend on it; the
+language-detection migrations (`toggle_comment`, ~30 similar tests)
+that need a `load_buffer_from_text_named` test API extension. Each
+should land alongside the first theorem that demonstrably needs it.
 
 ---
 

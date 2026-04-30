@@ -13,7 +13,8 @@
 use crate::common::theorem::buffer_theorem::CursorExpect;
 use fresh::test_api::Caret;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TheoremFailure {
     BufferTextMismatch {
         description: String,
