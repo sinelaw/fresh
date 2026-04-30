@@ -1151,22 +1151,15 @@ impl Editor {
                     {
                         match result {
                             Ok(receiver) => {
-                                self.pending_plugin_actions.push((
-                                    "live_grep_cycle_provider".to_string(),
-                                    receiver,
-                                ));
+                                self.pending_plugin_actions
+                                    .push(("live_grep_cycle_provider".to_string(), receiver));
                             }
                             Err(e) => {
-                                self.set_status_message(format!(
-                                    "Live Grep cycle failed: {}",
-                                    e
-                                ));
+                                self.set_status_message(format!("Live Grep cycle failed: {}", e));
                             }
                         }
                     } else {
-                        self.set_status_message(
-                            "Live Grep plugin not loaded".to_string(),
-                        );
+                        self.set_status_message("Live Grep plugin not loaded".to_string());
                     }
                 }
                 #[cfg(not(feature = "plugins"))]
