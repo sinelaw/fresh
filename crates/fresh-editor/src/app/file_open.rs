@@ -81,6 +81,12 @@ pub struct FileOpenState {
     /// Scroll offset for file list
     pub scroll_offset: usize,
 
+    /// Number of file rows visible in the viewport, as reported by the
+    /// renderer on the previous frame. Used by selection actions to clamp
+    /// `scroll_offset` to the actual viewport instead of a fixed default —
+    /// the renderer is the only place that knows the real viewport height.
+    pub last_visible_rows: usize,
+
     /// Which section is currently active
     pub active_section: FileOpenSection,
 
@@ -124,6 +130,7 @@ impl FileOpenState {
             sort_ascending: true,
             selected_index: None,
             scroll_offset: 0,
+            last_visible_rows: 0,
             active_section: FileOpenSection::Files,
             filter: String::new(),
             shortcuts,
@@ -548,30 +555,39 @@ impl FileOpenState {
         }
     }
 
-    /// Ensure selected item is visible in viewport
+    /// Ensure selected item is visible in viewport, using the most recent
+    /// viewport height reported by the renderer. Called from input handlers,
+    /// where the actual viewport height isn't known directly.
     fn ensure_selected_visible(&mut self) {
-        let Some(idx) = self.selected_index else {
-            return;
-        };
-        // This will be called with actual visible_rows from renderer
-        // For now, use a reasonable default
-        let visible_rows = 15;
-        if idx < self.scroll_offset {
-            self.scroll_offset = idx;
-        } else if idx >= self.scroll_offset + visible_rows {
-            self.scroll_offset = idx.saturating_sub(visible_rows - 1);
-        }
+        self.clamp_scroll_to_selection();
     }
 
-    /// Update scroll offset based on visible rows
+    /// Reconcile `scroll_offset` with the actual viewport height. The
+    /// renderer calls this once per frame; selection actions call
+    /// `ensure_selected_visible` which uses the cached value.
     pub fn update_scroll_for_visible_rows(&mut self, visible_rows: usize) {
-        let Some(idx) = self.selected_index else {
+        self.last_visible_rows = visible_rows;
+        self.clamp_scroll_to_selection();
+    }
+
+    /// Clamp `scroll_offset` so the selection stays within the viewport
+    /// `[scroll_offset, scroll_offset + last_visible_rows)`, and so that we
+    /// never scroll past the last entry.
+    fn clamp_scroll_to_selection(&mut self) {
+        let visible_rows = self.last_visible_rows;
+        if visible_rows == 0 {
             return;
-        };
-        if idx < self.scroll_offset {
-            self.scroll_offset = idx;
-        } else if idx >= self.scroll_offset + visible_rows {
-            self.scroll_offset = idx.saturating_sub(visible_rows - 1);
+        }
+        if let Some(idx) = self.selected_index {
+            if idx < self.scroll_offset {
+                self.scroll_offset = idx;
+            } else if idx >= self.scroll_offset + visible_rows {
+                self.scroll_offset = idx + 1 - visible_rows;
+            }
+        }
+        let max_offset = self.entries.len().saturating_sub(visible_rows);
+        if self.scroll_offset > max_offset {
+            self.scroll_offset = max_offset;
         }
     }
 
@@ -847,6 +863,83 @@ mod tests {
 
         state.select_last();
         assert_eq!(state.selected_index, Some(2));
+    }
+
+    /// Regression test for #245: when the terminal is small enough that the
+    /// file list shows fewer than the previous hardcoded 15 rows, moving the
+    /// selection past the bottom of the viewport must scroll the list so the
+    /// selected entry stays visible.
+    #[test]
+    fn test_scroll_follows_selection_in_small_viewport() {
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
+        state.set_entries(
+            (0..10)
+                .map(|i| make_entry(&format!("f{i}"), false))
+                .collect(),
+        );
+
+        // Renderer reports a 3-row viewport (very small terminal).
+        state.update_scroll_for_visible_rows(3);
+        assert_eq!(state.scroll_offset, 0);
+
+        // Walk down to index 4. Selection must remain inside [scroll_offset, scroll_offset + 3).
+        for _ in 0..5 {
+            state.select_next();
+        }
+        assert_eq!(state.selected_index, Some(4));
+        let idx = state.selected_index.unwrap();
+        assert!(
+            idx >= state.scroll_offset && idx < state.scroll_offset + 3,
+            "selected idx {idx} not in viewport [{}, {})",
+            state.scroll_offset,
+            state.scroll_offset + 3
+        );
+
+        // Jumping to the last entry must also keep it on screen.
+        state.select_last();
+        let idx = state.selected_index.unwrap();
+        assert_eq!(idx, 9);
+        assert!(
+            idx >= state.scroll_offset && idx < state.scroll_offset + 3,
+            "select_last left idx {idx} outside viewport [{}, {})",
+            state.scroll_offset,
+            state.scroll_offset + 3
+        );
+
+        // Moving back up shrinks the offset so we don't leave a blank tail.
+        state.select_first();
+        assert_eq!(state.selected_index, Some(0));
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    /// When the viewport shrinks (terminal resize), the next renderer pass
+    /// must re-clamp `scroll_offset` so the selection stays visible.
+    #[test]
+    fn test_scroll_reclamped_on_viewport_shrink() {
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
+        state.set_entries(
+            (0..20)
+                .map(|i| make_entry(&format!("f{i}"), false))
+                .collect(),
+        );
+
+        state.update_scroll_for_visible_rows(15);
+        for _ in 0..15 {
+            state.select_next();
+        }
+        // Selection at idx 14 fits in a 15-row viewport with offset 0.
+        assert_eq!(state.selected_index, Some(14));
+        assert_eq!(state.scroll_offset, 0);
+
+        // Terminal shrinks to 4 rows; the next render reports the new height.
+        state.update_scroll_for_visible_rows(4);
+        let idx = state.selected_index.unwrap();
+        assert!(
+            idx >= state.scroll_offset && idx < state.scroll_offset + 4,
+            "selected idx {idx} not in shrunk viewport [{}, {})",
+            state.scroll_offset,
+            state.scroll_offset + 4
+        );
     }
 
     #[test]

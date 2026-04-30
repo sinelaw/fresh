@@ -1433,7 +1433,7 @@ impl Editor {
             prompt.prompt_type,
             PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
         ) {
-            let Some(file_open_state) = &self.file_open_state else {
+            let Some(file_open_state) = &mut self.file_open_state else {
                 return;
             };
             let max_height = prompt_area.y.saturating_sub(1).min(20);

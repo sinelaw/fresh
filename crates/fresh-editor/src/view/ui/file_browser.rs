@@ -38,7 +38,7 @@ impl FileBrowserRenderer {
     pub fn render(
         frame: &mut Frame,
         area: Rect,
-        state: &FileOpenState,
+        state: &mut FileOpenState,
         theme: &crate::view::theme::Theme,
         hover_target: &Option<crate::app::HoverTarget>,
         keybindings: Option<&crate::input::keybindings::KeybindingResolver>,
@@ -490,13 +490,16 @@ impl FileBrowserRenderer {
     fn render_file_list(
         frame: &mut Frame,
         area: Rect,
-        state: &FileOpenState,
+        state: &mut FileOpenState,
         theme: &crate::view::theme::Theme,
         hover_target: &Option<crate::app::HoverTarget>,
     ) -> usize {
         use crate::app::HoverTarget;
 
         let visible_rows = area.height as usize;
+        // Sync scroll/selection with the actual viewport before drawing —
+        // input handlers had to guess the height; only the renderer knows it.
+        state.update_scroll_for_visible_rows(visible_rows);
         let width = area.width as usize;
 
         // Column widths (matching header)
