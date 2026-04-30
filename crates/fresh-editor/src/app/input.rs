@@ -129,6 +129,12 @@ impl Editor {
             self.panel_ids.remove(&panel_key);
         }
 
+        // Capture the source split before creating the buffer —
+        // create_virtual_buffer adds the new buffer as a tab to the
+        // currently active split, which leaves a phantom tab in the
+        // editor split after we move the buffer to the dock.
+        let source_split_before_create = self.split_manager.active_split();
+
         // Create the virtual buffer for the Quickfix list.
         let buffer_id = self.create_virtual_buffer(
             "*Quickfix*".to_string(),
@@ -149,9 +155,12 @@ impl Editor {
         // Place the buffer in the dock — reuse the existing dock leaf
         // if any; otherwise create one at the bottom (horizontal,
         // ratio 0.3) and tag it as the dock.
-        if let Some(dock_leaf) = self.split_manager.find_leaf_by_role(SplitRole::UtilityDock) {
+        let dock_leaf = if let Some(dock_leaf) =
+            self.split_manager.find_leaf_by_role(SplitRole::UtilityDock)
+        {
             self.split_manager.set_active_split(dock_leaf);
             self.set_pane_buffer(dock_leaf, buffer_id);
+            Some(dock_leaf)
         } else {
             match self.split_manager.split_active_positioned(
                 SplitDirection::Horizontal,
@@ -179,13 +188,28 @@ impl Editor {
                     self.split_manager
                         .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
                     self.split_manager.set_active_split(new_leaf);
+                    Some(new_leaf)
                 }
                 Err(e) => {
                     tracing::error!("Failed to create dock split for quickfix: {}", e);
                     return;
                 }
             }
+        };
+
+        // Drop the phantom tab from the source split so the Quickfix
+        // buffer only appears in the dock. Skip if (somehow) the dock
+        // is the source split — we'd leave the buffer with no host.
+        if let Some(dock) = dock_leaf {
+            if dock != source_split_before_create {
+                if let Some(source_view_state) =
+                    self.split_view_states.get_mut(&source_split_before_create)
+                {
+                    source_view_state.remove_buffer(buffer_id);
+                }
+            }
         }
+
         self.set_status_message(format!(
             "Quickfix exported: {} matches in dock",
             matches.len()

@@ -237,6 +237,15 @@ impl InputHandler for Prompt {
 
             // Tab accepts suggestion
             KeyCode::Tab => {
+                // In a floating-overlay prompt (Live Grep) the
+                // suggestion's `value` field is opaque (the Finder
+                // library uses indices like "0", "1", …) so accepting
+                // it would clobber the search query with garbage.
+                // Arrow keys already move the selection, so Tab is
+                // simply a no-op in overlay mode.
+                if self.overlay {
+                    return InputResult::Consumed;
+                }
                 if let Some(selected) = self.selected_suggestion {
                     if let Some(suggestion) = self.suggestions.get(selected) {
                         if !suggestion.disabled {

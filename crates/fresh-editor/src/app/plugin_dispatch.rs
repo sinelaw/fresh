@@ -2009,6 +2009,11 @@ impl Editor {
         // tab in the dock leaf.
         if let Some(target_role) = split_role {
             if let Some(dock_leaf) = self.split_manager.find_leaf_by_role(target_role) {
+                // Capture the source split *before* create_virtual_buffer
+                // tabs the new buffer into it; we drop that phantom tab
+                // after the dock attach so the buffer only shows in the
+                // dock.
+                let source_split_before_create = self.split_manager.active_split();
                 let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
                 if let Some(state) = self.buffers.get_mut(&buffer_id) {
                     state.margins.configure_for_line_numbers(show_line_numbers);
@@ -2028,6 +2033,15 @@ impl Editor {
                 // dock-resident utilities (Diagnostics ↔ Quickfix etc.).
                 self.split_manager.set_active_split(dock_leaf);
                 self.set_pane_buffer(dock_leaf, buffer_id);
+
+                // Drop the phantom tab from the source split.
+                if dock_leaf != source_split_before_create {
+                    if let Some(source_view_state) =
+                        self.split_view_states.get_mut(&source_split_before_create)
+                    {
+                        source_view_state.remove_buffer(buffer_id);
+                    }
+                }
 
                 if let Some(req_id) = request_id {
                     let result = fresh_core::api::VirtualBufferResult {
