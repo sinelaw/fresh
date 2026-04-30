@@ -2184,4 +2184,68 @@ mod tests {
             "Line 2 should NOT have current_line_bg when cursor is on line 1"
         );
     }
+
+    /// Agreement test: the standalone `wrap_str_to_width` helper used by
+    /// the virtual-line path must produce the same chunk boundaries as
+    /// `apply_wrapping_transform` does for a single Text token starting
+    /// on a fresh row (no tabs, no ANSI, no hanging indent).  This
+    /// pins the two implementations together so the doc-comment claim
+    /// "virtual lines wrap like source lines" stays honest.
+    #[test]
+    fn wrap_str_to_width_matches_apply_wrapping_transform() {
+        use crate::primitives::visual_layout::wrap_str_to_width;
+        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
+        // A range of inputs that exercise both the word-boundary and
+        // hard-cap fallback paths.  Each (text, wrap_width) pair must
+        // produce identical chunk byte boundaries on both code paths.
+        let cases: &[(&str, usize)] = &[
+            ("hello world how are you today friend", 12),
+            ("the quick brown fox jumps over the lazy dog", 18),
+            ("https://example.com/very-long-path/file", 24),
+            (&"x".repeat(120), 32),
+            (&"abc ".repeat(40), 25),
+            ("dialog.getButton(...).setOnClickListener", 24),
+        ];
+
+        for &(text, wrap_width) in cases {
+            // Direct helper output.
+            let helper_chunks = wrap_str_to_width(text, wrap_width);
+            let helper_strings: Vec<&str> =
+                helper_chunks.iter().map(|r| &text[r.clone()]).collect();
+
+            // Run the full transform on a single Text token.  Use
+            // `gutter_width = 0` so `available_width == content_width`
+            // and the transform's effective wrap width matches what
+            // we pass to `wrap_str_to_width`.
+            let tokens = vec![ViewTokenWire {
+                kind: ViewTokenWireKind::Text(text.to_string()),
+                source_offset: Some(0),
+                style: None,
+            }];
+            let wrapped = apply_wrapping_transform(tokens, wrap_width, 0, false);
+
+            // Reconstruct the chunks the transform emitted by walking
+            // its output: each Text token is one chunk; Break tokens
+            // delimit chunks.  Skip standalone Spaces/etc. — they
+            // don't appear in our pure-text inputs.
+            let mut transform_strings: Vec<String> = Vec::new();
+            for tok in &wrapped {
+                match &tok.kind {
+                    ViewTokenWireKind::Text(t) => transform_strings.push(t.clone()),
+                    ViewTokenWireKind::Break => {}
+                    other => panic!("unexpected token kind in agreement test: {:?}", other),
+                }
+            }
+
+            assert_eq!(
+                transform_strings
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                helper_strings,
+                "wrap mismatch for text={text:?} wrap_width={wrap_width}",
+            );
+        }
+    }
 }

@@ -3,6 +3,7 @@
 //! This module has no dependency on any shared render-time "mega struct".
 
 use crate::primitives::display_width::char_width;
+use crate::primitives::visual_layout::wrap_str_to_width;
 use crate::view::theme::{color_to_rgb, Theme};
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use fresh_core::api::ViewTokenStyle;
@@ -127,10 +128,13 @@ pub(super) fn append_fold_placeholder(line: &mut ViewLine, text: &str, style: &V
 /// the text into segments no wider than `wrap_width` visual columns when
 /// that bound is supplied.
 ///
-/// Each resulting line is a self-contained virtual line marked
-/// `LineStart::AfterInjectedNewline`, so the renderer's bg-fill path for
-/// virtual lines (which is gated on that variant) extends the style's bg
-/// to the viewport edge of every wrapped row.
+/// Wrapping uses the shared [`wrap_str_to_width`] helper, so virtual
+/// lines break at UAX #29 word boundaries within `WRAP_MAX_LOOKBACK`
+/// columns of the hard cap — the same algorithm `apply_wrapping_transform`
+/// uses for source lines.  Each resulting line is a self-contained
+/// virtual line marked `LineStart::AfterInjectedNewline`, so the
+/// renderer's bg-fill path for virtual lines (gated on that variant)
+/// extends the style's bg to the viewport edge of every wrapped row.
 pub(super) fn create_wrapped_virtual_lines(
     text: &str,
     style: Style,
@@ -149,33 +153,33 @@ pub(super) fn create_wrapped_virtual_lines(
         italic: style.add_modifier.contains(Modifier::ITALIC),
     };
 
-    // Group chars into segments whose visual width stays at or under
-    // `wrap_width`. With no wrap width (or width 0, which would be a
-    // pathological viewport) we degenerate to a single segment.
-    let segments: Vec<Vec<char>> = match wrap_width {
-        Some(w) if w > 0 => split_by_visual_width(text, w),
-        _ => vec![text.chars().collect()],
+    let chunk_ranges = match wrap_width {
+        Some(w) if w > 0 => wrap_str_to_width(text, w),
+        _ => {
+            if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![0..text.len()]
+            }
+        }
     };
 
-    if segments.is_empty() {
+    if chunk_ranges.is_empty() {
         // Empty input still produces one empty virtual line so it
         // contributes a row to the screen, matching prior behaviour.
-        return vec![build_virtual_view_line(String::new(), 0, &token_style)];
+        return vec![build_virtual_view_line("", &token_style)];
     }
 
-    segments
+    chunk_ranges
         .into_iter()
-        .map(|chars| {
-            let len = chars.len();
-            let segment_text: String = chars.into_iter().collect();
-            build_virtual_view_line(segment_text, len, &token_style)
-        })
+        .map(|r| build_virtual_view_line(&text[r], &token_style))
         .collect()
 }
 
-fn build_virtual_view_line(text: String, len: usize, token_style: &ViewTokenStyle) -> ViewLine {
+fn build_virtual_view_line(text: &str, token_style: &ViewTokenStyle) -> ViewLine {
+    let len = text.chars().count();
     ViewLine {
-        text,
+        text: text.to_string(),
         source_start_byte: None,
         char_source_bytes: vec![None; len],
         char_styles: vec![Some(token_style.clone()); len],
@@ -187,83 +191,9 @@ fn build_virtual_view_line(text: String, len: usize, token_style: &ViewTokenStyl
     }
 }
 
-/// Greedy grapheme-by-grapheme split of `text` into segments whose
-/// `unicode_width` does not exceed `wrap_width`. A char wider than the
-/// limit (e.g. a double-width CJK glyph in a 1-column viewport) is
-/// emitted on its own row to guarantee forward progress.
-fn split_by_visual_width(text: &str, wrap_width: usize) -> Vec<Vec<char>> {
-    let mut segments: Vec<Vec<char>> = Vec::new();
-    let mut current: Vec<char> = Vec::new();
-    let mut current_width: usize = 0;
-
-    for ch in text.chars() {
-        let w = char_width(ch);
-        if !current.is_empty() && current_width + w > wrap_width {
-            segments.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-        current.push(ch);
-        current_width += w;
-    }
-
-    if !current.is_empty() {
-        segments.push(current);
-    }
-
-    segments
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn split_by_visual_width_splits_long_text() {
-        let text: String = std::iter::repeat('A')
-            .take(32)
-            .chain(std::iter::repeat('B').take(32))
-            .collect();
-        let segs = split_by_visual_width(&text, 33);
-        assert_eq!(segs.len(), 2);
-        assert_eq!(segs[0].len(), 33);
-        assert_eq!(segs[1].len(), 31);
-    }
-
-    #[test]
-    fn split_by_visual_width_keeps_short_text_in_one_segment() {
-        let segs = split_by_visual_width("hello", 80);
-        assert_eq!(segs.len(), 1);
-        assert_eq!(segs[0].len(), 5);
-    }
-
-    #[test]
-    fn split_by_visual_width_breaks_at_exact_boundary() {
-        let segs = split_by_visual_width("AAAAAA", 3);
-        assert_eq!(segs.len(), 2);
-        assert_eq!(segs[0].len(), 3);
-        assert_eq!(segs[1].len(), 3);
-    }
-
-    #[test]
-    fn split_by_visual_width_handles_double_width_chars() {
-        // CJK characters take 2 columns; with wrap_width=4, each segment
-        // should fit at most 2 chars.
-        let segs = split_by_visual_width("世界你好", 4);
-        // 4 chars × width 2 = 8 cols total. With wrap=4, we get 2 segments
-        // of 2 chars each.
-        assert_eq!(segs.len(), 2);
-        assert_eq!(segs[0].len(), 2);
-        assert_eq!(segs[1].len(), 2);
-    }
-
-    #[test]
-    fn split_by_visual_width_makes_progress_even_for_oversized_char() {
-        // A double-width char in a 1-col viewport: emit it on its own row
-        // so we don't loop forever.
-        let segs = split_by_visual_width("世", 1);
-        assert_eq!(segs.len(), 1);
-        assert_eq!(segs[0].len(), 1);
-    }
 
     #[test]
     fn create_wrapped_virtual_lines_no_wrap_returns_one_line() {
@@ -274,17 +204,48 @@ mod tests {
     }
 
     #[test]
-    fn create_wrapped_virtual_lines_splits_under_wrap_width() {
+    fn create_wrapped_virtual_lines_empty_input_yields_single_empty_row() {
+        let lines = create_wrapped_virtual_lines("", Style::default(), Some(20));
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].text.is_empty());
+        assert_eq!(lines[0].line_start, LineStart::AfterInjectedNewline);
+    }
+
+    #[test]
+    fn create_wrapped_virtual_lines_splits_no_boundary_at_hard_cap() {
+        // No word boundary anywhere — must hard-cap at width.
         let text: String = std::iter::repeat('X').take(50).collect();
         let lines = create_wrapped_virtual_lines(&text, Style::default(), Some(20));
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].text.chars().count(), 20);
         assert_eq!(lines[1].text.chars().count(), 20);
         assert_eq!(lines[2].text.chars().count(), 10);
-        // All segments must be virtual rows so the bg-fill path triggers
+        // Every segment must be a virtual row so the bg-fill path triggers
         // for each one.
         for line in &lines {
             assert_eq!(line.line_start, LineStart::AfterInjectedNewline);
         }
+    }
+
+    #[test]
+    fn create_wrapped_virtual_lines_prefers_word_boundary() {
+        // With a sentence and width 18, we should break at a space — not
+        // mid-word — proving virtual lines now share the source-line
+        // wrap algorithm.
+        let lines = create_wrapped_virtual_lines(
+            "the quick brown fox jumps over the lazy dog",
+            Style::default(),
+            Some(18),
+        );
+        assert!(lines.len() >= 2);
+        // Concatenating the segment texts must round-trip the input.
+        let joined: String = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(joined, "the quick brown fox jumps over the lazy dog");
+        // First row must end at a space, not split a word.
+        let first = &lines[0].text;
+        assert!(
+            first.ends_with(' '),
+            "expected first row to end at a word boundary; got {first:?}",
+        );
     }
 }

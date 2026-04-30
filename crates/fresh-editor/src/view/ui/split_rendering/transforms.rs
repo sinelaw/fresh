@@ -29,7 +29,7 @@ use std::collections::HashSet;
 ///      char-wrap (grapheme-split) fills the remaining columns.
 ///   3. Inside the grapheme-split path, each chunk prefers to end at a
 ///      UAX #29 word boundary within a lookback window defined by
-///      `MAX_LOOKBACK`.  This turns e.g.
+///      `WRAP_MAX_LOOKBACK`.  This turns e.g.
 ///      `dialog.getButton(...).setOnClickListener` into
 ///      `dialog.getButton(...)` / `.setOnClickListener` rather than a
 ///      mid-identifier char-split.
@@ -37,6 +37,17 @@ use std::collections::HashSet;
 ///      boundary qualifies — guaranteeing forward progress and, as a
 ///      post-condition, that no row is ever emitted wider than
 ///      `eff_width`.
+///
+/// The grapheme-split + word-boundary algorithm in step 3/4 mirrors the
+/// standalone [`crate::primitives::visual_layout::wrap_str_to_width`]
+/// helper — used by the virtual-line path
+/// (`split_rendering::style::create_wrapped_virtual_lines`).  Both share
+/// the same `WRAP_MAX_LOOKBACK` constant; the agreement test
+/// `wrap_str_to_width_matches_apply_wrapping_transform` in
+/// `transforms` keeps them honest on simple inputs.  This keeps virtual
+/// lines and source lines wrapping at the same boundaries even though
+/// the orchestration (token carry-over, hanging indent, tabs, ANSI) is
+/// only handled here.
 pub(crate) fn apply_wrapping_transform(
     tokens: Vec<ViewTokenWire>,
     content_width: usize,
@@ -44,17 +55,13 @@ pub(crate) fn apply_wrapping_transform(
     hanging_indent: bool,
 ) -> Vec<ViewTokenWire> {
     use visual_layout::visual_width;
+    // Single source of truth for the lookback window — keeps the
+    // word-boundary preference here in sync with the standalone
+    // `wrap_str_to_width` helper used by the virtual-line path.
+    use visual_layout::WRAP_MAX_LOOKBACK as MAX_LOOKBACK;
 
     /// Minimum content width for continuation lines when hanging indent is active.
     const MIN_CONTINUATION_CONTENT_WIDTH: usize = 10;
-
-    /// How many columns before the hard cap a word-boundary split is still
-    /// considered acceptable.  The row floor is
-    /// `max(eff_width - MAX_LOOKBACK, eff_width / 2)` — the `/2` tightens
-    /// the window at very narrow widths so boundary splits don't leave
-    /// half the row empty.  Matches the constant used by the wrap
-    /// property test in `split_rendering::tests::wrap_boundary_property`.
-    const MAX_LOOKBACK: usize = 16;
 
     // Calculate available width (accounting for gutter on first line only)
     let available_width = content_width.saturating_sub(gutter_width);

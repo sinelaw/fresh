@@ -16,6 +16,8 @@
 
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::char_width;
+use crate::primitives::display_width::str_width;
+use std::ops::Range;
 
 /// Standard tab width for terminal display
 pub const TAB_WIDTH: usize = 8;
@@ -302,6 +304,144 @@ pub fn build_line_mappings(
     builder.finish()
 }
 
+/// How many columns of look-back from a hard cap a word-boundary split is
+/// still considered acceptable. Rows shorter than `wrap_width / 2` fall
+/// back to char-wrap so a boundary near the start doesn't strand most of
+/// the row empty.  Matches the constant used by the renderer's
+/// `apply_wrapping_transform` so virtual-line wrap and source-line wrap
+/// stay aligned.
+pub const WRAP_MAX_LOOKBACK: usize = 16;
+
+/// Greedy soft-wrap of `text` into chunks whose visual width does not
+/// exceed `wrap_width`.  Within each chunk, prefer to end at a UAX #29
+/// word boundary that lies within `WRAP_MAX_LOOKBACK` columns of the
+/// hard cap (or past `wrap_width / 2` — whichever is larger).  Falls
+/// back to the hard cap when no boundary qualifies.  Always makes
+/// forward progress: a single grapheme wider than `wrap_width` (e.g. a
+/// double-width CJK glyph in a 1-col viewport) is emitted on its own
+/// row.
+///
+/// Returns the byte ranges of the chunks; concatenating them recovers
+/// the original input.  An empty input yields no chunks; `wrap_width`
+/// of `0` degenerates to one chunk covering the whole input (the
+/// caller decides how to render a zero-width row).
+///
+/// The algorithm mirrors the inner Text-token char-split path of
+/// `view::ui::split_rendering::transforms::apply_wrapping_transform` —
+/// keep the two in sync if either changes.  Tabs and ANSI escapes are
+/// out of scope for this helper; callers needing tab-aware wrapping
+/// (the source-line path) handle them in their own pre/post passes.
+pub fn wrap_str_to_width(text: &str, wrap_width: usize) -> Vec<Range<usize>> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if wrap_width == 0 {
+        return vec![0..text.len()];
+    }
+
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let graphemes: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
+    let word_bounds: Vec<usize> = text.split_word_bound_indices().map(|(b, _)| b).collect();
+    let text_len = text.len();
+
+    let mut chunks: Vec<Range<usize>> = Vec::new();
+    let mut grapheme_idx = 0;
+    // Monotonic cursor into `word_bounds` so the per-chunk boundary search
+    // is amortised O(1) rather than rescanning from byte 0.
+    let mut wb_lo: usize = 0;
+
+    while grapheme_idx < graphemes.len() {
+        let chunk_start_byte = graphemes[grapheme_idx].0;
+
+        // Greedy fill: how many graphemes fit in `wrap_width`?
+        let mut chunk_visual_width = 0usize;
+        let mut chunk_grapheme_count = 0usize;
+        for &(_b, g) in &graphemes[grapheme_idx..] {
+            let g_width = str_width(g);
+            if chunk_visual_width + g_width > wrap_width && chunk_grapheme_count > 0 {
+                break;
+            }
+            chunk_visual_width += g_width;
+            chunk_grapheme_count += 1;
+        }
+        // Forward-progress guarantee for an oversized lone grapheme.
+        if chunk_grapheme_count == 0 {
+            chunk_grapheme_count = 1;
+        }
+
+        let slice_end_hard = if grapheme_idx + chunk_grapheme_count < graphemes.len() {
+            graphemes[grapheme_idx + chunk_grapheme_count].0
+        } else {
+            text_len
+        };
+
+        // Boundary preference within `[floor_byte, slice_end_hard]`.  Floor
+        // is row-relative — we only enter this loop on a fresh row, so
+        // `current_line_width` would be 0 and `chunk_floor_from_cursor`
+        // collapses to `row_floor`.
+        let row_floor = wrap_width
+            .saturating_sub(WRAP_MAX_LOOKBACK)
+            .max(wrap_width / 2);
+        let floor_byte = if row_floor < chunk_grapheme_count {
+            graphemes[grapheme_idx + row_floor].0
+        } else {
+            slice_end_hard
+        };
+
+        // Advance `wb_lo` past entries already at or before chunk start.
+        while wb_lo < word_bounds.len() && word_bounds[wb_lo] <= chunk_start_byte {
+            wb_lo += 1;
+        }
+        let mut wb_hi = wb_lo;
+        while wb_hi < word_bounds.len() && word_bounds[wb_hi] <= slice_end_hard {
+            wb_hi += 1;
+        }
+
+        // Largest boundary in `[floor_byte, slice_end_hard]`.
+        let mut best_target_byte = word_bounds[wb_lo..wb_hi]
+            .iter()
+            .rev()
+            .copied()
+            .find(|&b| b >= floor_byte);
+        // `text.len()` is a virtual boundary if it falls inside the window —
+        // this stops a chunk that happens to end exactly at the text end
+        // from being shrunk to an earlier boundary (which would leak chars
+        // onto the next row).
+        if text_len > chunk_start_byte
+            && text_len >= floor_byte
+            && text_len <= slice_end_hard
+            && best_target_byte.map_or(true, |b| text_len > b)
+        {
+            best_target_byte = Some(text_len);
+        }
+
+        let chunk_end_byte = if let Some(target_byte) = best_target_byte {
+            let new_count = graphemes[grapheme_idx..]
+                .iter()
+                .position(|(b, _)| *b == target_byte)
+                .unwrap_or(chunk_grapheme_count);
+            if new_count > 0 && new_count < chunk_grapheme_count {
+                chunk_grapheme_count = new_count;
+                if grapheme_idx + new_count < graphemes.len() {
+                    graphemes[grapheme_idx + new_count].0
+                } else {
+                    text_len
+                }
+            } else {
+                slice_end_hard
+            }
+        } else {
+            slice_end_hard
+        };
+
+        chunks.push(chunk_start_byte..chunk_end_byte);
+        grapheme_idx += chunk_grapheme_count;
+    }
+
+    chunks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,5 +622,114 @@ mod tests {
         assert_eq!(mappings.visual_col_at_char(4), 0);
         assert_eq!(mappings.visual_col_at_char(5), 0); // 'H'
         assert_eq!(mappings.visual_col_at_char(6), 1); // 'i'
+    }
+
+    fn collect_chunks<'a>(text: &'a str, chunks: &[Range<usize>]) -> Vec<&'a str> {
+        chunks.iter().map(|r| &text[r.clone()]).collect()
+    }
+
+    #[test]
+    fn wrap_str_to_width_empty_input_yields_no_chunks() {
+        assert!(wrap_str_to_width("", 10).is_empty());
+    }
+
+    #[test]
+    fn wrap_str_to_width_short_text_fits_in_one_chunk() {
+        let chunks = wrap_str_to_width("hello", 80);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(&"hello"[chunks[0].clone()], "hello");
+    }
+
+    #[test]
+    fn wrap_str_to_width_no_word_boundaries_falls_back_to_hard_cap() {
+        // 64 of the same char — no word boundary — must hard-cap at 32.
+        let text: String = std::iter::repeat('A').take(64).collect();
+        let chunks = wrap_str_to_width(&text, 32);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 32);
+        assert_eq!(chunks[1].len(), 32);
+    }
+
+    #[test]
+    fn wrap_str_to_width_prefers_word_boundary_over_mid_word_break() {
+        // Two words: "hello world" — wrap at width 8.  Hard cap would
+        // split mid-word at "hello wo|rld"; the helper should prefer the
+        // boundary at the space and emit "hello |world" instead.
+        let text = "hello world";
+        let chunks = wrap_str_to_width(text, 8);
+        let pieces = collect_chunks(text, &chunks);
+        assert_eq!(pieces, vec!["hello ", "world"]);
+    }
+
+    #[test]
+    fn wrap_str_to_width_handles_double_width_chars() {
+        // "世界你好" — each glyph is width 2.  At width 4, two glyphs fit.
+        let text = "世界你好";
+        let chunks = wrap_str_to_width(text, 4);
+        let pieces = collect_chunks(text, &chunks);
+        assert_eq!(pieces, vec!["世界", "你好"]);
+    }
+
+    #[test]
+    fn wrap_str_to_width_progress_for_oversized_grapheme() {
+        // Double-width glyph in a 1-col viewport: emit on its own row so
+        // we don't loop forever.
+        let chunks = wrap_str_to_width("世", 1);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(&"世"[chunks[0].clone()], "世");
+    }
+
+    #[test]
+    fn wrap_str_to_width_breaks_at_word_boundary_inside_url() {
+        // UAX #29 treats '/', '.', and '-' as word boundaries inside a
+        // URL.  Wrapping "https://example.com/very-long-path/file" at
+        // width 24 should not split "very" mid-word: a boundary exists
+        // at byte 24 (right after "very", before "-long-path/file"), so
+        // the helper should pick it.
+        let text = "https://example.com/very-long-path/file";
+        let chunks = wrap_str_to_width(text, 24);
+
+        // Round-trip + width invariants.
+        let mut acc = String::new();
+        for r in &chunks {
+            let piece = &text[r.clone()];
+            assert!(str_width(piece) <= 24, "chunk over width: {piece:?}");
+            acc.push_str(piece);
+        }
+        assert_eq!(acc, text);
+
+        // No chunk should split a UAX #29 alphabetic word in half — the
+        // boundary right after "very" must be honoured.
+        assert!(
+            !text[chunks[0].clone()].ends_with("ver"),
+            "first chunk truncated 'very' mid-word: {:?}",
+            &text[chunks[0].clone()],
+        );
+        assert!(
+            text[chunks[0].clone()].ends_with("very"),
+            "first chunk should end at the word boundary right after \
+             'very': {:?}",
+            &text[chunks[0].clone()],
+        );
+    }
+
+    #[test]
+    fn wrap_str_to_width_round_trips_input() {
+        // Property-flavoured spot check: chunks should always tile the input.
+        let text = "the quick brown fox jumps over the lazy dog. \
+                    the quick brown fox jumps over the lazy dog.";
+        for w in [8usize, 10, 16, 25, 40] {
+            let chunks = wrap_str_to_width(text, w);
+            let mut acc = String::new();
+            for r in &chunks {
+                let piece = &text[r.clone()];
+                assert!(
+                    str_width(piece) <= w,
+                    "chunk over width at w={w}: {piece:?}"
+                );
+                acc.push_str(piece);
+            }
+            assert_eq!(acc, text, "round-trip mismatch at w={w}");
+        }
     }
 }
