@@ -1357,6 +1357,13 @@ impl Editor {
         self.live_grep_last_state = state;
     }
 
+    /// Test-only accessor for the split tree, so layout-shape
+    /// regression tests can assert on the structure directly.
+    #[doc(hidden)]
+    pub fn split_manager_for_tests(&self) -> &crate::view::split::SplitManager {
+        &self.split_manager
+    }
+
     /// Refresh the plugin-readable keybinding-label snapshot from
     /// the current keymap. Call this whenever a plugin is about to
     /// surface key hints in its UI (overlay headers, tooltips,

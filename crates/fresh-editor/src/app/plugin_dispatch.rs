@@ -2163,76 +2163,84 @@ impl Editor {
             _ => crate::model::event::SplitDirection::Horizontal,
         };
 
-        // Create a split with the new buffer
-        let created_split_id = match self
-            .split_manager
-            .split_active_positioned(split_dir, buffer_id, ratio, before)
-        {
-            Ok(new_split_id) => {
-                // The buffer now lives in its own split, so drop its
-                // tab from the source split (see bug #3).  Only do
-                // this when the new split actually differs from the
-                // source split — otherwise we'd leave no split
-                // displaying the buffer.
-                if new_split_id != source_split_before_create {
-                    if let Some(source_view_state) =
-                        self.split_view_states.get_mut(&source_split_before_create)
-                    {
-                        source_view_state.remove_buffer(buffer_id);
+        // Create a split with the new buffer. When the caller asked
+        // for `role = "utility_dock"` and no dock leaf exists yet,
+        // split at the *root* so the dock spans the full width below
+        // any pre-existing side-by-side panes — splitting the active
+        // leaf would nest the dock under whichever pane was focused.
+        let created_split_id =
+            match if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
+                self.split_manager
+                    .split_root_positioned(split_dir, buffer_id, ratio, before)
+            } else {
+                self.split_manager
+                    .split_active_positioned(split_dir, buffer_id, ratio, before)
+            } {
+                Ok(new_split_id) => {
+                    // The buffer now lives in its own split, so drop its
+                    // tab from the source split (see bug #3).  Only do
+                    // this when the new split actually differs from the
+                    // source split — otherwise we'd leave no split
+                    // displaying the buffer.
+                    if new_split_id != source_split_before_create {
+                        if let Some(source_view_state) =
+                            self.split_view_states.get_mut(&source_split_before_create)
+                        {
+                            source_view_state.remove_buffer(buffer_id);
+                        }
                     }
-                }
-                // Create independent view state for the new split with the buffer in tabs
-                let mut view_state = SplitViewState::with_buffer(
-                    self.terminal_width,
-                    self.terminal_height,
-                    buffer_id,
-                );
-                view_state.apply_config_defaults(
-                    self.config.editor.line_numbers,
-                    self.config.editor.highlight_current_line,
-                    line_wrap.unwrap_or_else(|| self.resolve_line_wrap_for_buffer(buffer_id)),
-                    self.config.editor.wrap_indent,
-                    self.resolve_wrap_column_for_buffer(buffer_id),
-                    self.config.editor.rulers.clone(),
-                );
-                // Override with plugin-requested show_line_numbers
-                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-                self.split_view_states.insert(new_split_id, view_state);
-
-                // Focus the new split (the diagnostics panel)
-                self.split_manager.set_active_split(new_split_id);
-                // NOTE: split tree was updated by split_active, active_buffer derives from it
-
-                // If a role was requested but no dock existed (we fell
-                // through the fast-path above), tag the freshly created
-                // leaf so the next utility lands here. Clear any stale
-                // role from elsewhere first to preserve the
-                // one-leaf-per-role invariant.
-                if let Some(target_role) = split_role {
-                    self.split_manager.clear_role(target_role);
-                    self.split_manager
-                        .set_leaf_role(new_split_id, Some(target_role));
-                    tracing::info!(
-                        "Tagged new dock leaf {:?} with role {:?}",
-                        new_split_id,
-                        target_role
+                    // Create independent view state for the new split with the buffer in tabs
+                    let mut view_state = SplitViewState::with_buffer(
+                        self.terminal_width,
+                        self.terminal_height,
+                        buffer_id,
                     );
-                }
+                    view_state.apply_config_defaults(
+                        self.config.editor.line_numbers,
+                        self.config.editor.highlight_current_line,
+                        line_wrap.unwrap_or_else(|| self.resolve_line_wrap_for_buffer(buffer_id)),
+                        self.config.editor.wrap_indent,
+                        self.resolve_wrap_column_for_buffer(buffer_id),
+                        self.config.editor.rulers.clone(),
+                    );
+                    // Override with plugin-requested show_line_numbers
+                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+                    self.split_view_states.insert(new_split_id, view_state);
 
-                tracing::info!(
-                    "Created {:?} split with virtual buffer {:?}",
-                    split_dir,
-                    buffer_id
-                );
-                Some(new_split_id)
-            }
-            Err(e) => {
-                tracing::error!("Failed to create split: {}", e);
-                // Fall back to just switching to the buffer
-                self.set_active_buffer(buffer_id);
-                None
-            }
-        };
+                    // Focus the new split (the diagnostics panel)
+                    self.split_manager.set_active_split(new_split_id);
+                    // NOTE: split tree was updated by split_active, active_buffer derives from it
+
+                    // If a role was requested but no dock existed (we fell
+                    // through the fast-path above), tag the freshly created
+                    // leaf so the next utility lands here. Clear any stale
+                    // role from elsewhere first to preserve the
+                    // one-leaf-per-role invariant.
+                    if let Some(target_role) = split_role {
+                        self.split_manager.clear_role(target_role);
+                        self.split_manager
+                            .set_leaf_role(new_split_id, Some(target_role));
+                        tracing::info!(
+                            "Tagged new dock leaf {:?} with role {:?}",
+                            new_split_id,
+                            target_role
+                        );
+                    }
+
+                    tracing::info!(
+                        "Created {:?} split with virtual buffer {:?}",
+                        split_dir,
+                        buffer_id
+                    );
+                    Some(new_split_id)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create split: {}", e);
+                    // Fall back to just switching to the buffer
+                    self.set_active_buffer(buffer_id);
+                    None
+                }
+            };
 
         // Send response with buffer ID and split ID via callback resolution
         // NOTE: Using VirtualBufferResult type for type-safe JSON serialization

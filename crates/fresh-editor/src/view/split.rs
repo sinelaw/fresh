@@ -1199,6 +1199,30 @@ impl SplitManager {
         result
     }
 
+    /// Split the root of the tree (rather than the active leaf), so the
+    /// new leaf becomes a sibling of the entire existing layout. Used
+    /// by the Utility Dock so the dock spans the full width below any
+    /// pre-existing horizontal-axis splits, instead of nesting under
+    /// whichever pane happened to be active.
+    ///
+    /// `ratio` controls the first child's proportion. `before = false`
+    /// places the new leaf after (right/bottom) the existing root.
+    pub fn split_root_positioned(
+        &mut self,
+        direction: SplitDirection,
+        new_buffer_id: BufferId,
+        ratio: f32,
+        before: bool,
+    ) -> Result<LeafId, String> {
+        let root_id = self.root.id();
+        let result =
+            self.replace_split_with_split(root_id, direction, new_buffer_id, ratio, before);
+        if let Ok(new_split_id) = &result {
+            self.active_split = *new_split_id;
+        }
+        result
+    }
+
     /// Replace a split with a new split container.
     /// When `before` is true, the new buffer is placed as the first child (left/top).
     fn replace_split_with_split(
@@ -1920,5 +1944,92 @@ mod tests {
         manager.set_label(split, "only".to_string());
         // Only split is labeled — returns None
         assert_eq!(manager.find_unlabeled_leaf(), None);
+    }
+
+    /// Regression test: opening the Utility Dock when a vertical split
+    /// already exists must put the dock as a sibling of the *root*, so
+    /// it spans the full width below both side-by-side panes — not
+    /// nested under whichever pane was active.
+    #[test]
+    fn test_split_root_positioned_with_existing_vertical_split() {
+        // Set up: root is a vertical split with two leaves (left/right).
+        let left = BufferId(0);
+        let right = BufferId(1);
+        let dock = BufferId(2);
+        let mut manager = SplitManager::new(left);
+        manager
+            .split_active(SplitDirection::Vertical, right, 0.5)
+            .expect("vertical split");
+        // Sanity: root is a vertical Split with two leaves, count = 2.
+        assert!(matches!(
+            manager.root(),
+            SplitNode::Split {
+                direction: SplitDirection::Vertical,
+                ..
+            }
+        ));
+        assert_eq!(manager.root().count_leaves(), 2);
+        // Active leaf is the right pane (vertical split sets the new
+        // leaf active). Buggy behavior would split that leaf and nest
+        // the dock under it.
+        let active_before = manager.active_split();
+
+        // Act: split the *root* horizontally to add the dock.
+        let dock_leaf = manager
+            .split_root_positioned(SplitDirection::Horizontal, dock, 0.7, false)
+            .expect("split_root_positioned");
+
+        // Assert: root is now a Horizontal Split whose first child is
+        // the original Vertical split and whose second child is the
+        // new dock leaf. The original two leaves remain siblings of
+        // each other (still under the inner Vertical split).
+        match manager.root() {
+            SplitNode::Split {
+                direction: SplitDirection::Horizontal,
+                first,
+                second,
+                ..
+            } => {
+                assert!(
+                    matches!(
+                        first.as_ref(),
+                        SplitNode::Split {
+                            direction: SplitDirection::Vertical,
+                            ..
+                        }
+                    ),
+                    "first child of new root must be the original Vertical split, got {:?}",
+                    first
+                );
+                match second.as_ref() {
+                    SplitNode::Leaf {
+                        buffer_id,
+                        split_id,
+                        ..
+                    } => {
+                        assert_eq!(*buffer_id, dock, "second child must be the dock leaf");
+                        assert_eq!(
+                            *split_id, dock_leaf,
+                            "split_root_positioned must return the new leaf id"
+                        );
+                    }
+                    other => panic!("expected dock leaf as second child, got {:?}", other),
+                }
+            }
+            other => {
+                panic!(
+                    "root must be a Horizontal Split after split_root_positioned, got {:?}",
+                    other
+                );
+            }
+        }
+        // Total leaf count went from 2 → 3.
+        assert_eq!(manager.root().count_leaves(), 3);
+        // The dock leaf must not be the previously-active leaf — it
+        // must be a freshly-created sibling of the root.
+        assert_ne!(
+            dock_leaf, active_before,
+            "dock must be a new sibling of the root, not the previously-active leaf"
+        );
     }
 }

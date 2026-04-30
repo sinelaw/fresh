@@ -549,3 +549,83 @@ fn test_resume_live_grep_restores_real_cached_state() {
         "Resume with a real cached state must restore the prior query"
     );
 }
+
+/// Regression test: opening the Utility Dock when a side-by-side
+/// (vertical) split already exists must place the dock as a sibling
+/// of the *root*, so it spans the full width below both panes — not
+/// nested under whichever pane was focused.
+///
+/// Pre-fix the dock-creation site used `split_active_positioned`,
+/// which split the active leaf and produced a tree like
+/// `Vertical(left, Horizontal(right, dock))` — visually the dock
+/// appeared only under the right pane. Post-fix, `split_root_positioned`
+/// produces `Horizontal(Vertical(left, right), dock)` so the dock
+/// spans the full editor width.
+#[test]
+fn test_open_terminal_in_dock_spans_full_width_with_existing_vsplit() {
+    use fresh::view::split::SplitNode;
+    use fresh_core::SplitDirection;
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    // Set up: vertical (side-by-side) split.
+    harness.editor_mut().split_pane_vertical();
+    {
+        let sm = harness.editor().split_manager_for_tests();
+        assert!(
+            matches!(
+                sm.root(),
+                SplitNode::Split {
+                    direction: SplitDirection::Vertical,
+                    ..
+                }
+            ),
+            "precondition: root must be a Vertical Split, got {:?}",
+            sm.root()
+        );
+        assert_eq!(sm.root().count_leaves(), 2);
+    }
+
+    // Act: open the dock. Action::OpenTerminalInDock spawns a
+    // terminal after creating the dock leaf; the terminal spawn is
+    // best-effort in the harness but the split-tree mutation runs
+    // synchronously before it, which is what we care about here.
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::OpenTerminalInDock);
+
+    // Assert: root is now a Horizontal Split whose first child is
+    // the original Vertical split (the two side-by-side editor
+    // panes) and whose second child is the dock leaf.
+    let sm = harness.editor().split_manager_for_tests();
+    match sm.root() {
+        SplitNode::Split {
+            direction: SplitDirection::Horizontal,
+            first,
+            ..
+        } => {
+            assert!(
+                matches!(
+                    first.as_ref(),
+                    SplitNode::Split {
+                        direction: SplitDirection::Vertical,
+                        ..
+                    }
+                ),
+                "first child of root must be the original Vertical split — pre-fix \
+                 the dock got nested under the active pane, leaving the root as the \
+                 original Vertical and the dock as a child of one of its leaves. Got {:?}",
+                first
+            );
+        }
+        other => panic!(
+            "root must be a Horizontal Split after dock creation, got {:?}",
+            other
+        ),
+    }
+    assert_eq!(
+        sm.root().count_leaves(),
+        3,
+        "expected 3 leaves (left, right, dock); got tree: {:?}",
+        sm.root()
+    );
+}

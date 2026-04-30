@@ -149,7 +149,9 @@ impl Editor {
                 self.set_pane_buffer(dock_leaf, buffer_id);
                 Some(dock_leaf)
             } else {
-                match self.split_manager.split_active_positioned(
+                // Split at the root so the dock spans the full width
+                // below any pre-existing side-by-side panes.
+                match self.split_manager.split_root_positioned(
                     SplitDirection::Horizontal,
                     buffer_id,
                     0.7,
@@ -1180,8 +1182,13 @@ impl Editor {
                         // Seed the dock with the currently active
                         // buffer as a placeholder; the terminal we
                         // open right after will swap into it.
+                        // Split at the root so the dock spans the full
+                        // width below any pre-existing side-by-side
+                        // panes — splitting the active leaf instead
+                        // would nest the dock under whichever pane was
+                        // focused.
                         let seed_buffer = self.active_buffer();
-                        match self.split_manager.split_active_positioned(
+                        match self.split_manager.split_root_positioned(
                             SplitDirection::Horizontal,
                             seed_buffer,
                             0.7,
