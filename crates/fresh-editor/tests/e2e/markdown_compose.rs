@@ -577,6 +577,128 @@ fn test_compose_mode_disable_preserves_content() {
     harness.assert_screen_contains("List item");
 }
 
+/// Regression test for issue #1789.
+///
+/// Compose mode wraps a long paragraph using soft breaks computed by the
+/// plugin. The Rust renderer's wrap pass reserves the last column for the
+/// EOL cursor, so the plugin must use the same reservation. Without the
+/// reservation, the plugin produces a "perfect-fit" line at width N that
+/// the renderer then re-wraps at width N-1 — splitting off the trailing
+/// word into a single-word "orphan" visual row.
+///
+/// The test sweeps a range of viewport widths one column at a time
+/// (resizing the harness in-place so the same compose session is reused)
+/// and asserts no paragraph visual row holds a single word at any width.
+/// The issue itself reports orphans at widths 90, 105, and 110; the sweep
+/// is wider so off-by-one regressions at any width get caught.
+#[test]
+fn test_compose_wrap_no_single_word_orphan() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("orphan.md");
+    let paragraph = "A piece tree data structure represents this file. \
+                     Some of the data may be in memory while the rest is \
+                     pointed at the disk. The piece tree provides an iterator \
+                     that walks in linear offset order over nodes of the tree, \
+                     yielding chunks of contiguous content longer.";
+    std::fs::write(&md_path, format!("# Test\n\n{paragraph}\n")).unwrap();
+
+    // Start at the upper bound of the sweep range; the harness is resized
+    // down one column at a time below.
+    let max_width: u16 = 130;
+    let min_width: u16 = 60;
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        max_width,
+        30,
+        Default::default(),
+        project_root,
+    )
+    .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Enable compose mode once. The same buffer/session is reused across
+    // resizes — the soft-break pipeline reruns on `viewport_changed`.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    /// Find rows belonging to the paragraph by skipping the heading and
+    /// empty rows above the paragraph, then taking until the next blank
+    /// row. Returns owned strings so the caller doesn't need to keep the
+    /// screen buffer alive.
+    fn paragraph_rows(harness: &crate::common::harness::EditorTestHarness) -> Vec<String> {
+        let screen = harness.screen_to_string();
+        let (content_start, content_end) = harness.content_area_rows();
+        screen
+            .lines()
+            .skip(content_start)
+            .take(content_end - content_start + 1)
+            .skip_while(|l| {
+                let t = l.trim_start();
+                t.is_empty() || t.starts_with('#') || t.starts_with("Test")
+            })
+            .take_while(|l| !l.trim().is_empty())
+            .map(|l| l.to_string())
+            .collect()
+    }
+
+    for width in (min_width..=max_width).rev() {
+        if width != max_width {
+            harness.resize(width, 30).unwrap();
+        }
+
+        // Wait for the soft-break pipeline to rewrap the paragraph at the
+        // new width. The semantic signal is that the paragraph wraps onto
+        // multiple visual rows (the fixture is far wider than the
+        // sweep's upper bound).
+        harness
+            .wait_until_stable(|h| paragraph_rows(h).len() >= 2)
+            .unwrap();
+
+        let rows = paragraph_rows(&harness);
+        assert!(
+            rows.len() >= 2,
+            "width {width}: paragraph should wrap onto multiple visual rows. \
+             Screen:\n{}",
+            harness.screen_to_string(),
+        );
+
+        // No NON-LAST paragraph row may hold a single word — that's the
+        // orphan bug from issue #1789. The last visual row of a paragraph
+        // can naturally be short under any greedy wrap (e.g. just the
+        // sentence terminator) and is not what this fix addresses; that's
+        // a separate balancing concern (Knuth–Plass).
+        for (i, row) in rows.iter().enumerate().take(rows.len() - 1) {
+            let words: Vec<&str> = row.split_whitespace().collect();
+            assert!(
+                words.len() >= 2,
+                "width {width}: visual row {i} contains a single-word orphan {:?}.\n\
+                 Issue #1789: wrap budget must match the renderer's reservation.\n\
+                 Paragraph rows:\n{}",
+                words.first().copied().unwrap_or(""),
+                rows.join("\n"),
+            );
+        }
+    }
+}
+
 /// Test visual cursor movement through soft-wrapped lines and auto-expose /
 /// re-conceal of markup when the cursor enters / leaves a line.
 ///

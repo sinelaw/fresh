@@ -1425,7 +1425,16 @@ function processLineSoftBreaks(
   }
 
   // Walk through the line content and find word-wrap break points
-  // We need to find Space positions where wrapping should occur
+  // We need to find Space positions where wrapping should occur.
+  //
+  // The wrap budget must reserve one column to match the Rust renderer's
+  // `apply_wrapping_transform`, which subtracts one from `content_width`
+  // to keep the end-of-line cursor off the scrollbar track. If the
+  // plugin uses the full viewport width, it produces lines that fit
+  // exactly N columns; the renderer then re-wraps them at N-1, splitting
+  // off the trailing word into a single-word "orphan" visual row
+  // (issue #1789).
+  const wrapBudget = Math.max(1, width - 1);
   let column = 0;
   let i = 0;
 
@@ -1440,8 +1449,8 @@ function processLineSoftBreaks(
         nextWordLen += charW[j];
       }
 
-      // Check if space + next word would exceed width
-      if (column + 1 + nextWordLen > width && nextWordLen > 0) {
+      // Check if space + next word would exceed wrap budget
+      if (column + 1 + nextWordLen > wrapBudget && nextWordLen > 0) {
         // Add a soft break at this space's buffer position
         const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, i));
         editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, hangingIndent);
