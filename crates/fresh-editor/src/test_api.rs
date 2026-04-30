@@ -108,6 +108,26 @@ pub trait EditorTestApi {
     /// order, joined by `\n`. Returns the empty string if no cursor has a
     /// selection.
     fn selection_text(&mut self) -> String;
+
+    // ── Class B: layout observables ──────────────────────────────────────
+    //
+    // These reflect viewport state that is reconciled by the render
+    // pipeline (`Viewport::ensure_visible_in_layout`), not by action
+    // dispatch alone. The `LayoutTheorem` runner invokes
+    // `EditorTestHarness::render` exactly once before reading them.
+    //
+    // This is intentionally a *thin* layout surface — just `top_byte`
+    // for now. The `RenderSnapshot` design (see §9.1 of the migration
+    // doc) is the right home for richer layout observables (gutter
+    // spans, scrollbar geometry, hardware cursor row/col, popup
+    // placement) and is reserved for a future expansion when a
+    // theorem actually needs them.
+
+    /// Byte offset of the first line currently visible in the active
+    /// viewport. After the renderer has run, this is the viewport's
+    /// scroll position. Without a render, this reflects the last
+    /// reconciliation point.
+    fn viewport_top_byte(&self) -> usize;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -180,5 +200,9 @@ impl EditorTestApi for crate::app::Editor {
             .map(|r| state.get_text_range(r.start, r.end))
             .collect();
         parts.join("\n")
+    }
+
+    fn viewport_top_byte(&self) -> usize {
+        self.active_viewport().top_byte
     }
 }

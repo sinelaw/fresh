@@ -1,9 +1,31 @@
 # E2E Test Migration — From Imperative Harness to Declarative Theorems
 
-**Status:** Design / Phase 0 (no code changes yet)
+**Status:** Phases 1, 2, 3a/3b/3c (minimal) landed on
+`claude/e2e-test-migration-design-HxHlO`
 **Branch:** `claude/e2e-test-migration-design-HxHlO`
 **Owner:** TBD
 **Scope:** `crates/fresh-editor/tests/e2e/*` (~220 files)
+
+## What's landed (cumulative)
+
+| Phase | Commit | Lines | Result |
+|---|---|---|---|
+| 1 — `EditorTestApi` seam | `af066ad` | +295 | Trait + `Caret` projection on `Editor`, `harness.api_mut()`, isolation lint script, smoke test |
+| 2 — `BufferTheorem` + PoC | `448fd4f` | +245 | Runner framework, `tests/semantic/case_conversion.rs` rewritten as a 12-line theorem |
+| 3a — Multi-cursor | (pending commit) | ~30 | `theorem_multi_cursor_insertion_is_vectorized` — replaces `test_multi_cursor_typing` |
+| 3b — `TraceTheorem` | (pending commit) | ~70 | Forward + undo-roundtrip runner; `theorem_multi_cursor_undo_is_atomic` |
+| 3c — Minimal `LayoutTheorem` | (pending commit) | ~60 | `viewport_top_byte` observable; trivial baseline theorems exercising the render-once architecture |
+
+5 theorem tests live under `tests/semantic/` (case_conversion + 2×
+multicursor + 2× layout). Full integration test compile-and-run for
+`semantic_tests` finishes in ~1.8s on a debug build.
+
+**Deferred deliberately:** the full `RenderSnapshot` design from §9.1
+and the issue-#1147-style Class B rewrites that depend on it. The
+minimal `LayoutTheorem` only exposes `viewport_top_byte` so the
+contract for adding richer observables (cursor screen position, gutter
+spans, scrollbar geometry) stays explicit: each one lands alongside
+the first theorem that actually needs it.
 
 ---
 

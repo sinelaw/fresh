@@ -2,3 +2,5 @@
 // failures grouped and discoverable.
 
 pub mod case_conversion;
+pub mod layout;
+pub mod multicursor;

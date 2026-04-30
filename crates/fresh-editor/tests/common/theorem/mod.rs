@@ -9,3 +9,5 @@
 //! `crossterm::KeyCode`, no screen scraping.
 
 pub mod buffer_theorem;
+pub mod layout_theorem;
+pub mod trace_theorem;
