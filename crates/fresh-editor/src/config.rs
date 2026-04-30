@@ -6458,6 +6458,32 @@ impl Config {
                 root_markers: Default::default(),
             }]),
         );
+
+        // svls - SystemVerilog Language Server (https://github.com/dalance/svls)
+        // Install via cargo: cargo install svls
+        // Handles both Verilog and SystemVerilog; configured per-project via .svls.toml.
+        let svls_config = LspServerConfig {
+            command: "svls".to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: false,
+            process_limits: ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+            root_markers: vec![".svls.toml".to_string(), ".git".to_string()],
+        };
+        lsp.insert(
+            "verilog".to_string(),
+            LspLanguageConfig::Multi(vec![svls_config.clone()]),
+        );
+        lsp.insert(
+            "systemverilog".to_string(),
+            LspLanguageConfig::Multi(vec![svls_config]),
+        );
     }
     pub fn validate(&self) -> Result<(), ConfigError> {
         // Validate tab size
