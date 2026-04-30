@@ -103,6 +103,49 @@ impl Default for TerminalSize {
     }
 }
 
+/// Behavior flags that materially change the response to a typed
+/// character — auto-close brackets, auto-indent on newline, and
+/// auto-surround a selection. The default `EditorTestHarness`
+/// turns all three OFF "for simpler testing" (so basic inserts are
+/// 1-character changes), which is wrong when the *theorem under
+/// test* is the auto-pair behavior itself. Pass explicit
+/// `BehaviorFlags::production()` (or a custom subset) via
+/// [`assert_buffer_theorem_with_behavior`] to re-enable production
+/// semantics for that one test.
+///
+/// Default mirrors the harness default (all off) so existing
+/// theorems are unaffected.
+#[derive(Debug, Clone, Copy)]
+pub struct BehaviorFlags {
+    pub auto_close: bool,
+    pub auto_indent: bool,
+    pub auto_surround: bool,
+}
+
+impl Default for BehaviorFlags {
+    fn default() -> Self {
+        Self {
+            auto_close: false,
+            auto_indent: false,
+            auto_surround: false,
+        }
+    }
+}
+
+impl BehaviorFlags {
+    /// Match the production defaults (`Config::default()`): every
+    /// auto-* feature on. Use for migrations of e2e tests that
+    /// configured the harness with `harness_with_auto_indent()` or
+    /// equivalent.
+    pub fn production() -> Self {
+        Self {
+            auto_close: true,
+            auto_indent: true,
+            auto_surround: true,
+        }
+    }
+}
+
 /// Apply `action` `n` times. Useful for lifting `for _ in 0..n
 /// { send_key(...) }` into a single declarative repetition.
 pub fn repeat(action: Action, n: usize) -> impl Iterator<Item = Action> {
@@ -134,15 +177,47 @@ pub fn check_buffer_theorem_with_terminal(
     t: BufferTheorem,
     term: TerminalSize,
 ) -> Result<(), TheoremFailure> {
-    // We use `with_temp_project` so the test gets an isolated working
-    // directory (per CONTRIBUTING.md §3.4).
+    check_buffer_theorem_full(t, term, BehaviorFlags::default())
+}
+
+/// Same as [`check_buffer_theorem`] but with explicit auto-* behavior
+/// flags. Use this when the theorem-under-test is auto-close /
+/// auto-indent / auto-surround.
+pub fn check_buffer_theorem_with_behavior(
+    t: BufferTheorem,
+    behavior: BehaviorFlags,
+) -> Result<(), TheoremFailure> {
+    check_buffer_theorem_full(t, TerminalSize::default(), behavior)
+}
+
+fn check_buffer_theorem_full(
+    t: BufferTheorem,
+    term: TerminalSize,
+    behavior: BehaviorFlags,
+) -> Result<(), TheoremFailure> {
+    // We use a temp-project harness so the test gets an isolated
+    // working directory (per CONTRIBUTING.md §3.4).
     //
     // Harness construction failures are infrastructure-level (no
     // disk, no temp dir) and are not theorem failures — they bubble
     // up as panics from the helper. An external driver running this
     // in a tight loop should already trust its environment.
-    let mut harness = EditorTestHarness::with_temp_project(term.width, term.height)
-        .expect("EditorTestHarness::with_temp_project failed");
+    let mut harness = if behavior_is_default(behavior) {
+        // Default path: behavior flags off (harness default); preserve
+        // the exact construction `with_temp_project` uses so existing
+        // theorems behave identically.
+        EditorTestHarness::with_temp_project(term.width, term.height)
+            .expect("EditorTestHarness::with_temp_project failed")
+    } else {
+        // Need an explicit Config so the harness's "config not
+        // provided" branch doesn't reset auto_close/auto_indent.
+        let mut config = fresh::config::Config::default();
+        config.editor.auto_close = behavior.auto_close;
+        config.editor.auto_indent = behavior.auto_indent;
+        config.editor.auto_surround = behavior.auto_surround;
+        EditorTestHarness::with_temp_project_and_config(term.width, term.height, config)
+            .expect("EditorTestHarness::with_temp_project_and_config failed")
+    };
     let _fixture = harness
         .load_buffer_from_text(t.initial_text)
         .expect("load_buffer_from_text failed");
@@ -238,4 +313,15 @@ pub fn assert_buffer_theorem_with_terminal(t: BufferTheorem, term: TerminalSize)
     if let Err(f) = check_buffer_theorem_with_terminal(t, term) {
         panic!("{f}");
     }
+}
+
+/// Panicking wrapper around [`check_buffer_theorem_with_behavior`].
+pub fn assert_buffer_theorem_with_behavior(t: BufferTheorem, behavior: BehaviorFlags) {
+    if let Err(f) = check_buffer_theorem_with_behavior(t, behavior) {
+        panic!("{f}");
+    }
+}
+
+fn behavior_is_default(b: BehaviorFlags) -> bool {
+    !b.auto_close && !b.auto_indent && !b.auto_surround
 }
