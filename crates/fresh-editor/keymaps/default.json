@@ -1792,6 +1792,14 @@
       "action": "open_terminal_in_dock",
       "args": {},
       "when": "normal"
+    },
+    {
+      "comment": "Live Grep prompt — cycle to the next *available* search provider (rg → ag → git-grep → ack → fff → grep). Skips providers whose isAvailable() returns false (e.g. git-grep outside a repo). Mnemonic: 'p' for Provider.",
+      "key": "p",
+      "modifiers": ["alt"],
+      "action": "cycle_live_grep_provider",
+      "args": {},
+      "when": "prompt"
     }
   ]
 }

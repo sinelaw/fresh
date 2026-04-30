@@ -1122,6 +1122,60 @@ impl Editor {
                     );
                 }
             }
+            Action::CycleLiveGrepProvider => {
+                // Only meaningful while the Live Grep overlay is
+                // open. Detect via prompt state — both
+                // `PromptType::LiveGrep` (Resume's pre-seeded
+                // overlay) and `Plugin{custom_type:"live-grep"}`
+                // (the live-running plugin's prompt) qualify.
+                let in_live_grep = self
+                    .prompt
+                    .as_ref()
+                    .map(|p| match &p.prompt_type {
+                        PromptType::LiveGrep => true,
+                        PromptType::Plugin { custom_type } => custom_type == "live-grep",
+                        _ => false,
+                    })
+                    .unwrap_or(false);
+                if !in_live_grep {
+                    self.set_status_message(
+                        "Cycle Live Grep provider only works inside Live Grep".to_string(),
+                    );
+                    return Ok(());
+                }
+                #[cfg(feature = "plugins")]
+                {
+                    if let Some(result) = self
+                        .plugin_manager
+                        .execute_action_async("live_grep_cycle_provider")
+                    {
+                        match result {
+                            Ok(receiver) => {
+                                self.pending_plugin_actions.push((
+                                    "live_grep_cycle_provider".to_string(),
+                                    receiver,
+                                ));
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!(
+                                    "Live Grep cycle failed: {}",
+                                    e
+                                ));
+                            }
+                        }
+                    } else {
+                        self.set_status_message(
+                            "Live Grep plugin not loaded".to_string(),
+                        );
+                    }
+                }
+                #[cfg(not(feature = "plugins"))]
+                {
+                    self.set_status_message(
+                        "Live Grep cycle requires the plugins feature".to_string(),
+                    );
+                }
+            }
             Action::OpenTerminalInDock => {
                 use crate::model::event::SplitDirection;
                 use crate::view::split::SplitRole;

@@ -505,6 +505,26 @@ export class Finder<T> {
   }
 
   /**
+   * Re-run the current search against `lastQuery`, bypassing the
+   * "skip-if-same-query" dedup. Useful when the *backend* has
+   * changed (e.g. user cycled Live Grep providers) and the same
+   * query needs to produce different results.
+   *
+   * No-op for filter-mode sources (results are already correct
+   * client-side) and when no prompt is open.
+   */
+  async refresh(): Promise<void> {
+    if (!this.isPromptMode || !this.currentSource) return;
+    if (this.currentSource.mode !== "search") return;
+    const query = this.promptState.lastQuery;
+    // Reset dedup so runSearch doesn't short-circuit on the
+    // unchanged query.
+    this.promptState.lastQuery = "";
+    if (query.length === 0) return;
+    await this.runSearch(query, this.currentSource);
+  }
+
+  /**
    * Show static results in panel
    */
   async panel(options: PanelOptions<T>): Promise<void> {

@@ -202,8 +202,44 @@ registerProvider({
 });
 
 registerProvider({
-  name: "git-grep",
+  name: "ag",
   priority: -1,
+  isAvailable: async () => {
+    try {
+      const r = await editor.spawnProcess("ag", ["--version"], editor.getCwd());
+      return r.exit_code === 0;
+    } catch {
+      return false;
+    }
+  },
+  search: async (query, { cwd, maxResults }) => {
+    const r = await editor.spawnProcess(
+      "ag",
+      [
+        "--column",
+        "--numbers",
+        "--nogroup",
+        "--nocolor",
+        "--smart-case",
+        "--ignore", ".git",
+        "--ignore", "node_modules",
+        "--ignore", "target",
+        "--ignore", "*.lock",
+        "--",
+        query,
+      ],
+      cwd
+    );
+    if (r.exit_code === 0 || r.exit_code === 1) {
+      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+    }
+    return [];
+  },
+});
+
+registerProvider({
+  name: "git-grep",
+  priority: -2,
   isAvailable: async () => {
     try {
       // git grep needs both `git` on PATH and to be inside a repo.
@@ -235,8 +271,67 @@ registerProvider({
 });
 
 registerProvider({
+  name: "ack",
+  priority: -3,
+  isAvailable: async () => {
+    try {
+      const r = await editor.spawnProcess("ack", ["--version"], editor.getCwd());
+      return r.exit_code === 0;
+    } catch {
+      return false;
+    }
+  },
+  search: async (query, { cwd, maxResults }) => {
+    const r = await editor.spawnProcess(
+      "ack",
+      [
+        "--nocolor",
+        "--column",
+        "--smart-case",
+        "--",
+        query,
+      ],
+      cwd
+    );
+    if (r.exit_code === 0 || r.exit_code === 1) {
+      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+    }
+    return [];
+  },
+});
+
+// `fff` is registered as a placeholder built-in: many users alias
+// their preferred custom search to `fff`, and the priority chain
+// makes it easy to override (this entry sits *below* the standard
+// tools so it only kicks in when nothing else is installed). The
+// argument shape mirrors ripgrep's positional pattern; users whose
+// `fff` differs can replace this entry from init.ts:
+//
+//     editor.getPluginApi("live-grep")?.unregisterProvider("fff");
+//     editor.getPluginApi("live-grep")?.registerProvider({ ... });
+registerProvider({
+  name: "fff",
+  priority: -4,
+  isAvailable: async () => {
+    try {
+      const r = await editor.spawnProcess("fff", ["--version"], editor.getCwd());
+      return r.exit_code === 0;
+    } catch {
+      return false;
+    }
+  },
+  search: async (query, { cwd, maxResults }) => {
+    const r = await editor.spawnProcess("fff", ["--", query], cwd);
+    if (r.exit_code === 0 || r.exit_code === 1) {
+      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+    }
+    return [];
+  },
+});
+
+registerProvider({
   name: "grep",
-  priority: -2,
+  priority: -5,
   isAvailable: async () => {
     try {
       const r = await editor.spawnProcess("grep", ["--version"], editor.getCwd());
@@ -291,6 +386,61 @@ const finder = new Finder<GrepMatch>(editor, {
   preview: false,
   maxResults: 100,
 });
+
+/**
+ * Switch to the next *available* registered provider, in priority
+ * order, wrapping at the end. Unavailable providers (those whose
+ * `isAvailable()` returns false right now) are skipped — pressing
+ * the cycle key never lands on a backend that can't actually run.
+ *
+ * Side effects: updates `cachedSelected` so the next search uses
+ * the new provider, fires a status message naming the new
+ * provider, and re-runs the current query (via the prompt-changed
+ * hook the Finder is already listening for).
+ */
+async function cycleProvider(): Promise<void> {
+  if (providers.length === 0) {
+    editor.setStatus("Live Grep: no providers registered");
+    return;
+  }
+  // Find the position to start scanning from. If a provider is
+  // currently cached, start *after* it so we genuinely move on; if
+  // not, start from the top of the list.
+  const currentIdx =
+    cachedSelected != null ? providers.indexOf(cachedSelected) : -1;
+  // Walk the full list once (mod len), skipping any provider whose
+  // probe says unavailable. If we wrap back to where we started
+  // without finding a different available provider, surface a
+  // status message and leave the selection alone.
+  for (let step = 1; step <= providers.length; step++) {
+    const idx = (currentIdx + step + providers.length) % providers.length;
+    const candidate = providers[idx];
+    if (candidate === cachedSelected) {
+      // Looped past the start without finding anything else
+      // available; only the current one is usable.
+      editor.setStatus(
+        `Live Grep: no other available providers (still on ${candidate.name})`
+      );
+      return;
+    }
+    let ok = false;
+    try {
+      ok = await Promise.resolve(candidate.isAvailable());
+    } catch (e) {
+      editor.debug(`[live-grep] ${candidate.name}.isAvailable threw: ${e}`);
+    }
+    if (!ok) continue;
+    cachedSelected = candidate;
+    editor.setStatus(`Live Grep: switched to ${candidate.name}`);
+    // Re-run the current query through the new provider so the
+    // result list updates without the user having to type a
+    // throwaway character.
+    await finder.refresh();
+    return;
+  }
+  editor.setStatus("Live Grep: no available providers");
+}
+registerHandler("live_grep_cycle_provider", cycleProvider);
 
 async function search(query: string): Promise<GrepMatch[]> {
   const provider = await selectProvider();
