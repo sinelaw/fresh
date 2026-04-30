@@ -793,6 +793,29 @@ pub struct Editor {
     /// without re-running ripgrep. Editing the query invalidates it.
     pub(crate) live_grep_last_state: Option<crate::services::live_grep_state::LiveGrepLastState>,
 
+    /// Phantom leaf id for the Live Grep floating overlay's preview
+    /// pane (issue #1796). The leaf is *not* part of `SplitManager`'s
+    /// tree — we allocate a unique `LeafId` and a parallel
+    /// `SplitViewState` keyed by that id, then call the same per-leaf
+    /// rendering pipeline regular splits use. This gives the preview
+    /// real syntax highlighting, gutter, scroll, fold, etc., without
+    /// mutating the user's split layout. `None` when the overlay is
+    /// not open.
+    pub(crate) overlay_preview_leaf: Option<crate::model::event::LeafId>,
+
+    /// Buffer currently displayed in the overlay preview pane (the
+    /// `active_buffer` of `overlay_preview_leaf`'s `SplitViewState`).
+    /// Tracked here so we can detect when selection navigates to a
+    /// different file and swap the leaf's buffer.
+    pub(crate) overlay_preview_buffer: Option<BufferId>,
+
+    /// Buffers we loaded only to feed the overlay preview pane. On
+    /// overlay close we close any of these that aren't held by
+    /// another split. Buffers the user already had open are *not*
+    /// added here, so closing the overlay never disturbs the user's
+    /// workspace state.
+    pub(crate) overlay_preview_loaded_buffers: std::collections::HashSet<BufferId>,
+
     /// Buffer groups: multiple splits/buffers appearing as one tab
     buffer_groups: HashMap<types::BufferGroupId, types::BufferGroup>,
     /// Reverse index: buffer ID → group ID (for lookups)

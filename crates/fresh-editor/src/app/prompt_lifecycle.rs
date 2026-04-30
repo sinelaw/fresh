@@ -573,6 +573,29 @@ impl Editor {
         }
     }
 
+    /// Tear down the phantom preview leaf used by the Live Grep
+    /// floating overlay (issue #1796). Drops the leaf's
+    /// `SplitViewState`, closes any buffers we loaded purely for
+    /// preview (buffers the user already had open are left
+    /// untouched), and clears the cached pointers so the next overlay
+    /// session starts fresh.
+    pub(crate) fn cleanup_overlay_preview(&mut self) {
+        if let Some(leaf) = self.overlay_preview_leaf.take() {
+            self.split_view_states.remove(&leaf);
+        }
+        self.overlay_preview_buffer = None;
+        let to_close: Vec<crate::model::event::BufferId> =
+            self.overlay_preview_loaded_buffers.drain().collect();
+        for buffer_id in to_close {
+            // close_buffer is the user-facing close (errors on
+            // unsaved changes). Preview-loaded buffers are read-only
+            // / unmodified by definition, so this should always
+            // succeed. Tolerate failure silently — leaving an extra
+            // hidden buffer around is preferable to crashing.
+            let _ = self.close_buffer(buffer_id);
+        }
+    }
+
     /// Snapshot the current prompt's suggestions as a list of
     /// `GrepMatch` records, so Resume can re-display them without
     /// re-running ripgrep and Quickfix export can hand them to the
@@ -722,6 +745,16 @@ impl Editor {
             }
         }
 
+        // If we're closing a floating-overlay prompt (Live Grep,
+        // issue #1796), tear down the phantom preview leaf and close
+        // any buffers we loaded purely to feed the preview pane. The
+        // user's split tree and originally-open buffers are
+        // untouched.
+        let was_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
+        if was_overlay {
+            self.cleanup_overlay_preview();
+        }
+
         self.prompt = None;
         self.pending_search_range = None;
         self.status_message = Some(t!("search.cancelled").to_string());
@@ -774,6 +807,13 @@ impl Editor {
     /// Returns None if trying to confirm a disabled command
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
         if let Some(prompt) = self.prompt.take() {
+            // Tear down the floating-overlay preview state on
+            // confirm too — the user is committing to a result and
+            // navigating to it, so the preview-only buffers should
+            // be cleaned up the same way they are on cancel.
+            if prompt.overlay {
+                self.cleanup_overlay_preview();
+            }
             let selected_index = prompt.selected_suggestion;
             // For prompts with suggestions, prefer the selected suggestion over raw input
             let mut final_input = if prompt.sync_input_on_navigate {

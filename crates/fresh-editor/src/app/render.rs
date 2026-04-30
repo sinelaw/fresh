@@ -876,6 +876,18 @@ impl Editor {
             }
         }
 
+        // Float-overlay preview: load the selected match's file (if
+        // the file changed) and seed the phantom leaf's cursor before
+        // the renderer reaches it. Done before render_prompt_popups
+        // because that path immediately needs the leaf's view state.
+        if self
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.overlay)
+        {
+            self.prepare_overlay_preview();
+        }
+
         // Render file browser popup or suggestions popup AFTER status bar + prompt,
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
         self.render_prompt_popups(frame, main_chunks[prompt_line_idx], size.width);
@@ -1516,6 +1528,217 @@ impl Editor {
         }
     }
 
+    /// Resolve the overlay's currently-selected match into a real
+    /// `Buffer` parked in a phantom `LeafId`, so the preview pane can
+    /// reuse the regular per-leaf renderer (with syntax highlighting,
+    /// gutter, scrollbars, folding). No-op when the prompt has no
+    /// selection or its label is not a `path:line[:col]` triple.
+    fn prepare_overlay_preview(&mut self) {
+        use crate::input::quick_open::parse_path_line_col;
+
+        let (path_str, line, col) = {
+            let Some(prompt) = self.prompt.as_ref() else {
+                return;
+            };
+            let Some(idx) = prompt.selected_suggestion else {
+                return;
+            };
+            let Some(s) = prompt.suggestions.get(idx) else {
+                return;
+            };
+            // Suggestions emitted by the Finder library use `value` as
+            // an opaque index; the parseable label lives in `text`.
+            // Resume-replay is the inverse: `value` carries the full
+            // path:line:col triple.
+            let from_text = parse_path_line_col(&s.text);
+            if !from_text.0.is_empty() && from_text.1.is_some() {
+                from_text
+            } else if let Some(v) = s.value.as_deref() {
+                parse_path_line_col(v)
+            } else {
+                from_text
+            }
+        };
+        if path_str.is_empty() {
+            return;
+        }
+        let line = line.unwrap_or(1).saturating_sub(1);
+        let col = col.unwrap_or(1).saturating_sub(1);
+
+        // Resolve relative to the working directory.
+        let path_buf = std::path::PathBuf::from(&path_str);
+        let abs_path = if path_buf.is_absolute() {
+            path_buf
+        } else {
+            self.working_dir.join(&path_buf)
+        };
+        // Canonicalize for buffer-dedup parity with open_file_no_focus.
+        let abs_path = self
+            .authority
+            .filesystem
+            .canonicalize(&abs_path)
+            .unwrap_or(abs_path);
+
+        // If the leaf already shows this path, only need to re-seed
+        // the cursor — skip the file-load roundtrip.
+        let already_target = self.overlay_preview_buffer.is_some_and(|bid| {
+            self.buffers
+                .get(&bid)
+                .and_then(|s| s.buffer.file_path())
+                .is_some_and(|p| p == abs_path.as_path())
+        });
+
+        let buffer_id = if already_target {
+            self.overlay_preview_buffer.unwrap()
+        } else {
+            // Snapshot whether this path was already known so we can
+            // tell "I just loaded it for preview" from "the user had
+            // it open" — only the former gets cleaned up on close.
+            let was_open = self
+                .buffers
+                .iter()
+                .any(|(_, s)| s.buffer.file_path() == Some(abs_path.as_path()));
+            // Capture the active split so we can remove the phantom
+            // tab `open_file_no_focus` will add to it.
+            let source_split = self.split_manager.active_split();
+            let buffer_id = match self.open_file_no_focus(abs_path.as_path()) {
+                Ok(id) => id,
+                Err(_e) => return,
+            };
+            // Make the buffer invisible in any tab bar so the user
+            // doesn't see a phantom preview tab. Done unconditionally
+            // — we re-clear hidden_from_tabs in cleanup if we ourselves
+            // loaded it; user-loaded buffers stay flagged for the
+            // duration of the overlay only when we mark them, which
+            // we don't (the flag is reset on overlay close).
+            if !was_open {
+                if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                    meta.hidden_from_tabs = true;
+                }
+                self.overlay_preview_loaded_buffers.insert(buffer_id);
+            }
+            // Drop the buffer from every split's `open_buffers` list
+            // so it doesn't surface as a tab anywhere. This is safe
+            // because the phantom leaf displays the buffer directly
+            // via its own `SplitViewState::active_buffer`, which does
+            // not require the buffer to be in `open_buffers`.
+            if !was_open {
+                let leaf_ids: Vec<_> = self.split_view_states.keys().copied().collect();
+                for leaf_id in leaf_ids {
+                    if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+                        view_state.remove_buffer(buffer_id);
+                    }
+                }
+                // open_file_no_focus may have switched the active
+                // buffer of the source split to the new buffer (it
+                // calls set_pane_buffer). Switch it back.
+                if let Some(source_state) = self.split_view_states.get_mut(&source_split) {
+                    if source_state.active_buffer == buffer_id {
+                        // Pick any other buffer the source has, or
+                        // fall back to the first non-preview buffer
+                        // we know about.
+                        let fallback = source_state
+                            .open_buffers
+                            .iter()
+                            .find_map(|t| t.as_buffer())
+                            .or_else(|| {
+                                self.buffers
+                                    .keys()
+                                    .copied()
+                                    .find(|b| {
+                                        *b != buffer_id
+                                            && !self
+                                                .overlay_preview_loaded_buffers
+                                                .contains(b)
+                                    })
+                            });
+                        if let Some(fb) = fallback {
+                            source_state.switch_buffer(fb);
+                            self.split_manager.set_split_buffer(source_split, fb);
+                        }
+                    }
+                }
+                // Restore active split focus (open_file_no_focus may
+                // have moved it).
+                self.split_manager.set_active_split(source_split);
+            }
+            buffer_id
+        };
+
+        // Lazily allocate the phantom leaf id.
+        let leaf_id = match self.overlay_preview_leaf {
+            Some(id) => id,
+            None => {
+                let raw = self.split_manager.allocate_split_id();
+                let leaf = crate::model::event::LeafId(raw);
+                self.overlay_preview_leaf = Some(leaf);
+                leaf
+            }
+        };
+
+        // Ensure the phantom leaf has a SplitViewState pointed at the
+        // current preview buffer.
+        let need_init = !self.split_view_states.contains_key(&leaf_id);
+        if need_init {
+            let mut view_state = crate::view::split::SplitViewState::with_buffer(
+                self.terminal_width,
+                self.terminal_height,
+                buffer_id,
+            );
+            view_state.apply_config_defaults(
+                self.config.editor.line_numbers,
+                self.config.editor.highlight_current_line,
+                self.resolve_line_wrap_for_buffer(buffer_id),
+                self.config.editor.wrap_indent,
+                self.resolve_wrap_column_for_buffer(buffer_id),
+                self.config.editor.rulers.clone(),
+            );
+            self.split_view_states.insert(leaf_id, view_state);
+        } else if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+            if view_state.active_buffer != buffer_id {
+                view_state.switch_buffer(buffer_id);
+            }
+        }
+        self.overlay_preview_buffer = Some(buffer_id);
+
+        // Set the cursor to the match position and centre the line.
+        let byte_offset = {
+            let Some(state) = self.buffers.get(&buffer_id) else {
+                return;
+            };
+            // line/col are 0-based; convert to a byte offset via the
+            // buffer's piece-tree position-to-offset helper.
+            state.buffer.position_to_offset(crate::model::piece_tree::Position {
+                line,
+                column: col,
+            })
+        };
+        // line_start byte for the centred-on scroll target.
+        let line_start = self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|s| s.buffer.line_start_offset(line))
+            .unwrap_or(byte_offset);
+        if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+            // Move primary cursor to the match. Use primary_mut and
+            // overwrite the position field directly.
+            view_state.cursors.primary_mut().position = byte_offset;
+            // Centre the match line: set top_byte so the cursor sits
+            // around the middle of the viewport. The viewport's
+            // scroll machinery clamps to bounds on the next render.
+            let h = view_state.viewport.height.max(1) as usize;
+            let half = h / 2;
+            let target_top_line = line.saturating_sub(half);
+            // Translate top line -> top byte via the buffer.
+            let top_byte = self
+                .buffers
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.line_start_offset(target_top_line))
+                .unwrap_or(line_start);
+            view_state.viewport.top_byte = top_byte;
+        }
+    }
+
     /// Render the active prompt as a centred floating overlay
     /// (issue #1796). Layout, top-down inside the overlay frame:
     ///
@@ -1701,133 +1924,121 @@ impl Editor {
             }
         }
 
-        // Right-half preview pane.
+        // Right-half preview pane: a real Buffer rendered via the
+        // same per-leaf pipeline regular splits use. Buffer + cursor
+        // are already seeded by `prepare_overlay_preview` (called
+        // earlier in the render flow). Borrows are split here so we
+        // can hand out independent `&mut` references to the
+        // renderer's internals without going back through `&mut self`.
         if let Some(preview_rect) = preview_area {
-            self.render_overlay_preview(frame, preview_rect, &prompt, &theme);
-        }
-    }
+            // Frame the preview area first (vertical separator) so
+            // the renderer fills the inner rect.
+            use ratatui::widgets::{Block, Borders, Clear};
+            frame.render_widget(Clear, preview_rect);
+            let block = Block::default()
+                .borders(Borders::LEFT)
+                .border_style(Style::default().fg(theme.popup_border_fg))
+                .style(Style::default().bg(theme.suggestion_bg));
+            let inner = block.inner(preview_rect);
+            frame.render_widget(block, preview_rect);
 
-    /// Render the preview half of the Live Grep overlay. Shows the
-    /// content of the currently selected match's file, scrolled to the
-    /// match line. Falls back to a placeholder when no match is
-    /// selected. Read-only — purely visual.
-    fn render_overlay_preview(
-        &self,
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-        prompt: &crate::view::prompt::Prompt,
-        theme: &crate::view::theme::Theme,
-    ) {
-        use crate::input::quick_open::parse_path_line_col;
-        use ratatui::style::{Modifier, Style};
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+            if inner.height > 0 && inner.width > 0 {
+                let leaf = self.overlay_preview_leaf;
+                let buffer_id = self.overlay_preview_buffer;
+                if let (Some(leaf), Some(buffer_id)) = (leaf, buffer_id) {
+                    // Resize the phantom viewport to match the
+                    // current preview rect so layout/scrollbars are
+                    // computed against the right size.
+                    if let Some(view_state) = self.split_view_states.get_mut(&leaf) {
+                        view_state.viewport.resize(inner.width, inner.height);
+                    }
+                    // Snapshot scalar values from self before splitting
+                    // mutable borrows. AnsiBackground isn't Clone, so
+                    // take a borrow — Rust allows disjoint-field
+                    // splitting between &self.ansi_background and
+                    // &mut self.buffers et al. since they don't alias.
+                    let bg_fade = self.background_fade;
+                    let estimated_line_length =
+                        self.config.editor.estimated_line_length;
+                    let highlight_context_bytes =
+                        self.config.editor.highlight_context_bytes;
+                    let relative_line_numbers =
+                        self.config.editor.relative_line_numbers;
+                    let use_terminal_bg = self.config.editor.use_terminal_bg;
+                    let session_mode =
+                        self.session_mode || !self.software_cursor_only;
+                    let software_cursor_only = self.software_cursor_only;
+                    let diagnostics_inline_text =
+                        self.config.editor.diagnostics_inline_text;
+                    let show_tilde = false; // preview hides tilde markers
+                    let highlight_current_column =
+                        self.config.editor.highlight_current_column;
+                    let screen_width = frame.area().width;
 
-        frame.render_widget(Clear, area);
-        let block = Block::default()
-            .borders(Borders::LEFT)
-            .border_style(Style::default().fg(theme.popup_border_fg))
-            .style(Style::default().bg(theme.suggestion_bg));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        if inner.height == 0 || inner.width == 0 {
-            return;
-        }
+                    let ansi_ref = self.ansi_background.as_ref();
+                    let buffers = &mut self.buffers;
+                    let split_view_states = &mut self.split_view_states;
+                    let event_logs = &mut self.event_logs;
+                    let cell_theme_map = &mut self.cached_layout.cell_theme_map;
 
-        // Resolve selection -> file path + line.
-        let selection = prompt
-            .selected_suggestion
-            .and_then(|i| prompt.suggestions.get(i));
-        let Some(s) = selection else {
-            let hint =
-                Paragraph::new("(no match selected)")
-                    .style(Style::default().fg(theme.popup_border_fg));
-            frame.render_widget(hint, inner);
-            return;
-        };
-        // Suggestions emitted by the Finder library use `value` as
-        // an opaque index (`"0"`, `"1"`, …) and put the
-        // `path:line[:col]` label in `text`. Parse `text` first; only
-        // fall back to `value` when `text` lacks any path-shaped
-        // segment (e.g. a Resume-replay where `value` carries
-        // `path:line:col` directly).
-        let from_text = parse_path_line_col(&s.text);
-        let (path, line, _col) = if !from_text.0.is_empty() && from_text.1.is_some() {
-            from_text
-        } else if let Some(v) = s.value.as_deref() {
-            parse_path_line_col(v)
-        } else {
-            from_text
-        };
-        if path.is_empty() {
-            return;
-        }
-        let target_line = line.unwrap_or(1).saturating_sub(1);
-
-        // Resolve to absolute path against working_dir if relative.
-        let path_buf = std::path::PathBuf::from(&path);
-        let abs = if path_buf.is_absolute() {
-            path_buf
-        } else {
-            self.working_dir.join(&path_buf)
-        };
-
-        // Read the file directly (the existing FileSystem trait would
-        // be more honest, but for read-only preview a synchronous
-        // std::fs::read_to_string is acceptable on file sizes within
-        // an editor's typical workspace and avoids tying the renderer
-        // to async machinery).
-        let content = match std::fs::read_to_string(&abs) {
-            Ok(s) => s,
-            Err(_) => {
-                let msg = format!("(unable to read {})", path);
-                frame.render_widget(
-                    Paragraph::new(msg).style(Style::default().fg(theme.popup_border_fg)),
-                    inner,
-                );
-                return;
+                    if let (Some(state), Some(view_state)) =
+                        (buffers.get_mut(&buffer_id), split_view_states.get_mut(&leaf))
+                    {
+                        // SplitViewState reaches its inner fields via
+                        // DerefMut → BufferViewState. Multiple
+                        // `&mut view_state.<field>` accesses confuse
+                        // disjoint-borrow analysis because each goes
+                        // through DerefMut. Deref once to a concrete
+                        // `&mut BufferViewState` so disjoint field
+                        // splits are obvious to the borrow checker.
+                        let buf_state = view_state.active_state_mut();
+                        let cursors = buf_state.cursors.clone();
+                        let view_mode = buf_state.view_mode.clone();
+                        let compose_width = buf_state.compose_width;
+                        let compose_column_guides =
+                            buf_state.compose_column_guides.clone();
+                        let view_transform = buf_state.view_transform.clone();
+                        let rulers = buf_state.rulers.clone();
+                        let show_line_numbers = buf_state.show_line_numbers;
+                        let highlight_current_line = buf_state.highlight_current_line;
+                        let viewport_ref = &mut buf_state.viewport;
+                        let folds_ref = &mut buf_state.folds;
+                        let event_log = event_logs.get_mut(&buffer_id);
+                        let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
+                            frame,
+                            state,
+                            &cursors,
+                            viewport_ref,
+                            folds_ref,
+                            event_log,
+                            inner,
+                            &theme,
+                            ansi_ref,
+                            bg_fade,
+                            view_mode,
+                            compose_width,
+                            compose_column_guides,
+                            view_transform,
+                            estimated_line_length,
+                            highlight_context_bytes,
+                            buffer_id,
+                            relative_line_numbers,
+                            use_terminal_bg,
+                            session_mode,
+                            software_cursor_only,
+                            &rulers,
+                            show_line_numbers,
+                            highlight_current_line,
+                            diagnostics_inline_text,
+                            show_tilde,
+                            highlight_current_column,
+                            cell_theme_map,
+                            screen_width,
+                        );
+                    }
+                }
             }
-        };
-
-        // Render a window of lines around the target.
-        let half = inner.height as usize / 2;
-        let total = content.lines().count();
-        let start = target_line.saturating_sub(half).min(total.saturating_sub(1));
-        let end = (start + inner.height as usize).min(total);
-
-        let mut lines: Vec<Line> = Vec::with_capacity(end - start);
-        for (idx, src) in content.lines().enumerate().skip(start).take(end - start) {
-            let is_target = idx == target_line;
-            let prefix = format!(
-                "{:>4} {} ",
-                idx + 1,
-                if is_target { '\u{25B6}' } else { ' ' }
-            );
-            let row_style = if is_target {
-                Style::default()
-                    .fg(theme.prompt_fg)
-                    .bg(theme.prompt_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.prompt_fg).bg(theme.suggestion_bg)
-            };
-            let prefix_style = Style::default()
-                .fg(theme.popup_border_fg)
-                .bg(if is_target {
-                    theme.prompt_bg
-                } else {
-                    theme.suggestion_bg
-                });
-            // Truncate src to fit width.
-            let max_src_len = (inner.width as usize).saturating_sub(prefix.len()).max(1);
-            let trimmed: String = src.chars().take(max_src_len).collect();
-            lines.push(Line::from(vec![
-                Span::styled(prefix, prefix_style),
-                Span::styled(trimmed, row_style),
-            ]));
         }
-        let para = Paragraph::new(lines).style(Style::default().bg(theme.suggestion_bg));
-        frame.render_widget(para, inner);
     }
 
     /// Render hover highlights for interactive elements (separators, scrollbars)

@@ -38,7 +38,11 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use render_buffer::{compute_buffer_layout, render_buffer_in_split};
+use render_buffer::compute_buffer_layout;
+// Re-exported one level up (split_rendering::SplitRenderer) so the
+// `render_phantom_leaf` façade can forward into the per-leaf
+// pipeline. Stays crate-private; callers use the façade.
+pub(super) use render_buffer::render_buffer_in_split;
 use render_composite::render_composite_buffer;
 use std::collections::HashMap;
 

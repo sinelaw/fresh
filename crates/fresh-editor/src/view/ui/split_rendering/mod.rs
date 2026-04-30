@@ -189,6 +189,95 @@ impl SplitRenderer {
         )
     }
 
+    /// Render a single buffer into an arbitrary screen rect.
+    ///
+    /// Public façade over the per-leaf renderer for callers that
+    /// drive layout outside of the split tree (e.g. the Live Grep
+    /// floating overlay's preview pane — see render.rs). The leaf is
+    /// not registered in `SplitManager`; the caller owns the
+    /// `SplitViewState` and is responsible for cursor, viewport, and
+    /// fold state. Returns the per-line mappings used for hit
+    /// testing — overlay callers may discard them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_phantom_leaf(
+        frame: &mut Frame,
+        state: &mut EditorState,
+        cursors: &crate::model::cursor::Cursors,
+        viewport: &mut crate::view::viewport::Viewport,
+        folds: &mut crate::view::folding::FoldManager,
+        event_log: Option<&mut EventLog>,
+        area: Rect,
+        theme: &crate::view::theme::Theme,
+        ansi_background: Option<&AnsiBackground>,
+        background_fade: f32,
+        view_mode: crate::state::ViewMode,
+        compose_width: Option<u16>,
+        compose_column_guides: Option<Vec<u16>>,
+        view_transform: Option<
+            crate::services::plugins::api::ViewTransformPayload,
+        >,
+        estimated_line_length: usize,
+        highlight_context_bytes: usize,
+        buffer_id: BufferId,
+        relative_line_numbers: bool,
+        use_terminal_bg: bool,
+        session_mode: bool,
+        software_cursor_only: bool,
+        rulers: &[usize],
+        show_line_numbers: bool,
+        highlight_current_line: bool,
+        diagnostics_inline_text: bool,
+        show_tilde: bool,
+        highlight_current_column: bool,
+        cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
+        screen_width: u16,
+    ) -> Vec<crate::app::types::ViewLineMapping> {
+        // Phantom leaves are never the focused split, so:
+        // - is_active = false (no current-line emphasis chrome owned
+        //   by the focus split)
+        // - hide_cursor = true (the user's cursor lives in the
+        //   overlay's prompt input, not the preview)
+        // - lsp_waiting = false (preview never owns LSP requests)
+        // - pending_hardware_cursor: the preview must not move the
+        //   terminal's hardware cursor away from the prompt input.
+        let mut sink: Option<(u16, u16)> = None;
+        orchestration::render_buffer_in_split(
+            frame,
+            state,
+            cursors,
+            viewport,
+            folds,
+            event_log,
+            area,
+            /* is_active */ false,
+            theme,
+            ansi_background,
+            background_fade,
+            /* lsp_waiting */ false,
+            view_mode,
+            compose_width,
+            compose_column_guides,
+            view_transform,
+            estimated_line_length,
+            highlight_context_bytes,
+            buffer_id,
+            /* hide_cursor */ true,
+            relative_line_numbers,
+            use_terminal_bg,
+            session_mode,
+            software_cursor_only,
+            rulers,
+            show_line_numbers,
+            highlight_current_line,
+            diagnostics_inline_text,
+            show_tilde,
+            highlight_current_column,
+            cell_theme_map,
+            screen_width,
+            &mut sink,
+        )
+    }
+
     /// Public wrapper for building base tokens - used by render.rs for the
     /// view_transform_request hook.
     pub fn build_base_tokens_for_hook(
