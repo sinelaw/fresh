@@ -198,6 +198,14 @@ impl IndentCalculator {
         language: &Language,
         tab_size: usize,
     ) -> Option<usize> {
+        // When the cursor is at column 0 of an existing non-empty line,
+        // pressing Enter splits before the line content. Adding any indent
+        // here would shift the existing content rightward, so the auto-indent
+        // for the new (empty) line above must be 0. See #1425.
+        if Self::is_at_start_of_nonempty_line(buffer, position) {
+            return Some(0);
+        }
+
         // Try tree-sitter-based indent
         if let Some(indent) =
             self.calculate_indent_tree_sitter(buffer, position, language, tab_size)
@@ -222,6 +230,11 @@ impl IndentCalculator {
         position: usize,
         tab_size: usize,
     ) -> usize {
+        // See `calculate_indent` for the rationale (#1425).
+        if Self::is_at_start_of_nonempty_line(buffer, position) {
+            return 0;
+        }
+
         // Pattern-based indent (for incomplete syntax)
         if let Some(indent) = Self::calculate_indent_pattern(buffer, position, tab_size) {
             return indent;
@@ -229,6 +242,38 @@ impl IndentCalculator {
 
         // Final fallback: copy current line's indent
         Self::get_current_line_indent(buffer, position, tab_size)
+    }
+
+    /// Returns true if `position` is at column 0 of a line whose content
+    /// (from `position` up to the next newline or end of buffer) starts with a
+    /// non-whitespace, non-closing-delimiter character.
+    ///
+    /// Lines whose first non-whitespace character is a closing delimiter
+    /// (`}`, `)`, `]`) are excluded so that pressing Enter just before them
+    /// keeps the existing "indent matches enclosing block" behaviour useful
+    /// for typing more code in front of the close. For other content lines,
+    /// auto-indent must be 0 — otherwise the existing line content would be
+    /// pushed rightward, the bug reported in #1425.
+    fn is_at_start_of_nonempty_line(buffer: &Buffer, position: usize) -> bool {
+        // Must be at the very start of a line (column 0).
+        let at_line_start =
+            position == 0 || Self::byte_at(buffer, position.saturating_sub(1)) == Some(b'\n');
+        if !at_line_start {
+            return false;
+        }
+
+        // Look ahead on the same line for the first non-whitespace character.
+        let mut pos = position;
+        while pos < buffer.len() {
+            match Self::byte_at(buffer, pos) {
+                Some(b'\n') => return false,
+                Some(b' ') | Some(b'\t') | Some(b'\r') => pos += 1,
+                Some(b'}') | Some(b')') | Some(b']') => return false,
+                Some(_) => return true,
+                None => return false,
+            }
+        }
+        false
     }
 
     /// Calculate the correct indent for a closing delimiter being typed
@@ -1361,6 +1406,77 @@ mod tests {
             indent,
             Some(4),
             "After empty line in function body (incomplete syntax), should indent to 4 spaces using reference line"
+        );
+    }
+
+    #[test]
+    fn test_enter_at_start_of_unindented_line_after_blank_does_not_indent() {
+        // Regression test for #1425: pressing Enter at the start of an
+        // unindented line that follows blank lines after indented content
+        // should not pull in the previous block's indent and displace the
+        // existing line content.
+        //
+        //     ····line1
+        //     ····line2
+        //     ········line3
+        //     ········line4
+        //     <empty>
+        //     unindented line   <- cursor at column 0, press Enter
+        //
+        // Expected: the existing "unindented line" stays at column 0.
+        let buffer = Buffer::from_str_test(
+            "    line1\n    line2\n        line3\n        line4\n\nunindented line",
+        );
+        let position = buffer
+            .to_string()
+            .unwrap()
+            .find("unindented line")
+            .expect("test fixture should contain marker");
+
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
+        assert_eq!(
+            indent, 0,
+            "Enter at column 0 of an existing non-empty line must not insert indentation"
+        );
+    }
+
+    #[test]
+    fn test_enter_at_start_of_indented_line_does_not_displace_content() {
+        // Even when the existing line is itself indented, pressing Enter at
+        // the very start of that line should not add extra indent (which
+        // would push the existing leading whitespace further right).
+        let buffer = Buffer::from_str_test("    line1\n    target");
+        let position = buffer
+            .to_string()
+            .unwrap()
+            .find("    target")
+            .expect("test fixture should contain marker");
+
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
+        assert_eq!(
+            indent, 0,
+            "Enter at column 0 of an indented line must not add indent on top of the existing leading whitespace"
+        );
+    }
+
+    #[test]
+    fn test_enter_at_start_of_unindented_line_python() {
+        // Same regression as #1425 but for a tree-sitter language: the
+        // pattern fallback or tree-sitter logic must not inject indent that
+        // displaces existing content on the line.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n    pass\n\nunindented");
+        let position = buffer
+            .to_string()
+            .unwrap()
+            .find("unindented")
+            .expect("test fixture should contain marker");
+
+        let indent = calc.calculate_indent(&buffer, position, &Language::Python, 4);
+        assert_eq!(
+            indent,
+            Some(0),
+            "Enter at column 0 of an unindented Python line must not be auto-indented"
         );
     }
 }
