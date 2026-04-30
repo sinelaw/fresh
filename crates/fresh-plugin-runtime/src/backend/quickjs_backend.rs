@@ -3057,18 +3057,26 @@ impl JsEditorApi {
         id
     }
 
-    /// Start an interactive prompt
+    /// Start an interactive prompt.
+    ///
+    /// `floating_overlay` is declared via `rquickjs::function::Opt`
+    /// rather than `Option<bool>` so JS callers can omit the
+    /// argument entirely (`startPrompt(label, type)`). With plain
+    /// `Option<bool>`, the binding macro requires the argument
+    /// position to be present (even if null), and a 2-arg JS call
+    /// throws at runtime — caught only by the e2e suite, not by
+    /// `cargo build`.
     pub fn start_prompt(
         &self,
         label: String,
         prompt_type: String,
-        floating_overlay: Option<bool>,
+        floating_overlay: rquickjs::function::Opt<bool>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::StartPrompt {
                 label,
                 prompt_type,
-                floating_overlay: floating_overlay.unwrap_or(false),
+                floating_overlay: floating_overlay.0.unwrap_or(false),
             })
             .is_ok()
     }
@@ -3118,20 +3126,22 @@ impl JsEditorApi {
         id
     }
 
-    /// Start a prompt with initial value
+    /// Start a prompt with initial value. See `start_prompt` for why
+    /// `floating_overlay` uses `rquickjs::function::Opt` (so JS
+    /// callers can omit the argument).
     pub fn start_prompt_with_initial(
         &self,
         label: String,
         prompt_type: String,
         initial_value: String,
-        floating_overlay: Option<bool>,
+        floating_overlay: rquickjs::function::Opt<bool>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::StartPromptWithInitial {
                 label,
                 prompt_type,
                 initial_value,
-                floating_overlay: floating_overlay.unwrap_or(false),
+                floating_overlay: floating_overlay.0.unwrap_or(false),
             })
             .is_ok()
     }
