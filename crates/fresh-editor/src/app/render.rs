@@ -1599,7 +1599,11 @@ impl Editor {
             // the active split's tabs and may switch its active
             // buffer to the loaded file).
             let source_split = self.split_manager.active_split();
-            let buffer_id = match self.open_file_no_focus(abs_path.as_path()) {
+            // `open_file_for_preview` always allocates a fresh buffer
+            // — never repurposes the "no name" empty buffer the user
+            // is currently looking at — so the background view stays
+            // intact while we cycle through preview results.
+            let buffer_id = match self.open_file_for_preview(abs_path.as_path()) {
                 Ok(id) => id,
                 Err(_e) => return,
             };
@@ -1929,86 +1933,85 @@ impl Editor {
             frame.render_widget(block, preview_rect);
 
             if inner.height > 0 && inner.width > 0 {
-                if self.overlay_preview_state.is_some() {
-                    // Resize the standalone viewport to match the
-                    // current preview rect so layout/scrollbars are
-                    // computed against the right size.
-                    if let Some(state) = self.overlay_preview_state.as_mut() {
-                        state.view_state.viewport.resize(inner.width, inner.height);
-                    }
-                    // Snapshot scalar values from self before splitting
-                    // mutable borrows. AnsiBackground isn't Clone, so
-                    // take a borrow — Rust allows disjoint-field
-                    // splitting between &self.ansi_background and
-                    // &mut self.buffers et al. since they don't alias.
-                    let bg_fade = self.background_fade;
-                    let estimated_line_length = self.config.editor.estimated_line_length;
-                    let highlight_context_bytes = self.config.editor.highlight_context_bytes;
-                    let relative_line_numbers = self.config.editor.relative_line_numbers;
-                    let use_terminal_bg = self.config.editor.use_terminal_bg;
-                    let session_mode = self.session_mode || !self.software_cursor_only;
-                    let software_cursor_only = self.software_cursor_only;
-                    let diagnostics_inline_text = self.config.editor.diagnostics_inline_text;
-                    let show_tilde = false; // preview hides tilde markers
-                    let highlight_current_column = self.config.editor.highlight_current_column;
-                    let screen_width = frame.area().width;
+                // Snapshot scalar config values up front so the
+                // mutable-borrow split below has minimal scope.
+                // AnsiBackground isn't Clone, so it's taken as a
+                // borrow; Rust permits disjoint-field splitting
+                // between `&self.ansi_background` and the `&mut`
+                // accesses below because they touch distinct fields.
+                let bg_fade = self.background_fade;
+                let estimated_line_length = self.config.editor.estimated_line_length;
+                let highlight_context_bytes = self.config.editor.highlight_context_bytes;
+                let relative_line_numbers = self.config.editor.relative_line_numbers;
+                let use_terminal_bg = self.config.editor.use_terminal_bg;
+                let session_mode = self.session_mode || !self.software_cursor_only;
+                let software_cursor_only = self.software_cursor_only;
+                let diagnostics_inline_text = self.config.editor.diagnostics_inline_text;
+                let show_tilde = false; // preview hides tilde markers
+                let highlight_current_column = self.config.editor.highlight_current_column;
+                let screen_width = frame.area().width;
 
-                    let ansi_ref = self.ansi_background.as_ref();
-                    let buffers = &mut self.buffers;
-                    let event_logs = &mut self.event_logs;
-                    let cell_theme_map = &mut self.cached_layout.cell_theme_map;
-                    let preview_state = self.overlay_preview_state.as_mut().unwrap();
-                    let buffer_id = preview_state.buffer_id;
+                let ansi_ref = self.ansi_background.as_ref();
+                let buffers = &mut self.buffers;
+                let event_logs = &mut self.event_logs;
+                let cell_theme_map = &mut self.cached_layout.cell_theme_map;
+                let Some(preview_state) = self.overlay_preview_state.as_mut() else {
+                    return;
+                };
+                preview_state
+                    .view_state
+                    .viewport
+                    .resize(inner.width, inner.height);
+                let buffer_id = preview_state.buffer_id;
 
-                    if let Some(state) = buffers.get_mut(&buffer_id) {
-                        // Deref the SplitViewState once to a concrete
-                        // `&mut BufferViewState` so disjoint field
-                        // splits (`viewport` + `folds`) are visible
-                        // to the borrow checker.
-                        let buf_state = preview_state.view_state.active_state_mut();
-                        let cursors = buf_state.cursors.clone();
-                        let view_mode = buf_state.view_mode.clone();
-                        let compose_width = buf_state.compose_width;
-                        let compose_column_guides = buf_state.compose_column_guides.clone();
-                        let view_transform = buf_state.view_transform.clone();
-                        let rulers = buf_state.rulers.clone();
-                        let show_line_numbers = buf_state.show_line_numbers;
-                        let highlight_current_line = buf_state.highlight_current_line;
-                        let viewport_ref = &mut buf_state.viewport;
-                        let folds_ref = &mut buf_state.folds;
-                        let event_log = event_logs.get_mut(&buffer_id);
-                        let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
-                            frame,
-                            state,
-                            &cursors,
-                            viewport_ref,
-                            folds_ref,
-                            event_log,
-                            inner,
-                            &theme,
-                            ansi_ref,
-                            bg_fade,
-                            view_mode,
-                            compose_width,
-                            compose_column_guides,
-                            view_transform,
-                            estimated_line_length,
-                            highlight_context_bytes,
-                            buffer_id,
-                            relative_line_numbers,
-                            use_terminal_bg,
-                            session_mode,
-                            software_cursor_only,
-                            &rulers,
-                            show_line_numbers,
-                            highlight_current_line,
-                            diagnostics_inline_text,
-                            show_tilde,
-                            highlight_current_column,
-                            cell_theme_map,
-                            screen_width,
-                        );
-                    }
+                if let Some(state) = buffers.get_mut(&buffer_id) {
+                    // Deref the SplitViewState once to a concrete
+                    // `&mut BufferViewState` so disjoint field
+                    // splits (`viewport` + `folds`) are visible
+                    // to the borrow checker.
+                    let buf_state = preview_state.view_state.active_state_mut();
+                    let cursors = buf_state.cursors.clone();
+                    let view_mode = buf_state.view_mode.clone();
+                    let compose_width = buf_state.compose_width;
+                    let compose_column_guides = buf_state.compose_column_guides.clone();
+                    let view_transform = buf_state.view_transform.clone();
+                    let rulers = buf_state.rulers.clone();
+                    let show_line_numbers = buf_state.show_line_numbers;
+                    let highlight_current_line = buf_state.highlight_current_line;
+                    let viewport_ref = &mut buf_state.viewport;
+                    let folds_ref = &mut buf_state.folds;
+                    let event_log = event_logs.get_mut(&buffer_id);
+                    let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
+                        frame,
+                        state,
+                        &cursors,
+                        viewport_ref,
+                        folds_ref,
+                        event_log,
+                        inner,
+                        &theme,
+                        ansi_ref,
+                        bg_fade,
+                        view_mode,
+                        compose_width,
+                        compose_column_guides,
+                        view_transform,
+                        estimated_line_length,
+                        highlight_context_bytes,
+                        buffer_id,
+                        relative_line_numbers,
+                        use_terminal_bg,
+                        session_mode,
+                        software_cursor_only,
+                        &rulers,
+                        show_line_numbers,
+                        highlight_current_line,
+                        diagnostics_inline_text,
+                        show_tilde,
+                        highlight_current_column,
+                        cell_theme_map,
+                        screen_width,
+                    );
                 }
             }
         }

@@ -105,6 +105,29 @@ impl Editor {
     ///
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
     pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        self.open_file_no_focus_inner(path, true)
+    }
+
+    /// Open a file without switching focus AND without ever
+    /// repurposing the active "no name" buffer.
+    ///
+    /// `open_file_no_focus`'s `replace_current` heuristic reuses the
+    /// initial empty unnamed buffer for the *first* file the user
+    /// opens — convenient for the normal "fresh launch → open file"
+    /// flow. The Live Grep floating overlay's preview pane needs the
+    /// opposite: the user's current buffer (often the empty unnamed
+    /// scratch) must stay untouched as preview cycles through
+    /// results. This variant always allocates a fresh BufferId so the
+    /// background buffer never gets repurposed.
+    pub(super) fn open_file_for_preview(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        self.open_file_no_focus_inner(path, false)
+    }
+
+    fn open_file_no_focus_inner(
+        &mut self,
+        path: &Path,
+        allow_replace_empty: bool,
+    ) -> anyhow::Result<BufferId> {
         // Fail fast if the remote connection is down — don't attempt I/O that
         // would either timeout or return confusing errors.
         if !self.authority.filesystem.is_remote_connected() {
@@ -193,8 +216,10 @@ impl Editor {
         }
 
         // If the current buffer is empty and unmodified, replace it instead of creating a new one
-        // Note: Don't replace composite buffers (they appear empty but are special views)
-        let replace_current = {
+        // Note: Don't replace composite buffers (they appear empty but are special views).
+        // Suppressed when `allow_replace_empty` is false — see
+        // `open_file_for_preview` for the rationale.
+        let replace_current = allow_replace_empty && {
             let current_state = self.buffers.get(&self.active_buffer()).unwrap();
             !current_state.is_composite_buffer
                 && current_state.buffer.is_empty()
