@@ -15,26 +15,33 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 
-/// Per-request timeout used by the channel under test.
+/// Short timeout used *only* for assertions whose contract is "this
+/// request should hit the channel-level timeout."  Two seconds is
+/// long enough to absorb scheduler jitter on slow CI runners while
+/// still keeping these tests cheap when they fire as intended.
+const TIMEOUT_FOR_INTENTIONAL_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// "Effectively infinite" timeout used before any happy-path
+/// `request should succeed` assertion.  Honors CONTRIBUTING.md rule
+/// #3 ("Wait indefinitely, don't put timeouts inside tests"):
+/// load-spike pauses on CI must not flip a should-succeed call into
+/// a spurious `Err(Timeout)`.  cargo nextest's own per-test cap
+/// catches the case where the channel genuinely hangs.
 ///
-/// Sized as "essentially infinity" for sub-millisecond agent
-/// responses on a healthy runner — a load spike on CI must not trip
-/// a happy-path "should succeed" assertion that shares this timeout
-/// (CONTRIBUTING.md rule #3 forbids time-sensitive assertions:
-/// "Wait indefinitely, don't put timeouts inside tests").  Reduces
-/// the historical 2s value, which surfaced as
-/// `test_multiple_reconnections` flaking with
-/// "Round 2: request should succeed: Err(Timeout)" on slow runners.
-///
-/// The intentional-timeout assertions in this file (`silent_agent`
-/// cases) still pay at most this duration once each — the explicit
-/// timeout cost is part of the test's contract.  Tests with
-/// multiple back-to-back intentional timeouts (e.g.
-/// `test_multiple_reconnections`'s 3 rounds = 3 × `TEST_TIMEOUT`)
-/// run on the order of seconds × N wall-clock; that's bounded by
-/// nextest's external per-test timeout (default 180s) so we don't
-/// need an internal cap here.
-const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// One hour is large enough to be "infinity" for unit tests and
+/// safely fits in `u64` milliseconds (the field type used by
+/// `set_request_timeout`).
+const TIMEOUT_FOR_HAPPY_PATH: Duration = Duration::from_secs(3600);
+
+/// Re-arm the channel for an intentional-timeout assertion.
+fn arm_intentional_timeout(channel: &AgentChannel) {
+    channel.set_request_timeout(TIMEOUT_FOR_INTENTIONAL_TIMEOUT);
+}
+
+/// Re-arm the channel for a happy-path `should succeed` assertion.
+fn arm_happy_path(channel: &AgentChannel) {
+    channel.set_request_timeout(TIMEOUT_FOR_HAPPY_PATH);
+}
 
 /// Spawn a Python script that sends a ready message then never responds to requests.
 /// The script reads stdin (so it doesn't die from SIGPIPE) but never writes back.
@@ -132,7 +139,7 @@ fn test_request_to_silent_server_does_not_hang() {
         return;
     };
 
-    channel.set_request_timeout(TEST_TIMEOUT);
+    arm_intentional_timeout(&channel);
 
     // This should return an error (timeout), not hang forever.
     let result = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
@@ -157,9 +164,8 @@ fn test_second_request_hangs_after_server_goes_silent() {
         return;
     };
 
-    channel.set_request_timeout(TEST_TIMEOUT);
-
     // First request should succeed
+    arm_happy_path(&channel);
     let result1 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
     assert!(
         result1.is_ok(),
@@ -168,6 +174,7 @@ fn test_second_request_hangs_after_server_goes_silent() {
     );
 
     // Second request: server is now silent. Should timeout, not hang.
+    arm_intentional_timeout(&channel);
     let result2 = channel.request_blocking("stat", serde_json::json!({"path": "/tmp"}));
     assert!(
         result2.is_err(),
@@ -188,7 +195,7 @@ fn test_connection_marked_disconnected_after_timeout() {
         return;
     };
 
-    channel.set_request_timeout(TEST_TIMEOUT);
+    arm_intentional_timeout(&channel);
 
     assert!(channel.is_connected(), "Should start connected");
 
@@ -216,12 +223,15 @@ fn test_requests_fail_fast_when_disconnected() {
         return;
     };
 
-    channel.set_request_timeout(TEST_TIMEOUT);
-
     // First: get into disconnected state via timeout
+    arm_intentional_timeout(&channel);
     let _ = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
 
-    // Now: subsequent requests should fail immediately
+    // Now: subsequent requests should fail immediately, regardless of
+    // the channel's current timeout setting (the request short-circuits
+    // on `is_connected()`).  Re-arm to the happy-path value to prove
+    // the fail-fast path is independent of timeout duration.
+    arm_happy_path(&channel);
     let start = std::time::Instant::now();
     let result = channel.request_blocking("stat", serde_json::json!({"path": "/tmp"}));
     let elapsed = start.elapsed();
@@ -254,13 +264,13 @@ fn test_reconnection_via_replace_transport() {
         return;
     };
 
-    channel.set_request_timeout(TEST_TIMEOUT);
-
     // First request works
+    arm_happy_path(&channel);
     let r1 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
     assert!(r1.is_ok(), "First request should succeed: {:?}", r1);
 
     // Second request times out (agent is now silent)
+    arm_intentional_timeout(&channel);
     let r2 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
     assert!(r2.is_err(), "Second request should timeout");
     assert!(!channel.is_connected(), "Should be disconnected");
@@ -274,6 +284,7 @@ fn test_reconnection_via_replace_transport() {
     channel.replace_transport_blocking(new_reader, new_writer);
 
     // Third request works on the new connection
+    arm_happy_path(&channel);
     let r3 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
     assert!(
         r3.is_ok(),
@@ -293,14 +304,14 @@ fn test_multiple_reconnections() {
         return;
     };
 
-    channel.set_request_timeout(TEST_TIMEOUT);
-
     for round in 1..=3 {
         // Request works
+        arm_happy_path(&channel);
         let r = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
         assert!(r.is_ok(), "Round {round}: request should succeed: {:?}", r);
 
         // Times out (agent answered one request, now silent)
+        arm_intentional_timeout(&channel);
         let r = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
         assert!(r.is_err(), "Round {round}: should timeout");
         assert!(
@@ -381,8 +392,6 @@ fn test_auto_reconnect_task() {
         return;
     };
 
-    channel.set_request_timeout(TEST_TIMEOUT);
-
     // Spawn the reconnect task with a factory that spawns healthy agents.
     // We enter the runtime context so the task can be spawned.
     let channel_clone = channel.clone();
@@ -403,10 +412,12 @@ fn test_auto_reconnect_task() {
     );
 
     // First request works
+    arm_happy_path(&channel);
     let r1 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
     assert!(r1.is_ok(), "First request should succeed: {:?}", r1);
 
     // Second request times out (agent went silent)
+    arm_intentional_timeout(&channel);
     let r2 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
     assert!(r2.is_err(), "Second request should timeout");
     assert!(!channel.is_connected(), "Should be disconnected");
@@ -417,6 +428,7 @@ fn test_auto_reconnect_task() {
     }
 
     // Third request works on the new connection
+    arm_happy_path(&channel);
     let r3 = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
     assert!(
         r3.is_ok(),
