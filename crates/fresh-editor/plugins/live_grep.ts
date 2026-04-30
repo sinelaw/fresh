@@ -3,19 +3,41 @@
 /**
  * Live Grep Plugin
  *
- * Project-wide search with ripgrep and live preview.
- * Uses the Finder abstraction for unified search UX.
+ * Project-wide search rendered as a centred floating overlay
+ * (issue #1796). Search results stream in as the user types; arrow
+ * keys navigate; Enter opens at the match location.
  *
- * - Type to search across all files
- * - Navigate results with Up/Down to see preview
- * - Press Enter to open file at location
+ * Search backend is pluggable. The plugin ships three built-in
+ * providers (ripgrep → git grep → grep) selected by priority on
+ * each invocation; users and other plugins can register additional
+ * providers via the exported plugin API:
+ *
+ *     const liveGrep = editor.getPluginApi("live-grep");
+ *     liveGrep?.registerProvider({
+ *       name: "fff",
+ *       priority: 100,                     // higher wins
+ *       isAvailable: async () => {
+ *         const r = await editor.spawnProcess("fff", ["--version"], editor.getCwd());
+ *         return r.exit_code === 0;
+ *       },
+ *       search: async (query, { cwd, maxResults }) => {
+ *         const r = await editor.spawnProcess("fff", [query], cwd);
+ *         return parseFFFOutput(r.stdout);
+ *       },
+ *     });
+ *
+ * The provider whose `isAvailable()` returns true with the highest
+ * priority is selected on each Live Grep invocation; the result is
+ * cached for the duration of the prompt.
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
 
 const editor = getEditor();
 
-// Result type from ripgrep
+// One Live Grep match. Mirrors the JSON shape ripgrep emits with
+// `--line-number --column --no-heading`; built-in non-rg providers
+// (git grep, grep) normalise to this shape via parseGrepOutput.
 interface GrepMatch {
   file: string;
   line: number;
@@ -23,11 +45,235 @@ interface GrepMatch {
   content: string;
 }
 
-// Create the finder instance. The editor renders the prompt + results
-// + preview inside a single floating overlay (issue #1796), so we
-// turn the Finder's standalone preview split off — the overlay's
-// right-half pane handles preview directly without mutating the user's
-// split layout.
+/** Options passed to a provider's `search` callback. */
+export interface SearchOpts {
+  /** Working directory the search should run in (the editor's cwd). */
+  cwd: string;
+  /** Caller's preferred result cap. Providers may return fewer.
+   *  Returning more is allowed; the Finder caps at its own
+   *  `maxResults`. */
+  maxResults: number;
+}
+
+/** A registered Live Grep backend. */
+export interface LiveGrepProvider {
+  /** Stable id, surfaced in status messages. Two providers with the
+   *  same name are both kept; only the higher-priority one is ever
+   *  selected unless it becomes unavailable. */
+  name: string;
+  /** Higher priority wins. Built-ins use 0/-1/-2; user-registered
+   *  providers default to 0 if omitted. */
+  priority?: number;
+  /** Cheap probe — typically `editor.spawnProcess("foo", [], cwd)`
+   *  and check `exit_code`. May be sync or async. Failures (thrown
+   *  errors) are treated as "not available". */
+  isAvailable: () => boolean | Promise<boolean>;
+  /** Run the search. Return an array of matches; an empty array
+   *  means "no matches" (not "provider broken"). Errors thrown
+   *  here surface as a status message and bypass the next
+   *  provider — the registry doesn't fall back automatically once
+   *  a provider is selected. */
+  search: (query: string, opts: SearchOpts) => Promise<GrepMatch[]>;
+}
+
+/** Public surface exposed via `editor.getPluginApi("live-grep")`. */
+export type LiveGrepApi = {
+  /** Add a provider. Returns an unregister function. */
+  registerProvider(provider: LiveGrepProvider): () => void;
+  /** Remove every provider whose name matches. Returns true if at
+   *  least one was removed. */
+  unregisterProvider(name: string): boolean;
+  /** Inspect the current provider list, sorted by priority desc.
+   *  Useful for status / debugging / settings UIs. */
+  listProviders(): { name: string; priority: number }[];
+  /** Forget the cached "selected provider" — the next search runs a
+   *  fresh `isAvailable()` probe. Call from init.ts after late
+   *  registrations or after the user installs a new binary. */
+  resetSelection(): void;
+};
+
+declare global {
+  interface FreshPluginRegistry {
+    "live-grep": LiveGrepApi;
+  }
+}
+
+// ── Registry ──────────────────────────────────────────────────────
+
+const providers: LiveGrepProvider[] = [];
+let cachedSelected: LiveGrepProvider | null | undefined = undefined;
+
+function sortByPriority(): void {
+  providers.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+}
+
+function registerProvider(provider: LiveGrepProvider): () => void {
+  if (typeof provider !== "object" || provider === null) {
+    throw new Error("live-grep.registerProvider: provider must be an object");
+  }
+  if (typeof provider.name !== "string" || provider.name.length === 0) {
+    throw new Error("live-grep.registerProvider: name must be a non-empty string");
+  }
+  if (typeof provider.isAvailable !== "function") {
+    throw new Error("live-grep.registerProvider: isAvailable must be a function");
+  }
+  if (typeof provider.search !== "function") {
+    throw new Error("live-grep.registerProvider: search must be a function");
+  }
+  providers.push(provider);
+  sortByPriority();
+  cachedSelected = undefined; // re-probe on next invocation
+  return () => {
+    const i = providers.indexOf(provider);
+    if (i >= 0) {
+      providers.splice(i, 1);
+      cachedSelected = undefined;
+    }
+  };
+}
+
+function unregisterProvider(name: string): boolean {
+  let removed = false;
+  for (let i = providers.length - 1; i >= 0; i--) {
+    if (providers[i].name === name) {
+      providers.splice(i, 1);
+      removed = true;
+    }
+  }
+  if (removed) cachedSelected = undefined;
+  return removed;
+}
+
+async function selectProvider(): Promise<LiveGrepProvider | null> {
+  if (cachedSelected !== undefined) return cachedSelected;
+  for (const p of providers) {
+    try {
+      const ok = await Promise.resolve(p.isAvailable());
+      if (ok) {
+        cachedSelected = p;
+        editor.debug(`[live-grep] selected provider: ${p.name}`);
+        return p;
+      }
+    } catch (e) {
+      editor.debug(`[live-grep] ${p.name}.isAvailable threw: ${e}`);
+    }
+  }
+  cachedSelected = null;
+  return null;
+}
+
+// ── Built-in providers ──────────────────────────────────────────
+
+registerProvider({
+  name: "ripgrep",
+  priority: 0,
+  isAvailable: async () => {
+    try {
+      const r = await editor.spawnProcess("rg", ["--version"], editor.getCwd());
+      return r.exit_code === 0;
+    } catch {
+      return false;
+    }
+  },
+  search: async (query, { cwd, maxResults }) => {
+    const r = await editor.spawnProcess(
+      "rg",
+      [
+        "--line-number",
+        "--column",
+        "--no-heading",
+        "--color=never",
+        "--smart-case",
+        `--max-count=${maxResults}`,
+        "-g", "!.git",
+        "-g", "!node_modules",
+        "-g", "!target",
+        "-g", "!*.lock",
+        "--",
+        query,
+      ],
+      cwd
+    );
+    if (r.exit_code === 0) {
+      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+    }
+    return [];
+  },
+});
+
+registerProvider({
+  name: "git-grep",
+  priority: -1,
+  isAvailable: async () => {
+    try {
+      // git grep needs both `git` on PATH and to be inside a repo.
+      const cwd = editor.getCwd();
+      const ver = await editor.spawnProcess("git", ["--version"], cwd);
+      if (ver.exit_code !== 0) return false;
+      const inRepo = await editor.spawnProcess(
+        "git",
+        ["rev-parse", "--is-inside-work-tree"],
+        cwd
+      );
+      return inRepo.exit_code === 0;
+    } catch {
+      return false;
+    }
+  },
+  search: async (query, { cwd, maxResults }) => {
+    const r = await editor.spawnProcess(
+      "git",
+      ["grep", "-n", "--column", "-I", "-e", query],
+      cwd
+    );
+    // git grep exits 1 when no matches — treat as empty, not error.
+    if (r.exit_code === 0 || r.exit_code === 1) {
+      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+    }
+    return [];
+  },
+});
+
+registerProvider({
+  name: "grep",
+  priority: -2,
+  isAvailable: async () => {
+    try {
+      const r = await editor.spawnProcess("grep", ["--version"], editor.getCwd());
+      return r.exit_code === 0;
+    } catch {
+      return false;
+    }
+  },
+  search: async (query, { cwd, maxResults }) => {
+    const r = await editor.spawnProcess(
+      "grep",
+      [
+        "-rn",
+        "--column",
+        "-I",
+        "--exclude-dir=.git",
+        "--exclude-dir=node_modules",
+        "--exclude-dir=target",
+        "--",
+        query,
+        ".",
+      ],
+      cwd
+    );
+    if (r.exit_code === 0 || r.exit_code === 1) {
+      // POSIX grep doesn't emit `path:line:col:content` natively
+      // even with `--column`; on most BSD/GNU greps the format is
+      // still `path:line:content`. parseGrepOutput tolerates the
+      // missing column.
+      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+    }
+    return [];
+  },
+});
+
+// ── Wiring ──────────────────────────────────────────────────────
+
 const finder = new Finder<GrepMatch>(editor, {
   id: "live-grep",
   format: (match) => ({
@@ -46,55 +292,39 @@ const finder = new Finder<GrepMatch>(editor, {
   maxResults: 100,
 });
 
-// Search function that parses ripgrep output
-async function searchWithRipgrep(query: string): Promise<GrepMatch[]> {
-  const cwd = editor.getCwd();
-  const result = await editor.spawnProcess(
-    "rg",
-    [
-      "--line-number",
-      "--column",
-      "--no-heading",
-      "--color=never",
-      "--smart-case",
-      "--max-count=100",
-      "-g",
-      "!.git",
-      "-g",
-      "!node_modules",
-      "-g",
-      "!target",
-      "-g",
-      "!*.lock",
-      "--",
-      query,
-    ],
-    cwd
-  );
-
-  if (result.exit_code === 0) {
-    return parseGrepOutput(result.stdout, 100) as GrepMatch[];
+async function search(query: string): Promise<GrepMatch[]> {
+  const provider = await selectProvider();
+  if (!provider) {
+    editor.setStatus(
+      "Live Grep: no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
+    );
+    return [];
   }
-  return [];
+  try {
+    return await provider.search(query, {
+      cwd: editor.getCwd(),
+      maxResults: 100,
+    });
+  } catch (e) {
+    editor.setStatus(`Live Grep (${provider.name}) failed: ${e}`);
+    return [];
+  }
 }
 
-// Start live grep
-function start_live_grep() : void {
+function start_live_grep(): void {
   finder.prompt({
     title: editor.t("prompt.live_grep"),
     source: {
       mode: "search",
-      search: searchWithRipgrep,
+      search,
       debounceMs: 150,
       minQueryLength: 2,
     },
-    // Render as a centred floating overlay (issue #1796).
     floatingOverlay: true,
   });
 }
 registerHandler("start_live_grep", start_live_grep);
 
-// Register command
 editor.registerCommand(
   "%cmd.live_grep",
   "%cmd.live_grep_desc",
@@ -102,4 +332,18 @@ editor.registerCommand(
   null
 );
 
-editor.debug("Live Grep plugin loaded (using Finder abstraction)");
+editor.exportPluginApi("live-grep", {
+  registerProvider,
+  unregisterProvider,
+  listProviders(): { name: string; priority: number }[] {
+    return providers.map((p) => ({
+      name: p.name,
+      priority: p.priority ?? 0,
+    }));
+  },
+  resetSelection(): void {
+    cachedSelected = undefined;
+  },
+} satisfies LiveGrepApi);
+
+editor.debug("Live Grep plugin loaded (provider registry)");

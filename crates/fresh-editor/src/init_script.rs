@@ -172,6 +172,42 @@ const editor = getEditor();
 //         ctx.newline();
 //     });
 // });
+
+// Example: register a custom Live Grep search backend.
+//
+// The bundled providers (ripgrep → git grep → grep) are picked by
+// priority on each invocation. Higher-priority registrations win;
+// register from init.ts to use a custom indexer or wrapper script.
+//
+// editor.on("plugins_loaded", () => {
+//     const liveGrep = editor.getPluginApi("live-grep");
+//     if (!liveGrep) return;
+//     liveGrep.registerProvider({
+//         name: "fff",
+//         priority: 100,
+//         isAvailable: async () => {
+//             try {
+//                 const r = await editor.spawnProcess("fff", ["--version"], editor.getCwd());
+//                 return r.exit_code === 0;
+//             } catch {
+//                 return false;
+//             }
+//         },
+//         search: async (query, { cwd, maxResults }) => {
+//             const r = await editor.spawnProcess("fff", [query], cwd);
+//             // Return GrepMatch[]: { file, line, column, content }
+//             return r.stdout.split("\n").filter(Boolean).map((line) => {
+//                 const [file, lineStr, ...rest] = line.split(":");
+//                 return {
+//                     file,
+//                     line: parseInt(lineStr, 10) || 1,
+//                     column: 1,
+//                     content: rest.join(":"),
+//                 };
+//             }).slice(0, maxResults);
+//         },
+//     });
+// });
 "#;
 
 /// `tsconfig.json` for the user's init.ts. Matches the plugin-dev
