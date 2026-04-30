@@ -107,6 +107,16 @@ impl Editor {
             self.sync_terminal_to_buffer(buffer_id);
         }
 
+        // Window resize events only resize terminals that are currently the
+        // active tab in their split (see `resize_visible_terminals`). A
+        // terminal hidden behind another tab when the host was resized never
+        // sees the new size, so its PTY child keeps reporting stale
+        // dimensions when the user switches back. Re-running the visible
+        // resize here picks up the now-revealed terminal. Issue #1795.
+        if self.is_terminal_buffer(buffer_id) {
+            self.resize_visible_terminals();
+        }
+
         // Ensure the newly active tab is visible
         self.ensure_active_tab_visible(active_split, buffer_id, self.effective_tabs_width());
 

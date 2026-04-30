@@ -3252,3 +3252,76 @@ fn test_terminal_shell_config_override() {
         "terminal should spawn with the config-overridden shell"
     );
 }
+
+/// Regression: a terminal hidden behind another tab during a window resize
+/// should pick up the new dimensions when the user switches back to it,
+/// rather than keeping the stale pre-resize PTY size.  Issue #1795.
+#[test]
+fn test_hidden_terminal_resyncs_pty_size_when_revealed() {
+    let mut harness = harness_or_return!(120, 35);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .get_terminal_id(terminal_buffer)
+        .expect("terminal buffer should have a terminal id");
+    let (cols_before, rows_before) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle should exist")
+        .size();
+
+    // Move the terminal off-screen by switching to a fresh empty buffer in the
+    // same split.  The terminal is now hidden behind the new tab.
+    harness.new_buffer().unwrap();
+    let other_buffer = harness.editor().active_buffer_id();
+    assert_ne!(other_buffer, terminal_buffer);
+    assert!(!harness.editor().is_terminal_buffer(other_buffer));
+
+    // Shrink the host terminal while the PTY is hidden.  Without the fix,
+    // `resize_visible_terminals` skips the hidden buffer and the PTY keeps
+    // its original geometry.
+    harness.resize(80, 25).unwrap();
+
+    // Sanity: the PTY child still reports the original (stale) dimensions.
+    let (cols_hidden, rows_hidden) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle should exist")
+        .size();
+    assert_eq!(
+        (cols_hidden, rows_hidden),
+        (cols_before, rows_before),
+        "hidden terminal should not have been resized while off-screen"
+    );
+
+    // Bring the terminal tab back to the front; the PTY size should now
+    // reflect the smaller window.
+    harness.editor_mut().switch_buffer(terminal_buffer);
+    harness.render().unwrap();
+
+    let (cols_after, rows_after) = harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle should exist")
+        .size();
+
+    assert!(
+        cols_after < cols_before,
+        "expected PTY cols to shrink after reveal: before={}, after={}",
+        cols_before,
+        cols_after
+    );
+    assert!(
+        rows_after < rows_before,
+        "expected PTY rows to shrink after reveal: before={}, after={}",
+        rows_before,
+        rows_after
+    );
+}
