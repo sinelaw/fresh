@@ -206,8 +206,12 @@ impl LspClientState {
             (Running, Stopping) | (Running, Error) => true,
             // From Stopping, can become stopped or error
             (Stopping, Stopped) | (Stopping, Error) => true,
-            // From Stopped or Error, can restart
-            (Stopped, Starting) | (Error, Starting) => true,
+            // From Stopped, can restart
+            (Stopped, Starting) => true,
+            // From Error, can be cleanly shut down or restarted.
+            // Shutdown from Error is reachable when initialization
+            // fails or the server crashes — see #1797.
+            (Error, Stopping) | (Error, Starting) => true,
             // Any state can become error
             (_, Error) => true,
             // Same state is always valid (no-op)
@@ -5313,5 +5317,79 @@ mod tests {
         // Cleanup - best-effort, test is ending
         #[allow(clippy::let_underscore_must_use)]
         let _ = handle.shutdown();
+    }
+
+    #[test]
+    fn test_lsp_client_state_can_shutdown_from_error() {
+        // Regression test for #1797. When the LSP fails to initialize
+        // (e.g. rust-analyzer rustup proxy exits immediately), the state
+        // transitions to Error. Cleanup paths then call shutdown(), which
+        // calls transition_to(Stopping). Before the fix, that produced
+        // `Invalid state transition from Error to Stopping` warnings on
+        // every retry — Cleanup is a legitimate operation from Error.
+        let mut state = LspClientState::Error;
+
+        assert!(
+            state.can_transition_to(LspClientState::Stopping),
+            "Error state must allow transition to Stopping for graceful shutdown"
+        );
+        assert!(state.transition_to(LspClientState::Stopping).is_ok());
+        // Stopping -> Stopped is already permitted; ensure the full
+        // shutdown sequence completes without warnings.
+        assert!(state.transition_to(LspClientState::Stopped).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_lsp_handle_shutdown_after_spawn_failure_advances_state() {
+        // End-to-end regression for #1797. With a non-existent command
+        // the spawn task transitions state to Error. shutdown() must
+        // be able to advance the state past Error (to Stopping or
+        // Stopped) — before the fix it stayed stuck at Error and
+        // emitted `Invalid state transition from Error to Stopping`.
+        let runtime = tokio::runtime::Handle::current();
+        let async_bridge = AsyncBridge::new();
+
+        let handle = LspHandle::spawn(
+            &runtime,
+            "fresh-nonexistent-lsp-binary-7c93af",
+            &[],
+            Default::default(),
+            LanguageScope::single("test"),
+            "test-server".to_string(),
+            &async_bridge,
+            ProcessLimits::unlimited(),
+            Default::default(),
+            local_spawner(),
+        )
+        .unwrap();
+
+        // Wait until the spawn task observes the missing binary and
+        // pushes the state to Error.
+        for _ in 0..200 {
+            if handle.state() == LspClientState::Error {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            handle.state(),
+            LspClientState::Error,
+            "spawn task should have transitioned to Error after failed spawn"
+        );
+
+        // Shutdown from Error: the channel send may fail because the
+        // spawn task already exited, but state must advance past Error.
+        // It must NOT remain stuck at Error (which is what the broken
+        // state transition produced).
+        let _ = handle.shutdown();
+        let final_state = handle.state();
+        assert!(
+            matches!(
+                final_state,
+                LspClientState::Stopping | LspClientState::Stopped
+            ),
+            "shutdown from Error must advance state, got {:?}",
+            final_state
+        );
     }
 }
