@@ -9,6 +9,7 @@
 //! `scripts/check-semantic-test-isolation.sh` lint enforces it.
 
 use crate::common::harness::EditorTestHarness;
+use crate::common::theorem::failure::TheoremFailure;
 use fresh::test_api::{Action, Caret};
 
 /// Expected state of one cursor.
@@ -90,13 +91,26 @@ pub fn repeat(action: Action, n: usize) -> impl Iterator<Item = Action> {
 
 /// Evaluate a `BufferTheorem` against a headless `Editor`.
 ///
+/// Returns `Ok(())` on success or `Err(TheoremFailure)` on the first
+/// failed assertion. Never panics. Designed for external drivers
+/// (fuzzers, generators, proof-search loops) that need to call the
+/// runner in a tight loop and inspect typed failures.
+///
+/// Test authors usually want `assert_buffer_theorem` instead — see
+/// below.
+///
 /// The runner never calls `harness.render()`. If a theorem fails because
 /// it depends on layout state (e.g. viewport scroll), it is in the wrong
-/// domain — use `LayoutTheorem` (Phase 3) or keep the test imperative.
-pub fn assert_buffer_theorem(t: BufferTheorem) {
+/// domain — use `LayoutTheorem` or keep the test imperative.
+pub fn check_buffer_theorem(t: BufferTheorem) -> Result<(), TheoremFailure> {
     // 80×24 is the default; layout dimensions are irrelevant because
     // the renderer never runs. We use `with_temp_project` so the test
     // gets an isolated working directory (per CONTRIBUTING.md §3.4).
+    //
+    // Harness construction failures are infrastructure-level (no
+    // disk, no temp dir) and are not theorem failures — they bubble
+    // up as panics from the helper. An external driver running this
+    // in a tight loop should already trust its environment.
     let mut harness = EditorTestHarness::with_temp_project(80, 24)
         .expect("EditorTestHarness::with_temp_project failed");
     let _fixture = harness
@@ -108,31 +122,33 @@ pub fn assert_buffer_theorem(t: BufferTheorem) {
 
     // ── Assert buffer text ──────────────────────────────────────────
     let actual_text = api.buffer_text();
-    assert_eq!(
-        actual_text, t.expected_text,
-        "[{}] buffer text mismatch",
-        t.description
-    );
+    if actual_text != t.expected_text {
+        return Err(TheoremFailure::BufferTextMismatch {
+            description: t.description.to_string(),
+            expected: t.expected_text.to_string(),
+            actual: actual_text,
+        });
+    }
 
     // ── Assert cursors ──────────────────────────────────────────────
     let primary = api.primary_caret();
-    assert!(
-        t.expected_primary == primary,
-        "[{}] primary cursor mismatch:\n   expected = {:?}\n   actual   = {:?}",
-        t.description,
-        t.expected_primary,
-        primary,
-    );
+    if t.expected_primary != primary {
+        return Err(TheoremFailure::PrimaryCursorMismatch {
+            description: t.description.to_string(),
+            expected: t.expected_primary,
+            actual: primary,
+        });
+    }
 
     let all_carets = api.carets();
-    assert_eq!(
-        all_carets.len(),
-        1 + t.expected_extra_cursors.len(),
-        "[{}] cursor count mismatch (got {} cursors, expected {})",
-        t.description,
-        all_carets.len(),
-        1 + t.expected_extra_cursors.len(),
-    );
+    let expected_count = 1 + t.expected_extra_cursors.len();
+    if all_carets.len() != expected_count {
+        return Err(TheoremFailure::CursorCountMismatch {
+            description: t.description.to_string(),
+            expected: expected_count,
+            actual: all_carets.len(),
+        });
+    }
 
     // `carets()` is sorted ascending by position; the primary may be at
     // any sorted index, so we filter it out and compare the remainder
@@ -146,23 +162,43 @@ pub fn assert_buffer_theorem(t: BufferTheorem) {
     let mut expected_secondaries = t.expected_extra_cursors.clone();
     expected_secondaries.sort_by_key(|c| c.position);
 
-    for (got, want) in secondaries.iter().zip(expected_secondaries.iter()) {
-        assert!(
-            *want == *got,
-            "[{}] secondary cursor mismatch:\n   expected = {:?}\n   actual   = {:?}",
-            t.description,
-            want,
-            got,
-        );
+    for (i, (got, want)) in secondaries
+        .iter()
+        .zip(expected_secondaries.iter())
+        .enumerate()
+    {
+        if want != got {
+            return Err(TheoremFailure::SecondaryCursorMismatch {
+                description: t.description.to_string(),
+                index: i,
+                expected: *want,
+                actual: *got,
+            });
+        }
     }
 
     // ── Assert selection text (optional) ────────────────────────────
     if let Some(expected) = t.expected_selection_text {
         let actual = api.selection_text();
-        assert_eq!(
-            actual, expected,
-            "[{}] selection text mismatch",
-            t.description
-        );
+        if actual != expected {
+            return Err(TheoremFailure::SelectionTextMismatch {
+                description: t.description.to_string(),
+                expected: expected.to_string(),
+                actual,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Panicking wrapper around [`check_buffer_theorem`] for test authors.
+///
+/// The panic message is `Display` of the underlying `TheoremFailure`,
+/// which exactly mirrors the legacy `assert_eq!` / `assert!` text — so
+/// `#[should_panic(expected = "…")]` meta-tests continue to work.
+pub fn assert_buffer_theorem(t: BufferTheorem) {
+    if let Err(f) = check_buffer_theorem(t) {
+        panic!("{f}");
     }
 }

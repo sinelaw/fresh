@@ -14,6 +14,7 @@
 //! theorem that demonstrably needs them.
 
 use crate::common::harness::EditorTestHarness;
+use crate::common::theorem::failure::TheoremFailure;
 use fresh::test_api::{Action, EditorTestApi};
 
 pub struct LayoutTheorem {
@@ -25,7 +26,7 @@ pub struct LayoutTheorem {
     pub expected_top_byte: usize,
 }
 
-pub fn assert_layout_theorem(t: LayoutTheorem) {
+pub fn check_layout_theorem(t: LayoutTheorem) -> Result<(), TheoremFailure> {
     let mut harness = EditorTestHarness::with_temp_project(t.width, t.height)
         .expect("EditorTestHarness::with_temp_project failed");
     let _fixture = harness
@@ -48,9 +49,18 @@ pub fn assert_layout_theorem(t: LayoutTheorem) {
     harness.render().expect("final render failed");
 
     let actual = harness.api_mut().viewport_top_byte();
-    assert_eq!(
-        actual, t.expected_top_byte,
-        "[{}] viewport_top_byte mismatch",
-        t.description
-    );
+    if actual != t.expected_top_byte {
+        return Err(TheoremFailure::ViewportTopByteMismatch {
+            description: t.description.to_string(),
+            expected: t.expected_top_byte,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+pub fn assert_layout_theorem(t: LayoutTheorem) {
+    if let Err(f) = check_layout_theorem(t) {
+        panic!("{f}");
+    }
 }

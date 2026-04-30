@@ -170,3 +170,141 @@ fn metatheorem_layout_wrong_top_byte_panics() {
         expected_top_byte: 999_999,
     });
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// External-driver shape: check_* returns typed Result without panic.
+//
+// These tests don't use #[should_panic]. They invoke the fallible
+// runners directly and pattern-match on the returned TheoremFailure.
+// This is the entry point an external prover/fuzzer would call: each
+// theorem evaluation is a function call, never a stack unwind.
+// ─────────────────────────────────────────────────────────────────────────
+
+use crate::common::theorem::buffer_theorem::check_buffer_theorem;
+use crate::common::theorem::failure::TheoremFailure;
+use crate::common::theorem::layout_theorem::check_layout_theorem;
+use crate::common::theorem::trace_theorem::check_trace_theorem;
+
+#[test]
+fn metatheorem_check_returns_ok_on_correct_theorem() {
+    let result = check_buffer_theorem(BufferTheorem {
+        description: "passes via check_*",
+        initial_text: "hi",
+        actions: vec![],
+        expected_text: "hi",
+        expected_primary: CursorExpect::at(0),
+        expected_extra_cursors: vec![],
+        expected_selection_text: Some(""),
+    });
+    assert!(result.is_ok(), "expected Ok, got {result:?}");
+}
+
+#[test]
+fn metatheorem_check_returns_typed_buffer_text_failure() {
+    let result = check_buffer_theorem(BufferTheorem {
+        description: "wrong via check_*",
+        initial_text: "hi",
+        actions: vec![],
+        expected_text: "WRONG",
+        expected_primary: CursorExpect::at(0),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+    });
+    match result {
+        Err(TheoremFailure::BufferTextMismatch {
+            ref expected,
+            ref actual,
+            ..
+        }) => {
+            assert_eq!(expected, "WRONG");
+            assert_eq!(actual, "hi");
+        }
+        other => panic!("expected BufferTextMismatch, got {other:?}"),
+    }
+}
+
+#[test]
+fn metatheorem_check_returns_typed_primary_cursor_failure() {
+    let result = check_buffer_theorem(BufferTheorem {
+        description: "wrong primary via check_*",
+        initial_text: "abc",
+        actions: vec![],
+        expected_text: "abc",
+        expected_primary: CursorExpect::at(42),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+    });
+    assert!(matches!(
+        result,
+        Err(TheoremFailure::PrimaryCursorMismatch { .. })
+    ));
+}
+
+#[test]
+fn metatheorem_check_returns_typed_forward_trace_failure() {
+    let result = check_trace_theorem(TraceTheorem {
+        description: "wrong forward via check_*",
+        initial_text: "",
+        actions: vec![Action::InsertChar('x')],
+        expected_text: "WRONG",
+        undo_count: 1,
+    });
+    assert!(matches!(
+        result,
+        Err(TheoremFailure::ForwardTraceFailed { .. })
+    ));
+}
+
+#[test]
+fn metatheorem_check_returns_typed_layout_failure() {
+    let result = check_layout_theorem(LayoutTheorem {
+        description: "wrong top_byte via check_*",
+        initial_text: "x",
+        width: 80,
+        height: 24,
+        actions: vec![],
+        expected_top_byte: 999,
+    });
+    assert!(matches!(
+        result,
+        Err(TheoremFailure::ViewportTopByteMismatch {
+            expected: 999,
+            actual: 0,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn metatheorem_check_can_be_called_in_a_loop_without_panic() {
+    // The defining use case: an external driver calls check_* on
+    // generated theorems and decides what to mutate next based on the
+    // typed failure. This loop must terminate normally even when most
+    // theorems fail — proving the panic-free contract.
+    let cases = [
+        ("hi", "hi", true),        // pass
+        ("hi", "WRONG", false),    // fail
+        ("hello", "HELLO", false), // fail
+        ("hello", "hello", true),  // pass
+    ];
+
+    let mut pass_count = 0;
+    let mut fail_count = 0;
+    for (initial, expected, _should_pass) in cases {
+        let r = check_buffer_theorem(BufferTheorem {
+            description: "loop case",
+            initial_text: initial,
+            actions: vec![],
+            expected_text: expected,
+            expected_primary: CursorExpect::at(0),
+            expected_extra_cursors: vec![],
+            expected_selection_text: None,
+        });
+        match r {
+            Ok(_) => pass_count += 1,
+            Err(_) => fail_count += 1,
+        }
+    }
+    assert_eq!(pass_count, 2);
+    assert_eq!(fail_count, 2);
+}

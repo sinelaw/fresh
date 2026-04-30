@@ -18,6 +18,7 @@
 //! directly.
 
 use crate::common::harness::EditorTestHarness;
+use crate::common::theorem::failure::TheoremFailure;
 use fresh::test_api::Action;
 
 pub struct TraceTheorem {
@@ -32,7 +33,7 @@ pub struct TraceTheorem {
     pub undo_count: usize,
 }
 
-pub fn assert_trace_theorem(t: TraceTheorem) {
+pub fn check_trace_theorem(t: TraceTheorem) -> Result<(), TheoremFailure> {
     let mut harness = EditorTestHarness::with_temp_project(80, 24)
         .expect("EditorTestHarness::with_temp_project failed");
     let _fixture = harness
@@ -43,21 +44,33 @@ pub fn assert_trace_theorem(t: TraceTheorem) {
 
     // Forward trace.
     api.dispatch_seq(&t.actions);
-    assert_eq!(
-        api.buffer_text(),
-        t.expected_text,
-        "[{}] forward trace failed: buffer text after actions",
-        t.description,
-    );
+    let after_forward = api.buffer_text();
+    if after_forward != t.expected_text {
+        return Err(TheoremFailure::ForwardTraceFailed {
+            description: t.description.to_string(),
+            expected: t.expected_text.to_string(),
+            actual: after_forward,
+        });
+    }
 
     // Reverse trace.
     let undo_actions: Vec<Action> = (0..t.undo_count).map(|_| Action::Undo).collect();
     api.dispatch_seq(&undo_actions);
-    assert_eq!(
-        api.buffer_text(),
-        t.initial_text,
-        "[{}] reverse trace failed: {} undos should yield the initial buffer",
-        t.description,
-        t.undo_count,
-    );
+    let after_reverse = api.buffer_text();
+    if after_reverse != t.initial_text {
+        return Err(TheoremFailure::ReverseTraceFailed {
+            description: t.description.to_string(),
+            undo_count: t.undo_count,
+            expected: t.initial_text.to_string(),
+            actual: after_reverse,
+        });
+    }
+
+    Ok(())
+}
+
+pub fn assert_trace_theorem(t: TraceTheorem) {
+    if let Err(f) = check_trace_theorem(t) {
+        panic!("{f}");
+    }
 }
