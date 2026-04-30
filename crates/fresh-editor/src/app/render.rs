@@ -121,11 +121,18 @@ impl Editor {
             )
         });
 
-        // Hide status bar when suggestions popup or file browser popup is shown
+        // Hide status bar when suggestions popup or file browser
+        // popup is shown — those popups float just above the prompt
+        // line, and a visible status bar wedged between them looks
+        // wrong. Floating-overlay prompts (Live Grep, issue #1796)
+        // are exempt because their suggestions live inside the
+        // centred frame, not above the bottom row.
+        let prompt_is_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
         let has_suggestions = self
             .prompt
             .as_ref()
-            .is_some_and(|p| !p.suggestions.is_empty());
+            .is_some_and(|p| !p.suggestions.is_empty())
+            && !prompt_is_overlay;
         let has_file_browser = self.prompt.as_ref().is_some_and(|p| {
             matches!(
                 p.prompt_type,
@@ -147,11 +154,18 @@ impl Editor {
                 },
             ), // Status bar (hidden when toggled off or with popups)
             Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
-            Constraint::Length(if self.prompt_line_visible || self.prompt.is_some() {
-                1
-            } else {
-                0
-            }), // Prompt line (auto-hidden when no prompt active)
+            Constraint::Length(
+                // Prompt line is auto-hidden when no prompt active.
+                // Overlay prompts (Live Grep, issue #1796) host the
+                // input row inside the centred frame, so the
+                // bottom row stays available for editor content
+                // rather than being reserved as dead space.
+                if (self.prompt_line_visible || self.prompt.is_some()) && !prompt_is_overlay {
+                    1
+                } else {
+                    0
+                },
+            ), // Prompt line
         ];
 
         let main_chunks = Layout::default()
@@ -1789,9 +1803,22 @@ impl Editor {
         };
         let prompt = prompt.clone();
 
-        // Clear and frame.
+        // Clear and frame. Plugin-owned prompts can publish their
+        // own title via `editor.setPromptTitle(...)`; falls back to
+        // " Live Grep " when unset (so a Resume-replay prompt and
+        // freshly-opened plugin prompt look the same).
         frame.render_widget(Clear, overlay_rect);
-        let title = " Live Grep ";
+        let default_title = " Live Grep ";
+        let title_owned: String;
+        let title: &str = match prompt.title.as_deref() {
+            Some(t) if !t.is_empty() => {
+                // Pad with single spaces so it sits flush with the
+                // frame's corners regardless of length.
+                title_owned = format!(" {} ", t.trim());
+                &title_owned
+            }
+            _ => default_title,
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.popup_border_fg))

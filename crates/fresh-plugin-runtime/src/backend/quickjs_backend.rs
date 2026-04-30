@@ -3164,6 +3164,14 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Set the floating-overlay prompt's title. `null`/missing
+    /// clears the title and falls back to the prompt-type default.
+    pub fn set_prompt_title(&self, title: rquickjs::function::Opt<String>) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetPromptTitle { title: title.0 })
+            .is_ok()
+    }
+
     // === Modes ===
 
     /// Define a buffer mode (takes bindings as array of [key, command] pairs)

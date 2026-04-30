@@ -1508,6 +1508,12 @@ pub enum PluginCommand {
     /// When enabled, navigating suggestions updates the prompt input text
     SetPromptInputSync { sync: bool },
 
+    /// Set the title shown in a floating-overlay prompt's frame
+    /// header (issue #1796). `None` clears any previously-set title
+    /// and falls back to the prompt-type default. Has no visible
+    /// effect on non-overlay prompts.
+    SetPromptTitle { title: Option<String> },
+
     /// Add a menu item to an existing menu
     /// Add a menu item to an existing menu
     AddMenuItem {
@@ -3189,6 +3195,12 @@ impl PluginApi {
     /// Enable/disable syncing prompt input text when navigating suggestions
     pub fn set_prompt_input_sync(&self, sync: bool) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptInputSync { sync })
+    }
+
+    /// Set the floating-overlay prompt's title (issue #1796). `None`
+    /// clears the title and falls back to the prompt-type default.
+    pub fn set_prompt_title(&self, title: Option<String>) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptTitle { title })
     }
 
     /// Add a menu item to an existing menu

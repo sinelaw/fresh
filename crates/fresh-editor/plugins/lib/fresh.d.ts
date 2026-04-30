@@ -1729,6 +1729,13 @@ interface EditorAPI {
 	setPromptSuggestions(suggestions: PromptSuggestion[]): boolean;
 	setPromptInputSync(sync: boolean): boolean;
 	/**
+	* Set the title shown in the floating-overlay prompt's frame
+	* header (issue #1796). Pass `null` or omit the argument to
+	* clear the title and fall back to the default. Has no
+	* visible effect on non-overlay prompts.
+	*/
+	setPromptTitle(title?: string | null): boolean;
+	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;

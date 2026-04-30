@@ -804,6 +804,11 @@ impl Editor {
                     prompt.sync_input_on_navigate = sync;
                 }
             }
+            PluginCommand::SetPromptTitle { title } => {
+                if let Some(prompt) = &mut self.prompt {
+                    prompt.title = title;
+                }
+            }
 
             // ==================== Command/Mode Registration ====================
             PluginCommand::RegisterCommand { command } => {

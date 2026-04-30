@@ -144,14 +144,27 @@ function unregisterProvider(name: string): boolean {
   return removed;
 }
 
+function updateOverlayTitle(provider: LiveGrepProvider | null): void {
+  // Reflect the active provider in the floating overlay's frame
+  // header so the user always knows which backend is producing
+  // the results, even after the search-result status overwrites
+  // any one-shot "switched to" message.
+  const label = provider ? `Live Grep · ${provider.name}` : "Live Grep";
+  editor.setPromptTitle(label);
+}
+
 async function selectProvider(): Promise<LiveGrepProvider | null> {
-  if (cachedSelected !== undefined) return cachedSelected;
+  if (cachedSelected !== undefined) {
+    updateOverlayTitle(cachedSelected);
+    return cachedSelected;
+  }
   for (const p of providers) {
     try {
       const ok = await Promise.resolve(p.isAvailable());
       if (ok) {
         cachedSelected = p;
         editor.debug(`[live-grep] selected provider: ${p.name}`);
+        updateOverlayTitle(p);
         return p;
       }
     } catch (e) {
@@ -159,6 +172,7 @@ async function selectProvider(): Promise<LiveGrepProvider | null> {
     }
   }
   cachedSelected = null;
+  updateOverlayTitle(null);
   return null;
 }
 
@@ -431,6 +445,10 @@ async function cycleProvider(): Promise<void> {
     }
     if (!ok) continue;
     cachedSelected = candidate;
+    // Reflect the new provider in the overlay's title bar
+    // immediately — the status row gets clobbered by the search
+    // result count, but the title stays put.
+    updateOverlayTitle(candidate);
     // Re-run the current query through the new provider so the
     // result list updates without the user having to type a
     // throwaway character. `refresh()` itself sets status to
@@ -485,6 +503,18 @@ function start_live_grep(): void {
     },
     floatingOverlay: true,
   });
+  // Pre-populate the overlay's frame title with the cached
+  // provider name (if any) before the user types — avoids the
+  // brief "Live Grep" → "Live Grep · ripgrep" flash when the
+  // first search resolves selectProvider().
+  if (cachedSelected) {
+    updateOverlayTitle(cachedSelected);
+  } else {
+    // Kick off provider probing in the background so the title
+    // updates as soon as the first available probe resolves,
+    // rather than waiting for the first keystroke.
+    void selectProvider();
+  }
 }
 registerHandler("start_live_grep", start_live_grep);
 

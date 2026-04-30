@@ -221,6 +221,12 @@ pub struct Prompt {
     /// is rendering-only — confirm/cancel/hooks behave identically to
     /// a non-overlay prompt of the same `prompt_type`.
     pub overlay: bool,
+    /// Title shown in the overlay's frame header (e.g.
+    /// `" Live Grep · ripgrep "`). `None` falls back to a
+    /// `prompt_type`-specific default. Plugin-controlled via
+    /// `editor.setPromptTitle(...)`. Has no effect on non-overlay
+    /// prompts.
+    pub title: Option<String>,
 }
 
 /// Maximum number of suggestion rows shown at once. Mirrors the cap used by
@@ -244,6 +250,7 @@ impl Prompt {
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
+            title: None,
         }
     }
 
@@ -274,6 +281,7 @@ impl Prompt {
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
+            title: None,
         }
     }
 
@@ -323,6 +331,7 @@ impl Prompt {
             suggestions_set_for_input: None,
             sync_input_on_navigate: false,
             overlay: false,
+            title: None,
         }
     }
 
