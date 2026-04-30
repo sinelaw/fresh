@@ -314,49 +314,19 @@ registerProvider({
   },
 });
 
-// `fff` is registered as a placeholder built-in: many users alias
-// their preferred custom search to `fff`, and the priority chain
-// makes it easy to override (this entry sits *below* the standard
-// tools so it only kicks in when nothing else is installed). The
-// argument shape mirrors ripgrep's positional pattern; users whose
-// `fff` differs can replace this entry from init.ts:
-//
-//     editor.getPluginApi("live-grep")?.unregisterProvider("fff");
-//     editor.getPluginApi("live-grep")?.registerProvider({ ... });
-//
-// The probe uses `sh -c "command -v fff"` rather than `fff --version`
-// because not every tool packaged as "fff" implements `--version`
-// (the popular bash file-manager `fff` doesn't, for example, and
-// users may alias the name to a custom script). `command -v` is
-// POSIX-portable and only checks PATH membership, so isAvailable
-// is true iff the binary is reachable.
-registerProvider({
-  name: "fff",
-  priority: -4,
-  isAvailable: async () => {
-    try {
-      const r = await editor.spawnProcess(
-        "sh",
-        ["-c", "command -v fff"],
-        editor.getCwd()
-      );
-      return r.exit_code === 0;
-    } catch {
-      return false;
-    }
-  },
-  search: async (query, { cwd, maxResults }) => {
-    const r = await editor.spawnProcess("fff", ["--", query], cwd);
-    if (r.exit_code === 0 || r.exit_code === 1) {
-      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
-    }
-    return [];
-  },
-});
+// Note: `fff` is *not* shipped as a built-in. There's no canonical
+// "fff" grep tool with a known argument shape — the most popular
+// binary named `fff` is the bash file-manager
+// (https://github.com/dylanaraps/fff), which is interactive and
+// doesn't accept a search pattern as an argument. Wiring a guess
+// here would silently return zero results for that flavour. Users
+// who have their own `fff` (or any other custom tool) should
+// register it from init.ts where the exact CLI is known. The
+// starter init.ts template documents the pattern.
 
 registerProvider({
   name: "grep",
-  priority: -5,
+  priority: -4,
   isAvailable: async () => {
     try {
       const r = await editor.spawnProcess("grep", ["--version"], editor.getCwd());

@@ -1794,7 +1794,7 @@
       "when": "normal"
     },
     {
-      "comment": "Live Grep prompt — cycle to the next *available* search provider (rg → ag → git-grep → ack → fff → grep). Skips providers whose isAvailable() returns false (e.g. git-grep outside a repo). Mnemonic: 'p' for Provider.",
+      "comment": "Live Grep prompt — cycle to the next *available* search provider. Built-ins are rg → ag → git-grep → ack → grep; user plugins can register more via editor.getPluginApi(\"live-grep\")?.registerProvider(...). Skips providers whose isAvailable() returns false (e.g. git-grep outside a repo). Mnemonic: 'p' for Provider.",
       "key": "p",
       "modifiers": ["alt"],
       "action": "cycle_live_grep_provider",
