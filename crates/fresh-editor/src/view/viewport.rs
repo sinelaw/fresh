@@ -2260,28 +2260,51 @@ impl Viewport {
         let line_start = cursor_iter.current_position();
         let column = cursor.position.saturating_sub(line_start);
 
-        // Count lines from top_byte to cursor to get screen row
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
-        let mut screen_row = 0;
-
-        while let Some((line_byte, _)) = iter.next_line() {
-            if line_byte >= line_start {
-                break;
-            }
-            screen_row += 1;
-        }
-
-        // Calculate screen column and additional wrapped rows if line wrapping is enabled
-        let (screen_col, additional_rows) = if self.line_wrap_enabled {
-            // Use new clean wrapping implementation
+        // Wrap config used for both visual-row counting (lines above the
+        // cursor) and the cursor's own intra-line position. Built once.
+        let wrap_config = if self.line_wrap_enabled {
             let gutter_width = self.gutter_width(buffer);
-            let config = WrapConfig::new(
+            Some(WrapConfig::new(
                 self.effective_width() as usize,
                 gutter_width,
                 true,
                 self.wrap_indent,
-            );
+            ))
+        } else {
+            None
+        };
 
+        // Count visual rows from top_byte up to (but not including) the
+        // cursor's line. With wrap enabled, lines above the cursor may
+        // occupy multiple visual rows; counting logical lines anchors
+        // popups (e.g. completion) to the wrong screen row in heavily
+        // wrapped buffers — see issue #1794.
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut screen_row: usize = 0;
+
+        while let Some((line_byte, content)) = iter.next_line() {
+            if line_byte >= line_start {
+                break;
+            }
+            if let Some(ref config) = wrap_config {
+                let line_end = iter.current_position();
+                let line_text = content.trim_end_matches(['\n', '\r']);
+                screen_row += Self::count_visual_rows_for_line(
+                    line_byte,
+                    line_end,
+                    line_text,
+                    config,
+                    &[],
+                    &[],
+                    None,
+                );
+            } else {
+                screen_row += 1;
+            }
+        }
+
+        // Calculate screen column and additional wrapped rows if line wrapping is enabled
+        let (screen_col, additional_rows) = if let Some(ref config) = wrap_config {
             // Get the line text for wrapping
             let mut line_iter = buffer.line_iterator(line_start, 80);
             let line_text = if let Some((_start, content)) = line_iter.next_line() {
@@ -2317,9 +2340,13 @@ impl Viewport {
             (screen_col, 0)
         };
 
+        // If `top_byte` sits mid-line (visual offset into the first
+        // visible logical line), the on-screen origin is shifted up by
+        // that offset.
+        let total_row = (screen_row + additional_rows).saturating_sub(self.top_view_line_offset);
+
         // Return (x, y) which is (col, row)
-        // Add the additional wrapped rows to the screen row
-        (screen_col, (screen_row + additional_rows) as u16)
+        (screen_col, total_row as u16)
     }
 }
 
@@ -2423,6 +2450,41 @@ mod tests {
         // x is column (horizontal), y is row (vertical)
         assert_eq!(x, 0); // Column 0 (start of line)
         assert_eq!(y, 1); // Row 1 (second line, since top_line is 0)
+    }
+
+    /// Issue #1794: completion popup is anchored to the wrong screen row in
+    /// heavily-wrapped buffers because the row count from `top_byte` to the
+    /// cursor's line was being computed in *logical lines* rather than
+    /// *visual rows*. With wrap enabled, lines above the cursor that occupy
+    /// multiple visual rows must each contribute their full visual-row count.
+    #[test]
+    fn test_cursor_screen_position_with_wrapped_lines_above() {
+        // Build 4 lines where each line wraps to ~3 visual rows in a 30-col
+        // viewport. Identical wrap behaviour to the issue's repro: long
+        // sentences that will be word-wrapped onto multiple rows.
+        let long = "the quick brown fox jumps over the lazy dog and runs away";
+        let content = format!("{long}\n{long}\n{long}\n{long}");
+        let mut buffer = Buffer::from_str_test(&content);
+
+        let mut vp = Viewport::new(30, 24);
+        vp.line_wrap_enabled = true;
+        vp.show_line_numbers = false; // simpler width math
+
+        // Place the cursor at the END of line 4 (last logical line). With
+        // ~30-col wrap, each of the 3 prior lines wraps to 3 visual rows
+        // (= 9 rows total above), and the cursor's own line lands on its
+        // last sub-row. The popup expects the cursor's true visual row.
+        let cursor_pos = content.len();
+        let cursor = Cursor::new(cursor_pos);
+        let (_x, y) = vp.cursor_screen_position(&mut buffer, &cursor);
+
+        // With 3 wrapped lines above (>=2 visual rows each) the cursor's
+        // visual row must be at least 6. Pre-fix, this returns 3 + segment
+        // (i.e. ~5) because the prior 3 lines were counted as 1 row each.
+        assert!(
+            y >= 6,
+            "expected cursor visual row >= 6 (3 wrapped lines above × >=2 rows), got {y}"
+        );
     }
 
     #[test]
