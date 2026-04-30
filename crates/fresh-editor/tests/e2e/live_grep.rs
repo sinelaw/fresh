@@ -1,6 +1,7 @@
 use crate::common::fixtures::TestFixture;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::input::commands::Suggestion;
 use fresh::input::keybindings::Action;
 use fresh::services::live_grep_state::{GrepMatch, LiveGrepLastState};
 use fresh::view::prompt::PromptType;
@@ -442,6 +443,45 @@ fn test_resume_live_grep_capture_skips_empty_dismissal() {
          pre-fix this stored Some(LiveGrepLastState {{ cached_results: Some(vec![]), .. }}) \
          which made Resume open an empty popup."
     );
+}
+
+/// Regression test for the bug surfaced after the initial fix shipped:
+/// pressing Enter on a Live Grep result jumps to the file but loses
+/// the Resume cache, so Alt+r returns the user to a fresh-empty popup
+/// instead of their match list. Pre-fix `confirm_prompt` had no
+/// caching for Live Grep prompts; only `cancel_prompt` did. Post-fix
+/// the confirm path mirrors the cancel path's gates.
+#[test]
+fn test_resume_live_grep_capture_on_confirm_with_results() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness
+        .editor_mut()
+        .start_prompt("Live grep: ".to_string(), PromptType::LiveGrep);
+    if let Some(prompt) = harness.editor_mut().prompt_mut() {
+        prompt.input = "needle".to_string();
+        prompt.cursor_pos = prompt.input.len();
+        let mut s = Suggestion::new("src/foo.rs:42".to_string());
+        s.description = Some("fn needle() {}".to_string());
+        s.value = Some("src/foo.rs:42:1".to_string());
+        prompt.suggestions = vec![s];
+        prompt.selected_suggestion = Some(0);
+    }
+    let _ = harness.editor_mut().confirm_prompt();
+
+    let cached = harness
+        .editor()
+        .live_grep_last_state_for_tests()
+        .expect("Confirming Live Grep on a real result must populate the Resume cache");
+    assert_eq!(cached.query, "needle");
+    assert_eq!(cached.selected_index, Some(0));
+    let results = cached
+        .cached_results
+        .as_ref()
+        .expect("cached_results must be Some after confirm");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file, "src/foo.rs");
+    assert_eq!(results[0].line, 42);
 }
 
 /// Regression test for issue #1796 (replay side): even if a degenerate

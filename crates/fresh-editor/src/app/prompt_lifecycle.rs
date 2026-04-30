@@ -817,6 +817,31 @@ impl Editor {
     /// Returns None if trying to confirm a disabled command
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
         if let Some(prompt) = self.prompt.take() {
+            // Capture Live Grep state on confirm too (issue #1796).
+            // `cancel_prompt` already does this; without it here,
+            // pressing Enter on a result jumps to the file but loses
+            // the Resume cache, so `Action::ResumeLiveGrep` then opens
+            // a fresh-empty popup instead of returning the user to
+            // their match list. Same gates as cancel: only cache when
+            // query and snapshot are both non-empty.
+            let is_live_grep = match &prompt.prompt_type {
+                PromptType::LiveGrep => true,
+                PromptType::Plugin { custom_type } => custom_type == "live-grep",
+                _ => false,
+            };
+            if is_live_grep {
+                let cached = self.snapshot_prompt_results_for_grep(&prompt);
+                if !prompt.input.is_empty() && !cached.is_empty() {
+                    self.live_grep_last_state =
+                        Some(crate::services::live_grep_state::LiveGrepLastState {
+                            query: prompt.input.clone(),
+                            selected_index: prompt.selected_suggestion,
+                            cached_results: Some(cached),
+                            cached_at: Some(std::time::Instant::now()),
+                            last_results_snapshot_id: None,
+                        });
+                }
+            }
             // Tear down the floating-overlay preview state on
             // confirm too — the user is committing to a result and
             // navigating to it, so the preview-only buffers should

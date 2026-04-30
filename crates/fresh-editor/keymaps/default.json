@@ -1770,9 +1770,9 @@
       "when": "prompt"
     },
     {
-      "comment": "Live Grep prompt — alternate Quickfix export binding for terminals that mangle Alt+Q",
-      "key": "Enter",
-      "modifiers": ["ctrl"],
+      "comment": "Live Grep prompt — alternate Quickfix export binding for terminals that mangle Alt+Q. Mnemonic: 'm' for matches → dock. Uses Alt+M instead of Ctrl+Enter because many terminals don't distinguish Ctrl+Enter from plain Enter (the alternate binding then silently confirmed the selection instead of exporting).",
+      "key": "m",
+      "modifiers": ["alt"],
       "action": "live_grep_export_quickfix",
       "args": {},
       "when": "prompt"
