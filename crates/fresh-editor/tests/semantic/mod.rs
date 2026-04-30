@@ -18,3 +18,4 @@ pub mod smart_home;
 pub mod sort_lines;
 pub mod toggle_comment;
 pub mod undo_redo;
+pub mod unicode_cursor;

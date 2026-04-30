@@ -1,9 +1,10 @@
 # E2E Test Migration — From Imperative Harness to Declarative Theorems
 
 **Status:** Phases 1, 2, 3, A, B, C, D all landed on
-`claude/e2e-test-migration-design-HxHlO`. Test suite green (67 passing,
+`claude/e2e-test-migration-design-HxHlO`. Test suite green (134 passing,
 0 ignored). Framework proven by finding *and fixing* three real
-production bugs (proptest found two; theorem migration found a third).
+production bugs and surfacing two further behavioral asymmetries
+(Redo cursor; ExpandSelection on punctuation runs).
 **Branch:** `claude/e2e-test-migration-design-HxHlO`
 **Owner:** TBD
 **Scope:** `crates/fresh-editor/tests/e2e/*` (~220 files)
@@ -23,15 +24,26 @@ production bugs (proptest found two; theorem migration found a third).
 | D1 — serde failures | `4925f8a` | ~40 | `TheoremFailure: Serialize + Deserialize`; JSON round-trip meta-test. External drivers can write to dashboards / CI artifacts / replay logs without string parsing. |
 | **Bug fixes (1)** | `d95b9d1` | +13/-21 | Both latent bugs fixed: `prefix_bytes.last()` instead of OOB indexing in actions.rs; `.min(deleted_text.len())` clamp in state.rs. All `#[ignore]` annotations removed. |
 | **Track B (continued)** | `ad4887a` | +364/-30 | `duplicate_line` (5 theorems), `emacs_actions` (8 + 1 #[ignore]'d bug). Theorem migration of `test_open_line_basic` revealed a 3rd bug: `Action::OpenLine` advances the cursor instead of staying put (Emacs C-o intent). |
-| **Bug fixes (2)** | (next commit) | small | OpenLine handler emits a follow-up `Event::MoveCursor` to restore the cursor position. The `#[ignore]`'d theorem flips to a passing regression test plus a "type-after-OpenLine inserts on the original line" companion. |
+| **Bug fixes (2)** | `6b2f144` | small | OpenLine handler emits a follow-up `Event::MoveCursor` to restore the cursor position. The `#[ignore]`'d theorem flips to a passing regression test plus a "type-after-OpenLine inserts on the original line" companion. |
+| **Track B (3)** | `e0b2a43` | +520 | `undo_redo` (4 theorems) + `auto_pairs` (14 theorems) + `BehaviorFlags` framework extension. Migration of `test_redo_skips_readonly_movement_actions` revealed a 4th asymmetry: Redo doesn't re-advance the cursor past the re-inserted bytes (pinned, not yet fixed). |
+| **Track B (4)** | `79c648e` | +421 | `toggle_comment` (10 theorems) + 6 quote auto-pair theorems + `load_buffer_from_text_named` framework extension. Resolves the deferred language-detection blocker; `.rs`/`.py`/`.sh`/`.yaml`/`.yml`/`.c` comment-prefix selection now under permanent coverage (issue #774 pinned). |
+| **Track B (5)** | `ad52e6f` | +553 | `selection` (17 theorems) + `save_state` (4 theorems) + `is_modified()` test_api observable. Issue #191 (undo-back-to-save-point) pinned. Found a 5th asymmetry: ExpandSelection on punctuation-then-word runs picks "**-" in e2e but "**-word" in the semantic harness — pinned. |
+| **Track B (6)** | (next commit) | +~330 | `unicode_cursor` (12 theorems): UTF-8/grapheme invariants for arrow movement, backspace (Norwegian, emoji, Thai layer-by-layer), DeleteForward (atomic Thai cluster), selection-delete and selection-replace over multibyte ranges. |
 
-**Final test count:** 67 passing, 0 ignored, 0 failing. Every formerly-
-`#[ignore]`d property and regression repro is now permanent coverage.
+**Final test count:** 134 passing, 0 ignored, 0 failing. Every
+formerly-`#[ignore]`d property and regression repro is now permanent
+coverage.
 
-**13 declarative theorems** under `tests/semantic/`, each one
-mathematically pinning down behavior the imperative originals were
-silent or vague about (selection clearing, cursor position after
-sort, exact byte ranges of select-to-paragraph).
+**Migrated tests by source file** (~80 e2e tests subsumed):
+case_conversion (1), sort_lines (3), indent_dedent (3),
+select_to_paragraph (2), smart_home (2), duplicate_line (5),
+emacs_actions (8), undo_redo (4), auto_pairs (20), toggle_comment (10),
+selection (17), save_state (4), unicode_cursor (12).
+
+Each theorem mathematically pins down behavior the imperative
+originals were silent or vague about — selection clearing after
+SortLines, exact byte ranges of select-to-paragraph, the
+Undo/Redo cursor asymmetry, the Emacs C-o intent gap, etc.
 
 **Two latent production bugs found by the property tests, now fixed in `d95b9d1`:**
 
@@ -85,11 +97,31 @@ bugs than imperative E2E. The two bugs found here are the kind that
 plugin and vi-mode dispatch — so even an exhaustive imperative suite
 that drives every keystroke would never have surfaced them.
 
-**Deferred deliberately:** the full `RenderSnapshot` design from §9.1
-and the issue-#1147-style Class B rewrites that depend on it; the
-language-detection migrations (`toggle_comment`, ~30 similar tests)
-that need a `load_buffer_from_text_named` test API extension. Each
-should land alongside the first theorem that demonstrably needs it.
+**Framework extensions landed alongside migrations:**
+
+| Extension | Commit | Unblocked |
+|---|---|---|
+| `BehaviorFlags { auto_close, auto_indent, auto_surround }` + `assert_buffer_theorem_with_behavior` | `e0b2a43` | auto-pair / smart-editing tests that need production auto-* defaults |
+| `load_buffer_from_text_named(filename, content)` + `_with_file` / `_with_behavior_and_file` runners | `79c648e` | toggle_comment language-detection tests; quote auto-pair (suppressed in `language="text"`) |
+| `EditorTestApi::is_modified() -> bool` | `ad52e6f` | save-point / dirty-state undo tests (issue #191) |
+
+**Behavioral findings — three fixed bugs and two pinned asymmetries:**
+
+| # | Source | Finding | Status |
+|---|---|---|---|
+| 1 | proptest fuzzing | `actions.rs:1613` smart-dedent OOB on stale cursor | Fixed in `d95b9d1` |
+| 2 | proptest fuzzing | `state.rs:462` delete-backward newline counter OOB | Fixed in `d95b9d1` |
+| 3 | `emacs_actions` migration | `Action::OpenLine` advances cursor instead of staying put (Emacs C-o intent) | Fixed in `6b2f144` |
+| 4 | `undo_redo` migration | Undo restores cursor to pre-write position, but Redo does *not* re-advance the cursor past re-inserted bytes | Pinned (asymmetry recorded as theorem) |
+| 5 | `selection` migration | ExpandSelection on a punctuation-then-word run selects `"**-"` in e2e but `"**-word"` in the semantic harness — likely a `word_characters` resolution gap | Pinned (semantic-harness behavior recorded) |
+
+**Still deferred:** the full `RenderSnapshot` design from §9.1 and
+the issue-#1147-style Class B rewrites that depend on it. Smaller
+remaining batches without framework needs: `multicursor.rs` edge
+cases, `vi_mode.rs` action subset, the
+`test_select_word_accented_characters` proptest-style migration.
+Each should land alongside the first theorem that demonstrably
+needs the corresponding extension.
 
 ---
 
