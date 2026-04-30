@@ -152,11 +152,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     // belongs to the same logical line as the cursor — even if a plugin
     // soft-break (compose-mode wrapping) put the sub-row's start mid-line.
     // Without this, the highlight only landed on the *first* visual sub-row
-    // of a soft-wrapped paragraph (issue #1790).
-    let cursor_line_end_byte = state
-        .buffer
-        .line_start_offset(state.primary_cursor_line_number.value() + 1)
-        .unwrap_or_else(|| state.buffer.len().saturating_add(1));
+    // of a soft-wrapped paragraph (issue #1790). Computed by direct byte scan
+    // so it doesn't depend on the cached `primary_cursor_line_number` being
+    // in sync with the cursor position.
+    let cursor_line_end_byte =
+        indent_folding::find_line_end_byte(&state.buffer, primary_cursor_position);
 
     let highlight_spans = &decorations.highlight_spans;
     let semantic_token_spans = &decorations.semantic_token_spans;

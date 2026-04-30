@@ -419,6 +419,22 @@ pub mod indent_folding {
         }
     }
 
+    /// Find the exclusive byte offset just past the line containing `pos`
+    /// (i.e. one byte past its terminating `\n`, or the buffer length if the
+    /// line has no trailing newline). Scans forward for `\n`.
+    pub fn find_line_end_byte(buffer: &Buffer, pos: usize) -> usize {
+        let buf_len = buffer.len();
+        let mut p = pos;
+        while p < buf_len {
+            match PatternIndentCalculator::byte_at(buffer, p) {
+                Some(b'\n') => return p + 1,
+                None => return buf_len,
+                _ => p += 1,
+            }
+        }
+        buf_len
+    }
+
     /// Measure leading indent of a line given as a byte slice (no trailing `\n`).
     fn slice_indent(line: &[u8], tab_size: usize) -> (usize, bool) {
         let mut indent = 0;
