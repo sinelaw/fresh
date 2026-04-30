@@ -6,16 +6,14 @@
 //! turns OFF for simpler unrelated tests. Theorems here opt in via
 //! `assert_buffer_theorem_with_behavior` + `BehaviorFlags::production()`.
 //!
-//! Quote-close tests are deferred: `get_auto_close_char` disables
-//! auto-close for `"`, `'`, `` ` `` when `state.language == "text"`.
-//! The semantic harness opens an unnamed `.txt` buffer, so the
-//! language is always "text". Migrating the quote subset needs a
-//! `load_buffer_from_text_named(name, content)` extension to set the
-//! file extension and trigger non-"text" language detection.
+//! Quote auto-pair theorems use `assert_buffer_theorem_with_behavior_and_file`
+//! to load the buffer with a `.rs` extension so language detection
+//! resolves to Rust (not "text"). `get_auto_close_char` suppresses
+//! auto-close for `"`, `'`, `` ` `` when language=="text".
 
 use crate::common::theorem::buffer_theorem::{
-    assert_buffer_theorem, assert_buffer_theorem_with_behavior, BehaviorFlags, BufferTheorem,
-    CursorExpect,
+    assert_buffer_theorem, assert_buffer_theorem_with_behavior,
+    assert_buffer_theorem_with_behavior_and_file, BehaviorFlags, BufferTheorem, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -294,5 +292,121 @@ fn theorem_backspace_does_not_pair_delete_when_content_between() {
             expected_selection_text: None,
         },
         BehaviorFlags::production(),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Quote auto-pair (require non-"text" language → load via x.rs file)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn theorem_typing_double_quote_auto_closes_in_rust() {
+    // Replaces test_auto_close_double_quotes.
+    // `get_auto_close_char` only disables quote auto-close in language="text"
+    // and language="markdown"/"mdx". For Rust (loaded via x.rs), '"' pairs.
+    assert_buffer_theorem_with_behavior_and_file(
+        BufferTheorem {
+            description: "InsertChar('\"') auto-pairs in a Rust buffer",
+            initial_text: "",
+            actions: vec![Action::InsertChar('"')],
+            expected_text: "\"\"",
+            expected_primary: CursorExpect::at(1),
+            expected_extra_cursors: vec![],
+            expected_selection_text: None,
+        },
+        BehaviorFlags::production(),
+        "x.rs",
+    );
+}
+
+#[test]
+fn theorem_typing_single_quote_auto_closes_in_rust() {
+    // Replaces test_auto_close_single_quotes.
+    assert_buffer_theorem_with_behavior_and_file(
+        BufferTheorem {
+            description: "InsertChar('\\'') auto-pairs in a Rust buffer",
+            initial_text: "",
+            actions: vec![Action::InsertChar('\'')],
+            expected_text: "''",
+            expected_primary: CursorExpect::at(1),
+            expected_extra_cursors: vec![],
+            expected_selection_text: None,
+        },
+        BehaviorFlags::production(),
+        "x.rs",
+    );
+}
+
+#[test]
+fn theorem_typing_backtick_auto_closes_in_rust() {
+    // Replaces test_auto_close_backtick.
+    assert_buffer_theorem_with_behavior_and_file(
+        BufferTheorem {
+            description: "InsertChar('`') auto-pairs in a Rust buffer",
+            initial_text: "",
+            actions: vec![Action::InsertChar('`')],
+            expected_text: "``",
+            expected_primary: CursorExpect::at(1),
+            expected_extra_cursors: vec![],
+            expected_selection_text: None,
+        },
+        BehaviorFlags::production(),
+        "x.rs",
+    );
+}
+
+#[test]
+fn theorem_typing_closing_quote_skips_over_existing() {
+    // Replaces test_skip_over_closing_quote.
+    // After auto-close inserts `""`, typing `"` again must just advance
+    // the cursor — no third quote.
+    assert_buffer_theorem_with_behavior_and_file(
+        BufferTheorem {
+            description: "Typing '\"' before existing '\"' just advances the cursor",
+            initial_text: "",
+            actions: vec![Action::InsertChar('"'), Action::InsertChar('"')],
+            expected_text: "\"\"",
+            expected_primary: CursorExpect::at(2),
+            expected_extra_cursors: vec![],
+            expected_selection_text: None,
+        },
+        BehaviorFlags::production(),
+        "x.rs",
+    );
+}
+
+#[test]
+fn theorem_backspace_between_empty_double_quotes_deletes_both() {
+    // Replaces test_auto_pair_delete_double_quotes.
+    assert_buffer_theorem_with_behavior_and_file(
+        BufferTheorem {
+            description: "Backspace between empty \"\" pair deletes both",
+            initial_text: "",
+            actions: vec![Action::InsertChar('"'), Action::DeleteBackward],
+            expected_text: "",
+            expected_primary: CursorExpect::at(0),
+            expected_extra_cursors: vec![],
+            expected_selection_text: None,
+        },
+        BehaviorFlags::production(),
+        "x.rs",
+    );
+}
+
+#[test]
+fn theorem_backspace_between_empty_single_quotes_deletes_both() {
+    // Replaces test_auto_pair_delete_single_quotes.
+    assert_buffer_theorem_with_behavior_and_file(
+        BufferTheorem {
+            description: "Backspace between empty '' pair deletes both",
+            initial_text: "",
+            actions: vec![Action::InsertChar('\''), Action::DeleteBackward],
+            expected_text: "",
+            expected_primary: CursorExpect::at(0),
+            expected_extra_cursors: vec![],
+            expected_selection_text: None,
+        },
+        BehaviorFlags::production(),
+        "x.rs",
     );
 }

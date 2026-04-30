@@ -177,7 +177,7 @@ pub fn check_buffer_theorem_with_terminal(
     t: BufferTheorem,
     term: TerminalSize,
 ) -> Result<(), TheoremFailure> {
-    check_buffer_theorem_full(t, term, BehaviorFlags::default())
+    check_buffer_theorem_full(t, term, BehaviorFlags::default(), DEFAULT_FILENAME)
 }
 
 /// Same as [`check_buffer_theorem`] but with explicit auto-* behavior
@@ -187,13 +187,46 @@ pub fn check_buffer_theorem_with_behavior(
     t: BufferTheorem,
     behavior: BehaviorFlags,
 ) -> Result<(), TheoremFailure> {
-    check_buffer_theorem_full(t, TerminalSize::default(), behavior)
+    check_buffer_theorem_full(t, TerminalSize::default(), behavior, DEFAULT_FILENAME)
 }
+
+/// Same as [`check_buffer_theorem`] but with a custom on-disk filename
+/// for the temp fixture. Use this for theorems whose behavior depends
+/// on the buffer's language — e.g. `"x.rs"` triggers Rust syntax
+/// highlighting and Rust comment prefix; `"x.py"` triggers Python.
+/// The filename's *extension* is what matters for language detection;
+/// the stem can be anything.
+pub fn check_buffer_theorem_with_file(
+    t: BufferTheorem,
+    filename: &'static str,
+) -> Result<(), TheoremFailure> {
+    check_buffer_theorem_full(
+        t,
+        TerminalSize::default(),
+        BehaviorFlags::default(),
+        filename,
+    )
+}
+
+/// Combined opt-in: auto-* behavior **and** a custom filename. Use
+/// this for theorems like quote auto-pair that need both production
+/// auto-close behavior and a non-`text` language (auto-close of
+/// `"`, `'`, `` ` `` is suppressed when language=="text").
+pub fn check_buffer_theorem_with_behavior_and_file(
+    t: BufferTheorem,
+    behavior: BehaviorFlags,
+    filename: &'static str,
+) -> Result<(), TheoremFailure> {
+    check_buffer_theorem_full(t, TerminalSize::default(), behavior, filename)
+}
+
+const DEFAULT_FILENAME: &str = "test_buffer.txt";
 
 fn check_buffer_theorem_full(
     t: BufferTheorem,
     term: TerminalSize,
     behavior: BehaviorFlags,
+    filename: &str,
 ) -> Result<(), TheoremFailure> {
     // We use a temp-project harness so the test gets an isolated
     // working directory (per CONTRIBUTING.md §3.4).
@@ -219,8 +252,8 @@ fn check_buffer_theorem_full(
             .expect("EditorTestHarness::with_temp_project_and_config failed")
     };
     let _fixture = harness
-        .load_buffer_from_text(t.initial_text)
-        .expect("load_buffer_from_text failed");
+        .load_buffer_from_text_named(filename, t.initial_text)
+        .expect("load_buffer_from_text_named failed");
 
     let api = harness.api_mut();
     api.dispatch_seq(&t.actions);
@@ -318,6 +351,24 @@ pub fn assert_buffer_theorem_with_terminal(t: BufferTheorem, term: TerminalSize)
 /// Panicking wrapper around [`check_buffer_theorem_with_behavior`].
 pub fn assert_buffer_theorem_with_behavior(t: BufferTheorem, behavior: BehaviorFlags) {
     if let Err(f) = check_buffer_theorem_with_behavior(t, behavior) {
+        panic!("{f}");
+    }
+}
+
+/// Panicking wrapper around [`check_buffer_theorem_with_file`].
+pub fn assert_buffer_theorem_with_file(t: BufferTheorem, filename: &'static str) {
+    if let Err(f) = check_buffer_theorem_with_file(t, filename) {
+        panic!("{f}");
+    }
+}
+
+/// Panicking wrapper around [`check_buffer_theorem_with_behavior_and_file`].
+pub fn assert_buffer_theorem_with_behavior_and_file(
+    t: BufferTheorem,
+    behavior: BehaviorFlags,
+    filename: &'static str,
+) {
+    if let Err(f) = check_buffer_theorem_with_behavior_and_file(t, behavior, filename) {
         panic!("{f}");
     }
 }

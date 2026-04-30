@@ -975,7 +975,21 @@ impl EditorTestHarness {
         &mut self,
         content: &str,
     ) -> anyhow::Result<crate::common::fixtures::TestFixture> {
-        let fixture = crate::common::fixtures::TestFixture::new("test_buffer.txt", content)?;
+        self.load_buffer_from_text_named("test_buffer.txt", content)
+    }
+
+    /// Like [`load_buffer_from_text`], but the on-disk fixture uses
+    /// the given filename. Choose the extension to drive
+    /// language-detection — `"x.rs"` → Rust, `"x.py"` → Python,
+    /// `"x.yaml"` → YAML, etc. Needed for theorems whose behavior
+    /// depends on the buffer's language (toggle-comment prefix,
+    /// auto-close of quote chars, etc.).
+    pub fn load_buffer_from_text_named(
+        &mut self,
+        filename: &str,
+        content: &str,
+    ) -> anyhow::Result<crate::common::fixtures::TestFixture> {
+        let fixture = crate::common::fixtures::TestFixture::new(filename, content)?;
         self.open_file(&fixture.path)?;
         Ok(fixture)
     }
