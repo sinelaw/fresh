@@ -155,6 +155,7 @@ pub mod search_center_on_scroll;
 pub mod search_down_stall_after_wrap;
 pub mod search_navigation_after_move;
 pub mod search_replace;
+pub mod search_selection_on_punctuation;
 pub mod search_viewport_stall_after_wrap;
 pub mod select_to_paragraph;
 pub mod selection;

@@ -174,6 +174,30 @@ pub fn find_completion_word_start(buffer: &Buffer, pos: usize) -> usize {
     start + new_pos
 }
 
+/// Returns true if the grapheme at `pos` is a word character
+/// (alphanumeric or `_`). Position past the end of the buffer returns false.
+///
+/// This is grapheme-aware (handles multi-byte UTF-8 like accented letters)
+/// and is meant for "is the cursor on a word?" checks. Unlike
+/// `find_word_start`/`find_word_end`, it does not extend into adjacent
+/// graphemes — it only looks at the one at `pos`.
+pub fn is_cursor_on_word_char(buffer: &Buffer, pos: usize) -> bool {
+    let buf_len = buffer.len();
+    if pos >= buf_len {
+        return false;
+    }
+    // A UTF-8 grapheme is at most 4 bytes; read enough to decode the first one.
+    const MAX_UTF8_CHAR_LEN: usize = 4;
+    let end = (pos + MAX_UTF8_CHAR_LEN).min(buf_len);
+    let bytes = buffer.slice_bytes(pos..end);
+    let text = String::from_utf8_lossy(&bytes);
+    let next = next_grapheme_boundary(&text, 0);
+    if next == 0 {
+        return false;
+    }
+    get_grapheme_class(&text[..next]) == CharClass::Word
+}
+
 /// Find the start of the word at or before the given position
 ///
 /// Uses grapheme-based classification to correctly handle Unicode characters
@@ -560,6 +584,28 @@ mod tests {
         assert!(!is_word_char(b' '));
         assert!(!is_word_char(b'.'));
         assert!(!is_word_char(b'-'));
+    }
+
+    #[test]
+    fn test_is_cursor_on_word_char() {
+        let buffer = Buffer::from_str_test("hello {world} café");
+        // 'h' of hello
+        assert!(is_cursor_on_word_char(&buffer, 0));
+        // 'o' of hello
+        assert!(is_cursor_on_word_char(&buffer, 4));
+        // space
+        assert!(!is_cursor_on_word_char(&buffer, 5));
+        // '{'
+        assert!(!is_cursor_on_word_char(&buffer, 6));
+        // 'w' of world
+        assert!(is_cursor_on_word_char(&buffer, 7));
+        // '}'
+        assert!(!is_cursor_on_word_char(&buffer, 12));
+        // first byte of multi-byte 'é' in "café"
+        assert!(is_cursor_on_word_char(&buffer, 17));
+        // past the end
+        assert!(!is_cursor_on_word_char(&buffer, buffer.len()));
+        assert!(!is_cursor_on_word_char(&buffer, buffer.len() + 100));
     }
 
     #[test]

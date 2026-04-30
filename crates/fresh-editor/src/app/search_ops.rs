@@ -630,22 +630,23 @@ impl Editor {
     /// Otherwise, it starts a new search with the current selection or word under cursor.
     pub(super) fn find_selection_next(&mut self) {
         // If there's already a search active AND cursor is at a match position,
-        // just continue to next match. Otherwise, clear and start fresh.
+        // just continue to next match.
         if let Some(ref search_state) = self.search_state {
             let cursor_pos = self.active_cursors().primary().position;
             if search_state.matches.binary_search(&cursor_pos).is_ok() {
                 self.find_next();
                 return;
             }
-            // Cursor moved away from a match - clear search state
         }
-        self.search_state = None;
 
-        // No active search - start a new one with selection or word under cursor
+        // Try to start a new search from the selection or word under cursor.
         let (search_text, selection_start) = self.get_selection_or_word_for_search_with_pos();
 
         match search_text {
             Some(text) if !text.is_empty() => {
+                // We have a new search term — discard any previous search.
+                self.search_state = None;
+
                 // Record cursor position before search
                 let cursor_before = self.active_cursors().primary().position;
 
@@ -678,7 +679,15 @@ impl Editor {
                 }
             }
             _ => {
-                self.set_status_message(t!("search.no_text").to_string());
+                // No selection or word at the cursor (e.g. cursor sits on a
+                // bracket after `goto_matching_bracket`). Don't synthesize
+                // a query — fall back to navigating the existing search if
+                // there is one (issue #1537).
+                if self.search_state.is_some() {
+                    self.find_next();
+                } else {
+                    self.set_status_message(t!("search.no_text").to_string());
+                }
             }
         }
     }
@@ -690,22 +699,23 @@ impl Editor {
     /// Otherwise, it starts a new search with the current selection or word under cursor.
     pub(super) fn find_selection_previous(&mut self) {
         // If there's already a search active AND cursor is at a match position,
-        // just continue to previous match. Otherwise, clear and start fresh.
+        // just continue to previous match.
         if let Some(ref search_state) = self.search_state {
             let cursor_pos = self.active_cursors().primary().position;
             if search_state.matches.binary_search(&cursor_pos).is_ok() {
                 self.find_previous();
                 return;
             }
-            // Cursor moved away from a match - clear search state
         }
-        self.search_state = None;
 
-        // No active search - start a new one with selection or word under cursor
+        // Try to start a new search from the selection or word under cursor.
         let (search_text, selection_start) = self.get_selection_or_word_for_search_with_pos();
 
         match search_text {
             Some(text) if !text.is_empty() => {
+                // We have a new search term — discard any previous search.
+                self.search_state = None;
+
                 // Record cursor position before search
                 let cursor_before = self.active_cursors().primary().position;
 
@@ -743,7 +753,14 @@ impl Editor {
                 }
             }
             _ => {
-                self.set_status_message(t!("search.no_text").to_string());
+                // No selection or word at the cursor — fall back to
+                // navigating the existing search if there is one
+                // (issue #1537).
+                if self.search_state.is_some() {
+                    self.find_previous();
+                } else {
+                    self.set_status_message(t!("search.no_text").to_string());
+                }
             }
         }
     }
@@ -751,7 +768,9 @@ impl Editor {
     /// Get the text to search for from selection or word under cursor,
     /// along with the start position of that text (for determining if we're at a match).
     fn get_selection_or_word_for_search_with_pos(&mut self) -> (Option<String>, Option<usize>) {
-        use crate::primitives::word_navigation::{find_word_end, find_word_start};
+        use crate::primitives::word_navigation::{
+            find_word_end, find_word_start, is_cursor_on_word_char,
+        };
 
         // First get selection range and cursor position with immutable borrow
         let (selection_range, cursor_pos) = {
@@ -768,9 +787,23 @@ impl Editor {
             }
         }
 
-        // No selection - try to get word under cursor
+        // No selection - try to get word under cursor.
+        //
+        // Only extract a "word under cursor" if the cursor is actually
+        // sitting on a word character. `find_word_start` / `find_word_end`
+        // are designed for word-by-word *navigation* (Ctrl+arrows): when
+        // pointed at a non-word position they intentionally extend across
+        // whitespace/punctuation into the adjacent word. That semantic is
+        // wrong here — for "find selection / word under cursor" we want
+        // either the word at the cursor or nothing. See issue #1537,
+        // where a `goto_matching_bracket` left the cursor on `}` and a
+        // subsequent Ctrl+F3 hijacked the search query into the bracket
+        // plus surrounding words.
         let (word_start, word_end) = {
             let state = self.active_state();
+            if !is_cursor_on_word_char(&state.buffer, cursor_pos) {
+                return (None, None);
+            }
             let word_start = find_word_start(&state.buffer, cursor_pos);
             let word_end = find_word_end(&state.buffer, cursor_pos);
             (word_start, word_end)
