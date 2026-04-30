@@ -1609,8 +1609,8 @@ fn handle_delete_backward(
                     let prefix_bytes = state.buffer.slice_bytes(line_start..cursor.position);
                     let all_whitespace = prefix_bytes.iter().all(|&b| b == b' ' || b == b'\t');
 
-                    if all_whitespace {
-                        let last_byte = prefix_bytes[prefix_len - 1];
+                    if all_whitespace && !prefix_bytes.is_empty() {
+                        let last_byte = *prefix_bytes.last().unwrap();
                         let chars_to_remove = if last_byte == b'\t' {
                             1
                         } else {

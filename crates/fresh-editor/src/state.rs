@@ -458,7 +458,10 @@ impl EditorState {
         // For forward delete: cursor was at range.start, so no deleted newlines are before it.
         let primary_newlines_removed = if cursor_id == cursors.primary_id() {
             let cursor_pos = cursors.get(cursor_id).map_or(range.start, |c| c.position);
-            let bytes_before_cursor = cursor_pos.saturating_sub(range.start).min(len);
+            let bytes_before_cursor = cursor_pos
+                .saturating_sub(range.start)
+                .min(len)
+                .min(deleted_text.len());
             deleted_text[..bytes_before_cursor].matches('\n').count()
         } else {
             0

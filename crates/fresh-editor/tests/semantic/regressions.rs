@@ -46,7 +46,6 @@ use fresh::test_api::Action;
 /// See `diagnosis_bug1_does_not_panic_with_render_between` below for
 /// the diagnostic that confirms the layout-reconciliation hypothesis.
 #[test]
-#[ignore = "BUG: actions.rs:1613 — smart-dedent panics in no-render dispatch paths (vi count prefix, plugin batches)"]
 fn regression_smart_dedent_panic_on_phantom_line() {
     // The exact shrunk repro from
     // tests/semantic/properties.proptest-regressions.
@@ -94,7 +93,6 @@ fn regression_smart_dedent_panic_on_phantom_line() {
 /// See `diagnosis_bug2_does_not_panic_with_render_between` below for
 /// the diagnostic.
 #[test]
-#[ignore = "BUG: state.rs:462 — DeleteBackward over whitespace-only buffer panics in no-render dispatch paths"]
 fn regression_delete_backward_panic_on_whitespace_only_buffer() {
     let result = check_buffer_theorem(BufferTheorem {
         description:
@@ -132,7 +130,6 @@ fn regression_delete_backward_panic_on_whitespace_only_buffer() {
 // ─────────────────────────────────────────────────────────────────────────
 
 use crate::common::harness::EditorTestHarness;
-use fresh::test_api::EditorTestApi;
 
 fn run_with_render_per_action(initial_text: &str, actions: &[Action]) {
     let mut harness = EditorTestHarness::with_temp_project(80, 24)

@@ -40,15 +40,11 @@ proptest! {
     /// carries state across buffer instantiations, which is a
     /// real test-isolation bug.
     ///
-    /// **Currently #[ignore]d**: a 2nd production bug was found —
-    /// state.rs:462 panics on the same family of cursor/buffer
-    /// desync after MoveLineEnd / SelectLineEnd / DeleteBackward
-    /// over a whitespace-only buffer. Repro committed as
-    /// `regression_delete_backward_panic_on_whitespace_only_buffer`
-    /// in `tests/semantic/regressions.rs`.
+    /// Bug fixed: state.rs:462 panicked on the same family of cursor/buffer
+    /// desync after MoveLineEnd / SelectLineEnd / DeleteBackward over a
+    /// whitespace-only buffer. Regression test at
+    /// `regressions::regression_delete_backward_panic_on_whitespace_only_buffer`.
     #[test]
-    #[ignore = "FOUND BUG: state.rs:462 panics on DeleteBackward over whitespace-only buffer. \
-                See regressions::regression_delete_backward_panic_on_whitespace_only_buffer."]
     fn property_dispatch_is_deterministic(
         initial_text in initial_text_strategy(),
         actions in prop::collection::vec(safe_action_strategy(), 0..16),
@@ -97,14 +93,10 @@ proptest! {
     /// panicked on a path the property generator reached, which is
     /// a real bug regardless of intended behavior.
     ///
-    /// **Currently #[ignore]d**: the first run of this property
-    /// (proptest seed cc f8324...) found a real production bug.
-    /// Repro committed as `regression_smart_dedent_panic_on_phantom_line`
-    /// in `tests/semantic/regressions.rs`. Re-enable this property
-    /// (and the regression test) after that bug is fixed.
+    /// Bug fixed: the first run found a real production bug at actions.rs:1613
+    /// (smart-dedent bounds check). Regression test at
+    /// `regressions::regression_smart_dedent_panic_on_phantom_line`.
     #[test]
-    #[ignore = "FOUND BUG: actions.rs:1613 panics on smart-dedent over phantom line. \
-                See regressions::regression_smart_dedent_panic_on_phantom_line."]
     fn property_arbitrary_actions_do_not_panic(
         initial_text in initial_text_strategy(),
         actions in prop::collection::vec(safe_action_strategy(), 0..24),
