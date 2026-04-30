@@ -1,0 +1,48 @@
+%YAML 1.2
+---
+name: VHDL
+file_extensions: [vhd, vhdl, vho]
+scope: source.vhdl
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '--'
+      push: [{meta_scope: comment.line.double-dash.vhdl}, {match: '$', pop: true}]
+    - match: '/\*'
+      push: [{meta_scope: comment.block.vhdl}, {match: '\*/', pop: true}]
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.vhdl
+        - match: '""'
+          scope: constant.character.escape.vhdl
+        - match: '"'
+          pop: true
+    - match: "'.'"
+      scope: string.quoted.single.vhdl
+  keywords:
+    - match: '(?i)\b(entity|architecture|configuration|package|component|library|use|context|generic|port|signal|variable|constant|file|alias|attribute|subtype|type|record|access|array|range|units|of|is|begin|end|new)\b'
+      scope: keyword.declaration.vhdl
+    - match: '(?i)\b(if|then|elsif|else|case|when|others|loop|while|for|next|exit|return|wait|until|on|after|process|procedure|function|impure|pure|generate|block|assert|report|severity|null|with|select)\b'
+      scope: keyword.control.vhdl
+    - match: '(?i)\b(in|out|inout|buffer|linkage|map|to|downto|all|open|register|bus|disconnect|guarded|transport|inertial|reject|postponed|shared|protected|body)\b'
+      scope: storage.modifier.vhdl
+    - match: '(?i)\b(bit|bit_vector|boolean|character|integer|natural|positive|real|string|time|std_logic|std_logic_vector|std_ulogic|std_ulogic_vector|signed|unsigned|line|text|severity_level|file_open_kind|file_open_status)\b'
+      scope: storage.type.vhdl
+    - match: '(?i)\b(true|false|note|warning|error|failure)\b'
+      scope: constant.language.vhdl
+    - match: '(?i)\b(and|or|nand|nor|xor|xnor|not|abs|mod|rem|sll|srl|sla|sra|rol|ror)\b'
+      scope: keyword.operator.word.vhdl
+    - match: '(?i)\b(now|left|right|low|high|ascending|image|value|pos|val|succ|pred|leftof|rightof|base|range|reverse_range|length|delayed|stable|quiet|transaction|event|active|last_event|last_active|last_value|driving|driving_value|simple_name|instance_name|path_name|element|subtype)\b'
+      scope: support.function.attribute.vhdl
+  numbers:
+    - match: '\b\d+#[0-9a-fA-F_]+(\.[0-9a-fA-F_]+)?#(E[+-]?\d+)?\b'
+      scope: constant.numeric.based.vhdl
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(E[+-]?\d+)?\b'
+      scope: constant.numeric.vhdl
+    - match: \b[bBoOxX]"[0-9a-fA-F_]+"\b
+      scope: constant.numeric.bitstring.vhdl

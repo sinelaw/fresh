@@ -1,0 +1,56 @@
+%YAML 1.2
+---
+name: SystemVerilog
+file_extensions: [sv, svh, svi, svp]
+scope: source.systemverilog
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '//'
+      push: [{meta_scope: comment.line.double-slash.systemverilog}, {match: '$', pop: true}]
+    - match: '/\*'
+      push: [{meta_scope: comment.block.systemverilog}, {match: '\*/', pop: true}]
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.systemverilog
+        - match: '\\.'
+          scope: constant.character.escape.systemverilog
+        - match: '"'
+          pop: true
+  keywords:
+    - match: '\b(module|endmodule|primitive|endprimitive|function|endfunction|task|endtask|begin|end|generate|endgenerate|specify|endspecify|table|endtable|fork|join|join_any|join_none|case|casex|casez|endcase|config|endconfig|class|endclass|interface|endinterface|package|endpackage|program|endprogram|covergroup|endcovergroup|sequence|endsequence|property|endproperty|clocking|endclocking|checker|endchecker|modport|extern)\b'
+      scope: keyword.declaration.systemverilog
+    - match: '\b(if|else|for|while|forever|repeat|do|return|break|continue|disable|wait|default|posedge|negedge|edge|assign|deassign|force|release|initial|always|always_comb|always_ff|always_latch|@|final|foreach|iff|inside|throughout|with|new|null|this|super)\b'
+      scope: keyword.control.systemverilog
+    - match: '\b(input|output|inout|ref|reg|wire|tri|tri0|tri1|triand|trior|trireg|wand|wor|supply0|supply1|integer|int|byte|shortint|longint|real|shortreal|realtime|time|bit|logic|enum|struct|union|typedef|parameter|localparam|defparam|genvar|signed|unsigned|automatic|static|net|scalared|vectored|small|medium|large|var|const|chandle|event|string|void)\b'
+      scope: storage.type.systemverilog
+    - match: '\b(virtual|pure|local|protected|rand|randc|randomize|constraint|solve|before|after|priority|unique|unique0|context|import|export|extends|implements|forkjoin|tagged)\b'
+      scope: storage.modifier.systemverilog
+    - match: '\b(strong0|strong1|weak0|weak1|highz0|highz1|pull0|pull1)\b'
+      scope: storage.modifier.drive.systemverilog
+    - match: '\b(and|or|not|nand|nor|xor|xnor|buf|bufif0|bufif1|notif0|notif1|cmos|nmos|pmos|rcmos|rnmos|rpmos|tran|tranif0|tranif1|rtran|rtranif0|rtranif1|pulldown|pullup)\b'
+      scope: support.function.gate.systemverilog
+    - match: '\b(assert|assume|cover|expect|coverpoint|cross|bins|illegal_bins|ignore_bins|wildcard|binsof|matches|first_match|intersect|dist|within|null|randomize|srandom)\b'
+      scope: keyword.assertion.systemverilog
+    - match: '\$(display|write|monitor|strobe|finish|stop|time|stime|realtime|random|urandom|urandom_range|fopen|fclose|fwrite|fdisplay|readmem[bh]|writemem[bh]|dumpfile|dumpvars|dumpon|dumpoff|test\$plusargs|value\$plusargs|signed|unsigned|bits|clog2|cast|past|rose|fell|stable|onehot|onehot0|countones|isunknown|sampled|info|warning|error|fatal|assertcontrol|asserton|assertoff|assertkill)\b'
+      scope: support.function.system.systemverilog
+    - match: '`(define|undef|ifdef|ifndef|elsif|else|endif|include|timescale|resetall|celldefine|endcelldefine|default_nettype|line|pragma|begin_keywords|end_keywords|unconnected_drive|nounconnected_drive|__FILE__|__LINE__)\b'
+      scope: keyword.control.preprocessor.systemverilog
+    - match: '\b(true|false|1''b0|1''b1)\b'
+      scope: constant.language.systemverilog
+  numbers:
+    - match: \b\d*'[bB][01_xXzZ?]+\b
+      scope: constant.numeric.binary.systemverilog
+    - match: \b\d*'[oO][0-7_xXzZ?]+\b
+      scope: constant.numeric.octal.systemverilog
+    - match: \b\d*'[dD][0-9_xXzZ?]+\b
+      scope: constant.numeric.decimal.systemverilog
+    - match: \b\d*'[hH][0-9a-fA-F_xXzZ?]+\b
+      scope: constant.numeric.hex.systemverilog
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?(e[+-]?\d+)?\b'
+      scope: constant.numeric.systemverilog

@@ -1,0 +1,71 @@
+%YAML 1.2
+---
+# Verilog grammar based on IEEE Std 1364-2005 (Annex B reserved keywords).
+name: Verilog
+file_extensions: [vh, verilog]
+scope: source.verilog
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: directives
+    - include: system_tasks
+    - include: keywords
+    - include: numbers
+  comments:
+    - match: '//'
+      push: [{meta_scope: comment.line.double-slash.verilog}, {match: '$', pop: true}]
+    - match: '/\*'
+      push: [{meta_scope: comment.block.verilog}, {match: '\*/', pop: true}]
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.verilog
+        - match: '\\.'
+          scope: constant.character.escape.verilog
+        - match: '"'
+          pop: true
+  directives:
+    # IEEE 1364-2005 Section 19 compiler directives
+    - match: '`(define|undef|ifdef|ifndef|elsif|else|endif|include|timescale|resetall|celldefine|endcelldefine|default_nettype|line|pragma|begin_keywords|end_keywords|unconnected_drive|nounconnected_drive)\b'
+      scope: keyword.control.preprocessor.verilog
+    # Macro / text-substitution invocation
+    - match: '`[A-Za-z_][A-Za-z0-9_]*'
+      scope: variable.other.macro.verilog
+  system_tasks:
+    # IEEE 1364-2005 Section 17 system tasks and functions (representative set)
+    - match: '\$(display|displayb|displayo|displayh|write|writeb|writeo|writeh|monitor|monitorb|monitoro|monitorh|monitoroff|monitoron|strobe|strobeb|strobeo|strobeh|finish|stop|exit|time|stime|realtime|printtimescale|timeformat|random|dist_chi_square|dist_erlang|dist_exponential|dist_normal|dist_poisson|dist_t|dist_uniform|fopen|fclose|fdisplay|fdisplayb|fdisplayo|fdisplayh|fwrite|fwriteb|fwriteo|fwriteh|fmonitor|fmonitorb|fmonitoro|fmonitorh|fstrobe|fstrobeb|fstrobeo|fstrobeh|fread|fscanf|fseek|fgets|sscanf|sformat|swrite|swriteb|swriteo|swriteh|ungetc|ferror|feof|rewind|ftell|fflush|readmemb|readmemh|writememb|writememh|dumpfile|dumpvars|dumpon|dumpoff|dumpall|dumpflush|dumplimit|dumpports|dumpportsoff|dumpportson|dumpportsall|dumpportsflush|dumpportslimit|test\$plusargs|value\$plusargs|signed|unsigned|bitstoreal|realtobits|bitstoshortreal|shortrealtobits|itor|rtoi|sdf_annotate|async\$and\$array|async\$and\$plane|async\$nand\$array|async\$nand\$plane|async\$or\$array|async\$or\$plane|async\$nor\$array|async\$nor\$plane|sync\$and\$array|sync\$and\$plane|sync\$nand\$array|sync\$nand\$plane|sync\$or\$array|sync\$or\$plane|sync\$nor\$array|sync\$nor\$plane|q_initialize|q_add|q_remove|q_full|q_exam|setup|hold|setuphold|recovery|removal|recrem|skew|timeskew|fullskew|period|width|nochange)\b'
+      scope: support.function.system.verilog
+    # Generic fallback for any other system task
+    - match: '\$[A-Za-z_][A-Za-z0-9_]*'
+      scope: support.function.system.verilog
+  keywords:
+    # IEEE 1364-2005 Annex B: declarations / module structure
+    - match: '\b(module|endmodule|macromodule|primitive|endprimitive|function|endfunction|task|endtask|begin|end|generate|endgenerate|specify|endspecify|table|endtable|fork|join|case|casex|casez|endcase|config|endconfig|cell|design|incdir|include|instance|liblist|library|use)\b'
+      scope: keyword.declaration.verilog
+    # Control flow / event triggers
+    - match: '\b(if|ifnone|else|for|while|forever|repeat|return|disable|wait|default|posedge|negedge|edge|assign|deassign|force|release|initial|always|@)\b'
+      scope: keyword.control.verilog
+    # Net / variable types and parameter declarations
+    - match: '\b(input|output|inout|reg|wire|uwire|tri|tri0|tri1|triand|trior|trireg|wand|wor|supply0|supply1|integer|real|realtime|time|event|parameter|localparam|defparam|specparam|genvar|signed|unsigned|automatic|net|scalared|vectored|small|medium|large)\b'
+      scope: storage.type.verilog
+    # Drive / charge strengths and pulse style modifiers
+    - match: '\b(strong0|strong1|weak0|weak1|highz0|highz1|pull0|pull1|pulsestyle_onevent|pulsestyle_ondetect|showcancelled|noshowcancelled)\b'
+      scope: storage.modifier.verilog
+    # Gate-level primitives
+    - match: '\b(and|or|not|nand|nor|xor|xnor|buf|bufif0|bufif1|notif0|notif1|cmos|nmos|pmos|rcmos|rnmos|rpmos|tran|tranif0|tranif1|rtran|rtranif0|rtranif1|pulldown|pullup)\b'
+      scope: support.function.gate.verilog
+  numbers:
+    # Sized / based number literals (IEEE 1364-2005 Section 2.5).
+    # Optional size, base ' [s] [bodh], digits with x/z/?/_
+    - match: \b\d*'[sS]?[bB][01xXzZ?_]+\b
+      scope: constant.numeric.binary.verilog
+    - match: \b\d*'[sS]?[oO][0-7xXzZ?_]+\b
+      scope: constant.numeric.octal.verilog
+    - match: \b\d*'[sS]?[dD][0-9xXzZ?_]+\b
+      scope: constant.numeric.decimal.verilog
+    - match: \b\d*'[sS]?[hH][0-9a-fA-FxXzZ?_]+\b
+      scope: constant.numeric.hex.verilog
+    # Plain integer / real
+    - match: '\b\d[\d_]*(\.\d[\d_]*)?([eE][+-]?\d+)?\b'
+      scope: constant.numeric.verilog

@@ -234,6 +234,12 @@ pub const AUTOHOTKEY_GRAMMAR: &str =
     include_str!("../../grammars/autohotkey/AutoHotkey.sublime-syntax");
 /// Embedded Racket grammar (syntect doesn't include one)
 pub const RACKET_GRAMMAR: &str = include_str!("../../grammars/racket.sublime-syntax");
+/// Embedded Verilog grammar (HDL)
+pub const VERILOG_GRAMMAR: &str = include_str!("../../grammars/verilog.sublime-syntax");
+/// Embedded SystemVerilog grammar (HDL)
+pub const SYSTEMVERILOG_GRAMMAR: &str = include_str!("../../grammars/systemverilog.sublime-syntax");
+/// Embedded VHDL grammar (HDL)
+pub const VHDL_GRAMMAR: &str = include_str!("../../grammars/vhdl.sublime-syntax");
 
 /// Registry of all available TextMate grammars.
 ///
@@ -655,6 +661,9 @@ impl GrammarRegistry {
             (HYPRLANG_GRAMMAR, "Hyprlang"),
             (AUTOHOTKEY_GRAMMAR, "AutoHotkey"),
             (RACKET_GRAMMAR, "Racket"),
+            (VERILOG_GRAMMAR, "Verilog"),
+            (SYSTEMVERILOG_GRAMMAR, "SystemVerilog"),
+            (VHDL_GRAMMAR, "VHDL"),
         ];
 
         for (grammar_str, name) in additional_grammars {

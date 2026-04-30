@@ -4575,6 +4575,86 @@ impl Config {
         );
 
         languages.insert(
+            "verilog".to_string(),
+            LanguageConfig {
+                extensions: vec!["vh".to_string(), "verilog".to_string()],
+                filenames: vec![],
+                grammar: "Verilog".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+            },
+        );
+
+        languages.insert(
+            "systemverilog".to_string(),
+            LanguageConfig {
+                extensions: vec![
+                    "sv".to_string(),
+                    "svh".to_string(),
+                    "svi".to_string(),
+                    "svp".to_string(),
+                ],
+                filenames: vec![],
+                grammar: "SystemVerilog".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+            },
+        );
+
+        languages.insert(
+            "vhdl".to_string(),
+            LanguageConfig {
+                extensions: vec!["vhd".to_string(), "vhdl".to_string(), "vho".to_string()],
+                filenames: vec![],
+                grammar: "VHDL".to_string(),
+                comment_prefix: Some("--".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+            },
+        );
+
+        languages.insert(
             "ruby".to_string(),
             LanguageConfig {
                 extensions: vec!["rb".to_string(), "rake".to_string(), "gemspec".to_string()],

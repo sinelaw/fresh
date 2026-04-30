@@ -363,6 +363,9 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
             "AutoHotkey",
         ),
         ("src/grammars/racket.sublime-syntax", "Racket"),
+        ("src/grammars/verilog.sublime-syntax", "Verilog"),
+        ("src/grammars/systemverilog.sublime-syntax", "SystemVerilog"),
+        ("src/grammars/vhdl.sublime-syntax", "VHDL"),
     ];
 
     let mut loaded = 0;
