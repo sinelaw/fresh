@@ -1447,6 +1447,13 @@ impl Editor {
         prompt_type: String,
         floating_overlay: bool,
     ) {
+        // Refresh the plugin-readable keybinding-label snapshot so
+        // any UI hint the plugin draws ("Alt+P to cycle", etc.)
+        // reflects the user's *current* keymap, not the one from
+        // editor startup. Cheap; runs once per prompt-open.
+        #[cfg(feature = "plugins")]
+        self.refresh_keybinding_labels_snapshot();
+
         // Create a plugin-controlled prompt
         use crate::view::prompt::{Prompt, PromptType};
         let mut prompt = Prompt::new(
@@ -1478,6 +1485,10 @@ impl Editor {
         initial_value: String,
         floating_overlay: bool,
     ) {
+        // Refresh keybinding labels — see `handle_start_prompt`.
+        #[cfg(feature = "plugins")]
+        self.refresh_keybinding_labels_snapshot();
+
         // Create a plugin-controlled prompt with initial text
         use crate::view::prompt::{Prompt, PromptType};
         let mut prompt = Prompt::with_initial_text(

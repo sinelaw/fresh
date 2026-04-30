@@ -1339,6 +1339,23 @@ impl Editor {
             tracing::warn!("dispatch_action_for_tests: {e}");
         }
     }
+
+    /// Refresh the plugin-readable keybinding-label snapshot from
+    /// the current keymap. Call this whenever a plugin is about to
+    /// surface key hints in its UI (overlay headers, tooltips,
+    /// menus) so the user's most-recent rebinds are reflected.
+    ///
+    /// Cheap — walks every typed `Action` × ~9 contexts; runs in
+    /// well under a millisecond on this hardware. Cheaper than
+    /// adding refresh hooks to every keymap-mutation site.
+    #[cfg(feature = "plugins")]
+    pub(crate) fn refresh_keybinding_labels_snapshot(&self) {
+        if let Some(snapshot_handle) = self.plugin_manager.state_snapshot_handle() {
+            if let Ok(mut snapshot) = snapshot_handle.write() {
+                populate_builtin_keybinding_labels(&mut snapshot, &self.keybindings);
+            }
+        }
+    }
 }
 
 /// Walk every typed `Action` and the contexts most relevant to UI
@@ -1376,6 +1393,19 @@ fn populate_builtin_keybinding_labels(
         KeyContext::Settings,
         KeyContext::CompositeBuffer,
     ];
+    // Clear stale built-in entries first so a re-populate after
+    // the user un-binds an action drops the label rather than
+    // leaving the old key visible. Entries whose `\0<context>`
+    // suffix isn't in our list are left alone — those belong to
+    // plugin-defined buffer modes and have their own
+    // re-population path in `handle_register_mode`.
+    let known_suffixes: Vec<String> = contexts
+        .iter()
+        .map(|c| format!("\0{}", c.to_when_clause()))
+        .collect();
+    snapshot
+        .keybinding_labels
+        .retain(|k, _| !known_suffixes.iter().any(|s| k.ends_with(s)));
     for action_name in Action::all_action_names() {
         for ctx in &contexts {
             if let Some(label) = resolver.find_keybinding_for_action(&action_name, ctx.clone()) {
