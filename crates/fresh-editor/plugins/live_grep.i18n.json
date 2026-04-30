@@ -10,7 +10,9 @@
     "status.opened_file": "Opened %{file}:%{line}",
     "status.no_file_selected": "No file selected",
     "status.cancelled": "Live grep cancelled",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "cs": {
     "cmd.live_grep": "Live Grep (Hledat v souborech)",
@@ -23,7 +25,9 @@
     "status.opened_file": "Otevreno %{file}:%{line}",
     "status.no_file_selected": "Zaden soubor nevybran",
     "status.cancelled": "Live grep zrusen",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "de": {
     "cmd.live_grep": "Live Grep (Suche in Dateien)",
@@ -36,7 +40,9 @@
     "status.opened_file": "%{file}:%{line} geoffnet",
     "status.no_file_selected": "Keine Datei ausgewahlt",
     "status.cancelled": "Live Grep abgebrochen",
-    "prompt.live_grep": "Live Grep: "
+    "prompt.live_grep": "Live Grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "es": {
     "cmd.live_grep": "Grep en Vivo (Buscar en Archivos)",
@@ -49,7 +55,9 @@
     "status.opened_file": "Abierto %{file}:%{line}",
     "status.no_file_selected": "Ningun archivo seleccionado",
     "status.cancelled": "Grep en vivo cancelado",
-    "prompt.live_grep": "Grep en vivo: "
+    "prompt.live_grep": "Grep en vivo: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "fr": {
     "cmd.live_grep": "Grep en Direct (Rechercher dans les Fichiers)",
@@ -62,7 +70,9 @@
     "status.opened_file": "Ouvert %{file}:%{line}",
     "status.no_file_selected": "Aucun fichier selectionne",
     "status.cancelled": "Grep en direct annule",
-    "prompt.live_grep": "Grep en direct : "
+    "prompt.live_grep": "Grep en direct : ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "it": {
     "cmd.live_grep": "Live Grep (Cerca nei file)",
@@ -75,7 +85,9 @@
     "status.opened_file": "Aperto %{file}:%{line}",
     "status.no_file_selected": "Nessun file selezionato",
     "status.cancelled": "Live grep annullato",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "ja": {
     "cmd.live_grep": "Live Grep (ファイル内検索)",
@@ -88,7 +100,9 @@
     "status.opened_file": "%{file}:%{line} を開きました",
     "status.no_file_selected": "ファイルが選択されていません",
     "status.cancelled": "Live grep がキャンセルされました",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "ko": {
     "cmd.live_grep": "라이브 Grep (파일에서 찾기)",
@@ -101,7 +115,9 @@
     "status.opened_file": "%{file}:%{line} 열림",
     "status.no_file_selected": "선택된 파일 없음",
     "status.cancelled": "라이브 grep 취소됨",
-    "prompt.live_grep": "라이브 grep: "
+    "prompt.live_grep": "라이브 grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "pt-BR": {
     "cmd.live_grep": "Grep ao Vivo (Buscar em Arquivos)",
@@ -114,7 +130,9 @@
     "status.opened_file": "Aberto %{file}:%{line}",
     "status.no_file_selected": "Nenhum arquivo selecionado",
     "status.cancelled": "Grep ao vivo cancelado",
-    "prompt.live_grep": "Grep ao vivo: "
+    "prompt.live_grep": "Grep ao vivo: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "ru": {
     "cmd.live_grep": "Live Grep (Поиск в файлах)",
@@ -127,7 +145,9 @@
     "status.opened_file": "Открыт %{file}:%{line}",
     "status.no_file_selected": "Файл не выбран",
     "status.cancelled": "Live grep отменен",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "th": {
     "cmd.live_grep": "Live Grep (ค้นหาในไฟล์)",
@@ -140,7 +160,9 @@
     "status.opened_file": "เปิดแล้ว %{file}:%{line}",
     "status.no_file_selected": "ไม่ได้เลือกไฟล์",
     "status.cancelled": "ยกเลิก Live grep แล้ว",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "uk": {
     "cmd.live_grep": "Live Grep (Пошук у файлах)",
@@ -153,7 +175,9 @@
     "status.opened_file": "Відкрито %{file}:%{line}",
     "status.no_file_selected": "Файл не вибрано",
     "status.cancelled": "Live grep скасовано",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "vi": {
     "cmd.live_grep": "Live Grep (Tìm trong tệp)",
@@ -166,7 +190,9 @@
     "status.opened_file": "Đã mở %{file}:%{line}",
     "status.no_file_selected": "Chưa chọn tệp",
     "status.cancelled": "Đã hủy live grep",
-    "prompt.live_grep": "Live grep: "
+    "prompt.live_grep": "Live grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   },
   "zh-CN": {
     "cmd.live_grep": "实时 Grep (文件内搜索)",
@@ -179,6 +205,8 @@
     "status.opened_file": "已打开 %{file}:%{line}",
     "status.no_file_selected": "未选择文件",
     "status.cancelled": "实时 grep 已取消",
-    "prompt.live_grep": "实时 grep: "
+    "prompt.live_grep": "实时 grep: ",
+    "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
   }
 }

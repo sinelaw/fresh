@@ -441,6 +441,17 @@ async function cycleProvider(): Promise<void> {
   editor.setStatus("Live Grep: no available providers");
 }
 registerHandler("live_grep_cycle_provider", cycleProvider);
+// `registerHandler` only sets a globalThis function — to make the
+// editor's `execute_action` path find it across the plugin-context
+// boundary the action also has to live in the registered-actions
+// table. `registerCommand` is the public-facing mechanism that
+// inserts that entry. Doubles as a palette-discoverable command.
+editor.registerCommand(
+  "%cmd.live_grep_cycle_provider",
+  "%cmd.live_grep_cycle_provider_desc",
+  "live_grep_cycle_provider",
+  null
+);
 
 async function search(query: string): Promise<GrepMatch[]> {
   const provider = await selectProvider();
