@@ -126,6 +126,10 @@ const finder = new Finder<DiagnosticItem>(editor, {
   groupBy: "file",
   syncWithEditor: true,
   navigateOnCursorMove: true,
+  // Diagnostics is a generic "list of locations" UX — route into
+  // the shared Utility Dock so it shares space with Quickfix,
+  // search-replace results, etc. See issue #1796.
+  useUtilityDock: true,
   onClose: () => {
     isOpen = false;
     sourceBufferId = null;

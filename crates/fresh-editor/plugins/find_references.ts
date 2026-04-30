@@ -40,6 +40,10 @@ const finder = new Finder<ReferenceLocation>(editor, {
   },
   preview: true,
   maxResults: 100,
+  // Find References is a generic "list of locations" UX — share
+  // the Utility Dock with Diagnostics, Quickfix, search-replace
+  // results, etc. See issue #1796.
+  useUtilityDock: true,
 });
 
 // Pending references for the current prompt

@@ -118,6 +118,21 @@ export interface FinderConfig<T> {
 
   /** Called when the panel or prompt is closed (e.g. via Escape) */
   onClose?: () => void;
+
+  /**
+   * When true, panels created by this Finder are routed into the
+   * shared Utility Dock (issue #1796 / Section 2 of
+   * `docs/internal/tui-editor-layout-design.md`). The first
+   * dock-aware utility creates the dock leaf; subsequent ones swap
+   * the dock's active buffer instead of spawning new splits.
+   *
+   * Defaults to `false` so panels with bespoke layouts (e.g.
+   * `theme_editor`'s buffer groups, `pkg`'s side-by-side panes)
+   * keep their independent split. Plugins that present a generic
+   * "list of locations" UX (Diagnostics, Find References, Live
+   * Grep Quickfix) should opt in.
+   */
+  useUtilityDock?: boolean;
 }
 
 /**
@@ -1105,12 +1120,11 @@ export class Finder<T> {
         ratio,
         direction: "horizontal",
         panelId: this.config.id,
-        // Every Finder panel (Diagnostics, References, etc.) opts into
-        // the Utility Dock (issue #1796 / Section 2 of
-        // docs/internal/tui-editor-layout-design.md). The first panel
-        // creates the dock; subsequent panels swap the dock's active
-        // buffer instead of spawning more splits.
-        role: "utility_dock",
+        // Per-finder opt-in via `useUtilityDock` — many Finder
+        // consumers (theme_editor's buffer groups, pkg's side-by-
+        // side panes, …) need their own independent splits and
+        // would break if routed into the shared dock.
+        ...(this.config.useUtilityDock ? { role: "utility_dock" } : {}),
         showLineNumbers: false,
         showCursors: true,
         editingDisabled: true,

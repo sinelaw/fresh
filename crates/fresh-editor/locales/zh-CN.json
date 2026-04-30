@@ -1434,5 +1434,10 @@
   "explorer.context.paste": "粘贴",
   "explorer.context.rename": "重命名",
   "explorer.new_file_prompt": "新建文件名称：",
-  "explorer.new_directory_prompt": "新建文件夹名称："
+  "explorer.new_directory_prompt": "新建文件夹名称：",
+  "action.open_live_grep": "Live Grep (Find in Files)",
+  "action.resume_live_grep": "Resume Live Grep",
+  "action.live_grep_export_quickfix": "Export Live Grep results to Quickfix",
+  "action.toggle_utility_dock": "Toggle Utility Dock focus",
+  "action.open_terminal_in_dock": "Open terminal in Utility Dock"
 }

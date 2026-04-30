@@ -1434,5 +1434,10 @@
   "explorer.context.paste": "Coller",
   "explorer.context.rename": "Renommer",
   "explorer.new_file_prompt": "Nom du nouveau fichier : ",
-  "explorer.new_directory_prompt": "Nom du nouveau dossier : "
+  "explorer.new_directory_prompt": "Nom du nouveau dossier : ",
+  "action.open_live_grep": "Live Grep (Find in Files)",
+  "action.resume_live_grep": "Resume Live Grep",
+  "action.live_grep_export_quickfix": "Export Live Grep results to Quickfix",
+  "action.toggle_utility_dock": "Toggle Utility Dock focus",
+  "action.open_terminal_in_dock": "Open terminal in Utility Dock"
 }
