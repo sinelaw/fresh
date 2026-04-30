@@ -5381,6 +5381,7 @@ mod tests {
         // spawn task already exited, but state must advance past Error.
         // It must NOT remain stuck at Error (which is what the broken
         // state transition produced).
+        #[allow(clippy::let_underscore_must_use)]
         let _ = handle.shutdown();
         let final_state = handle.state();
         assert!(
