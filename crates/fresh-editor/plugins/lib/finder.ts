@@ -1095,6 +1095,12 @@ export class Finder<T> {
         ratio,
         direction: "horizontal",
         panelId: this.config.id,
+        // Every Finder panel (Diagnostics, References, etc.) opts into
+        // the Utility Dock (issue #1796 / Section 2 of
+        // docs/internal/tui-editor-layout-design.md). The first panel
+        // creates the dock; subsequent panels swap the dock's active
+        // buffer instead of spawning more splits.
+        role: "utility_dock",
         showLineNumbers: false,
         showCursors: true,
         editingDisabled: true,

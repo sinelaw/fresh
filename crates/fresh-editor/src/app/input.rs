@@ -834,17 +834,40 @@ impl Editor {
                 self.start_quick_open_with_prefix("");
             }
             Action::OpenLiveGrep => {
-                // Stub for issue #1796. Opening the floating overlay
-                // requires the renderer-side composite (Phase 2/3 of
-                // the design). For now, dispatch through the existing
-                // command palette so users can still reach Live Grep.
-                if let Some(prompt) = &self.prompt {
-                    if prompt.prompt_type == PromptType::QuickOpen {
-                        self.cancel_prompt();
-                        return Ok(());
+                // Invoke the live_grep plugin's start_live_grep handler.
+                // This still produces the bottom-anchored Finder UI today
+                // — Phase 2/3 of issue #1796 will swap in the floating
+                // overlay rendering. The Action exists now so users get a
+                // direct keybinding (Alt+/) instead of palette-only access.
+                #[cfg(feature = "plugins")]
+                {
+                    if let Some(result) =
+                        self.plugin_manager.execute_action_async("start_live_grep")
+                    {
+                        match result {
+                            Ok(receiver) => {
+                                self.pending_plugin_actions
+                                    .push(("start_live_grep".to_string(), receiver));
+                            }
+                            Err(e) => {
+                                self.set_status_message(format!(
+                                    "Live Grep unavailable: {}",
+                                    e
+                                ));
+                            }
+                        }
+                    } else {
+                        self.set_status_message(
+                            "Live Grep plugin not loaded".to_string(),
+                        );
                     }
                 }
-                self.start_quick_open_with_prefix(">live grep");
+                #[cfg(not(feature = "plugins"))]
+                {
+                    self.set_status_message(
+                        "Live Grep requires the plugins feature".to_string(),
+                    );
+                }
             }
             Action::ResumeLiveGrep => {
                 // Stub: replay the last-known query through the

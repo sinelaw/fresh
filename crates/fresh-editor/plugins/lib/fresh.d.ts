@@ -821,6 +821,13 @@ type CreateVirtualBufferInSplitOptions = {
 	* Initial content entries with optional properties
 	*/
 	entries?: Array<TextPropertyEntry>;
+	/**
+	* Split role tag. When set to `"utility_dock"`, the dispatcher
+	* routes this buffer to the existing dock leaf if one exists,
+	* instead of creating a new split. See
+	* `docs/internal/tui-editor-layout-design.md` Section 2.
+	*/
+	role?: string;
 };
 type CreateVirtualBufferOptions = {
 	/**

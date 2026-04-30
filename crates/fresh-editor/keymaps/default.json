@@ -1746,9 +1746,9 @@
       "when": "compositeBuffer"
     },
     {
-      "comment": "Live Grep — open as floating overlay (issue #1796)",
-      "key": "f",
-      "modifiers": ["ctrl", "shift"],
+      "comment": "Live Grep — open as floating overlay (issue #1796). Bound to Alt+/ rather than Ctrl+Shift+F because most terminals collapse Ctrl+Shift+F to Ctrl+F (which is already buffer-local search). Mnemonic: '/' is the search character in many editors.",
+      "key": "/",
+      "modifiers": ["alt"],
       "action": "open_live_grep",
       "args": {},
       "when": "normal"
@@ -1778,8 +1778,8 @@
       "when": "prompt"
     },
     {
-      "comment": "Utility Dock — focus / unfocus toggle (mnemonic: D for Dock)",
-      "key": "d",
+      "comment": "Utility Dock — focus / unfocus toggle. Avoids Alt+D because Ctrl+D (add_cursor_next_match) is in the multi-cursor cluster and the adjacency is muscle-memory-risky. Mnemonic: 'j' is 'down' in vim-ish navigation, matching the dock's bottom-of-screen home position.",
+      "key": "j",
       "modifiers": ["alt"],
       "action": "toggle_utility_dock",
       "args": {},

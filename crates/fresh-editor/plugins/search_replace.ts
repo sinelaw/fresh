@@ -750,6 +750,11 @@ async function openPanel(): Promise<void> {
       entries: buildPanelEntries(),
       ratio: 0.6,
       panelId: "search-replace-panel",
+      // Opt into the Utility Dock (issue #1796 / Section 2 of
+      // docs/internal/tui-editor-layout-design.md). When the dock
+      // already exists, the editor swaps the dock's active buffer
+      // to the search-replace panel instead of spawning a new split.
+      role: "utility_dock",
       showLineNumbers: false,
       showCursors: false,
       editingDisabled: true,
