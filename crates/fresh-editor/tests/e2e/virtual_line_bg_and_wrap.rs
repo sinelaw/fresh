@@ -10,9 +10,10 @@
 //!    fill path is gated on `byte_pos.is_some()`.
 //!
 //! 2. A virtual line whose text is wider than the viewport's content area
-//!    is truncated rather than soft-wrapped to additional visual rows,
-//!    even when the buffer has `line_wrap = true`. Long deleted source
-//!    lines therefore disappear off the right edge.
+//!    used to be truncated rather than soft-wrapped to additional visual
+//!    rows, even when the buffer had `line_wrap = true`. Now
+//!    `inject_virtual_lines` splits long virtual text into one ViewLine
+//!    per wrapped row.
 
 use crate::common::harness::EditorTestHarness;
 use fresh::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
@@ -77,16 +78,11 @@ fn virtual_line_bg_fills_to_viewport_edge() {
 
 /// Bug 2: A long virtual line (wider than the viewport's content area)
 /// should soft-wrap to additional visual rows, just like a long source
-/// line does under `line_wrap = true`. Today it's emitted as a single
-/// `ViewLine` with the entire text and only the first viewport-width
-/// chars are visible — the rest disappear.
+/// line does under `line_wrap = true`.
 ///
-/// Marked `#[ignore]` because it reproduces a known renderer
-/// limitation — `inject_virtual_lines` produces one ViewLine per
-/// virtual entry without splitting at the wrap width. Drop the
-/// `#[ignore]` when the renderer wraps long virtual lines.
+/// Fixed by splitting virtual-line text by display width inside
+/// `inject_virtual_lines`, producing one `ViewLine` per wrapped row.
 #[test]
-#[ignore = "known-failing repro: long virtual line is truncated, not wrapped"]
 fn long_virtual_line_wraps_under_line_wrap_default() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");

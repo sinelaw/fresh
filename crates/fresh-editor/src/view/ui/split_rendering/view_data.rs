@@ -295,7 +295,16 @@ pub(super) fn build_view_data(
     }
 
     // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager.
-    let lines = inject_virtual_lines(source_lines, state, theme);
+    // When soft-wrap is enabled, pass the same per-row content width that
+    // `apply_wrapping_transform` uses for source lines (effective width
+    // less the gutter) so long virtual-line text wraps consistently
+    // instead of being truncated past the viewport edge.
+    let virtual_line_wrap_width = if line_wrap_enabled {
+        Some(effective_width.saturating_sub(gutter_width).max(1))
+    } else {
+        None
+    };
+    let lines = inject_virtual_lines(source_lines, state, theme, virtual_line_wrap_width);
     let placeholder_style = fold_placeholder_style(theme);
     let lines = apply_folding(
         lines,

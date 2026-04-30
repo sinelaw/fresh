@@ -8,7 +8,7 @@
 //!
 //! None of these depend on any shared render-time "mega struct".
 
-use super::style::create_virtual_line;
+use super::style::create_wrapped_virtual_lines;
 use crate::primitives::{ansi, display_width, visual_layout};
 use crate::state::EditorState;
 use crate::view::theme::Theme;
@@ -742,10 +742,16 @@ pub(crate) fn apply_conceal_ranges(
 }
 
 /// Inject `LineAbove` / `LineBelow` virtual lines into the view line stream.
+///
+/// `wrap_width` is the viewport's effective content width when soft-wrap is
+/// enabled, allowing a virtual line whose text exceeds the row width to be
+/// split across multiple visual rows (matching how source lines behave under
+/// `line_wrap = true`). Pass `None` to keep virtual lines on a single row.
 pub(super) fn inject_virtual_lines(
     source_lines: Vec<ViewLine>,
     state: &EditorState,
     theme: &Theme,
+    wrap_width: Option<usize>,
 ) -> Vec<ViewLine> {
     // Get viewport byte range from source lines.
     // Use the last line that has source bytes (not a trailing empty line
@@ -787,9 +793,10 @@ pub(super) fn inject_virtual_lines(
                     && *anchor_pos < end
                     && vtext.position == VirtualTextPosition::LineAbove
                 {
-                    result.push(create_virtual_line(
+                    result.extend(create_wrapped_virtual_lines(
                         &vtext.text,
                         vtext.resolved_style(theme),
+                        wrap_width,
                     ));
                 }
             }
@@ -803,9 +810,10 @@ pub(super) fn inject_virtual_lines(
                     && *anchor_pos < end
                     && vtext.position == VirtualTextPosition::LineBelow
                 {
-                    result.push(create_virtual_line(
+                    result.extend(create_wrapped_virtual_lines(
                         &vtext.text,
                         vtext.resolved_style(theme),
+                        wrap_width,
                     ));
                 }
             }
