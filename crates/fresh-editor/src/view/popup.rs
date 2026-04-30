@@ -45,6 +45,12 @@ pub enum PopupPosition {
     Fixed { x: u16, y: u16 },
     /// Centered on screen
     Centered,
+    /// Centered floating overlay sized as a percentage of the frame,
+    /// regardless of the content's natural size. Used by Live Grep
+    /// (issue #1796) so the input row and preview pane stay anchored
+    /// while results stream in. Both fields are clamped to 1..=100 by
+    /// the renderer.
+    CenteredOverlay { width_pct: u8, height_pct: u8 },
     /// Bottom right corner (above status bar)
     BottomRight,
     /// Anchored above the status bar at a specific column (left-aligned at x).
@@ -929,6 +935,25 @@ impl Popup {
                     .content_height()
                     .min(self.max_height)
                     .min(terminal_area.height);
+                let x = (terminal_area.width.saturating_sub(width)) / 2;
+                let y = (terminal_area.height.saturating_sub(height)) / 2;
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }
+            }
+            PopupPosition::CenteredOverlay {
+                width_pct,
+                height_pct,
+            } => {
+                let w_pct = width_pct.clamp(1, 100) as u32;
+                let h_pct = height_pct.clamp(1, 100) as u32;
+                let width = ((terminal_area.width as u32 * w_pct) / 100) as u16;
+                let height = ((terminal_area.height as u32 * h_pct) / 100) as u16;
+                let width = width.max(1).min(terminal_area.width);
+                let height = height.max(1).min(terminal_area.height);
                 let x = (terminal_area.width.saturating_sub(width)) / 2;
                 let y = (terminal_area.height.saturating_sub(height)) / 2;
                 Rect {

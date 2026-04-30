@@ -785,6 +785,14 @@ pub struct Editor {
     /// Maps panel ID (e.g., "diagnostics") to buffer ID
     panel_ids: HashMap<String, BufferId>,
 
+    /// Live Grep "Return to Work" cache. Holds the prior query and
+    /// selected index so `Action::ResumeLiveGrep` can re-open the
+    /// floating overlay (issue #1796) with the same state. Cleared
+    /// only when the user starts a fundamentally different search.
+    /// `cached_results` is a *display* cache — Resume reuses it
+    /// without re-running ripgrep. Editing the query invalidates it.
+    pub(crate) live_grep_last_state: Option<crate::services::live_grep_state::LiveGrepLastState>,
+
     /// Buffer groups: multiple splits/buffers appearing as one tab
     buffer_groups: HashMap<types::BufferGroupId, types::BufferGroup>,
     /// Reverse index: buffer ID → group ID (for lookups)

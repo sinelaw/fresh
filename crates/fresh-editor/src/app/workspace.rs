@@ -1355,6 +1355,7 @@ impl Editor {
                 split_id,
                 label,
                 unnamed_recovery_id,
+                role,
             } => {
                 // Get the buffer for this leaf: file path, unnamed recovery ID, or default
                 let buffer_id = file_path
@@ -1385,6 +1386,13 @@ impl Editor {
                     self.split_manager.set_label(current_leaf_id, label.clone());
                 }
 
+                // Restore role tag if present (clearing any prior holder
+                // first to preserve the at-most-one-leaf-per-role invariant).
+                if let Some(role) = role {
+                    self.split_manager.clear_role(*role);
+                    self.split_manager.set_leaf_role(current_leaf_id, Some(*role));
+                }
+
                 // Restore the view state for this split
                 self.restore_split_view_state(
                     current_leaf_id,
@@ -1399,6 +1407,7 @@ impl Editor {
                 terminal_index,
                 split_id,
                 label,
+                role,
             } => {
                 let buffer_id = terminal_buffers
                     .get(terminal_index)
@@ -1418,6 +1427,13 @@ impl Editor {
                 // Restore label if present
                 if let Some(label) = label {
                     self.split_manager.set_label(current_leaf_id, label.clone());
+                }
+
+                // Restore role tag for terminal leaves (same one-per-role
+                // invariant as the file-leaf branch above).
+                if let Some(role) = role {
+                    self.split_manager.clear_role(*role);
+                    self.split_manager.set_leaf_role(current_leaf_id, Some(*role));
                 }
 
                 self.split_manager
@@ -1807,6 +1823,7 @@ fn serialize_split_node(
             split_id: 0,
             label: None,
             unnamed_recovery_id: None,
+            role: None,
         }
     })
 }
@@ -1842,9 +1859,11 @@ fn serialize_split_node_pruned(
         SplitNode::Leaf {
             buffer_id,
             split_id,
+            role,
         } => {
             let raw_split_id: SplitId = (*split_id).into();
             let label = split_labels.get(&raw_split_id).cloned();
+            let role = *role;
 
             if let Some(terminal_id) = terminal_buffers.get(buffer_id) {
                 if let Some(index) = terminal_indices.get(terminal_id) {
@@ -1852,6 +1871,7 @@ fn serialize_split_node_pruned(
                         terminal_index: *index,
                         split_id: raw_split_id.0,
                         label,
+                        role,
                     });
                 }
             }
@@ -1889,6 +1909,7 @@ fn serialize_split_node_pruned(
                 split_id: raw_split_id.0,
                 label,
                 unnamed_recovery_id,
+                role,
             })
         }
         SplitNode::Split {

@@ -1744,6 +1744,54 @@
       "action": "composite_prev_hunk",
       "args": {},
       "when": "compositeBuffer"
+    },
+    {
+      "comment": "Live Grep — open as floating overlay (issue #1796)",
+      "key": "f",
+      "modifiers": ["ctrl", "shift"],
+      "action": "open_live_grep",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Live Grep — Resume with prior query and selection without re-running ripgrep",
+      "key": "s",
+      "modifiers": ["alt", "shift"],
+      "action": "resume_live_grep",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Live Grep prompt — export current results to Utility Dock as Quickfix (Alt+Q; Ctrl+Q is reserved for quit)",
+      "key": "q",
+      "modifiers": ["alt"],
+      "action": "live_grep_export_quickfix",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Live Grep prompt — alternate Quickfix export binding for terminals that mangle Alt+Q",
+      "key": "Enter",
+      "modifiers": ["ctrl"],
+      "action": "live_grep_export_quickfix",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Utility Dock — focus / unfocus toggle (mnemonic: D for Dock)",
+      "key": "d",
+      "modifiers": ["alt"],
+      "action": "toggle_utility_dock",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Utility Dock — open a terminal inside the dock (mnemonic: backtick like tmux/VSCode terminal)",
+      "key": "`",
+      "modifiers": ["alt"],
+      "action": "open_terminal_in_dock",
+      "args": {},
+      "when": "normal"
     }
   ]
 }

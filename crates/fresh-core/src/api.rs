@@ -1580,6 +1580,11 @@ pub enum PluginCommand {
         line_wrap: Option<bool>,
         /// Place the new buffer before (left/top of) the existing content (default: false/after)
         before: bool,
+        /// Optional split role tag. When `Some("utility_dock")`, the
+        /// dispatcher routes the buffer to the existing dock leaf if
+        /// one exists; otherwise it seeds a new dock leaf with the
+        /// requested direction/ratio.
+        role: Option<String>,
         /// Optional request ID for async response (if set, editor will send back buffer ID)
         request_id: Option<u64>,
     },
@@ -2623,6 +2628,13 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default)]
     #[ts(optional)]
     pub entries: Option<Vec<JsTextPropertyEntry>>,
+    /// Split role tag. When set to `"utility_dock"`, the dispatcher
+    /// routes this buffer to the existing dock leaf if one exists,
+    /// instead of creating a new split. See
+    /// `docs/internal/tui-editor-layout-design.md` Section 2.
+    #[serde(default)]
+    #[ts(optional)]
+    pub role: Option<String>,
 }
 
 /// Options for createVirtualBufferInExistingSplit

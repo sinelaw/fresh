@@ -36,6 +36,13 @@ pub enum PromptType {
     /// Quick Open - unified prompt with prefix-based provider routing
     /// Supports file finding (default), commands (>), buffers (#), goto line (:)
     QuickOpen,
+    /// Live Grep — project-wide search rendered as a centred floating
+    /// overlay (issue #1796). Unlike `Plugin { custom_type }`, this
+    /// variant gets first-class layout handling: the renderer draws the
+    /// prompt and its suggestion list inside a `PopupPosition::CenteredOverlay`
+    /// frame instead of on the bottom minibuffer row, leaving the
+    /// underlying split tree untouched.
+    LiveGrep,
     /// Go to a specific line number
     GotoLine,
     /// Go to a specific byte offset (large file without line index scan)

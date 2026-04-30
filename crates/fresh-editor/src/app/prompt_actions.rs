@@ -199,6 +199,13 @@ impl Editor {
                 // Handle Quick Open confirmation based on prefix
                 return self.handle_quick_open_confirm(&input, selected_index);
             }
+            PromptType::LiveGrep => {
+                // Phase 2/3 of issue #1796 will route this through the
+                // floating overlay's confirm-in-active-split flow.
+                // Until then, defer to the same handler the
+                // QuickOpen-piped Live Grep palette command uses.
+                return self.handle_quick_open_confirm(&input, selected_index);
+            }
             PromptType::SetBackgroundFile => {
                 if let Err(e) = self.load_ansi_background(&input) {
                     self.set_status_message(

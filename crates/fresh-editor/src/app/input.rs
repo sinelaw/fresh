@@ -833,6 +833,88 @@ impl Editor {
                 }
                 self.start_quick_open_with_prefix("");
             }
+            Action::OpenLiveGrep => {
+                // Stub for issue #1796. Opening the floating overlay
+                // requires the renderer-side composite (Phase 2/3 of
+                // the design). For now, dispatch through the existing
+                // command palette so users can still reach Live Grep.
+                if let Some(prompt) = &self.prompt {
+                    if prompt.prompt_type == PromptType::QuickOpen {
+                        self.cancel_prompt();
+                        return Ok(());
+                    }
+                }
+                self.start_quick_open_with_prefix(">live grep");
+            }
+            Action::ResumeLiveGrep => {
+                // Stub: replay the last-known query through the
+                // palette path until the floating overlay lands.
+                let last_query = self
+                    .live_grep_last_state
+                    .as_ref()
+                    .map(|s| s.query.clone())
+                    .unwrap_or_default();
+                if last_query.is_empty() {
+                    self.start_quick_open_with_prefix(">live grep");
+                } else {
+                    // Future: open overlay seeded with `last_query` and
+                    // `selected_index`. For now, surface a status hint.
+                    self.set_status_message(format!(
+                        "Resume Live Grep: previous query was \"{}\" (overlay not yet wired — open via Ctrl+P)",
+                        last_query
+                    ));
+                }
+            }
+            Action::LiveGrepExportQuickfix => {
+                // Stub: only meaningful when the active prompt is the
+                // Live Grep overlay. Until the overlay lands the active
+                // prompt is `QuickOpen`, so just no-op with a status.
+                let in_live_grep = self
+                    .prompt
+                    .as_ref()
+                    .map(|p| p.prompt_type == PromptType::LiveGrep)
+                    .unwrap_or(false);
+                if !in_live_grep {
+                    self.set_status_message(
+                        "Quickfix export is only available inside the Live Grep overlay".to_string(),
+                    );
+                    return Ok(());
+                }
+                // TODO(#1796 Phase 6): snapshot prompt.suggestions ->
+                // Vec<GrepMatch>, dismiss prompt, push into Utility
+                // Dock as a virtual buffer with role=utility_dock.
+                self.set_status_message("Quickfix export not yet implemented".to_string());
+            }
+            Action::ToggleUtilityDock => {
+                use crate::view::split::SplitRole;
+                if let Some(dock_leaf) = self
+                    .split_manager
+                    .find_leaf_by_role(SplitRole::UtilityDock)
+                {
+                    let active = self.split_manager.active_split();
+                    if active == dock_leaf {
+                        // Already focused — no editor-leaf history yet,
+                        // so just cycle to the next leaf via the
+                        // existing Alt+] command. Phase 7 will track a
+                        // proper "previous editor split" pointer.
+                        self.next_split();
+                    } else {
+                        self.split_manager.set_active_split(dock_leaf);
+                    }
+                } else {
+                    self.set_status_message(
+                        "No Utility Dock open — invoke a dock-aware utility (Diagnostics, Search/Replace, …)"
+                            .to_string(),
+                    );
+                }
+            }
+            Action::OpenTerminalInDock => {
+                // TODO(#1796 Phase 5/7): route through the dock
+                // dispatcher so the terminal lands in the dock leaf
+                // (creating it if absent). Until that wiring is in
+                // place, fall back to the existing standalone path.
+                self.open_terminal();
+            }
             Action::ToggleLineWrap => {
                 let new_value = !self.config.editor.line_wrap;
                 self.config_mut().editor.line_wrap = new_value;

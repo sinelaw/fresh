@@ -2989,6 +2989,11 @@ pub fn action_to_events(
         | Action::QuickOpen
         | Action::QuickOpenBuffers
         | Action::QuickOpenFiles
+        | Action::OpenLiveGrep
+        | Action::ResumeLiveGrep
+        | Action::LiveGrepExportQuickfix
+        | Action::ToggleUtilityDock
+        | Action::OpenTerminalInDock
         | Action::ShowHelp
         | Action::ToggleLineWrap
         | Action::ToggleCurrentLineHighlight

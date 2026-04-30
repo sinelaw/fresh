@@ -3837,6 +3837,7 @@ impl JsEditorApi {
                 editing_disabled: opts.editing_disabled.unwrap_or(false),
                 line_wrap: opts.line_wrap,
                 before: opts.before.unwrap_or(false),
+                role: opts.role,
                 request_id: Some(id),
             });
         Ok(id)

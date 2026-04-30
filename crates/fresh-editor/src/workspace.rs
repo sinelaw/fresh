@@ -124,6 +124,9 @@ pub enum SerializedSplitNode {
         /// Recovery ID for unnamed buffers (when file_path is None)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unnamed_recovery_id: Option<String>,
+        /// Role tag (e.g. UtilityDock). Mirrors `SplitNode::Leaf::role`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<crate::view::split::SplitRole>,
     },
     Terminal {
         terminal_index: usize,
@@ -131,6 +134,9 @@ pub enum SerializedSplitNode {
         /// Optional label set by plugins
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        /// Role tag — terminals can also be the dock occupant.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<crate::view::split::SplitRole>,
     },
     Split {
         direction: SerializedSplitDirection,
@@ -899,6 +905,7 @@ impl Workspace {
                 split_id: 0,
                 label: None,
                 unnamed_recovery_id: None,
+                role: None,
             },
             active_split_id: 0,
             split_states: HashMap::new(),
@@ -1022,12 +1029,14 @@ mod tests {
                 split_id: 1,
                 label: None,
                 unnamed_recovery_id: None,
+                role: None,
             }),
             second: Box::new(SerializedSplitNode::Leaf {
                 file_path: Some(PathBuf::from("src/lib.rs")),
                 split_id: 2,
                 label: None,
                 unnamed_recovery_id: None,
+                role: None,
             }),
             ratio: 0.5,
             split_id: 0,
@@ -1146,12 +1155,14 @@ mod tests {
                 split_id: 1,
                 label: None,
                 unnamed_recovery_id: None,
+                role: None,
             }),
             second: Box::new(SerializedSplitNode::Leaf {
                 file_path: Some(PathBuf::from("Cargo.toml")),
                 split_id: 2,
                 label: None,
                 unnamed_recovery_id: None,
+                role: None,
             }),
             ratio: 0.6,
             split_id: 0,

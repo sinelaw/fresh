@@ -63,6 +63,19 @@ impl TabTarget {
     }
 }
 
+/// Role tag for special-purpose leaves in the split tree.
+///
+/// At most one leaf in the tree carries any given role (this is the
+/// invariant that makes "tagged singleton dock" work — see
+/// `docs/internal/tui-editor-layout-design.md`, Section 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SplitRole {
+    /// The Utility Dock — diagnostics, search-replace results, terminal,
+    /// quickfix, and other panel-like utilities all swap into this leaf
+    /// instead of spawning new splits.
+    UtilityDock,
+}
+
 /// A node in the split tree
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SplitNode {
@@ -72,6 +85,11 @@ pub enum SplitNode {
         buffer_id: BufferId,
         /// Unique ID for this split pane
         split_id: LeafId,
+        /// Optional role tag (e.g. UtilityDock). At most one leaf in
+        /// the tree may carry any given role; the dispatcher routes
+        /// tagged buffer creation to the existing tagged leaf.
+        #[serde(default)]
+        role: Option<SplitRole>,
     },
     /// Internal node: contains two child splits
     Split {
@@ -578,6 +596,31 @@ impl SplitNode {
         Self::Leaf {
             buffer_id,
             split_id: LeafId(split_id),
+            role: None,
+        }
+    }
+
+    /// Create a new leaf node with a role tag.
+    pub fn leaf_with_role(buffer_id: BufferId, split_id: SplitId, role: SplitRole) -> Self {
+        Self::Leaf {
+            buffer_id,
+            split_id: LeafId(split_id),
+            role: Some(role),
+        }
+    }
+
+    /// Get this leaf's role, if any.
+    pub fn role(&self) -> Option<SplitRole> {
+        match self {
+            Self::Leaf { role, .. } => *role,
+            _ => None,
+        }
+    }
+
+    /// Set this leaf's role. No-op for non-leaf nodes.
+    pub fn set_role(&mut self, new_role: Option<SplitRole>) {
+        if let Self::Leaf { role, .. } = self {
+            *role = new_role;
         }
     }
 
@@ -725,6 +768,7 @@ impl SplitNode {
             Self::Leaf {
                 buffer_id,
                 split_id,
+                ..
             } => {
                 vec![(*split_id, *buffer_id, rect)]
             }
@@ -764,6 +808,7 @@ impl SplitNode {
             Self::Leaf {
                 buffer_id,
                 split_id,
+                ..
             } => {
                 vec![(*split_id, *buffer_id, rect)]
             }
@@ -1336,6 +1381,7 @@ impl SplitManager {
             if let Some(SplitNode::Leaf {
                 buffer_id,
                 split_id,
+                ..
             }) = self.root.find(maximized_id)
             {
                 return vec![(*split_id, *buffer_id, viewport_rect)];
@@ -1582,6 +1628,43 @@ impl SplitManager {
     /// Get all split labels (for workspace serialization)
     pub fn labels(&self) -> &HashMap<SplitId, String> {
         &self.labels
+    }
+
+    /// Set the role tag on a leaf. No-op if `split_id` is not a leaf.
+    /// Caller is responsible for the "at most one leaf per role" invariant
+    /// — call `clear_role` on the previous holder first.
+    pub fn set_leaf_role(&mut self, split_id: LeafId, new_role: Option<SplitRole>) {
+        if let Some(node) = self.root.find_mut(split_id.into()) {
+            node.set_role(new_role);
+        }
+    }
+
+    /// Find the unique leaf carrying the given role, if any.
+    pub fn find_leaf_by_role(&self, target: SplitRole) -> Option<LeafId> {
+        fn walk(node: &SplitNode, target: SplitRole) -> Option<LeafId> {
+            match node {
+                SplitNode::Leaf {
+                    role: Some(r),
+                    split_id,
+                    ..
+                } if *r == target => Some(*split_id),
+                SplitNode::Leaf { .. } => None,
+                SplitNode::Split { first, second, .. } => {
+                    walk(first, target).or_else(|| walk(second, target))
+                }
+                SplitNode::Grouped { layout, .. } => walk(layout, target),
+            }
+        }
+        walk(&self.root, target)
+    }
+
+    /// Clear any leaf currently carrying the given role. Returns the leaf
+    /// id whose role was cleared, if one was found. Used to enforce the
+    /// "at most one leaf per role" invariant when transferring a role.
+    pub fn clear_role(&mut self, target: SplitRole) -> Option<LeafId> {
+        let leaf = self.find_leaf_by_role(target)?;
+        self.set_leaf_role(leaf, None);
+        Some(leaf)
     }
 
     /// Find the first leaf split with the given label

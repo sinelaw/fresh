@@ -11,6 +11,7 @@ pub mod counters;
 pub mod fs;
 #[cfg(target_os = "linux")]
 pub mod gpm;
+pub mod live_grep_state;
 pub mod log_dirs;
 pub mod lsp;
 pub mod packages;

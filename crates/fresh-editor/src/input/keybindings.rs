@@ -478,6 +478,21 @@ pub enum Action {
     QuickOpenBuffers,
     /// Quick Open - files (empty prefix)
     QuickOpenFiles,
+    /// Open Live Grep as a floating overlay (issue #1796).
+    OpenLiveGrep,
+    /// Re-open Live Grep with the prior query and selection.
+    ResumeLiveGrep,
+    /// Export the Live Grep overlay's current results into the Utility
+    /// Dock as a Quickfix list. Only fires when the active prompt is
+    /// `PromptType::LiveGrep`.
+    LiveGrepExportQuickfix,
+    /// Toggle focus on the Utility Dock. If the dock exists and is not
+    /// focused, focus it. If it is focused, return focus to the
+    /// previously active editor split.
+    ToggleUtilityDock,
+    /// Open a terminal inside the Utility Dock (creates the dock if
+    /// absent; otherwise swaps the active dock buffer to a terminal).
+    OpenTerminalInDock,
     ToggleLineWrap,
     ToggleCurrentLineHighlight,
     ToggleReadOnly,
@@ -946,6 +961,11 @@ impl Action {
             "quick_open" => QuickOpen,
             "quick_open_buffers" => QuickOpenBuffers,
             "quick_open_files" => QuickOpenFiles,
+            "open_live_grep" => OpenLiveGrep,
+            "resume_live_grep" => ResumeLiveGrep,
+            "live_grep_export_quickfix" => LiveGrepExportQuickfix,
+            "toggle_utility_dock" => ToggleUtilityDock,
+            "open_terminal_in_dock" => OpenTerminalInDock,
             "toggle_line_wrap" => ToggleLineWrap,
             "toggle_current_line_highlight" => ToggleCurrentLineHighlight,
             "toggle_read_only" => ToggleReadOnly,
@@ -1612,6 +1632,11 @@ impl KeybindingResolver {
                 | Action::QuickOpen
                 | Action::QuickOpenBuffers
                 | Action::QuickOpenFiles
+                | Action::OpenLiveGrep
+                | Action::ResumeLiveGrep
+                | Action::LiveGrepExportQuickfix
+                | Action::ToggleUtilityDock
+                | Action::OpenTerminalInDock
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
@@ -2243,6 +2268,11 @@ impl KeybindingResolver {
             Action::QuickOpen => t!("action.quick_open"),
             Action::QuickOpenBuffers => t!("action.quick_open_buffers"),
             Action::QuickOpenFiles => t!("action.quick_open_files"),
+            Action::OpenLiveGrep => t!("action.open_live_grep"),
+            Action::ResumeLiveGrep => t!("action.resume_live_grep"),
+            Action::LiveGrepExportQuickfix => t!("action.live_grep_export_quickfix"),
+            Action::ToggleUtilityDock => t!("action.toggle_utility_dock"),
+            Action::OpenTerminalInDock => t!("action.open_terminal_in_dock"),
             Action::InspectThemeAtCursor => t!("action.inspect_theme_at_cursor"),
             Action::ToggleLineWrap => t!("action.toggle_line_wrap"),
             Action::ToggleCurrentLineHighlight => t!("action.toggle_current_line_highlight"),

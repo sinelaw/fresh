@@ -818,6 +818,7 @@ impl Editor {
             plugin_dev_workspaces: HashMap::new(),
             seen_byte_ranges: HashMap::new(),
             panel_ids: HashMap::new(),
+            live_grep_last_state: None,
             buffer_groups: HashMap::new(),
             buffer_to_group: HashMap::new(),
             next_buffer_group_id: 0,

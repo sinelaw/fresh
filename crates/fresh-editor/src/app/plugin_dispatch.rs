@@ -985,6 +985,7 @@ impl Editor {
                 editing_disabled,
                 line_wrap,
                 before,
+                role,
                 request_id,
             } => {
                 self.handle_create_virtual_buffer_in_split(
@@ -1000,6 +1001,7 @@ impl Editor {
                     editing_disabled,
                     line_wrap,
                     before,
+                    role,
                     request_id,
                 );
             }
@@ -1980,8 +1982,64 @@ impl Editor {
         editing_disabled: bool,
         line_wrap: Option<bool>,
         before: bool,
+        role: Option<String>,
         request_id: Option<u64>,
     ) {
+        // Resolve the role string. Unknown roles are silently dropped
+        // (forward-compat for plugins targeting newer cores).
+        let split_role: Option<crate::view::split::SplitRole> = match role.as_deref() {
+            Some("utility_dock") => Some(crate::view::split::SplitRole::UtilityDock),
+            _ => None,
+        };
+
+        // Utility-dock fast path (issue #1796 / Section 2 of the design):
+        // if a leaf with this role already exists, swap its active
+        // buffer instead of spawning a fresh split. The buffer is
+        // created normally, registered in `panel_ids`, and added as a
+        // tab in the dock leaf.
+        if let Some(target_role) = split_role {
+            if let Some(dock_leaf) = self.split_manager.find_leaf_by_role(target_role) {
+                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    state.margins.configure_for_line_numbers(show_line_numbers);
+                    state.show_cursors = show_cursors;
+                    state.editing_disabled = editing_disabled;
+                }
+                if let Some(pid) = &panel_id {
+                    self.panel_ids.insert(pid.clone(), buffer_id);
+                }
+                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+                    tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
+                    return;
+                }
+
+                // Swap the dock leaf's active buffer to the new one and
+                // add it as a tab so the user can flip between
+                // dock-resident utilities (Diagnostics ↔ Quickfix etc.).
+                self.split_manager.set_active_split(dock_leaf);
+                self.set_pane_buffer(dock_leaf, buffer_id);
+
+                if let Some(req_id) = request_id {
+                    let result = fresh_core::api::VirtualBufferResult {
+                        buffer_id: buffer_id.0 as u64,
+                        split_id: Some(dock_leaf.0 .0 as u64),
+                    };
+                    self.plugin_manager.resolve_callback(
+                        fresh_core::api::JsCallbackId::from(req_id),
+                        serde_json::to_string(&result).unwrap_or_default(),
+                    );
+                }
+                tracing::info!(
+                    "Routed virtual buffer '{}' into existing utility dock {:?}",
+                    name,
+                    dock_leaf
+                );
+                return;
+            }
+            // No dock yet — fall through to normal split creation,
+            // then tag the new leaf with the requested role at the end.
+        }
+
         // Check if this panel already exists (for idempotent operations)
         if let Some(pid) = &panel_id {
             if let Some(&existing_buffer_id) = self.panel_ids.get(pid) {
@@ -2115,6 +2173,22 @@ impl Editor {
                 // Focus the new split (the diagnostics panel)
                 self.split_manager.set_active_split(new_split_id);
                 // NOTE: split tree was updated by split_active, active_buffer derives from it
+
+                // If a role was requested but no dock existed (we fell
+                // through the fast-path above), tag the freshly created
+                // leaf so the next utility lands here. Clear any stale
+                // role from elsewhere first to preserve the
+                // one-leaf-per-role invariant.
+                if let Some(target_role) = split_role {
+                    self.split_manager.clear_role(target_role);
+                    self.split_manager
+                        .set_leaf_role(new_split_id, Some(target_role));
+                    tracing::info!(
+                        "Tagged new dock leaf {:?} with role {:?}",
+                        new_split_id,
+                        target_role
+                    );
+                }
 
                 tracing::info!(
                     "Created {:?} split with virtual buffer {:?}",
