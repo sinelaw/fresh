@@ -231,3 +231,77 @@ fn rapid_tab_switches_settle_on_target_content() {
         screen
     );
 }
+
+/// Drive a long vertical cursor move (`Ctrl+End`, dy ≫ 2 — well past
+/// the cursor-jump threshold) and assert that the cursor-jump trail
+/// kicks off when the dedicated `cursor_jump_animation` toggle is on,
+/// and is suppressed when it is off — even though the master
+/// `animations` toggle is on in both runs.
+///
+/// We use the monotonic `total_started()` counter rather than peeking
+/// at a transient `is_active()` window. Within a single buffer with
+/// no tab switches, plugin events, or dashboard activity, the only
+/// thing that can bump the counter on a cursor move is the cursor-
+/// jump effect itself, so the assertion is unambiguous.
+fn cursor_jump_long_move_test(cursor_jump_enabled: bool) -> u64 {
+    let mut config = Config::default();
+    config.editor.animations = true;
+    config.editor.cursor_jump_animation = cursor_jump_enabled;
+
+    let mut harness = EditorTestHarness::with_config(80, 30, config).unwrap();
+    harness.new_buffer().unwrap();
+
+    // Twenty short lines: enough that Ctrl+End jumps the cursor far
+    // past the dy > 2 threshold for the cursor-jump animation.
+    for i in 1..=20 {
+        harness.type_text(&format!("line {}", i)).unwrap();
+        if i < 20 {
+            harness
+                .send_key(KeyCode::Enter, KeyModifiers::empty())
+                .unwrap();
+        }
+    }
+    // Park the cursor at the top so the next jump is unambiguous.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| !h.editor().animations.is_active())
+        .unwrap();
+
+    let baseline = harness.editor().animations.total_started();
+
+    // Long jump: top → end of buffer.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Give the runner one extra render tick so the jump observed in
+    // this frame can call `start()` if it's going to.
+    harness.render().unwrap();
+
+    harness.editor().animations.total_started() - baseline
+}
+
+#[test]
+fn cursor_jump_animation_runs_when_toggle_enabled() {
+    let started = cursor_jump_long_move_test(true);
+    assert!(
+        started >= 1,
+        "long Ctrl+End jump should kick off a cursor-jump effect when \
+         editor.cursor_jump_animation = true (started: {})",
+        started,
+    );
+}
+
+#[test]
+fn cursor_jump_animation_suppressed_when_toggle_disabled() {
+    let started = cursor_jump_long_move_test(false);
+    assert_eq!(
+        started, 0,
+        "long Ctrl+End jump must not start any animation when \
+         editor.cursor_jump_animation = false even though editor.animations = true",
+    );
+}

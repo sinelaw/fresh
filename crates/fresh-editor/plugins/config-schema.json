@@ -31,6 +31,7 @@
       "$ref": "#/$defs/EditorConfig",
       "default": {
         "animations": true,
+        "cursor_jump_animation": true,
         "line_numbers": true,
         "relative_line_numbers": false,
         "highlight_current_line": true,
@@ -276,6 +277,12 @@
       "properties": {
         "animations": {
           "description": "Enable frame-buffer animations (tab-switch slides, dashboard\nbringup, plugin-driven effects). When `false`, every animation\ncall is a no-op: the UI is fully static and each render lands\nthe final frame immediately. Useful on slow terminals, over\nSSH, or for users who prefer no motion.",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "cursor_jump_animation": {
+          "description": "Enable the cursor-jump trail animation that plays when the cursor\nmoves a long distance (search jumps, go-to-definition, pane\nswitches, ...). Independent from the master `animations` toggle:\nwhen `animations` is `true` and this is `false`, ambient\nanimations (tab-switch slides, dashboard, plugin effects) still\nplay but the cursor-jump trail is suppressed. When `animations`\nis `false`, this setting has no effect — all animations are off.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"

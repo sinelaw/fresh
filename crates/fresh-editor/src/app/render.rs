@@ -1302,8 +1302,11 @@ impl Editor {
         // Honour the global animations toggle. Tests default to
         // `animations = false` so single-tick `render()` calls observe the
         // settled buffer instead of a mid-flight trail; users can also
-        // disable animations entirely from config.
-        if !self.config.editor.animations {
+        // disable animations entirely from config. The dedicated
+        // `cursor_jump_animation` toggle suppresses just the cursor-jump
+        // trail while leaving ambient animations (tab slides, dashboard,
+        // plugin effects) running.
+        if !self.config.editor.animations || !self.config.editor.cursor_jump_animation {
             self.previous_cursor_screen_pos = current_pos.map(|p| (p, active_split));
             return;
         }
