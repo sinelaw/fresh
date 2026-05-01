@@ -1560,8 +1560,11 @@ mod tests {
         assert_eq!(engine.backend_name(), "textmate");
         assert!(engine.language().is_some());
 
+        // JavaScript is routed to tree-sitter (issue #899: syntect's JS
+        // grammar bleeds template-literal string state past the closing
+        // backtick).
         let engine = HighlightEngine::for_file(Path::new("test.js"), None, &registry);
-        assert_eq!(engine.backend_name(), "textmate");
+        assert_eq!(engine.backend_name(), "tree-sitter");
         assert!(engine.language().is_some());
 
         // TypeScript falls back to tree-sitter (syntect doesn't include TS by default)
@@ -2048,6 +2051,58 @@ mod tests {
             "large file windowed parse should be ~{window} bytes, got {parsed} \
              (file {})",
             buffer.len()
+        );
+    }
+
+    /// Regression for issue #899: a class field initialised with an arrow
+    /// function that returns a template literal must not bleed string
+    /// highlighting onto the rest of the class body. The user-reported
+    /// repro pinned the syntect JavaScript grammar to a string state from
+    /// the trailing `;` until EOF; the constructor keyword, comments, and
+    /// the closing `}` were all painted as a string.
+    #[test]
+    fn test_javascript_template_literal_does_not_bleed() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("repro.js"), None, &registry);
+
+        // Reproduction code from issue #899.
+        let source = "class ExampleClass {\n\
+                      \texampleFunction = exampleArg => `${exampleArg}`;\n\
+                      \n\
+                      \tconstructor() {\n\
+                      \t\t// constructor body\n\
+                      \t}\n\
+                      \n\
+                      \t/* multiline comment */\n\
+                      }\n";
+        let buffer = Buffer::from_str(source, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let _ = engine.highlight_viewport(&buffer, 0, source.len(), &theme, 0);
+
+        // The `constructor` keyword sits well after the template literal.
+        // If string state bleeds, this position is reported as String.
+        let ctor_pos = source.find("constructor").expect("locate constructor");
+        let ctor_cat = engine.category_at_position(ctor_pos);
+        assert_ne!(
+            ctor_cat,
+            Some(HighlightCategory::String),
+            "constructor keyword must not inherit string state from earlier \
+             template literal (got {:?})",
+            ctor_cat,
+        );
+
+        // The closing brace of the class — the very last non-whitespace char
+        // — also lives outside any string in correct JS.
+        let last_brace = source.rfind('}').expect("locate closing brace");
+        let brace_cat = engine.category_at_position(last_brace);
+        assert_ne!(
+            brace_cat,
+            Some(HighlightCategory::String),
+            "closing class brace must not be highlighted as string \
+             (got {:?})",
+            brace_cat,
         );
     }
 }

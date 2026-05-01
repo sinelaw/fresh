@@ -937,7 +937,7 @@ impl GrammarRegistry {
         let mut catalog: Vec<GrammarEntry> = Vec::new();
         let mut scope_to_index: HashMap<String, usize> = HashMap::new();
 
-        // Syntect-backed entries (skip Plain Text).
+        // Syntect-backed entries (skip Plain Text and JavaScript).
         //
         // Syntect's `file_extensions` is a hybrid list: real extensions like
         // "rb" sit alongside bare filenames like "Gemfile", "Rakefile",
@@ -946,8 +946,19 @@ impl GrammarRegistry {
         // the catalog has to preserve that semantics. We keep everything in
         // `extensions` here and index each entry as *both* an extension and
         // a filename at the bottom of this method.
+        //
+        // JavaScript is skipped here so the catalog falls through to the
+        // tree-sitter-only fallback below — the bundled syntect JS grammar
+        // mishandles class fields whose initialiser is an arrow function
+        // returning a template literal (issue #899: state leaks past the
+        // closing backtick and paints the rest of the file as a string).
+        // tree-sitter-javascript parses template literals from the AST and
+        // does not have this failure mode. `find_syntax_by_name("JavaScript")`
+        // still returns syntect's grammar via the catalog's fallback path,
+        // so markdown popup rendering and other code-string highlighters
+        // are unaffected.
         for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
-            if syntax.name == "Plain Text" {
+            if syntax.name == "Plain Text" || syntax.name == "JavaScript" {
                 continue;
             }
             let (language_id, tree_sitter) = derive_language_id(&syntax.name);
@@ -1550,11 +1561,16 @@ mod tests {
     fn test_find_syntax_for_common_extensions() {
         let registry = GrammarRegistry::default();
 
-        // Test common extensions that syntect should support
+        // Test common extensions that resolve to a syntect (TextMate) grammar
+        // via the catalog. JavaScript is intentionally NOT here — it is routed
+        // exclusively to tree-sitter (issue #899) and so has no catalog-level
+        // syntect entry. Code-block highlighting in popups still finds the
+        // syntect JS grammar through `SyntaxSet::find_syntax_by_token`, which
+        // bypasses the catalog.
         let test_cases = [
             ("test.py", true),
             ("test.rs", true),
-            ("test.js", true),
+            ("test.js", false),
             ("test.json", true),
             ("test.md", true),
             ("test.html", true),
@@ -1964,9 +1980,9 @@ mod tests {
         assert_eq!(ts.language_id, "typescript");
         assert!(ts.extensions.iter().any(|e| e == "ts"));
 
-        // Languages that exist in both syntect and tree-sitter (Rust, Python,
-        // JavaScript) must appear exactly once and prefer the syntect engine.
-        for name in ["Rust", "Python", "JavaScript"] {
+        // Languages that exist in both syntect and tree-sitter (Rust, Python)
+        // must appear exactly once and prefer the syntect engine.
+        for name in ["Rust", "Python"] {
             let entry = registry
                 .find_by_name(name)
                 .unwrap_or_else(|| panic!("{} must be in the catalog", name));
@@ -1987,6 +2003,24 @@ mod tests {
                 .expect("language_id should resolve");
             assert_eq!(by_id.display_name, entry.display_name);
         }
+
+        // JavaScript is deliberately routed to tree-sitter only — the
+        // bundled syntect JavaScript grammar mishandles certain template
+        // literals and bleeds string state into the rest of the file
+        // (issue #899). The catalog must therefore expose a tree-sitter-only
+        // entry, even though syntect ships a JavaScript grammar.
+        let js = registry
+            .find_by_name("JavaScript")
+            .expect("JavaScript must be in the catalog");
+        assert!(
+            js.engines.syntect.is_none(),
+            "JavaScript must not be routed to the syntect engine (issue #899)"
+        );
+        assert_eq!(
+            js.engines.tree_sitter,
+            Some(fresh_languages::Language::JavaScript),
+            "JavaScript must carry the tree-sitter language"
+        );
     }
 
     #[test]
