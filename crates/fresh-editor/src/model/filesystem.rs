@@ -884,6 +884,14 @@ pub fn build_search_regex(
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }
 
+/// Maximum per-file size for unbounded project-wide search.  Files larger
+/// than this are treated as binary and skipped: searching multi-gigabyte
+/// archives, model weights, or audio files would otherwise lock up the
+/// editor for minutes (issue #1342).  Source files virtually never exceed
+/// this limit; users wanting to search huge text logs should open them
+/// directly so hybrid buffer search applies.
+pub const MAX_PROJECT_SEARCH_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
 /// Default implementation of `FileSystem::search_file` that works for any
 /// filesystem backend.  Reads one chunk via `read_range`, scans with the
 /// given regex, and returns matches with line/column/context.
@@ -901,18 +909,36 @@ pub fn default_search_file(
     const CHUNK_SIZE: usize = 1_048_576; // 1 MB
     let overlap = pattern.len().max(256);
 
-    let file_len = fs.metadata(path)?.size as usize;
+    let meta = fs.metadata(path)?;
+    let file_size = meta.size;
+    let file_len = file_size as usize;
     let effective_end = cursor.end_offset.unwrap_or(file_len).min(file_len);
 
     // Binary check on first call (only when starting from offset 0 with no range bound)
     if cursor.offset == 0 && cursor.end_offset.is_none() {
-        if file_len == 0 {
+        if file_size == 0 {
+            cursor.done = true;
+            return Ok(vec![]);
+        }
+        // Skip files that exceed the project-search size cap.  Multi-gigabyte
+        // archives, model weights, and audio files would otherwise lock up
+        // the editor (issue #1342).  Bounded scans (hybrid buffer search)
+        // bypass this — they only run when the user has explicitly opened
+        // the file.
+        if file_size > MAX_PROJECT_SEARCH_FILE_SIZE {
             cursor.done = true;
             return Ok(vec![]);
         }
         let header_len = file_len.min(8192);
         let header = fs.read_range(path, 0, header_len)?;
-        if header.contains(&0) {
+        // Detect binary by null bytes *or* other non-text control chars.
+        // Many binary formats (PNG's 0x1A, ZIP's 0x03 0x04, ELF's 0x7F, etc.)
+        // place non-null control bytes in their first few bytes long before
+        // any null appears, so a null-only check leaks them through.
+        if header
+            .iter()
+            .any(|&b| b == 0 || crate::model::encoding::is_binary_control_char(b))
+        {
             cursor.done = true;
             return Ok(vec![]);
         }
@@ -1825,6 +1851,59 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("empty.txt");
         fs.write_file(&path, b"").unwrap();
+
+        let opts = make_search_opts(true);
+        let mut cursor = FileSearchCursor::new();
+        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+
+        assert!(cursor.done);
+        assert!(matches.is_empty());
+    }
+
+    /// Issue #1342: Search/Replace across project locks up on huge files
+    /// (multi-GB archives, model weights, audio).  Unbounded scans cap the
+    /// per-file size; anything larger is treated as binary and skipped.
+    #[test]
+    fn test_search_file_oversized_skipped() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("oversized.txt");
+
+        // File slightly larger than the project-search cap, with the search
+        // pattern only at the very end.  Without the size guard, the scanner
+        // would chew through the whole file and return a match.
+        let mut data = vec![b'a'; (MAX_PROJECT_SEARCH_FILE_SIZE as usize) + 1024];
+        data.extend_from_slice(b"\nUNIQUE_TAIL_MARKER\n");
+        fs.write_file(&path, &data).unwrap();
+
+        let opts = make_search_opts(true);
+        let mut cursor = FileSearchCursor::new();
+        let matches = fs
+            .search_file(&path, "UNIQUE_TAIL_MARKER", &opts, &mut cursor)
+            .unwrap();
+
+        assert!(
+            cursor.done,
+            "oversized file should be marked done in one call"
+        );
+        assert!(matches.is_empty(), "oversized file should yield no matches");
+    }
+
+    /// Issue #1342: Some binary formats (zip-based archives like .pth, ELF
+    /// tail headers, etc.) have non-null control bytes in their first 8 KB
+    /// even when null bytes happen to appear later.  The unbounded scan
+    /// should reject those just like the null-byte case.
+    #[test]
+    fn test_search_file_binary_control_char_skipped() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("ctrl.dat");
+        // No null bytes, but a SUB control char (0x1A) — same byte that
+        // identifies PNG headers and many other binary formats.
+        let mut data = b"hello world\n".to_vec();
+        data.push(0x1A);
+        data.extend_from_slice(b"hello again\n");
+        fs.write_file(&path, &data).unwrap();
 
         let opts = make_search_opts(true);
         let mut cursor = FileSearchCursor::new();
