@@ -1118,6 +1118,13 @@ impl SettingsState {
             KeyCode::Enter => {
                 self.number_confirm();
             }
+            KeyCode::Tab | KeyCode::BackTab => {
+                // Tab commits the pending edit and exits editing mode. We
+                // don't move panel focus here so the user can continue to
+                // tweak the same setting with Left/Right after Tab — matching
+                // the muscle memory of "Tab to leave the input box."
+                self.number_confirm();
+            }
             KeyCode::Char('a') if ctrl => {
                 self.number_select_all();
             }
@@ -1528,5 +1535,49 @@ mod tests {
             ctx.deferred_actions[0],
             DeferredAction::CloseSettings { save: true }
         ));
+    }
+
+    /// Reproducer for issue #1825: Tab while editing a Number control was a
+    /// no-op, leaving the user "stuck" in the input. Tab should commit the
+    /// pending edit and exit number-editing mode (matching the Text-control
+    /// behavior).
+    #[test]
+    fn test_tab_exits_number_editing() {
+        use crate::view::settings::items::SettingControl;
+
+        let schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(schema, &config).unwrap();
+        state.visible = true;
+        state.focus.set(FocusPanel::Settings);
+
+        // Find a number setting (any will do)
+        let number_idx = state
+            .pages
+            .get(state.selected_category)
+            .and_then(|page| {
+                page.items
+                    .iter()
+                    .position(|item| matches!(item.control, SettingControl::Number(_)))
+            })
+            .expect("expected at least one Number control on the default page");
+        state.selected_item = number_idx;
+
+        // Enter number editing mode and type a digit so we have a pending edit
+        state.start_number_editing();
+        assert!(
+            state.is_number_editing(),
+            "precondition: should be in number-editing mode"
+        );
+        state.number_insert('7');
+
+        let mut ctx = InputContext::new();
+
+        // Tab should exit editing mode (currently fails: Tab is unhandled)
+        state.handle_key_event(&key(KeyCode::Tab), &mut ctx);
+        assert!(
+            !state.is_number_editing(),
+            "Tab while editing a Number control must exit editing mode"
+        );
     }
 }

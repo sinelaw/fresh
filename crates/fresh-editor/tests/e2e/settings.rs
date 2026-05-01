@@ -428,6 +428,89 @@ fn test_settings_number_increment() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
+/// Reproducer for issue #1825: clicking the `[+]` / `[-]` buttons next to a
+/// Number setting must change the value, and clicking the value between the
+/// brackets must enter inline editing mode (so the user can immediately type
+/// over it). Before the fix, both flows were no-ops.
+#[test]
+fn test_settings_number_mouse_buttons_and_value_click() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Search for the "hover delay" Number setting (default 500). Use a
+    // search query specific enough to land directly on this setting.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "mouse hover delay".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Locate the value cell rendered as "[ 500 ]" — anchor every click on
+    // that row so we don't accidentally hit a sibling Number control or a
+    // description line that mentions "500".
+    let (bracket_col, value_row) = harness.find_text_on_screen("[ 500 ]").unwrap_or_else(|| {
+        panic!(
+            "expected '[ 500 ]' value cell after navigating to the setting:\n{}",
+            harness.screen_to_string()
+        )
+    });
+
+    // Render: `[ 500 ] [-] [+]` — bracket_col points to '['. The "500" digits
+    // start at +2, `[-]` starts at +8, `[+]` at +12.
+    let value_col = bracket_col + 2;
+    let minus_col = bracket_col + 8;
+    let plus_col = bracket_col + 12;
+
+    // Click [+] — value cell on this row should change from 500 to 501.
+    harness.mouse_click(plus_col + 1, value_row).unwrap();
+    let after_plus = harness.screen_row_text(value_row);
+    assert!(
+        after_plus.contains("[ 501 ]"),
+        "[+] click should bump value to 501 on this row:\n{after_plus}"
+    );
+
+    // Click [-] — value should decrement back to 500.
+    harness.mouse_click(minus_col + 1, value_row).unwrap();
+    let after_minus = harness.screen_row_text(value_row);
+    assert!(
+        after_minus.contains("[ 500 ]"),
+        "[-] click should bring value back to 500:\n{after_minus}"
+    );
+
+    // Click the value between the brackets — should enter editing mode so
+    // typing replaces the value (start_editing selects-all). Type "9" and
+    // confirm with Tab; the value must become 9.
+    harness.mouse_click(value_col, value_row).unwrap();
+    harness
+        .send_key(KeyCode::Char('9'), KeyModifiers::NONE)
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let after_edit = harness.screen_row_text(value_row);
+    assert!(
+        after_edit.contains("[  9  ]"),
+        "click on value area should enter edit mode and accept '9':\n{after_edit}"
+    );
+
+    // Discard changes and close
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
 /// Test number input decrement with Left arrow
 #[test]
 fn test_settings_number_decrement() {

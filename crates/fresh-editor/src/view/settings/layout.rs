@@ -258,7 +258,7 @@ impl SettingsLayout {
                             return Some(SettingsHit::ControlIncrement(item.index));
                         }
                         if point_in_rect(*value, x, y) {
-                            return Some(SettingsHit::Item(item.index));
+                            return Some(SettingsHit::ControlNumberValue(item.index));
                         }
                     }
                     ControlLayoutInfo::Dropdown {
@@ -400,6 +400,9 @@ pub enum SettingsHit {
     ControlDecrement(usize),
     /// Click on number increment button
     ControlIncrement(usize),
+    /// Click on the value area between the brackets of a number control —
+    /// should focus the item and enter inline editing mode.
+    ControlNumberValue(usize),
     /// Click on dropdown button
     ControlDropdown(usize),
     /// Click on dropdown option (item_idx, option_idx)
@@ -514,5 +517,45 @@ mod tests {
 
         // Click on item but not on toggle
         assert_eq!(layout.hit_test(35, 10), Some(SettingsHit::Item(0)));
+    }
+
+    /// Reproducer for issue #1825: clicking on the value area between the
+    /// brackets of a Number control used to return `Item`, which only
+    /// changes selection. It must now return a dedicated hit that the mouse
+    /// handler can route to "start editing".
+    #[test]
+    fn test_hit_test_number_value_area() {
+        let modal = Rect::new(10, 5, 80, 30);
+        let mut layout = SettingsLayout::new(modal);
+
+        let item_area = Rect::new(35, 10, 50, 1);
+        let decrement = Rect::new(50, 10, 3, 1);
+        let increment = Rect::new(54, 10, 3, 1);
+        let value = Rect::new(42, 10, 7, 1);
+
+        layout.add_item(
+            0,
+            "/tab_size".to_string(),
+            item_area,
+            ControlLayoutInfo::Number {
+                decrement,
+                increment,
+                value,
+            },
+            None,
+        );
+
+        assert_eq!(
+            layout.hit_test(45, 10),
+            Some(SettingsHit::ControlNumberValue(0))
+        );
+        assert_eq!(
+            layout.hit_test(51, 10),
+            Some(SettingsHit::ControlDecrement(0))
+        );
+        assert_eq!(
+            layout.hit_test(55, 10),
+            Some(SettingsHit::ControlIncrement(0))
+        );
     }
 }

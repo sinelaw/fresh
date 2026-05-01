@@ -327,6 +327,15 @@ impl Editor {
                 }
                 self.settings_increment_current();
             }
+            SettingsHit::ControlNumberValue(idx) => {
+                // Click on the value between the brackets — focus the item
+                // and enter inline editing mode (matches the Enter-key flow).
+                if let Some(ref mut state) = self.settings_state {
+                    state.focus.set(FocusPanel::Settings);
+                    state.selected_item = idx;
+                    state.start_number_editing();
+                }
+            }
             SettingsHit::ControlText(idx) | SettingsHit::ControlTextListRow(idx, _) => {
                 if let Some(ref mut state) = self.settings_state {
                     state.focus.set(FocusPanel::Settings);
