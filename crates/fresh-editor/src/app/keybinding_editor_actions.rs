@@ -164,6 +164,19 @@ impl Editor {
                     editor.select_next();
                 }
             }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // Continue dragging the scrollbar thumb (no selection or
+                // dialog disambiguation needed: the click that started the
+                // drag already gated those).
+                if editor.dragging_table_scrollbar {
+                    if let Some(sb) = editor.layout.table_scrollbar {
+                        scrollbar_jump_to_row(&mut editor, &sb, row);
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                editor.dragging_table_scrollbar = false;
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 // Handle confirm dialog clicks first
                 if editor.showing_confirm_dialog {
@@ -240,6 +253,18 @@ impl Editor {
                     }
                 }
 
+                // Click on the scrollbar: jump the viewport and start a drag.
+                // Checked before row-click because the scrollbar overlaps the
+                // rightmost column of `table_area`.
+                if let Some(sb) = layout.table_scrollbar {
+                    if point_in_rect(sb, col, row) {
+                        scrollbar_jump_to_row(&mut editor, &sb, row);
+                        editor.dragging_table_scrollbar = true;
+                        self.keybinding_editor = Some(editor);
+                        return Ok(true);
+                    }
+                }
+
                 // Click on table row to select (or toggle section header)
                 let table_area = layout.table_area;
                 let first_row_y = layout.table_first_row_y;
@@ -260,4 +285,16 @@ impl Editor {
         self.keybinding_editor = Some(editor);
         Ok(true)
     }
+}
+
+/// Move the keybinding-editor table viewport so the scrollbar thumb maps
+/// to `row`. Mirrors the math used by other modals (e.g. settings) so the
+/// thumb tracks the cursor while dragging.
+fn scrollbar_jump_to_row(editor: &mut KeybindingEditor, sb_area: &ratatui::layout::Rect, row: u16) {
+    if sb_area.height == 0 {
+        return;
+    }
+    let relative_y = row.saturating_sub(sb_area.y);
+    let ratio = (relative_y as f32 / sb_area.height as f32).clamp(0.0, 1.0);
+    editor.scroll.scroll_to_ratio(ratio);
 }

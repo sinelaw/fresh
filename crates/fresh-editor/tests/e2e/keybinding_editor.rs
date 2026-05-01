@@ -910,6 +910,79 @@ fn test_mouse_click_selects_row() {
     );
 }
 
+/// Compute the scrollbar track position for a 120×40 keybinding editor.
+///
+/// The modal is centred (`min(W × 0.90, 120) × (H × 0.90)`); the table chunk
+/// sits below a 3-row header, and `render_table` reserves the first 2 rows of
+/// that chunk for the column-header + separator. The scrollbar is 1 column
+/// wide at the rightmost column of the (post-header) table area.
+fn scrollbar_track_for_120x40() -> (u16, u16, u16) {
+    let modal_w = ((120.0_f32 * 0.90).min(120.0)) as u16;
+    let modal_h = (40.0_f32 * 0.90) as u16;
+    let modal_x = (120 - modal_w) / 2;
+    let modal_y = (40 - modal_h) / 2;
+    let inner_x = modal_x + 1;
+    let inner_y = modal_y + 1;
+    let inner_w = modal_w - 2;
+    let inner_h = modal_h - 2;
+    let table_chunk_y = inner_y + 3;
+    let table_chunk_h = inner_h - 3 - 1;
+    let sb_top = table_chunk_y + 2; // skip column-header + separator
+    let sb_height = table_chunk_h - 2;
+    let sb_col = inner_x + inner_w - 1;
+    (sb_col, sb_top, sb_top + sb_height - 1)
+}
+
+/// Click on the bottom of the scrollbar — the visible rows should scroll
+/// (regression test for issue #1593: scrollbar was unresponsive to mouse).
+#[test]
+fn test_scrollbar_click_scrolls_table() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    open_keybinding_editor(&mut harness);
+
+    let (sb_col, sb_top, sb_bottom) = scrollbar_track_for_120x40();
+
+    let screen_before = harness.screen_to_string();
+
+    // Click near the bottom of the scrollbar track.
+    harness.mouse_click(sb_col, sb_bottom).unwrap();
+
+    let screen_after = harness.screen_to_string();
+    assert_ne!(
+        screen_before, screen_after,
+        "Clicking the bottom of the scrollbar must scroll the table"
+    );
+
+    // Click back at the top — should scroll back to the start.
+    harness.mouse_click(sb_col, sb_top).unwrap();
+    let screen_back = harness.screen_to_string();
+    assert_ne!(
+        screen_after, screen_back,
+        "Clicking the top of the scrollbar must scroll the table back"
+    );
+}
+
+/// Drag the scrollbar thumb — the viewport should follow the cursor.
+#[test]
+fn test_scrollbar_drag_scrolls_table() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    open_keybinding_editor(&mut harness);
+
+    let (sb_col, sb_top, sb_bottom) = scrollbar_track_for_120x40();
+
+    let screen_before = harness.screen_to_string();
+
+    harness
+        .mouse_drag(sb_col, sb_top, sb_col, sb_bottom)
+        .unwrap();
+
+    let screen_after = harness.screen_to_string();
+    assert_ne!(
+        screen_before, screen_after,
+        "Dragging the scrollbar thumb to the bottom must scroll the table"
+    );
+}
+
 /// Test mouse events are masked (don't leak to underlying editor)
 #[test]
 fn test_mouse_events_masked() {

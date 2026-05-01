@@ -85,6 +85,7 @@ pub fn render_keybinding_editor(
     editor.layout.dialog_action_field = None;
     editor.layout.dialog_context_field = None;
     editor.layout.confirm_buttons = None;
+    editor.layout.table_scrollbar = None;
 
     render_header(frame, chunks[0], editor, theme);
     render_table(frame, chunks[1], editor, theme);
@@ -521,6 +522,7 @@ fn render_table(frame: &mut Frame, area: Rect, editor: &mut KeybindingEditor, th
         let sb_state = editor.scroll.to_scrollbar_state();
         let sb_colors = ScrollbarColors::from_theme(theme);
         render_scrollbar(frame, sb_area, &sb_state, &sb_colors);
+        editor.layout.table_scrollbar = Some(sb_area);
     }
 }
 

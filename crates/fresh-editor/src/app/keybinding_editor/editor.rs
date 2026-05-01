@@ -80,6 +80,10 @@ pub struct KeybindingEditor {
 
     /// Layout info for mouse hit testing (updated during render)
     pub layout: KeybindingEditorLayout,
+
+    /// True while the user is dragging the table scrollbar thumb.
+    /// Set on press inside the scrollbar rect, cleared on release.
+    pub dragging_table_scrollbar: bool,
 }
 
 impl KeybindingEditor {
@@ -188,6 +192,7 @@ impl KeybindingEditor {
             display_rows: Vec::new(),
             collapsed_sections,
             layout: KeybindingEditorLayout::default(),
+            dragging_table_scrollbar: false,
         };
 
         editor.apply_filters();

@@ -260,4 +260,6 @@ pub struct KeybindingEditorLayout {
     pub confirm_buttons: Option<(Rect, Rect, Rect)>,
     /// Search bar area (for clicking to focus)
     pub search_bar: Option<Rect>,
+    /// Vertical scrollbar area for the table (1 column wide), if rendered
+    pub table_scrollbar: Option<Rect>,
 }
