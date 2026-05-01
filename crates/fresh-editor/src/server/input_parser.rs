@@ -270,6 +270,30 @@ impl InputParser {
                 self.parse_modifiers(params),
             ))),
 
+            // Modified F1-F4 in CSI form: ESC [ 1 ; <modifier> P/Q/R/S
+            // (xterm modifyFunctionKeys=1). Plain F1-F4 normally arrive via
+            // SS3 (ESC O P/Q/R/S); when modifiers are pressed, xterm switches
+            // to the CSI form. CSI 1;2 R (Shift+F3) collides with cursor
+            // position reports (CSI <row>;<col> R), but fresh never issues
+            // CSI 6 n against the host terminal, so any incoming `R` final
+            // byte must be a function-key event.
+            b'P' => ParseResult::Complete(Event::Key(KeyEvent::new(
+                KeyCode::F(1),
+                self.parse_modifiers(params),
+            ))),
+            b'Q' => ParseResult::Complete(Event::Key(KeyEvent::new(
+                KeyCode::F(2),
+                self.parse_modifiers(params),
+            ))),
+            b'R' => ParseResult::Complete(Event::Key(KeyEvent::new(
+                KeyCode::F(3),
+                self.parse_modifiers(params),
+            ))),
+            b'S' => ParseResult::Complete(Event::Key(KeyEvent::new(
+                KeyCode::F(4),
+                self.parse_modifiers(params),
+            ))),
+
             // Special keys with tilde
             b'~' => self.parse_tilde_sequence(params),
 
@@ -1258,5 +1282,112 @@ mod tests {
         let events = parser.parse(&[0xC1, 0xA0]);
         // Both bytes handled as single bytes / Invalid, not as a 2-byte UTF-8 sequence
         let _ = events;
+    }
+
+    // ---- Regression tests for issue #699: modified F1-F4 via CSI form ----
+    //
+    // xterm with modifyFunctionKeys=1 (the default in many terminals, including
+    // gnome-terminal and xfce4-terminal) sends modified F1-F4 as CSI sequences
+    // of the form `ESC [ 1 ; <modifier> P/Q/R/S`. Without this, Shift+F3
+    // (`ESC [ 1 ; 2 R`) was dropped and surfaced as `Esc, '[', '1', ';', '2', 'R'`
+    // separate keystrokes.
+
+    #[test]
+    fn test_shift_f3_via_csi_modifier() {
+        let mut parser = InputParser::new();
+        // Shift+F3: ESC [ 1 ; 2 R
+        let events = parser.parse(b"\x1b[1;2R");
+        assert_eq!(
+            events.len(),
+            1,
+            "Expected single Shift+F3, got: {:?}",
+            events
+        );
+        match &events[0] {
+            Event::Key(ke) => {
+                assert_eq!(ke.code, KeyCode::F(3));
+                assert!(ke.modifiers.contains(KeyModifiers::SHIFT));
+                assert!(!ke.modifiers.contains(KeyModifiers::CONTROL));
+                assert!(!ke.modifiers.contains(KeyModifiers::ALT));
+            }
+            _ => panic!("Expected Shift+F3, got {:?}", events[0]),
+        }
+    }
+
+    #[test]
+    fn test_modified_f1_to_f4_via_csi() {
+        // Mapping table: (sequence, expected_keycode, expected_modifier)
+        // Modifier param: 2=Shift, 3=Alt, 4=Alt+Shift, 5=Ctrl, 6=Ctrl+Shift, 7=Ctrl+Alt
+        let cases: &[(&[u8], KeyCode, KeyModifiers)] = &[
+            (b"\x1b[1;2P", KeyCode::F(1), KeyModifiers::SHIFT),
+            (b"\x1b[1;5P", KeyCode::F(1), KeyModifiers::CONTROL),
+            (b"\x1b[1;2Q", KeyCode::F(2), KeyModifiers::SHIFT),
+            (b"\x1b[1;3Q", KeyCode::F(2), KeyModifiers::ALT),
+            (b"\x1b[1;2R", KeyCode::F(3), KeyModifiers::SHIFT),
+            (b"\x1b[1;5R", KeyCode::F(3), KeyModifiers::CONTROL),
+            (
+                b"\x1b[1;6R",
+                KeyCode::F(3),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            (b"\x1b[1;2S", KeyCode::F(4), KeyModifiers::SHIFT),
+            (b"\x1b[1;3S", KeyCode::F(4), KeyModifiers::ALT),
+        ];
+        for (input, expected_code, expected_mods) in cases {
+            let mut parser = InputParser::new();
+            let events = parser.parse(input);
+            assert_eq!(
+                events.len(),
+                1,
+                "Expected single event for {:?}, got: {:?}",
+                std::str::from_utf8(input).unwrap_or("?"),
+                events,
+            );
+            match &events[0] {
+                Event::Key(ke) => {
+                    assert_eq!(
+                        ke.code,
+                        *expected_code,
+                        "Wrong keycode for {:?}",
+                        std::str::from_utf8(input).unwrap_or("?"),
+                    );
+                    assert_eq!(
+                        ke.modifiers,
+                        *expected_mods,
+                        "Wrong modifiers for {:?}",
+                        std::str::from_utf8(input).unwrap_or("?"),
+                    );
+                }
+                _ => panic!(
+                    "Expected key event for {:?}, got {:?}",
+                    std::str::from_utf8(input).unwrap_or("?"),
+                    events[0]
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn test_unmodified_f1_to_f4_still_via_ss3() {
+        // Plain F1-F4 still come through SS3 unchanged; this test guards
+        // against regressions in the existing path.
+        let cases: &[(&[u8], KeyCode)] = &[
+            (b"\x1bOP", KeyCode::F(1)),
+            (b"\x1bOQ", KeyCode::F(2)),
+            (b"\x1bOR", KeyCode::F(3)),
+            (b"\x1bOS", KeyCode::F(4)),
+        ];
+        for (input, expected_code) in cases {
+            let mut parser = InputParser::new();
+            let events = parser.parse(input);
+            assert_eq!(events.len(), 1);
+            match &events[0] {
+                Event::Key(ke) => {
+                    assert_eq!(ke.code, *expected_code);
+                    assert!(ke.modifiers.is_empty());
+                }
+                _ => panic!("Expected unmodified F-key"),
+            }
+        }
     }
 }
