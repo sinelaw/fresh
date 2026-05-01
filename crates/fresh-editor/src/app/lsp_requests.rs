@@ -1070,8 +1070,13 @@ impl Editor {
         popup.background_style = Style::default().bg(self.theme.popup_bg);
         popup.focus_key_hint = self.popup_focus_key_hint();
 
-        // Show the popup
+        // Show the popup. Replace any existing transient (hover/signature)
+        // popup so successive hovers don't pile up on the popup stack —
+        // the user expects exactly one hover card on screen at a time.
         if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+            while state.popups.top().is_some_and(|p| p.transient) {
+                state.popups.hide();
+            }
             state.popups.show(popup);
             tracing::info!("Showing hover popup (markdown={})", is_markdown);
         }

@@ -4346,6 +4346,96 @@ fn test_hover_popup_persists_through_click_after_outside_move() -> anyhow::Resul
     Ok(())
 }
 
+/// Regression test: a fresh hover response must not stack on top of an
+/// existing hover popup. Earlier the `update_lsp_hover_state` path
+/// dismissed the prior popup whenever the mouse left the symbol; once the
+/// fix for #692 stopped that eager dismissal, every new LSP hover response
+/// pushed a new popup onto the stack while the previous one was still
+/// there, producing a pile of hovers stacked on the screen.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_hover_popup_does_not_accumulate_across_hovers() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    // Two well-separated identifiers on the same line so we can hover
+    // each in turn and trigger two distinct LSP responses.
+    std::fs::write(&test_file, "fn alpha_function() {} fn beta_function() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // First hover — over `alpha_function`.
+    harness.mouse_move(10, 2)?;
+    harness.render()?;
+    harness.editor_mut().force_check_mouse_hover();
+    harness.wait_until(|h| h.editor().active_state().popups.is_visible())?;
+    let popups_after_first = harness.editor().active_state().popups.all().len();
+    assert_eq!(
+        popups_after_first, 1,
+        "Exactly one hover popup expected after first hover"
+    );
+
+    // Second hover — move to `beta_function` (a different word). Wait for
+    // the debounce, force the request, and wait for the response.
+    harness.mouse_move(35, 2)?;
+    harness.sleep(std::time::Duration::from_millis(600));
+    harness.editor_mut().force_check_mouse_hover();
+    // Settle: render until the editor has processed at least one further
+    // hover response. We can't filter by popup count alone (that would be
+    // exactly the regression we're testing), so just give the response a
+    // chance to land.
+    for _ in 0..20 {
+        harness.render()?;
+        let _ = harness.editor_mut().process_async_messages();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let popups_after_second = harness.editor().active_state().popups.all().len();
+    assert_eq!(
+        popups_after_second, 1,
+        "A second LSP hover response must REPLACE the existing hover popup, \
+         not accumulate on top of it (regression). Stack length: {}",
+        popups_after_second
+    );
+
+    Ok(())
+}
+
 /// Test that hover popup shows scrollbar when content exceeds visible area
 ///
 /// When the hover documentation is longer than the popup's max_height,
