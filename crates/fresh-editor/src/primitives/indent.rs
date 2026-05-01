@@ -198,12 +198,12 @@ impl IndentCalculator {
         language: &Language,
         tab_size: usize,
     ) -> Option<usize> {
-        // When the cursor is at column 0 of an existing non-empty line,
-        // pressing Enter splits before the line content. Adding any indent
-        // here would shift the existing content rightward, so the auto-indent
-        // for the new (empty) line above must be 0. See #1425.
-        if Self::is_at_start_of_nonempty_line(buffer, position) {
-            return Some(0);
+        // When the cursor is inside (or at the boundary of) an existing
+        // non-empty line's leading whitespace, the auto-indent must equal
+        // the cursor's column so that pressing Enter does not displace the
+        // existing content. See #1425.
+        if let Some(indent) = Self::indent_for_cursor_in_leading_ws(buffer, position, tab_size) {
+            return Some(indent);
         }
 
         // Try tree-sitter-based indent
@@ -231,8 +231,8 @@ impl IndentCalculator {
         tab_size: usize,
     ) -> usize {
         // See `calculate_indent` for the rationale (#1425).
-        if Self::is_at_start_of_nonempty_line(buffer, position) {
-            return 0;
+        if let Some(indent) = Self::indent_for_cursor_in_leading_ws(buffer, position, tab_size) {
+            return indent;
         }
 
         // Pattern-based indent (for incomplete syntax)
@@ -244,36 +244,70 @@ impl IndentCalculator {
         Self::get_current_line_indent(buffer, position, tab_size)
     }
 
-    /// Returns true if `position` is at column 0 of a line whose content
-    /// (from `position` up to the next newline or end of buffer) starts with a
-    /// non-whitespace, non-closing-delimiter character.
+    /// If `position` is inside (or at the boundary of) the leading whitespace
+    /// of a line that has non-whitespace content, return the cursor's column
+    /// measured in indent units.
     ///
-    /// Lines whose first non-whitespace character is a closing delimiter
-    /// (`}`, `)`, `]`) are excluded so that pressing Enter just before them
-    /// keeps the existing "indent matches enclosing block" behaviour useful
-    /// for typing more code in front of the close. For other content lines,
-    /// auto-indent must be 0 — otherwise the existing line content would be
-    /// pushed rightward, the bug reported in #1425.
-    fn is_at_start_of_nonempty_line(buffer: &Buffer, position: usize) -> bool {
-        // Must be at the very start of a line (column 0).
-        let at_line_start =
-            position == 0 || Self::byte_at(buffer, position.saturating_sub(1)) == Some(b'\n');
-        if !at_line_start {
-            return false;
+    /// At such a position, pressing Enter splits the line before (or in the
+    /// middle of) the existing leading whitespace. To preserve the existing
+    /// content's column on the new line below, the auto-indent inserted
+    /// between the new `\n` and the remainder of the line must equal the
+    /// cursor's column. Concretely:
+    ///
+    /// - cursor at col 0 of `unindented line`     → 0 (no displacement)
+    /// - cursor at col 0 of `    indented_target` → 0 (the 4 spaces ride
+    ///   over with the content untouched)
+    /// - cursor at col 2 of `    indented_target` → 2 (line A keeps 2
+    ///   spaces; 2 more spaces remain in front of `indented_target`)
+    /// - cursor at col 4 of `    foo()` (just before `f`) → 4
+    ///
+    /// The rule is language-agnostic — it does not look at what character
+    /// starts the content (word, `}`, `end`, `</tag>`, `fi`, …) — and it
+    /// matches the behaviour of VS Code, Sublime Text, and similar editors.
+    /// Returns `None` when the cursor is past any non-whitespace character on
+    /// the line, or when the line has no content (empty / whitespace-only);
+    /// in those cases the regular smart-indent logic takes over.
+    fn indent_for_cursor_in_leading_ws(
+        buffer: &Buffer,
+        position: usize,
+        tab_size: usize,
+    ) -> Option<usize> {
+        // Find start of the current line.
+        let mut line_start = position;
+        while line_start > 0 {
+            if Self::byte_at(buffer, line_start.saturating_sub(1)) == Some(b'\n') {
+                break;
+            }
+            line_start = line_start.saturating_sub(1);
         }
 
-        // Look ahead on the same line for the first non-whitespace character.
+        // Verify everything from line_start to position is whitespace and
+        // accumulate the cursor's column in indent units.
+        let mut col = 0;
+        let mut pos = line_start;
+        while pos < position {
+            match Self::byte_at(buffer, pos) {
+                Some(b' ') => col += 1,
+                Some(b'\t') => col += tab_size,
+                Some(b'\r') => {}
+                _ => return None, // cursor is past content on this line
+            }
+            pos += 1;
+        }
+
+        // Require at least one non-whitespace character at or after the
+        // cursor; otherwise this is a blank/whitespace-only line and the
+        // existing logic already handles it correctly.
         let mut pos = position;
         while pos < buffer.len() {
             match Self::byte_at(buffer, pos) {
-                Some(b'\n') => return false,
+                Some(b'\n') => return None,
                 Some(b' ') | Some(b'\t') | Some(b'\r') => pos += 1,
-                Some(b'}') | Some(b')') | Some(b']') => return false,
-                Some(_) => return true,
-                None => return false,
+                Some(_) => return Some(col),
+                None => return None,
             }
         }
-        false
+        None
     }
 
     /// Calculate the correct indent for a closing delimiter being typed
@@ -1373,20 +1407,21 @@ mod tests {
     }
 
     #[test]
-    fn test_indent_after_empty_line_uses_reference() {
-        // Test the hybrid heuristic: indent after empty line should use previous non-empty line as reference
+    fn test_indent_on_empty_line_uses_reference() {
+        // Hybrid heuristic: when the cursor is on a truly empty line between
+        // code lines, indent calculation should use the previous non-empty
+        // line as reference.
         let mut calc = IndentCalculator::new();
 
-        // Buffer with closing brace to test if tree-sitter works with complete syntax
-        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
-        let position = 27; // Position after second \n, before the }
+        // "fn main() {\n    let x = 1;\n\n}" — cursor on the empty line.
+        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n\n}");
+        let position = 27; // start of the empty line (after the second '\n')
 
         let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
-        tracing::trace!("TEST: With closing brace, indent = {:?}", indent);
         assert_eq!(
             indent,
             Some(4),
-            "After empty line in function body, should indent to 4 spaces (reference line has 4, we're in same block)"
+            "On an empty line inside a function body, should indent to match the reference line"
         );
     }
 
@@ -1477,6 +1512,67 @@ mod tests {
             indent,
             Some(0),
             "Enter at column 0 of an unindented Python line must not be auto-indented"
+        );
+    }
+
+    #[test]
+    fn test_enter_in_middle_of_leading_ws_preserves_content_column() {
+        // Cursor at column 2 of "    indented_target" (in the middle of the
+        // 4-space leading whitespace). Pressing Enter splits the indent: 2
+        // spaces stay on line A, 2 spaces remain in front of `indented_target`
+        // on line B. Auto-indent must equal the cursor's column (2), giving
+        // line B a total of 2 + 2 = 4 leading spaces — preserving the
+        // original column of `indented_target`.
+        let buffer = Buffer::from_str_test("    line1\n    indented_target");
+        let target = buffer
+            .to_string()
+            .unwrap()
+            .find("    indented_target")
+            .unwrap();
+        let position = target + 2; // mid-indent
+
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
+        assert_eq!(
+            indent, 2,
+            "Splitting in the middle of leading whitespace must preserve the content column"
+        );
+    }
+
+    #[test]
+    fn test_enter_at_start_of_closing_brace_line_does_not_displace() {
+        // Language-agnostic: at column 0 of a `}` line we must not insert
+        // indent that pushes `}` rightward. Other editors (VS Code, Sublime)
+        // create the empty line above and leave the `}` at column 0; the
+        // user can press Tab to indent if they want to type code in front
+        // of the close. The same rule applies uniformly to `end` (Lua,
+        // Ruby), `</tag>` (HTML), `fi`/`done` (Bash) — there is no
+        // language-specific list of closing tokens to maintain.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
+        let position = 27; // start of the `}` line
+
+        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        assert_eq!(
+            indent,
+            Some(0),
+            "Enter at column 0 of a `}}` line must not displace the closing delimiter"
+        );
+    }
+
+    #[test]
+    fn test_enter_inside_content_still_uses_smart_indent() {
+        // Sanity check: when the cursor is past the leading whitespace, the
+        // generalised fix must NOT short-circuit — smart auto-indent is still
+        // expected to fire and indent inside an opened block.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("fn main() {");
+        let position = buffer.len(); // end of the opening brace line
+
+        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        assert_eq!(
+            indent,
+            Some(4),
+            "Pressing Enter at the end of `fn main() {{` should still indent the new line"
         );
     }
 }
