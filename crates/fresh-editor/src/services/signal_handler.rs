@@ -57,7 +57,7 @@ pub fn dump_js_state() {
     }
 }
 
-/// Initialize signal handlers for SIGTERM and SIGINT.
+/// Initialize signal handlers for SIGHUP, SIGINT, and SIGTERM.
 /// On Linux, dumps thread backtraces before terminating.
 /// On other Unix platforms (macOS), dumps JS state and current thread backtrace.
 pub fn install_signal_handlers() {
@@ -91,15 +91,22 @@ mod linux {
         install_termination_signal_handlers();
     }
 
-    /// Install signal handlers for SIGINT and SIGTERM that dump backtraces before exiting
+    /// Install signal handlers for SIGHUP / SIGINT / SIGTERM that dump
+    /// backtraces before exiting.
+    ///
+    /// SIGHUP is included so the editor terminates promptly when its
+    /// controlling terminal goes away (window/tab close, ssh disconnect),
+    /// instead of relying on the kernel's default disposition — which can
+    /// be subverted by a thread blocking the signal or by a third-party
+    /// dependency installing SIG_IGN.
     fn install_termination_signal_handlers() {
-        extern "C" fn termination_handler(_: libc::c_int) {
+        extern "C" fn termination_handler(signum: libc::c_int) {
             // Only handle the first signal
             if SIGNAL_RECEIVED.swap(true, Ordering::SeqCst) {
                 return;
             }
 
-            tracing::error!("=== SIGNAL RECEIVED - Dumping debug info ===");
+            tracing::error!("=== SIGNAL {} RECEIVED - Dumping debug info ===", signum);
 
             // Dump JavaScript state first (if registered)
             tracing::error!("--- JavaScript State ---");
@@ -110,14 +117,18 @@ mod linux {
             dump_all_thread_backtraces();
             tracing::error!("=== Debug dump complete, terminating process ===");
 
-            // Terminate the process
-            std::process::exit(130); // Standard exit code for Ctrl+C
+            // Terminate with the conventional 128 + signum exit code so callers
+            // can distinguish (130 = SIGINT, 143 = SIGTERM, 129 = SIGHUP).
+            std::process::exit(128 + signum);
         }
 
         let handler = SigHandler::Handler(termination_handler);
         let action = SigAction::new(handler, SaFlags::empty(), SigSet::empty());
 
         unsafe {
+            if let Err(e) = sigaction(Signal::SIGHUP, &action) {
+                tracing::error!("Failed to set SIGHUP handler: {}", e);
+            }
             if let Err(e) = sigaction(Signal::SIGINT, &action) {
                 tracing::error!("Failed to set SIGINT handler: {}", e);
             }
@@ -250,12 +261,12 @@ mod unix_fallback {
     }
 
     fn install_termination_signal_handlers() {
-        extern "C" fn termination_handler(_: libc::c_int) {
+        extern "C" fn termination_handler(signum: libc::c_int) {
             if SIGNAL_RECEIVED.swap(true, Ordering::SeqCst) {
                 return;
             }
 
-            tracing::error!("=== SIGNAL RECEIVED - Dumping debug info ===");
+            tracing::error!("=== SIGNAL {} RECEIVED - Dumping debug info ===", signum);
 
             tracing::error!("--- JavaScript State ---");
             super::dump_js_state();
@@ -265,13 +276,16 @@ mod unix_fallback {
             tracing::error!("Backtrace:\n{}", bt);
 
             tracing::error!("=== Debug dump complete, terminating process ===");
-            std::process::exit(130);
+            std::process::exit(128 + signum);
         }
 
         let handler = SigHandler::Handler(termination_handler);
         let action = SigAction::new(handler, SaFlags::empty(), SigSet::empty());
 
         unsafe {
+            if let Err(e) = sigaction(Signal::SIGHUP, &action) {
+                tracing::error!("Failed to set SIGHUP handler: {}", e);
+            }
             if let Err(e) = sigaction(Signal::SIGINT, &action) {
                 tracing::error!("Failed to set SIGINT handler: {}", e);
             }
@@ -279,5 +293,108 @@ mod unix_fallback {
                 tracing::error!("Failed to set SIGTERM handler: {}", e);
             }
         }
+    }
+}
+
+/// Test that the editor terminates promptly on SIGHUP — the signal sent
+/// by the kernel when the controlling terminal goes away (window/tab
+/// close, ssh disconnect). Regression test for issue #1809.
+///
+/// Runs in a forked child so the test process's own signal disposition
+/// is unaffected. The child installs the production signal handlers and
+/// pauses; the parent waits for the child to signal readiness via a
+/// pipe, then sends SIGHUP and asserts the child exits with the
+/// conventional 128 + signum status (129 for SIGHUP).
+#[cfg(all(test, unix))]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn sighup_terminates_process() {
+        // Pipe used to synchronize: child writes after handlers are installed,
+        // parent reads to know it's safe to send SIGHUP.
+        let mut pipe_fds = [0i32; 2];
+        let r = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
+        assert_eq!(r, 0, "pipe failed: {}", std::io::Error::last_os_error());
+        let (read_fd, write_fd) = (pipe_fds[0], pipe_fds[1]);
+
+        // SAFETY: fork() is called from a #[test] which Cargo runs serially
+        // per-process; the child immediately installs handlers, signals
+        // readiness, and pauses. It does not touch shared mutable state of
+        // the parent runtime.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed: {}", std::io::Error::last_os_error());
+
+        if pid == 0 {
+            // Child: install handlers, signal readiness, then sleep.
+            unsafe {
+                libc::close(read_fd);
+            }
+            super::install_signal_handlers();
+            // Notify parent that handlers are installed.
+            let byte: u8 = 1;
+            let _ = unsafe { libc::write(write_fd, &byte as *const u8 as *const _, 1) };
+            unsafe {
+                libc::close(write_fd);
+            }
+            // pause() blocks until any signal is delivered. With our handler
+            // installed, SIGHUP will run the handler which calls exit(129).
+            // If the handler isn't installed for SIGHUP, default disposition
+            // (term) still terminates the child — but with WIFSIGNALED, not
+            // WIFEXITED, so the assertion below distinguishes them.
+            unsafe {
+                libc::pause();
+            }
+            // Should not be reached if the handler exits on signal.
+            unsafe {
+                libc::_exit(0);
+            }
+        }
+
+        // Parent: close write end and wait for child's readiness byte.
+        unsafe {
+            libc::close(write_fd);
+        }
+        let mut buf: [u8; 1] = [0];
+        let n = unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut _, 1) };
+        unsafe {
+            libc::close(read_fd);
+        }
+        assert_eq!(
+            n, 1,
+            "did not receive readiness byte from child: read returned {}",
+            n
+        );
+
+        unsafe {
+            libc::kill(pid, libc::SIGHUP);
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut status: libc::c_int = 0;
+        loop {
+            let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if r == pid {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "child did not exit within 10s after SIGHUP"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(
+            libc::WIFEXITED(status),
+            "child terminated abnormally (status raw = {}): handler did not run on SIGHUP",
+            status
+        );
+        assert_eq!(
+            libc::WEXITSTATUS(status),
+            128 + libc::SIGHUP,
+            "child exit code: expected 128+SIGHUP={}, got {}",
+            128 + libc::SIGHUP,
+            libc::WEXITSTATUS(status)
+        );
     }
 }
