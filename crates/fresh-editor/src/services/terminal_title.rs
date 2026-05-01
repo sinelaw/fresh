@@ -32,6 +32,26 @@ pub fn sanitize_title(title: &str) -> String {
     filtered[..end].to_string()
 }
 
+/// Build a terminal window title from the active buffer's display name and
+/// the optional project name (typically the working directory's last
+/// component). Including the project name disambiguates files when several
+/// Fresh sessions are open across different projects.
+///
+/// Format:
+/// - With project: `<display_name> — <project_name> — Fresh`
+/// - Without project: `<display_name> — Fresh`
+///
+/// An empty `project_name` is treated the same as `None`, so callers can pass
+/// the result of `Path::file_name().and_then(OsStr::to_str)` directly.
+pub fn build_window_title(display_name: &str, project_name: Option<&str>) -> String {
+    match project_name {
+        Some(p) if !p.is_empty() => {
+            format!("{} \u{2014} {} \u{2014} Fresh", display_name, p)
+        }
+        _ => format!("{} \u{2014} Fresh", display_name),
+    }
+}
+
 /// Write an OSC 2 escape sequence to stdout setting the terminal title.
 ///
 /// The title is sanitized before writing. No-op when stdout is not a
@@ -83,5 +103,37 @@ mod tests {
     #[test]
     fn empty_input_yields_empty_output() {
         assert_eq!(sanitize_title(""), "");
+    }
+
+    #[test]
+    fn title_includes_project_when_provided() {
+        assert_eq!(
+            build_window_title("foo/bar.rs", Some("my-project")),
+            "foo/bar.rs \u{2014} my-project \u{2014} Fresh"
+        );
+    }
+
+    #[test]
+    fn title_omits_project_when_none() {
+        assert_eq!(
+            build_window_title("foo/bar.rs", None),
+            "foo/bar.rs \u{2014} Fresh"
+        );
+    }
+
+    #[test]
+    fn title_omits_project_when_empty_string() {
+        assert_eq!(
+            build_window_title("foo/bar.rs", Some("")),
+            "foo/bar.rs \u{2014} Fresh"
+        );
+    }
+
+    #[test]
+    fn title_handles_virtual_buffer_names() {
+        assert_eq!(
+            build_window_title("[No Name]", Some("my-project")),
+            "[No Name] \u{2014} my-project \u{2014} Fresh"
+        );
     }
 }

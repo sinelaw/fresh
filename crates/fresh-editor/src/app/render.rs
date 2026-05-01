@@ -2555,7 +2555,8 @@ impl Editor {
     }
 
     /// Emit an OSC 2 escape sequence to set the host terminal's window/tab
-    /// title based on the active buffer's display name. Deduplicated against
+    /// title based on the active buffer's display name and the project name
+    /// (the working directory's last path component). Deduplicated against
     /// the last title we wrote so we don't spam stdout every frame.
     ///
     /// Gated by `editor.set_window_title` (default on). Terminals that
@@ -2564,7 +2565,9 @@ impl Editor {
         if !self.config.editor.set_window_title {
             return;
         }
-        let new_title = format!("{} \u{2014} Fresh", display_name);
+        let project_name = self.working_dir.file_name().and_then(|s| s.to_str());
+        let new_title =
+            crate::services::terminal_title::build_window_title(display_name, project_name);
         if self.last_window_title.as_deref() == Some(new_title.as_str()) {
             return;
         }
