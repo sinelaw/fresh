@@ -892,6 +892,167 @@ pub fn build_search_regex(
 /// directly so hybrid buffer search applies.
 pub const MAX_PROJECT_SEARCH_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
+/// Filename extensions that always represent binary content for project
+/// search.  Files matching this list are skipped before any I/O — no
+/// `stat`, no header read — which both avoids waste on the obvious cases
+/// and removes the dependency on heuristic content detection for formats
+/// whose first 8 KB can occasionally look text-like.
+///
+/// Kept as a sorted ASCII-lowercase list and matched case-insensitively
+/// via `eq_ignore_ascii_case` (no allocation per file).
+pub const BINARY_FILE_EXTENSIONS: &[&str] = &[
+    // Compiled binaries / object code / libraries
+    "a",
+    "class",
+    "dll",
+    "dylib",
+    "exe",
+    "jar",
+    "lib",
+    "o",
+    "obj",
+    "pdb",
+    "pyc",
+    "pyo",
+    "so",
+    "wasm",
+    "war",
+    // Archives / compressed
+    "7z",
+    "br",
+    "bz2",
+    "gz",
+    "lz",
+    "lz4",
+    "lzma",
+    "rar",
+    "tar",
+    "tbz",
+    "tbz2",
+    "tgz",
+    "txz",
+    "xz",
+    "z",
+    "zip",
+    "zst",
+    // Disk images / installers / packages
+    "apk",
+    "deb",
+    "dmg",
+    "img",
+    "ipa",
+    "iso",
+    "msi",
+    "rpm",
+    "vhd",
+    "vmdk",
+    // Images
+    "bmp",
+    "gif",
+    "heic",
+    "heif",
+    "ico",
+    "jp2",
+    "jpe",
+    "jpeg",
+    "jpg",
+    "png",
+    "psd",
+    "raw",
+    "tif",
+    "tiff",
+    "webp",
+    // Audio / video
+    "aac",
+    "aif",
+    "aiff",
+    "avi",
+    "flac",
+    "flv",
+    "m4a",
+    "m4v",
+    "mid",
+    "midi",
+    "mka",
+    "mkv",
+    "mov",
+    "mp3",
+    "mp4",
+    "mpeg",
+    "mpg",
+    "ogg",
+    "opus",
+    "wav",
+    "webm",
+    "wma",
+    "wmv",
+    // Office / compound documents
+    "doc",
+    "docx",
+    "odp",
+    "ods",
+    "odt",
+    "pdf",
+    "ppt",
+    "pptx",
+    "rtf",
+    "xls",
+    "xlsx",
+    // Databases
+    "db",
+    "mdb",
+    "sqlite",
+    "sqlite3",
+    // Fonts
+    "eot",
+    "otf",
+    "ttc",
+    "ttf",
+    "woff",
+    "woff2",
+    // ML / scientific data
+    "ckpt",
+    "h5",
+    "hdf5",
+    "msgpack",
+    "npy",
+    "npz",
+    "onnx",
+    "pb",
+    "pickle",
+    "pkl",
+    "pt",
+    "pth",
+    "safetensors",
+    "tflite",
+    // Generic binary
+    "bin",
+    "dat",
+    "swf",
+];
+
+/// True if `path`'s extension matches a known binary format.
+fn has_binary_extension(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    BINARY_FILE_EXTENSIONS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(ext))
+}
+
+/// True if a UTF-8/byte-level regex can meaningfully match content of
+/// this encoding.  UTF-16/UTF-32 carry interleaved NUL bytes for ASCII
+/// characters, so byte-regex search would never find a UTF-8 pattern in
+/// them; correct support requires transcoding the chunk first, which we
+/// don't do yet.  All single-byte ASCII-superset encodings (UTF-8,
+/// Latin-1, Windows-12xx) and CJK encodings (lead+trail bytes ≥ 0x40)
+/// match a UTF-8 pattern in their ASCII portion just fine.
+fn is_byte_searchable_encoding(enc: crate::model::encoding::Encoding) -> bool {
+    use crate::model::encoding::Encoding;
+    !matches!(enc, Encoding::Utf16Le | Encoding::Utf16Be)
+}
+
 /// Default implementation of `FileSystem::search_file` that works for any
 /// filesystem backend.  Reads one chunk via `read_range`, scans with the
 /// given regex, and returns matches with line/column/context.
@@ -909,12 +1070,24 @@ pub fn default_search_file(
     const CHUNK_SIZE: usize = 1_048_576; // 1 MB
     let overlap = pattern.len().max(256);
 
+    // Pre-flight checks for unbounded scans.  Bounded scans (hybrid
+    // buffer search) intentionally bypass all of these — they run only
+    // when the user has explicitly opened the file as text, and we trust
+    // the editor's load-time decision.
+    if cursor.offset == 0 && cursor.end_offset.is_none() {
+        // Extension fast-path: skip known-binary formats with no I/O at
+        // all (no stat, no header read).
+        if has_binary_extension(path) {
+            cursor.done = true;
+            return Ok(vec![]);
+        }
+    }
+
     let meta = fs.metadata(path)?;
     let file_size = meta.size;
     let file_len = file_size as usize;
     let effective_end = cursor.end_offset.unwrap_or(file_len).min(file_len);
 
-    // Binary check on first call (only when starting from offset 0 with no range bound)
     if cursor.offset == 0 && cursor.end_offset.is_none() {
         if file_size == 0 {
             cursor.done = true;
@@ -922,23 +1095,23 @@ pub fn default_search_file(
         }
         // Skip files that exceed the project-search size cap.  Multi-gigabyte
         // archives, model weights, and audio files would otherwise lock up
-        // the editor (issue #1342).  Bounded scans (hybrid buffer search)
-        // bypass this — they only run when the user has explicitly opened
-        // the file.
+        // the editor (issue #1342).
         if file_size > MAX_PROJECT_SEARCH_FILE_SIZE {
             cursor.done = true;
             return Ok(vec![]);
         }
+        // Delegate the header sniff to the same encoding detector the
+        // buffer loader uses, so search and editor agree on what's text.
+        // The detector handles BOMs, UTF-16 statistical detection, and
+        // the full set of "non-text control char" indicators.  We then
+        // additionally reject encodings byte-regex can't meaningfully
+        // match (UTF-16/32) until we add transcoding.
         let header_len = file_len.min(8192);
         let header = fs.read_range(path, 0, header_len)?;
-        // Detect binary by null bytes *or* other non-text control chars.
-        // Many binary formats (PNG's 0x1A, ZIP's 0x03 0x04, ELF's 0x7F, etc.)
-        // place non-null control bytes in their first few bytes long before
-        // any null appears, so a null-only check leaks them through.
-        if header
-            .iter()
-            .any(|&b| b == 0 || crate::model::encoding::is_binary_control_char(b))
-        {
+        let truncated = header_len < file_len;
+        let (encoding, is_binary) =
+            crate::model::encoding::detect_encoding_or_binary(&header, truncated);
+        if is_binary || !is_byte_searchable_encoding(encoding) {
             cursor.done = true;
             return Ok(vec![]);
         }
@@ -957,6 +1130,21 @@ pub fn default_search_file(
     let chunk = fs.read_range(path, read_start as u64, read_end - read_start)?;
 
     let overlap_len = cursor.offset - read_start;
+
+    // Mid-stream binary detection.  The 8 KB header check at the top of
+    // the function only sees the start of the file, but plenty of formats
+    // are text in their first few KB and binary thereafter (self-extracting
+    // installers, mbox files with attachments, log files with embedded
+    // crash dumps).  A NUL byte in any subsequent chunk is the strongest
+    // indicator the file isn't text we should be searching, so bail out
+    // and discard whatever pseudo-matches the regex would have found.
+    // Bounded scans skip this — they're searching a delimited region of
+    // an already-loaded text buffer where NULs may legitimately appear
+    // mid-stream (e.g., cursor sentinels in piece-tree leaves).
+    if cursor.end_offset.is_none() && chunk[overlap_len..].contains(&0) {
+        cursor.done = true;
+        return Ok(vec![]);
+    }
 
     // Incremental line counting (same algorithm as search_scan_next_chunk)
     let newlines_in_overlap = chunk[..overlap_len].iter().filter(|&&b| b == b'\n').count();
@@ -1843,6 +2031,116 @@ mod tests {
 
         assert!(cursor.done);
         assert!(matches.is_empty());
+    }
+
+    /// Issue #1342 follow-up (A — extension fast-path): a file with a
+    /// known-binary extension is skipped without any I/O even when its
+    /// content happens to be valid UTF-8.  Previously the content
+    /// heuristic was the only gate, so an ASCII `.png` would be scanned.
+    #[test]
+    fn test_search_file_binary_extension_skipped_despite_text_content() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("not_actually_binary.png");
+        fs.write_file(&path, b"hello world\nhello again\n").unwrap();
+
+        let opts = make_search_opts(true);
+        let mut cursor = FileSearchCursor::new();
+        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+
+        assert!(cursor.done);
+        assert!(
+            matches.is_empty(),
+            ".png extension should short-circuit before content scan"
+        );
+    }
+
+    /// Issue #1342 follow-up (A — extension fast-path): the check is
+    /// case-insensitive (Windows/macOS users frequently see uppercase
+    /// extensions) and respects multi-segment names like `archive.tar.gz`.
+    #[test]
+    fn test_search_file_binary_extension_case_insensitive() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        for name in ["IMG.JPG", "archive.tar.gz", "weights.SafeTensors"] {
+            let path = temp_dir.path().join(name);
+            fs.write_file(&path, b"definitely text content here\n")
+                .unwrap();
+
+            let opts = make_search_opts(true);
+            let mut cursor = FileSearchCursor::new();
+            let matches = fs
+                .search_file(&path, "definitely", &opts, &mut cursor)
+                .unwrap();
+
+            assert!(cursor.done, "{} should be marked done", name);
+            assert!(
+                matches.is_empty(),
+                "{} matched but extension should have skipped it",
+                name
+            );
+        }
+    }
+
+    /// Issue #1342 follow-up (B — encoding-aware sniff): UTF-16 with BOM
+    /// is recognised as text by the editor, but byte-regex search would
+    /// never match a UTF-8 pattern in interleaved-NUL content.  The
+    /// sniff must skip it explicitly rather than wasting I/O on regex
+    /// passes that find nothing.
+    #[test]
+    fn test_search_file_utf16_skipped_via_encoding_gate() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("utf16.txt");
+        // UTF-16 LE BOM + "hello"
+        let mut data = vec![0xFF, 0xFE];
+        for ch in "hello world\nhello again\n".chars() {
+            let n = ch as u32;
+            data.push((n & 0xFF) as u8);
+            data.push(((n >> 8) & 0xFF) as u8);
+        }
+        fs.write_file(&path, &data).unwrap();
+
+        let opts = make_search_opts(true);
+        let mut cursor = FileSearchCursor::new();
+        let matches = fs.search_file(&path, "hello", &opts, &mut cursor).unwrap();
+
+        assert!(cursor.done);
+        assert!(
+            matches.is_empty(),
+            "UTF-16 file must be skipped: byte-regex can't match UTF-8 patterns in it"
+        );
+    }
+
+    /// Issue #1342 follow-up (C — mid-stream NUL check): a file whose
+    /// first 8 KB looks textual but turns binary later (self-extracting
+    /// installers, mbox + attachment, log + crash dump) used to be
+    /// regex-scanned end-to-end.  Once a NUL appears in any subsequent
+    /// chunk, search bails out.
+    #[test]
+    fn test_search_file_midstream_nul_aborts_scan() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("mid.dat");
+
+        // 9000 bytes of text — past the 8 KB header window — then a NUL,
+        // then a marker the regex would otherwise find.
+        let mut data = vec![b'a'; 9000];
+        data.push(0);
+        data.extend_from_slice(b"PATTERN_AFTER_NUL\n");
+        fs.write_file(&path, &data).unwrap();
+
+        let opts = make_search_opts(true);
+        let mut cursor = FileSearchCursor::new();
+        let matches = fs
+            .search_file(&path, "PATTERN_AFTER_NUL", &opts, &mut cursor)
+            .unwrap();
+
+        assert!(cursor.done);
+        assert!(
+            matches.is_empty(),
+            "mid-stream NUL should abort scan and discard pseudo-matches"
+        );
     }
 
     #[test]
