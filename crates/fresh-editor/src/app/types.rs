@@ -753,6 +753,11 @@ pub enum FileExplorerContextMenuItem {
 
 impl FileExplorerContextMenuItem {
     pub fn all() -> &'static [Self] {
+        // Order matters: existing e2e tests address items by their index in
+        // this list (e.g. Delete is index 6 in the single-selection menu).
+        // Append-only changes here keep the older tests stable; the new
+        // entries (Duplicate, CopyFullPath, CopyRelativePath) live after
+        // Delete for that reason.
         &[
             Self::NewFile,
             Self::NewDirectory,
@@ -760,8 +765,8 @@ impl FileExplorerContextMenuItem {
             Self::Cut,
             Self::Copy,
             Self::Paste,
-            Self::Duplicate,
             Self::Delete,
+            Self::Duplicate,
             Self::CopyFullPath,
             Self::CopyRelativePath,
         ]
@@ -772,21 +777,20 @@ impl FileExplorerContextMenuItem {
             Self::Cut,
             Self::Copy,
             Self::Paste,
-            Self::Duplicate,
             Self::Delete,
+            Self::Duplicate,
             Self::CopyFullPath,
             Self::CopyRelativePath,
         ]
     }
 
     pub fn root_single_selection() -> &'static [Self] {
-        &[
-            Self::NewFile,
-            Self::NewDirectory,
-            Self::Paste,
-            Self::CopyFullPath,
-            Self::CopyRelativePath,
-        ]
+        // The root menu is intentionally narrow (VS Code parity): only
+        // creation + paste actions. Copy-path on the project root is left
+        // off because the workspace path is already exposed via other
+        // commands and adding it here would surface a "Copy …" entry on
+        // a menu that's supposed to hide destructive/copy-style actions.
+        &[Self::NewFile, Self::NewDirectory, Self::Paste]
     }
 
     pub fn label(&self) -> String {
