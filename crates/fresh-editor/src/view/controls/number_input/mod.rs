@@ -360,6 +360,10 @@ pub struct NumberInputColors {
     pub focused: Color,
     /// Focused highlight foreground color (text on focused background)
     pub focused_fg: Color,
+    /// Background colour for the in-edit selection range. Must contrast
+    /// with `focused`, otherwise the selection is invisible whenever the
+    /// row is also the focused (selected) row.
+    pub selection_bg: Color,
     /// Disabled color
     pub disabled: Color,
 }
@@ -373,6 +377,7 @@ impl Default for NumberInputColors {
             button: Color::Cyan,
             focused: Color::Cyan,
             focused_fg: Color::Black,
+            selection_bg: Color::Blue,
             disabled: Color::DarkGray,
         }
     }
@@ -388,6 +393,9 @@ impl NumberInputColors {
             button: theme.menu_active_fg,
             focused: theme.settings_selected_bg,
             focused_fg: theme.settings_selected_fg,
+            // Use the editor's text-selection bg so the in-edit selection
+            // is visible against the row's focus highlight (`focused`).
+            selection_bg: theme.selection_bg,
             disabled: theme.line_number_fg,
         }
     }
@@ -698,5 +706,67 @@ mod tests {
 
         state.move_end();
         assert_eq!(state.cursor_col(), 3);
+    }
+
+    /// Regression: entering edit mode used to shrink `[  4  ]` (value cell
+    /// rendered as `format!("{:^5}", "4")`) down to `[4]`, shifting the
+    /// `[-]` / `[+]` buttons left. Both states must render the value cell
+    /// at the same width.
+    #[test]
+    fn test_value_cell_width_stable_between_edit_and_view() {
+        fn bracket_columns(state: &NumberInputState) -> (u16, u16) {
+            let backend = TestBackend::new(40, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    let area = Rect::new(0, 0, 40, 1);
+                    let colors = NumberInputColors::default();
+                    render_number_input(frame, area, state, &colors);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let mut open = None;
+            let mut close = None;
+            for x in 0..40 {
+                let symbol = buffer.cell((x, 0)).map(|c| c.symbol()).unwrap_or("");
+                if symbol == "[" && open.is_none() {
+                    open = Some(x);
+                } else if symbol == "]" && open.is_some() && close.is_none() {
+                    close = Some(x);
+                }
+            }
+            (
+                open.expect("missing opening bracket"),
+                close.expect("missing closing bracket"),
+            )
+        }
+
+        let view_state = NumberInputState::new(4, "Tab Size");
+        let mut edit_state = NumberInputState::new(4, "Tab Size");
+        edit_state.start_editing();
+
+        let view_brackets = bracket_columns(&view_state);
+        let edit_brackets = bracket_columns(&edit_state);
+        assert_eq!(
+            view_brackets, edit_brackets,
+            "value cell brackets must stay at the same columns when entering edit mode"
+        );
+    }
+
+    /// Regression: the in-edit selection used to share its bg colour with
+    /// the row's focus highlight, so `select_all()` (called on entering
+    /// edit mode) rendered as bg-on-bg and was invisible. The two colours
+    /// are now decoupled.
+    #[test]
+    fn test_selection_bg_distinct_from_focus_bg() {
+        let theme = crate::view::theme::Theme::load_builtin("dark")
+            .or_else(|| crate::view::theme::Theme::load_builtin("default"))
+            .expect("expected a builtin theme to load");
+        let colors = NumberInputColors::from_theme(&theme);
+        assert_ne!(
+            colors.selection_bg, colors.focused,
+            "selection bg must differ from focus bg, otherwise the in-edit selection is invisible \
+             when the row is focused"
+        );
     }
 }

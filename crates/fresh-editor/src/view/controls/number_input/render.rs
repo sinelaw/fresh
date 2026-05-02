@@ -128,8 +128,14 @@ pub fn render_number_input_aligned(
     }
 }
 
+/// Minimum visible width of the value cell, matching the
+/// `format!("{:^5}", ...)` non-editing rendering. Padding the editing
+/// view to the same width keeps `[ value ] [-] [+]` from shifting
+/// horizontally when the user enters edit mode.
+pub(super) const VALUE_CELL_MIN_WIDTH: usize = 5;
+
 /// Build spans for the editing value with cursor and selection highlighting
-fn build_editing_spans(
+pub(super) fn build_editing_spans(
     value: &str,
     state: &NumberInputState,
     value_color: ratatui::style::Color,
@@ -142,10 +148,25 @@ fn build_editing_spans(
     let cursor_style = Style::default()
         .fg(value_color)
         .add_modifier(Modifier::REVERSED);
-    let selection_style = Style::default().fg(colors.value).bg(colors.focused);
+    // Use a colour distinct from the row's focus highlight (`colors.focused`),
+    // otherwise selecting the value while the row is focused renders as
+    // bg-on-bg and the user can't tell the value is selected.
+    let selection_style = Style::default().fg(colors.value).bg(colors.selection_bg);
 
     let chars: Vec<char> = value.chars().collect();
+    // Block cursor at end of text adds one extra rendered cell.
+    let cursor_at_end = selection_range.is_none() && cursor_pos >= chars.len();
+    let rendered_width = chars.len() + if cursor_at_end { 1 } else { 0 };
+    let total_width = rendered_width.max(VALUE_CELL_MIN_WIDTH);
+    let extra = total_width - rendered_width;
+    let leading = extra / 2;
+    let trailing = extra - leading;
+
     let mut spans = Vec::new();
+
+    if leading > 0 {
+        spans.push(Span::raw(" ".repeat(leading)));
+    }
 
     if let Some((sel_start, sel_end)) = selection_range {
         // Render with selection highlighting
@@ -194,6 +215,10 @@ fn build_editing_spans(
             // Cursor at end - show block cursor
             spans.push(Span::styled(" ", cursor_style));
         }
+    }
+
+    if trailing > 0 {
+        spans.push(Span::raw(" ".repeat(trailing)));
     }
 
     spans
