@@ -887,7 +887,49 @@ fn test_mouse_scroll() {
     let screen_after = harness.screen_to_string();
     assert_ne!(
         screen_before, screen_after,
-        "Mouse scroll should move the selection"
+        "Mouse scroll should move the viewport"
+    );
+}
+
+/// After a scrollbar drag the wheel must continue scrolling from the new
+/// viewport — not snap selection back into view. Regression test for the
+/// "wheel-bounces-back-after-drag" bug.
+#[test]
+fn test_wheel_after_scrollbar_drag_does_not_snap_back() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    open_keybinding_editor(&mut harness);
+
+    let (sb_col, sb_top, sb_bottom) = scrollbar_track_for_120x40();
+
+    // Drag the scrollbar to the bottom — viewport now far from selection.
+    harness
+        .mouse_drag(sb_col, sb_top, sb_col, sb_bottom)
+        .unwrap();
+    let after_drag = harness.screen_to_string();
+
+    // Tick the wheel up once. With the old behaviour this called
+    // `select_prev` + `ensure_visible`, snapping the viewport to wherever
+    // the (still-near-the-top) selection lives. The new behaviour scrolls
+    // a few rows up from the dragged position.
+    harness.mouse_scroll_up(60, 20).unwrap();
+    let after_wheel = harness.screen_to_string();
+
+    assert_ne!(
+        after_drag, after_wheel,
+        "Wheel must move the viewport even after a scrollbar drag"
+    );
+
+    // Sanity: the screen after a single wheel tick should look much more
+    // like the dragged-to-bottom view than the initial view (the selection
+    // would have snapped back to the very top in the old behaviour).
+    let before_anything = {
+        let mut other = EditorTestHarness::new(120, 40).unwrap();
+        open_keybinding_editor(&mut other);
+        other.screen_to_string()
+    };
+    assert_ne!(
+        before_anything, after_wheel,
+        "Wheel after drag must NOT snap the viewport back to the start"
     );
 }
 

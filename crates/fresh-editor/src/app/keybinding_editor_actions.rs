@@ -154,14 +154,17 @@ impl Editor {
 
         match mouse_event.kind {
             MouseEventKind::ScrollUp => {
-                // Scroll the table
+                // Scroll the viewport without touching selection. Coupling
+                // wheel to selection meant any prior scrollbar drag snapped
+                // back via `ensure_visible` on the next wheel tick. Three
+                // rows per tick matches the settings modal.
                 if editor.edit_dialog.is_none() && !editor.showing_confirm_dialog {
-                    editor.select_prev();
+                    editor.scroll.scroll_by(-3);
                 }
             }
             MouseEventKind::ScrollDown => {
                 if editor.edit_dialog.is_none() && !editor.showing_confirm_dialog {
-                    editor.select_next();
+                    editor.scroll.scroll_by(3);
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
