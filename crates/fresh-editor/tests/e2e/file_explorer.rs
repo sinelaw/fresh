@@ -3471,3 +3471,172 @@ fn test_file_explorer_side_workspace_serialization() {
     // Save the workspace and reload
     harness.editor_mut().save_workspace().unwrap();
 }
+
+// ----- Context menu: duplicate / copy path (issue #1576) -----
+
+/// Duplicate the selected file: a sibling named "<stem> copy.<ext>" must
+/// appear on disk after invoking the action.
+#[test]
+fn test_file_explorer_duplicate_file_creates_copy_sibling() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("alpha.txt"), "hello").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("alpha.txt").unwrap();
+
+    // Move selection from the (auto-expanded) root onto alpha.txt.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().file_explorer_duplicate();
+    harness
+        .wait_until(|h| h.editor().working_dir().join("alpha copy.txt").exists())
+        .unwrap();
+
+    let original = project_root.join("alpha.txt");
+    let copy = project_root.join("alpha copy.txt");
+    assert!(original.exists(), "original alpha.txt must remain");
+    assert!(copy.exists(), "duplicate alpha copy.txt must exist");
+    assert_eq!(
+        fs::read_to_string(&copy).unwrap(),
+        fs::read_to_string(&original).unwrap(),
+        "duplicate's contents must match the source"
+    );
+}
+
+/// Duplicating when "<stem> copy.<ext>" already exists must pick the next
+/// numbered name ("<stem> copy 2.<ext>") rather than overwriting.
+#[test]
+fn test_file_explorer_duplicate_increments_when_copy_exists() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("alpha.txt"), "hello").unwrap();
+    fs::write(project_root.join("alpha copy.txt"), "old copy").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("alpha.txt").unwrap();
+
+    // Tree order is alphabetical, so two Downs land on "alpha.txt"
+    // ("alpha copy.txt" sorts first).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().file_explorer_duplicate();
+    harness
+        .wait_until(|h| h.editor().working_dir().join("alpha copy 2.txt").exists())
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(project_root.join("alpha copy.txt")).unwrap(),
+        "old copy",
+        "the pre-existing 'alpha copy.txt' must NOT be overwritten"
+    );
+    assert_eq!(
+        fs::read_to_string(project_root.join("alpha copy 2.txt")).unwrap(),
+        "hello",
+        "the new duplicate must contain alpha.txt's content"
+    );
+}
+
+/// Duplicating a directory must recursively copy its contents under a new
+/// "<name> copy" sibling.
+#[test]
+fn test_file_explorer_duplicate_directory_copies_recursively() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::create_dir(project_root.join("src")).unwrap();
+    fs::write(project_root.join("src/main.rs"), "fn main() {}").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("src").unwrap();
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().file_explorer_duplicate();
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .working_dir()
+                .join("src copy")
+                .join("main.rs")
+                .exists()
+        })
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(project_root.join("src copy/main.rs")).unwrap(),
+        "fn main() {}",
+        "duplicated directory must contain a copy of main.rs"
+    );
+}
+
+/// Copy Full Path puts the absolute path of the selected node on the
+/// internal clipboard.
+#[test]
+fn test_file_explorer_copy_full_path() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join("alpha.txt"), "hello").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("alpha.txt").unwrap();
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Force internal-only clipboard so the test doesn't read/write the
+    // host's real clipboard and stays parallel-safe in CI.
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    harness.editor_mut().file_explorer_copy_path(false);
+
+    let copied = harness.editor().clipboard_content_for_test();
+    let expected = project_root.join("alpha.txt");
+    assert_eq!(
+        copied,
+        expected.to_string_lossy(),
+        "Copy Full Path must put the absolute path on the clipboard"
+    );
+}
+
+/// Copy Relative Path strips the project root prefix.
+#[test]
+fn test_file_explorer_copy_relative_path() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::create_dir(project_root.join("src")).unwrap();
+    fs::write(project_root.join("src/main.rs"), "fn main() {}").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("src").unwrap();
+
+    // Down once to select "src", expand, Down again to land on "main.rs".
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_file_explorer_item("main.rs").unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    harness.editor_mut().file_explorer_copy_path(true);
+
+    let copied = harness.editor().clipboard_content_for_test();
+    let expected = std::path::Path::new("src").join("main.rs");
+    assert_eq!(
+        copied,
+        expected.to_string_lossy(),
+        "Copy Relative Path must produce a project-relative path"
+    );
+}

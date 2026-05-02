@@ -2845,6 +2845,9 @@ pub fn action_to_events(
         | Action::FileExplorerCopy
         | Action::FileExplorerCut
         | Action::FileExplorerPaste
+        | Action::FileExplorerDuplicate
+        | Action::FileExplorerCopyFullPath
+        | Action::FileExplorerCopyRelativePath
         | Action::FileExplorerExtendSelectionUp
         | Action::FileExplorerExtendSelectionDown
         | Action::FileExplorerToggleSelect

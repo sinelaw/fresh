@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_BACKGROUND_FILE: &str = "scripts/landscape-wide.txt";
 
-pub const FILE_EXPLORER_CONTEXT_MENU_WIDTH: u16 = 18;
+pub const FILE_EXPLORER_CONTEXT_MENU_WIDTH: u16 = 24;
 
 /// Unique identifier for a buffer group
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -745,7 +745,10 @@ pub enum FileExplorerContextMenuItem {
     Cut,
     Copy,
     Paste,
+    Duplicate,
     Delete,
+    CopyFullPath,
+    CopyRelativePath,
 }
 
 impl FileExplorerContextMenuItem {
@@ -757,16 +760,33 @@ impl FileExplorerContextMenuItem {
             Self::Cut,
             Self::Copy,
             Self::Paste,
+            Self::Duplicate,
             Self::Delete,
+            Self::CopyFullPath,
+            Self::CopyRelativePath,
         ]
     }
 
     pub fn multi_selection() -> &'static [Self] {
-        &[Self::Cut, Self::Copy, Self::Paste, Self::Delete]
+        &[
+            Self::Cut,
+            Self::Copy,
+            Self::Paste,
+            Self::Duplicate,
+            Self::Delete,
+            Self::CopyFullPath,
+            Self::CopyRelativePath,
+        ]
     }
 
     pub fn root_single_selection() -> &'static [Self] {
-        &[Self::NewFile, Self::NewDirectory, Self::Paste]
+        &[
+            Self::NewFile,
+            Self::NewDirectory,
+            Self::Paste,
+            Self::CopyFullPath,
+            Self::CopyRelativePath,
+        ]
     }
 
     pub fn label(&self) -> String {
@@ -777,7 +797,10 @@ impl FileExplorerContextMenuItem {
             Self::Cut => t!("explorer.context.cut").to_string(),
             Self::Copy => t!("explorer.context.copy").to_string(),
             Self::Paste => t!("explorer.context.paste").to_string(),
+            Self::Duplicate => t!("explorer.context.duplicate").to_string(),
             Self::Delete => t!("explorer.context.delete").to_string(),
+            Self::CopyFullPath => t!("explorer.context.copy_full_path").to_string(),
+            Self::CopyRelativePath => t!("explorer.context.copy_relative_path").to_string(),
         }
     }
 }

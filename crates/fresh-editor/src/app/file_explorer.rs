@@ -1586,6 +1586,136 @@ impl Editor {
             }
         }
     }
+
+    /// Duplicate the selected file/directory in-place, naming the new copy
+    /// using the same `name copy[.ext]` convention as Paste's auto-rename.
+    ///
+    /// Multi-selection duplicates each item independently; the project
+    /// root is skipped (you can't duplicate the project root itself).
+    pub fn file_explorer_duplicate(&mut self) {
+        let Some(explorer) = &self.file_explorer else {
+            return;
+        };
+        let root_id = explorer.tree().root_id();
+        let selected_ids = explorer.effective_selection();
+        let sources: Vec<PathBuf> = selected_ids
+            .iter()
+            .filter(|&&id| id != root_id)
+            .filter_map(|&id| explorer.tree().get_node(id).map(|n| n.entry.path.clone()))
+            .collect();
+
+        if sources.is_empty() {
+            self.set_status_message(t!("explorer.cannot_duplicate_root").to_string());
+            return;
+        }
+
+        // Resolve destination paths up front so we don't observe an
+        // intermediate filesystem state for siblings duplicated in the
+        // same parent directory.
+        let mut ops: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(sources.len());
+        for src in &sources {
+            let Some(parent) = src.parent() else {
+                continue;
+            };
+            let Some(file_name) = src.file_name() else {
+                continue;
+            };
+            let dst = unique_paste_name(
+                &*self.authority.filesystem,
+                parent,
+                &file_name.to_string_lossy(),
+            );
+            ops.push((src.clone(), dst));
+        }
+
+        if ops.is_empty() {
+            return;
+        }
+
+        let mut succeeded: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(ops.len());
+        let mut first_error: Option<std::io::Error> = None;
+        for (src, dst) in ops {
+            match self.paste_one_fs_op(&src, &dst, false) {
+                PasteOpOutcome::Ok => succeeded.push((src, dst)),
+                PasteOpOutcome::SourceRemovalFailed { .. } => {
+                    // is_cut=false above; this variant is unreachable for copies.
+                    unreachable!("paste_one_fs_op returned SourceRemovalFailed for a non-cut op");
+                }
+                PasteOpOutcome::Failed(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
+            }
+        }
+
+        if !succeeded.is_empty() {
+            let (first_src, first_dst) = succeeded[0].clone();
+            self.refresh_tree_after_paste(&first_src, &first_dst, false);
+        }
+
+        let msg = if let Some(e) = &first_error {
+            t!("explorer.error_copying", error = e.to_string()).to_string()
+        } else if succeeded.len() == 1 {
+            let name = succeeded[0]
+                .1
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            t!("explorer.duplicated", name = &name).to_string()
+        } else {
+            t!("explorer.duplicated_n", count = succeeded.len()).to_string()
+        };
+        self.set_status_message(msg);
+        self.key_context = KeyContext::FileExplorer;
+    }
+
+    /// Copy the selected node's path(s) to the clipboard.
+    ///
+    /// `relative=true` strips `working_dir` from each path when it is a
+    /// prefix; otherwise the absolute path is used. Multiple selections
+    /// are joined by newlines, in the same visible order shown by the
+    /// tree, so the result is friendly for pasting into a shell or list.
+    pub fn file_explorer_copy_path(&mut self, relative: bool) {
+        let Some(explorer) = &self.file_explorer else {
+            return;
+        };
+        let selected_ids = explorer.effective_selection();
+        let paths: Vec<PathBuf> = selected_ids
+            .iter()
+            .filter_map(|&id| explorer.tree().get_node(id).map(|n| n.entry.path.clone()))
+            .collect();
+
+        if paths.is_empty() {
+            self.set_status_message(t!("clipboard.no_file_path").to_string());
+            return;
+        }
+
+        let working_dir = self.working_dir.clone();
+        let rendered: Vec<String> = paths
+            .iter()
+            .map(|p| {
+                if relative {
+                    p.strip_prefix(&working_dir)
+                        .unwrap_or(p)
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    p.to_string_lossy().into_owned()
+                }
+            })
+            .collect();
+
+        let joined = rendered.join("\n");
+        self.clipboard.copy(joined.clone());
+
+        let msg = if rendered.len() == 1 {
+            t!("clipboard.copied_path", path = &rendered[0]).to_string()
+        } else {
+            t!("clipboard.copied_paths_n", count = rendered.len()).to_string()
+        };
+        self.set_status_message(msg);
+    }
 }
 
 /// Generate a unique non-conflicting paste name in dst_dir for a file/dir named `name`.

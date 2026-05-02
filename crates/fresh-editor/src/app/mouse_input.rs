@@ -2763,7 +2763,10 @@ impl Editor {
             FileExplorerContextMenuItem::Cut => self.file_explorer_cut(),
             FileExplorerContextMenuItem::Copy => self.file_explorer_copy(),
             FileExplorerContextMenuItem::Paste => self.file_explorer_paste(),
+            FileExplorerContextMenuItem::Duplicate => self.file_explorer_duplicate(),
             FileExplorerContextMenuItem::Delete => self.file_explorer_delete(),
+            FileExplorerContextMenuItem::CopyFullPath => self.file_explorer_copy_path(false),
+            FileExplorerContextMenuItem::CopyRelativePath => self.file_explorer_copy_path(true),
         }
     }
 
