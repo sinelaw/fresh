@@ -2105,4 +2105,69 @@ mod tests {
             brace_cat,
         );
     }
+
+    /// The closing `}` of a `${…}` template substitution and the closing
+    /// backtick of the surrounding template literal must keep template
+    /// string colouring — not inherit the `@variable` highlight from the
+    /// substitution's expression. Tree-sitter-highlight emits one
+    /// HighlightEnd event per started highlight; if the editor's
+    /// span-flattening logic doesn't pop the inner `@variable` correctly
+    /// when the substitution closes, the variable colour bleeds across
+    /// `}` and the trailing `\`` until the next sibling capture (here,
+    /// the `;` operator).
+    #[test]
+    fn test_javascript_template_substitution_closing_tokens_are_string() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("tmpl.js"), None, &registry);
+
+        // Minimal template literal: `${name}` — wrapped in a statement so
+        // the parser sees a complete program.
+        let source = "const x = `${name}`;\n";
+        let buffer = Buffer::from_str(source, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let _ = engine.highlight_viewport(&buffer, 0, source.len(), &theme, 0);
+
+        // Locate the closing `}` of the substitution and the closing
+        // backtick of the template literal.
+        let close_brace = source
+            .find("}`")
+            .expect("locate substitution closing brace");
+        let close_backtick = close_brace + 1;
+
+        // Sanity: the inner identifier `name` is correctly tagged as a
+        // variable (this guards us against an unrelated regression where
+        // the entire template gets typed wrong).
+        let name_pos = source.find("name").expect("locate identifier");
+        let name_cat = engine.category_at_position(name_pos);
+        assert_eq!(
+            name_cat,
+            Some(HighlightCategory::Variable),
+            "substitution identifier should be Variable (got {:?})",
+            name_cat,
+        );
+
+        // The closing `}` and `` ` `` live inside the surrounding
+        // `template_string` node, so tree-sitter assigns them the
+        // `@string` capture. They must surface as String here — not
+        // as Variable (the previous symptom of the bleed) and not as
+        // None (which would make the editor render them with the
+        // default foreground colour, equally wrong).
+        let brace_cat = engine.category_at_position(close_brace);
+        assert_eq!(
+            brace_cat,
+            Some(HighlightCategory::String),
+            "closing }} of ${{…}} must be String (got {:?})",
+            brace_cat,
+        );
+        let backtick_cat = engine.category_at_position(close_backtick);
+        assert_eq!(
+            backtick_cat,
+            Some(HighlightCategory::String),
+            "closing backtick of template literal must be String \
+             (got {:?})",
+            backtick_cat,
+        );
+    }
 }

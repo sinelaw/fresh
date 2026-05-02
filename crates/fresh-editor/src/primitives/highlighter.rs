@@ -154,7 +154,20 @@ impl Highlighter {
         // Extract source bytes from buffer
         let source = buffer.slice_bytes(parse_range.clone());
 
-        // Highlight the source - store categories for theme-independent caching
+        // Highlight the source - store categories for theme-independent caching.
+        //
+        // Tree-sitter-highlight emits highlights as a *stack*: outer
+        // captures wrap inner ones, and a `HighlightEnd` event pops back
+        // to the enclosing highlight. We have to keep that stack
+        // intact — collapsing it to a single `Option` (as we used to)
+        // strips the parent highlight off any `Source` event that
+        // follows a closing inner capture. Concrete failure: in
+        // `` `${expr}` ``, the @string capture wraps the whole template
+        // and @variable captures `expr`. When @variable ends, the
+        // closing `}` and `` ` `` are still inside @string, but a
+        // single-slot tracker would mark them as "no highlight" and
+        // the editor would render them with the surrounding default
+        // foreground (the trailing variable colour, in practice).
         let mut cached_spans = Vec::new();
         match self.ts_highlighter.highlight(
             &self.config,
@@ -163,7 +176,7 @@ impl Highlighter {
             |_| None, // injection callback
         ) {
             Ok(highlights) => {
-                let mut current_highlight: Option<usize> = None;
+                let mut highlight_stack: Vec<usize> = Vec::new();
 
                 for event in highlights {
                     match event {
@@ -171,7 +184,7 @@ impl Highlighter {
                             let span_start = parse_start + start;
                             let span_end = parse_start + end;
 
-                            if let Some(highlight_idx) = current_highlight {
+                            if let Some(&highlight_idx) = highlight_stack.last() {
                                 if let Some(category) =
                                     self.language.highlight_category(highlight_idx)
                                 {
@@ -183,10 +196,10 @@ impl Highlighter {
                             }
                         }
                         Ok(HighlightEvent::HighlightStart(s)) => {
-                            current_highlight = Some(s.0);
+                            highlight_stack.push(s.0);
                         }
                         Ok(HighlightEvent::HighlightEnd) => {
-                            current_highlight = None;
+                            highlight_stack.pop();
                         }
                         Err(e) => {
                             tracing::warn!("Highlight error: {}", e);
