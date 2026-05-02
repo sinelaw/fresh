@@ -1033,6 +1033,29 @@ impl StdFileSystem {
         (euid, groups)
     }
 
+    /// Ask the kernel whether the effective user can write to `path`.
+    ///
+    /// Uses `faccessat(AT_FDCWD, path, W_OK, AT_EACCESS)`, which respects POSIX
+    /// ACLs, capabilities, and read-only mounts — all of which a manual mode-bit
+    /// check would miss. Returns `None` if the path can't be encoded as a
+    /// C string; callers should fall back to mode-bit checks in that case.
+    #[cfg(unix)]
+    fn kernel_writable(path: &Path) -> Option<bool> {
+        use std::os::unix::ffi::OsStrExt;
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+        // SAFETY: c_path is a valid NUL-terminated C string for the lifetime of
+        // this call; AT_FDCWD, W_OK and AT_EACCESS are well-defined constants.
+        let rc = unsafe {
+            libc::faccessat(
+                libc::AT_FDCWD,
+                c_path.as_ptr(),
+                libc::W_OK,
+                libc::AT_EACCESS,
+            )
+        };
+        Some(rc == 0)
+    }
+
     /// Build FileMetadata from std::fs::Metadata
     fn build_metadata(path: &Path, meta: &std::fs::Metadata) -> FileMetadata {
         #[cfg(unix)]
@@ -1041,9 +1064,16 @@ impl StdFileSystem {
             let file_uid = meta.uid();
             let file_gid = meta.gid();
             let permissions = FilePermissions::from_std(meta.permissions());
-            let (euid, user_groups) = Self::current_user_groups();
-            let is_readonly =
-                permissions.is_readonly_for_user(euid, file_uid, file_gid, &user_groups);
+            // Prefer the kernel's view (respects POSIX ACLs, capabilities,
+            // read-only mounts); fall back to mode bits if the syscall can't
+            // be issued for this path.
+            let is_readonly = match Self::kernel_writable(path) {
+                Some(writable) => !writable,
+                None => {
+                    let (euid, user_groups) = Self::current_user_groups();
+                    permissions.is_readonly_for_user(euid, file_uid, file_gid, &user_groups)
+                }
+            };
             FileMetadata {
                 size: meta.len(),
                 modified: meta.modified().ok(),
@@ -2227,5 +2257,149 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
+    }
+
+    /// `is_writable()` must agree with the kernel's `faccessat(W_OK, AT_EACCESS)`
+    /// on a regular, writable file owned by the current user. This pins down the
+    /// contract that we delegate writability to the kernel — which is what makes
+    /// the fix for #1765 (POSIX ACLs ignored) correct: the kernel honours ACLs,
+    /// capabilities, and read-only mounts, while a manual mode-bit walk does not.
+    #[test]
+    #[cfg(unix)]
+    fn test_is_writable_matches_kernel_for_owner_writable() {
+        use std::os::unix::ffi::OsStrExt;
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("writable.txt");
+        fs.write_file(&path, b"x").unwrap();
+        fs.set_permissions(&path, &FilePermissions::from_mode(0o600))
+            .unwrap();
+
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let kernel_writable = unsafe {
+            libc::faccessat(
+                libc::AT_FDCWD,
+                c_path.as_ptr(),
+                libc::W_OK,
+                libc::AT_EACCESS,
+            )
+        } == 0;
+        assert!(
+            kernel_writable,
+            "owner-writable file must be writable per kernel"
+        );
+        assert_eq!(fs.is_writable(&path), kernel_writable);
+    }
+
+    /// Regression test for #1765: a POSIX ACL granting write access to the
+    /// effective user must be honoured by `is_writable`, even when the inode's
+    /// "other" mode bits would say the file is read-only.
+    ///
+    /// The setup needs three things that aren't available in vanilla CI:
+    ///   * `setfacl` (acl userspace)
+    ///   * the ability to chown the test file to a foreign uid (root)
+    ///   * a non-root uid the test child can switch to (we use `nobody`, 65534)
+    ///
+    /// On Linux test runners that have all three, this exercises the exact
+    /// scenario from the bug report: a file owned by uid 999, mode 0o600,
+    /// with a named-user ACL granting our user rw — fixed code reports the
+    /// file writable, the previous mode-bits-only code reported it read-only.
+    ///
+    /// Run manually with:
+    ///   sudo cargo test -p fresh-editor --features runtime \
+    ///       test_is_writable_respects_posix_acl -- --ignored --nocapture
+    #[test]
+    #[ignore = "requires root + setfacl; see test docstring"]
+    #[cfg(target_os = "linux")]
+    fn test_is_writable_respects_posix_acl() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::process::Command;
+
+        // SAFETY: geteuid is always safe.
+        if unsafe { libc::geteuid() } != 0 {
+            panic!("test must be run as root (need to chown to a foreign uid)");
+        }
+        let setfacl_ok = Command::new("setfacl").arg("--version").output().is_ok();
+        assert!(setfacl_ok, "setfacl must be installed");
+
+        // The non-root uid we drop to in the child. 65534 is the conventional
+        // "nobody" uid on Linux.
+        let test_uid: libc::uid_t = 65534;
+        let test_gid: libc::gid_t = 65534;
+        // A different "foreign" uid for the file's owner so the test user
+        // is neither owner nor a group member — i.e. matches against the
+        // "other" mode bits, which are 0 here.
+        let foreign_uid: libc::uid_t = 9999;
+        let foreign_gid: libc::gid_t = 9999;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        // Ensure the child can traverse into the test dir.
+        std::fs::set_permissions(
+            temp_dir.path(),
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+        )
+        .unwrap();
+
+        let file = temp_dir.path().join("acl_test.txt");
+        std::fs::write(&file, b"hi").unwrap();
+
+        let c_file = std::ffi::CString::new(file.as_os_str().as_bytes()).unwrap();
+        // SAFETY: c_file is a NUL-terminated path; the uids/gids are valid.
+        let r = unsafe { libc::chown(c_file.as_ptr(), foreign_uid, foreign_gid) };
+        assert_eq!(r, 0, "chown failed: {}", io::Error::last_os_error());
+        std::fs::set_permissions(
+            &file,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600),
+        )
+        .unwrap();
+
+        let acl_status = Command::new("setfacl")
+            .args(["-m", &format!("u:{test_uid}:rw")])
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(
+            acl_status.success(),
+            "setfacl failed (does the filesystem support ACLs?)",
+        );
+
+        // Fork + setuid in the child. Keep the child's work to bare syscalls
+        // and exit via _exit (skipping atexit handlers) to stay safe in a
+        // multi-threaded test runner.
+        // SAFETY: fork is allowed, but the child must avoid touching shared
+        // mutable state. We only call setgid/setuid + a single metadata read,
+        // then _exit.
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            panic!("fork failed: {}", io::Error::last_os_error());
+        }
+        if pid == 0 {
+            // Child
+            // SAFETY: setgid/setuid are async-signal-safe.
+            if unsafe { libc::setgid(test_gid) } != 0 {
+                unsafe { libc::_exit(2) };
+            }
+            if unsafe { libc::setuid(test_uid) } != 0 {
+                unsafe { libc::_exit(3) };
+            }
+            let writable = StdFileSystem.is_writable(&file);
+            unsafe { libc::_exit(if writable { 0 } else { 1 }) };
+        }
+
+        // Parent
+        let mut status: libc::c_int = 0;
+        // SAFETY: pid is a valid child; status is a writable c_int.
+        let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert!(r > 0, "waitpid failed: {}", io::Error::last_os_error());
+        let exited_normally = (status & 0x7f) == 0;
+        let exit_code = (status >> 8) & 0xff;
+        assert!(
+            exited_normally,
+            "child terminated abnormally; status={status}"
+        );
+        assert_eq!(
+            exit_code, 0,
+            "child reported file NOT writable (exit_code={exit_code}); ACL was ignored",
+        );
     }
 }
