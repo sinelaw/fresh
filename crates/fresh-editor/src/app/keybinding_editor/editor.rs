@@ -81,21 +81,8 @@ pub struct KeybindingEditor {
     /// Layout info for mouse hit testing (updated during render)
     pub layout: KeybindingEditorLayout,
 
-    /// Active drag of the table scrollbar thumb.
-    ///
-    /// Captured on press inside the scrollbar rect — `start_row` is the
-    /// track-relative row the user pressed, `start_offset` is the scroll
-    /// offset at that moment. `drag_to_offset` uses these to keep the
-    /// cursor pinned to the same spot on the thumb during a drag.
-    pub scrollbar_drag: Option<ScrollbarDrag>,
-}
-
-/// In-flight scrollbar drag state. `start_row` is in track coordinates
-/// (0 = top of the scrollbar track).
-#[derive(Debug, Clone, Copy)]
-pub struct ScrollbarDrag {
-    pub start_row: usize,
-    pub start_offset: usize,
+    /// Mouse interaction state for the table scrollbar (press/drag/release).
+    pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
 }
 
 impl KeybindingEditor {
@@ -204,7 +191,7 @@ impl KeybindingEditor {
             display_rows: Vec::new(),
             collapsed_sections,
             layout: KeybindingEditorLayout::default(),
-            scrollbar_drag: None,
+            scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse::default(),
         };
 
         editor.apply_filters();

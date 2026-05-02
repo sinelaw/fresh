@@ -167,6 +167,75 @@ impl ScrollbarState {
     }
 }
 
+/// In-flight scrollbar drag state captured on press. `start_row` is in
+/// track coordinates (0 = top of the track).
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollbarDrag {
+    pub start_row: usize,
+    pub start_offset: usize,
+}
+
+/// Shared press/drag/release state for a modal scrollbar. Owners hold one
+/// of these alongside their scroll state and forward mouse events to it
+/// via [`press`](Self::press), [`drag`](Self::drag), [`release`](Self::release).
+///
+/// All three methods return `Some(new_offset)` when the caller should
+/// update its scroll position, or `None` when the event isn't ours to
+/// handle (press outside the track, drag without a prior press, etc.).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScrollbarMouse {
+    pub drag: Option<ScrollbarDrag>,
+}
+
+impl ScrollbarMouse {
+    /// Handle a left-button press. Returns `Some(new_offset)` when the
+    /// press lands inside `track`. A press on the thumb captures the
+    /// anchor without moving the viewport; a press on the track outside
+    /// the thumb recentres the thumb on the cursor before capturing.
+    pub fn press(
+        &mut self,
+        state: ScrollbarState,
+        track: Rect,
+        col: u16,
+        row: u16,
+    ) -> Option<usize> {
+        if !super::point_in_rect(track, col, row) {
+            return None;
+        }
+        let track_height = track.height as usize;
+        let click_row = (row.saturating_sub(track.y) as usize).min(track_height);
+
+        let new_offset = if state.is_thumb_row(track_height, click_row) {
+            state.scroll_offset
+        } else {
+            let (_, thumb_size) = state.thumb_geometry(track_height);
+            let aim_top = click_row.saturating_sub(thumb_size / 2);
+            state.offset_for_thumb_top(track_height, aim_top)
+        };
+
+        self.drag = Some(ScrollbarDrag {
+            start_row: click_row,
+            start_offset: new_offset,
+        });
+        Some(new_offset)
+    }
+
+    /// Handle a left-button drag. Returns `Some(new_offset)` if a drag is
+    /// active (i.e. there was a prior `press`), preserving the cursor's
+    /// position within the thumb.
+    pub fn drag(&mut self, state: ScrollbarState, track: Rect, row: u16) -> Option<usize> {
+        let drag = self.drag?;
+        let track_height = track.height as usize;
+        let current_row = (row.saturating_sub(track.y) as usize).min(track_height);
+        Some(state.drag_to_offset(track_height, drag.start_row, drag.start_offset, current_row))
+    }
+
+    /// Handle a left-button release. Ends any active drag.
+    pub fn release(&mut self) {
+        self.drag = None;
+    }
+}
+
 /// Colors for the scrollbar
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollbarColors {
@@ -471,5 +540,84 @@ mod tests {
             state.offset_for_thumb_top(track, max_thumb_top + 100),
             200 - 50
         );
+    }
+
+    fn track_rect(height: u16) -> Rect {
+        Rect::new(50, 10, 1, height)
+    }
+
+    #[test]
+    fn test_mouse_press_outside_track_returns_none() {
+        let mut mouse = ScrollbarMouse::default();
+        let state = ScrollbarState::new(200, 50, 75);
+        let track = track_rect(20);
+        // x outside
+        assert_eq!(mouse.press(state, track, 0, 15), None);
+        // y above
+        assert_eq!(mouse.press(state, track, 50, 0), None);
+        // y below (track is rows 10..30)
+        assert_eq!(mouse.press(state, track, 50, 30), None);
+        assert!(mouse.drag.is_none());
+    }
+
+    #[test]
+    fn test_mouse_press_on_thumb_does_not_jump() {
+        let mut mouse = ScrollbarMouse::default();
+        let state = ScrollbarState::new(200, 50, 75);
+        let track = track_rect(20);
+        let (thumb_top, _) = state.thumb_geometry(track.height as usize);
+        let press_screen_row = track.y + thumb_top as u16 + 1;
+        let returned = mouse.press(state, track, track.x, press_screen_row);
+        assert_eq!(returned, Some(75), "press on thumb must not move offset");
+        let drag = mouse.drag.expect("anchor captured");
+        assert_eq!(drag.start_offset, 75);
+    }
+
+    #[test]
+    fn test_mouse_press_on_track_recenters_thumb() {
+        let mut mouse = ScrollbarMouse::default();
+        let state = ScrollbarState::new(200, 50, 0); // thumb at top
+        let track = track_rect(20);
+        // Click way down the track (outside the thumb).
+        let returned = mouse.press(state, track, track.x, track.y + 18).unwrap();
+        // The new offset should place the thumb so its centre is near
+        // row 18: that means the new thumb_top is at 18 - thumb_size/2.
+        let placed = ScrollbarState::new(200, 50, returned);
+        let (got_top, thumb_size) = placed.thumb_geometry(track.height as usize);
+        let want_top = (18_usize).saturating_sub(thumb_size / 2);
+        assert!(
+            got_top.abs_diff(want_top) <= 1,
+            "thumb landed at {got_top}, expected ~{want_top}"
+        );
+    }
+
+    #[test]
+    fn test_mouse_drag_without_press_returns_none() {
+        let mut mouse = ScrollbarMouse::default();
+        let state = ScrollbarState::new(200, 50, 0);
+        assert_eq!(mouse.drag(state, track_rect(20), 15), None);
+    }
+
+    #[test]
+    fn test_mouse_drag_after_press_follows_cursor() {
+        let mut mouse = ScrollbarMouse::default();
+        let state = ScrollbarState::new(200, 50, 0);
+        let track = track_rect(20);
+        // Press at the thumb top.
+        let _ = mouse.press(state, track, track.x, track.y);
+        // Drag down a few rows.
+        let new_offset = mouse.drag(state, track, track.y + 5).unwrap();
+        assert!(new_offset > 0, "drag down should increase offset");
+    }
+
+    #[test]
+    fn test_mouse_release_clears_drag() {
+        let mut mouse = ScrollbarMouse::default();
+        let state = ScrollbarState::new(200, 50, 0);
+        let track = track_rect(20);
+        let _ = mouse.press(state, track, track.x, track.y);
+        assert!(mouse.drag.is_some());
+        mouse.release();
+        assert!(mouse.drag.is_none());
     }
 }
