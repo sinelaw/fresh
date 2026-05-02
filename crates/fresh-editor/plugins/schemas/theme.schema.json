@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ThemeFile",
-  "description": "Serializable theme definition (matches JSON structure)",
+  "description": "Serializable theme definition (matches JSON structure)\n\nThe five color sections (`editor`, `ui`, `search`, `diagnostic`, `syntax`)\nare all optional. Every leaf field within each section already has a\n`#[serde(default = \"…\")]` fallback, so a theme JSON only needs to specify\nthe colors it cares about. This matches the minimal example shipped in\n`docs/features/themes.md` and unblocks user-authored themes that override\njust `editor`/`syntax` (issue #1281).",
   "type": "object",
   "properties": {
     "name": {
@@ -10,32 +10,420 @@
     },
     "editor": {
       "description": "Editor area colors",
-      "$ref": "#/$defs/EditorColors"
+      "$ref": "#/$defs/EditorColors",
+      "default": {
+        "bg": [
+          30,
+          30,
+          30
+        ],
+        "fg": [
+          212,
+          212,
+          212
+        ],
+        "cursor": [
+          255,
+          255,
+          255
+        ],
+        "inactive_cursor": "DarkGray",
+        "selection_bg": [
+          38,
+          79,
+          120
+        ],
+        "current_line_bg": [
+          40,
+          40,
+          40
+        ],
+        "line_number_fg": [
+          100,
+          100,
+          100
+        ],
+        "line_number_bg": [
+          30,
+          30,
+          30
+        ],
+        "diff_add_bg": [
+          35,
+          60,
+          35
+        ],
+        "diff_remove_bg": [
+          70,
+          35,
+          35
+        ],
+        "diff_add_highlight_bg": null,
+        "diff_remove_highlight_bg": null,
+        "diff_modify_bg": [
+          40,
+          38,
+          30
+        ],
+        "ruler_bg": [
+          50,
+          50,
+          50
+        ],
+        "whitespace_indicator_fg": [
+          70,
+          70,
+          70
+        ],
+        "after_eof_bg": null
+      }
     },
     "ui": {
       "description": "UI element colors (tabs, menus, status bar, etc.)",
-      "$ref": "#/$defs/UiColors"
+      "$ref": "#/$defs/UiColors",
+      "default": {
+        "tab_active_fg": "Yellow",
+        "tab_active_bg": "Blue",
+        "tab_inactive_fg": "White",
+        "tab_inactive_bg": "DarkGray",
+        "tab_separator_bg": "Black",
+        "tab_close_hover_fg": [
+          255,
+          100,
+          100
+        ],
+        "tab_hover_bg": [
+          70,
+          70,
+          75
+        ],
+        "menu_bg": [
+          60,
+          60,
+          65
+        ],
+        "menu_fg": [
+          220,
+          220,
+          220
+        ],
+        "menu_active_bg": [
+          60,
+          60,
+          60
+        ],
+        "menu_active_fg": [
+          255,
+          255,
+          255
+        ],
+        "menu_dropdown_bg": [
+          50,
+          50,
+          50
+        ],
+        "menu_dropdown_fg": [
+          220,
+          220,
+          220
+        ],
+        "menu_highlight_bg": [
+          70,
+          130,
+          180
+        ],
+        "menu_highlight_fg": [
+          255,
+          255,
+          255
+        ],
+        "menu_border_fg": [
+          100,
+          100,
+          100
+        ],
+        "menu_separator_fg": [
+          80,
+          80,
+          80
+        ],
+        "menu_hover_bg": [
+          55,
+          55,
+          55
+        ],
+        "menu_hover_fg": [
+          255,
+          255,
+          255
+        ],
+        "menu_disabled_fg": [
+          100,
+          100,
+          100
+        ],
+        "menu_disabled_bg": [
+          50,
+          50,
+          50
+        ],
+        "status_bar_fg": "White",
+        "status_bar_bg": "DarkGray",
+        "status_palette_fg": null,
+        "status_palette_bg": null,
+        "status_lsp_on_fg": null,
+        "status_lsp_on_bg": null,
+        "prompt_fg": "White",
+        "prompt_bg": "Black",
+        "prompt_selection_fg": "White",
+        "prompt_selection_bg": [
+          58,
+          79,
+          120
+        ],
+        "popup_border_fg": "Gray",
+        "popup_bg": [
+          30,
+          30,
+          30
+        ],
+        "popup_selection_bg": [
+          58,
+          79,
+          120
+        ],
+        "popup_selection_fg": [
+          255,
+          255,
+          255
+        ],
+        "popup_text_fg": "White",
+        "suggestion_bg": [
+          30,
+          30,
+          30
+        ],
+        "suggestion_selected_bg": [
+          58,
+          79,
+          120
+        ],
+        "help_bg": "Black",
+        "help_fg": "White",
+        "help_key_fg": "Cyan",
+        "help_separator_fg": "DarkGray",
+        "help_indicator_fg": "Red",
+        "help_indicator_bg": "Black",
+        "inline_code_bg": "DarkGray",
+        "split_separator_fg": [
+          100,
+          100,
+          100
+        ],
+        "split_separator_hover_fg": [
+          100,
+          149,
+          237
+        ],
+        "scrollbar_track_fg": "DarkGray",
+        "scrollbar_thumb_fg": "Gray",
+        "scrollbar_track_hover_fg": "Gray",
+        "scrollbar_thumb_hover_fg": "White",
+        "compose_margin_bg": [
+          18,
+          18,
+          18
+        ],
+        "semantic_highlight_bg": [
+          60,
+          60,
+          80
+        ],
+        "terminal_bg": "Default",
+        "terminal_fg": "Default",
+        "status_warning_indicator_bg": [
+          181,
+          137,
+          0
+        ],
+        "status_warning_indicator_fg": [
+          0,
+          0,
+          0
+        ],
+        "status_error_indicator_bg": [
+          220,
+          50,
+          47
+        ],
+        "status_error_indicator_fg": [
+          255,
+          255,
+          255
+        ],
+        "status_warning_indicator_hover_bg": [
+          211,
+          167,
+          30
+        ],
+        "status_warning_indicator_hover_fg": [
+          0,
+          0,
+          0
+        ],
+        "status_error_indicator_hover_bg": [
+          250,
+          80,
+          77
+        ],
+        "status_error_indicator_hover_fg": [
+          255,
+          255,
+          255
+        ],
+        "tab_drop_zone_bg": [
+          70,
+          130,
+          180
+        ],
+        "tab_drop_zone_border": [
+          100,
+          149,
+          237
+        ],
+        "settings_selected_bg": [
+          60,
+          60,
+          70
+        ],
+        "settings_selected_fg": [
+          255,
+          255,
+          255
+        ],
+        "file_status_added_fg": null,
+        "file_status_modified_fg": null,
+        "file_status_deleted_fg": null,
+        "file_status_renamed_fg": null,
+        "file_status_untracked_fg": null,
+        "file_status_conflicted_fg": null
+      }
     },
     "search": {
       "description": "Search result highlighting colors",
-      "$ref": "#/$defs/SearchColors"
+      "$ref": "#/$defs/SearchColors",
+      "default": {
+        "match_bg": [
+          100,
+          100,
+          20
+        ],
+        "match_fg": [
+          255,
+          255,
+          255
+        ],
+        "label_bg": [
+          199,
+          78,
+          189
+        ],
+        "label_fg": [
+          255,
+          255,
+          255
+        ]
+      }
     },
     "diagnostic": {
       "description": "LSP diagnostic colors (errors, warnings, etc.)",
-      "$ref": "#/$defs/DiagnosticColors"
+      "$ref": "#/$defs/DiagnosticColors",
+      "default": {
+        "error_fg": "Red",
+        "error_bg": [
+          60,
+          20,
+          20
+        ],
+        "warning_fg": "Yellow",
+        "warning_bg": [
+          60,
+          50,
+          0
+        ],
+        "info_fg": "Blue",
+        "info_bg": [
+          0,
+          30,
+          60
+        ],
+        "hint_fg": "Gray",
+        "hint_bg": [
+          30,
+          30,
+          30
+        ]
+      }
     },
     "syntax": {
       "description": "Syntax highlighting colors",
-      "$ref": "#/$defs/SyntaxColors"
+      "$ref": "#/$defs/SyntaxColors",
+      "default": {
+        "keyword": [
+          86,
+          156,
+          214
+        ],
+        "string": [
+          206,
+          145,
+          120
+        ],
+        "comment": [
+          106,
+          153,
+          85
+        ],
+        "function": [
+          220,
+          220,
+          170
+        ],
+        "type": [
+          78,
+          201,
+          176
+        ],
+        "variable": [
+          156,
+          220,
+          254
+        ],
+        "constant": [
+          79,
+          193,
+          255
+        ],
+        "operator": [
+          212,
+          212,
+          212
+        ],
+        "punctuation_bracket": [
+          212,
+          212,
+          212
+        ],
+        "punctuation_delimiter": [
+          212,
+          212,
+          212
+        ]
+      }
     }
   },
   "required": [
-    "name",
-    "editor",
-    "ui",
-    "search",
-    "diagnostic",
-    "syntax"
+    "name"
   ],
   "$defs": {
     "EditorColors": {

@@ -245,20 +245,66 @@ impl From<Color> for ColorDef {
 }
 
 /// Serializable theme definition (matches JSON structure)
+///
+/// The five color sections (`editor`, `ui`, `search`, `diagnostic`, `syntax`)
+/// are all optional. Every leaf field within each section already has a
+/// `#[serde(default = "…")]` fallback, so a theme JSON only needs to specify
+/// the colors it cares about. This matches the minimal example shipped in
+/// `docs/features/themes.md` and unblocks user-authored themes that override
+/// just `editor`/`syntax` (issue #1281).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFile {
     /// Theme name
     pub name: String,
     /// Editor area colors
+    #[serde(default = "default_editor_colors")]
     pub editor: EditorColors,
     /// UI element colors (tabs, menus, status bar, etc.)
+    #[serde(default = "default_ui_colors")]
     pub ui: UiColors,
     /// Search result highlighting colors
+    #[serde(default = "default_search_colors")]
     pub search: SearchColors,
     /// LSP diagnostic colors (errors, warnings, etc.)
+    #[serde(default = "default_diagnostic_colors")]
     pub diagnostic: DiagnosticColors,
     /// Syntax highlighting colors
+    #[serde(default = "default_syntax_colors")]
     pub syntax: SyntaxColors,
+}
+
+// Per-section defaults piggyback on the field-level `#[serde(default = "…")]`
+// already declared on every leaf — deserializing an empty object materializes
+// an all-defaults section without us having to restate every field here, and
+// keeps the section default in lock-step with its field defaults.
+fn default_section<T: serde::de::DeserializeOwned>(section: &'static str) -> T {
+    serde_json::from_str("{}").unwrap_or_else(|e| {
+        panic!(
+            "theme section `{}` must be default-constructible from `{{}}` \
+             (every field needs `#[serde(default = ...)]`): {}",
+            section, e
+        )
+    })
+}
+
+fn default_editor_colors() -> EditorColors {
+    default_section("editor")
+}
+
+fn default_ui_colors() -> UiColors {
+    default_section("ui")
+}
+
+fn default_search_colors() -> SearchColors {
+    default_section("search")
+}
+
+fn default_diagnostic_colors() -> DiagnosticColors {
+    default_section("diagnostic")
+}
+
+fn default_syntax_colors() -> SyntaxColors {
+    default_section("syntax")
 }
 
 /// Editor area colors
@@ -1741,6 +1787,70 @@ mod tests {
         let json = r#"{"name":"test","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#;
         let theme = Theme::from_json(json).expect("Should parse minimal theme");
         assert_eq!(theme.name, "test");
+    }
+
+    /// Regression test for #1281: a user theme that follows the minimal example
+    /// in `docs/features/themes.md` (only `name`, `editor`, `syntax` — no `ui`,
+    /// `search`, or `diagnostic` sections) must load successfully. Before the
+    /// fix, `serde_json::from_str::<ThemeFile>` errored with `missing field
+    /// `ui``, the loader silently dropped the theme, and the user saw
+    /// "Failed to load theme" in the status bar.
+    #[test]
+    fn test_minimal_user_theme_from_issue_1281_loads() {
+        // Verbatim from https://github.com/sinelaw/fresh/issues/1281
+        let json = r#"{
+  "name": "gruvbox-light-orange",
+  "editor": {
+    "bg": [251, 241, 199],
+    "fg": [60, 56, 54],
+    "cursor": [254, 128, 25],
+    "selection_bg": [213, 196, 161]
+  },
+  "syntax": {
+    "keyword": [175, 58, 3],
+    "string": [152, 151, 26],
+    "comment": [146, 131, 116]
+  }
+}"#;
+        let theme = Theme::from_json(json)
+            .expect("Theme from issue #1281 should parse without `ui`/`search`/`diagnostic`");
+        assert_eq!(theme.name, "gruvbox-light-orange");
+
+        // Explicit fields land where expected.
+        assert_eq!(theme.editor_bg, Color::Rgb(251, 241, 199));
+        assert_eq!(theme.editor_fg, Color::Rgb(60, 56, 54));
+        assert_eq!(theme.cursor, Color::Rgb(254, 128, 25));
+        assert_eq!(theme.selection_bg, Color::Rgb(213, 196, 161));
+        assert_eq!(theme.syntax_keyword, Color::Rgb(175, 58, 3));
+        assert_eq!(theme.syntax_string, Color::Rgb(152, 151, 26));
+        assert_eq!(theme.syntax_comment, Color::Rgb(146, 131, 116));
+
+        // A theme that omits `ui`/`search`/`diagnostic` should still produce
+        // a usable `Theme` — the missing sections fall back to per-field
+        // defaults, so colors that the editor reads from those sections are
+        // populated rather than left in an undefined state.
+        assert_eq!(
+            theme.resolve_theme_key("diagnostic.error_fg"),
+            Some(theme.diagnostic_error_fg)
+        );
+        assert_eq!(
+            theme.resolve_theme_key("ui.status_bar_fg"),
+            Some(theme.status_bar_fg)
+        );
+    }
+
+    /// `name` remains the only truly required top-level field. A theme JSON
+    /// missing `name` should still be rejected with a clear error so users
+    /// don't end up with an unidentifiable theme in the registry.
+    #[test]
+    fn test_theme_without_name_still_errors() {
+        let json = r#"{ "editor": {} }"#;
+        let err = Theme::from_json(json).expect_err("missing `name` must be an error");
+        assert!(
+            err.contains("name"),
+            "error should mention the missing `name` field, got: {}",
+            err
+        );
     }
 
     #[test]
