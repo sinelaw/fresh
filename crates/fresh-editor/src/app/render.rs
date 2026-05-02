@@ -1335,13 +1335,13 @@ impl Editor {
         // Animate when the cursor crossed split panes, or when it made a
         // non-incremental move within the same pane: more than two rows
         // vertically, or — for moves that stay within ±2 rows — at
-        // least 25 columns horizontally. The horizontal threshold is
+        // least 80 columns horizontally. The horizontal threshold is
         // generous because typing, arrow keys, word-jump, and Home/End
         // on long source lines can all exceed a smaller bound without
         // being a genuine "jump".
         let crossed_panes = prev_split != active_split;
         let row_jump = dy > 2;
-        let col_jump = dx >= 25;
+        let col_jump = dx >= 80;
         if !crossed_panes && !row_jump && !col_jump {
             return;
         }
