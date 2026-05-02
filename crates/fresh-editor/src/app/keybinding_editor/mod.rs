@@ -8,5 +8,5 @@ mod editor;
 mod helpers;
 mod types;
 
-pub use editor::KeybindingEditor;
+pub use editor::{KeybindingEditor, ScrollbarDrag};
 pub use types::*;

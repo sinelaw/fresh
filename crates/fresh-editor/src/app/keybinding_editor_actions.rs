@@ -168,14 +168,22 @@ impl Editor {
                 // Continue dragging the scrollbar thumb (no selection or
                 // dialog disambiguation needed: the click that started the
                 // drag already gated those).
-                if editor.dragging_table_scrollbar {
-                    if let Some(sb) = editor.layout.table_scrollbar {
-                        scrollbar_jump_to_row(&mut editor, &sb, row);
-                    }
+                if let (Some(drag), Some(sb)) =
+                    (editor.scrollbar_drag, editor.layout.table_scrollbar)
+                {
+                    let track_height = sb.height as usize;
+                    let current_row = (row.saturating_sub(sb.y) as usize).min(track_height);
+                    let sb_state = scrollbar_state_for(&editor);
+                    editor.scroll.offset = sb_state.drag_to_offset(
+                        track_height,
+                        drag.start_row,
+                        drag.start_offset,
+                        current_row,
+                    ) as u16;
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                editor.dragging_table_scrollbar = false;
+                editor.scrollbar_drag = None;
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 // Handle confirm dialog clicks first
@@ -253,13 +261,35 @@ impl Editor {
                     }
                 }
 
-                // Click on the scrollbar: jump the viewport and start a drag.
-                // Checked before row-click because the scrollbar overlaps the
-                // rightmost column of `table_area`.
+                // Click on the scrollbar: when the press lands on the
+                // thumb, capture its grab position and let the drag follow
+                // the cursor (no jump). When it lands on the track outside
+                // the thumb, jump the viewport so the thumb's centre moves
+                // under the cursor, then continue as a drag.
+                //
+                // Checked before row-click because the scrollbar overlaps
+                // the rightmost column of `table_area`.
                 if let Some(sb) = layout.table_scrollbar {
                     if point_in_rect(sb, col, row) {
-                        scrollbar_jump_to_row(&mut editor, &sb, row);
-                        editor.dragging_table_scrollbar = true;
+                        let track_height = sb.height as usize;
+                        let click_row = (row.saturating_sub(sb.y) as usize).min(track_height);
+                        let sb_state = scrollbar_state_for(&editor);
+
+                        if !sb_state.is_thumb_row(track_height, click_row) {
+                            // Track click outside the thumb — recentre on
+                            // the cursor (so the click position becomes the
+                            // thumb's middle, not its top).
+                            let (_, thumb_size) = sb_state.thumb_geometry(track_height);
+                            let aim_top = click_row.saturating_sub(thumb_size / 2);
+                            editor.scroll.offset =
+                                sb_state.click_to_offset(track_height, aim_top) as u16;
+                        }
+
+                        editor.scrollbar_drag =
+                            Some(crate::app::keybinding_editor::ScrollbarDrag {
+                                start_row: click_row,
+                                start_offset: editor.scroll.offset as usize,
+                            });
                         self.keybinding_editor = Some(editor);
                         return Ok(true);
                     }
@@ -287,14 +317,12 @@ impl Editor {
     }
 }
 
-/// Move the keybinding-editor table viewport so the scrollbar thumb maps
-/// to `row`. Mirrors the math used by other modals (e.g. settings) so the
-/// thumb tracks the cursor while dragging.
-fn scrollbar_jump_to_row(editor: &mut KeybindingEditor, sb_area: &ratatui::layout::Rect, row: u16) {
-    if sb_area.height == 0 {
-        return;
-    }
-    let relative_y = row.saturating_sub(sb_area.y);
-    let ratio = (relative_y as f32 / sb_area.height as f32).clamp(0.0, 1.0);
-    editor.scroll.scroll_to_ratio(ratio);
+/// Snapshot the keybinding editor's scroll state as a `ScrollbarState`,
+/// so we can call into the shared scrollbar widget for click/drag math.
+fn scrollbar_state_for(editor: &KeybindingEditor) -> crate::view::ui::scrollbar::ScrollbarState {
+    crate::view::ui::scrollbar::ScrollbarState::new(
+        editor.scroll.content_height as usize,
+        editor.scroll.viewport as usize,
+        editor.scroll.offset as usize,
+    )
 }

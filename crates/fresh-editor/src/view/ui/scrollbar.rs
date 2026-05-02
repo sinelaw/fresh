@@ -93,6 +93,55 @@ impl ScrollbarState {
         let (thumb_start, thumb_size) = self.thumb_geometry(track_height);
         row >= thumb_start && row < thumb_start + thumb_size
     }
+
+    /// Compute the scroll offset for a drag that preserves the cursor's
+    /// position within the thumb.
+    ///
+    /// When the user presses on the thumb itself, the thumb shouldn't jump
+    /// so its top aligns with the cursor — the cursor should stay pinned to
+    /// the same spot on the thumb. Callers capture the press position
+    /// (`drag_start_row`) and the scroll offset at that moment
+    /// (`drag_start_offset`), then call this on every subsequent drag event.
+    ///
+    /// # Arguments
+    /// * `track_height` — height of the scrollbar track in rows
+    /// * `drag_start_row` — track-relative row where the drag started
+    /// * `drag_start_offset` — scroll offset at the time of the press
+    /// * `current_row` — track-relative row of the cursor now
+    pub fn drag_to_offset(
+        &self,
+        track_height: usize,
+        drag_start_row: usize,
+        drag_start_offset: usize,
+        current_row: usize,
+    ) -> usize {
+        let max_scroll = self.total_items.saturating_sub(self.visible_items);
+        if track_height == 0 || max_scroll == 0 {
+            return drag_start_offset.min(max_scroll);
+        }
+
+        // Compute by cursor delta so the round-trip through thumb_geometry
+        // can't drift the offset on a zero-movement drag — pressing on the
+        // thumb without moving must leave the viewport untouched.
+        let delta_rows = current_row as i64 - drag_start_row as i64;
+        if delta_rows == 0 {
+            return drag_start_offset.min(max_scroll);
+        }
+
+        // Thumb geometry the thumb had at drag start. `max_thumb_top` is
+        // the denominator that maps thumb rows to scroll offsets.
+        let start = Self::new(self.total_items, self.visible_items, drag_start_offset);
+        let (_, thumb_size) = start.thumb_geometry(track_height);
+        let max_thumb_top = track_height.saturating_sub(thumb_size);
+        if max_thumb_top == 0 {
+            return drag_start_offset.min(max_scroll);
+        }
+
+        // delta_rows on the track ↦ delta_rows × (max_scroll / max_thumb_top).
+        let offset_delta = delta_rows as f64 * (max_scroll as f64 / max_thumb_top as f64);
+        let new_offset = (drag_start_offset as f64 + offset_delta).round();
+        new_offset.clamp(0.0, max_scroll as f64) as usize
+    }
 }
 
 /// Colors for the scrollbar
@@ -298,5 +347,66 @@ mod tests {
         if start > 0 {
             assert!(!state.is_thumb_row(10, 0));
         }
+    }
+
+    #[test]
+    fn test_drag_to_offset_no_movement_keeps_offset() {
+        // Press on the thumb and don't move — offset must stay put.
+        let state = ScrollbarState::new(100, 20, 40);
+        let track = 20;
+        let (thumb_top, _) = state.thumb_geometry(track);
+        // Click in the middle of the thumb.
+        let click_row = thumb_top + 1;
+        let new_offset = state.drag_to_offset(track, click_row, 40, click_row);
+        assert_eq!(new_offset, 40);
+    }
+
+    #[test]
+    fn test_drag_to_offset_press_anywhere_on_thumb_no_jump() {
+        // Pressing on a non-top row of the thumb must not jump the
+        // viewport — the cursor stays pinned to that thumb position.
+        let state = ScrollbarState::new(200, 50, 75);
+        let track = 20;
+        let (thumb_top, thumb_size) = state.thumb_geometry(track);
+        assert!(thumb_size >= 2, "test needs thumb at least 2 rows tall");
+        for row_in_thumb in thumb_top..(thumb_top + thumb_size) {
+            let new_offset = state.drag_to_offset(track, row_in_thumb, 75, row_in_thumb);
+            assert_eq!(
+                new_offset, 75,
+                "press at thumb row {row_in_thumb} should not move the viewport"
+            );
+        }
+    }
+
+    #[test]
+    fn test_drag_to_offset_follows_cursor_down() {
+        // Press at the top of the thumb when scrolled to the start, then
+        // drag the cursor down — the offset must move down accordingly.
+        let state = ScrollbarState::new(100, 20, 0);
+        let track = 20;
+        let (thumb_top, _) = state.thumb_geometry(track);
+        let start_row = thumb_top;
+        let down_row = start_row + 5;
+        let dragged = state.drag_to_offset(track, start_row, 0, down_row);
+        assert!(
+            dragged > 0,
+            "drag down should increase offset, got {dragged}"
+        );
+    }
+
+    #[test]
+    fn test_drag_to_offset_clamps_at_bottom() {
+        let state = ScrollbarState::new(100, 20, 0);
+        let track = 20;
+        let dragged = state.drag_to_offset(track, 0, 0, 1000);
+        let max_scroll = 100 - 20;
+        assert_eq!(dragged, max_scroll);
+    }
+
+    #[test]
+    fn test_drag_to_offset_no_overflow_when_fits() {
+        // Content shorter than viewport — drag is a no-op.
+        let state = ScrollbarState::new(10, 20, 0);
+        assert_eq!(state.drag_to_offset(20, 0, 0, 5), 0);
     }
 }

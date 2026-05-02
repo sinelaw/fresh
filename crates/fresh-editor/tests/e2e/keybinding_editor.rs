@@ -983,6 +983,30 @@ fn test_scrollbar_drag_scrolls_table() {
     );
 }
 
+/// Pressing on the thumb itself (anywhere within it) and dragging by zero
+/// rows must NOT move the viewport — the cursor should stay pinned to its
+/// position on the thumb. Regression test for the click-jumps-to-row bug.
+#[test]
+fn test_scrollbar_press_on_thumb_does_not_jump() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    open_keybinding_editor(&mut harness);
+
+    let (sb_col, sb_top, _) = scrollbar_track_for_120x40();
+    // At rest the thumb is anchored at the top of the track. Press one
+    // row down from the top — that's still inside the thumb (which is
+    // multiple rows tall for ~370 bindings in a 28-row track).
+    let press_row = sb_top + 1;
+
+    let screen_before = harness.screen_to_string();
+    harness.mouse_click(sb_col, press_row).unwrap();
+    let screen_after = harness.screen_to_string();
+
+    assert_eq!(
+        screen_before, screen_after,
+        "A press inside the thumb (without movement) must not move the viewport"
+    );
+}
+
 /// Test mouse events are masked (don't leak to underlying editor)
 #[test]
 fn test_mouse_events_masked() {
