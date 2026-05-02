@@ -1334,12 +1334,14 @@ impl Editor {
         let dy = (current.1 as i32 - prev.1 as i32).abs();
         // Animate when the cursor crossed split panes, or when it made a
         // non-incremental move within the same pane: more than two rows
-        // vertically, or at least ten columns horizontally. Small hops
-        // (typing, arrow keys, word-jump, home/end on short lines) are
-        // intentionally skipped.
+        // vertically, or — for moves that stay within ±2 rows — at
+        // least 25 columns horizontally. The horizontal threshold is
+        // generous because typing, arrow keys, word-jump, and Home/End
+        // on long source lines can all exceed a smaller bound without
+        // being a genuine "jump".
         let crossed_panes = prev_split != active_split;
         let row_jump = dy > 2;
-        let col_jump = dx >= 10;
+        let col_jump = dx >= 25;
         if !crossed_panes && !row_jump && !col_jump {
             return;
         }
