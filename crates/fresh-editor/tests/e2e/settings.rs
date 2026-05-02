@@ -453,28 +453,29 @@ fn test_settings_number_mouse_buttons_and_value_click() {
         .unwrap();
     harness.render().unwrap();
 
-    // Locate the value cell rendered as "[500]" — anchor every click on
+    // Locate the value cell rendered as "[500 ]" — anchor every click on
     // that row so we don't accidentally hit a sibling Number control or a
     // description line that mentions "500". The value is right-aligned in
-    // a 3-char cell, so `500` (already 3 chars) prints with no padding.
-    let (bracket_col, value_row) = harness.find_text_on_screen("[500]").unwrap_or_else(|| {
+    // a 3-char digit area followed by a 1-char reserved trailing cell
+    // (where the cursor block lives during editing).
+    let (bracket_col, value_row) = harness.find_text_on_screen("[500 ]").unwrap_or_else(|| {
         panic!(
-            "expected '[500]' value cell after navigating to the setting:\n{}",
+            "expected '[500 ]' value cell after navigating to the setting:\n{}",
             harness.screen_to_string()
         )
     });
 
-    // Render: `[500] [-] [+]` — bracket_col points to '['. The value cell
-    // spans 3 chars after the `[`, then `]`, then ` `, then `[-]`, ` `, `[+]`.
+    // Render: `[500 ] [-] [+]` — bracket_col points to '['. Inner cell is
+    // 4 chars, then `]`, then ` `, then `[-]`, ` `, `[+]`.
     let value_col = bracket_col + 1; // first inner char ("5")
-    let minus_col = bracket_col + 6; // first '[' of '[-]'
-    let plus_col = bracket_col + 10; // first '[' of '[+]'
+    let minus_col = bracket_col + 7; // first '[' of '[-]'
+    let plus_col = bracket_col + 11; // first '[' of '[+]'
 
     // Click [+] — value cell on this row should change from 500 to 501.
     harness.mouse_click(plus_col + 1, value_row).unwrap();
     let after_plus = harness.screen_row_text(value_row);
     assert!(
-        after_plus.contains("[501]"),
+        after_plus.contains("[501 ]"),
         "[+] click should bump value to 501 on this row:\n{after_plus}"
     );
 
@@ -482,13 +483,13 @@ fn test_settings_number_mouse_buttons_and_value_click() {
     harness.mouse_click(minus_col + 1, value_row).unwrap();
     let after_minus = harness.screen_row_text(value_row);
     assert!(
-        after_minus.contains("[500]"),
+        after_minus.contains("[500 ]"),
         "[-] click should bring value back to 500:\n{after_minus}"
     );
 
     // Click the value between the brackets — should enter editing mode so
     // typing replaces the value (start_editing selects-all). Type "9" and
-    // confirm with Tab; the value must become 9, right-aligned to "[  9]".
+    // confirm with Tab; the value must become 9, right-aligned to "[  9 ]".
     harness.mouse_click(value_col, value_row).unwrap();
     harness
         .send_key(KeyCode::Char('9'), KeyModifiers::NONE)
@@ -497,7 +498,7 @@ fn test_settings_number_mouse_buttons_and_value_click() {
     harness.render().unwrap();
     let after_edit = harness.screen_row_text(value_row);
     assert!(
-        after_edit.contains("[  9]"),
+        after_edit.contains("[  9 ]"),
         "click on value area should enter edit mode and accept '9':\n{after_edit}"
     );
 

@@ -753,6 +753,62 @@ mod tests {
         );
     }
 
+    /// Regression: the digit's column used to shift left as soon as the
+    /// user started typing — the cursor block claimed the last cell and
+    /// the right-aligned digit slid one column inward. The trailing
+    /// reserved cell now keeps the digit pinned to the same column in
+    /// view mode, while-selected, and while-typing.
+    #[test]
+    fn test_digit_column_stable_across_view_select_and_typing() {
+        fn digit_column(state: &NumberInputState, digit: char) -> u16 {
+            let backend = TestBackend::new(40, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    let area = Rect::new(0, 0, 40, 1);
+                    let colors = NumberInputColors::default();
+                    render_number_input(frame, area, state, &colors);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let needle = digit.to_string();
+            for x in 0..40 {
+                let symbol = buffer.cell((x, 0)).map(|c| c.symbol()).unwrap_or("");
+                if symbol == needle {
+                    return x;
+                }
+            }
+            panic!("digit {digit:?} not found on rendered line");
+        }
+
+        // View mode: "4" is rendered right-aligned with the trailing
+        // reserved cell.
+        let view_state = NumberInputState::new(4, "Tab Size");
+
+        // Edit mode, select-all (cursor at end, value still "4").
+        let mut select_state = NumberInputState::new(4, "Tab Size");
+        select_state.start_editing();
+
+        // Edit mode, after typing replaces selection with "1" (cursor at
+        // end of the new value).
+        let mut typed_state = NumberInputState::new(4, "Tab Size");
+        typed_state.start_editing();
+        typed_state.insert_char('1');
+
+        let view_col = digit_column(&view_state, '4');
+        let select_col = digit_column(&select_state, '4');
+        let typed_col = digit_column(&typed_state, '1');
+
+        assert_eq!(
+            view_col, select_col,
+            "digit must stay at the same column when entering edit mode"
+        );
+        assert_eq!(
+            view_col, typed_col,
+            "digit must stay at the same column after typing replaces the selection"
+        );
+    }
+
     /// Regression: the in-edit selection used to share its bg colour with
     /// the row's focus highlight, so `select_all()` (called on entering
     /// edit mode) rendered as bg-on-bg and was invisible. The two colours
