@@ -86,7 +86,7 @@ pub fn render_number_input_aligned(
         build_editing_spans(&value_str, state, value_color, colors)
     } else {
         vec![Span::styled(
-            format!("{:^5}", value_str),
+            format!("{:>width$}", value_str, width = VALUE_CELL_MIN_WIDTH),
             Style::default().fg(value_color),
         )]
     };
@@ -112,7 +112,8 @@ pub fn render_number_input_aligned(
 
     let final_label_width = actual_label_width + 2;
     let value_start = area.x + final_label_width;
-    let value_width = 7;
+    // 2 brackets + the inner value cell.
+    let value_width = (VALUE_CELL_MIN_WIDTH as u16) + 2;
 
     let dec_start = value_start + value_width + 1;
     let dec_width = 3;
@@ -128,11 +129,12 @@ pub fn render_number_input_aligned(
     }
 }
 
-/// Minimum visible width of the value cell, matching the
-/// `format!("{:^5}", ...)` non-editing rendering. Padding the editing
-/// view to the same width keeps `[ value ] [-] [+]` from shifting
-/// horizontally when the user enters edit mode.
-pub(super) const VALUE_CELL_MIN_WIDTH: usize = 5;
+/// Minimum visible width of the value cell. Used for both the
+/// non-editing right-aligned format (`format!("{:>3}", ...)`) and the
+/// editing-mode padding so the `[ value ] [-] [+]` cluster doesn't
+/// shift horizontally when the user enters edit mode. Values longer
+/// than this width still render in full and grow the cell to the right.
+pub(super) const VALUE_CELL_MIN_WIDTH: usize = 3;
 
 /// Build spans for the editing value with cursor and selection highlighting
 pub(super) fn build_editing_spans(
@@ -158,9 +160,8 @@ pub(super) fn build_editing_spans(
     let cursor_at_end = selection_range.is_none() && cursor_pos >= chars.len();
     let rendered_width = chars.len() + if cursor_at_end { 1 } else { 0 };
     let total_width = rendered_width.max(VALUE_CELL_MIN_WIDTH);
-    let extra = total_width - rendered_width;
-    let leading = extra / 2;
-    let trailing = extra - leading;
+    // Right-align the value: all extra space goes on the left.
+    let leading = total_width - rendered_width;
 
     let mut spans = Vec::new();
 
@@ -215,10 +216,6 @@ pub(super) fn build_editing_spans(
             // Cursor at end - show block cursor
             spans.push(Span::styled(" ", cursor_style));
         }
-    }
-
-    if trailing > 0 {
-        spans.push(Span::raw(" ".repeat(trailing)));
     }
 
     spans
