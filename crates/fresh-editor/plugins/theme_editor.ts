@@ -258,8 +258,12 @@ function loadThemeSections(): ThemeSection[] {
   const sectionOrder = ["editor", "ui", "search", "diagnostic", "syntax"];
 
   for (const [sectionName, sectionSchema] of Object.entries(properties)) {
-    // Skip "name" field - it's not a color section
-    if (sectionName === "name") continue;
+    // Skip top-level fields that aren't color sections: `name` is the
+    // theme's identity and `extends` is the inheritance pointer (a string,
+    // not a section). Without this check, the plugin would emit
+    // `"extends": {}` when serializing back out, which fails to round-trip
+    // as a `ThemeFile`.
+    if (sectionName === "name" || sectionName === "extends") continue;
 
     const sectionObj = sectionSchema as Record<string, unknown>;
     const sectionDesc = (sectionObj.description as string) || "";

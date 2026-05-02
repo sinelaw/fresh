@@ -252,10 +252,31 @@ impl From<Color> for ColorDef {
 /// the colors it cares about. This matches the minimal example shipped in
 /// `docs/features/themes.md` and unblocks user-authored themes that override
 /// just `editor`/`syntax` (issue #1281).
+///
+/// **Inheritance**: when a theme omits whole sections, the unset fields are
+/// resolved against a *base* theme rather than against the per-field hardcoded
+/// fallback. The base is chosen in this order:
+///
+/// 1. Explicit `extends` field (`"builtin://light"`, `"dark"`, etc.).
+/// 2. If `editor.bg` is provided, the relative-luminance of that color picks
+///    `builtin://light` or `builtin://dark` automatically — so a user theme
+///    that sets a cream background gets light UI chrome without any extra
+///    configuration.
+/// 3. Otherwise, fall through to the per-field hardcoded defaults.
+///
+/// Only built-in themes are valid `extends` targets in this version. Chained
+/// inheritance across user themes is intentionally out of scope here.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFile {
     /// Theme name
     pub name: String,
+    /// Optional base theme to inherit from. Accepts `"builtin://NAME"` or a
+    /// bare built-in name (e.g. `"dark"`, `"light"`, `"high-contrast"`).
+    /// When set, every field this theme does not specify is taken from the
+    /// base; explicit fields override the base. See [`ThemeFile`] for the
+    /// full inheritance resolution order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
     /// Editor area colors
     #[serde(default = "default_editor_colors")]
     pub editor: EditorColors,
@@ -1345,6 +1366,9 @@ impl From<Theme> for ThemeFile {
     fn from(theme: Theme) -> Self {
         Self {
             name: theme.name,
+            // A round-tripped `Theme` is already fully resolved — no further
+            // inheritance is needed when serializing back out.
+            extends: None,
             editor: EditorColors {
                 bg: theme.editor_bg.into(),
                 fg: theme.editor_fg.into(),
@@ -1470,6 +1494,87 @@ impl From<Theme> for ThemeFile {
     }
 }
 
+/// Resolve the base theme that a parsed `ThemeFile` should be layered on top of.
+///
+/// See [`ThemeFile`] for the resolution order. Returns an error only when
+/// `extends` references a base that does not exist; the no-info-at-all case
+/// quietly falls through to the per-field hardcoded defaults so a theme of
+/// `{"name": "x"}` keeps working.
+fn resolve_base_theme(theme_file: &ThemeFile, raw: &serde_json::Value) -> Result<Theme, String> {
+    // 1. Explicit `extends`.
+    if let Some(extends) = theme_file.extends.as_deref() {
+        let name = extends.strip_prefix("builtin://").unwrap_or(extends);
+        return Theme::load_builtin(name).ok_or_else(|| {
+            let available: Vec<&str> = BUILTIN_THEMES.iter().map(|t| t.name).collect();
+            format!(
+                "theme `extends: {:?}` does not match any built-in theme. \
+                 Available: {}. \
+                 Inheriting from other user themes is not yet supported.",
+                extends,
+                available.join(", ")
+            )
+        });
+    }
+
+    // 2. Auto-infer from explicit `editor.bg` luminance. We deliberately read
+    //    the *raw* JSON here instead of `theme_file.editor.bg` — the typed
+    //    struct fills in a default for `bg` even when the user didn't write
+    //    one, and inferring a base from a default we ourselves invented would
+    //    be circular.
+    if let Some(bg) = raw
+        .get("editor")
+        .and_then(|e| e.get("bg"))
+        .cloned()
+        .and_then(|v| serde_json::from_value::<ColorDef>(v).ok())
+    {
+        let color: Color = bg.into();
+        if let Some((r, g, b)) = color_to_rgb(color) {
+            let lum = relative_luminance(r, g, b);
+            let base_name = if lum > 0.5 { THEME_LIGHT } else { THEME_DARK };
+            if let Some(base) = Theme::load_builtin(base_name) {
+                return Ok(base);
+            }
+        }
+    }
+
+    // 3. Fallback: per-field hardcoded defaults via the existing typed path.
+    Ok(theme_file.clone().into())
+}
+
+/// Compute sRGB relative luminance (ITU-R BT.709) for an RGB triple in 0..=255.
+/// Used for picking a light vs dark base when the user didn't ask for one.
+fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    0.2126 * (r as f64 / 255.0) + 0.7152 * (g as f64 / 255.0) + 0.0722 * (b as f64 / 255.0)
+}
+
+/// Walk the user-supplied JSON and overlay every explicitly-set leaf onto the
+/// base theme. Reuses [`Theme::resolve_theme_key_mut`] so the override surface
+/// is exactly the surface the rest of the editor already knows how to address;
+/// unknown keys are silently ignored, matching `override_colors` semantics.
+fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_json::Value) {
+    // Name always comes from the user file — that's the theme's identity.
+    theme.name = theme_file.name.clone();
+
+    for section in ["editor", "ui", "search", "diagnostic", "syntax"] {
+        let Some(obj) = raw.get(section).and_then(|v| v.as_object()) else {
+            continue;
+        };
+        for (field, value) in obj {
+            // Optional `Option<ColorDef>` fields encode `null` as JSON null.
+            // Treat that as "no override," not "set to default."
+            if value.is_null() {
+                continue;
+            }
+            let key = format!("{}.{}", section, field);
+            if let Ok(color_def) = serde_json::from_value::<ColorDef>(value.clone()) {
+                if let Some(slot) = theme.resolve_theme_key_mut(&key) {
+                    *slot = color_def.into();
+                }
+            }
+        }
+    }
+}
+
 impl Theme {
     /// Returns `true` when the theme has a light background.
     ///
@@ -1477,15 +1582,9 @@ impl Theme {
     /// A threshold of 0.5 separates dark from light; for `Color::Reset` or
     /// unresolvable colors, falls back to `false` (dark).
     pub fn is_light(&self) -> bool {
-        if let Some((r, g, b)) = color_to_rgb(self.editor_bg) {
-            // sRGB relative luminance (ITU-R BT.709)
-            let lum = 0.2126 * (r as f64 / 255.0)
-                + 0.7152 * (g as f64 / 255.0)
-                + 0.0722 * (b as f64 / 255.0);
-            lum > 0.5
-        } else {
-            false
-        }
+        color_to_rgb(self.editor_bg)
+            .map(|(r, g, b)| relative_luminance(r, g, b) > 0.5)
+            .unwrap_or(false)
     }
 
     /// Load a builtin theme by name (no I/O, uses embedded JSON).
@@ -1498,10 +1597,27 @@ impl Theme {
     }
 
     /// Parse theme from JSON string (no I/O).
+    ///
+    /// Supports the inheritance model documented on [`ThemeFile`]: an explicit
+    /// `extends` chooses the base; otherwise the relative luminance of an
+    /// explicit `editor.bg` picks `builtin://light` vs `builtin://dark`;
+    /// otherwise the per-field hardcoded defaults apply. Every leaf the user
+    /// JSON specifies overrides the corresponding field on the base — the
+    /// override walk uses the same `resolve_theme_key_mut` machinery as
+    /// `override_colors`, so the supported set of keys stays in lock-step.
     pub fn from_json(json: &str) -> Result<Self, String> {
-        let theme_file: ThemeFile =
+        // Dual-parse: the typed `ThemeFile` validates the schema and gives us
+        // `name` / `extends` cheaply; the raw `Value` tells us *which* fields
+        // the user actually specified, which we cannot recover from the typed
+        // struct because every field has a serde default.
+        let raw: serde_json::Value =
             serde_json::from_str(json).map_err(|e| format!("Failed to parse theme JSON: {}", e))?;
-        Ok(theme_file.into())
+        let theme_file: ThemeFile = serde_json::from_value(raw.clone())
+            .map_err(|e| format!("Failed to parse theme: {}", e))?;
+
+        let mut theme = resolve_base_theme(&theme_file, &raw)?;
+        apply_theme_overrides(&mut theme, &theme_file, &raw);
+        Ok(theme)
     }
 
     /// Resolve a theme key to a Color.
@@ -1795,6 +1911,11 @@ mod tests {
     /// fix, `serde_json::from_str::<ThemeFile>` errored with `missing field
     /// `ui``, the loader silently dropped the theme, and the user saw
     /// "Failed to load theme" in the status bar.
+    ///
+    /// Beyond loading, this also pins the auto-inheritance behavior: with a
+    /// cream `editor.bg`, the unspecified UI/diagnostic colors must come from
+    /// `builtin://light` (so the theme reads coherently end-to-end), not from
+    /// the dark-flavored hardcoded fallbacks.
     #[test]
     fn test_minimal_user_theme_from_issue_1281_loads() {
         // Verbatim from https://github.com/sinelaw/fresh/issues/1281
@@ -1825,18 +1946,100 @@ mod tests {
         assert_eq!(theme.syntax_string, Color::Rgb(152, 151, 26));
         assert_eq!(theme.syntax_comment, Color::Rgb(146, 131, 116));
 
-        // A theme that omits `ui`/`search`/`diagnostic` should still produce
-        // a usable `Theme` — the missing sections fall back to per-field
-        // defaults, so colors that the editor reads from those sections are
-        // populated rather than left in an undefined state.
+        // Auto-inheritance: cream bg → `builtin://light` is the base. The
+        // unspecified UI/diagnostic colors should match the light builtin's
+        // values — not the dark-flavored hardcoded fallbacks.
+        let light = Theme::load_builtin(THEME_LIGHT).expect("light builtin");
         assert_eq!(
-            theme.resolve_theme_key("diagnostic.error_fg"),
-            Some(theme.diagnostic_error_fg)
+            theme.status_bar_fg, light.status_bar_fg,
+            "ui.status_bar_fg should inherit from builtin://light when bg is bright"
         );
         assert_eq!(
-            theme.resolve_theme_key("ui.status_bar_fg"),
-            Some(theme.status_bar_fg)
+            theme.diagnostic_error_fg, light.diagnostic_error_fg,
+            "diagnostic.error_fg should inherit from builtin://light when bg is bright"
         );
+        assert_eq!(
+            theme.menu_bg, light.menu_bg,
+            "ui.menu_bg should inherit from builtin://light when bg is bright"
+        );
+    }
+
+    /// A user theme with an explicit `extends` must inherit from that base —
+    /// even when auto-inference would have picked something different.
+    #[test]
+    fn test_extends_explicit_builtin_wins_over_auto_infer() {
+        // `editor.bg` is dark (would auto-infer `dark`), but `extends` asks
+        // for `light`. The explicit choice must win.
+        let json = r#"{
+            "name": "explicit-light",
+            "extends": "builtin://light",
+            "editor": { "bg": [0, 0, 0] }
+        }"#;
+        let theme = Theme::from_json(json).expect("extends should resolve");
+        let light = Theme::load_builtin(THEME_LIGHT).expect("light builtin");
+
+        // Override applied.
+        assert_eq!(theme.editor_bg, Color::Rgb(0, 0, 0));
+        // Unspecified fields come from the explicit base, not from auto-infer.
+        assert_eq!(theme.menu_bg, light.menu_bg);
+        assert_eq!(theme.tab_active_bg, light.tab_active_bg);
+        assert_eq!(theme.diagnostic_warning_fg, light.diagnostic_warning_fg);
+    }
+
+    /// Bare-name `extends` (e.g. `"dark"`) is the legacy form accepted by the
+    /// rest of the registry (`ThemeRegistry::resolve_key`), so we accept it
+    /// here too — being strict about a `builtin://` prefix would just be a
+    /// papercut for users hand-writing a theme JSON.
+    #[test]
+    fn test_extends_bare_builtin_name_works() {
+        let json = r#"{ "name": "x", "extends": "high-contrast" }"#;
+        let theme = Theme::from_json(json).expect("bare-name extends should resolve");
+        let hc = Theme::load_builtin("high-contrast").expect("hc builtin");
+        assert_eq!(theme.menu_bg, hc.menu_bg);
+    }
+
+    /// An unknown `extends` target must produce a clear error that names what
+    /// went wrong and lists the valid alternatives — anything less leaves the
+    /// user staring at the same opaque "Failed to load theme" message that
+    /// motivated #1281 in the first place.
+    #[test]
+    fn test_extends_unknown_builtin_errors_with_helpful_message() {
+        let json = r#"{ "name": "x", "extends": "builtin://no-such-theme" }"#;
+        let err = Theme::from_json(json).expect_err("unknown extends must error");
+        assert!(
+            err.contains("no-such-theme"),
+            "error should quote the bad value, got: {}",
+            err
+        );
+        assert!(
+            err.contains("dark") && err.contains("light"),
+            "error should list available builtins, got: {}",
+            err
+        );
+    }
+
+    /// Auto-inference picks `dark` for a clearly-dark `editor.bg`. Mirrors
+    /// the light path tested in the #1281 regression so both branches stay
+    /// honest.
+    #[test]
+    fn test_auto_infer_dark_base_from_dark_bg() {
+        let json = r#"{ "name": "x", "editor": { "bg": [20, 20, 30] } }"#;
+        let theme = Theme::from_json(json).expect("should parse");
+        let dark = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+        assert_eq!(theme.menu_bg, dark.menu_bg);
+        assert_eq!(theme.diagnostic_error_fg, dark.diagnostic_error_fg);
+    }
+
+    /// With neither `extends` nor an explicit `editor.bg`, there's nothing to
+    /// infer from — the theme should still load and use the per-field
+    /// hardcoded defaults rather than failing or picking an arbitrary builtin.
+    #[test]
+    fn test_no_inheritance_signal_uses_hardcoded_defaults() {
+        let json = r#"{ "name": "x" }"#;
+        let theme = Theme::from_json(json).expect("should parse");
+        // The hardcoded `default_editor_bg` is `Rgb(30, 30, 30)`. Pin that so
+        // a future change to the default prompts a deliberate test update.
+        assert_eq!(theme.editor_bg, Color::Rgb(30, 30, 30));
     }
 
     /// `name` remains the only truly required top-level field. A theme JSON
@@ -1851,6 +2054,31 @@ mod tests {
             "error should mention the missing `name` field, got: {}",
             err
         );
+    }
+
+    /// Overriding a single nested field on top of an explicit `extends` must
+    /// only touch that field — every sibling stays at the base's value. This
+    /// is the surgical-tweak workflow ("I love `dark` but want a different
+    /// cursor color"), and the override walk must not bleed into other fields.
+    #[test]
+    fn test_extends_overrides_compose_field_by_field() {
+        let json = r#"{
+            "name": "dark-with-pink-cursor",
+            "extends": "builtin://dark",
+            "editor": { "cursor": [255, 105, 180] }
+        }"#;
+        let theme = Theme::from_json(json).expect("should parse");
+        let dark = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+
+        // Cursor was overridden.
+        assert_eq!(theme.cursor, Color::Rgb(255, 105, 180));
+        // Every other editor field comes from the base verbatim.
+        assert_eq!(theme.editor_bg, dark.editor_bg);
+        assert_eq!(theme.editor_fg, dark.editor_fg);
+        assert_eq!(theme.selection_bg, dark.selection_bg);
+        // And so do the other sections.
+        assert_eq!(theme.menu_bg, dark.menu_bg);
+        assert_eq!(theme.syntax_keyword, dark.syntax_keyword);
     }
 
     #[test]

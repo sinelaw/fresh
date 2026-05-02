@@ -443,9 +443,7 @@ impl ThemeLoader {
                         let theme_path = pkg_dir.join(file);
                         if theme_path.exists() {
                             if let Ok(content) = std::fs::read_to_string(&theme_path) {
-                                if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(&content)
-                                {
-                                    let theme: Theme = theme_file.into();
+                                if let Ok(theme) = Theme::from_json(&content) {
                                     let normalized_name = normalize_theme_name(name);
                                     let info = if let Some(ref repo) = repository {
                                         ThemeInfo::with_key(
@@ -516,8 +514,8 @@ impl ThemeLoader {
                 self.scan_directory(&path, &new_pack, repository, themes, theme_list);
             } else if path.extension().is_some_and(|ext| ext == "json") {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(theme_file) = serde_json::from_str::<ThemeFile>(&content) {
-                        let name = normalize_theme_name(&theme_file.name);
+                    if let Ok(theme) = Theme::from_json(&content) {
+                        let name = normalize_theme_name(&theme.name);
                         let info = if let Some(repo) = repository {
                             ThemeInfo::with_key(&name, pack, format!("{}#{}", repo, name))
                         } else if pack.starts_with("user") {
@@ -532,7 +530,6 @@ impl ThemeLoader {
                             continue;
                         }
 
-                        let theme: Theme = theme_file.into();
                         themes.insert(info.key.clone(), theme);
                         theme_list.push(info);
                     }

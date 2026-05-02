@@ -89,6 +89,43 @@ Themes are stored as JSON files. You can also edit them directly at `~/.config/f
 
 Colors are specified as `[R, G, B]` arrays with values from 0-255.
 
+Only `name` is required. Any section or field you omit is filled in from a
+**base theme** (see [Inheritance](#inheritance) below), so a partial theme
+only needs to spell out the colors that differ from its base.
+
+## Inheritance
+
+A theme can build on top of another theme instead of restating every color.
+Any field you don't set is taken from the base; the fields you do set
+override the base.
+
+```jsonc
+{
+  "name": "my-light-tweak",
+  "extends": "builtin://light",        // pick the base
+  "editor": { "cursor": [255, 105, 180] }  // change one thing
+}
+```
+
+`extends` accepts a built-in name in either form: `"builtin://light"` or
+just `"light"`. The available built-ins are `dark`, `light`, and
+`high-contrast` (plus any others shipped in your install — see the
+**Select Theme** menu for the full list). Inheriting from another *user*
+theme is not supported in this version.
+
+If `extends` is omitted, Fresh tries to pick a sensible base for you:
+
+- If your theme sets `editor.bg`, Fresh looks at the relative luminance of
+  that color and picks `builtin://light` for bright backgrounds and
+  `builtin://dark` for dim ones. So a custom theme that only sets a cream
+  background gets light-flavored UI chrome automatically.
+- If your theme doesn't set `editor.bg` either, every unset field falls
+  back to a per-field hardcoded default.
+
+This means the partial example at the top of this section works without
+needing to spell out every UI/diagnostic color — Fresh fills the rest in
+from the matching built-in.
+
 ## Inspecting Theme Colors
 
 Use "Inspect Theme at Cursor" from the command palette to see which theme colors apply at the cursor position. You can also `Ctrl+Right-Click` on any text to see theme info in a popup.

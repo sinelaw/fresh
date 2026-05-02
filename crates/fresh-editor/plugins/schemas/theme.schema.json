@@ -1,12 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ThemeFile",
-  "description": "Serializable theme definition (matches JSON structure)\n\nThe five color sections (`editor`, `ui`, `search`, `diagnostic`, `syntax`)\nare all optional. Every leaf field within each section already has a\n`#[serde(default = \"…\")]` fallback, so a theme JSON only needs to specify\nthe colors it cares about. This matches the minimal example shipped in\n`docs/features/themes.md` and unblocks user-authored themes that override\njust `editor`/`syntax` (issue #1281).",
+  "description": "Serializable theme definition (matches JSON structure)\n\nThe five color sections (`editor`, `ui`, `search`, `diagnostic`, `syntax`)\nare all optional. Every leaf field within each section already has a\n`#[serde(default = \"…\")]` fallback, so a theme JSON only needs to specify\nthe colors it cares about. This matches the minimal example shipped in\n`docs/features/themes.md` and unblocks user-authored themes that override\njust `editor`/`syntax` (issue #1281).\n\n**Inheritance**: when a theme omits whole sections, the unset fields are\nresolved against a *base* theme rather than against the per-field hardcoded\nfallback. The base is chosen in this order:\n\n1. Explicit `extends` field (`\"builtin://light\"`, `\"dark\"`, etc.).\n2. If `editor.bg` is provided, the relative-luminance of that color picks\n   `builtin://light` or `builtin://dark` automatically — so a user theme\n   that sets a cream background gets light UI chrome without any extra\n   configuration.\n3. Otherwise, fall through to the per-field hardcoded defaults.\n\nOnly built-in themes are valid `extends` targets in this version. Chained\ninheritance across user themes is intentionally out of scope here.",
   "type": "object",
   "properties": {
     "name": {
       "description": "Theme name",
       "type": "string"
+    },
+    "extends": {
+      "description": "Optional base theme to inherit from. Accepts `\"builtin://NAME\"` or a\nbare built-in name (e.g. `\"dark\"`, `\"light\"`, `\"high-contrast\"`).\nWhen set, every field this theme does not specify is taken from the\nbase; explicit fields override the base. See [`ThemeFile`] for the\nfull inheritance resolution order.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "editor": {
       "description": "Editor area colors",
