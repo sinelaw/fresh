@@ -498,6 +498,30 @@ impl Editor {
         positions
     }
 
+    /// If an active search has placed the cursor inside a match, return that
+    /// match's byte range.  Used by Ctrl-D ("Add cursor at next match") so a
+    /// substring search drives the selection — instead of expanding to the
+    /// whole word — when the user presses Ctrl-D right after searching
+    /// (issue #1697).
+    pub(super) fn search_match_at_primary_cursor(&self) -> Option<std::ops::Range<usize>> {
+        let search_state = self.search_state.as_ref()?;
+        let pos = self.active_cursors().primary().position;
+        // matches is sorted; find the rightmost match start <= pos and check
+        // whether pos falls within [start, start + len).
+        let idx = match search_state.matches.binary_search(&pos) {
+            Ok(i) => i,
+            Err(0) => return None,
+            Err(i) => i - 1,
+        };
+        let start = search_state.matches[idx];
+        let len = *search_state.match_lengths.get(idx)?;
+        if pos < start + len {
+            Some(start..start + len)
+        } else {
+            None
+        }
+    }
+
     /// Find the next match.
     ///
     /// For small files, overlay markers are used as the source of truth

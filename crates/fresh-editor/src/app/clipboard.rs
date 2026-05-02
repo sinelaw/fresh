@@ -684,8 +684,31 @@ impl Editor {
     }
 
     /// Add a cursor at the next occurrence of the selected text
-    /// If no selection, first selects the entire word at cursor position
+    /// If no selection, first selects the entire word at cursor position.
+    ///
+    /// When an active substring search has placed the cursor at a match
+    /// (cursor inside `search_state.matches[i]..matches[i] + match_lengths[i]`),
+    /// the search match is selected instead of the surrounding word.  This
+    /// way subsequent presses look for the search substring rather than the
+    /// whole word, which would skip other substring occurrences (issue #1697).
     pub fn add_cursor_at_next_match(&mut self) {
+        if let Some(range) = self.search_match_at_primary_cursor() {
+            let primary_id = self.active_cursors().primary_id();
+            let primary = self.active_cursors().primary();
+            let event = Event::MoveCursor {
+                cursor_id: primary_id,
+                old_position: primary.position,
+                new_position: range.end,
+                old_anchor: primary.anchor,
+                new_anchor: Some(range.start),
+                old_sticky_column: primary.sticky_column,
+                new_sticky_column: 0,
+            };
+            self.active_event_log_mut().append(event.clone());
+            self.apply_event_to_active_buffer(&event);
+            return;
+        }
+
         let cursors = self.active_cursors().clone();
         let state = self.active_state_mut();
         match add_cursor_at_next_match(state, &cursors) {
