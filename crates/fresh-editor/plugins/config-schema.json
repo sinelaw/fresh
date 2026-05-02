@@ -282,7 +282,7 @@
           "x-section": "Display"
         },
         "cursor_jump_animation": {
-          "description": "Enable the cursor-jump trail animation that plays when the cursor\nmoves a long distance (search jumps, go-to-definition, pane\nswitches, ...). Independent from the master `animations` toggle:\nwhen `animations` is `true` and this is `false`, ambient\nanimations (tab-switch slides, dashboard, plugin effects) still\nplay but the cursor-jump trail is suppressed. When `animations`\nis `false`, this setting has no effect — all animations are off.",
+          "description": "Enable the cursor-jump trail animation on long cursor moves\n(search jumps, go-to-definition, pane switches). Has no effect\nwhen `animations` is `false`.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"

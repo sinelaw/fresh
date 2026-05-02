@@ -752,13 +752,9 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub animations: bool,
 
-    /// Enable the cursor-jump trail animation that plays when the cursor
-    /// moves a long distance (search jumps, go-to-definition, pane
-    /// switches, ...). Independent from the master `animations` toggle:
-    /// when `animations` is `true` and this is `false`, ambient
-    /// animations (tab-switch slides, dashboard, plugin effects) still
-    /// play but the cursor-jump trail is suppressed. When `animations`
-    /// is `false`, this setting has no effect — all animations are off.
+    /// Enable the cursor-jump trail animation on long cursor moves
+    /// (search jumps, go-to-definition, pane switches). Has no effect
+    /// when `animations` is `false`.
     #[serde(default = "default_true")]
     #[schemars(extend("x-section" = "Display"))]
     pub cursor_jump_animation: bool,
