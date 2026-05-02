@@ -94,6 +94,29 @@ impl ScrollbarState {
         row >= thumb_start && row < thumb_start + thumb_size
     }
 
+    /// Inverse of [`thumb_geometry`]: compute the scroll offset that
+    /// places the thumb's top at (or as close as possible to)
+    /// `target_thumb_top`. Use this — not `click_to_offset` — when a
+    /// caller needs the thumb to land at a specific row on the track
+    /// (e.g. press on the track to recentre the thumb under the cursor):
+    /// `click_to_offset` divides by `track_height` rather than the actual
+    /// `max_thumb_top`, so its result drifts above the intended row by a
+    /// factor of `thumb_size / track_height`.
+    pub fn offset_for_thumb_top(&self, track_height: usize, target_thumb_top: usize) -> usize {
+        let max_scroll = self.total_items.saturating_sub(self.visible_items);
+        if track_height == 0 || max_scroll == 0 {
+            return 0;
+        }
+        let (_, thumb_size) = self.thumb_geometry(track_height);
+        let max_thumb_top = track_height.saturating_sub(thumb_size);
+        if max_thumb_top == 0 {
+            return 0;
+        }
+        let clamped = target_thumb_top.min(max_thumb_top);
+        let ratio = clamped as f64 / max_thumb_top as f64;
+        ((ratio * max_scroll as f64).round() as usize).min(max_scroll)
+    }
+
     /// Compute the scroll offset for a drag that preserves the cursor's
     /// position within the thumb.
     ///
@@ -408,5 +431,45 @@ mod tests {
         // Content shorter than viewport — drag is a no-op.
         let state = ScrollbarState::new(10, 20, 0);
         assert_eq!(state.drag_to_offset(20, 0, 0, 5), 0);
+    }
+
+    #[test]
+    fn test_offset_for_thumb_top_round_trip() {
+        // For every reachable thumb row, `offset_for_thumb_top` must
+        // produce an offset whose rendered thumb top matches that row —
+        // i.e. it really is the inverse of `thumb_geometry`.
+        let cases = [
+            (200_usize, 50_usize, 20_usize),
+            (1000, 30, 25),
+            (50, 10, 15),
+        ];
+        for (total, visible, track) in cases {
+            let probe = ScrollbarState::new(total, visible, 0);
+            let (_, thumb_size) = probe.thumb_geometry(track);
+            let max_thumb_top = track.saturating_sub(thumb_size);
+            for target in 0..=max_thumb_top {
+                let offset = probe.offset_for_thumb_top(track, target);
+                let placed = ScrollbarState::new(total, visible, offset);
+                let (got_top, _) = placed.thumb_geometry(track);
+                assert!(
+                    got_top.abs_diff(target) <= 1,
+                    "thumb landed at {got_top}, expected {target} (total={total} visible={visible} track={track})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_offset_for_thumb_top_clamps_to_max() {
+        let state = ScrollbarState::new(200, 50, 0);
+        let track = 20;
+        let (_, thumb_size) = state.thumb_geometry(track);
+        let max_thumb_top = track - thumb_size;
+        // Asking for a row past the bottom must clamp to max_scroll, not
+        // wrap or overshoot.
+        assert_eq!(
+            state.offset_for_thumb_top(track, max_thumb_top + 100),
+            200 - 50
+        );
     }
 }

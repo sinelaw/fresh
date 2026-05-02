@@ -276,13 +276,17 @@ impl Editor {
                         let sb_state = scrollbar_state_for(&editor);
 
                         if !sb_state.is_thumb_row(track_height, click_row) {
-                            // Track click outside the thumb — recentre on
-                            // the cursor (so the click position becomes the
-                            // thumb's middle, not its top).
+                            // Track click outside the thumb — recentre the
+                            // thumb on the cursor. Use `offset_for_thumb_top`
+                            // (the proper inverse of `thumb_geometry`)
+                            // rather than `click_to_offset`, otherwise the
+                            // thumb lands a row or two above the cursor
+                            // because the latter divides by `track_height`
+                            // instead of `max_thumb_top`.
                             let (_, thumb_size) = sb_state.thumb_geometry(track_height);
                             let aim_top = click_row.saturating_sub(thumb_size / 2);
                             editor.scroll.offset =
-                                sb_state.click_to_offset(track_height, aim_top) as u16;
+                                sb_state.offset_for_thumb_top(track_height, aim_top) as u16;
                         }
 
                         editor.scrollbar_drag =
