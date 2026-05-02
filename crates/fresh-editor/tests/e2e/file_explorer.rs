@@ -3594,17 +3594,35 @@ fn test_file_explorer_copy_full_path() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
+    // Read the actual selected-node path from the explorer rather than
+    // reconstructing it from `project_dir()`. On macOS CI the working dir
+    // can be a symlinked tempdir (`/tmp` → `/private/tmp`, `/var/folders`
+    // → `/private/var/folders`), so reconstruction and the tree's own
+    // path representation can differ as strings even when they point to
+    // the same file.
+    let selected_path = harness
+        .editor()
+        .file_explorer()
+        .and_then(|fe| fe.get_selected_entry())
+        .map(|e| e.path.clone())
+        .expect("explorer must have a selected entry after Down");
+    assert_eq!(
+        selected_path.file_name().and_then(|n| n.to_str()),
+        Some("alpha.txt"),
+        "Down from the auto-expanded root should land on alpha.txt; got {:?}",
+        selected_path
+    );
+
     // Force internal-only clipboard so the test doesn't read/write the
     // host's real clipboard and stays parallel-safe in CI.
     harness.editor_mut().set_clipboard_for_test(String::new());
     harness.editor_mut().file_explorer_copy_path(false);
 
     let copied = harness.editor().clipboard_content_for_test();
-    let expected = project_root.join("alpha.txt");
     assert_eq!(
         copied,
-        expected.to_string_lossy(),
-        "Copy Full Path must put the absolute path on the clipboard"
+        selected_path.to_string_lossy(),
+        "Copy Full Path must put the selected node's absolute path on the clipboard"
     );
 }
 
@@ -3629,14 +3647,37 @@ fn test_file_explorer_copy_relative_path() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
+    // Sanity-check selection so the test fails loudly if explorer ordering
+    // shifts under us, instead of silently asserting against the wrong path.
+    let selected_path = harness
+        .editor()
+        .file_explorer()
+        .and_then(|fe| fe.get_selected_entry())
+        .map(|e| e.path.clone())
+        .expect("explorer must have a selected entry");
+    assert_eq!(
+        selected_path.file_name().and_then(|n| n.to_str()),
+        Some("main.rs"),
+        "selection should be on main.rs after Down, Right, Down; got {:?}",
+        selected_path
+    );
+
     harness.editor_mut().set_clipboard_for_test(String::new());
     harness.editor_mut().file_explorer_copy_path(true);
 
     let copied = harness.editor().clipboard_content_for_test();
-    let expected = std::path::Path::new("src").join("main.rs");
+    // Compute the expected relative path the same way file_explorer_copy_path
+    // does — strip the working_dir prefix from the actual selected-node path.
+    // `working_dir` and `selected_path` come from the same source (the
+    // editor's own state), so the prefix-strip must succeed and the result
+    // is independent of any tempdir-symlink quirks.
+    let working_dir = harness.editor().working_dir().to_path_buf();
+    let expected = selected_path
+        .strip_prefix(&working_dir)
+        .expect("selected path must live under working_dir");
     assert_eq!(
         copied,
         expected.to_string_lossy(),
-        "Copy Relative Path must produce a project-relative path"
+        "Copy Relative Path must produce the project-relative path"
     );
 }
