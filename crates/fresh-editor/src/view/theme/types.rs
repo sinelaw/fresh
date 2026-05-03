@@ -444,6 +444,15 @@ pub struct UiColors {
     /// Status bar LSP indicator background when LSP is running (falls back to status_bar_bg)
     #[serde(default)]
     pub status_lsp_on_bg: Option<ColorDef>,
+    /// Status bar LSP indicator text color when LSP options are available
+    /// to act on (configured-but-not-running). Drawn prominently to signal
+    /// "click here to enable". Falls back to `status_warning_indicator_fg`.
+    #[serde(default)]
+    pub status_lsp_actionable_fg: Option<ColorDef>,
+    /// Status bar LSP indicator background when LSP options are available
+    /// to act on. Falls back to `status_warning_indicator_bg`.
+    #[serde(default)]
+    pub status_lsp_actionable_bg: Option<ColorDef>,
     /// Command prompt text color
     #[serde(default = "default_prompt_fg")]
     pub prompt_fg: ColorDef,
@@ -1017,6 +1026,10 @@ pub struct Theme {
     /// Status bar LSP indicator colors when running (default: same as status bar)
     pub status_lsp_on_fg: Color,
     pub status_lsp_on_bg: Color,
+    /// Status bar LSP indicator colors when actionable options are available
+    /// (configured-but-not-running). Default: same as status warning indicator.
+    pub status_lsp_actionable_fg: Color,
+    pub status_lsp_actionable_bg: Color,
     pub prompt_fg: Color,
     pub prompt_bg: Color,
     pub prompt_selection_fg: Color,
@@ -1199,6 +1212,18 @@ impl From<ThemeFile> for Theme {
                 .clone()
                 .map(|c| c.into())
                 .unwrap_or_else(|| file.ui.status_bar_bg.clone().into()),
+            status_lsp_actionable_fg: file
+                .ui
+                .status_lsp_actionable_fg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| file.ui.status_warning_indicator_fg.clone().into()),
+            status_lsp_actionable_bg: file
+                .ui
+                .status_lsp_actionable_bg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| file.ui.status_warning_indicator_bg.clone().into()),
             prompt_fg: file.ui.prompt_fg.into(),
             prompt_bg: file.ui.prompt_bg.into(),
             prompt_selection_fg: file.ui.prompt_selection_fg.into(),
@@ -1345,6 +1370,8 @@ impl From<Theme> for ThemeFile {
                 status_palette_bg: Some(theme.status_palette_bg.into()),
                 status_lsp_on_fg: Some(theme.status_lsp_on_fg.into()),
                 status_lsp_on_bg: Some(theme.status_lsp_on_bg.into()),
+                status_lsp_actionable_fg: Some(theme.status_lsp_actionable_fg.into()),
+                status_lsp_actionable_bg: Some(theme.status_lsp_actionable_bg.into()),
                 prompt_fg: theme.prompt_fg.into(),
                 prompt_bg: theme.prompt_bg.into(),
                 prompt_selection_fg: theme.prompt_selection_fg.into(),
@@ -1505,6 +1532,8 @@ impl Theme {
                 "status_palette_bg" => Some(self.status_palette_bg),
                 "status_lsp_on_fg" => Some(self.status_lsp_on_fg),
                 "status_lsp_on_bg" => Some(self.status_lsp_on_bg),
+                "status_lsp_actionable_fg" => Some(self.status_lsp_actionable_fg),
+                "status_lsp_actionable_bg" => Some(self.status_lsp_actionable_bg),
                 "prompt_fg" => Some(self.prompt_fg),
                 "prompt_bg" => Some(self.prompt_bg),
                 "prompt_selection_fg" => Some(self.prompt_selection_fg),
@@ -1604,6 +1633,8 @@ impl Theme {
                 "status_palette_bg" => Some(&mut self.status_palette_bg),
                 "status_lsp_on_fg" => Some(&mut self.status_lsp_on_fg),
                 "status_lsp_on_bg" => Some(&mut self.status_lsp_on_bg),
+                "status_lsp_actionable_fg" => Some(&mut self.status_lsp_actionable_fg),
+                "status_lsp_actionable_bg" => Some(&mut self.status_lsp_actionable_bg),
                 "prompt_fg" => Some(&mut self.prompt_fg),
                 "prompt_bg" => Some(&mut self.prompt_bg),
                 "prompt_selection_fg" => Some(&mut self.prompt_selection_fg),

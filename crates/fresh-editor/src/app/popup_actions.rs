@@ -70,13 +70,6 @@ impl Editor {
                     .and_then(|p| p.selected_item())
                     .and_then(|item| item.data.clone());
                 self.hide_popup();
-                // User picked a row → end the auto-prompt cycle for
-                // this language.
-                let active = self.active_buffer();
-                if let Some(language) = self.buffers.get(&active).map(|s| s.language.clone()) {
-                    self.pending_auto_start_prompts.remove(&language);
-                    self.auto_start_prompted_languages.insert(language);
-                }
                 if let Some(key) = action_key {
                     self.handle_lsp_status_action(&key);
                 }
@@ -300,14 +293,6 @@ impl Editor {
             }
 
             Some(PopupResolver::LspStatus) => {
-                // End the auto-prompt cycle for the active buffer's
-                // language so re-focusing another file of the same
-                // language doesn't re-pop it.
-                let active = self.active_buffer();
-                if let Some(language) = self.buffers.get(&active).map(|s| s.language.clone()) {
-                    self.pending_auto_start_prompts.remove(&language);
-                    self.auto_start_prompted_languages.insert(language);
-                }
                 self.hide_popup();
             }
 

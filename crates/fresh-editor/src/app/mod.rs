@@ -38,7 +38,6 @@ mod keybinding_editor_actions;
 mod lifecycle;
 mod line_scan;
 mod lsp_actions;
-pub mod lsp_auto_prompt;
 mod lsp_event_notify;
 mod lsp_requests;
 mod lsp_status;
@@ -954,31 +953,6 @@ pub struct Editor {
     /// mutating their on-disk config. Session-scoped; dismissal does not
     /// survive editor restarts.
     user_dismissed_lsp_languages: std::collections::HashSet<String>,
-
-    /// Languages for which the auto-start prompt has already been
-    /// surfaced this session, so subsequent opens of files in the same
-    /// language don't keep re-popping the popup. Cleared only by
-    /// editor restart — the persisted `auto_start=true` flag is what
-    /// silences the prompt across sessions.
-    auto_start_prompted_languages: std::collections::HashSet<String>,
-
-    /// Languages for which an auto-start prompt is queued, waiting
-    /// for a buffer of that language to become active. The popup is
-    /// shown lazily on render so it attaches to the currently-focused
-    /// buffer — this keeps the prompt visible when a session restore
-    /// opens several files of the same language back-to-back and the
-    /// active buffer ends up being a later one. Once drained, the
-    /// language moves to `auto_start_prompted_languages`.
-    pending_auto_start_prompts: std::collections::HashSet<String>,
-
-    /// Per-editor flag gating the LSP auto-prompt. Real sessions
-    /// default this to `true` (see `lsp_auto_prompt::default_enabled`);
-    /// test infrastructure flips the default to `false` in its ctor
-    /// to keep the popup from stealing keystrokes from scenarios
-    /// that don't care about LSP. Snapshotted at construction so
-    /// parallel tests running in the same process don't race on a
-    /// shared atomic.
-    lsp_auto_prompt_enabled: bool,
 
     /// Pending close buffer - buffer to close after SaveFileAs completes
     /// Used when closing a modified buffer that needs to be saved first

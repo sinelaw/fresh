@@ -459,6 +459,30 @@
           ],
           "default": null
         },
+        "status_lsp_actionable_fg": {
+          "description": "Status bar LSP indicator text color when LSP options are available\nto act on (configured-but-not-running). Drawn prominently to signal\n\"click here to enable\". Falls back to `status_warning_indicator_fg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status_lsp_actionable_bg": {
+          "description": "Status bar LSP indicator background when LSP options are available\nto act on. Falls back to `status_warning_indicator_bg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "prompt_fg": {
           "description": "Command prompt text color",
           "$ref": "#/$defs/ColorDef",

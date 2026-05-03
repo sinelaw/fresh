@@ -81,9 +81,6 @@ fn test_missing_binary_popup_shows_advisory_and_dismiss() -> anyhow::Result<()> 
             .with_config(make_config_with_missing_rust_lsp())
             .with_working_dir(temp.path().to_path_buf()),
     )?;
-    // Opt this test into the LSP auto-prompt; the harness ctor
-    // disables it by default for the rest of the suite.
-    harness.editor_mut().set_lsp_auto_prompt_enabled(true);
 
     harness.open_file(&file)?;
 
@@ -92,10 +89,9 @@ fn test_missing_binary_popup_shows_advisory_and_dismiss() -> anyhow::Result<()> 
     // because the real issue is upstream.
     harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
 
-    // The LSP auto-prompt already opens the popup on the first
-    // file open for a language with enabled+auto_start=false
-    // configured, so we don't need to invoke show_lsp_status_popup
-    // ourselves — doing so would toggle the popup closed.
+    // Open the popup explicitly: the indicator is the only entry point.
+    harness.editor_mut().show_lsp_status_popup();
+    harness.render()?;
 
     let items = popup_items(&harness);
     assert!(!items.is_empty(), "LSP status popup should have items");
@@ -174,9 +170,6 @@ fn test_dismiss_then_enable_round_trip() -> anyhow::Result<()> {
             .with_config(make_config_with_missing_rust_lsp())
             .with_working_dir(temp.path().to_path_buf()),
     )?;
-    // Opt this test into the LSP auto-prompt; the harness ctor
-    // disables it by default for the rest of the suite.
-    harness.editor_mut().set_lsp_auto_prompt_enabled(true);
 
     harness.open_file(&file)?;
     harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;

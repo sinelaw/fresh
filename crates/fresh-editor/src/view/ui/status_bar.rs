@@ -1035,32 +1035,25 @@ impl StatusBarRenderer {
             }
             ElementKind::Lsp => {
                 let is_hovering = hover == StatusBarHover::LspIndicator;
-                // Color by LSP state, reusing the diagnostic theme keys:
-                //   Error → diagnostics.error_*   (red-ish)
-                //   Off   → diagnostics.warning_* (yellow-ish)
-                //   On    → diagnostics.info_*    (info-ish)
-                //   None  → default status-bar colors
+                // Color by LSP state:
+                //   Error  → diagnostic_error_*       (red-ish; problem)
+                //   Off    → status_lsp_actionable_*  (prominent; click to act)
+                //   On     → status_lsp_on_*          (neutral; healthy)
+                //   Dismissed/None → status-bar palette (muted; nothing to do)
+                //
+                // Off is the indicator's main signal that the user has
+                // useful options behind a click — drawn prominently so
+                // it stands out in the status bar without auto-popping
+                // a dialog.
                 let (fg, bg) = match lsp_state {
                     LspIndicatorState::Error => {
                         (theme.diagnostic_error_fg, theme.diagnostic_error_bg)
                     }
-                    LspIndicatorState::Off => {
-                        (theme.diagnostic_warning_fg, theme.diagnostic_warning_bg)
-                    }
-                    // On is the expected/healthy case — driven by the
-                    // dedicated `status_lsp_on_*` theme keys (default to
-                    // the neutral status-bar palette so the indicator
-                    // blends into the bar instead of breaking its color
-                    // band).  Error and Off keep their vivid palettes
-                    // above so genuine problems still stand out.
+                    LspIndicatorState::Off => (
+                        theme.status_lsp_actionable_fg,
+                        theme.status_lsp_actionable_bg,
+                    ),
                     LspIndicatorState::On => (theme.status_lsp_on_fg, theme.status_lsp_on_bg),
-                    // Dismissed: fall back to the neutral status-bar
-                    // palette so the pill reads as low-priority.  We
-                    // intentionally don't introduce a dedicated theme
-                    // key — every theme already carries the plain
-                    // status-bar fg/bg, which reliably produces a
-                    // "muted" look next to the vivid error/warning
-                    // palettes above.
                     LspIndicatorState::OffDismissed => (theme.status_bar_fg, theme.status_bar_bg),
                     LspIndicatorState::None => (theme.status_bar_fg, theme.status_bar_bg),
                 };
@@ -1933,8 +1926,8 @@ mod tests {
             WarningLevel::None,
             LspIndicatorState::Off,
         );
-        assert_eq!(lsp_off_style.fg, Some(theme.diagnostic_warning_fg));
-        assert_eq!(lsp_off_style.bg, Some(theme.diagnostic_warning_bg));
+        assert_eq!(lsp_off_style.fg, Some(theme.status_lsp_actionable_fg));
+        assert_eq!(lsp_off_style.bg, Some(theme.status_lsp_actionable_bg));
 
         let lsp_error_style = StatusBarRenderer::element_style(
             ElementKind::Lsp,

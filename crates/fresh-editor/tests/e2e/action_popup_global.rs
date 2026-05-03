@@ -368,12 +368,13 @@ fn action_popups_queue_confirms_preserve_per_popup_identity() {
 }
 
 /// Regression for "user reports Attach stopped attaching when an LSP
-/// auto-prompt is also on screen":
+/// status popup is also on screen":
 ///
 ///   1. Open a file in a project that has devcontainer.json AND LSP
-///      configured-but-dormant for the file's language. The LSP
-///      auto-prompt shows (buffer stack); the devcontainer plugin
-///      shows its Attach popup (global stack) concurrently.
+///      configured-but-dormant for the file's language. The user opens
+///      the LSP status popup from the indicator (buffer stack); the
+///      devcontainer plugin shows its Attach popup (global stack)
+///      concurrently.
 ///   2. User presses Enter on the devcontainer popup to pick "Attach".
 ///   3. Pre-fix: `handle_popup_confirm`'s cascade checked
 ///      `pending_lsp_status_popup.is_some()` first, read the
@@ -390,7 +391,7 @@ fn action_popups_queue_confirms_preserve_per_popup_identity() {
 /// hook ran with the right arguments.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-fn action_popup_attach_fires_hook_even_when_lsp_auto_prompt_is_open() {
+fn action_popup_attach_fires_hook_even_when_lsp_status_popup_is_open() {
     use crate::common::harness::{copy_plugin_lib, HarnessOptions};
     use std::fs;
 
@@ -451,19 +452,16 @@ editor.on("action_popup_result", "devmock_on_result");
             .with_working_dir(project_root.clone()),
     )
     .unwrap();
-    // The harness disables LSP auto-prompt by default to keep unrelated
-    // tests clean. This test specifically exercises the collision with
-    // the auto-prompt, so re-enable it for this editor.
-    harness.editor_mut().set_lsp_auto_prompt_enabled(true);
 
-    // Open the file — LSP auto-prompt will show on the buffer popup
-    // stack on the next render.
+    // Open the file, then explicitly open the LSP status popup so the
+    // collision scenario below has both popups on screen.
     harness.open_file(&file).unwrap();
+    harness.editor_mut().show_lsp_status_popup();
     harness.render().unwrap();
     // Sanity: the LSP popup surfaced.
     assert!(
         harness.screen_to_string().contains("rust-analyzer"),
-        "LSP auto-prompt should be visible after opening src.rs. Screen:\n{}",
+        "LSP status popup should be visible after explicit open. Screen:\n{}",
         harness.screen_to_string()
     );
 

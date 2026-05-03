@@ -21,13 +21,6 @@ impl Editor {
         // Reset per-cell theme key map for this frame
         self.cached_layout.reset_cell_theme_map();
 
-        // Attach any queued LSP auto-start prompt to the currently
-        // active buffer. Done here (rather than at file-open) so the
-        // popup follows the user's focus through a session restore
-        // that opens several files of the same language in
-        // succession. No-op when nothing is queued.
-        self.drain_pending_lsp_prompt_for_active_buffer();
-
         // For scroll sync groups, we need to update the active split's viewport position BEFORE
         // calling sync_scroll_groups, so that the sync reads the correct position.
         // Otherwise, cursor movements like 'G' (go to end) won't sync properly because

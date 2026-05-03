@@ -984,35 +984,9 @@ impl Editor {
             }
             LspSpawnResult::NotAutoStart => {
                 tracing::debug!(
-                    "LSP for {} not auto-starting (auto_start=false). Use command palette to start manually.",
+                    "LSP for {} not auto-starting (auto_start=false). Click the LSP indicator to start manually.",
                     language
                 );
-                // Queue an auto-prompt for this language so the user
-                // can discover the dormant server (otherwise the only
-                // visible signal is a muted `LSP (off)` pill, which is
-                // easy to miss). We intentionally don't show the popup
-                // inline here — session restore typically opens many
-                // files of the same language back-to-back, and the
-                // buffer active at *this* instant isn't necessarily
-                // the one the user lands on. Draining happens on
-                // render, which guarantees the popup attaches to
-                // whichever buffer the user is actually looking at.
-                //
-                // Skip queueing entirely when the user already got
-                // the prompt this session or dismissed the pill —
-                // both mean "please don't re-pop this."  The
-                // persisted `auto_start = true` flag is what
-                // silences the prompt across sessions. Also skip
-                // when the process-wide toggle is off — e2e tests
-                // set this via `set_lsp_auto_prompt_enabled(false)`
-                // in their ctor so the popup doesn't steal
-                // keystrokes from unrelated scenarios.
-                if self.lsp_auto_prompt_enabled
-                    && !self.auto_start_prompted_languages.contains(&language)
-                    && !self.is_lsp_language_user_dismissed(&language)
-                {
-                    self.pending_auto_start_prompts.insert(language);
-                }
             }
             LspSpawnResult::NotConfigured => {
                 tracing::debug!("No LSP server configured for language: {}", language);
