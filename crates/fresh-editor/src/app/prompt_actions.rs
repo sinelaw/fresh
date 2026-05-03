@@ -1278,7 +1278,14 @@ impl Editor {
                 }
             }
         } else if first_char == discard_first {
-            // Discard changes and quit (no recovery)
+            // Discard changes and quit (no recovery). Clearing the modified flag
+            // on every buffer ensures `end_recovery_session` will not preserve
+            // their recovery files when hot_exit is enabled — the user has
+            // explicitly asked to throw the changes away.
+            for (_, state) in self.buffers.iter_mut() {
+                state.buffer.clear_modified();
+                state.buffer.set_recovery_pending(false);
+            }
             self.should_quit = true;
         } else if first_char == quit_first && self.config.editor.hot_exit {
             // Quit without saving — changes will be preserved via hot exit recovery

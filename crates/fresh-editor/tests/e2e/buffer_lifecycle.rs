@@ -103,6 +103,69 @@ fn test_quit_with_confirmation_discard() {
     assert!(harness.should_quit(), "Editor should quit after confirming");
 }
 
+/// Issue #1839: with hot_exit enabled, the unsaved-changes quit prompt should
+/// offer a "discard and quit" option in addition to the recoverable quit, so
+/// users can throw away accidental changes without flipping the global setting.
+#[test]
+fn test_quit_prompt_offers_discard_when_hot_exit_enabled() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let file_path = project_dir.join("notes.txt");
+    std::fs::write(&file_path, "initial\n").unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    harness.type_text("oops").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The prompt must list both the discard ("d") and recoverable-quit ("q")
+    // options; previously only the latter appeared in hot_exit mode.
+    harness.assert_screen_contains("(d)iscard and quit");
+    harness.assert_screen_contains("(q)uit (recoverable)");
+}
+
+/// Issue #1839: pressing the discard key in the hot_exit quit prompt must
+/// actually quit the editor (rather than silently being treated as cancel).
+#[test]
+fn test_quit_with_discard_key_works_with_hot_exit() {
+    let mut config = Config::default();
+    config.editor.hot_exit = true;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let file_path = project_dir.join("notes.txt");
+    std::fs::write(&file_path, "initial\n").unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    harness.type_text("changes to throw away").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.should_quit(),
+        "Editor should quit after pressing 'd' (discard) in hot_exit prompt"
+    );
+}
+
 /// Test that quitting with confirmation (cancel) cancels quit
 #[test]
 fn test_quit_with_confirmation_cancel() {

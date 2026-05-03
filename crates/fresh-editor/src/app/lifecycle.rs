@@ -157,13 +157,15 @@ impl Editor {
             let cancel_key = t!("prompt.key.cancel").to_string();
             let hot_exit = self.config.editor.hot_exit;
 
+            let discard_key = t!("prompt.key.discard").to_string();
             let msg = if hot_exit {
-                // With hot exit: offer save, quit-without-saving (recoverable), or cancel
+                // With hot exit: offer save, discard, quit-without-saving (recoverable), or cancel
                 let quit_key = t!("prompt.key.quit").to_string();
                 if modified_count == 1 {
                     t!(
                         "prompt.quit_modified_hot_one",
                         save_key = save_key,
+                        discard_key = discard_key,
                         quit_key = quit_key,
                         cancel_key = cancel_key
                     )
@@ -173,6 +175,7 @@ impl Editor {
                         "prompt.quit_modified_hot_many",
                         count = modified_count,
                         save_key = save_key,
+                        discard_key = discard_key,
                         quit_key = quit_key,
                         cancel_key = cancel_key
                     )
@@ -180,7 +183,6 @@ impl Editor {
                 }
             } else {
                 // Without hot exit: offer save, discard, or cancel
-                let discard_key = t!("prompt.key.discard").to_string();
                 if modified_count == 1 {
                     t!(
                         "prompt.quit_modified_one",
