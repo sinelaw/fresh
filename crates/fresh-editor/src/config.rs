@@ -16,7 +16,7 @@ pub struct ThemeName(pub String);
 impl ThemeName {
     /// Built-in theme options shown in the settings dropdown
     pub const BUILTIN_OPTIONS: &'static [&'static str] =
-        &["dark", "light", "high-contrast", "nostalgia"];
+        &["dark", "light", "high-contrast", "nostalgia", "terminal"];
 }
 
 impl Deref for ThemeName {

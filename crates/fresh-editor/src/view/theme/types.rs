@@ -14,6 +14,10 @@ pub const THEME_NOSTALGIA: &str = "nostalgia";
 pub const THEME_DRACULA: &str = "dracula";
 pub const THEME_NORD: &str = "nord";
 pub const THEME_SOLARIZED_DARK: &str = "solarized-dark";
+/// Theme that defers to the host terminal's palette and background
+/// (uses `Default` and named ANSI colors for everything visual), so
+/// fresh inherits whatever colorscheme the terminal already has.
+pub const THEME_TERMINAL: &str = "terminal";
 
 /// A builtin theme with its name, pack, and embedded JSON content.
 pub struct BuiltinTheme {
@@ -1757,6 +1761,15 @@ mod tests {
         let high_contrast =
             Theme::load_builtin(THEME_HIGH_CONTRAST).expect("High contrast theme must exist");
         assert_eq!(high_contrast.name, THEME_HIGH_CONTRAST);
+
+        let terminal = Theme::load_builtin(THEME_TERMINAL).expect("Terminal theme must exist");
+        assert_eq!(terminal.name, THEME_TERMINAL);
+        // The terminal theme defers to the host palette: backgrounds and
+        // primary text use Color::Reset so the terminal's own colors
+        // (including transparency) show through.
+        assert_eq!(terminal.editor_bg, Color::Reset);
+        assert_eq!(terminal.editor_fg, Color::Reset);
+        assert_eq!(terminal.terminal_bg, Color::Reset);
     }
 
     #[test]

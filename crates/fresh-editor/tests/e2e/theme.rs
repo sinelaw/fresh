@@ -205,7 +205,7 @@ fn test_theme_syntax_highlighting_colors() {
 
 #[test]
 fn test_all_available_themes_can_be_loaded() {
-    let themes = vec!["dark", "light", "high-contrast"];
+    let themes = vec!["dark", "light", "high-contrast", "terminal"];
 
     for theme_name in themes {
         let config = Config {
