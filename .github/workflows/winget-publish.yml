@@ -1,0 +1,41 @@
+# Publish to winget-pkgs after a release is created
+
+name: Publish to winget
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.1.99)'
+        required: true
+        type: string
+
+jobs:
+  publish-winget:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Configure gh to use PAT for git auth
+        run: gh auth setup-git
+
+      - name: Publish to winget-pkgs
+        run: ./scripts/winget-publish.py "${VERSION}"

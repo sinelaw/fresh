@@ -568,4 +568,11 @@ jobs:
     uses: ./.github/workflows/cargo-publish.yml
     secrets: inherit
 
-  # Winget publishing is done manually via scripts/winget-publish.sh
+  # Publish to winget-pkgs
+  publish-winget:
+    needs: [plan, release]
+    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    uses: ./.github/workflows/winget-publish.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+    secrets: inherit
