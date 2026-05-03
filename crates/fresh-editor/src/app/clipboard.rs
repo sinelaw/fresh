@@ -520,6 +520,10 @@ impl Editor {
     /// - Line ending normalization (CRLF/CR → buffer's format)
     /// - Single cursor paste
     /// - Multi-cursor paste (pastes at each cursor)
+    /// - Column-mode paste: when the cursor count equals the number of
+    ///   clipboard lines, each cursor receives a distinct line (matches
+    ///   VSCode/Notepad++ behavior, see issue #1057). This makes a
+    ///   block-selected copy/paste round-trip preserve its rectangular shape.
     /// - Selection replacement (deletes selection before inserting)
     /// - Atomic undo (single undo step for entire operation)
     /// - Routing to prompt if one is open
@@ -546,16 +550,6 @@ impl Editor {
             return;
         }
 
-        // Convert to buffer's line ending format
-        let buffer_line_ending = self.active_state().buffer.line_ending();
-        let paste_text = match buffer_line_ending {
-            crate::model::buffer::LineEnding::LF => normalized,
-            crate::model::buffer::LineEnding::CRLF => normalized.replace('\n', "\r\n"),
-            crate::model::buffer::LineEnding::CR => normalized.replace('\n', "\r"),
-        };
-
-        let mut events = Vec::new();
-
         // Collect cursor info sorted in reverse order by position
         let mut cursor_data: Vec<_> = self
             .active_cursors()
@@ -571,6 +565,26 @@ impl Editor {
             .collect();
         cursor_data.sort_by_key(|(_, _, pos)| std::cmp::Reverse(*pos));
 
+        // Decide whether to distribute one clipboard line per cursor
+        // (column-mode paste). We split on LF (after normalization above) and
+        // ignore a single trailing empty entry from a trailing newline so that
+        // "a\nb\nc" and "a\nb\nc\n" both yield 3 lines.
+        let mut lines_for_distribution: Vec<&str> = normalized.split('\n').collect();
+        if lines_for_distribution.len() > 1 && lines_for_distribution.last() == Some(&"") {
+            lines_for_distribution.pop();
+        }
+        let use_column_paste = cursor_data.len() > 1
+            && lines_for_distribution.len() > 1
+            && lines_for_distribution.len() == cursor_data.len();
+
+        // Convert to buffer's line ending format (only used in non-column mode;
+        // a single column-paste line never contains an embedded newline).
+        let paste_text_full = match self.active_state().buffer.line_ending() {
+            crate::model::buffer::LineEnding::LF => normalized.clone(),
+            crate::model::buffer::LineEnding::CRLF => normalized.replace('\n', "\r\n"),
+            crate::model::buffer::LineEnding::CR => normalized.replace('\n', "\r"),
+        };
+
         // Get deleted text for each selection
         let cursor_data_with_text: Vec<_> = {
             let state = self.active_state_mut();
@@ -585,8 +599,18 @@ impl Editor {
                 .collect()
         };
 
-        // Build events for each cursor
-        for (cursor_id, selection, insert_position, deleted_text) in cursor_data_with_text {
+        // Build events for each cursor.
+        //
+        // cursor_data_with_text is sorted by position DESCENDING (so events
+        // applied in vector order don't invalidate earlier offsets). For column
+        // paste we want the topmost cursor (smallest position) to receive the
+        // first clipboard line, so we index into `lines_for_distribution` from
+        // the back when iterating.
+        let total = cursor_data_with_text.len();
+        let mut events = Vec::new();
+        for (i, (cursor_id, selection, insert_position, deleted_text)) in
+            cursor_data_with_text.into_iter().enumerate()
+        {
             if let (Some(range), Some(text)) = (selection, deleted_text) {
                 events.push(Event::Delete {
                     range,
@@ -594,9 +618,14 @@ impl Editor {
                     cursor_id,
                 });
             }
+            let text = if use_column_paste {
+                lines_for_distribution[total - 1 - i].to_string()
+            } else {
+                paste_text_full.clone()
+            };
             events.push(Event::Insert {
                 position: insert_position,
-                text: paste_text.clone(),
+                text,
                 cursor_id,
             });
         }

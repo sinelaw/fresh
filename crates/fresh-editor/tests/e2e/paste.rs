@@ -839,3 +839,166 @@ fn test_paste_crlf_into_prompt() {
     // Prompt should contain the text (newlines may be shown differently in prompt)
     harness.assert_screen_contains("line1");
 }
+
+// ============================================================================
+// Column-mode paste tests (issue #1057)
+//
+// When the cursor count matches the number of clipboard lines, each cursor
+// receives a distinct line — matching VSCode/Notepad++ behavior. This makes a
+// block-selected copy/paste round-trip preserve its rectangular shape.
+// ============================================================================
+
+/// When the number of clipboard lines matches the cursor count, each cursor
+/// receives one line in top-to-bottom order.
+#[test]
+fn test_paste_distributes_lines_when_cursor_count_matches() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("aaa\nbbb\nccc").unwrap();
+    harness.assert_buffer_content("aaa\nbbb\nccc");
+
+    // Place a cursor at the end of each line.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness.editor_mut().add_cursor_below();
+    assert_eq!(harness.editor().active_cursors().count(), 3);
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("X\nYY\nZZZ".to_string());
+    harness.editor_mut().paste_for_test();
+    harness.render().unwrap();
+
+    // First cursor receives "X", second "YY", third "ZZZ".
+    harness.assert_buffer_content("aaaX\nbbbYY\ncccZZZ");
+}
+
+/// A trailing newline in the clipboard is dropped before deciding whether to
+/// distribute, so "X\nY\n" with 2 cursors still distributes one line per
+/// cursor.
+#[test]
+fn test_paste_column_mode_ignores_trailing_newline() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("aaa\nbbb").unwrap();
+    harness.assert_buffer_content("aaa\nbbb");
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.editor_mut().add_cursor_below();
+    assert_eq!(harness.editor().active_cursors().count(), 2);
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("X\nY\n".to_string());
+    harness.editor_mut().paste_for_test();
+    harness.render().unwrap();
+
+    harness.assert_buffer_content("Xaaa\nYbbb");
+}
+
+/// When cursor count and clipboard line count don't match, fall back to
+/// pasting the full multi-line text at every cursor.
+#[test]
+fn test_paste_pastes_full_text_when_cursor_count_does_not_match() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("aaa\nbbb").unwrap();
+    harness.assert_buffer_content("aaa\nbbb");
+
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.editor_mut().add_cursor_below();
+    assert_eq!(harness.editor().active_cursors().count(), 2);
+
+    // 2 cursors but 3 clipboard lines → fall back to inserting the whole
+    // multi-line text at each cursor.
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("X\nY\nZ".to_string());
+    harness.editor_mut().paste_for_test();
+    harness.render().unwrap();
+
+    harness.assert_buffer_content("X\nY\nZaaa\nX\nY\nZbbb");
+}
+
+/// Round-trip: copying a block selection and pasting it at a multi-cursor
+/// preserves the rectangular shape (the headline scenario from issue #1057).
+#[test]
+fn test_block_selection_copy_paste_roundtrip() {
+    use fresh::input::keybindings::Action;
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Six lines we'll later treat as two side-by-side columns.
+    harness
+        .type_text("Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6")
+        .unwrap();
+
+    // Select "Line 4", "Line 5", "Line 6" as a block: cursor is currently at
+    // end of "Line 6"; extend block selection up two lines, then left across
+    // each line's contents.
+    for _ in 0..2 {
+        harness
+            .editor_mut()
+            .dispatch_action_for_tests(Action::BlockSelectUp);
+    }
+    for _ in 0.."Line 6".len() {
+        harness
+            .editor_mut()
+            .dispatch_action_for_tests(Action::BlockSelectLeft);
+    }
+    harness.render().unwrap();
+
+    // Copy the block.
+    harness.editor_mut().copy_selection();
+    let copied = harness.editor().clipboard_content_for_test();
+    assert_eq!(copied, "Line 4\nLine 5\nLine 6");
+
+    // Move to start of "Line 1" and place a cursor at the start of each
+    // of the three target lines.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness.editor_mut().add_cursor_below();
+    assert_eq!(harness.editor().active_cursors().count(), 3);
+
+    // Paste: each cursor should receive its own line of the copied block.
+    harness.editor_mut().paste_for_test();
+    harness.render().unwrap();
+
+    harness
+        .assert_buffer_content("Line 4Line 1\nLine 5Line 2\nLine 6Line 3\nLine 4\nLine 5\nLine 6");
+}
+
+/// Column-mode paste must remain atomic for undo: a single Ctrl+Z reverts
+/// every per-cursor insertion.
+#[test]
+fn test_paste_column_mode_undo_is_atomic() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness.type_text("aaa\nbbb\nccc").unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness.editor_mut().add_cursor_below();
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("X\nY\nZ".to_string());
+    harness.editor_mut().paste_for_test();
+    harness.render().unwrap();
+    harness.assert_buffer_content("Xaaa\nYbbb\nZccc");
+
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("aaa\nbbb\nccc");
+}
