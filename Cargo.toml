@@ -78,6 +78,12 @@ force-frame-pointers = true
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
+strip = true
+lto = "fat"
+codegen-units = 1
+force-frame-pointers = false
+panic = "abort"
+opt-level = "z"
 
 # Optimize the critical dependencies in the plugin-load path at -O3 even
 # in dev/test builds. These are the only deps where unoptimized code
