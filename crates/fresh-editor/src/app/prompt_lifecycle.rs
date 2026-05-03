@@ -723,6 +723,17 @@ impl Editor {
                     // Clear file browser state
                     self.file_open_state = None;
                     self.file_browser_layout = None;
+
+                    // Cancelling a Save-As that was opened as part of the
+                    // "save and quit" chain aborts the quit — the user
+                    // explicitly chose not to name this buffer, so we'd
+                    // rather keep the editor open than drop their content.
+                    if matches!(prompt.prompt_type, PromptType::SaveFileAs)
+                        && !self.pending_quit_unnamed_save.is_empty()
+                    {
+                        self.pending_quit_unnamed_save.clear();
+                        self.set_status_message(t!("buffer.close_cancelled").to_string());
+                    }
                 }
                 PromptType::AsyncPrompt => {
                     // Resolve the pending async prompt callback with null (cancelled)

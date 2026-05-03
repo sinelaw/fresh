@@ -958,6 +958,14 @@ pub struct Editor {
     /// Used when closing a modified buffer that needs to be saved first
     pending_close_buffer: Option<BufferId>,
 
+    /// Pending Save-As queue for the "save and quit" flow.
+    ///
+    /// When the user picks "save" from the unsaved-changes quit prompt and one
+    /// or more unnamed buffers are dirty, those buffer ids are pushed here so
+    /// each one can be walked through a SaveFileAs prompt before quitting.
+    /// Empty means we are not in the save-on-quit flow.
+    pending_quit_unnamed_save: Vec<BufferId>,
+
     /// Whether auto-revert mode is enabled (automatically reload files when changed on disk)
     auto_revert_enabled: bool,
 

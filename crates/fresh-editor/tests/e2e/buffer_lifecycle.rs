@@ -166,6 +166,158 @@ fn test_quit_with_discard_key_works_with_hot_exit() {
     );
 }
 
+/// Picking 'save' from the quit prompt while an unnamed buffer is dirty must
+/// not silently drop the buffer. It should walk the user through Save As,
+/// then quit only after the file is named and written.
+#[test]
+fn test_quit_save_chains_save_as_for_unnamed_buffer() {
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    harness.new_buffer().unwrap();
+    harness.type_text("scratch content").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // We should now be sitting on the Save As prompt, not quitting.
+    harness.assert_screen_contains("Save as:");
+    assert!(
+        !harness.should_quit(),
+        "Editor should keep running until the unnamed buffer is named"
+    );
+
+    let target = project_dir.join("scratch.txt");
+    harness.type_text(target.to_str().unwrap()).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.should_quit(),
+        "Editor should quit after the chained Save As completes"
+    );
+    let written = std::fs::read_to_string(&target).unwrap();
+    assert_eq!(written, "scratch content");
+}
+
+/// Multiple dirty unnamed buffers must each get their own Save As prompt
+/// before the editor quits — the queue should not collapse them or skip any.
+#[test]
+fn test_quit_save_chains_save_as_for_multiple_unnamed_buffers() {
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    harness.new_buffer().unwrap();
+    harness.type_text("first scratch").unwrap();
+    harness.render().unwrap();
+
+    harness.new_buffer().unwrap();
+    harness.type_text("second scratch").unwrap();
+    harness.render().unwrap();
+
+    // Initiate save-and-quit.
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // First Save-As prompt — name the active buffer.
+    harness.assert_screen_contains("Save as:");
+    assert!(!harness.should_quit());
+    let first = project_dir.join("first.txt");
+    harness.type_text(first.to_str().unwrap()).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The chain should now advance to the second unnamed buffer rather than
+    // quitting.
+    harness.assert_screen_contains("Save as:");
+    assert!(
+        !harness.should_quit(),
+        "Editor should keep prompting until every unnamed buffer is named"
+    );
+    let second = project_dir.join("second.txt");
+    harness.type_text(second.to_str().unwrap()).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.should_quit(),
+        "Editor should finally quit once both unnamed buffers are saved"
+    );
+    let first_written = std::fs::read_to_string(&first).unwrap();
+    let second_written = std::fs::read_to_string(&second).unwrap();
+    let combined = format!("{first_written}|{second_written}");
+    // The harness order between buffers is not guaranteed, so accept either
+    // ordering as long as both contents reached disk under their own name.
+    assert!(
+        combined == "first scratch|second scratch" || combined == "second scratch|first scratch",
+        "Both unnamed buffers should be saved with distinct content. Got: {combined}"
+    );
+}
+
+/// Cancelling the chained Save As should abort the quit so the user doesn't
+/// lose their unnamed buffer to a stray Escape.
+#[test]
+fn test_quit_save_chain_cancel_aborts_quit() {
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 24, config).unwrap();
+
+    harness.new_buffer().unwrap();
+    harness.type_text("draft").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save as:");
+
+    // Dismiss the Save As prompt.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.should_quit(),
+        "Cancelling the Save As during save-and-quit must keep the editor open"
+    );
+}
+
 /// Test that quitting with confirmation (cancel) cancels quit
 #[test]
 fn test_quit_with_confirmation_cancel() {

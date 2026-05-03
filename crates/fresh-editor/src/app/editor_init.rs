@@ -878,6 +878,7 @@ impl Editor {
             chord_state: Vec::new(),
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             pending_close_buffer: None,
+            pending_quit_unnamed_save: Vec::new(),
             auto_revert_enabled: true,
             last_auto_revert_poll: time_source.now(),
             last_file_tree_poll: time_source.now(),

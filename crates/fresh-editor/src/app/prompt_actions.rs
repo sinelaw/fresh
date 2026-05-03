@@ -814,6 +814,18 @@ impl Editor {
                     } else {
                         self.set_status_message(t!("buffer.saved_and_closed").to_string());
                     }
+                } else if !self.pending_quit_unnamed_save.is_empty() {
+                    // Pop the buffer we just saved off the head of the queue,
+                    // then either advance to the next unnamed buffer or quit.
+                    let just_saved = self.active_buffer();
+                    self.pending_quit_unnamed_save
+                        .retain(|id| *id != just_saved);
+                    self.set_status_message(
+                        t!("file.saved_as", path = full_path.display().to_string()).to_string(),
+                    );
+                    if !self.start_next_quit_save_as() {
+                        self.should_quit = true;
+                    }
                 } else {
                     self.set_status_message(
                         t!("file.saved_as", path = full_path.display().to_string()).to_string(),
@@ -822,6 +834,11 @@ impl Editor {
             }
             Err(e) => {
                 self.pending_close_buffer = None;
+                // A failed Save-As during the save-and-quit chain means we
+                // can't honor the user's intent to save everything; abandon
+                // the quit rather than silently dropping the remaining
+                // unnamed buffers.
+                self.pending_quit_unnamed_save.clear();
                 self.set_status_message(t!("file.error_saving", error = e.to_string()).to_string());
             }
         }
@@ -1264,11 +1281,10 @@ impl Editor {
         let quit_first = quit_key.chars().next();
 
         if first_char == save_first {
-            // Save all modified file-backed buffers to disk, then quit
+            // Save all modified file-backed buffers to disk first.
             match self.save_all_on_exit() {
                 Ok(count) => {
                     tracing::info!("Saved {} buffer(s) on exit", count);
-                    self.should_quit = true;
                 }
                 Err(e) => {
                     self.set_status_message(
@@ -1276,6 +1292,15 @@ impl Editor {
                     );
                     return true; // Early return, stay in editor
                 }
+            }
+
+            // Modified unnamed buffers don't have a path yet — chain a Save As
+            // prompt for each one before actually quitting, so the user's
+            // intent ("save everything") is honored instead of silently
+            // dropping their content.
+            self.pending_quit_unnamed_save = self.collect_unnamed_modified_buffers();
+            if !self.start_next_quit_save_as() {
+                self.should_quit = true;
             }
         } else if first_char == discard_first {
             // Discard changes and quit (no recovery). Clearing the modified flag

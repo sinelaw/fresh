@@ -259,6 +259,60 @@ impl Editor {
         Ok(count)
     }
 
+    /// Collect ids of modified unnamed (no on-disk path) buffers in tab order.
+    ///
+    /// Used by the "save and quit" flow to walk a Save-As prompt over each
+    /// unnamed buffer before the editor actually exits.
+    pub(crate) fn collect_unnamed_modified_buffers(&self) -> Vec<BufferId> {
+        let mut out = Vec::new();
+        for (id, state) in &self.buffers {
+            if !state.buffer.is_modified() {
+                continue;
+            }
+            let is_unnamed = state
+                .buffer
+                .file_path()
+                .map(|p| p.as_os_str().is_empty())
+                .unwrap_or(true);
+            if is_unnamed {
+                out.push(*id);
+            }
+        }
+        out
+    }
+
+    /// Pop the next id from `pending_quit_unnamed_save` and start a Save-As
+    /// prompt for it. Returns true when a prompt was opened (and the editor
+    /// must keep running until the user finishes the chain).
+    pub(crate) fn start_next_quit_save_as(&mut self) -> bool {
+        while let Some(buffer_id) = self.pending_quit_unnamed_save.first().copied() {
+            // Skip ids that vanished or were already saved out from under us.
+            let still_dirty_unnamed = self
+                .buffers
+                .get(&buffer_id)
+                .map(|s| {
+                    s.buffer.is_modified()
+                        && s.buffer
+                            .file_path()
+                            .map(|p| p.as_os_str().is_empty())
+                            .unwrap_or(true)
+                })
+                .unwrap_or(false);
+            if !still_dirty_unnamed {
+                self.pending_quit_unnamed_save.remove(0);
+                continue;
+            }
+
+            self.set_active_buffer(buffer_id);
+            self.start_prompt(
+                t!("file.save_as_prompt").to_string(),
+                PromptType::SaveFileAs,
+            );
+            return true;
+        }
+        false
+    }
+
     /// Save all modified file-backed buffers to disk (called on exit when auto_save is enabled).
     /// Unlike `auto_save_persistent_buffers`, this skips the interval check and only saves
     /// named file-backed buffers (not unnamed buffers).
