@@ -62,8 +62,11 @@ fn test_git_grep_shows_results() {
     // Trigger git grep
     trigger_git_grep(&mut harness);
 
-    // Check that the prompt appeared
-    harness.assert_screen_contains("Git grep: ");
+    // Wait for the grep prompt to appear. Eager `assert_screen_contains`
+    // races the JS plugin's prompt mount on slow CI runners (notably
+    // Windows): the palette closes on Enter but the grep prompt isn't
+    // rendered yet by the time the assertion runs.
+    harness.wait_for_screen_contains("Git grep: ").unwrap();
 
     // Type search query
     harness.type_text("config").unwrap();
