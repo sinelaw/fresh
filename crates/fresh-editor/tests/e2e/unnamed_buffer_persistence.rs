@@ -419,7 +419,7 @@ fn test_hot_exit_quit_shows_recoverable_option() {
     config.editor.hot_exit = true;
 
     let mut harness = EditorTestHarness::create(
-        80,
+        120,
         24,
         HarnessOptions::new()
             .with_config(config)
