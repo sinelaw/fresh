@@ -55,8 +55,11 @@ pub enum PopupPosition {
     BottomRight,
     /// Anchored above the status bar at a specific column (left-aligned at x).
     /// Used by the LSP-status popup so it appears directly above the LSP
-    /// segment that opened it.
-    AboveStatusBarAt { x: u16 },
+    /// segment that opened it. `status_row` is the actual row of the status
+    /// bar in the current frame — passing it in lets the popup hug the
+    /// status bar regardless of whether the prompt line is visible (which
+    /// shifts the status bar by a row when it auto-hides).
+    AboveStatusBarAt { x: u16, status_row: u16 },
 }
 
 /// Kind of popup - determines input handling behavior
@@ -982,31 +985,26 @@ impl Popup {
                     height,
                 }
             }
-            PopupPosition::AboveStatusBarAt { x } => {
+            PopupPosition::AboveStatusBarAt { x, status_row } => {
                 let width = self.width.min(terminal_area.width);
                 let height = self
                     .content_height()
                     .min(self.max_height)
                     .min(terminal_area.height);
-                // Align left edge with the given x, but clamp so the popup
-                // stays within the terminal bounds.
-                let x = if x + width > terminal_area.width {
-                    terminal_area.width.saturating_sub(width)
-                } else {
-                    x
-                };
-                // Leave one empty row between the popup's bottom border
-                // and the status bar.  Without this gap, the popup's
-                // bottom border visually touches the LSP indicator it was
-                // opened from, making the indicator harder to read and
-                // obscuring the spinner while progress is in flight.
-                //   - terminal_height - 1 = status bar row
-                //   - terminal_height - 2 = gap row
-                //   - popup bottom ends at terminal_height - 3
-                let y = terminal_area
-                    .height
-                    .saturating_sub(height)
-                    .saturating_sub(2);
+                // Reserve the rightmost column for the editor scrollbar.
+                // Without the reservation, a popup that overflows the
+                // right edge gets clamped flush to `terminal_area.width`
+                // and its right border paints over the scrollbar of the
+                // split underneath.
+                let max_x = terminal_area.width.saturating_sub(width).saturating_sub(1);
+                let x = x.min(max_x);
+                // Sit the popup's bottom border on the row immediately
+                // above the status bar. Anchoring to `status_row` (rather
+                // than `terminal_area.height - 2`) keeps the popup hugging
+                // the status bar in both prompt-visible and prompt-auto-
+                // hide modes — the prompt-line constraint shifts the
+                // status bar's row by one when it disappears.
+                let y = status_row.saturating_sub(height);
                 Rect {
                     x,
                     y,

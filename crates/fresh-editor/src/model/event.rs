@@ -338,6 +338,11 @@ pub enum PopupPositionData {
     /// the status bar that opened it.
     AboveStatusBarAt {
         x: u16,
+        /// Row of the status bar in the current frame. Lets the popup
+        /// place its bottom border immediately above the status bar
+        /// regardless of whether the prompt line is visible (which
+        /// shifts the status bar's row by one).
+        status_row: u16,
     },
 }
 

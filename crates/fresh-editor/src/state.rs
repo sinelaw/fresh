@@ -1062,7 +1062,9 @@ pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         PopupPositionData::Fixed { x, y } => PopupPosition::Fixed { x, y },
         PopupPositionData::Centered => PopupPosition::Centered,
         PopupPositionData::BottomRight => PopupPosition::BottomRight,
-        PopupPositionData::AboveStatusBarAt { x } => PopupPosition::AboveStatusBarAt { x },
+        PopupPositionData::AboveStatusBarAt { x, status_row } => {
+            PopupPosition::AboveStatusBarAt { x, status_row }
+        }
     };
 
     // Map the explicit kind hint to PopupKind for input handling

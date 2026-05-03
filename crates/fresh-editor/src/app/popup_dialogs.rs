@@ -525,13 +525,16 @@ impl Editor {
         // Left-align the popup's column with the LSP indicator on the
         // status bar, if we know where it was drawn in the last frame.
         // Falls back to the previous BottomRight anchor when the LSP
-        // segment isn't visible (e.g. first render).
+        // segment isn't visible (e.g. first render). `status_row` comes
+        // from the same cached layout so the popup hugs the status bar
+        // even in prompt-auto-hide mode.
         let position = self
             .cached_layout
             .status_bar_lsp_area
             .map(
-                |(_, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
+                |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
                     x: col_start,
+                    status_row,
                 },
             )
             .unwrap_or(crate::view::popup::PopupPosition::BottomRight);
@@ -783,13 +786,16 @@ impl Editor {
 
         // Anchor the popup to the remote-indicator's left edge if it's
         // visible in the last frame; otherwise fall back to the bottom-
-        // right corner so the popup still appears.
+        // right corner so the popup still appears. `status_row` comes
+        // from the same cached layout so the popup hugs the status bar
+        // even in prompt-auto-hide mode.
         let position = self
             .cached_layout
             .status_bar_remote_area
             .map(
-                |(_, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
+                |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
                     x: col_start,
+                    status_row,
                 },
             )
             .unwrap_or(crate::view::popup::PopupPosition::BottomRight);
