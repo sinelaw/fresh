@@ -42,6 +42,9 @@ pub fn check_trace_scenario(s: TraceScenario) -> Result<(), ScenarioFailure> {
     // `EditorTestHarness::with_temp_project_no_plugins`.
     let mut harness = EditorTestHarness::with_temp_project_no_plugins(80, 24)
         .expect("EditorTestHarness::with_temp_project_no_plugins failed");
+    // See the same call in buffer_scenario.rs: prevents OS-clipboard
+    // bleed across parallel tests that exercise Copy/Paste.
+    harness.editor_mut().set_clipboard_for_test(String::new());
     timer.phase("harness_create");
     let _fixture = harness
         .load_buffer_from_text(&s.initial_text)

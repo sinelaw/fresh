@@ -185,6 +185,13 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
             .expect("EditorTestHarness::with_temp_project_and_config_no_plugins failed")
     };
     timer.phase("harness_create");
+    // Force the per-harness clipboard into internal-only mode so a
+    // Copy in this scenario can't leak into a parallel test's Paste
+    // through the OS clipboard (arboard/X11/Wayland) and vice versa.
+    // Without this, a flake surfaces: e.g. test A copies " world",
+    // test B copies "universe", test B's Paste sees A's " world"
+    // because they share the process-global SYSTEM_CLIPBOARD.
+    harness.editor_mut().set_clipboard_for_test(String::new());
     let filename = s.language.as_deref().unwrap_or(DEFAULT_FILENAME);
     let _fixture = harness
         .load_buffer_from_text_named(filename, &s.initial_text)
