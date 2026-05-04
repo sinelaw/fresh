@@ -11,6 +11,57 @@
 // on Editor and most of the types in the module.
 use super::*;
 
+/// Phase-timing helper used when `FRESH_TEST_TIMING=1` is set so test
+/// authors can see where `Editor::with_options` spends its wall clock.
+/// No-op when the env var is unset; printed to stderr otherwise.
+struct InitTimer {
+    label: &'static str,
+    start: std::time::Instant,
+    last: std::time::Instant,
+    enabled: bool,
+}
+
+impl InitTimer {
+    fn start(label: &'static str) -> Self {
+        let enabled = std::env::var("FRESH_TEST_TIMING").is_ok_and(|v| !v.is_empty() && v != "0");
+        let now = std::time::Instant::now();
+        if enabled {
+            eprintln!("[timing] {label}  start");
+        }
+        Self {
+            label,
+            start: now,
+            last: now,
+            enabled,
+        }
+    }
+    fn phase(&mut self, name: &str) {
+        if !self.enabled {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let delta = now.duration_since(self.last);
+        let cumul = now.duration_since(self.start);
+        eprintln!(
+            "[timing]     {name:<30} +{delta:>8.1}ms  (cumul {cumul:.1}ms)",
+            name = name,
+            delta = delta.as_secs_f64() * 1000.0,
+            cumul = cumul.as_secs_f64() * 1000.0,
+        );
+        self.last = now;
+    }
+    fn finish(self) {
+        if !self.enabled {
+            return;
+        }
+        eprintln!(
+            "[timing] {label}  total {total:.1}ms",
+            label = self.label,
+            total = self.start.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
+}
+
 /// Set a value at a dot-separated path inside a JSON object, creating
 /// intermediate maps as needed.
 fn set_dot_path(root: &mut serde_json::Value, path: &str, value: serde_json::Value) {
@@ -209,6 +260,7 @@ impl Editor {
         grammar_registry: Arc<crate::primitives::grammar::GrammarRegistry>,
         defer_plugin_load: bool,
     ) -> AnyhowResult<Self> {
+        let mut t = InitTimer::start("Editor::with_options");
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
         tracing::info!("Editor::new called with width={}, height={}", width, height);
@@ -221,14 +273,17 @@ impl Editor {
         // This ensures consistent path comparisons throughout the editor
         let working_dir = working_dir.canonicalize().unwrap_or(working_dir);
 
+        t.phase("preamble");
         // Load all themes into registry
         tracing::info!("Loading themes...");
         let theme_loader = crate::view::theme::ThemeLoader::new(dir_context.themes_dir());
+        t.phase("ThemeLoader::new");
         // Scan installed packages (language packs + bundles) before plugin loading.
         // This replaces the JS loadInstalledPackages() — configs, grammars, plugin dirs,
         // and theme dirs are all collected here and applied synchronously.
         let scan_result =
             crate::services::packages::scan_installed_packages(&dir_context.config_dir);
+        t.phase("scan_installed_packages");
 
         // Apply package language configs (user config takes priority via or_insert)
         for (lang_id, lang_config) in &scan_result.language_configs {
@@ -247,6 +302,7 @@ impl Editor {
         }
 
         let theme_registry = Arc::new(theme_loader.load_all(&scan_result.bundle_theme_dirs));
+        t.phase("theme_loader.load_all");
         tracing::info!("Themes loaded");
 
         // Get active theme from registry, falling back to default if not found
@@ -265,7 +321,9 @@ impl Editor {
         // Set terminal cursor color to match theme
         theme.set_terminal_cursor_color();
 
+        t.phase("theme_setup");
         let keybindings = Arc::new(RwLock::new(KeybindingResolver::new(&config)));
+        t.phase("keybindings");
 
         // Create an empty initial buffer
         let mut buffers = HashMap::new();
@@ -300,6 +358,7 @@ impl Editor {
         // Initialize LSP manager with current working directory as root
         let root_uri = types::file_path_to_lsp_uri(&working_dir);
 
+        t.phase("buffer_state");
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2) // Small pool for I/O tasks
@@ -307,6 +366,7 @@ impl Editor {
             .enable_all()
             .build()
             .ok();
+        t.phase("tokio_runtime");
 
         // Create async bridge for communication
         let async_bridge = AsyncBridge::new();
@@ -354,6 +414,7 @@ impl Editor {
             lsp.set_language_config("typescript".to_string(), deno_config);
         }
 
+        t.phase("lsp_setup");
         // Initialize split manager with the initial buffer
         let split_manager = SplitManager::new(buffer_id);
 
@@ -406,6 +467,7 @@ impl Editor {
         // Build shared theme cache for plugin access
         let theme_cache = Arc::new(RwLock::new(theme_registry.to_json_map()));
 
+        t.phase("split_quickopen_authority");
         // Initialize plugin manager (handles both enabled and disabled cases internally)
         let plugin_manager = PluginManager::new(
             enable_plugins,
@@ -413,6 +475,7 @@ impl Editor {
             dir_context.clone(),
             Arc::clone(&theme_cache),
         );
+        t.phase("PluginManager::new");
 
         // Update the plugin state snapshot with working_dir BEFORE loading plugins
         // This ensures plugins can call getCwd() correctly during initialization
@@ -653,6 +716,7 @@ impl Editor {
             }
         }
 
+        t.phase("plugin_loading");
         // Extract config values before moving config into the struct
         let file_explorer_width = config.file_explorer.width;
         let file_explorer_side = config.file_explorer.side;
@@ -957,6 +1021,7 @@ impl Editor {
             pending_vb_animations: Vec::new(),
         };
 
+        t.phase("editor_struct_assembly");
         // Apply clipboard configuration
         editor.clipboard.apply_config(&editor.config.clipboard);
 
@@ -970,7 +1035,8 @@ impl Editor {
                 );
             }
         }
-
+        t.phase("post_struct_hooks");
+        t.finish();
         Ok(editor)
     }
 

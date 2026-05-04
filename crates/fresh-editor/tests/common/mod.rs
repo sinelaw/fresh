@@ -23,6 +23,9 @@ pub mod scenario;
 pub mod scrollbar;
 #[cfg(test)]
 #[allow(dead_code)]
+pub mod timing;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod tracing;
 #[cfg(test)]
 #[allow(dead_code)]

@@ -34,16 +34,21 @@ pub struct TraceScenario {
 }
 
 pub fn check_trace_scenario(s: TraceScenario) -> Result<(), ScenarioFailure> {
+    let mut timer =
+        crate::common::timing::Timer::start(format!("trace_scenario: {}", s.description));
     let mut harness = EditorTestHarness::with_temp_project(80, 24)
         .expect("EditorTestHarness::with_temp_project failed");
+    timer.phase("harness_create");
     let _fixture = harness
         .load_buffer_from_text(&s.initial_text)
         .expect("load_buffer_from_text failed");
+    timer.phase("load_buffer");
 
     let api = harness.api_mut();
 
     // Forward trace.
     api.dispatch_seq(&s.actions);
+    timer.phase("forward_dispatch");
     let after_forward = api.buffer_text();
     if after_forward != s.expected_text {
         return Err(ScenarioFailure::ForwardTraceFailed {
@@ -56,6 +61,7 @@ pub fn check_trace_scenario(s: TraceScenario) -> Result<(), ScenarioFailure> {
     // Reverse trace.
     let undo_actions: Vec<Action> = (0..s.undo_count).map(|_| Action::Undo).collect();
     api.dispatch_seq(&undo_actions);
+    timer.phase("undo_dispatch");
     let after_reverse = api.buffer_text();
     if after_reverse != s.initial_text {
         return Err(ScenarioFailure::ReverseTraceFailed {
@@ -66,6 +72,9 @@ pub fn check_trace_scenario(s: TraceScenario) -> Result<(), ScenarioFailure> {
         });
     }
 
+    drop(harness);
+    timer.phase("harness_drop");
+    timer.finish();
     Ok(())
 }
 

@@ -547,12 +547,14 @@ impl EditorTestHarness {
     /// )?;
     /// ```
     pub fn create(width: u16, height: u16, options: HarnessOptions) -> anyhow::Result<Self> {
+        let mut t = crate::common::timing::Timer::start("harness::create");
         // Create temp directory if we don't have a shared dir_context
         let temp_dir = if options.dir_context.is_none() || options.create_project_root {
             Some(TempDir::new()?)
         } else {
             None
         };
+        t.phase("temp_dir");
 
         // Determine the base path for our temp directory
         let temp_base = temp_dir.as_ref().map(|d| d.path().to_path_buf());
@@ -573,6 +575,7 @@ impl EditorTestHarness {
                 .expect("temp_dir must exist when no working_dir provided")
         };
 
+        t.phase("working_dir_setup");
         // Plugin loading. Historically the harness created an empty
         // `<working_dir>/plugins/` so the editor would scan it and
         // skip the embedded fallback (suppression by directory
@@ -602,6 +605,8 @@ impl EditorTestHarness {
             .unwrap_or(false);
         let enable_plugins_for_editor = true;
 
+        t.phase("plugin_dir_setup");
+
         // Get or create DirectoryContext
         let dir_context = options.dir_context.unwrap_or_else(|| {
             DirectoryContext::for_testing(
@@ -610,6 +615,7 @@ impl EditorTestHarness {
                     .expect("temp_dir must exist when no dir_context provided"),
             )
         });
+        t.phase("dir_context");
 
         // Create TestTimeSource for controllable time in tests
         let test_time_source = Arc::new(TestTimeSource::new());
@@ -668,6 +674,7 @@ impl EditorTestHarness {
         // from this perf fix; flagging here so the next reader knows.
         fresh::i18n::init_with_config(config.locale.as_option());
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
+        t.phase("config_and_i18n");
 
         // Create filesystem backend (custom, slow, or default)
         let (filesystem, fs_metrics): (Arc<dyn FileSystem + Send + Sync>, _) =
@@ -682,9 +689,12 @@ impl EditorTestHarness {
                 (Arc::new(StdFileSystem), None)
             };
 
+        t.phase("filesystem");
+
         // Create terminal
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend)?;
+        t.phase("terminal");
 
         // Create grammar registry if requested (slow, only for tests that need syntax highlighting)
         let grammar_registry = if options.use_full_grammar_registry {
@@ -707,10 +717,13 @@ impl EditorTestHarness {
         // plugin fallback so the bundled set doesn't leak in. This matches
         // the pre-#1722 behavior, where any `working_dir/plugins/` (even
         // empty) suppressed embedded loading.
+        t.phase("grammar_registry");
+
         if working_plugins_populated {
             let target = dir_context.config_dir.join("plugins");
             mirror_plugins_dir(&working_plugins_path, &target)?;
         }
+        t.phase("mirror_plugins");
         // Embedded loads only when the test isn't taking control. The
         // `force_embedded_plugins` escape hatch overrides this for tests
         // that need production plugin-loading semantics (see #1722).
@@ -731,10 +744,13 @@ impl EditorTestHarness {
             enable_embedded_plugins,
         )?;
 
+        t.phase("Editor::for_test");
+
         // Process any pending plugin commands
         editor.process_async_messages();
+        t.phase("process_async_messages");
 
-        Ok(EditorTestHarness {
+        let h = EditorTestHarness {
             editor,
             terminal,
             _temp_dir: temp_dir,
@@ -751,7 +767,9 @@ impl EditorTestHarness {
             vt100_parser: vt100::Parser::new(height, width, 0),
             term_width: width,
             term_height: height,
-        })
+        };
+        t.finish();
+        Ok(h)
     }
 
     // =========================================================================
@@ -962,14 +980,18 @@ impl EditorTestHarness {
 
     /// Open a file in the editor
     pub fn open_file(&mut self, path: &Path) -> anyhow::Result<()> {
+        let mut t = crate::common::timing::Timer::start("harness::open_file");
         self.editor.open_file(path)?;
+        t.phase("editor.open_file");
         self.render()?;
+        t.phase("render");
 
         // Initialize shadow string with the file content (if available)
         // For large files with lazy loading, shadow validation is not supported
         self.shadow_string = self.get_buffer_content().unwrap_or_default();
         self.shadow_cursor = self.cursor_position();
-
+        t.phase("shadow_init");
+        t.finish();
         Ok(())
     }
 

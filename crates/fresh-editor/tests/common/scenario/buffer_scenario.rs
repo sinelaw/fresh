@@ -165,6 +165,8 @@ const DEFAULT_FILENAME: &str = "test_buffer.txt";
 /// because it depends on layout state (e.g. viewport scroll), it is
 /// in the wrong domain — use `LayoutScenario` instead.
 pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
+    let mut timer =
+        crate::common::timing::Timer::start(format!("buffer_scenario: {}", s.description));
     let term = s.terminal;
     let mut harness = if behavior_is_default(s.behavior) {
         EditorTestHarness::with_temp_project(term.width, term.height)
@@ -177,13 +179,16 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
         EditorTestHarness::with_temp_project_and_config(term.width, term.height, config)
             .expect("EditorTestHarness::with_temp_project_and_config failed")
     };
+    timer.phase("harness_create");
     let filename = s.language.as_deref().unwrap_or(DEFAULT_FILENAME);
     let _fixture = harness
         .load_buffer_from_text_named(filename, &s.initial_text)
         .expect("load_buffer_from_text_named failed");
+    timer.phase("load_buffer");
 
     let api = harness.api_mut();
     api.dispatch_seq(&s.actions);
+    timer.phase("dispatch_actions");
 
     // ── Assert buffer text ──────────────────────────────────────────
     let actual_text = api.buffer_text();
@@ -254,6 +259,10 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
         }
     }
 
+    timer.phase("assertions");
+    drop(harness);
+    timer.phase("harness_drop");
+    timer.finish();
     Ok(())
 }
 
