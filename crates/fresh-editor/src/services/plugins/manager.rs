@@ -26,6 +26,13 @@ pub struct PluginManager {
     inner: Option<PluginThreadHandle>,
     #[cfg(not(feature = "plugins"))]
     _phantom: std::marker::PhantomData<()>,
+    /// Test-only side channel: commands pushed via
+    /// [`Self::test_inject_command`] are returned by the next
+    /// `process_commands()` call as if they had come from the plugin
+    /// thread. Always present (zero overhead — empty `Vec`) so
+    /// integration tests in `tests/` can use it without an extra
+    /// feature flag.
+    pending_injected_commands: Vec<super::api::PluginCommand>,
 }
 
 impl PluginManager {
@@ -51,6 +58,7 @@ impl PluginManager {
                     Ok(handle) => {
                         return Self {
                             inner: Some(handle),
+                            pending_injected_commands: Vec::new(),
                         }
                     }
                     Err(e) => {
@@ -62,7 +70,10 @@ impl PluginManager {
             } else {
                 tracing::info!("Plugins disabled via --no-plugins flag");
             }
-            Self { inner: None }
+            Self {
+                inner: None,
+                pending_injected_commands: Vec::new(),
+            }
         }
 
         #[cfg(not(feature = "plugins"))]
@@ -75,12 +86,29 @@ impl PluginManager {
             }
             Self {
                 _phantom: std::marker::PhantomData,
+                pending_injected_commands: Vec::new(),
             }
         }
     }
 
-    /// Check if the plugin system is active (has a running plugin thread).
+    /// Inject a [`PluginCommand`](super::api::PluginCommand) into the
+    /// manager's pending queue as if it had arrived from the plugin
+    /// thread. Returned by the next `process_commands()` call.
+    ///
+    /// Intended for tests that need to deterministically reproduce
+    /// renderer/plugin races (e.g. the mid-render `process_commands`
+    /// path in `Editor::render`) without spinning up the real plugin
+    /// runtime. Production code should not call this.
+    pub fn test_inject_command(&mut self, command: super::api::PluginCommand) {
+        self.pending_injected_commands.push(command);
+    }
+
+    /// Check if the plugin system is active (has a running plugin thread,
+    /// or — in tests — has commands queued via [`Self::test_inject_command`]).
     pub fn is_active(&self) -> bool {
+        if !self.pending_injected_commands.is_empty() {
+            return true;
+        }
         #[cfg(feature = "plugins")]
         {
             self.inner.is_some()
@@ -243,17 +271,18 @@ impl PluginManager {
 
     /// Process pending plugin commands (non-blocking).
     pub fn process_commands(&mut self) -> Vec<super::api::PluginCommand> {
+        // Drain any test-injected commands first so they appear at the
+        // front of the returned batch — matching the order the real
+        // plugin thread would have produced if the inject call were a
+        // genuine plugin response.
+        let mut commands = std::mem::take(&mut self.pending_injected_commands);
         #[cfg(feature = "plugins")]
         {
             if let Some(ref mut manager) = self.inner {
-                return manager.process_commands();
+                commands.extend(manager.process_commands());
             }
-            Vec::new()
         }
-        #[cfg(not(feature = "plugins"))]
-        {
-            Vec::new()
-        }
+        commands
     }
 
     /// Process commands, blocking until `HookCompleted` for the given hook arrives.

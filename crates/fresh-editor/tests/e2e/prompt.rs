@@ -1,5 +1,104 @@
 use crate::common::harness::EditorTestHarness;
 
+/// Regression test for the mid-render plugin command race observed
+/// when invoking the audit_mode plugin's "Review PR Branch" command
+/// from the command palette under auto-hide mode.
+///
+/// `Editor::render` (`crates/fresh-editor/src/app/render.rs:402`) drains
+/// the plugin manager's command queue *after* the layout has been
+/// computed but *before* the prompt/status bar are rendered. Any
+/// plugin command queued just before this render — for example, the
+/// `StartPromptAsync` that `editor.prompt(...)` queues from the
+/// audit_mode handler — gets dispatched at line 402 and sets
+/// `self.prompt = Some(AsyncPrompt)`. The cached `main_chunks` still
+/// reflects the prior `prompt = None` state, so the prompt slot is at
+/// `(y = size.height, h = 0)` (off-screen) and the status bar lands on
+/// the bottom row. The user sees status-bar text where the prompt
+/// input should be.
+///
+/// To reproduce deterministically without spinning up the real plugin
+/// runtime, the test uses `PluginManager::test_inject_command` to
+/// queue a `StartPromptAsync` immediately before a single `render()`
+/// call. The render fires the in-render `process_commands()` call,
+/// which dispatches the injected command mid-render, triggering the
+/// race exactly as the audit_mode flow does.
+///
+/// **Currently fails** — kept ignored so CI stays green while we
+/// decide on the fix shape (simplest: drop the in-render
+/// `process_commands` call; surgical: filter to render-only commands;
+/// defensive: recompute the layout after mid-render command
+/// processing). Remove the `#[ignore]` once the fix lands.
+#[test]
+#[ignore = "expected to fail; reproduces issue #1785-class mid-render plugin race — un-ignore once render.rs:402 fix lands"]
+fn test_mid_render_start_prompt_async_keeps_prompt_visible() {
+    use fresh_core::api::{JsCallbackId, PluginCommand};
+
+    // Match the user-reported environment (200x50 tmux pane, default
+    // auto-hide prompt line).
+    let mut harness = EditorTestHarness::new(200, 50).unwrap();
+    harness.editor_mut().toggle_prompt_line();
+    assert!(!harness.editor().prompt_line_visible());
+
+    // Set a status message so the bottom row's status-bar content is
+    // distinguishable from the editor body. The marker word lets the
+    // assertion below detect any leak unambiguously.
+    harness
+        .editor_mut()
+        .set_status_message("Test status XYZZY-bleed-marker".to_string());
+    harness.render().unwrap();
+
+    // Sanity: with no prompt active and the prompt line auto-hidden,
+    // the status bar lands on the bottom row.
+    let height = harness.buffer().area.height;
+    let bottom_baseline = harness.get_row_text(height - 1);
+    assert!(
+        bottom_baseline.contains("XYZZY-bleed-marker"),
+        "Setup expected status bar on bottom row, got: {:?}",
+        bottom_baseline,
+    );
+
+    // Queue a StartPromptAsync command — this is exactly what the
+    // audit_mode plugin's `editor.prompt(label, initial)` call sends.
+    // The command will be picked up by `Editor::render`'s mid-render
+    // `process_commands()` call.
+    harness
+        .editor_mut()
+        .plugin_manager_mut()
+        .test_inject_command(PluginCommand::StartPromptAsync {
+            label: "Base ref to compare against (default: master): ".to_string(),
+            initial_value: "master".to_string(),
+            callback_id: JsCallbackId(1),
+        });
+
+    // Render once. The render must produce a frame where:
+    //   - the AsyncPrompt's label is on the bottom row, and
+    //   - the bottom row contains no status-bar leftovers.
+    harness.render().unwrap();
+
+    let bottom_row = harness.get_row_text(height - 1);
+    let screen = harness.screen_to_string();
+
+    assert!(
+        bottom_row.contains("Base ref to compare against"),
+        "Expected AsyncPrompt label on bottom row after the injected\n\
+         StartPromptAsync was processed mid-render.\n\
+         Bottom row: {:?}\nFull screen:\n{}",
+        bottom_row,
+        screen,
+    );
+    assert!(
+        !bottom_row.contains("XYZZY-bleed-marker"),
+        "Status-bar text from before the prompt opened leaked through\n\
+         the prompt's row — the layout was computed for prompt=None\n\
+         but the prompt was set Some mid-render, so the prompt slot is\n\
+         at the wrong y/height and the status bar paints the bottom\n\
+         row instead.\n\
+         Bottom row: {:?}\nFull screen:\n{}",
+        bottom_row,
+        screen,
+    );
+}
+
 /// Test that the prompt is rendered correctly
 #[test]
 fn test_prompt_rendering() {
