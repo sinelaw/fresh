@@ -248,7 +248,8 @@
         "dark",
         "light",
         "high-contrast",
-        "nostalgia"
+        "nostalgia",
+        "terminal"
       ]
     },
     "LocaleOptions": {
