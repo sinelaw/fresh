@@ -163,6 +163,48 @@ line (byte = end-of-original-line + 1 newline).
 **Assessment:** Sensible default. Pinned across
 `migrated_duplicate_line_full::*` so a behavior change surfaces.
 
+## 11. `RemoveSecondaryCursors` also clears active selection
+
+**Source:** `tests/e2e/block_selection.rs::test_block_select_then_escape`.
+**Sequence:** `[BlockSelectDown, RemoveSecondaryCursors]` on
+`"line1 text\nline2 text\nline3 text"` (cursor at byte 0).
+**Expectation (naive):** `RemoveSecondaryCursors` removes
+secondary cursors but leaves the primary's selection untouched
+(so cursor at 0 with selection 0..11 should remain).
+**Observation:** Two things happen in `BlockSelectDown`+
+`RemoveSecondaryCursors`:
+- `BlockSelectDown` is implemented as an *extension of the
+  primary's selection* (anchor=0, position=11), not as adding a
+  secondary cursor.
+- `RemoveSecondaryCursors` clears the active selection in
+  addition to dropping secondaries — the surviving cursor is at
+  byte 11 with `anchor=None`.
+**Assessment:** Likely intentional (Esc-as-clear-all in a
+multi-cursor block), but worth pinning so a future split between
+"remove secondaries" and "clear selection" doesn't silently
+break this. Pinned in
+`migrated_block_selection_extras::migrated_block_select_then_remove_secondary_collapses`.
+
+## 12. `AddCursorNextMatch` is three behaviors in one action
+
+**Source:** `tests/e2e/issue_1697_ctrl_d_after_search.rs` and
+`tests/e2e/multicursor.rs::test_add_cursor_next_match`.
+**Observation:** `Action::AddCursorNextMatch` (Ctrl+D) does
+different things depending on cursor + search state:
+1. **No selection, active search** (after `Search` +
+   `PromptConfirm`): selects the search match at the cursor's
+   current position. Does NOT add a new cursor.
+2. **No selection, no search**: selects the word at the cursor.
+3. **Has selection** (from any source): adds a new cursor at
+   the next occurrence of the selected text; the new cursor
+   becomes primary, the original becomes secondary.
+**Assessment:** This three-state behavior is intentional but
+non-obvious. Pinned in
+`migrated_search_modal_flows::migrated_ctrl_d_after_substring_search_selects_match_not_word`
+(case 1) and
+`migrated_multicursor_extras::migrated_add_cursor_next_match_with_*_selection`
+(case 3).
+
 ---
 
 ## How to add a finding

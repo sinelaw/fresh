@@ -17,6 +17,7 @@ pub mod migrated_auto_indent_extras;
 pub mod migrated_auto_indent_full;
 pub mod migrated_basic;
 pub mod migrated_block_selection;
+pub mod migrated_block_selection_extras;
 pub mod migrated_block_selection_full;
 pub mod migrated_bulk;
 pub mod migrated_case_conversion_full;
