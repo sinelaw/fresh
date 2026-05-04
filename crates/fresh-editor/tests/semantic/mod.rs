@@ -26,6 +26,7 @@ pub mod migrated_emacs_full;
 pub mod migrated_goto_matching_bracket;
 pub mod migrated_indent;
 pub mod migrated_indent_dedent_full;
+pub mod migrated_issue_1574_viewport_drift;
 pub mod migrated_issue_repros;
 pub mod migrated_layout;
 pub mod migrated_layout_cursor;
