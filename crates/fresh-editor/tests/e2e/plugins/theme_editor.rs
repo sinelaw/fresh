@@ -4192,3 +4192,72 @@ fn test_paste_in_theme_editor_does_not_panic() {
     harness.editor_mut().paste_for_test();
     harness.render().unwrap();
 }
+
+/// Regression test: opening the Theme Editor for the `terminal` built-in
+/// theme must populate the tree panel with field rows. The terminal theme
+/// uses non-color schema fields (`selection_modifier`,
+/// `semantic_highlight_modifier`) which are arrays of strings — the
+/// plugin used to treat any array as an RGB tuple and crash inside
+/// `formatColorValue → rgbToHex → toHex` when it hit a modifier value,
+/// which aborted `buildTreeLines` and left the tree panel completely
+/// blank.
+#[test]
+fn test_theme_editor_terminal_builtin_renders_field_rows() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(140, 40, Default::default(), project_root)
+            .unwrap();
+    harness.render().unwrap();
+
+    // Open Edit Theme via command palette and pick the `terminal` built-in.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Edit Theme").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Select theme to edit"))
+        .unwrap();
+    harness.type_text("terminal").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the editor's header so we know the buffer was opened.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Theme Editor: terminal"))
+        .unwrap();
+
+    // The tree panel should list the `editor` section header and at least
+    // one field row. If `buildTreeLines` aborted the tree will be blank
+    // (only the divider column survives), so the section name and field
+    // keys never appear.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Theme Editor: terminal")
+                && screen.contains("editor")
+                && (screen.contains(" bg ") || screen.contains(" fg "))
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "Theme editor tree panel never populated for terminal theme. \
+                 Likely the plugin's `formatColorValue` crashed on a non-color \
+                 field (e.g. `selection_modifier: [\"reversed\"]`). \
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}

@@ -225,6 +225,30 @@ interface ThemeField {
 let cachedThemeSections: ThemeSection[] | null = null;
 
 /**
+ * Whether a property schema entry refers to `ColorDef` — directly via
+ * `$ref` or wrapped inside an `anyOf` (the schema generator wraps
+ * `Option<ColorDef>` as `anyOf: [{$ref: ColorDef}, {type: null}]`).
+ * Returns false for unrelated $refs such as `ModifierDef`.
+ */
+function fieldRefersToColorDef(fieldObj: Record<string, unknown>): boolean {
+  const refStr = fieldObj["$ref"];
+  if (typeof refStr === "string" && refStr.endsWith("/ColorDef")) {
+    return true;
+  }
+  const anyOf = fieldObj["anyOf"];
+  if (Array.isArray(anyOf)) {
+    for (const variant of anyOf) {
+      if (variant && typeof variant === "object") {
+        const v = variant as Record<string, unknown>;
+        const r = v["$ref"];
+        if (typeof r === "string" && r.endsWith("/ColorDef")) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Load theme sections from the Rust API.
  * Parses the raw JSON Schema and resolves $ref references.
  * Uses i18n keys for localized display names.
@@ -275,6 +299,14 @@ function loadThemeSections(): ThemeSection[] {
     for (const [fieldName, fieldSchema] of Object.entries(sectionProps)) {
       const fieldObj = fieldSchema as Record<string, unknown>;
       const fieldDesc = (fieldObj.description as string) || "";
+
+      // Skip non-color fields (e.g. `selection_modifier`, which is a
+      // string array of SGR text-attribute names). The theme editor only
+      // knows how to format and edit `ColorDef` values; if it tried to
+      // hand a modifier-array to `formatColorValue` it would treat the
+      // array as an RGB tuple and crash inside `rgbToHex` when the second
+      // element turns out to be undefined.
+      if (!fieldRefersToColorDef(fieldObj)) continue;
 
       // Generate i18n keys from field names
       const i18nName = `field.${fieldName}`;
