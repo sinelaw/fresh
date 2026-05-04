@@ -78,3 +78,68 @@ force-frame-pointers = true
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
+
+# Optimize the critical dependencies in the plugin-load path at -O3 even
+# in dev/test builds. These are the only deps where unoptimized code
+# materially slows test wall time:
+#
+#   * oxc_*  — TypeScript→JS transpile + isolated-declarations emit,
+#              dominant cost inside prepare_plugin.
+#   * rquickjs / rquickjs-sys — the JavaScript runtime that runs every
+#              plugin's top-level during plugin_exec.
+#
+# Our own crates still compile at -O0 + debug-info so incremental
+# rebuilds stay fast. We avoid the wildcard `package."*"` form because
+# rebuilding *every* transitive dep at -O3 was prohibitively slow on a
+# cold build.
+[profile.dev.package.oxc_allocator]
+opt-level = 3
+[profile.dev.package.oxc_ast]
+opt-level = 3
+[profile.dev.package.oxc_codegen]
+opt-level = 3
+[profile.dev.package.oxc_diagnostics]
+opt-level = 3
+[profile.dev.package.oxc_isolated_declarations]
+opt-level = 3
+[profile.dev.package.oxc_parser]
+opt-level = 3
+[profile.dev.package.oxc_semantic]
+opt-level = 3
+[profile.dev.package.oxc_span]
+opt-level = 3
+[profile.dev.package.oxc_transformer]
+opt-level = 3
+[profile.dev.package.rquickjs]
+opt-level = 3
+[profile.dev.package.rquickjs-sys]
+opt-level = 3
+[profile.dev.package.rquickjs-serde]
+opt-level = 3
+
+# Mirror the same overrides into the test profile, which `cargo test`
+# and `cargo nextest run` use.
+[profile.test.package.oxc_allocator]
+opt-level = 3
+[profile.test.package.oxc_ast]
+opt-level = 3
+[profile.test.package.oxc_codegen]
+opt-level = 3
+[profile.test.package.oxc_diagnostics]
+opt-level = 3
+[profile.test.package.oxc_isolated_declarations]
+opt-level = 3
+[profile.test.package.oxc_parser]
+opt-level = 3
+[profile.test.package.oxc_semantic]
+opt-level = 3
+[profile.test.package.oxc_span]
+opt-level = 3
+[profile.test.package.oxc_transformer]
+opt-level = 3
+[profile.test.package.rquickjs]
+opt-level = 3
+[profile.test.package.rquickjs-sys]
+opt-level = 3
+[profile.test.package.rquickjs-serde]
+opt-level = 3
