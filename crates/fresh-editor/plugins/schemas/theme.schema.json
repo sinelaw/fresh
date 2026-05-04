@@ -83,6 +83,18 @@
             120
           ]
         },
+        "selection_modifier": {
+          "description": "Optional text-attribute modifiers (e.g. `[\"reversed\"]`) layered\non top of `selection_bg`. Themes that want a terminal-adaptive\nvisual selection (the canonical pattern for native-palette\nthemes — vim/neovim Visual, helix term16, htop, less) set\n`[\"reversed\"]` here; the renderer ORs `Modifier::REVERSED` into\nthe selected cells, which works on any terminal because it\ninverts whatever fg/bg the terminal already uses.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "current_line_bg": {
           "description": "Background of the line containing cursor",
           "$ref": "#/$defs/ColorDef",
@@ -227,6 +239,13 @@
           "type": "string"
         }
       ]
+    },
+    "ModifierDef": {
+      "description": "Serializable text-attribute modifier list.\n\nLets a theme specify SGR text attributes (reverse video, bold,\nitalic, underline, dim) on top of fg/bg colors. Designed for\nterminal-adaptive themes that want to use `[\"reversed\"]` on the\nvisual selection — the canonical pattern documented for native-\npalette themes (vim/neovim Visual mode, helix term16, htop, less)\nbecause reverse video automatically inverts the terminal's\ncurrent fg/bg and so adapts to both light and dark backgrounds\nwithout a separate variant.\n\nJSON form: `[\"reversed\"]` or `[\"bold\", \"underlined\"]`. Unknown\nstrings are silently dropped so a typo can't crash a render.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "UiColors": {
       "description": "UI element colors (tabs, menus, status bar, etc.)",
@@ -652,6 +671,18 @@
             60,
             80
           ]
+        },
+        "semantic_highlight_modifier": {
+          "description": "Optional text-attribute modifiers (e.g. `[\"bold\"]` or\n`[\"reversed\"]`) layered on top of `semantic_highlight_bg`.\nPer the canonical native-palette pattern, current-word\nhighlights are often shown via `Bold` (so the word stands\nout against other variables without altering its color slot)\nor `Reversed`. See `EditorColors::selection_modifier`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "terminal_bg": {
           "description": "Embedded terminal background (use Default for transparency)",

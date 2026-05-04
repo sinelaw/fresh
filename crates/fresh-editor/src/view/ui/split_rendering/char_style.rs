@@ -149,6 +149,13 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 style = style.bg(*color);
                 if let Some(key) = overlay.theme_key {
                     bg_theme_key = Some(key);
+                    // Pick up any SGR modifier the theme associates with
+                    // this bg slot (e.g. terminal-adaptive themes ship
+                    // `Reversed` for `ui.semantic_highlight_bg`).
+                    let m = ctx.theme.modifier_for_bg_key(key);
+                    if !m.is_empty() {
+                        style = style.add_modifier(m);
+                    }
                 }
             }
             OverlayFace::Foreground { color } => {
@@ -185,6 +192,10 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                     if let Some(color) = ctx.theme.resolve_theme_key(bg_key) {
                         themed_style = themed_style.bg(color);
                     }
+                    let m = ctx.theme.modifier_for_bg_key(bg_key);
+                    if !m.is_empty() {
+                        themed_style = themed_style.add_modifier(m);
+                    }
                 }
                 style = style.patch(themed_style);
             }
@@ -196,9 +207,15 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         style = style.bg(ctx.current_line_bg);
     }
 
-    // Apply selection highlighting (preserve fg/syntax colors, only change bg)
+    // Apply selection highlighting (preserve fg/syntax colors, only change bg).
+    // Themes may also opt into SGR text attributes here (e.g. `Reversed`)
+    // so a native-palette theme can swap fg/bg via the terminal instead
+    // of relying on a fixed bg color — see `Theme::selection_modifier`.
     if ctx.is_selected {
         style = style.bg(ctx.theme.selection_bg);
+        if !ctx.theme.selection_modifier.is_empty() {
+            style = style.add_modifier(ctx.theme.selection_modifier);
+        }
         bg_theme_key = Some("editor.selection_bg");
         region = "Selection";
     }

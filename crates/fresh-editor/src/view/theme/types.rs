@@ -3,7 +3,7 @@
 //! This module contains all theme-related data structures that can be used
 //! without filesystem access. This enables WASM compatibility and easier testing.
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -190,6 +190,70 @@ impl From<ColorDef> for Color {
     }
 }
 
+/// Serializable text-attribute modifier list.
+///
+/// Lets a theme specify SGR text attributes (reverse video, bold,
+/// italic, underline, dim) on top of fg/bg colors. Designed for
+/// terminal-adaptive themes that want to use `["reversed"]` on the
+/// visual selection — the canonical pattern documented for native-
+/// palette themes (vim/neovim Visual mode, helix term16, htop, less)
+/// because reverse video automatically inverts the terminal's
+/// current fg/bg and so adapts to both light and dark backgrounds
+/// without a separate variant.
+///
+/// JSON form: `["reversed"]` or `["bold", "underlined"]`. Unknown
+/// strings are silently dropped so a typo can't crash a render.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct ModifierDef(pub Vec<String>);
+
+impl From<&ModifierDef> for Modifier {
+    fn from(def: &ModifierDef) -> Self {
+        let mut m = Modifier::empty();
+        for s in &def.0 {
+            match s.as_str() {
+                "reversed" | "reverse" => m |= Modifier::REVERSED,
+                "bold" => m |= Modifier::BOLD,
+                "italic" => m |= Modifier::ITALIC,
+                "underlined" | "underline" => m |= Modifier::UNDERLINED,
+                "dim" => m |= Modifier::DIM,
+                _ => {}
+            }
+        }
+        m
+    }
+}
+
+impl From<ModifierDef> for Modifier {
+    fn from(def: ModifierDef) -> Self {
+        Modifier::from(&def)
+    }
+}
+
+impl From<Modifier> for ModifierDef {
+    fn from(m: Modifier) -> Self {
+        // Order matches the canonical order in the parser, so a
+        // round-trip Theme -> ThemeFile -> Theme yields the same set.
+        let mut out = Vec::new();
+        if m.contains(Modifier::REVERSED) {
+            out.push("reversed".to_string());
+        }
+        if m.contains(Modifier::BOLD) {
+            out.push("bold".to_string());
+        }
+        if m.contains(Modifier::ITALIC) {
+            out.push("italic".to_string());
+        }
+        if m.contains(Modifier::UNDERLINED) {
+            out.push("underlined".to_string());
+        }
+        if m.contains(Modifier::DIM) {
+            out.push("dim".to_string());
+        }
+        ModifierDef(out)
+    }
+}
+
 /// Convert a named color string (e.g. "Yellow", "Red") to a ratatui Color.
 /// Returns None if the string is not a recognized named color.
 pub fn named_color_from_str(name: &str) -> Option<Color> {
@@ -283,6 +347,15 @@ pub struct EditorColors {
     /// Selected text background
     #[serde(default = "default_selection_bg")]
     pub selection_bg: ColorDef,
+    /// Optional text-attribute modifiers (e.g. `["reversed"]`) layered
+    /// on top of `selection_bg`. Themes that want a terminal-adaptive
+    /// visual selection (the canonical pattern for native-palette
+    /// themes — vim/neovim Visual, helix term16, htop, less) set
+    /// `["reversed"]` here; the renderer ORs `Modifier::REVERSED` into
+    /// the selected cells, which works on any terminal because it
+    /// inverts whatever fg/bg the terminal already uses.
+    #[serde(default)]
+    pub selection_modifier: Option<ModifierDef>,
     /// Background of the line containing cursor
     #[serde(default = "default_current_line_bg")]
     pub current_line_bg: ColorDef,
@@ -535,6 +608,14 @@ pub struct UiColors {
     /// Word under cursor highlight
     #[serde(default = "default_semantic_highlight_bg")]
     pub semantic_highlight_bg: ColorDef,
+    /// Optional text-attribute modifiers (e.g. `["bold"]` or
+    /// `["reversed"]`) layered on top of `semantic_highlight_bg`.
+    /// Per the canonical native-palette pattern, current-word
+    /// highlights are often shown via `Bold` (so the word stands
+    /// out against other variables without altering its color slot)
+    /// or `Reversed`. See `EditorColors::selection_modifier`.
+    #[serde(default)]
+    pub semantic_highlight_modifier: Option<ModifierDef>,
     /// Embedded terminal background (use Default for transparency)
     #[serde(default = "default_terminal_bg")]
     pub terminal_bg: ColorDef,
@@ -975,6 +1056,11 @@ pub struct Theme {
     pub cursor: Color,
     pub inactive_cursor: Color,
     pub selection_bg: Color,
+    /// SGR text attributes layered onto selected cells. Empty for
+    /// traditional themes; native-palette themes set
+    /// `Modifier::REVERSED` so the selection inverts the terminal's
+    /// current fg/bg (vim/neovim Visual, helix term16, htop, less).
+    pub selection_modifier: Modifier,
     pub current_line_bg: Color,
     pub line_number_fg: Color,
     pub line_number_bg: Color,
@@ -1073,6 +1159,11 @@ pub struct Theme {
 
     // Semantic highlighting (word under cursor)
     pub semantic_highlight_bg: Color,
+    /// SGR text attributes layered onto current-word-highlight cells.
+    /// Native-palette themes typically set `Modifier::BOLD` (so the
+    /// word stands out without altering its color slot) or
+    /// `Modifier::REVERSED`.
+    pub semantic_highlight_modifier: Modifier,
 
     // Terminal colors (for embedded terminal buffers)
     pub terminal_bg: Color,
@@ -1142,6 +1233,12 @@ impl From<ThemeFile> for Theme {
             cursor: file.editor.cursor.into(),
             inactive_cursor: file.editor.inactive_cursor.into(),
             selection_bg: file.editor.selection_bg.into(),
+            selection_modifier: file
+                .editor
+                .selection_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or(Modifier::empty()),
             current_line_bg: file.editor.current_line_bg.into(),
             line_number_fg: file.editor.line_number_fg.into(),
             line_number_bg: file.editor.line_number_bg.into(),
@@ -1254,6 +1351,12 @@ impl From<ThemeFile> for Theme {
             scrollbar_thumb_hover_fg: file.ui.scrollbar_thumb_hover_fg.into(),
             compose_margin_bg: file.ui.compose_margin_bg.into(),
             semantic_highlight_bg: file.ui.semantic_highlight_bg.into(),
+            semantic_highlight_modifier: file
+                .ui
+                .semantic_highlight_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or(Modifier::empty()),
             terminal_bg: file.ui.terminal_bg.into(),
             terminal_fg: file.ui.terminal_fg.into(),
             status_warning_indicator_bg: file.ui.status_warning_indicator_bg.into(),
@@ -1334,6 +1437,11 @@ impl From<Theme> for ThemeFile {
                 cursor: theme.cursor.into(),
                 inactive_cursor: theme.inactive_cursor.into(),
                 selection_bg: theme.selection_bg.into(),
+                selection_modifier: if theme.selection_modifier.is_empty() {
+                    None
+                } else {
+                    Some(theme.selection_modifier.into())
+                },
                 current_line_bg: theme.current_line_bg.into(),
                 line_number_fg: theme.line_number_fg.into(),
                 line_number_bg: theme.line_number_bg.into(),
@@ -1402,6 +1510,11 @@ impl From<Theme> for ThemeFile {
                 scrollbar_thumb_hover_fg: theme.scrollbar_thumb_hover_fg.into(),
                 compose_margin_bg: theme.compose_margin_bg.into(),
                 semantic_highlight_bg: theme.semantic_highlight_bg.into(),
+                semantic_highlight_modifier: if theme.semantic_highlight_modifier.is_empty() {
+                    None
+                } else {
+                    Some(theme.semantic_highlight_modifier.into())
+                },
                 terminal_bg: theme.terminal_bg.into(),
                 terminal_fg: theme.terminal_fg.into(),
                 status_warning_indicator_bg: theme.status_warning_indicator_bg.into(),
@@ -1487,6 +1600,22 @@ impl Theme {
         let theme_file: ThemeFile =
             serde_json::from_str(json).map_err(|e| format!("Failed to parse theme JSON: {}", e))?;
         Ok(theme_file.into())
+    }
+
+    /// SGR text-attribute modifier associated with a bg theme key.
+    ///
+    /// Lets overlay-driven highlights (e.g. word-under-cursor via
+    /// `ui.semantic_highlight_bg`, selection via `editor.selection_bg`)
+    /// pick up the same modifier the theme would apply directly when
+    /// painting that region, so a `terminal` theme's `["reversed"]`
+    /// selection works whether the cells go through `char_style` or
+    /// the overlay pipeline. Unknown keys return `Modifier::empty()`.
+    pub fn modifier_for_bg_key(&self, key: &str) -> Modifier {
+        match key {
+            "editor.selection_bg" => self.selection_modifier,
+            "ui.semantic_highlight_bg" => self.semantic_highlight_modifier,
+            _ => Modifier::empty(),
+        }
     }
 
     /// Resolve a theme key to a Color.
@@ -1770,6 +1899,90 @@ mod tests {
         assert_eq!(terminal.editor_bg, Color::Reset);
         assert_eq!(terminal.editor_fg, Color::Reset);
         assert_eq!(terminal.terminal_bg, Color::Reset);
+        // Adaptive accents use SGR text attributes so they invert/emphasise
+        // against whatever fg/bg the terminal already has.
+        assert!(terminal.selection_modifier.contains(Modifier::REVERSED));
+        assert!(
+            terminal
+                .semantic_highlight_modifier
+                .contains(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn test_modifier_def_round_trip() {
+        let cases = [
+            (vec!["reversed"], Modifier::REVERSED),
+            (vec!["bold", "underlined"], Modifier::BOLD | Modifier::UNDERLINED),
+            (vec!["italic", "dim"], Modifier::ITALIC | Modifier::DIM),
+            (vec!["reverse"], Modifier::REVERSED), // alias
+            (vec!["underline"], Modifier::UNDERLINED), // alias
+        ];
+        for (strs, expected) in cases {
+            let def = ModifierDef(strs.iter().map(|s| s.to_string()).collect());
+            let m: Modifier = (&def).into();
+            assert_eq!(m, expected, "ModifierDef({:?}) -> Modifier", strs);
+        }
+    }
+
+    #[test]
+    fn test_modifier_def_unknown_strings_are_dropped() {
+        // A typo in a theme JSON shouldn't crash a render — unknown
+        // modifier names are silently dropped.
+        let def = ModifierDef(vec!["reversed".into(), "wibble".into(), "bold".into()]);
+        let m: Modifier = (&def).into();
+        assert_eq!(m, Modifier::REVERSED | Modifier::BOLD);
+    }
+
+    #[test]
+    fn test_themes_without_modifier_default_to_empty() {
+        // Existing themes (no `*_modifier` keys in their JSON) must
+        // resolve to Modifier::empty() — i.e. the new fields are
+        // backward compatible and don't change rendering for old
+        // themes.
+        let dark = Theme::load_builtin(THEME_DARK).expect("Dark theme must exist");
+        assert!(dark.selection_modifier.is_empty());
+        assert!(dark.semantic_highlight_modifier.is_empty());
+    }
+
+    #[test]
+    fn test_modifier_for_bg_key_lookup() {
+        let terminal = Theme::load_builtin(THEME_TERMINAL).expect("Terminal theme must exist");
+        // Overlay-driven highlights pick up the same modifier the
+        // direct-paint path uses, keyed by bg theme key.
+        assert!(
+            terminal
+                .modifier_for_bg_key("editor.selection_bg")
+                .contains(Modifier::REVERSED)
+        );
+        assert!(
+            terminal
+                .modifier_for_bg_key("ui.semantic_highlight_bg")
+                .contains(Modifier::BOLD)
+        );
+        // Unknown / unmapped keys yield empty so we don't accidentally
+        // tint other UI regions.
+        assert!(
+            terminal
+                .modifier_for_bg_key("ui.popup_selection_bg")
+                .is_empty()
+        );
+        assert!(terminal.modifier_for_bg_key("nonsense").is_empty());
+    }
+
+    #[test]
+    fn test_modifier_round_trip_via_theme_file() {
+        // Theme -> ThemeFile -> Theme preserves modifiers.
+        let original = Theme::load_builtin(THEME_TERMINAL).expect("Terminal theme must exist");
+        let file: ThemeFile = original.clone().into();
+        let json = serde_json::to_string(&file).expect("serialize");
+        let parsed: ThemeFile = serde_json::from_str(&json).expect("parse");
+        let round_tripped: Theme = parsed.into();
+        assert_eq!(round_tripped.selection_modifier, original.selection_modifier);
+        assert_eq!(
+            round_tripped.semantic_highlight_modifier,
+            original.semantic_highlight_modifier
+        );
     }
 
     #[test]
