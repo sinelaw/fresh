@@ -216,7 +216,14 @@ impl Editor {
         self.promote_active_buffer_from_preview();
 
         let active_buf = self.active_buffer();
-        let split_id = self.split_manager.active_split();
+        // Use `effective_active_split` rather than `split_manager.active_split()`
+        // so we get the leaf whose `SplitViewState` actually owns the active
+        // buffer's keyed_states. They diverge whenever a buffer-group panel
+        // is focused (e.g. the Theme Editor): `active_buffer()` resolves to
+        // the inner panel's buffer via `effective_active_pair`, while the
+        // outer split has no entry for it. Without this, a paste with >1
+        // event in the Theme Editor unwraps `None` and panics.
+        let split_id = self.effective_active_split();
 
         // Capture old cursor states from SplitViewState (sole source of truth)
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self

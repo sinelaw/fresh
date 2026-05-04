@@ -4133,3 +4133,62 @@ fn find_swatch_color(harness: &EditorTestHarness, row: u16) -> Option<Color> {
     }
     None
 }
+
+/// Regression test: pasting (or any path that runs
+/// `apply_events_as_bulk_edit`) inside the Theme Editor must not
+/// panic. Reported in the field as
+/// `called Option::unwrap() on a None value` at
+/// `app/event_apply.rs:228`.
+///
+/// Reproduces by opening the Theme Editor (which puts the active
+/// buffer inside a buffer-group panel whose `BufferId` lives in the
+/// inner panel's `keyed_states`, NOT in the outer split's
+/// `keyed_states`) and then triggering a multi-event paste. The
+/// bulk-edit path captures `split_id` from the outer split but
+/// `active_buf` from `effective_active_pair`, so the outer split's
+/// `keyed_states.get(&active_buf)` is `None` and unwraps to a panic.
+#[test]
+fn test_paste_in_theme_editor_does_not_panic() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "theme_editor");
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), project_root)
+            .unwrap();
+    harness.render().unwrap();
+
+    open_theme_editor(&mut harness);
+
+    // Use the internal-only clipboard so this test doesn't fight the
+    // host system clipboard in parallel CI runs.
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("zzz\nzzz".to_string());
+
+    // Multi-line clipboard content forces the bulk-edit path even
+    // with a single cursor + no selection if the implementation ever
+    // changes; for the current implementation, force the bulk path
+    // explicitly by adding a second cursor first via Ctrl+D
+    // (add-cursor-next-match) — but that requires a match, so just
+    // hand-craft the events through paste_text.
+    //
+    // The simpler reproducer: select the current line then paste,
+    // which produces (Delete, Insert) — 2 events → bulk path.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::End, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // This must not panic.
+    harness.editor_mut().paste_for_test();
+    harness.render().unwrap();
+}
