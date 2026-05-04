@@ -160,6 +160,15 @@ impl IndentCalculator {
                 fresh_languages::tree_sitter_odin::LANGUAGE.into(),
                 include_str!("../../queries/odin/indents.scm"),
             ),
+            Language::Templ => (
+                // Templ extends Go's grammar; Go's indent rules apply to the
+                // Go portions of a templ file. The HTML/CSS portions
+                // currently fall back to copy-current-line indent, which is
+                // good enough as an initial heuristic.
+                "templ",
+                fresh_languages::tree_sitter_templ::LANGUAGE.into(),
+                include_str!("../../queries/go/indents.scm"),
+            ),
         };
 
         // Check if we already have this config
