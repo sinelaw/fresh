@@ -2475,21 +2475,21 @@ fn test_review_diff_collapse_all_and_expand_all() {
         screen
     );
 
-    // `z a` collapses everything.
+    // `z a` collapses everything. The fold-all handler rebuilds the diff
+    // buffer asynchronously via `updateMagitDisplay`; wait semantically
+    // for the collapse to land instead of relying on a single render flush.
     harness
         .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
         .unwrap();
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-
-    let collapsed = harness.screen_to_string();
-    assert!(
-        !collapsed.contains("MARKER_MAIN") && !collapsed.contains("MARKER_LIB"),
-        "Both files' hunks should be hidden after `z a`. Screen:\n{}",
-        collapsed
-    );
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("MARKER_MAIN") && !s.contains("MARKER_LIB")
+        })
+        .unwrap();
 
     // `z r` expands everything.
     harness
@@ -2498,14 +2498,12 @@ fn test_review_diff_collapse_all_and_expand_all() {
     harness
         .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-
-    let expanded = harness.screen_to_string();
-    assert!(
-        expanded.contains("MARKER_MAIN") || expanded.contains("MARKER_LIB"),
-        "Hunk content should reappear after `z r`. Screen:\n{}",
-        expanded
-    );
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("MARKER_MAIN") || s.contains("MARKER_LIB")
+        })
+        .unwrap();
 }
 
 /// Regression test for the "Review Diff scroll jumps on collapse/expand"
@@ -3714,20 +3712,21 @@ fn test_review_diff_n_auto_expands_collapsed_file() {
 
     let _ = open_review_diff(&mut harness);
 
-    // Collapse all files.
+    // Collapse all files. The fold-all handler rebuilds the diff buffer
+    // asynchronously via `updateMagitDisplay`; wait semantically for the
+    // collapse to land instead of relying on a single render flush.
     harness
         .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
         .unwrap();
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-    let collapsed = harness.screen_to_string();
-    assert!(
-        !collapsed.contains("HUNK_A") && !collapsed.contains("HUNK_B"),
-        "After `z a`, all hunk content is hidden. Screen:\n{}",
-        collapsed
-    );
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("HUNK_A") && !s.contains("HUNK_B")
+        })
+        .unwrap();
 
     // Press `n` — should expand the first file with hunks and land on it.
     harness
