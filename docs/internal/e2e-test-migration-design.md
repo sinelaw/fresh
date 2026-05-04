@@ -68,28 +68,45 @@ Structural wins beyond leverage:
 
 ## 3. What's already in place
 
-The framework foundation has shipped:
+The framework foundation has shipped. See
+`docs/internal/scenario-migration-status.md` for the
+forward-looking plan and `scenario-migration-findings.md` for
+the running log of behavioral asymmetries surfaced during
+migration.
 
-- `crates/fresh-editor/src/test_api.rs` — `EditorTestApi` trait with
-  `dispatch`, `dispatch_seq`, `buffer_text`, `primary_caret`,
-  `carets`, `selection_text`, `is_modified`, `viewport_top_byte`.
-- `crates/fresh-editor/tests/common/theorem/` — `BufferTheorem`,
-  `TraceTheorem`, minimal `LayoutTheorem`, proptest property
-  driver, structured `TheoremFailure`.
-- 116 semantic tests (zero ignored) across 18 files, subsuming ~80
-  e2e tests in `case_conversion`, `sort_lines`, `indent_dedent`,
-  `smart_home`, `duplicate_line`, `toggle_comment`, `unicode_cursor`,
-  `undo_redo`, `selection`, `auto_pairs`, `save_state`,
-  `emacs_actions`, and others.
+- `crates/fresh-editor/src/test_api.rs` — `EditorTestApi` trait
+  with the full per-phase observable surface
+  (`dispatch`/`dispatch_seq`, buffer + cursor + selection,
+  viewport top byte / hardware cursor / gutter / visible byte
+  range, modal snapshot, workspace observables, mouse dispatch,
+  `is_modified`).
+- `crates/fresh-editor/tests/common/scenario/` — runners for
+  `BufferScenario`, `LayoutScenario`, `ModalScenario`,
+  `WorkspaceScenario`, `PersistenceScenario`,
+  `TemporalScenario`, `InputScenario`, `TerminalIoScenario`.
+  `LspScenario` and `StyleScenario` exist as honest skeletons
+  whose runners panic with the precise prerequisite (see
+  §10.1).
+- A growing body of `tests/semantic/**` migrations spanning
+  buffer / cursor / selection, multi-cursor, undo (incl.
+  bulk-edit + save-point boundary), auto-indent (incl. bracket
+  expansion), case conversion, indent / dedent, sort lines,
+  duplicate line, toggle comment, unicode cursor + grapheme
+  handling, paste (round-trip Copy/Paste), search-modal flows,
+  workspace buffer-count, dabbrev word completion, and the
+  issue-numbered regressions for #210, #629, #1147, #1258,
+  #1305, #1566, #1574, #1577, #1697, plus the
+  bulk-edit-after-save undo corruption.
 - `Action` is the production input alphabet (`Serialize`).
-- `TheoremFailure` is `Serialize` + `Deserialize`.
+- `ScenarioFailure` is `Serialize` + `Deserialize`.
 - The `tests/semantic/**` lint forbids reaching into
   `fresh::app::*`, `fresh::model::*`, or `fresh::view::*`; only
-  `fresh::test_api` is reachable.
+  `fresh::test_api` and `crate::common::harness::EditorTestHarness`
+  are reachable.
 
-Five production bugs and behavioral asymmetries were found and
-fixed (or pinned) during the foundation work, so the framework's
-premise is no longer speculative.
+Production bugs and behavioral asymmetries have been found and
+fixed (or pinned) along the way — see
+`docs/internal/scenario-migration-findings.md` for the catalogue.
 
 ## 4. Data-model lockdown (Phase 1)
 
