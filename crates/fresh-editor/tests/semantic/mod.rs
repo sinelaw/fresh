@@ -50,6 +50,7 @@ pub mod migrated_multibyte_full;
 pub mod migrated_multicursor_extras;
 pub mod migrated_multicursor_full;
 pub mod migrated_paste;
+pub mod migrated_paste_extras;
 pub mod migrated_persistence;
 pub mod migrated_persistence_b;
 pub mod migrated_search;
