@@ -3681,3 +3681,62 @@ fn test_file_explorer_copy_relative_path() {
         "Copy Relative Path must produce the project-relative path"
     );
 }
+
+/// Regression: duplicating a tracked file inside a git repo must fire the
+/// `after_file_explorer_change` plugin hook so git_explorer rescans and the
+/// new file picks up its `U` (untracked) badge — without the hook, the
+/// freshly-duplicated file rendered with no decoration until the user
+/// triggered some other event (focus change, save, …). See PR #1841.
+#[test]
+#[cfg_attr(windows, ignore)] // Git plugin tests are flaky on Windows CI
+fn test_file_explorer_duplicate_refreshes_git_decorations() {
+    let repo = GitTestRepo::new();
+    repo.setup_git_explorer_plugin();
+    repo.create_file("alpha.txt", "tracked content");
+    repo.git_add_all();
+    repo.git_commit("seed");
+
+    let mut harness = EditorTestHarness::with_working_dir(120, 40, repo.path.clone()).unwrap();
+
+    harness.editor_mut().toggle_file_explorer();
+    harness.wait_for_screen_contains("File Explorer").unwrap();
+    harness.wait_for_file_explorer_item("alpha.txt").unwrap();
+
+    // Walk Down past the auto-created plugins/ directory (setup_git_explorer_plugin
+    // installs the plugin under <repo>/plugins/, which sorts before files in the
+    // default Type sort) until alpha.txt is selected, then bail out.
+    let mut steps = 0;
+    loop {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let name = harness
+            .editor()
+            .file_explorer()
+            .and_then(|fe| fe.get_selected_entry())
+            .and_then(|e| e.path.file_name().and_then(|n| n.to_str()).map(str::to_owned));
+        if name.as_deref() == Some("alpha.txt") {
+            break;
+        }
+        steps += 1;
+        assert!(
+            steps < 10,
+            "could not reach alpha.txt by pressing Down (got {:?})",
+            name
+        );
+    }
+
+    harness.editor_mut().file_explorer_duplicate();
+
+    // The duplicate lands as `alpha copy.txt`. The git_explorer plugin
+    // refreshes asynchronously off `after_file_explorer_change`; wait for
+    // the screen to show the new file *and* its `U` badge on the same line.
+    // Looking only for the file (no badge) would race the plugin's rescan
+    // and pass even if the hook were silently dropped.
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().lines().any(|line| {
+                line.contains("alpha copy.txt") && line.contains('U')
+            })
+        })
+        .unwrap();
+}

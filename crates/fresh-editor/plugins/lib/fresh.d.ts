@@ -2120,6 +2120,16 @@ interface HookEventMap {
 		path: string;
 		buffer_id: number;
 	};
+	/**
+	 * Fired by the file explorer after a paste/duplicate/etc. mutates
+	 * the filesystem without going through a buffer save. Plugins that
+	 * surface FS-derived state (git status badges, etc.) should
+	 * subscribe in addition to `after_file_save` to refresh on
+	 * explorer-driven changes too.
+	 */
+	after_file_explorer_change: {
+		path: string;
+	};
 	// ── text edits ───────────────────────────────────────────────────────────
 	before_insert: {
 		buffer_id: number;

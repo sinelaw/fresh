@@ -533,6 +533,7 @@ impl Editor {
                                 self.set_status_message(
                                     t!("explorer.created_file", name = &filename).to_string(),
                                 );
+                                self.notify_file_explorer_change(&path_clone);
 
                                 // Open the file in the buffer
                                 if let Err(e) = self.open_file(&path_clone) {
@@ -592,6 +593,7 @@ impl Editor {
                                 self.set_status_message(
                                     t!("explorer.created_dir", name = &dirname_clone).to_string(),
                                 );
+                                self.notify_file_explorer_change(&path_clone);
 
                                 let prompt = crate::view::prompt::Prompt::with_initial_text(
                                     t!("explorer.new_directory_prompt").to_string(),
@@ -754,6 +756,7 @@ impl Editor {
                     }
                 }
                 self.set_status_message(t!("explorer.moved_to_trash", name = &name).to_string());
+                self.notify_file_explorer_change(&path);
 
                 // Ensure focus remains on file explorer
                 self.key_context = KeyContext::FileExplorer;
@@ -897,6 +900,7 @@ impl Editor {
                     self.set_status_message(
                         t!("explorer.renamed", old = &original_name, new = &new_name).to_string(),
                     );
+                    self.notify_file_explorer_change(&new_path);
                 }
                 Err(e) => {
                     self.set_status_message(
@@ -1527,6 +1531,28 @@ impl Editor {
         // ghost IDs.
         explorer.clear_multi_selection();
         explorer.navigate_to_path(dst);
+
+        self.notify_file_explorer_change(dst);
+    }
+
+    /// Fire the `after_file_explorer_change` plugin hook for an
+    /// explorer-driven on-disk mutation (create / rename / delete /
+    /// paste / duplicate / ...). Plugins that surface filesystem-derived
+    /// state — git status badges, etc. — subscribe to this in addition
+    /// to `after_file_save`, since explorer-driven changes never fire
+    /// the buffer-save hooks.
+    ///
+    /// `path` is one of the affected paths (destination for move/copy,
+    /// the deleted path for delete, the new path for create/rename).
+    /// Multi-target operations call this once per refresh, not once per
+    /// file.
+    pub(super) fn notify_file_explorer_change(&self, path: &Path) {
+        self.plugin_manager.run_hook(
+            "after_file_explorer_change",
+            crate::services::plugins::hooks::HookArgs::AfterFileExplorerChange {
+                path: path.to_path_buf(),
+            },
+        );
     }
 
     pub fn perform_file_explorer_paste(&mut self, src: PathBuf, dst: PathBuf, is_cut: bool) {

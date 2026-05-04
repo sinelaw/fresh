@@ -117,9 +117,14 @@ async function refreshGitExplorerDecorations() {
       return;
     }
 
+    // -z gives NUL-terminated, raw (unquoted) paths. Without it git
+    // wraps any path containing spaces or special chars in double
+    // quotes (e.g. `?? "name copy.txt"`), which the parser would then
+    // key the decoration against — meaning the actual on-disk path
+    // never matches and the badge never appears next to the file.
     const statusResult = await editor.spawnProcess(
       "git",
-      ["status", "--porcelain"],
+      ["status", "--porcelain", "-z"],
       repoRoot
     );
     if (statusResult.exit_code !== 0) {
@@ -153,6 +158,9 @@ editor.on("after_file_open", () => {
   refreshGitExplorerDecorations();
 });
 editor.on("after_file_save", () => {
+  refreshGitExplorerDecorations();
+});
+editor.on("after_file_explorer_change", () => {
   refreshGitExplorerDecorations();
 });
 editor.on("editor_initialized", () => {

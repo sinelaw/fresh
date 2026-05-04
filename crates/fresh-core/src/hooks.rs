@@ -26,6 +26,15 @@ pub enum HookArgs {
     /// After a buffer is successfully saved
     AfterFileSave { buffer_id: BufferId, path: PathBuf },
 
+    /// The file explorer mutated the filesystem (paste, duplicate, ...)
+    /// without going through a buffer save. Plugins that surface
+    /// filesystem-derived state (git status decorations, etc.) use this
+    /// to re-scan after explorer-driven changes that wouldn't otherwise
+    /// fire `BeforeFileSave`/`AfterFileSave`. `path` is one of the
+    /// affected paths; for batch operations (multi-paste) the hook
+    /// fires once per refresh, not once per file.
+    AfterFileExplorerChange { path: PathBuf },
+
     /// A buffer was closed
     BufferClosed { buffer_id: BufferId },
 
