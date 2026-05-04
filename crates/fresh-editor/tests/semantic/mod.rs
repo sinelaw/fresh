@@ -47,6 +47,7 @@ pub mod migrated_paste;
 pub mod migrated_persistence;
 pub mod migrated_persistence_b;
 pub mod migrated_search;
+pub mod migrated_search_modal_flows;
 pub mod migrated_select_to_paragraph_full;
 pub mod migrated_selection_full;
 pub mod migrated_smart_editing;
