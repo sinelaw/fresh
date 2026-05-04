@@ -65,6 +65,7 @@ pub mod migrated_triple_click;
 pub mod migrated_undo_bulk_edit_after_save;
 pub mod migrated_undo_redo_extra;
 pub mod migrated_undo_redo_full;
+pub mod migrated_undo_save_point;
 pub mod migrated_unicode;
 pub mod migrated_unicode_grapheme;
 pub mod migrated_workspace;
