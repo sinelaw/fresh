@@ -21,6 +21,7 @@ pub mod migrated_block_selection_extras;
 pub mod migrated_block_selection_full;
 pub mod migrated_bulk;
 pub mod migrated_case_conversion_full;
+pub mod migrated_dabbrev;
 pub mod migrated_duplicate_line_full;
 pub mod migrated_emacs_extras;
 pub mod migrated_emacs_full;
