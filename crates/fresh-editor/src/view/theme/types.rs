@@ -1902,20 +1902,21 @@ mod tests {
         // Adaptive accents use SGR text attributes so they invert/emphasise
         // against whatever fg/bg the terminal already has.
         assert!(terminal.selection_modifier.contains(Modifier::REVERSED));
-        assert!(
-            terminal
-                .semantic_highlight_modifier
-                .contains(Modifier::BOLD)
-        );
+        assert!(terminal
+            .semantic_highlight_modifier
+            .contains(Modifier::BOLD));
     }
 
     #[test]
     fn test_modifier_def_round_trip() {
         let cases = [
             (vec!["reversed"], Modifier::REVERSED),
-            (vec!["bold", "underlined"], Modifier::BOLD | Modifier::UNDERLINED),
+            (
+                vec!["bold", "underlined"],
+                Modifier::BOLD | Modifier::UNDERLINED,
+            ),
             (vec!["italic", "dim"], Modifier::ITALIC | Modifier::DIM),
-            (vec!["reverse"], Modifier::REVERSED), // alias
+            (vec!["reverse"], Modifier::REVERSED),     // alias
             (vec!["underline"], Modifier::UNDERLINED), // alias
         ];
         for (strs, expected) in cases {
@@ -1950,23 +1951,17 @@ mod tests {
         let terminal = Theme::load_builtin(THEME_TERMINAL).expect("Terminal theme must exist");
         // Overlay-driven highlights pick up the same modifier the
         // direct-paint path uses, keyed by bg theme key.
-        assert!(
-            terminal
-                .modifier_for_bg_key("editor.selection_bg")
-                .contains(Modifier::REVERSED)
-        );
-        assert!(
-            terminal
-                .modifier_for_bg_key("ui.semantic_highlight_bg")
-                .contains(Modifier::BOLD)
-        );
+        assert!(terminal
+            .modifier_for_bg_key("editor.selection_bg")
+            .contains(Modifier::REVERSED));
+        assert!(terminal
+            .modifier_for_bg_key("ui.semantic_highlight_bg")
+            .contains(Modifier::BOLD));
         // Unknown / unmapped keys yield empty so we don't accidentally
         // tint other UI regions.
-        assert!(
-            terminal
-                .modifier_for_bg_key("ui.popup_selection_bg")
-                .is_empty()
-        );
+        assert!(terminal
+            .modifier_for_bg_key("ui.popup_selection_bg")
+            .is_empty());
         assert!(terminal.modifier_for_bg_key("nonsense").is_empty());
     }
 
@@ -1978,7 +1973,10 @@ mod tests {
         let json = serde_json::to_string(&file).expect("serialize");
         let parsed: ThemeFile = serde_json::from_str(&json).expect("parse");
         let round_tripped: Theme = parsed.into();
-        assert_eq!(round_tripped.selection_modifier, original.selection_modifier);
+        assert_eq!(
+            round_tripped.selection_modifier,
+            original.selection_modifier
+        );
         assert_eq!(
             round_tripped.semantic_highlight_modifier,
             original.semantic_highlight_modifier

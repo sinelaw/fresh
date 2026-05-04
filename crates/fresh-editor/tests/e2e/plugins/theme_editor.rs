@@ -4183,9 +4183,7 @@ fn test_paste_in_theme_editor_does_not_panic() {
         .send_key(KeyCode::Home, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
-    harness
-        .send_key(KeyCode::End, KeyModifiers::SHIFT)
-        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
     harness.render().unwrap();
 
     // This must not panic.
