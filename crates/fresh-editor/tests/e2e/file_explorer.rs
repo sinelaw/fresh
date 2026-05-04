@@ -3713,7 +3713,12 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
             .editor()
             .file_explorer()
             .and_then(|fe| fe.get_selected_entry())
-            .and_then(|e| e.path.file_name().and_then(|n| n.to_str()).map(str::to_owned));
+            .and_then(|e| {
+                e.path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(str::to_owned)
+            });
         if name.as_deref() == Some("alpha.txt") {
             break;
         }
@@ -3734,9 +3739,9 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
     // and pass even if the hook were silently dropped.
     harness
         .wait_until(|h| {
-            h.screen_to_string().lines().any(|line| {
-                line.contains("alpha copy.txt") && line.contains('U')
-            })
+            h.screen_to_string()
+                .lines()
+                .any(|line| line.contains("alpha copy.txt") && line.contains('U'))
         })
         .unwrap();
 }
