@@ -23,13 +23,7 @@ use crate::common::harness::EditorTestHarness;
 /// which dispatches the injected command mid-render, triggering the
 /// race exactly as the audit_mode flow does.
 ///
-/// **Currently fails** — kept ignored so CI stays green while we
-/// decide on the fix shape (simplest: drop the in-render
-/// `process_commands` call; surgical: filter to render-only commands;
-/// defensive: recompute the layout after mid-render command
-/// processing). Remove the `#[ignore]` once the fix lands.
 #[test]
-#[ignore = "expected to fail; reproduces issue #1785-class mid-render plugin race — un-ignore once render.rs:402 fix lands"]
 fn test_mid_render_start_prompt_async_keeps_prompt_visible() {
     use fresh_core::api::{JsCallbackId, PluginCommand};
 

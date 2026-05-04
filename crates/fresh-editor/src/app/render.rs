@@ -102,8 +102,16 @@ impl Editor {
             }
         }
 
-        // Determine if we need to show search options bar
-        let show_search_options = self.prompt.as_ref().is_some_and(|p| {
+        // Determine if we need to show search options bar.
+        // (Held in mutable bindings because the in-render
+        // `process_commands` block below can dispatch commands —
+        // e.g. `StartPromptAsync`, `SetPromptSuggestions` — that
+        // mutate `self.prompt`. When that happens we recompute these
+        // flags and re-split `main_chunks` so the bottom-row
+        // rendering uses an up-to-date layout. See the
+        // "Recompute layout if mid-render commands changed state"
+        // block below.)
+        let mut show_search_options = self.prompt.as_ref().is_some_and(|p| {
             matches!(
                 p.prompt_type,
                 PromptType::Search
@@ -120,13 +128,13 @@ impl Editor {
         // wrong. Floating-overlay prompts (Live Grep, issue #1796)
         // are exempt because their suggestions live inside the
         // centred frame, not above the bottom row.
-        let prompt_is_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
-        let has_suggestions = self
+        let mut prompt_is_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
+        let mut has_suggestions = self
             .prompt
             .as_ref()
             .is_some_and(|p| !p.suggestions.is_empty())
             && !prompt_is_overlay;
-        let has_file_browser = self.prompt.as_ref().is_some_and(|p| {
+        let mut has_file_browser = self.prompt.as_ref().is_some_and(|p| {
             matches!(
                 p.prompt_type,
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
@@ -136,34 +144,32 @@ impl Editor {
         // Build main vertical layout: [menu_bar, main_content, status_bar, search_options, prompt_line]
         // Status bar is hidden when suggestions popup is shown
         // Search options bar is shown when in search prompt
-        let constraints = vec![
-            Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }), // Menu bar
-            Constraint::Min(0),                                            // Main content area
-            Constraint::Length(
-                if !self.status_bar_visible || has_suggestions || has_file_browser {
-                    0
-                } else {
-                    1
-                },
-            ), // Status bar (hidden when toggled off or with popups)
-            Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
-            Constraint::Length(
-                // Prompt line is auto-hidden when no prompt active.
-                // Overlay prompts (Live Grep, issue #1796) host the
-                // input row inside the centred frame, so the
-                // bottom row stays available for editor content
-                // rather than being reserved as dead space.
-                if (self.prompt_line_visible || self.prompt.is_some()) && !prompt_is_overlay {
-                    1
-                } else {
-                    0
-                },
-            ), // Prompt line
-        ];
-
-        let main_chunks = Layout::default()
+        let mut main_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(constraints)
+            .constraints(vec![
+                Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }), // Menu bar
+                Constraint::Min(0),                                            // Main content area
+                Constraint::Length(
+                    if !self.status_bar_visible || has_suggestions || has_file_browser {
+                        0
+                    } else {
+                        1
+                    },
+                ), // Status bar (hidden when toggled off or with popups)
+                Constraint::Length(if show_search_options { 1 } else { 0 }),   // Search options bar
+                Constraint::Length(
+                    // Prompt line is auto-hidden when no prompt active.
+                    // Overlay prompts (Live Grep, issue #1796) host the
+                    // input row inside the centred frame, so the
+                    // bottom row stays available for editor content
+                    // rather than being reserved as dead space.
+                    if (self.prompt_line_visible || self.prompt.is_some()) && !prompt_is_overlay {
+                        1
+                    } else {
+                        0
+                    },
+                ), // Prompt line
+            ])
             .split(size);
 
         let menu_bar_area = main_chunks[0];
@@ -400,7 +406,8 @@ impl Editor {
             // at 60fps. The plugin's own refreshLines() call from cursor_moved
             // ensures a follow-up render cycle picks up any missed commands.
             let commands = self.plugin_manager.process_commands();
-            if !commands.is_empty() {
+            let dispatched_any = !commands.is_empty();
+            if dispatched_any {
                 let cmd_names: Vec<String> =
                     commands.iter().map(|c| c.debug_variant_name()).collect();
                 tracing::trace!(count = commands.len(), cmds = ?cmd_names, "process_commands during render");
@@ -413,6 +420,82 @@ impl Editor {
 
             // Flush any deferred grammar rebuilds as a single batch
             self.flush_pending_grammars();
+
+            // Recompute the bottom-row layout if the in-render command
+            // dispatch above mutated state that affects it. Without
+            // this, a `StartPromptAsync` (or similar) processed
+            // mid-render leaves `main_chunks` reflecting the prior
+            // `self.prompt = None` shape — the prompt slot ends up at
+            // (y = size.height, h = 0) and the status bar paints the
+            // bottom row in place of the prompt input. Conservative:
+            // we recompute on *any* dispatched commands rather than
+            // enumerating layout-affecting variants — Layout::split is
+            // cheap, and this avoids a maintenance-burden whitelist
+            // that would silently regress as new `PluginCommand`
+            // variants are added.
+            //
+            // Bounded — single drain + single recompute. We do not
+            // call `process_commands` again, so commands queued by
+            // hooks fired inside the dispatch above wait for the next
+            // render or `editor_tick` (the existing one-frame-late
+            // behaviour the comment above already accepts).
+            //
+            // `main_content_area` (and the file-explorer / split
+            // rendering derived from it earlier in this render) is
+            // intentionally NOT re-derived: those areas were already
+            // painted, and the bottom-row recompute may overwrite a
+            // single row of main content where the new status bar /
+            // prompt now sits. That brief overlap self-corrects on
+            // the next frame, where the layout is built consistently
+            // from the start.
+            if dispatched_any {
+                show_search_options = self.prompt.as_ref().is_some_and(|p| {
+                    matches!(
+                        p.prompt_type,
+                        PromptType::Search
+                            | PromptType::ReplaceSearch
+                            | PromptType::Replace { .. }
+                            | PromptType::QueryReplaceSearch
+                            | PromptType::QueryReplace { .. }
+                    )
+                });
+                prompt_is_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
+                has_suggestions = self
+                    .prompt
+                    .as_ref()
+                    .is_some_and(|p| !p.suggestions.is_empty())
+                    && !prompt_is_overlay;
+                has_file_browser = self.prompt.as_ref().is_some_and(|p| {
+                    matches!(
+                        p.prompt_type,
+                        PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
+                    )
+                }) && self.file_open_state.is_some();
+                main_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(vec![
+                        Constraint::Length(if self.menu_bar_visible { 1 } else { 0 }),
+                        Constraint::Min(0),
+                        Constraint::Length(
+                            if !self.status_bar_visible || has_suggestions || has_file_browser {
+                                0
+                            } else {
+                                1
+                            },
+                        ),
+                        Constraint::Length(if show_search_options { 1 } else { 0 }),
+                        Constraint::Length(
+                            if (self.prompt_line_visible || self.prompt.is_some())
+                                && !prompt_is_overlay
+                            {
+                                1
+                            } else {
+                                0
+                            },
+                        ),
+                    ])
+                    .split(size);
+            }
         }
 
         // Render editor content (same for both layouts)
