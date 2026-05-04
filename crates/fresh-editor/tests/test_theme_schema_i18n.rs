@@ -22,8 +22,13 @@ fn parse_schema_i18n_keys(
     };
 
     for (section_name, section_schema) in properties {
-        // Skip "name" field - it's not a color section
-        if section_name == "name" {
+        // Skip top-level fields that aren't color sections: `name` is the
+        // theme's identity and `extends` is the inheritance pointer (a string,
+        // not a section). The TypeScript theme-editor plugin
+        // (`plugins/theme_editor.ts::loadThemeSections`) uses the same skip
+        // list — they must stay in lock-step or the plugin will save
+        // `"extends": {}` and the round-trip test breaks.
+        if section_name == "name" || section_name == "extends" {
             continue;
         }
 
