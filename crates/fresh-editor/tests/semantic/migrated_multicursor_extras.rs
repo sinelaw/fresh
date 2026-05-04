@@ -32,7 +32,9 @@ fn migrated_add_cursor_next_match_with_backward_selection() {
     // point at the *start* of their selections (cursor < anchor)
     // so typing replaces each match consistently.
     assert_buffer_scenario(BufferScenario {
-        description: "AddCursorNextMatch from backward selection keeps both cursors at start (issue #210)".into(),
+        description:
+            "AddCursorNextMatch from backward selection keeps both cursors at start (issue #210)"
+                .into(),
         initial_text: "foo bar foo".into(),
         actions: repeat(Action::MoveRight, 3)
             .chain(repeat(Action::SelectLeft, 3))
@@ -78,7 +80,8 @@ fn migrated_typing_after_add_cursor_next_match_replaces_both_selections() {
     // should replace each selection with that char. End buffer:
     // "X bar X".
     assert_buffer_scenario(BufferScenario {
-        description: "Type after AddCursorNextMatch replaces both 'foo's with 'X' → 'X bar X'".into(),
+        description: "Type after AddCursorNextMatch replaces both 'foo's with 'X' → 'X bar X'"
+            .into(),
         initial_text: "foo bar foo".into(),
         actions: repeat(Action::SelectRight, 3)
             .chain(std::iter::once(Action::AddCursorNextMatch))
@@ -112,10 +115,7 @@ fn migrated_add_cursor_next_match_three_times_yields_three_cursors() {
         // forward. Primary = the most recently added cursor (last
         // AddCursorNextMatch lands on the third "foo" at 16..19).
         expected_primary: CursorExpect::range(16, 19),
-        expected_extra_cursors: vec![
-            CursorExpect::range(0, 3),
-            CursorExpect::range(8, 11),
-        ],
+        expected_extra_cursors: vec![CursorExpect::range(0, 3), CursorExpect::range(8, 11)],
         expected_selection_text: Some("foo\nfoo\nfoo".into()),
         ..Default::default()
     });
@@ -137,7 +137,8 @@ fn migrated_remove_secondary_cursors_returns_to_original_position() {
     //   After RemoveSecondaryCursors:
     //       1 cursor at byte 0 (Line 1, the original)
     assert_buffer_scenario(BufferScenario {
-        description: "RemoveSecondaryCursors collapses to the original cursor, not the latest".into(),
+        description: "RemoveSecondaryCursors collapses to the original cursor, not the latest"
+            .into(),
         initial_text: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5".into(),
         actions: repeat(Action::AddCursorBelow, 3)
             .chain(std::iter::once(Action::RemoveSecondaryCursors))

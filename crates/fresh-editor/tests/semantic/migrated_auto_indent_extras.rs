@@ -85,14 +85,19 @@ fn migrated_bracket_expansion_rust_function() {
     //   fn main() {\n    \n}   (cursor parked on indented middle line)
     let initial = "fn main() {}";
     assert_buffer_scenario(BufferScenario {
-        description: "Rust bracket expansion: Enter between `{` and `}` parks cursor on indented middle line"
-            .into(),
+        description:
+            "Rust bracket expansion: Enter between `{` and `}` parks cursor on indented middle line"
+                .into(),
         initial_text: initial.into(),
         language: Some("test.rs".into()),
         // Bracket expansion is an auto-PAIR feature: it requires
         // auto_close=true (production default), not just auto_indent.
         behavior: BehaviorFlags::production(),
-        actions: vec![Action::MoveDocumentEnd, Action::MoveLeft, Action::InsertNewline],
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::MoveLeft,
+            Action::InsertNewline,
+        ],
         // "fn main() {" (11) + "\n" + "    " (4) + "\n" + "}"
         expected_text: "fn main() {\n    \n}".into(),
         expected_primary: CursorExpect::at(11 + 1 + 4),
@@ -109,7 +114,11 @@ fn migrated_bracket_expansion_typescript_interface() {
         initial_text: initial.into(),
         language: Some("test.ts".into()),
         behavior: BehaviorFlags::production(),
-        actions: vec![Action::MoveDocumentEnd, Action::MoveLeft, Action::InsertNewline],
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::MoveLeft,
+            Action::InsertNewline,
+        ],
         expected_text: "interface User {\n    \n}".into(),
         expected_primary: CursorExpect::at(16 + 1 + 4),
         ..Default::default()
@@ -122,12 +131,16 @@ fn migrated_bracket_expansion_go_function() {
     // so the indented middle line is a single `\t`.
     let initial = "func main() {}";
     assert_buffer_scenario(BufferScenario {
-        description: "Go bracket expansion: Enter between `{` and `}` uses a tab on the middle line"
-            .into(),
+        description:
+            "Go bracket expansion: Enter between `{` and `}` uses a tab on the middle line".into(),
         initial_text: initial.into(),
         language: Some("test.go".into()),
         behavior: BehaviorFlags::production(),
-        actions: vec![Action::MoveDocumentEnd, Action::MoveLeft, Action::InsertNewline],
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::MoveLeft,
+            Action::InsertNewline,
+        ],
         expected_text: "func main() {\n\t\n}".into(),
         expected_primary: CursorExpect::at(13 + 1 + 1),
         ..Default::default()
@@ -141,11 +154,16 @@ fn migrated_bracket_expansion_json_object() {
     // makes is "buffer contains '{\n    '". Pin the full shape.
     let initial = "{}";
     assert_buffer_scenario(BufferScenario {
-        description: "JSON bracket expansion: Enter between `{` and `}` opens a 3-line object".into(),
+        description: "JSON bracket expansion: Enter between `{` and `}` opens a 3-line object"
+            .into(),
         initial_text: initial.into(),
         language: Some("test.json".into()),
         behavior: BehaviorFlags::production(),
-        actions: vec![Action::MoveDocumentEnd, Action::MoveLeft, Action::InsertNewline],
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::MoveLeft,
+            Action::InsertNewline,
+        ],
         expected_text: "{\n    \n}".into(),
         expected_primary: CursorExpect::at(1 + 1 + 4),
         ..Default::default()
@@ -160,7 +178,8 @@ fn migrated_bracket_expansion_json_object() {
 #[test]
 fn anti_bracket_expansion_dropping_move_left_yields_check_err() {
     let scenario = BufferScenario {
-        description: "anti: MoveLeft dropped — Enter past `}` cannot produce 3-line expansion".into(),
+        description: "anti: MoveLeft dropped — Enter past `}` cannot produce 3-line expansion"
+            .into(),
         initial_text: "fn main() {}".into(),
         language: Some("test.rs".into()),
         behavior: BehaviorFlags::production(),

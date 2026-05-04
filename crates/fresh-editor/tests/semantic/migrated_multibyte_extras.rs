@@ -55,7 +55,8 @@ fn migrated_repeated_backspace_drains_mixed_buffer_atomically() {
     // "a中b文c字d" entirely and never leave invalid UTF-8 along
     // the way. Final state: empty buffer.
     assert_buffer_scenario(BufferScenario {
-        description: "7 Backspaces from end of 'a中b文c字d' empty the buffer (no UTF-8 corruption)".into(),
+        description: "7 Backspaces from end of 'a中b文c字d' empty the buffer (no UTF-8 corruption)"
+            .into(),
         initial_text: "a中b文c字d".into(),
         actions: vec![
             Action::MoveDocumentEnd,

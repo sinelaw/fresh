@@ -21,8 +21,7 @@ use crate::common::scenario::buffer_scenario::{
 };
 use fresh::test_api::Action;
 
-const INITIAL: &str =
-    "fn main() {\n    println!(\"hello\");\n    println!(\"world\");\n}\n";
+const INITIAL: &str = "fn main() {\n    println!(\"hello\");\n    println!(\"world\");\n}\n";
 
 fn type_chars(s: &str) -> impl Iterator<Item = Action> + '_ {
     s.chars().map(Action::InsertChar)

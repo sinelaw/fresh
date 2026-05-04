@@ -78,7 +78,9 @@ fn migrated_block_select_then_remove_secondary_collapses() {
     // clears the active selection, so the surviving state is
     // "cursor at 11 with no anchor" — not "cursor at 0".
     assert_buffer_scenario(BufferScenario {
-        description: "BlockSelectDown + RemoveSecondaryCursors clears selection (cursor parks at active end)".into(),
+        description:
+            "BlockSelectDown + RemoveSecondaryCursors clears selection (cursor parks at active end)"
+                .into(),
         initial_text: "line1 text\nline2 text\nline3 text".into(),
         actions: vec![Action::BlockSelectDown, Action::RemoveSecondaryCursors],
         expected_text: "line1 text\nline2 text\nline3 text".into(),
@@ -128,7 +130,8 @@ fn migrated_block_select_then_type_clears_selection() {
 #[test]
 fn anti_block_select_then_remove_must_actually_clear() {
     let scenario = BufferScenario {
-        description: "anti: assert non-empty selection — must NOT match (selection was cleared)".into(),
+        description: "anti: assert non-empty selection — must NOT match (selection was cleared)"
+            .into(),
         initial_text: "line1 text\nline2 text\nline3 text".into(),
         actions: vec![Action::BlockSelectDown, Action::RemoveSecondaryCursors],
         expected_text: "line1 text\nline2 text\nline3 text".into(),

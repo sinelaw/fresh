@@ -87,15 +87,14 @@ fn migrated_third_ctrl_d_adds_cursor_at_third_match() {
     actions.push(Action::AddCursorNextMatch);
 
     assert_buffer_scenario(BufferScenario {
-        description: "Three AddCursorNextMatch yield three 3-byte cursors over the three 'foo' substrings".into(),
+        description:
+            "Three AddCursorNextMatch yield three 3-byte cursors over the three 'foo' substrings"
+                .into(),
         initial_text: "foobar foo foo".into(),
         actions,
         expected_text: "foobar foo foo".into(),
         expected_primary: CursorExpect::range(11, 14),
-        expected_extra_cursors: vec![
-            CursorExpect::range(0, 3),
-            CursorExpect::range(7, 10),
-        ],
+        expected_extra_cursors: vec![CursorExpect::range(0, 3), CursorExpect::range(7, 10)],
         expected_selection_text: Some("foo\nfoo\nfoo".into()),
         ..Default::default()
     });

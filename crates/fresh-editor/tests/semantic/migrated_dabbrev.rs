@@ -22,7 +22,8 @@ fn migrated_dabbrev_expand_picks_nearest_match_above_cursor() {
     // "calculate_difference\ncalculate_sum\n" + prefix "calc",
     // DabbrevExpand should expand "calc" to the nearest matching
     // word above the cursor — "calculate_sum".
-    let mut actions: Vec<Action> = type_chars("calculate_difference\ncalculate_sum\ncalc").collect();
+    let mut actions: Vec<Action> =
+        type_chars("calculate_difference\ncalculate_sum\ncalc").collect();
     actions.push(Action::DabbrevExpand);
 
     let expected = "calculate_difference\ncalculate_sum\ncalculate_sum";
@@ -62,7 +63,8 @@ fn migrated_dabbrev_uppercase_prefix_filters_strictly() {
     // Original: `test_dabbrev_smart_case`. Uppercase prefix
     // "HTTP" matches only the all-caps "HTTP_CONST", not the
     // mixed-case "HttpServer" or lowercase "http_request".
-    let mut actions: Vec<Action> = type_chars("HttpServer\nhttp_request\nHTTP_CONST\nHTTP").collect();
+    let mut actions: Vec<Action> =
+        type_chars("HttpServer\nhttp_request\nHTTP_CONST\nHTTP").collect();
     actions.push(Action::DabbrevExpand);
 
     let expected = "HttpServer\nhttp_request\nHTTP_CONST\nHTTP_CONST";
@@ -144,7 +146,9 @@ fn anti_dabbrev_dropping_action_yields_check_err() {
         initial_text: String::new(),
         actions,
         expected_text: "calculate_difference\ncalculate_sum\ncalculate_sum".into(),
-        expected_primary: CursorExpect::at("calculate_difference\ncalculate_sum\ncalculate_sum".len()),
+        expected_primary: CursorExpect::at(
+            "calculate_difference\ncalculate_sum\ncalculate_sum".len(),
+        ),
         ..Default::default()
     };
     assert!(

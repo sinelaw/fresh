@@ -65,9 +65,7 @@ fn migrated_undo_past_save_point_keeps_buffer_modified() {
     // is again *modified* because content no longer matches
     // disk.
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
-    let _fixture = harness
-        .load_buffer_from_text_named("test.txt", "")
-        .unwrap();
+    let _fixture = harness.load_buffer_from_text_named("test.txt", "").unwrap();
 
     // Type "hello", save → save point at "hello".
     for c in "hello".chars() {

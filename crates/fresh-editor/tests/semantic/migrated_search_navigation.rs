@@ -51,7 +51,8 @@ fn migrated_find_next_respects_cursor_position_after_move() {
     actions.push(Action::FindNext);
 
     assert_buffer_scenario(BufferScenario {
-        description: "Issue #1305: FindNext after MoveDown ×5 jumps to nearest match after cursor".into(),
+        description: "Issue #1305: FindNext after MoveDown ×5 jumps to nearest match after cursor"
+            .into(),
         initial_text: NEEDLE_FILE.into(),
         actions,
         expected_text: NEEDLE_FILE.into(),
@@ -80,7 +81,8 @@ fn migrated_find_previous_respects_cursor_position_after_move() {
     actions.push(Action::FindPrevious);
 
     assert_buffer_scenario(BufferScenario {
-        description: "Issue #1305: FindPrevious from EOF jumps to nearest match before cursor".into(),
+        description: "Issue #1305: FindPrevious from EOF jumps to nearest match before cursor"
+            .into(),
         initial_text: NEEDLE_FILE.into(),
         actions,
         expected_text: NEEDLE_FILE.into(),
@@ -104,7 +106,8 @@ fn anti_find_next_without_cursor_move_yields_check_err() {
     actions.push(Action::FindNext);
 
     let scenario = BufferScenario {
-        description: "anti: cursor-move dropped — FindNext should land on match 2, not match 3".into(),
+        description: "anti: cursor-move dropped — FindNext should land on match 2, not match 3"
+            .into(),
         initial_text: NEEDLE_FILE.into(),
         actions,
         expected_text: NEEDLE_FILE.into(),
