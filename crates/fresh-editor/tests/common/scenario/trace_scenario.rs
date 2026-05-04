@@ -36,8 +36,12 @@ pub struct TraceScenario {
 pub fn check_trace_scenario(s: TraceScenario) -> Result<(), ScenarioFailure> {
     let mut timer =
         crate::common::timing::Timer::start(format!("trace_scenario: {}", s.description));
-    let mut harness = EditorTestHarness::with_temp_project(80, 24)
-        .expect("EditorTestHarness::with_temp_project failed");
+    // TraceScenario asserts only on buffer text after a forward + undo
+    // trace, both dispatched through core `Action`s. No observable
+    // surface reaches plugin state, so we skip plugin loading. See
+    // `EditorTestHarness::with_temp_project_no_plugins`.
+    let mut harness = EditorTestHarness::with_temp_project_no_plugins(80, 24)
+        .expect("EditorTestHarness::with_temp_project_no_plugins failed");
     timer.phase("harness_create");
     let _fixture = harness
         .load_buffer_from_text(&s.initial_text)

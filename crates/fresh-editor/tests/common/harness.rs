@@ -809,6 +809,49 @@ impl EditorTestHarness {
         )
     }
 
+    /// Same as [`with_temp_project`] but with TypeScript plugin loading
+    /// disabled. Reserved for tests whose code paths provably do not
+    /// observe plugin behavior — every plugin-loading test boundary is
+    /// ~440 ms of TS transpile + QuickJS evaluation, so the suite-wide
+    /// savings are large.
+    ///
+    /// **Don't reach for this casually.** Disabling plugins removes any
+    /// hooks they install (`editor_initialized`, buffer-changed
+    /// reactions, command registrations). Currently used only by
+    /// scenarios whose contract guarantees no plugin interaction:
+    /// `BufferScenario` (text + caret only, dispatched through core
+    /// `Action`s) and `TraceScenario` (forward + undo trace on the same
+    /// core dispatch). Other scenario runners (Input, Modal, Layout,
+    /// etc.) keep plugins enabled so their tests preserve coverage of
+    /// any plugin-side effect that could reach the asserted state.
+    pub fn with_temp_project_no_plugins(width: u16, height: u16) -> anyhow::Result<Self> {
+        Self::create(
+            width,
+            height,
+            HarnessOptions::new()
+                .with_project_root()
+                .with_empty_plugins_dir(),
+        )
+    }
+
+    /// Same as [`with_temp_project_and_config`] but with plugins
+    /// disabled. See [`with_temp_project_no_plugins`] for when this is
+    /// safe to use.
+    pub fn with_temp_project_and_config_no_plugins(
+        width: u16,
+        height: u16,
+        config: Config,
+    ) -> anyhow::Result<Self> {
+        Self::create(
+            width,
+            height,
+            HarnessOptions::new()
+                .with_project_root()
+                .with_empty_plugins_dir()
+                .with_config(config),
+        )
+    }
+
     /// Create with explicit working directory, using default config.
     pub fn with_working_dir(width: u16, height: u16, working_dir: PathBuf) -> anyhow::Result<Self> {
         let config = Config::default();

@@ -168,16 +168,21 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
     let mut timer =
         crate::common::timing::Timer::start(format!("buffer_scenario: {}", s.description));
     let term = s.terminal;
+    // BufferScenario observes only buffer text + caret state, dispatched
+    // through core `Action`s exposed by `fresh::test_api`. Plugins can't
+    // reach that observable surface, so we skip plugin loading to save
+    // ~440 ms per test. See `EditorTestHarness::with_temp_project_no_plugins`
+    // for the broader caveat.
     let mut harness = if behavior_is_default(s.behavior) {
-        EditorTestHarness::with_temp_project(term.width, term.height)
-            .expect("EditorTestHarness::with_temp_project failed")
+        EditorTestHarness::with_temp_project_no_plugins(term.width, term.height)
+            .expect("EditorTestHarness::with_temp_project_no_plugins failed")
     } else {
         let mut config = fresh::config::Config::default();
         config.editor.auto_close = s.behavior.auto_close;
         config.editor.auto_indent = s.behavior.auto_indent;
         config.editor.auto_surround = s.behavior.auto_surround;
-        EditorTestHarness::with_temp_project_and_config(term.width, term.height, config)
-            .expect("EditorTestHarness::with_temp_project_and_config failed")
+        EditorTestHarness::with_temp_project_and_config_no_plugins(term.width, term.height, config)
+            .expect("EditorTestHarness::with_temp_project_and_config_no_plugins failed")
     };
     timer.phase("harness_create");
     let filename = s.language.as_deref().unwrap_or(DEFAULT_FILENAME);
