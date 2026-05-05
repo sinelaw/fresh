@@ -18,10 +18,12 @@ fn trigger_git_grep(harness: &mut EditorTestHarness) {
         .unwrap();
     harness.wait_for_prompt().unwrap();
     harness.type_text("Git Grep").unwrap();
+    // Wait for the command to appear in the palette before pressing Enter,
+    // otherwise Enter races with async palette filtering on slow CI runners.
+    harness.wait_for_screen_contains("Git Grep").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
 }
 
 /// Helper to trigger git find file via command palette
@@ -661,7 +663,9 @@ fn test_git_commands_via_command_palette() {
 
     // Type to filter to git commands (note: no colon in command name)
     harness.type_text("Git Grep").unwrap();
-    harness.render().unwrap();
+    // Wait for the filtered item before pressing Enter to avoid a race with
+    // async palette filtering on slow CI runners.
+    harness.wait_for_screen_contains("Git Grep").unwrap();
 
     // Confirm
     harness
