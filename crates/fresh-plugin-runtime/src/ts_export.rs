@@ -176,6 +176,17 @@ type AuthorityPayload = {
   spawner: AuthoritySpawner;
   terminal_wrapper: AuthorityTerminalWrapper;
   display_label?: string;
+  /**
+  * Optional host↔remote workspace path mapping. The dev-container
+  * authority sets both roots (editor.getCwd() on host;
+  * remoteWorkspaceFolder on container) so LSP URIs translate at the
+  * host/container boundary. Local and SSH authorities omit it.
+  */
+  path_translation?: PathTranslationSpec;
+};
+type PathTranslationSpec = {
+  host_root: string;
+  remote_root: string;
 };"#;
 
 /// Hand-written declaration for `RemoteIndicatorStatePayload`. Keep in
@@ -368,6 +379,14 @@ interface HookEventMap {
   after_file_open: { path: string; buffer_id: number };
   before_file_save: { path: string; buffer_id: number };
   after_file_save: { path: string; buffer_id: number };
+  /**
+   * Fired by the file explorer after a paste/duplicate/etc. mutates
+   * the filesystem without going through a buffer save. Plugins that
+   * surface FS-derived state (git status badges, etc.) should
+   * subscribe in addition to `after_file_save` to refresh on
+   * explorer-driven changes too.
+   */
+  after_file_explorer_change: { path: string };
 
   // ── text edits ───────────────────────────────────────────────────────────
   before_insert: { buffer_id: number; position: number; text: string };

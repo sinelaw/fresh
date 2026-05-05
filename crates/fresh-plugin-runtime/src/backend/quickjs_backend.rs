@@ -3059,13 +3059,14 @@ impl JsEditorApi {
 
     /// Start an interactive prompt.
     ///
-    /// `floating_overlay` is declared via `rquickjs::function::Opt`
-    /// rather than `Option<bool>` so JS callers can omit the
-    /// argument entirely (`startPrompt(label, type)`). With plain
-    /// `Option<bool>`, the binding macro requires the argument
-    /// position to be present (even if null), and a 2-arg JS call
-    /// throws at runtime — caught only by the e2e suite, not by
-    /// `cargo build`.
+    /// When `floatingOverlay` is true, the editor renders the prompt
+    /// and its suggestions inside a centred floating frame instead of
+    /// the bottom minibuffer row (issue #1796 — Live Grep). The flag
+    /// is rendering-only; confirm/cancel/hooks behave identically to a
+    /// non-overlay prompt of the same `promptType`.
+    // `floating_overlay` uses `rquickjs::function::Opt` (not `Option<bool>`)
+    // so JS callers can omit the argument; `Option<bool>` would require
+    // the argument position to be present at the JS layer.
     pub fn start_prompt(
         &self,
         label: String,
@@ -3126,9 +3127,8 @@ impl JsEditorApi {
         id
     }
 
-    /// Start a prompt with initial value. See `start_prompt` for why
-    /// `floating_overlay` uses `rquickjs::function::Opt` (so JS
-    /// callers can omit the argument).
+    /// Start a prompt with initial value. See `startPrompt` for the
+    /// meaning of `floatingOverlay`.
     pub fn start_prompt_with_initial(
         &self,
         label: String,
@@ -3164,9 +3164,14 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Set the floating-overlay prompt's title. `null`/missing
-    /// clears the title and falls back to the prompt-type default.
-    pub fn set_prompt_title(&self, title: rquickjs::function::Opt<String>) -> bool {
+    /// Set the title shown in the floating-overlay prompt's frame
+    /// header (issue #1796). Pass `null` or omit the argument to
+    /// clear the title and fall back to the default. Has no
+    /// visible effect on non-overlay prompts.
+    pub fn set_prompt_title(
+        &self,
+        #[plugin_api(ts_type = "string | null")] title: rquickjs::function::Opt<String>,
+    ) -> bool {
         self.command_sender
             .send(PluginCommand::SetPromptTitle { title: title.0 })
             .is_ok()
