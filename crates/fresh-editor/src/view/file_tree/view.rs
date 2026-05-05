@@ -904,4 +904,61 @@ mod tests {
         view.set_sort_mode(SortMode::Modified);
         assert_eq!(view.get_sort_mode(), SortMode::Modified);
     }
+
+    /// Reproducer: expanding a directory whose only contents are gitignored
+    /// (e.g. a build artifact dir whose own .gitignore is `*`) must not make
+    /// the directory itself disappear from the tree.
+    #[tokio::test]
+    async fn test_expanded_dir_with_all_children_filtered_stays_visible() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path();
+
+        let build_dir = temp_path.join("build");
+        std_fs::create_dir(&build_dir).unwrap();
+        std_fs::create_dir(build_dir.join("export")).unwrap();
+        std_fs::write(build_dir.join("metadata"), b"").unwrap();
+        std_fs::write(build_dir.join(".gitignore"), b"*\n").unwrap();
+
+        let backend = Arc::new(StdFileSystem);
+        let manager = Arc::new(FsManager::new(backend));
+        let tree = FileTree::new(temp_path.to_path_buf(), manager)
+            .await
+            .unwrap();
+        let mut view = FileTreeView::new(tree);
+
+        let root_id = view.tree().root_id();
+        view.tree_mut().expand_node(root_id).await.unwrap();
+
+        let build_id = view
+            .tree()
+            .get_node(root_id)
+            .unwrap()
+            .children
+            .iter()
+            .copied()
+            .find(|&id| {
+                view.tree()
+                    .get_node(id)
+                    .map(|n| n.entry.name == "build")
+                    .unwrap_or(false)
+            })
+            .expect("build/ child not found");
+
+        view.tree_mut().expand_node(build_id).await.unwrap();
+        view.load_gitignore_from_bytes(&build_dir, b"*\n", None);
+
+        let visible: Vec<NodeId> = view
+            .get_display_nodes()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert!(
+            visible.contains(&build_id),
+            "expanded build/ row vanished after its children were all filtered (visible={:?})",
+            visible
+                .iter()
+                .filter_map(|&id| view.tree().get_node(id).map(|n| n.entry.name.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
 }

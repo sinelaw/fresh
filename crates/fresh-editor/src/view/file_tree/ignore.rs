@@ -174,7 +174,9 @@ impl IgnorePatterns {
         // Find the most specific .gitignore (deepest directory)
         // that could apply to this path
         for (gitignore_dir, gitignore) in &self.gitignores {
-            if path.starts_with(gitignore_dir) {
+            // A .gitignore at dir X governs entries *inside* X, not X itself —
+            // otherwise a `*` pattern would hide the directory it lives in.
+            if path.starts_with(gitignore_dir) && path != gitignore_dir.as_path() {
                 let relative_path = path.strip_prefix(gitignore_dir).unwrap_or(path);
                 let matched = gitignore.matched(relative_path, is_dir);
 
