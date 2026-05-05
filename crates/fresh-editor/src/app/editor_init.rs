@@ -1013,6 +1013,7 @@ impl Editor {
             search_overlay_top_byte: None,
             review_hunks: Vec::new(),
             global_popups: crate::view::popup::PopupManager::new(),
+            global_panels: crate::view::global_panel::GlobalPanelManager::new(),
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
             animations: crate::view::animation::AnimationRunner::new(),

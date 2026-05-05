@@ -1133,6 +1133,10 @@ pub struct Editor {
     /// `PopupResolver::PluginAction` — no parallel side-channel stack.
     pub(crate) global_popups: crate::view::popup::PopupManager,
 
+    /// Editor-level overlay panels (showGlobalPanel / updateGlobalPanel).
+    /// Display-only; all key handling is done via defineMode.
+    pub(crate) global_panels: crate::view::global_panel::GlobalPanelManager,
+
     /// Composite buffers (separate from regular buffers)
     /// These display multiple source buffers in a single tab
     composite_buffers: HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,

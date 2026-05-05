@@ -61,6 +61,8 @@ pub mod file_browser_input;
 #[cfg(feature = "runtime")]
 pub mod file_tree;
 #[cfg(feature = "runtime")]
+pub mod global_panel;
+#[cfg(feature = "runtime")]
 pub mod keybinding_editor;
 #[cfg(feature = "runtime")]
 pub mod markdown;

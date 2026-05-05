@@ -1122,6 +1122,19 @@ impl Editor {
                 self.handle_show_action_popup(popup_id, title, message, actions);
             }
 
+            PluginCommand::ShowGlobalPanel { id, rows } => {
+                self.global_panels
+                    .show(crate::view::global_panel::GlobalPanel::new(id, rows));
+            }
+
+            PluginCommand::UpdateGlobalPanel { id, rows } => {
+                self.global_panels.update(&id, rows);
+            }
+
+            PluginCommand::CloseGlobalPanel { id } => {
+                self.global_panels.close(&id);
+            }
+
             PluginCommand::DisableLspForLanguage { language } => {
                 self.handle_disable_lsp_for_language(language);
             }

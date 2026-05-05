@@ -1941,6 +1941,28 @@ pub enum PluginCommand {
         actions: Vec<ActionPopupAction>,
     },
 
+    /// Show a global overlay panel anchored to the bottom of the screen
+    ShowGlobalPanel {
+        /// Unique identifier for the panel
+        id: String,
+        /// Rows to display
+        rows: Vec<GlobalPanelRow>,
+    },
+
+    /// Update the rows of an existing global panel in place
+    UpdateGlobalPanel {
+        /// Identifier of the panel to update
+        id: String,
+        /// New rows
+        rows: Vec<GlobalPanelRow>,
+    },
+
+    /// Close and remove a global panel
+    CloseGlobalPanel {
+        /// Identifier of the panel to close
+        id: String,
+    },
+
     /// Disable LSP for a specific language and persist to config
     DisableLspForLanguage {
         /// The language to disable LSP for (e.g., "python", "rust")
@@ -2410,6 +2432,29 @@ pub struct ActionPopupOptions {
     pub actions: Vec<ActionPopupAction>,
 }
 
+/// A single row in a global panel
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct GlobalPanelRow {
+    /// Text content of the row
+    pub text: String,
+    /// Visual style hint
+    #[serde(default)]
+    pub style: Option<String>,
+}
+
+/// Options for showGlobalPanel / updateGlobalPanel
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct GlobalPanelOptions {
+    /// Unique identifier for the panel
+    pub id: String,
+    /// Rows to display
+    pub rows: Vec<GlobalPanelRow>,
+}
+
 /// Syntax highlight span for a buffer range
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -2767,6 +2812,8 @@ mod fromjs_impls {
         ActionSpec,
         ActionPopupAction,
         ActionPopupOptions,
+        GlobalPanelRow,
+        GlobalPanelOptions,
         ViewTokenWire,
         ViewTokenStyle,
         LayoutHints,

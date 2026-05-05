@@ -19,12 +19,13 @@ use fresh_core::api::{
     BufferGroupResult, BufferInfo, BufferSavedDiff, CompositeHunk, CompositeLayoutConfig,
     CompositePaneStyle, CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
-    GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
-    LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SpawnResult,
-    SplitSnapshot, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GlobalPanelOptions,
+    GlobalPanelRow, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange,
+    JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LspServerPackConfig,
+    OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
+    ProcessLimitsPackConfig, ReplaceResult, SpawnResult, SplitSnapshot, TerminalResult,
+    TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
+    ViewportInfo, VirtualBufferResult,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -87,6 +88,8 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // UI types (ts-rs renames these with Ts prefix)
         "TsActionPopupAction" | "ActionPopupAction" => Some(ActionPopupAction::decl(&cfg)),
         "ActionPopupOptions" => Some(ActionPopupOptions::decl(&cfg)),
+        "GlobalPanelRow" => Some(GlobalPanelRow::decl(&cfg)),
+        "GlobalPanelOptions" => Some(GlobalPanelOptions::decl(&cfg)),
         "TsHighlightSpan" => Some(TsHighlightSpan::decl(&cfg)),
         "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
 
@@ -215,6 +218,8 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ActionSpec",                     // Used by executeActions
     "TsActionPopupAction",            // Used by ActionPopupOptions.actions
     "ActionPopupOptions",             // Used by showActionPopup
+    "GlobalPanelRow",                 // Used by GlobalPanelOptions.rows
+    "GlobalPanelOptions",             // Used by showGlobalPanel / updateGlobalPanel
     "FileExplorerDecoration",         // Used by setFileExplorerDecorations
     "FormatterPackConfig",            // Used by LanguagePackConfig.formatter
     "ProcessLimitsPackConfig",        // Used by LspServerPackConfig.process_limits
@@ -656,6 +661,8 @@ mod tests {
             "ViewTokenWire",
             "TsActionPopupAction",
             "ActionPopupOptions",
+            "GlobalPanelRow",
+            "GlobalPanelOptions",
             "TsHighlightSpan",
             "FileExplorerDecoration",
             "TextPropertyEntry",
@@ -1163,6 +1170,9 @@ mod tests {
             "removeScrollSyncGroup",
             "executeActions",
             "showActionPopup",
+            "showGlobalPanel",
+            "updateGlobalPanel",
+            "closeGlobalPanel",
             "disableLspForLanguage",
             "setLspRootUri",
             "getAllDiagnostics",

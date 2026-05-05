@@ -3688,6 +3688,33 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Show or replace a bottom-anchored global overlay panel
+    pub fn show_global_panel(&self, opts: fresh_core::api::GlobalPanelOptions) -> bool {
+        self.command_sender
+            .send(PluginCommand::ShowGlobalPanel {
+                id: opts.id,
+                rows: opts.rows,
+            })
+            .is_ok()
+    }
+
+    /// Update the rows of an existing global panel in place
+    pub fn update_global_panel(&self, opts: fresh_core::api::GlobalPanelOptions) -> bool {
+        self.command_sender
+            .send(PluginCommand::UpdateGlobalPanel {
+                id: opts.id,
+                rows: opts.rows,
+            })
+            .is_ok()
+    }
+
+    /// Close and remove a global panel
+    pub fn close_global_panel(&self, id: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::CloseGlobalPanel { id })
+            .is_ok()
+    }
+
     /// Disable LSP for a specific language
     pub fn disable_lsp_for_language(&self, language: String) -> bool {
         self.command_sender
