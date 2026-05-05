@@ -71,16 +71,13 @@ ts-rs = { version = "12.0", features = ["serde_json"] }
 
 [profile.release]
 debug = 0
-codegen-units = 4
-lto = "off" # speed up the binary final build
-force-frame-pointers = true
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
 
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
-lto = "fat"
-codegen-units = 1
-opt-level = "z"
 
 # Optimize the critical dependencies in the plugin-load path at -O3 even
 # in dev/test builds. These are the only deps where unoptimized code
