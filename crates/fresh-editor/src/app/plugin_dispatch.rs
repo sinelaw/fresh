@@ -1122,9 +1122,9 @@ impl Editor {
                 self.handle_show_action_popup(popup_id, title, message, actions);
             }
 
-            PluginCommand::ShowGlobalPanel { id, rows } => {
+            PluginCommand::ShowGlobalPanel { id, rows, anchor } => {
                 self.global_panels
-                    .show(crate::view::global_panel::GlobalPanel::new(id, rows));
+                    .show(crate::view::global_panel::GlobalPanel::new(id, rows, anchor));
             }
 
             PluginCommand::UpdateGlobalPanel { id, rows } => {

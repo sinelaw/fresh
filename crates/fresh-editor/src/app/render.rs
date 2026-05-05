@@ -1189,17 +1189,18 @@ impl Editor {
         }
 
         // Render global panels (showGlobalPanel / updateGlobalPanel).
-        // These sit between the split content and the status bar, overlaying
-        // everything below them without consuming layout space.
+        // These overlay the content area without consuming layout space.
         if let Some(panel) = self.global_panels.top() {
-            // Status bar height: 1 row when visible, 0 otherwise.
-            let status_bar_height =
+            // Bottom chrome: status bar when visible.
+            let bottom_reserved =
                 if self.status_bar_visible && !has_suggestions && !has_file_browser {
                     1u16
                 } else {
                     0u16
                 };
-            let panel_area = panel.calculate_area(size, status_bar_height);
+            // Top chrome: menu bar (1) + tab bar (1) when each is visible.
+            let top_reserved = u16::from(self.menu_bar_visible) + 1u16; // tab bar always 1
+            let panel_area = panel.calculate_area(size, top_reserved, bottom_reserved);
             panel.render(frame, panel_area, &theme_clone);
         }
 

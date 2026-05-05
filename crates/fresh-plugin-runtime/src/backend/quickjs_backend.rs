@@ -3688,12 +3688,13 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Show or replace a bottom-anchored global overlay panel
+    /// Show or replace a global overlay panel anchored to the specified side
     pub fn show_global_panel(&self, opts: fresh_core::api::GlobalPanelOptions) -> bool {
         self.command_sender
             .send(PluginCommand::ShowGlobalPanel {
                 id: opts.id,
                 rows: opts.rows,
+                anchor: opts.anchor,
             })
             .is_ok()
     }

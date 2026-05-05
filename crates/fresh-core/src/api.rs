@@ -1941,12 +1941,15 @@ pub enum PluginCommand {
         actions: Vec<ActionPopupAction>,
     },
 
-    /// Show a global overlay panel anchored to the bottom of the screen
+    /// Show a global overlay panel anchored to a side of the screen
     ShowGlobalPanel {
         /// Unique identifier for the panel
         id: String,
         /// Rows to display
         rows: Vec<GlobalPanelRow>,
+        /// Which screen edge the panel sticks to (default: bottom)
+        #[serde(default)]
+        anchor: GlobalPanelAnchor,
     },
 
     /// Update the rows of an existing global panel in place
@@ -2432,6 +2435,27 @@ pub struct ActionPopupOptions {
     pub actions: Vec<ActionPopupAction>,
 }
 
+/// Which edge of the screen the global panel is anchored to
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum GlobalPanelAnchor {
+    /// Anchored to the bottom edge, above the status bar (default)
+    Bottom,
+    /// Anchored to the top edge, below the menu/tab bar
+    Top,
+    /// Anchored to the left edge, full height of the content area
+    Left,
+    /// Anchored to the right edge, full height of the content area
+    Right,
+}
+
+impl Default for GlobalPanelAnchor {
+    fn default() -> Self {
+        Self::Bottom
+    }
+}
+
 /// A single row in a global panel
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -2453,6 +2477,9 @@ pub struct GlobalPanelOptions {
     pub id: String,
     /// Rows to display
     pub rows: Vec<GlobalPanelRow>,
+    /// Which screen edge the panel sticks to (default: bottom)
+    #[serde(default)]
+    pub anchor: GlobalPanelAnchor,
 }
 
 /// Syntax highlight span for a buffer range
@@ -2814,6 +2841,7 @@ mod fromjs_impls {
         ActionPopupOptions,
         GlobalPanelRow,
         GlobalPanelOptions,
+        GlobalPanelAnchor,
         ViewTokenWire,
         ViewTokenStyle,
         LayoutHints,

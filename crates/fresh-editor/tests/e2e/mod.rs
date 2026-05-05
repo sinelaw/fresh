@@ -39,6 +39,7 @@ pub mod file_permissions;
 pub mod flash;
 pub mod folding;
 pub mod glob_language_detection;
+pub mod global_panel;
 pub mod goto_matching_bracket;
 #[cfg(feature = "gui")]
 pub mod gui;

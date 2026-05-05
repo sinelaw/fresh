@@ -6,18 +6,20 @@ use ratatui::{
     Frame,
 };
 
-use fresh_core::api::GlobalPanelRow;
+use fresh_core::api::{GlobalPanelAnchor, GlobalPanelRow};
 
 /// A bottom-anchored, full-width overlay panel with no interactive model.
 /// All key handling is done externally via `defineMode`; the panel is display-only.
 pub struct GlobalPanel {
     pub id: String,
     pub rows: Vec<GlobalPanelRow>,
+    /// Which screen edge this panel is anchored to.
+    pub anchor: GlobalPanelAnchor,
 }
 
 impl GlobalPanel {
-    pub fn new(id: String, rows: Vec<GlobalPanelRow>) -> Self {
-        Self { id, rows }
+    pub fn new(id: String, rows: Vec<GlobalPanelRow>, anchor: GlobalPanelAnchor) -> Self {
+        Self { id, rows, anchor }
     }
 
     /// Height of the panel including the border (1 top + 1 bottom).
@@ -25,19 +27,77 @@ impl GlobalPanel {
         (self.rows.len() as u16).saturating_add(2)
     }
 
+    /// Width of the panel including the border (1 left + 1 right).
+    /// Used for left/right anchors.
+    pub fn total_width(&self) -> u16 {
+        self.rows
+            .iter()
+            .map(|r| r.text.chars().count() as u16)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(2)
+    }
+
     /// Compute the area for this panel given the full frame area and the
-    /// height of the status bar row(s) sitting below it.
-    pub fn calculate_area(&self, frame_area: Rect, status_bar_height: u16) -> Rect {
-        let height = self.total_height().min(frame_area.height);
-        let y = frame_area
+    /// heights/widths of the chrome rows/columns adjacent to each edge.
+    ///
+    /// `top_reserved`    — rows consumed by menu bar + tab bar (for `Top` anchor)
+    /// `bottom_reserved` — rows consumed by status bar (for `Bottom` anchor)
+    /// `content_y`       — first content row (same as `top_reserved`)
+    /// `content_height`  — usable content rows (for `Left`/`Right` anchors)
+    pub fn calculate_area(
+        &self,
+        frame_area: Rect,
+        top_reserved: u16,
+        bottom_reserved: u16,
+    ) -> Rect {
+        let content_y = top_reserved;
+        let content_height = frame_area
             .height
-            .saturating_sub(height)
-            .saturating_sub(status_bar_height);
-        Rect {
-            x: 0,
-            y,
-            width: frame_area.width,
-            height,
+            .saturating_sub(top_reserved)
+            .saturating_sub(bottom_reserved);
+
+        match self.anchor {
+            GlobalPanelAnchor::Bottom => {
+                let height = self.total_height().min(frame_area.height);
+                let y = frame_area
+                    .height
+                    .saturating_sub(height)
+                    .saturating_sub(bottom_reserved);
+                Rect {
+                    x: 0,
+                    y,
+                    width: frame_area.width,
+                    height,
+                }
+            }
+            GlobalPanelAnchor::Top => {
+                let height = self.total_height().min(frame_area.height);
+                Rect {
+                    x: 0,
+                    y: content_y,
+                    width: frame_area.width,
+                    height,
+                }
+            }
+            GlobalPanelAnchor::Left => {
+                let width = self.total_width().min(frame_area.width);
+                Rect {
+                    x: 0,
+                    y: content_y,
+                    width,
+                    height: content_height,
+                }
+            }
+            GlobalPanelAnchor::Right => {
+                let width = self.total_width().min(frame_area.width);
+                Rect {
+                    x: frame_area.width.saturating_sub(width),
+                    y: content_y,
+                    width,
+                    height: content_height,
+                }
+            }
         }
     }
 
