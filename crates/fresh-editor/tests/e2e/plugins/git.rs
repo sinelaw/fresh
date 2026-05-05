@@ -244,11 +244,11 @@ fn test_git_grep_confirm_jumps_to_location() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
 
-    // Give it time to open the file
-    harness.sleep(std::time::Duration::from_millis(200));
-    harness.render().unwrap();
+    // Wait for the grep prompt to close (file open is async)
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Git grep:"))
+        .unwrap();
 
     let screen = harness.screen_to_string();
     println!("After confirming grep result:\n{screen}");
@@ -949,12 +949,13 @@ fn trigger_git_log(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Git Log").unwrap();
+    harness.wait_for_screen_contains("Git Log").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_screen_contains("switch pane").unwrap();
 }
 
 /// Test git log opens and shows commits
@@ -1183,11 +1184,11 @@ fn test_git_log_close() {
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
-    harness.process_async_and_render().unwrap();
 
-    // Git log should be closed
-    harness.sleep(std::time::Duration::from_millis(100));
-    harness.render().unwrap();
+    // Wait for git log to actually close (buffer group teardown is async)
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("switch pane"))
+        .unwrap();
 
     let screen_after = harness.screen_to_string();
     println!("After closing:\n{screen_after}");
@@ -1555,12 +1556,13 @@ fn trigger_git_blame(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_prompt().unwrap();
     harness.type_text("Git Blame").unwrap();
+    harness.wait_for_screen_contains("Git Blame").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
+    harness.wait_for_screen_contains("──").unwrap();
 }
 
 /// Test git blame opens and shows blame blocks with headers
