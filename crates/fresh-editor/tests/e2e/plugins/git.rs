@@ -24,6 +24,9 @@ fn trigger_git_grep(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for the grep prompt to be visible before returning so callers can
+    // type their query immediately without racing the async plugin mount.
+    harness.wait_for_screen_contains("Git grep: ").unwrap();
 }
 
 /// Helper to trigger git find file via command palette
@@ -63,12 +66,6 @@ fn test_git_grep_shows_results() {
 
     // Trigger git grep
     trigger_git_grep(&mut harness);
-
-    // Wait for the grep prompt to appear. Eager `assert_screen_contains`
-    // races the JS plugin's prompt mount on slow CI runners (notably
-    // Windows): the palette closes on Enter but the grep prompt isn't
-    // rendered yet by the time the assertion runs.
-    harness.wait_for_screen_contains("Git grep: ").unwrap();
 
     // Type search query
     harness.type_text("config").unwrap();
