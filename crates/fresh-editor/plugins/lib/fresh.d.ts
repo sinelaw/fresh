@@ -1465,6 +1465,11 @@ interface EditorAPI {
 	*/
 	getBuiltinThemes(): unknown;
 	/**
+	* Full theme registry (builtins + user themes + packages + bundles).
+	* Keyed by canonical registry key; each value carries `_key` / `_pack`.
+	*/
+	getAllThemes(): unknown;
+	/**
 	* Delete a custom theme (alias for deleteThemeSync)
 	*/
 	deleteTheme(name: string): boolean;

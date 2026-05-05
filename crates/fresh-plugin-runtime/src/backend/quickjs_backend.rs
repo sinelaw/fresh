@@ -2186,6 +2186,14 @@ impl JsEditorApi {
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
+    /// Full theme registry (builtins + user themes + packages + bundles).
+    /// Keyed by canonical registry key; each value carries `_key` / `_pack`.
+    pub fn get_all_themes<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let themes = self.services.get_all_themes();
+        rquickjs_serde::to_value(ctx, &themes)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     /// Delete a custom theme file (sync)
     #[qjs(rename = "_deleteThemeSync")]
     pub fn delete_theme_sync(&self, name: String) -> bool {
@@ -6021,6 +6029,9 @@ mod tests {
         fn get_builtin_themes(&self) -> serde_json::Value {
             serde_json::json!([])
         }
+        fn get_all_themes(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
         fn register_command(&self, _command: fresh_core::command::Command) {}
         fn unregister_command(&self, _name: &str) {}
         fn unregister_commands_by_prefix(&self, _prefix: &str) {}
@@ -7620,6 +7631,9 @@ mod tests {
         }
         fn get_builtin_themes(&self) -> serde_json::Value {
             self.inner.get_builtin_themes()
+        }
+        fn get_all_themes(&self) -> serde_json::Value {
+            self.inner.get_all_themes()
         }
         fn register_command(&self, command: fresh_core::command::Command) {
             self.inner.register_command(command);

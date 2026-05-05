@@ -1113,6 +1113,7 @@ mod tests {
             "applyTheme",
             "getThemeSchema",
             "getBuiltinThemes",
+            "getAllThemes",
             "getThemeData",
             "saveThemeFile",
             "themeFileExists",

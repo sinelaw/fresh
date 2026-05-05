@@ -721,59 +721,31 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
 }
 
 /**
- * Find themes directory
- */
-function findThemesDir(): string {
-  const cwd = editor.getCwd();
-  const candidates = [
-    editor.pathJoin(cwd, "themes"),
-  ];
-
-  for (const path of candidates) {
-    if (editor.fileExists(path)) {
-      return path;
-    }
-  }
-
-  return candidates[0];
-}
-
-/**
- * Load list of available built-in themes
- */
-/**
- * Load all themes from the registry, returning a map of key → display name.
- *
- * The registry is keyed by unique keys (repo URLs, file:// paths, or bare
- * names for builtins). Each value contains a `name` field (display name)
- * and `_key`/`_pack` metadata.
- */
-/**
  * Load theme registry and populate state.themeRegistry + state.builtinKeys.
+ *
+ * Themes come pre-merged from the Rust registry (builtins + user dir +
+ * packages + bundles), keyed by canonical registry key with `_key`/`_pack`
+ * metadata baked in — same data the native `select_theme` prompt sees.
  */
 async function loadThemeRegistry(): Promise<void> {
-  try {
-    editor.debug("[theme_editor] loadThemeRegistry: calling editor.getBuiltinThemes()");
-    const rawThemes = editor.getBuiltinThemes();
-    const themes = typeof rawThemes === "string"
-      ? JSON.parse(rawThemes) as Record<string, Record<string, unknown>>
-      : rawThemes as Record<string, Record<string, unknown>>;
-    state.themeRegistry = new Map();
-    state.builtinKeys = new Set();
-    for (const [key, data] of Object.entries(themes)) {
-      const name = (data?.name as string) || key;
-      const pack = (data?._pack as string) || "";
-      state.themeRegistry.set(key, {name, pack});
-      // Builtin themes have an empty pack; user themes start with "user"
-      if (!pack || (!pack.startsWith("user") && !pack.startsWith("pkg"))) {
-        state.builtinKeys.add(key);
-      }
+  const themes = editor.getAllThemes() as Record<string, Record<string, unknown>>;
+
+  state.themeRegistry = new Map();
+  state.builtinKeys = new Set();
+
+  for (const [key, data] of Object.entries(themes)) {
+    const name = (data?.name as string) || key;
+    const pack = (data?._pack as string) || "";
+
+    state.themeRegistry.set(key, { name, pack });
+
+    // Builtin themes have an empty pack; user themes start with "user"
+    if (!pack || (!pack.startsWith("user") && !pack.startsWith("pkg"))) {
+      state.builtinKeys.add(key);
     }
-    editor.debug(`[theme_editor] loadThemeRegistry: loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);
-  } catch (e) {
-    editor.debug(`[theme_editor] Failed to load theme registry: ${e}`);
-    throw e;
   }
+
+  editor.debug(`[theme_editor] loadThemeRegistry: loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);
 }
 
 /**
@@ -2628,7 +2600,7 @@ async function open_theme_editor() : Promise<void> {
   state.sourceSplitId = editor.getActiveSplitId();
   state.sourceBufferId = editor.getActiveBufferId();
 
-  editor.debug("[theme_editor] loading builtin themes...");
+  editor.debug("[theme_editor] loading themes...");
   // Load available themes
   await loadThemeRegistry();
   editor.debug(`[theme_editor] loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);

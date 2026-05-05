@@ -44,6 +44,13 @@ impl PluginServiceBridge for EditorServiceBridge {
         theme::get_builtin_themes()
     }
 
+    fn get_all_themes(&self) -> serde_json::Value {
+        let cache = self.theme_cache.read().unwrap();
+        let map: serde_json::Map<String, serde_json::Value> =
+            cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        serde_json::Value::Object(map)
+    }
+
     fn register_plugin_strings(
         &self,
         plugin_name: &str,

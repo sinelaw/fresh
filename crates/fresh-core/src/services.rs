@@ -24,6 +24,11 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Get a list of builtin theme names
     fn get_builtin_themes(&self) -> serde_json::Value;
 
+    /// Full theme registry (builtins + user + packages + bundles) as a JSON
+    /// object keyed by canonical registry key. Each value is the parsed theme
+    /// with `_key` / `_pack` metadata fields (see `ThemeRegistry::to_json_map`).
+    fn get_all_themes(&self) -> serde_json::Value;
+
     /// Register custom i18n strings for a plugin
     fn register_plugin_strings(
         &self,
@@ -93,6 +98,9 @@ impl PluginServiceBridge for NoopServiceBridge {
         serde_json::Value::Null
     }
     fn get_builtin_themes(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+    fn get_all_themes(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
     fn register_plugin_strings(
