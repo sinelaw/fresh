@@ -725,6 +725,7 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
  */
 function findThemesDir(): string {
   const cwd = editor.getCwd();
+
   const candidates = [
     editor.pathJoin(cwd, "themes"),
   ];
@@ -735,8 +736,94 @@ function findThemesDir(): string {
     }
   }
 
-  return candidates[0];
+  return candidates?.[0] ?? '';
 }
+
+type Theme = Record<string, unknown>;
+
+type ThemeCollection = Record<string, Theme>;
+
+type ThemeFetcher = () => Promise<ThemeCollection>;
+
+async function getBuiltinThemes(): Promise<ThemeCollection> {
+  const rawThemes = editor.getBuiltinThemes();
+
+  // TODO: Verify if this check is necessary.
+  return typeof rawThemes === "string"
+    ? (JSON.parse(rawThemes) as Record<string, Record<string, unknown>>)
+    : (rawThemes as Record<string, Record<string, unknown>>);
+}
+
+async function getThemesFromDir(args: { directory: string, pack: string }): Promise<ThemeCollection> {
+  const themes: ThemeCollection = {};
+
+  const directories: Parameters<typeof getThemesFromDir>[0][] = [args];
+
+  do {
+    const current = directories.pop();
+
+    if (current) {
+      const { directory, pack } = current;
+
+      const entries = editor.readDir(directory);
+
+      for (const { is_dir, is_file, name } of entries) {
+        if (is_dir) {
+          // Skip "packages" at top-level user directory
+          if (pack === "user" && name === "packages") {
+            continue;
+          }
+
+          directories.push({
+            directory: editor.pathJoin(directory, name),
+            pack: `${pack}/${name}`
+          });
+
+          continue;
+        }
+
+        if (!name.endsWith(".json")) {
+          continue;
+        }
+
+        const filePath = editor.pathJoin(directory, name);
+
+        const fileContents = editor.readFile(filePath);
+
+        if (fileContents) {
+          const theme = editor.parseJsonc(fileContents) as Theme;
+
+          const name = (theme.name as string)
+            .toLowerCase().replace("_", "-").replace(" ", '-');
+
+          const key = (pack.startsWith('user')) ? `file://${filePath}` : name;
+
+          theme._pack = pack;
+
+          themes[key] = theme;
+        }
+      }
+    }
+  } while (directories.length);
+
+  return themes;
+}
+
+async function getRelativeThemes(): Promise<ThemeCollection> {
+  const relativeThemesDir = findThemesDir();
+
+  return relativeThemesDir ? getThemesFromDir({ directory: relativeThemesDir, pack: '' }) : {};
+}
+
+async function getUserThemes(): Promise<ThemeCollection> {
+  return getThemesFromDir({ directory: editor.getThemesDir(), pack: 'user' });
+}
+
+const themeFetchers: Record<string, ThemeFetcher> = {
+  builtin: getBuiltinThemes,
+  relative: getRelativeThemes,
+  user: getUserThemes
+};
 
 /**
  * Load list of available built-in themes
@@ -752,28 +839,42 @@ function findThemesDir(): string {
  * Load theme registry and populate state.themeRegistry + state.builtinKeys.
  */
 async function loadThemeRegistry(): Promise<void> {
-  try {
-    editor.debug("[theme_editor] loadThemeRegistry: calling editor.getBuiltinThemes()");
-    const rawThemes = editor.getBuiltinThemes();
-    const themes = typeof rawThemes === "string"
-      ? JSON.parse(rawThemes) as Record<string, Record<string, unknown>>
-      : rawThemes as Record<string, Record<string, unknown>>;
-    state.themeRegistry = new Map();
-    state.builtinKeys = new Set();
-    for (const [key, data] of Object.entries(themes)) {
-      const name = (data?.name as string) || key;
-      const pack = (data?._pack as string) || "";
-      state.themeRegistry.set(key, {name, pack});
-      // Builtin themes have an empty pack; user themes start with "user"
-      if (!pack || (!pack.startsWith("user") && !pack.startsWith("pkg"))) {
-        state.builtinKeys.add(key);
+  const fetchedThemes = (await Promise.all(
+    Object.entries(themeFetchers).map(([category, fetcher]) => {
+      editor.debug(`[theme_editor] loadThemeRegistry: loading category ${category}`);
+
+      try {
+        return fetcher();
+      } catch (e) {
+            editor.debug(
+              `[theme_editor] Failed to load theme registry category ${category}: ${e}`,
+            );
+
+        return {} as ThemeCollection
       }
+    })))
+    .flatMap((collection) => Object.entries(collection));
+
+  const themes: ThemeCollection = Object.fromEntries(fetchedThemes);
+
+  state.themeRegistry = new Map();
+
+  state.builtinKeys = new Set();
+
+  for (const [key, data] of Object.entries(themes)) {
+    const name = (data?.name as string) || key;
+
+    const pack = (data?._pack as string) || "";
+
+    state.themeRegistry.set(key, { name, pack });
+
+    // Builtin themes have an empty pack; user themes start with "user"
+    if (!pack || (!pack.startsWith("user") && !pack.startsWith("pkg"))) {
+      state.builtinKeys.add(key);
     }
-    editor.debug(`[theme_editor] loadThemeRegistry: loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);
-  } catch (e) {
-    editor.debug(`[theme_editor] Failed to load theme registry: ${e}`);
-    throw e;
   }
+
+  editor.debug(`[theme_editor] loadThemeRegistry: loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);
 }
 
 /**
@@ -2628,7 +2729,7 @@ async function open_theme_editor() : Promise<void> {
   state.sourceSplitId = editor.getActiveSplitId();
   state.sourceBufferId = editor.getActiveBufferId();
 
-  editor.debug("[theme_editor] loading builtin themes...");
+  editor.debug("[theme_editor] loading themes...");
   // Load available themes
   await loadThemeRegistry();
   editor.debug(`[theme_editor] loaded ${state.themeRegistry.size} themes (${state.builtinKeys.size} builtin)`);
