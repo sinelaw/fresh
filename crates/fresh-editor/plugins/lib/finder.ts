@@ -346,7 +346,8 @@ export function parseGrepLine(line: string): {
  */
 export function parseGrepOutput(
   stdout: string,
-  maxResults: number = 100
+  maxResults: number = 100,
+  debug?: (msg: string) => void
 ): Array<{ file: string; line: number; column: number; content: string }> {
   const results: Array<{
     file: string;
@@ -355,14 +356,16 @@ export function parseGrepOutput(
     content: string;
   }> = [];
 
-  for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line) continue;
     const match = parseGrepLine(line);
     if (match) {
       results.push(match);
       if (results.length >= maxResults) {
         break;
       }
+    } else if (debug) {
+      debug(`[parseGrepOutput] failed to parse line: ${line}`);
     }
   }
 
@@ -784,7 +787,8 @@ export class Finder<T> {
           // Parse as grep output by default
           const parsed = parseGrepOutput(
             result.stdout,
-            this.config.maxResults
+            this.config.maxResults,
+            (msg) => this.editor.debug(msg)
           ) as unknown as T[];
           this.updatePromptResults(parsed);
 

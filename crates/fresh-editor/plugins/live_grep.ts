@@ -228,9 +228,9 @@ registerProvider({
       cwd
     );
     if (r.exit_code === 0) {
-      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+      return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    return [];
+    throw new Error(`rg exited with code ${r.exit_code}: ${r.stderr}`);
   },
 });
 
@@ -264,9 +264,9 @@ registerProvider({
       cwd
     );
     if (r.exit_code === 0 || r.exit_code === 1) {
-      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+      return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    return [];
+    throw new Error(`ag exited with code ${r.exit_code}: ${r.stderr}`);
   },
 });
 
@@ -301,9 +301,9 @@ registerProvider({
     );
     // git grep exits 1 when no matches — treat as empty, not error.
     if (r.exit_code === 0 || r.exit_code === 1) {
-      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+      return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    return [];
+    throw new Error(`git grep exited with code ${r.exit_code}: ${r.stderr}`);
   },
 });
 
@@ -334,9 +334,9 @@ registerProvider({
       cwd
     );
     if (r.exit_code === 0 || r.exit_code === 1) {
-      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+      return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    return [];
+    throw new Error(`ack exited with code ${r.exit_code}: ${r.stderr}`);
   },
 });
 
@@ -382,9 +382,9 @@ registerProvider({
       // even with `--column`; on most BSD/GNU greps the format is
       // still `path:line:content`. parseGrepOutput tolerates the
       // missing column.
-      return parseGrepOutput(r.stdout, maxResults) as GrepMatch[];
+      return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
-    return [];
+    throw new Error(`grep exited with code ${r.exit_code}: ${r.stderr}`);
   },
 });
 
@@ -494,6 +494,7 @@ async function search(query: string): Promise<GrepMatch[]> {
       maxResults: 100,
     });
   } catch (e) {
+    editor.error(`[live_grep:${provider.name}] ${e}`);
     editor.setStatus(`Live Grep (${provider.name}) failed: ${e}`);
     return [];
   }

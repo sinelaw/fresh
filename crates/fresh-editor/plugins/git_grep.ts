@@ -48,8 +48,10 @@ async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
   );
 
   if (result.exit_code === 0) {
-    return parseGrepOutput(result.stdout, 100) as GrepMatch[];
+    return parseGrepOutput(result.stdout, 100, (msg) => editor.debug(msg)) as GrepMatch[];
   }
+  editor.error(`[git_grep] process exited with code ${result.exit_code}: ${result.stderr}`);
+  editor.setStatus(`git grep failed (exit ${result.exit_code})`);
   return [];
 }
 

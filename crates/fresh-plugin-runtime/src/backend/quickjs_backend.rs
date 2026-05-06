@@ -884,7 +884,7 @@ impl JsEditorApi {
     // === Logging ===
 
     pub fn debug(&self, msg: String) {
-        tracing::trace!("Plugin.debug: {}", msg);
+        tracing::debug!("Plugin: {}", msg);
     }
 
     pub fn info(&self, msg: String) {
