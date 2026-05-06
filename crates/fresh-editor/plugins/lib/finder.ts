@@ -831,9 +831,26 @@ export class Finder<T> {
       }
     } catch (e) {
       const errorMsg = String(e);
-      if (!errorMsg.includes("killed") && !errorMsg.includes("not found")) {
-        this.editor.setStatus(`Search error: ${e}`);
+      // "killed" / "not found" come from the cancellation path (a
+      // newer search aborted this one). Suppress those entirely —
+      // the user didn't ask for them.
+      if (errorMsg.includes("killed") || errorMsg.includes("not found")) {
+        return;
       }
+      // Render the error inside the overlay's result list itself.
+      // The status bar is shared and clobbered by other code paths,
+      // so it's not a reliable place to surface a feature-scoped
+      // error — the overlay is where the user is looking.
+      this.promptState.results = [];
+      this.promptState.entries = [];
+      const display = errorMsg.replace(/^Error:\s*/, "");
+      this.editor.setPromptSuggestions([
+        {
+          text: `⚠ ${display}`,
+          value: "",
+          disabled: true,
+        },
+      ]);
     }
   }
 

@@ -198,7 +198,7 @@ async function selectProvider(): Promise<LiveGrepProvider | null> {
 // ── Built-in providers ──────────────────────────────────────────
 
 registerProvider({
-  name: "ripgrep",
+  name: "rg",
   priority: -1,
   isAvailable: async () => {
     try {
@@ -366,7 +366,6 @@ registerProvider({
       "grep",
       [
         "-rn",
-        "--column",
         "-I",
         "--exclude-dir=.git",
         "--exclude-dir=node_modules",
@@ -378,10 +377,8 @@ registerProvider({
       cwd
     );
     if (r.exit_code === 0 || r.exit_code === 1) {
-      // POSIX grep doesn't emit `path:line:col:content` natively
-      // even with `--column`; on most BSD/GNU greps the format is
-      // still `path:line:content`. parseGrepOutput tolerates the
-      // missing column.
+      // grep emits `path:line:content` (no column). parseGrepOutput's
+      // 3-field fallback handles the missing column (defaults to 1).
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
     throw new Error(`grep exited with code ${r.exit_code}: ${r.stderr}`);
@@ -483,10 +480,12 @@ editor.registerCommand(
 async function search(query: string): Promise<GrepMatch[]> {
   const provider = await selectProvider();
   if (!provider) {
-    editor.setStatus(
-      "Live Grep: no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
+    // Throw rather than return [] — the Finder catches and shows
+    // the message inside the overlay. Returning [] would be
+    // indistinguishable from a real "no matches" result.
+    throw new Error(
+      "no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
     );
-    return [];
   }
   try {
     return await provider.search(query, {
@@ -494,9 +493,12 @@ async function search(query: string): Promise<GrepMatch[]> {
       maxResults: 100,
     });
   } catch (e) {
+    // Log to tracing for diagnostics, then re-throw so the Finder
+    // surfaces the failure in the overlay itself.
     editor.error(`[live_grep:${provider.name}] ${e}`);
-    editor.setStatus(`Live Grep (${provider.name}) failed: ${e}`);
-    return [];
+    throw new Error(
+      `${provider.name}: ${e instanceof Error ? e.message : String(e)}`
+    );
   }
 }
 
@@ -513,7 +515,7 @@ function start_live_grep(): void {
   });
   // Pre-populate the overlay's frame title with the cached
   // provider name (if any) before the user types — avoids the
-  // brief "Live Grep" → "Live Grep · ripgrep" flash when the
+  // brief "Live Grep" → "Live Grep · rg" flash when the
   // first search resolves selectProvider().
   if (cachedSelected) {
     updateOverlayTitle(cachedSelected);
