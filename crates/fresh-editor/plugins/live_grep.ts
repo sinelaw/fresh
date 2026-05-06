@@ -98,10 +98,20 @@ declare global {
   }
 }
 
+// Cap on the number of matches a single search returns. Higher than
+// the previous 100 to actually fit a typical refactor's worth of
+// hits in one snapshot, but bounded so a runaway query doesn't
+// stream the entire codebase into the overlay.
+const MAX_RESULTS = 1000;
+
 // ── Registry ──────────────────────────────────────────────────────
 
 const providers: LiveGrepProvider[] = [];
 let cachedSelected: LiveGrepProvider | null | undefined = undefined;
+// Set by `search` after each query so the toolbar can show
+// "1000+ matches" when a result set was clipped at MAX_RESULTS.
+// Reset to false on every new query (before the provider call).
+let lastSearchTruncated = false;
 
 function sortByPriority(): void {
   providers.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
@@ -169,6 +179,13 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
       { text: "Provider: " },
       { text: provider.name, style: { bold: true } },
     ]);
+  }
+  // Match-count indicator goes BEFORE the keybinding hints so a
+  // narrow terminal that truncates the toolbar still shows it —
+  // the trailing hints are easier to lose than the result-set
+  // status.
+  if (lastSearchTruncated) {
+    pushSegment([{ text: `${MAX_RESULTS}+ matches` }]);
   }
   const pushHint = (key: string | null, label: string) => {
     if (!key) return;
@@ -439,7 +456,7 @@ const finder = new Finder<GrepMatch>(editor, {
     }
   },
   preview: false,
-  maxResults: 100,
+  maxResults: MAX_RESULTS,
 });
 
 /**
@@ -524,11 +541,20 @@ async function search(query: string): Promise<GrepMatch[]> {
       "no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
     );
   }
+  const wasTruncated = lastSearchTruncated;
   try {
-    return await provider.search(query, {
+    const results = await provider.search(query, {
       cwd: editor.getCwd(),
-      maxResults: 100,
+      maxResults: MAX_RESULTS,
     });
+    lastSearchTruncated = results.length >= MAX_RESULTS;
+    // Refresh the toolbar whenever the truncation indicator
+    // changes so it appears (or disappears) alongside the new
+    // results in the same render.
+    if (lastSearchTruncated !== wasTruncated) {
+      updateOverlayTitle(provider);
+    }
+    return results;
   } catch (e) {
     // Log to tracing for diagnostics, then re-throw so the Finder
     // surfaces the failure in the overlay itself.
