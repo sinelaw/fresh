@@ -65,7 +65,8 @@ Or, pick your preferred method:
 | Windows | [winget](#windows-winget) |
 | Arch Linux | [AUR](#arch-linux-aur) |
 | Debian/Ubuntu | [.deb](#debianubuntu-deb) |
-| Fedora/RHEL | [.rpm](#fedorarhelopensuse-rpm), [Terra](https://terra.fyralabs.com/) |
+| Fedora/RHEL | [.rpm](#fedorarhel-rpm), [Terra](https://terra.fyralabs.com/) |
+| OpenSUSE | [zypper](#opensuse-zypper), [.rpm](#fedorarhel-rpm) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
 | Gentoo | [GURU](#gentoo-guru) |
 | Linux (any distro) | [AppImage](#appimage), [Flatpak](#flatpak) |
@@ -133,7 +134,7 @@ curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | 
 
 Or download the `.deb` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
 
-### Fedora/RHEL/openSUSE (.rpm)
+### Fedora/RHEL (.rpm)
 
 Download and install the latest release:
 
@@ -142,6 +143,12 @@ curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | 
 ```
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
+
+### OpenSUSE (zypper)
+
+```bash
+zypper install fresh-editor
+```
 
 ### Gentoo ([GURU](https://wiki.gentoo.org/wiki/Project:GURU))
 
