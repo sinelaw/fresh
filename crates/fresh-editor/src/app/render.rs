@@ -1897,6 +1897,29 @@ impl Editor {
         };
         let prompt = prompt.clone();
 
+        // Dim everything outside the overlay rect so the user's
+        // focus visibly belongs to the popup. The editor cells were
+        // already painted by earlier render passes; we add a DIM
+        // modifier to those cells in place. The overlay's Clear +
+        // Block draw afterwards on `overlay_rect`, so cells inside
+        // the popup are unaffected.
+        {
+            let buf = frame.buffer_mut();
+            let buf_area = buf.area;
+            for y in buf_area.y..buf_area.y.saturating_add(buf_area.height) {
+                for x in buf_area.x..buf_area.x.saturating_add(buf_area.width) {
+                    let inside_overlay = x >= overlay_rect.x
+                        && x < overlay_rect.x.saturating_add(overlay_rect.width)
+                        && y >= overlay_rect.y
+                        && y < overlay_rect.y.saturating_add(overlay_rect.height);
+                    if !inside_overlay {
+                        let cell = &mut buf[(x, y)];
+                        cell.modifier.insert(Modifier::DIM);
+                    }
+                }
+            }
+        }
+
         // Clear and frame. Plugin-owned prompts can publish their
         // own title via `editor.setPromptTitle(...)`; falls back to
         // " Live Grep " plus shortcut hints when unset (so a
