@@ -49,6 +49,12 @@ const editor = getEditor();
 // Commands:  Ctrl+P -> "init: Reload", "init: Check"
 // CLI:       fresh --cmd init check | fresh --safe | fresh --no-init
 
+// Example: enable vi mode at startup (otherwise off until toggled).
+//
+// editor.on("plugins_loaded", () => {
+//     editor.getPluginApi("vi-mode")?.enable();
+// });
+
 // Example: Add a command to select (mark) from current cursor to target line.
 //
 // registerHandler("select_to_line_handler", async function start_review_range() {

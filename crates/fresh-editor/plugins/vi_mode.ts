@@ -2889,24 +2889,25 @@ editor.on("prompt_confirmed", async (args) => {
 
 let viModeEnabled = false;
 
-function vi_mode_toggle(): void {
-  editor.debug("[vi_mode_toggle] called, viModeEnabled was: " + viModeEnabled);
-  viModeEnabled = !viModeEnabled;
-  editor.debug("[vi_mode_toggle] viModeEnabled now: " + viModeEnabled);
+function enableVi(): void {
+  if (viModeEnabled) return;
+  viModeEnabled = true;
+  switchMode("normal");
+  editor.setStatus(editor.t("status.enabled"));
+}
 
-  if (viModeEnabled) {
-    editor.debug("[vi_mode_toggle] enabling vi mode, calling switchMode('normal')");
-    switchMode("normal");
-    editor.debug("[vi_mode_toggle] switchMode done, setting status");
-    editor.setStatus(editor.t("status.enabled"));
-  } else {
-    editor.debug("[vi_mode_toggle] disabling vi mode");
-    editor.setEditorMode(null);
-    state.mode = "normal";
-    state.pendingOperator = null;
-    editor.setStatus(editor.t("status.disabled"));
-  }
-  editor.debug("[vi_mode_toggle] done");
+function disableVi(): void {
+  if (!viModeEnabled) return;
+  viModeEnabled = false;
+  editor.setEditorMode(null);
+  state.mode = "normal";
+  state.pendingOperator = null;
+  editor.setStatus(editor.t("status.disabled"));
+}
+
+function vi_mode_toggle(): void {
+  if (viModeEnabled) disableVi();
+  else enableVi();
 }
 registerHandler("vi_mode_toggle", vi_mode_toggle);
 
@@ -2916,6 +2917,26 @@ editor.registerCommand(
   "vi_mode_toggle",
   null,  // Always visible - needed to enable vi mode in the first place
 );
+
+export type ViModeApi = {
+  toggle(): void;
+  enable(): void;
+  disable(): void;
+  isEnabled(): boolean;
+};
+
+declare global {
+  interface FreshPluginRegistry {
+    "vi-mode": ViModeApi;
+  }
+}
+
+editor.exportPluginApi("vi-mode", {
+  toggle: vi_mode_toggle,
+  enable: enableVi,
+  disable: disableVi,
+  isEnabled: () => viModeEnabled,
+} satisfies ViModeApi);
 
 // ============================================================================
 // Initialization
