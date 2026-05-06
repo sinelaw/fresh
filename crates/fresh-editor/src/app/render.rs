@@ -1898,8 +1898,7 @@ impl Editor {
             .map(|p| !p.title.is_empty())
             .unwrap_or(false);
         let chrome_rows: usize = 4 + if toolbar_visible { 1 } else { 0 };
-        let suggestions_visible_rows =
-            (overlay_rect.height as usize).saturating_sub(chrome_rows);
+        let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(chrome_rows);
         if let Some(prompt) = self.prompt.as_mut() {
             prompt.ensure_selected_visible_within(suggestions_visible_rows);
         }
@@ -1912,11 +1911,7 @@ impl Editor {
         // focus visibly belongs to the popup. Reuses the same RGB-
         // darkening pass the Settings modal uses (`view::dimming`)
         // — Modifier::DIM alone is barely visible on most terminals.
-        crate::view::dimming::apply_dimming_excluding(
-            frame,
-            frame.area(),
-            Some(overlay_rect),
-        );
+        crate::view::dimming::apply_dimming_excluding(frame, frame.area(), Some(overlay_rect));
 
         // Clear and frame. Plugin-owned prompts can publish their
         // own title via `editor.setPromptTitle(...)`; falls back to
@@ -2059,8 +2054,7 @@ impl Editor {
         // Reserve one trailing column so the count doesn't sit
         // flush against the right border.
         let right_gap: usize = if count_w > 0 { 1 } else { 0 };
-        let visible_input_width = (results_area.width as usize)
-            .saturating_sub(count_w + right_gap);
+        let visible_input_width = (results_area.width as usize).saturating_sub(count_w + right_gap);
         let truncated_input: String = prompt
             .input
             .chars()
