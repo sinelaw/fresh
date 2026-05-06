@@ -7,6 +7,121 @@ use fresh::services::live_grep_state::{GrepMatch, LiveGrepLastState};
 use fresh::view::prompt::PromptType;
 use std::fs;
 
+/// End-to-end coverage of the git-grep provider path: in a real git
+/// working tree the registry should select git-grep (priority 0),
+/// shell out, parse the column-aware output, and surface results in
+/// the floating overlay's title and result list.
+#[test]
+fn test_live_grep_git_grep_flow_finds_match_in_repo() {
+    let git_check = std::process::Command::new("git").arg("--version").output();
+    if git_check.is_err() || !git_check.as_ref().unwrap().status.success() {
+        eprintln!("Skipping test: `git` is not installed or not in PATH");
+        return;
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Initialise a real git repo so `git rev-parse --is-inside-work-tree`
+    // succeeds and `isAvailable` returns true for git-grep.
+    let run_git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&project_root)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run_git(&["init", "--quiet", "-b", "main"]);
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let unique = "GIT_GREP_TOKEN_8a2e";
+    let target_path = project_root.join("target.rs");
+    fs::write(&target_path, format!("// {unique}\nfn target() {{}}\n")).unwrap();
+    // git-grep only reports tracked files, so add + commit.
+    run_git(&["add", "target.rs"]);
+    run_git(&["commit", "--quiet", "-m", "seed"]);
+
+    let start_file = project_root.join("start.txt");
+    fs::write(&start_file, "start\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    // Open palette → invoke "Live Grep".
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text(unique).unwrap();
+
+    // Two assertions in the rendered overlay:
+    //   1. the result list contains target.rs (proves git-grep ran
+    //      and parseGrepOutput parsed its `path:line:col:content`
+    //      output).
+    //   2. the overlay title carries the active provider name
+    //      (proves git-grep — not a fallback — was selected).
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("target.rs") && s.contains("git-grep")
+        })
+        .unwrap();
+
+    // No "⚠" — the error sentinel pushed by the Finder catch when
+    // a provider throws. Its absence is the post-fix invariant.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains('⚠'),
+        "overlay must not show an error indicator on a successful search; got:\n{}",
+        screen
+    );
+
+    // Pressing Enter should open the matched file at the unique line.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(unique))
+        .unwrap();
+    let content = harness.get_buffer_content().unwrap();
+    assert!(
+        content.contains(unique),
+        "buffer must contain the matched marker after Enter; got: {content}"
+    );
+}
+
 /// Test Live Grep plugin - basic search and preview functionality
 #[test]
 #[ignore = "flaky test - times out intermittently"]
