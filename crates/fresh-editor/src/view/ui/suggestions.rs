@@ -31,10 +31,14 @@ impl SuggestionsRenderer {
         prompt: &Prompt,
         theme: &crate::view::theme::Theme,
     ) -> Option<(Rect, usize, usize, usize)> {
-        Self::render_with_hover(frame, area, prompt, theme, None)
+        Self::render_with_hover(frame, area, prompt, theme, None, true)
     }
 
-    /// Render the suggestions popup with hover highlighting
+    /// Render the suggestions popup with hover highlighting.
+    /// `with_border` controls whether the popup draws its own
+    /// frame; the floating-overlay prompt passes `false` because
+    /// the overlay's outer frame already provides one and a
+    /// nested border would create a visible double frame.
     ///
     /// # Returns
     /// * Optional tuple of (inner_rect, scroll_start_idx, visible_count, total_count) for mouse hit testing
@@ -44,14 +48,18 @@ impl SuggestionsRenderer {
         prompt: &Prompt,
         theme: &crate::view::theme::Theme,
         hover_target: Option<&crate::app::HoverTarget>,
+        with_border: bool,
     ) -> Option<(Rect, usize, usize, usize)> {
         if prompt.suggestions.is_empty() {
             return None;
         }
 
-        // Create a block with a border and background
         let block = Block::default()
-            .borders(Borders::ALL)
+            .borders(if with_border {
+                Borders::ALL
+            } else {
+                Borders::NONE
+            })
             .border_style(Style::default().fg(theme.popup_border_fg))
             .style(Style::default().bg(theme.suggestion_bg));
 

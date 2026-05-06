@@ -1602,6 +1602,7 @@ impl Editor {
             prompt,
             &self.theme,
             self.mouse_state.hover_target.as_ref(),
+            true,
         );
         if self.cached_layout.suggestions_area.is_some() {
             self.cached_layout.suggestions_outer_area = Some(suggestions_area);
@@ -1885,10 +1886,20 @@ impl Editor {
         // (= 10), which would scroll prematurely.
         //
         // Geometry: overlay frame border (2) + input row (1) +
-        // separator (1) + suggestions-popup own border (2) = 6
-        // rows of chrome above the suggestion items themselves.
-        // The popup's inner content height is `overlay.height - 6`.
-        let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(6);
+        // optional toolbar row (1, when `prompt.title` is non-empty)
+        // + separator (1). The suggestions popup is rendered
+        // borderless inside the overlay (the outer frame already
+        // provides a border, so adding a nested one creates a
+        // double-frame). Inner content height = overlay.height -
+        // chrome.
+        let toolbar_visible = self
+            .prompt
+            .as_ref()
+            .map(|p| !p.title.is_empty())
+            .unwrap_or(false);
+        let chrome_rows: usize = 4 + if toolbar_visible { 1 } else { 0 };
+        let suggestions_visible_rows =
+            (overlay_rect.height as usize).saturating_sub(chrome_rows);
         if let Some(prompt) = self.prompt.as_mut() {
             prompt.ensure_selected_visible_within(suggestions_visible_rows);
         }
@@ -1914,6 +1925,14 @@ impl Editor {
         // similar even though they take different code paths).
         frame.render_widget(Clear, overlay_rect);
         let default_title: Vec<fresh_core::api::StyledText> = {
+            // Mirrors `updateOverlayTitle` in live_grep.ts (kept in
+            // sync deliberately so a Resume-replay overlay and a
+            // freshly-opened plugin overlay look identical). The
+            // input row's prefix already says "Live grep:", so the
+            // frame title doesn't repeat the feature name — it
+            // shows shortcut hints only. `resume_live_grep` is
+            // intentionally NOT shown here; that shortcut only
+            // matters once the overlay is closed.
             use crate::input::keybindings::KeyContext;
             use fresh_core::api::{OverlayColorSpec, OverlayOptions, StyledText};
             let keybindings = self.keybindings.read().unwrap();
@@ -1921,49 +1940,43 @@ impl Editor {
             if let Some(k) = keybindings
                 .find_keybinding_for_action("cycle_live_grep_provider", KeyContext::Prompt)
             {
-                hints.push((k, "cycle"));
+                hints.push((k, "switch grep provider"));
             }
             if let Some(k) = keybindings
                 .find_keybinding_for_action("live_grep_export_quickfix", KeyContext::Prompt)
             {
-                hints.push((k, "→ Quickfix"));
+                hints.push((k, "save matches"));
             }
-            if let Some(k) =
-                keybindings.find_keybinding_for_action("resume_live_grep", KeyContext::Normal)
-            {
-                hints.push((k, "resume"));
+            if hints.is_empty() {
+                Vec::new()
+            } else {
+                let hint_style = Some(OverlayOptions {
+                    fg: Some(OverlayColorSpec::ThemeKey("ui.help_key_fg".into())),
+                    ..OverlayOptions::default()
+                });
+                let sep_style = Some(OverlayOptions {
+                    fg: Some(OverlayColorSpec::ThemeKey("ui.popup_border_fg".into())),
+                    ..OverlayOptions::default()
+                });
+                let mut segs: Vec<StyledText> = Vec::new();
+                for (i, (k, verb)) in hints.into_iter().enumerate() {
+                    if i > 0 {
+                        segs.push(StyledText {
+                            text: " · ".into(),
+                            style: sep_style.clone(),
+                        });
+                    }
+                    segs.push(StyledText {
+                        text: k,
+                        style: hint_style.clone(),
+                    });
+                    segs.push(StyledText {
+                        text: format!(" {verb}"),
+                        style: None,
+                    });
+                }
+                segs
             }
-            let hint_style = Some(OverlayOptions {
-                fg: Some(OverlayColorSpec::ThemeKey("ui.help_key_fg".into())),
-                ..OverlayOptions::default()
-            });
-            let sep_style = Some(OverlayOptions {
-                fg: Some(OverlayColorSpec::ThemeKey("ui.popup_border_fg".into())),
-                ..OverlayOptions::default()
-            });
-            let mut segs: Vec<StyledText> = vec![StyledText {
-                text: " Live Grep".into(),
-                style: None,
-            }];
-            for (k, verb) in hints {
-                segs.push(StyledText {
-                    text: " · ".into(),
-                    style: sep_style.clone(),
-                });
-                segs.push(StyledText {
-                    text: k,
-                    style: hint_style.clone(),
-                });
-                segs.push(StyledText {
-                    text: format!(" {verb}"),
-                    style: None,
-                });
-            }
-            segs.push(StyledText {
-                text: " ".into(),
-                style: None,
-            });
-            segs
         };
         let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
             &default_title
@@ -1986,8 +1999,7 @@ impl Editor {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.popup_border_fg))
-            .style(Style::default().bg(theme.suggestion_bg))
-            .title(Line::from(title_spans));
+            .style(Style::default().bg(theme.suggestion_bg));
         let inner = block.inner(overlay_rect);
         frame.render_widget(block, overlay_rect);
 
@@ -2027,37 +2039,52 @@ impl Editor {
             width: results_area.width,
             height: 1,
         };
-        let input_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
+        // Use the editor's default bg for the input row so it
+        // visually reads as an editable text field (the popup bg
+        // is reserved for non-editable chrome — toolbar, results
+        // list). Both colours come from theme keys, no hardcoded
+        // RGB.
+        let input_style = Style::default().fg(theme.prompt_fg).bg(theme.editor_bg);
         let count_str = if prompt.suggestions.is_empty() {
             String::new()
         } else {
             format!(
-                "  {} / {}",
+                "{} / {}",
                 prompt.selected_suggestion.map(|i| i + 1).unwrap_or(0),
                 prompt.suggestions.len()
             )
         };
-        let visible_input_width =
-            results_area.width.saturating_sub(count_str.len() as u16) as usize;
+        use crate::primitives::display_width::str_width;
+        let count_w = str_width(&count_str);
+        // Reserve one trailing column so the count doesn't sit
+        // flush against the right border.
+        let right_gap: usize = if count_w > 0 { 1 } else { 0 };
+        let visible_input_width = (results_area.width as usize)
+            .saturating_sub(count_w + right_gap);
         let truncated_input: String = prompt
             .input
             .chars()
-            .take(visible_input_width.saturating_sub(prompt.message.len()))
+            .take(visible_input_width.saturating_sub(str_width(&prompt.message)))
             .collect();
+        // Pad between the typed input and the count so the count
+        // is right-aligned (with `right_gap` empty cols at the
+        // very edge), independent of how much the user has typed.
+        let used = str_width(&prompt.message) + str_width(&truncated_input) + count_w;
+        let pad = (results_area.width as usize).saturating_sub(used + right_gap);
         let line = Line::from(vec![
             Span::styled(prompt.message.clone(), input_style),
             Span::styled(truncated_input, input_style),
+            Span::styled(" ".repeat(pad), input_style),
             Span::styled(
                 count_str,
                 Style::default()
                     .fg(theme.popup_border_fg)
-                    .bg(theme.suggestion_bg),
+                    .bg(theme.editor_bg),
             ),
         ]);
         frame.render_widget(Paragraph::new(line).style(input_style), input_row);
 
         // Cursor position on the input row.
-        use crate::primitives::display_width::str_width;
         let cursor_x = (str_width(&prompt.message)
             + str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]))
             as u16;
@@ -2065,11 +2092,32 @@ impl Editor {
             frame.set_cursor_position((input_row.x + cursor_x, input_row.y));
         }
 
-        // Separator row.
-        if results_area.height >= 2 {
-            let sep = Rect {
+        // Optional toolbar row (the styled segments the plugin set
+        // via setPromptTitle, e.g. "Provider: rg · Alt+P switch
+        // grep provider · …"). Sits between the input row and the
+        // separator so the user sees feature-scoped controls right
+        // under what they're typing — not on the frame border
+        // where shortcut hints get visually lost.
+        let toolbar_h: u16 = if toolbar_visible { 1 } else { 0 };
+        if toolbar_visible && results_area.height >= 2 {
+            let toolbar = Rect {
                 x: results_area.x,
                 y: results_area.y + 1,
+                width: results_area.width,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(title_spans))
+                    .style(Style::default().bg(theme.suggestion_bg)),
+                toolbar,
+            );
+        }
+
+        // Separator row.
+        if results_area.height >= 2 + toolbar_h {
+            let sep = Rect {
+                x: results_area.x,
+                y: results_area.y + 1 + toolbar_h,
                 width: results_area.width,
                 height: 1,
             };
@@ -2087,15 +2135,19 @@ impl Editor {
         // 100+ matches. Only carve when the result set actually
         // exceeds the visible rows; otherwise the scrollbar is
         // visual noise.
-        if results_area.height > 2 {
-            let inner_rows = (results_area.height - 2).saturating_sub(2) as usize; // popup own border
+        let chrome_above_list: u16 = 2 + toolbar_h;
+        if results_area.height > chrome_above_list {
+            // No `-2` for popup-own-border — we render the
+            // borderless variant below since the overlay frame is
+            // already a border.
+            let inner_rows = (results_area.height - chrome_above_list) as usize;
             let needs_scrollbar = prompt.suggestions.len() > inner_rows.max(1);
             let scrollbar_w: u16 = if needs_scrollbar { 1 } else { 0 };
             let list_area = Rect {
                 x: results_area.x,
-                y: results_area.y + 2,
+                y: results_area.y + chrome_above_list,
                 width: results_area.width.saturating_sub(scrollbar_w),
-                height: results_area.height - 2,
+                height: results_area.height - chrome_above_list,
             };
             self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
                 frame,
@@ -2103,6 +2155,7 @@ impl Editor {
                 &prompt,
                 &theme,
                 self.mouse_state.hover_target.as_ref(),
+                false,
             );
             if self.cached_layout.suggestions_area.is_some() {
                 self.cached_layout.suggestions_outer_area = Some(list_area);
@@ -2115,15 +2168,14 @@ impl Editor {
                 use crate::view::ui::scrollbar::{
                     render_scrollbar, ScrollbarColors, ScrollbarState,
                 };
-                // Scrollbar rect aligns with the suggestions popup's
-                // *inner* area (skipping the popup's own top/bottom
-                // border) so the thumb tracks the visible items
-                // exactly.
+                // Scrollbar rect aligns with the borderless
+                // suggestions list — same y/height as the list itself
+                // since there's no popup-own border to skip.
                 let scrollbar_rect = Rect {
                     x: results_area.x + results_area.width - 1,
-                    y: list_area.y + 1,
+                    y: list_area.y,
                     width: 1,
-                    height: list_area.height.saturating_sub(2),
+                    height: list_area.height,
                 };
                 let state = ScrollbarState::new(
                     prompt.suggestions.len(),

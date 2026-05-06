@@ -145,40 +145,49 @@ function unregisterProvider(name: string): boolean {
 }
 
 function updateOverlayTitle(provider: LiveGrepProvider | null): void {
-  // Reflect the active provider in the floating overlay's frame
-  // header so the user always knows which backend is producing
-  // the results, even after the search-result status overwrites
-  // any one-shot "switched to" message. Shortcuts are pulled from
-  // the editor's keybinding registry (not hardcoded) so the hints
-  // always match the user's config. Each segment carries its own
-  // theme key so hints show in `ui.help_key_fg` and separators in
-  // `ui.popup_border_fg` without renderer-side string parsing.
+  // The input row's prefix already says "Live grep: …", so the
+  // frame title doesn't repeat the feature name — it's reserved
+  // for the active provider plus shortcut hints. Shortcuts come
+  // from the keybinding registry (not hardcoded) so labels match
+  // the user's actual binds. Each segment carries its own theme
+  // key (`ui.help_key_fg` for keys, `ui.popup_border_fg` for
+  // separators) so the renderer doesn't have to parse the title.
+  // `resume_live_grep` is intentionally NOT shown here — it only
+  // matters once the prompt is closed; it's surfaced in the
+  // status bar at that point instead.
   const sepStyle = { fg: "ui.popup_border_fg" };
   const hintStyle = { fg: "ui.help_key_fg" };
-  const segments: StyledText[] = [{ text: " Live Grep" }];
+  const segments: StyledText[] = [];
+  const pushSegment = (parts: StyledText[]) => {
+    if (segments.length > 0) {
+      segments.push({ text: " · ", style: sepStyle });
+    }
+    segments.push(...parts);
+  };
   if (provider) {
-    segments.push({ text: " · ", style: sepStyle });
-    segments.push({ text: provider.name });
+    pushSegment([
+      { text: "Provider: " },
+      { text: provider.name, style: { bold: true } },
+    ]);
   }
   const pushHint = (key: string | null, label: string) => {
     if (!key) return;
-    segments.push({ text: " · ", style: sepStyle });
-    segments.push({ text: key, style: hintStyle });
-    segments.push({ text: ` ${label}` });
+    pushSegment([
+      { text: key, style: hintStyle },
+      { text: ` ${label}` },
+    ]);
   };
   pushHint(
     editor.getKeybindingLabel("cycle_live_grep_provider", "prompt"),
-    "cycle"
+    "switch grep provider"
   );
   pushHint(
     editor.getKeybindingLabel("live_grep_export_quickfix", "prompt"),
-    "→ Quickfix"
+    "save matches"
   );
-  pushHint(
-    editor.getKeybindingLabel("resume_live_grep", "normal"),
-    "resume"
-  );
-  segments.push({ text: " " });
+  if (segments.length > 0) {
+    segments.push({ text: " " });
+  }
   editor.setPromptTitle(segments);
 }
 
@@ -411,6 +420,24 @@ const finder = new Finder<GrepMatch>(editor, {
       column: match.column,
     },
   }),
+  // Override the Finder's default "open file + status: Opened X"
+  // so we can surface the resume shortcut here. The shortcut is
+  // hidden inside the overlay (it can't apply while the overlay
+  // is open), but it's exactly what the user needs to know once
+  // they've jumped to a result and want to keep browsing.
+  onSelect: (_item, entry) => {
+    if (entry.location) {
+      editor.openFile(
+        entry.location.file,
+        entry.location.line,
+        entry.location.column
+      );
+    }
+    const resumeKey = editor.getKeybindingLabel("resume_live_grep", "normal");
+    if (resumeKey) {
+      editor.setStatus(`${resumeKey} to resume search`);
+    }
+  },
   preview: false,
   maxResults: 100,
 });
