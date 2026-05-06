@@ -148,28 +148,38 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
   // Reflect the active provider in the floating overlay's frame
   // header so the user always knows which backend is producing
   // the results, even after the search-result status overwrites
-  // any one-shot "switched to" message. Append the actual bound
-  // shortcuts (whatever the user remapped to) as hints — pulled
-  // from the editor's keybinding registry, not hardcoded, so they
-  // always match the user's actual config.
-  const hints: string[] = [];
-  const cycleKey = editor.getKeybindingLabel(
-    "cycle_live_grep_provider",
-    "prompt"
+  // any one-shot "switched to" message. Shortcuts are pulled from
+  // the editor's keybinding registry (not hardcoded) so the hints
+  // always match the user's config. Each segment carries its own
+  // theme key so hints show in `ui.help_key_fg` and separators in
+  // `ui.popup_border_fg` without renderer-side string parsing.
+  const sepStyle = { fg: "ui.popup_border_fg" };
+  const hintStyle = { fg: "ui.help_key_fg" };
+  const segments: StyledText[] = [{ text: " Live Grep" }];
+  if (provider) {
+    segments.push({ text: " · ", style: sepStyle });
+    segments.push({ text: provider.name });
+  }
+  const pushHint = (key: string | null, label: string) => {
+    if (!key) return;
+    segments.push({ text: " · ", style: sepStyle });
+    segments.push({ text: key, style: hintStyle });
+    segments.push({ text: ` ${label}` });
+  };
+  pushHint(
+    editor.getKeybindingLabel("cycle_live_grep_provider", "prompt"),
+    "cycle"
   );
-  if (cycleKey) hints.push(`${cycleKey} cycle`);
-  const exportKey = editor.getKeybindingLabel(
-    "live_grep_export_quickfix",
-    "prompt"
+  pushHint(
+    editor.getKeybindingLabel("live_grep_export_quickfix", "prompt"),
+    "→ Quickfix"
   );
-  if (exportKey) hints.push(`${exportKey} → Quickfix`);
-  const resumeKey = editor.getKeybindingLabel("resume_live_grep", "normal");
-  if (resumeKey) hints.push(`${resumeKey} resume`);
-  const hintSuffix = hints.length > 0 ? ` · ${hints.join(" · ")}` : "";
-  const label = provider
-    ? `Live Grep · ${provider.name}${hintSuffix}`
-    : `Live Grep${hintSuffix}`;
-  editor.setPromptTitle(label);
+  pushHint(
+    editor.getKeybindingLabel("resume_live_grep", "normal"),
+    "resume"
+  );
+  segments.push({ text: " " });
+  editor.setPromptTitle(segments);
 }
 
 async function selectProvider(): Promise<LiveGrepProvider | null> {

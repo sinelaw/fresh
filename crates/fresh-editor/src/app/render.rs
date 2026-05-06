@@ -1913,51 +1913,81 @@ impl Editor {
         // Resume-replay prompt and freshly-opened plugin prompt look
         // similar even though they take different code paths).
         frame.render_widget(Clear, overlay_rect);
-        let default_title_owned: String = {
+        let default_title: Vec<fresh_core::api::StyledText> = {
             use crate::input::keybindings::KeyContext;
+            use fresh_core::api::{OverlayColorSpec, OverlayOptions, StyledText};
             let keybindings = self.keybindings.read().unwrap();
-            let mut hints: Vec<String> = Vec::new();
+            let mut hints: Vec<(String, &str)> = Vec::new();
             if let Some(k) = keybindings
                 .find_keybinding_for_action("cycle_live_grep_provider", KeyContext::Prompt)
             {
-                hints.push(format!("{k} cycle"));
+                hints.push((k, "cycle"));
             }
             if let Some(k) = keybindings
                 .find_keybinding_for_action("live_grep_export_quickfix", KeyContext::Prompt)
             {
-                hints.push(format!("{k} → Quickfix"));
+                hints.push((k, "→ Quickfix"));
             }
             if let Some(k) =
                 keybindings.find_keybinding_for_action("resume_live_grep", KeyContext::Normal)
             {
-                hints.push(format!("{k} resume"));
+                hints.push((k, "resume"));
             }
-            if hints.is_empty() {
-                " Live Grep ".to_string()
-            } else {
-                format!(" Live Grep · {} ", hints.join(" · "))
+            let hint_style = Some(OverlayOptions {
+                fg: Some(OverlayColorSpec::ThemeKey("ui.help_key_fg".into())),
+                ..OverlayOptions::default()
+            });
+            let sep_style = Some(OverlayOptions {
+                fg: Some(OverlayColorSpec::ThemeKey("ui.popup_border_fg".into())),
+                ..OverlayOptions::default()
+            });
+            let mut segs: Vec<StyledText> = vec![StyledText {
+                text: " Live Grep".into(),
+                style: None,
+            }];
+            for (k, verb) in hints {
+                segs.push(StyledText {
+                    text: " · ".into(),
+                    style: sep_style.clone(),
+                });
+                segs.push(StyledText {
+                    text: k,
+                    style: hint_style.clone(),
+                });
+                segs.push(StyledText {
+                    text: format!(" {verb}"),
+                    style: None,
+                });
             }
+            segs.push(StyledText {
+                text: " ".into(),
+                style: None,
+            });
+            segs
         };
-        let title_owned: String;
-        let title: &str = match prompt.title.as_deref() {
-            Some(t) if !t.is_empty() => {
-                // Pad with single spaces so it sits flush with the
-                // frame's corners regardless of length.
-                title_owned = format!(" {} ", t.trim());
-                &title_owned
-            }
-            _ => &default_title_owned,
+        let title_segs: &[fresh_core::api::StyledText] = if prompt.title.is_empty() {
+            &default_title
+        } else {
+            &prompt.title
         };
+        let normal_title_style = Style::default()
+            .fg(theme.prompt_fg)
+            .add_modifier(Modifier::BOLD);
+        let title_spans: Vec<Span> = title_segs
+            .iter()
+            .map(|seg| {
+                let style = match &seg.style {
+                    Some(opts) => Self::resolve_overlay_style(opts, &theme),
+                    None => normal_title_style,
+                };
+                Span::styled(seg.text.clone(), style)
+            })
+            .collect();
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.popup_border_fg))
             .style(Style::default().bg(theme.suggestion_bg))
-            .title(Span::styled(
-                title,
-                Style::default()
-                    .fg(theme.prompt_fg)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            .title(Line::from(title_spans));
         let inner = block.inner(overlay_rect);
         frame.render_widget(block, overlay_rect);
 
@@ -2688,5 +2718,59 @@ impl Editor {
                 tracing::debug!("Saved {} history to {:?}", key, path);
             }
         }
+    }
+
+    /// Resolve a plugin-supplied [`OverlayOptions`] to a ratatui
+    /// [`Style`] against the active theme. RGB colours pass through;
+    /// theme keys (e.g. `"ui.help_key_fg"`) are looked up via
+    /// `theme.resolve_theme_key`. Mirrors the resolution
+    /// `OverlayFace::from_options` + char_style.rs do for buffer
+    /// overlays — pulled here so the prompt-frame renderer can build
+    /// styled spans inline.
+    fn resolve_overlay_style(
+        opts: &fresh_core::api::OverlayOptions,
+        theme: &crate::view::theme::Theme,
+    ) -> ratatui::style::Style {
+        use crate::view::theme::named_color_from_str;
+        use fresh_core::api::OverlayColorSpec;
+        use ratatui::style::{Color, Modifier, Style};
+
+        let resolve = |spec: &OverlayColorSpec| -> Option<Color> {
+            match spec {
+                OverlayColorSpec::Rgb(r, g, b) => Some(Color::Rgb(*r, *g, *b)),
+                OverlayColorSpec::ThemeKey(k) => {
+                    named_color_from_str(k).or_else(|| theme.resolve_theme_key(k))
+                }
+            }
+        };
+
+        let mut style = Style::default();
+        if let Some(ref fg) = opts.fg {
+            if let Some(c) = resolve(fg) {
+                style = style.fg(c);
+            }
+        }
+        if let Some(ref bg) = opts.bg {
+            if let Some(c) = resolve(bg) {
+                style = style.bg(c);
+            }
+        }
+        let mut m = Modifier::empty();
+        if opts.bold {
+            m |= Modifier::BOLD;
+        }
+        if opts.italic {
+            m |= Modifier::ITALIC;
+        }
+        if opts.underline {
+            m |= Modifier::UNDERLINED;
+        }
+        if opts.strikethrough {
+            m |= Modifier::CROSSED_OUT;
+        }
+        if !m.is_empty() {
+            style = style.add_modifier(m);
+        }
+        style
     }
 }

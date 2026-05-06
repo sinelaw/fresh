@@ -635,6 +635,33 @@ pub struct OverlayOptions {
     pub url: Option<String>,
 }
 
+/// A run of text with optional styling. `style` reuses
+/// [`OverlayOptions`] — the same primitive plugins use for virtual
+/// text — so a hint is just `{ text: "Alt+P cycle", style: { fg:
+/// "ui.help_key_fg" } }`. `None` style means "no styling override";
+/// each consumer applies its own default (e.g. the floating-prompt
+/// title uses `prompt_fg` + bold).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct StyledText {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Partial<OverlayOptions>")]
+    pub style: Option<OverlayOptions>,
+}
+
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for StyledText {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "StyledText",
+            message: Some(e.to_string()),
+        })
+    }
+}
+
 // ============================================================================
 // Composite Buffer Configuration (for multi-buffer single-tab views)
 // ============================================================================
@@ -1509,10 +1536,13 @@ pub enum PluginCommand {
     SetPromptInputSync { sync: bool },
 
     /// Set the title shown in a floating-overlay prompt's frame
-    /// header (issue #1796). `None` clears any previously-set title
-    /// and falls back to the prompt-type default. Has no visible
-    /// effect on non-overlay prompts.
-    SetPromptTitle { title: Option<String> },
+    /// header (issue #1796) as styled segments. Each segment carries
+    /// optional `OverlayOptions`, so plugins can theme keybinding
+    /// hints with `fg: "ui.help_key_fg"`, separators with
+    /// `fg: "ui.popup_border_fg"`, etc. An empty vec clears the
+    /// title and falls back to the prompt-type default. Has no
+    /// visible effect on non-overlay prompts.
+    SetPromptTitle { title: Vec<StyledText> },
 
     /// Add a menu item to an existing menu
     /// Add a menu item to an existing menu
@@ -3197,9 +3227,10 @@ impl PluginApi {
         self.send_command(PluginCommand::SetPromptInputSync { sync })
     }
 
-    /// Set the floating-overlay prompt's title (issue #1796). `None`
-    /// clears the title and falls back to the prompt-type default.
-    pub fn set_prompt_title(&self, title: Option<String>) -> Result<(), String> {
+    /// Set the floating-overlay prompt's title (issue #1796) as
+    /// styled segments. An empty vec clears the title and falls
+    /// back to the prompt-type default.
+    pub fn set_prompt_title(&self, title: Vec<StyledText>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptTitle { title })
     }
 

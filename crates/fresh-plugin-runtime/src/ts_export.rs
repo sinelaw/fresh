@@ -125,6 +125,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "OverlayOptions" => Some(OverlayOptions::decl(&cfg)),
         "OverlayColorSpec" => Some(OverlayColorSpec::decl(&cfg)),
         "InlineOverlay" => Some(InlineOverlay::decl(&cfg)),
+        "StyledText" => Some(fresh_core::api::StyledText::decl(&cfg)),
 
         // Authority — payload schema for `editor.setAuthority(...)`.
         // Hand-written because the authoritative struct lives in

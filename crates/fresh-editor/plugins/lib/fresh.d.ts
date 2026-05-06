@@ -989,6 +989,10 @@ type SpawnResult = {
 	*/
 	exit_code: number;
 };
+type StyledText = {
+	text: string;
+	style?: Partial<OverlayOptions>;
+};
 type TextPropertiesAtCursor = Array<Record<string, unknown>>;
 type TsHighlightSpan = {
 	start: number;
@@ -1735,11 +1739,16 @@ interface EditorAPI {
 	setPromptInputSync(sync: boolean): boolean;
 	/**
 	* Set the title shown in the floating-overlay prompt's frame
-	* header (issue #1796). Pass `null` or omit the argument to
-	* clear the title and fall back to the default. Has no
-	* visible effect on non-overlay prompts.
+	* header (issue #1796) as styled segments. Each segment
+	* carries optional `Partial<OverlayOptions>`, the same
+	* styling primitive used by virtual text — plugins mark
+	* keybinding hints with `{ fg: "ui.help_key_fg" }`,
+	* separators with `{ fg: "ui.popup_border_fg" }`, etc. Pass
+	* an empty array to clear the title and fall back to the
+	* prompt-type default. Has no visible effect on non-overlay
+	* prompts.
 	*/
-	setPromptTitle(title?: string | null): boolean;
+	setPromptTitle(title: StyledText[]): boolean;
 	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
 	*/

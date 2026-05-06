@@ -810,6 +810,7 @@ impl Editor {
                 }
             }
 
+
             // ==================== Command/Mode Registration ====================
             PluginCommand::RegisterCommand { command } => {
                 self.handle_register_command(command);

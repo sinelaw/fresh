@@ -3173,15 +3173,20 @@ impl JsEditorApi {
     }
 
     /// Set the title shown in the floating-overlay prompt's frame
-    /// header (issue #1796). Pass `null` or omit the argument to
-    /// clear the title and fall back to the default. Has no
-    /// visible effect on non-overlay prompts.
+    /// header (issue #1796) as styled segments. Each segment
+    /// carries optional `Partial<OverlayOptions>`, the same
+    /// styling primitive used by virtual text — plugins mark
+    /// keybinding hints with `{ fg: "ui.help_key_fg" }`,
+    /// separators with `{ fg: "ui.popup_border_fg" }`, etc. Pass
+    /// an empty array to clear the title and fall back to the
+    /// prompt-type default. Has no visible effect on non-overlay
+    /// prompts.
     pub fn set_prompt_title(
         &self,
-        #[plugin_api(ts_type = "string | null")] title: rquickjs::function::Opt<String>,
+        #[plugin_api(ts_type = "StyledText[]")] title: Vec<fresh_core::api::StyledText>,
     ) -> bool {
         self.command_sender
-            .send(PluginCommand::SetPromptTitle { title: title.0 })
+            .send(PluginCommand::SetPromptTitle { title })
             .is_ok()
     }
 
