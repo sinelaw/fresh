@@ -1090,6 +1090,48 @@ editor.openDiffView(opts: {
 The work is large (`§ Risks`) but factorable. Each step is a
 reviewable PR.
 
+### Implementation status snapshot (May 2026)
+
+The branch implementing this design landed an MVP across the
+following commits, in order:
+
+- Step 3 — `terminal_output` / `terminal_exit` plugin hooks
+- Step 1a — `Session` struct + base session wiring
+- Step 2 — `createSession` / `setActiveSession` / `closeSession`
+  plugin API + `listSessions` / `activeSession` snapshot reads
+  + 3 lifecycle hooks
+- Step 5 — confirmed `setGlobalState` / `getGlobalState` already
+  exist in core
+- Step 6 — first-party `conductor.ts` plugin: Control Room,
+  two-step new-session prompt, dive/list/navigate/kill
+- Step 1c — warm-swap file-explorer view (each session keeps
+  its expansion / scroll / selection across dives)
+- Step 1d — warm-swap utility-dock `panel_ids` (each session
+  has its own dock occupancy)
+- Step 1e — `Session.buffers` membership tracking (foundation
+  for session-scoped quick-open and tab filtering; not yet
+  consumed by either)
+
+Per the original Step 1 list, three subsystems remain on
+`Editor` rather than `Session`. They are deliberately deferred
+and tracked here so future work knows where to start:
+
+- **LSP set per session** — currently global. Diving doesn't
+  swap LSP roots; if both sessions use the same language, they
+  share one LSP rooted at whichever session opened a buffer
+  first. Per-session LSPs would double rust-analyzer memory
+  cost for parallel sessions; worth it eventually but a
+  meaningful trade-off (`§ Trade-off discussion`).
+- **Splits / view_states / active_split per session** —
+  ~430 references across the editor. Per-session split trees
+  are the largest architectural change in the migration; the
+  current shared layout means buffers from session A remain
+  visible in tabs while diving in session B.
+- **`file_mod_times` / watchers per session** — `file_mod_times`
+  is keyed by absolute path and works correctly globally;
+  per-session watchers will land alongside `watchPath` (the
+  v1.1+ collision radar API).
+
 ### Step 1 — `Session` struct, single forced session  `[MVP]`
 
 - Introduce `Session` with the fields above.
