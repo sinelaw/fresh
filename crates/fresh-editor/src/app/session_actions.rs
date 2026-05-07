@@ -79,10 +79,12 @@ impl crate::app::Editor {
         let outgoing_explorer = self.file_explorer.take();
         let outgoing_panel_ids = std::mem::take(&mut self.panel_ids);
         let outgoing_lsp = self.lsp.take();
+        let outgoing_mtimes = std::mem::take(&mut self.file_mod_times);
         if let Some(outgoing) = self.sessions.get_mut(&previous_id) {
             outgoing.file_explorer_stash = outgoing_explorer;
             outgoing.panel_ids_stash = outgoing_panel_ids;
             outgoing.lsp_stash = outgoing_lsp;
+            outgoing.file_mod_times_stash = outgoing_mtimes;
         }
 
         self.active_session = id;
@@ -90,12 +92,13 @@ impl crate::app::Editor {
 
         // Restore the incoming session's stashed state. A
         // never-activated session has empty stashes; the dock,
-        // file explorer, and LSP set rebuild on demand at the
-        // new root.
+        // file explorer, LSP set, and mtime cache rebuild on
+        // demand at the new root.
         if let Some(incoming) = self.sessions.get_mut(&id) {
             self.file_explorer = incoming.file_explorer_stash.take();
             self.panel_ids = std::mem::take(&mut incoming.panel_ids_stash);
             self.lsp = incoming.lsp_stash.take();
+            self.file_mod_times = std::mem::take(&mut incoming.file_mod_times_stash);
         }
 
         self.plugin_manager.run_hook(

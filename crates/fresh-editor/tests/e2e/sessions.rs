@@ -165,6 +165,38 @@ fn close_session_refuses_active_session() {
     assert_eq!(harness.editor().session_count(), 2);
 }
 
+/// `setActiveSession` warm-swaps the per-session mtime cache for
+/// auto-revert. Each session tracks its own files; when the user
+/// dives, the active mtime map switches with the rest of the
+/// session state. This matches the user's mental model that a
+/// dormant session "is paused" — its files don't auto-revert
+/// until the user dives back in.
+#[test]
+fn dive_stashes_and_restores_file_mod_times() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(PathBuf::from("/tmp/wt-alpha-mt"), "alpha".into());
+
+    let p = PathBuf::from("/tmp/some-file.txt");
+    let t = std::time::SystemTime::now();
+    harness.editor_mut().insert_mtime_for_test(p.clone(), t);
+    assert!(harness.editor().has_mtime_for_test(&p));
+
+    harness.editor_mut().set_active_session(alpha);
+    assert!(
+        !harness.editor().has_mtime_for_test(&p),
+        "alpha's mtime cache starts empty — base's entry must be stashed"
+    );
+
+    harness.editor_mut().set_active_session(SessionId(1));
+    assert!(
+        harness.editor().has_mtime_for_test(&p),
+        "diving back must restore base's mtime entry from its stash"
+    );
+}
+
 /// `setActiveSession` warm-swaps the LSP manager. The outgoing
 /// session's running LSPs are stashed (still alive in memory)
 /// and the incoming session's stash — empty for a fresh session

@@ -592,6 +592,20 @@ impl Editor {
         self.lsp = Some(crate::services::lsp::manager::LspManager::new(None));
     }
 
+    /// Inject an mtime entry into the active session's mod-time
+    /// cache. Used by tests to verify warm-swap of the cache
+    /// without going through real file I/O.
+    #[doc(hidden)]
+    pub fn insert_mtime_for_test(&mut self, path: std::path::PathBuf, t: std::time::SystemTime) {
+        self.file_mod_times.insert(path, t);
+    }
+
+    /// Whether the active session's mtime cache contains `path`.
+    #[doc(hidden)]
+    pub fn has_mtime_for_test(&self, path: &std::path::Path) -> bool {
+        self.file_mod_times.contains_key(path)
+    }
+
     /// Mutable access to the active session. Used by lifecycle code
     /// that re-targets per-session state (renaming, etc.). Same
     /// panic invariant as `active_session()`.

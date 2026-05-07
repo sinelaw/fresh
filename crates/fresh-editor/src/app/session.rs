@@ -56,6 +56,14 @@ pub struct Session {
     /// `root` on first toggle.
     pub file_explorer_stash: Option<FileTreeView>,
 
+    /// **Stash.** Polling-based mtime cache for auto-revert when
+    /// this session is *inactive*. Auto-revert only fires for
+    /// the active session's files; an inactive session's mtimes
+    /// stay frozen at dive-out time and resync on dive-back —
+    /// matching the user's mental model that a dormant session
+    /// "is paused".
+    pub file_mod_times_stash: HashMap<PathBuf, std::time::SystemTime>,
+
     /// **Stash.** LSP manager (running language servers, configs,
     /// per-language root URIs) when this session is *inactive*.
     /// The active session's LSP lives on `Editor.lsp`; on dive we
@@ -104,6 +112,7 @@ impl Session {
             label,
             root,
             file_explorer_stash: None,
+            file_mod_times_stash: HashMap::new(),
             lsp_stash: None,
             panel_ids_stash: HashMap::new(),
             buffers: HashSet::new(),
