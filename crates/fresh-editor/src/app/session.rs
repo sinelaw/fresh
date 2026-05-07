@@ -19,6 +19,7 @@
 //! commits move those into Session one subsystem at a time, each
 //! step preserving today's single-root behaviour.
 
+use crate::services::lsp::manager::LspManager;
 use crate::view::file_tree::FileTreeView;
 use fresh_core::{BufferId, SessionId};
 use std::collections::{HashMap, HashSet};
@@ -54,6 +55,18 @@ pub struct Session {
     /// once. `None` means "never opened" — the caller rebuilds at
     /// `root` on first toggle.
     pub file_explorer_stash: Option<FileTreeView>,
+
+    /// **Stash.** LSP manager (running language servers, configs,
+    /// per-language root URIs) when this session is *inactive*.
+    /// The active session's LSP lives on `Editor.lsp`; on dive we
+    /// swap. Inactive-session LSPs remain running in the
+    /// background — that's the warm-LSP property the design's
+    /// trade-off discussion calls out as a memory cost worth
+    /// paying so dive-back is instant.
+    ///
+    /// `None` means "this session has never spawned any LSP";
+    /// the next LSP feature trigger will lazily create one.
+    pub lsp_stash: Option<LspManager>,
 
     /// **Stash.** Utility-dock panel-id → buffer-id occupancy when
     /// this session is *inactive*. The active session's
@@ -91,6 +104,7 @@ impl Session {
             label,
             root,
             file_explorer_stash: None,
+            lsp_stash: None,
             panel_ids_stash: HashMap::new(),
             buffers: HashSet::new(),
         }

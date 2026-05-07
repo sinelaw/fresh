@@ -576,6 +576,22 @@ impl Editor {
         self.panel_ids.insert(key, buffer_id);
     }
 
+    /// True iff the active session has an LSP manager attached.
+    /// Used by tests to assert that warm-swap moves the manager
+    /// out of the active slot when the outgoing session had one.
+    #[doc(hidden)]
+    pub fn has_lsp_for_test(&self) -> bool {
+        self.lsp.is_some()
+    }
+
+    /// Inject an LspManager so tests can prove the swap routes
+    /// it through the session stash without depending on real
+    /// LSP server spawn.
+    #[doc(hidden)]
+    pub fn install_dummy_lsp_for_test(&mut self) {
+        self.lsp = Some(crate::services::lsp::manager::LspManager::new(None));
+    }
+
     /// Mutable access to the active session. Used by lifecycle code
     /// that re-targets per-session state (renaming, etc.). Same
     /// panic invariant as `active_session()`.

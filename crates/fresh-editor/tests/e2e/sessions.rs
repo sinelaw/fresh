@@ -165,6 +165,38 @@ fn close_session_refuses_active_session() {
     assert_eq!(harness.editor().session_count(), 2);
 }
 
+/// `setActiveSession` warm-swaps the LSP manager. The outgoing
+/// session's running LSPs are stashed (still alive in memory)
+/// and the incoming session's stash — empty for a fresh session
+/// — becomes the active slot. Future LSP requests in the new
+/// session spawn fresh servers rooted at its path; future dive-
+/// back finds the stashed LSPs warm.
+#[test]
+fn dive_stashes_and_restores_lsp_manager() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(PathBuf::from("/tmp/wt-alpha-lsp"), "alpha".into());
+
+    // Pretend the base session has LSPs running.
+    harness.editor_mut().install_dummy_lsp_for_test();
+    assert!(harness.editor().has_lsp_for_test());
+
+    harness.editor_mut().set_active_session(alpha);
+    assert!(
+        !harness.editor().has_lsp_for_test(),
+        "alpha has no stashed LSP; active slot must be empty so a \
+         fresh LspManager spawns rooted at alpha's path on demand"
+    );
+
+    harness.editor_mut().set_active_session(SessionId(1));
+    assert!(
+        harness.editor().has_lsp_for_test(),
+        "diving back must restore the base's stashed LspManager"
+    );
+}
+
 /// `setActiveSession` warm-swaps utility-dock panel-id occupancy.
 /// Each session has its own dock — a search panel claimed in the
 /// base session disappears when diving to alpha and reappears on
