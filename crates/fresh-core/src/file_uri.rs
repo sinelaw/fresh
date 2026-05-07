@@ -131,10 +131,8 @@ pub fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     // Must start with file:// (accept file:/// and file://localhost/)
     let path_str = if let Some(rest) = uri.strip_prefix("file:///") {
         rest
-    } else if let Some(rest) = uri.strip_prefix("file://localhost/") {
-        rest
     } else {
-        return None;
+        uri.strip_prefix("file://localhost/")?
     };
 
     let decoded = percent_decode(path_str);

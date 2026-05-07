@@ -3545,6 +3545,7 @@ fn default_plugin_provider_priority() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn test_plugin_api_creation() {
@@ -4174,13 +4175,15 @@ mod tests {
     // mutants replace the body with `Ok(())` / `()`, i.e. the side effect
     // disappears. One assertion per method ties the side effect down.
 
-    fn mk_api() -> (
+    type MkApi = (
         PluginApi,
         std::sync::mpsc::Receiver<PluginCommand>,
         Arc<RwLock<HookRegistry>>,
         Arc<RwLock<CommandRegistry>>,
         Arc<RwLock<EditorStateSnapshot>>,
-    ) {
+    );
+
+    fn mk_api() -> MkApi {
         let hooks = Arc::new(RwLock::new(HookRegistry::new()));
         let commands = Arc::new(RwLock::new(CommandRegistry::new()));
         let (tx, rx) = std::sync::mpsc::channel();
@@ -4266,7 +4269,7 @@ mod tests {
                 PathBuf::from("/tmp/x.rs"), Some(4), Some(8)
             ),
             PluginCommand::OpenFileAtLocation { path, line, column }
-                if path == PathBuf::from("/tmp/x.rs")
+                if path == Path::new("/tmp/x.rs")
                     && line == Some(4)
                     && column == Some(8)
         );
@@ -4278,7 +4281,7 @@ mod tests {
             ),
             PluginCommand::OpenFileInSplit { split_id, path, line, column }
                 if split_id == 2
-                    && path == PathBuf::from("/tmp/y.rs")
+                    && path == Path::new("/tmp/y.rs")
                     && line == Some(5)
                     && column.is_none()
         );

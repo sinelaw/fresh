@@ -108,6 +108,12 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, RwLock};
 
+/// Plugin-API exports map shared across every `JsEditorApi` /
+/// `QuickJsBackend` instance on a single runtime. Maps an export name to
+/// `(exporter plugin name, persistent JS object)`.
+type PluginApiExports =
+    Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>;
+
 /// Recursively copy a directory and all its contents.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -757,8 +763,7 @@ pub struct JsEditorApi {
     /// persistent JS Object). Shared across every plugin context on the
     /// same Runtime so init.ts can reach another plugin's typed API.
     #[qjs(skip_trace)]
-    plugin_api_exports:
-        Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>,
+    plugin_api_exports: PluginApiExports,
     pub plugin_name: String,
 }
 
@@ -4731,8 +4736,7 @@ pub struct QuickJsBackend {
     /// Plugin-configuration plane (design M3): name → (exporter, persistent
     /// JS Object). Shared across every JsEditorApi instance on this
     /// Runtime.
-    plugin_api_exports:
-        Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>,
+    plugin_api_exports: PluginApiExports,
 }
 
 impl Drop for QuickJsBackend {
