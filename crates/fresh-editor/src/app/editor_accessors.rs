@@ -526,6 +526,43 @@ impl Editor {
         &self.working_dir
     }
 
+    /// The currently active `Session`. Always `SessionId(1)` until
+    /// the multi-session migration step lands; until then this is
+    /// effectively a typed wrapper around `working_dir`. New code
+    /// should prefer this accessor so the eventual migration is a
+    /// no-op for the call site.
+    ///
+    /// Panics if the active session id is not present in the
+    /// `sessions` map. That invariant is upheld by the constructor
+    /// and `setActiveSession` (when added) — if the panic ever fires
+    /// it indicates a bug in session lifecycle code.
+    pub fn active_session(&self) -> &crate::app::session::Session {
+        self.sessions
+            .get(&self.active_session)
+            .expect("active_session id must be a member of sessions")
+    }
+
+    /// The active session's id.
+    pub fn active_session_id(&self) -> fresh_core::SessionId {
+        self.active_session
+    }
+
+    /// Number of sessions currently in the editor. Always 1 until
+    /// the multi-session step lands.
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
+    }
+
+    /// Mutable access to the active session. Used by lifecycle code
+    /// that re-targets per-session state (renaming, etc.). Same
+    /// panic invariant as `active_session()`.
+    pub fn active_session_mut(&mut self) -> &mut crate::app::session::Session {
+        let id = self.active_session;
+        self.sessions
+            .get_mut(&id)
+            .expect("active_session id must be a member of sessions")
+    }
+
     /// Return buffer ids whose on-disk path sits at or under `root`.
     /// Used by file-explorer operations that need to react when a file
     /// or directory on disk goes away or moves.

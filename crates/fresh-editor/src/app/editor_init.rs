@@ -843,6 +843,26 @@ impl Editor {
             menu_state: crate::view::ui::MenuState::new(dir_context.themes_dir()),
             menus: crate::config::MenuConfig::translated(),
             working_dir: working_dir.clone(),
+            // Boot with a single base session rooted at the process
+            // cwd. Multi-session support arrives in a follow-up
+            // commit; for now this exists so call sites can already
+            // read `editor.active_session().root` instead of
+            // `editor.working_dir`, and the eventual switch to a
+            // real active pointer is invisible to them.
+            sessions: {
+                let mut m = HashMap::new();
+                m.insert(
+                    fresh_core::SessionId(1),
+                    crate::app::session::Session::new(
+                        fresh_core::SessionId(1),
+                        "",
+                        working_dir.clone(),
+                    ),
+                );
+                m
+            },
+            active_session: fresh_core::SessionId(1),
+            next_session_id: 2,
             position_history: PositionHistory::new(),
             in_navigation: false,
             next_lsp_request_id: 0,

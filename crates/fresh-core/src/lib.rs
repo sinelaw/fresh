@@ -68,6 +68,25 @@ impl std::fmt::Display for TerminalId {
         write!(f, "Terminal-{}", self.0)
     }
 }
+
+/// Unique identifier for an editor `Session` — a project-rooted unit
+/// of editor state (file tree, LSP set, splits, buffer set, …) that
+/// the user can switch between as a whole. See
+/// `docs/internal/conductor-sessions-design.md`.
+///
+/// Sessions are 1-indexed; the editor always boots with id=1 (the
+/// "base" session) so the previous single-root behaviour is the
+/// SessionId(1) special case. Ids are stable within a process and
+/// monotonic — closing a session does not free its id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, TS)]
+#[ts(export)]
+pub struct SessionId(pub u64);
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Session-{}", self.0)
+    }
+}
 pub mod config;
 pub mod file_explorer;
 pub mod file_uri;
@@ -84,5 +103,11 @@ mod tests {
     fn terminal_id_display_format() {
         assert_eq!(TerminalId(0).to_string(), "Terminal-0");
         assert_eq!(TerminalId(42).to_string(), "Terminal-42");
+    }
+
+    #[test]
+    fn session_id_display_format() {
+        assert_eq!(SessionId(1).to_string(), "Session-1");
+        assert_eq!(SessionId(42).to_string(), "Session-42");
     }
 }

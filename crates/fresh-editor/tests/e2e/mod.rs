@@ -163,6 +163,7 @@ pub mod select_to_paragraph;
 pub mod selection;
 pub mod server_session_lifecycle;
 pub mod session_hot_exit;
+pub mod sessions;
 pub mod settings;
 pub mod settings_config_issue_806;
 pub mod settings_fallback_category;
