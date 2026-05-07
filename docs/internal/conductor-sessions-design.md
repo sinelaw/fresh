@@ -59,6 +59,109 @@ this design is settled.
 - Hot-reload of the Conductor plugin itself. Standard plugin reload
   semantics apply.
 
+## MVP scope
+
+The minimum viable Conductor delivers the load-bearing UX claim:
+
+> spawn agents in parallel worktrees, switch between them with the
+> entire editor retargeting (file tree, LSP, quick-open, ignore
+> rules, buffer set, splits), and have Conductor's session list
+> survive every switch unchanged.
+
+Everything else in this document is wanted but deferrable. Items
+throughout the doc are tagged `[MVP]` or `[v1.1+]`. This section is
+the index.
+
+### `[MVP]` — load-bearing for the core UX promise
+
+**Core abstraction**
+- `Session` struct with: `id`, `label`, `root`, `buffers`,
+  `file_tree`, `ignore_matcher`, `lsp_clients`, `split_layout`,
+  `view_states`, `panel_ids`
+- `Editor.sessions` + `active_session` pointer
+- Editor-global plugin state (where Conductor lives, by default)
+- Atomic dive (`setActiveSession`)
+- Lazy LSP startup on first activation
+
+**Plugin APIs**
+- `listSessions`, `activeSession`, `createSession`,
+  `setActiveSession`, `closeSession`
+- `session_created`, `session_closed`, `active_session_changed` events
+- `createTerminal({ sessionId, cwd, ... })` (existing API gains
+  `sessionId` field)
+- `terminal_output`, `terminal_exit` events (the smallest core
+  change; `§ Background`)
+
+**Screens**
+- Empty Conductor (`Screen 1`) — full
+- Control Room (`Screen 2`) — reduced column set: `#`, `LABEL`,
+  `ROOT PATH`, `AGENT`, `STATE`, `DIFF`, `AGE`. The COMMITS
+  column, memory header, and collision-radar pane are deferred;
+  the radar pane area renders an empty placeholder.
+- Session IDE (`Screen 3`) — full (falls out of the architecture
+  for free)
+- New-session prompt (`Screen 4`) — full
+
+**States** (in the `STATE` column)
+- `ACTIVE`, `RUNNING`, `AWAITING (Y/n)`, `READY`, `ERRORED`,
+  `KILLED`. `KILLED` rows drop immediately in MVP (no tombstone).
+
+**Controls**
+- Up / Down / `Ctrl+n` / `Ctrl+p` (navigate)
+- `Enter` (dive), `n` (new), `d` (diff), `m` (merge), `k`
+  (kill+drop), `Esc` (close)
+
+**Migration steps from `§ Migration sequence`**
+- Step 1, Step 2, Step 3, Step 5 (global namespace only), Step 6.
+
+This MVP set delivers PRD user stories 1 (orchestrate parallel
+agents) and 2 (focused coding in a single worktree) and the
+review-and-merge flow from story 3. It does *not* deliver passive
+status-bar awareness or pre-merge collision warnings.
+
+### `[v1.1+]` — wanted, deferred
+
+**Plugin APIs**
+- `watchPath` / `unwatchPath` / `path_changed` event (enables
+  collision radar)
+- `setSessionState` / `getSessionState` (other plugins' concern)
+- `openDiffView` (MVP shells out `git diff --color` in a session
+  terminal buffer)
+- `openFile({ sessionId })` (MVP only opens in active session)
+
+**Control Room enrichments**
+- `COMMITS` column
+- Header memory readout (`2.1GB / 32GB`)
+- `SYNCING` state and Conductor-driven git operations
+- `KILLED` tombstones with two-press semantics for `k`
+- Multi-select (Shift+arrow), parallel-attempts compare via `d`
+  on a multi-selection
+- "Promote one, kill the rest" cluster action on `m`
+- Rename (`r`)
+- Tab to cycle preview/collision pane focus
+- Mouse: click to select, double-click to dive
+
+**Lifecycle**
+- Cross-restart persistence of session list and layout snapshots
+- Auto-open Control Room on `AWAITING` / `ERRORED`
+- `editor.prewarmSession(id)`
+
+**Other**
+- Collision warning popup (`Screen 5`) — depends on `watchPath`
+- Native vertical diff renderer (Migration `Step 7`)
+- Bottom-of-window agent-state indicator (separate, depends on
+  `registerStatusBarElement` in PR #1843)
+
+### What's deliberately *not* MVP, even though small
+
+- **`r` rename.** The branch name is the default label and works.
+  Adding rename without a UI for "what was the original branch
+  again?" is mildly confusing; defer until needed.
+- **Memory readout in header.** Visible-by-default UX nicety.
+  Hide-by-default until users ask.
+- **Auto-open on AWAITING.** Interrupts the user; needs careful
+  default behavior. Ship with manual `<Leader>o` only and tune later.
+
 ## Background: the primitives we already have
 
 ### Project root is implicit and editor-wide
@@ -396,7 +499,7 @@ they typically encounter them. Each entry: a sketch, the user
 objective the screen exists to satisfy, the flows that lead in and
 out, and the controls available.
 
-### Screen 1: Empty Conductor (first run)
+### Screen 1: Empty Conductor (first run)  `[MVP]`
 
 ```
 +------------------------------------------------------------------+
@@ -438,7 +541,7 @@ the dock and returns the user to whatever they were editing.
 | `n` | Open new-session prompt |
 | `Esc` | Close Control Room |
 
-### Screen 2: Control Room
+### Screen 2: Control Room  `[MVP — reduced; see § MVP scope]`
 
 ```
 +----------------------------------------------------------------------------------+
@@ -498,28 +601,28 @@ awareness *inside* the Control Room.
 
 #### Columns
 
-| Column | Meaning |
-|---|---|
-| `#` | Stable session id (1-indexed; the base session is always 1). Survives across restart, monotonically grows. |
-| `LABEL` | User-facing name. Defaults to the branch name; `r` lets the user rename. Does not have to match the branch. |
-| `ROOT PATH` | Absolute filesystem root of the worktree. The base session shows the repo root annotated `(base)`. |
-| `AGENT` | The shell command form spawned in the session's terminal. `-` for the base session; `shell` for a plain shell. |
-| `STATE` | Parsed lifecycle state (see below). |
-| `DIFF (+/-)` | Lines added/removed compared to the merge base. Includes uncommitted changes; refreshed on a debounce. |
-| `COMMITS` | Number of commits the session has made on its branch since branching from the base. |
-| `AGE` | Wall-clock age since session creation. |
+| Column | Meaning | MVP |
+|---|---|---|
+| `#` | Stable session id (1-indexed; the base session is always 1). Survives across restart, monotonically grows. | MVP |
+| `LABEL` | User-facing name. Defaults to the branch name; `r` lets the user rename. Does not have to match the branch. | MVP (no rename) |
+| `ROOT PATH` | Absolute filesystem root of the worktree. The base session shows the repo root annotated `(base)`. | MVP |
+| `AGENT` | The shell command form spawned in the session's terminal. `-` for the base session; `shell` for a plain shell. | MVP |
+| `STATE` | Parsed lifecycle state (see below). | MVP (reduced state set) |
+| `DIFF (+/-)` | Lines added/removed compared to the merge base. Includes uncommitted changes; refreshed on a debounce. | MVP |
+| `COMMITS` | Number of commits the session has made on its branch since branching from the base. | v1.1+ |
+| `AGE` | Wall-clock age since session creation. | MVP |
 
 #### States
 
-| State | Meaning | Set by |
-|---|---|---|
-| `ACTIVE` | This session is the one currently being rendered (`active_session`). | Editor pointer. |
-| `RUNNING` | Agent process is alive and producing output. | Default. Re-entered when output advances after `AWAITING`. |
-| `AWAITING (Y/n)` | Output ends in a recognised prompt pattern; agent has stopped. | Regex on terminal output. |
-| `READY` | Agent process exited cleanly (code 0). | `terminal_exit` event. |
-| `ERRORED` | Agent process exited non-zero. | `terminal_exit` event. |
-| `KILLED` | User pressed `k`; conductor sent SIGTERM. The row remains as a tombstone until dismissed (see "KILLED retention" in open questions). | User action. |
-| `SYNCING` | A git operation initiated by Conductor is in flight in this worktree (merge into base, pull from remote, push). The terminal may be unresponsive during this. | Conductor entered git operation. |
+| State | Meaning | Set by | MVP |
+|---|---|---|---|
+| `ACTIVE` | This session is the one currently being rendered (`active_session`). | Editor pointer. | MVP |
+| `RUNNING` | Agent process is alive and producing output. | Default. Re-entered when output advances after `AWAITING`. | MVP |
+| `AWAITING (Y/n)` | Output ends in a recognised prompt pattern; agent has stopped. | Regex on terminal output. | MVP |
+| `READY` | Agent process exited cleanly (code 0). | `terminal_exit` event. | MVP |
+| `ERRORED` | Agent process exited non-zero. | `terminal_exit` event. | MVP |
+| `KILLED` | User pressed `k`; conductor sent SIGTERM. The row remains as a tombstone until dismissed (see "KILLED retention" in open questions). | User action. | MVP — but no tombstone in MVP; row drops immediately |
+| `SYNCING` | A git operation initiated by Conductor is in flight in this worktree (merge into base, pull from remote, push). The terminal may be unresponsive during this. | Conductor entered git operation. | v1.1+ |
 
 `KILLED` and `READY`/`ERRORED` are terminal states — the agent
 process is gone — but the worktree is *not* automatically removed.
@@ -545,7 +648,7 @@ patterns the design accommodates explicitly:
 The Conductor plugin does not need to know which is which; the
 state machine is uniform.
 
-#### Parallel attempts on the same branch
+#### Parallel attempts on the same branch  `[MVP for spawn; v1.1+ for compare/promote-cluster]`
 
 Rows 2/5, 3/6, 4/10 in the sketch above are deliberately on the
 same logical task (`feat/auth-v2`, `fix/redis-cache`,
@@ -567,7 +670,7 @@ The `LABEL` column makes parallel attempts identifiable; renaming
 (`r`) is how the user disambiguates them ("auth-with-uuid",
 "auth-with-snowflake").
 
-#### Memory display in the header
+#### Memory display in the header  `[v1.1+]`
 
 `2.1GB / 32GB` is total Fresh-process RSS over total system RAM.
 This exists because the warm-LSP architecture (`§ Lifecycle`) makes
@@ -612,27 +715,27 @@ via config.
 
 **Controls.**
 
-| Key | Action | When enabled |
-|---|---|---|
-| Up / Down | Move selection | always |
-| Shift + Up/Down | Extend multi-select | always |
-| Ctrl + n / Ctrl + p | Cycle selection (with wrap) | always |
-| Enter | Dive into selected | session is not the active one |
-| n | New session | always |
-| d | Show diff | selection has changes |
-| m | Merge selected into base | state == READY |
-| k | Kill agent (first press) / drop worktree (second press on tombstone) | not the base session |
-| r | Rename / re-label session | always |
-| Tab | Cycle preview pane focus (terminal / collisions) | always |
-| Esc | Close Control Room | always |
-| Mouse: click row | Select | always |
-| Mouse: double-click row | Dive | session is not the active one |
+| Key | Action | When enabled | Phase |
+|---|---|---|---|
+| Up / Down | Move selection | always | MVP |
+| Shift + Up/Down | Extend multi-select | always | v1.1+ |
+| Ctrl + n / Ctrl + p | Cycle selection (with wrap) | always | MVP |
+| Enter | Dive into selected | session is not the active one | MVP |
+| n | New session | always | MVP |
+| d | Show diff | selection has changes | MVP (via `git diff` in terminal) |
+| m | Merge selected into base | state == READY | MVP |
+| k | Kill agent (first press) / drop worktree (second press on tombstone) | not the base session | MVP — single press kills+drops |
+| r | Rename / re-label session | always | v1.1+ |
+| Tab | Cycle preview pane focus (terminal / collisions) | always | v1.1+ |
+| Esc | Close Control Room | always | MVP |
+| Mouse: click row | Select | always | v1.1+ |
+| Mouse: double-click row | Dive | session is not the active one | v1.1+ |
 
 `m` and `k`-on-non-tombstone both prompt for confirmation via
 `showActionPopup` because both are destructive (work that hasn't
 been pushed lives only in the worktree).
 
-### Screen 3: Session IDE (post-dive)
+### Screen 3: Session IDE (post-dive)  `[MVP — falls out of architecture]`
 
 ```
 +------------------------------------------------------------------+
@@ -697,7 +800,7 @@ The only Conductor-specific affordances are:
 | `<Leader> n` | Next session (cycle) |
 | `<Leader> p` | Previous session (cycle) |
 
-### Screen 4: New-session prompt
+### Screen 4: New-session prompt  `[MVP]`
 
 ```
 +------------------------------------------------------------------+
@@ -778,7 +881,7 @@ locked branch, path collision), Conductor surfaces the git error in
 a `showActionPopup` and leaves the user in the Control Room with no
 state change.
 
-### Screen 5: Collision warning popup
+### Screen 5: Collision warning popup  `[v1.1+ — depends on watchPath]`
 
 ```
 +------------------------------------------------------------------+
@@ -858,7 +961,7 @@ IDE).
 
 Additions only. Nothing existing is removed or changed shape.
 
-### Sessions
+### Sessions  `[MVP]`
 
 ```ts
 type SessionId = number;
@@ -877,9 +980,11 @@ editor.on("active_session_changed", handler: string): void;
 // payload: { previousId: SessionId | null; activeId: SessionId }
 ```
 
-### Buffer/terminal scoping
+### Buffer/terminal scoping  `[MVP for createTerminal; v1.1+ for openFile]`
 
-Most buffer APIs gain an optional `sessionId` (defaults to active):
+`createTerminal` gains an optional `sessionId` and is `[MVP]`.
+`openFile`'s `sessionId` parameter is `[v1.1+]` — MVP plugins open
+files in the active session only.
 
 ```ts
 editor.createTerminal({ sessionId?: SessionId, cwd?: string, ... }): Promise<TerminalResult>;
@@ -889,7 +994,7 @@ editor.openFile(path: string, opts?: { sessionId?: SessionId }): Promise<BufferI
 Existing call sites without `sessionId` get the active session, so
 existing plugins keep working.
 
-### Terminal output and exit events (the small core change)
+### Terminal output and exit events  `[MVP — the small core change]`
 
 ```ts
 editor.on("terminal_output", handler: string): void;
@@ -902,7 +1007,10 @@ editor.on("terminal_exit", handler: string): void;
 Wired by firing plugin events at
 `crates/fresh-editor/src/app/async_dispatch.rs:427,453`.
 
-### File watching
+### File watching  `[v1.1+]`
+
+Required for the collision radar. MVP ships with a placeholder
+empty pane in the Control Room where the radar will go.
 
 ```ts
 editor.watchPath(path: string, opts?: {
@@ -921,7 +1029,11 @@ Backed by the `notify` crate. The `sessionId` field is informational
 `Map<path, Set<SessionId>>` collision matrix without juggling its
 own handle-to-session map.
 
-### Plugin state scopes
+### Plugin state scopes  `[MVP for global namespace; v1.1+ for session namespace]`
+
+The global namespace is `[MVP]` because Conductor itself uses it.
+The session namespace is `[v1.1+]` and exists for other plugins
+that genuinely want per-project state.
 
 ```ts
 editor.setGlobalState(key: string, value: string): void;
@@ -935,7 +1047,14 @@ Persistence is editor-driven: the global namespace is flushed to
 `.fresh/state/<plugin>.json`, the session namespace to the session's
 record in `.fresh/sessions.json`.
 
-### Diff rendering (optional, v2)
+In MVP, even the global namespace's *cross-restart persistence* is
+`[v1.1+]` — `set/getGlobalState` work in-memory only for v1, so
+plugin state survives plugin reloads but not editor restarts.
+
+### Diff rendering  `[v1.1+]`
+
+MVP shells out `git diff --color` into a session terminal buffer
+opened by Conductor. Native side-by-side diff is `[v1.1+]`.
 
 ```ts
 editor.openDiffView(opts: {
@@ -946,14 +1065,12 @@ editor.openDiffView(opts: {
 }): Promise<{ bufferId: BufferId }>;
 ```
 
-V1 fallback: shell out `git diff --color` into a session terminal.
-
 ## Migration sequence
 
 The work is large (`§ Risks`) but factorable. Each step is a
 reviewable PR.
 
-### Step 1 — `Session` struct, single forced session
+### Step 1 — `Session` struct, single forced session  `[MVP]`
 
 - Introduce `Session` with the fields above.
 - Construct exactly one session at startup, rooted at process cwd.
@@ -969,7 +1086,7 @@ reviewable PR.
 This is the bulk of the refactor and the riskiest step. It is purely
 a rearrangement: behavior is identical to today's editor.
 
-### Step 2 — multiple sessions, manual switching
+### Step 2 — multiple sessions, manual switching  `[MVP]`
 
 - Add `createSession`, `setActiveSession`, `closeSession`.
 - Implement the atomic swap (`§ Dive`).
@@ -978,34 +1095,39 @@ a rearrangement: behavior is identical to today's editor.
 - A test plugin that calls `createSession` + `setActiveSession`
   exercises the swap end-to-end.
 
-### Step 3 — terminal events to plugins
+### Step 3 — terminal events to plugins  `[MVP]`
 
 Smallest core change. Add `terminal_output` / `terminal_exit` events
 at the two `async_dispatch.rs` arms.
 
-### Step 4 — `watchPath` plugin API
+### Step 4 — `watchPath` plugin API  `[v1.1+]`
 
-Wrap `notify` crate. Surface `path_changed` event.
+Wrap `notify` crate. Surface `path_changed` event. Required for the
+collision radar.
 
-### Step 5 — plugin state scopes
+### Step 5 — plugin state scopes  `[MVP for global; v1.1+ for session and persistence]`
 
-Add `setGlobalState`/`getGlobalState`/`setSessionState`/`getSessionState`
-with persistence to `.fresh/`.
+Add `setGlobalState`/`getGlobalState` (MVP, in-memory) and
+`setSessionState`/`getSessionState` (deferred). Persistence to
+`.fresh/` is `[v1.1+]`.
 
-### Step 6 — Conductor plugin (separate doc)
+### Step 6 — Conductor plugin (separate doc)  `[MVP — minimum viable plugin]`
 
 A first-party plugin shipping in `crates/fresh-editor/plugins/conductor/`.
-Drives the whole feature. Uses only the APIs introduced above.
+Drives the whole feature. Uses only the APIs introduced above. The
+MVP plugin implements Screens 1–4 with the reduced column set and
+state set defined in `§ MVP scope`.
 
-### Step 7 — diff renderer (optional)
+### Step 7 — diff renderer  `[v1.1+]`
 
 Native vertical diff. Falls back to `git diff` in a terminal until
 this lands.
 
-### Step 8 — session persistence across restart
+### Step 8 — session persistence across restart  `[v1.1+]`
 
 Lazy rehydration: only the active session boots LSPs / watchers on
-startup; others spin up on first activation.
+startup; others spin up on first activation. MVP starts cold every
+time — the user re-spawns sessions after restart.
 
 ## Risks
 
