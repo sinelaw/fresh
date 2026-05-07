@@ -793,3 +793,115 @@ fn test_drag_right_split_to_left_border_switches_order() {
         );
     }
 }
+
+/// Regression test: dragging a tab onto a split whose `keyed_states` does not
+/// already contain that buffer must add the entry, otherwise the next
+/// keystroke panics in `apply_event_to_state` on an `Option::unwrap()`
+/// against the missing per-buffer state.
+///
+/// To trigger the missing-keyed-state condition we first split off a tab
+/// onto a fresh split (which initializes its `SplitViewState` via
+/// `with_buffer`, populating `keyed_states` with only that one buffer),
+/// then drag a different tab onto the new split's tab bar. Typing a
+/// character afterwards used to panic — see the bug reproduced when
+/// dragging the search-replace tab out of the utility dock.
+#[test]
+fn test_drag_tab_to_fresh_split_then_type_does_not_panic() {
+    let (mut harness, _temp_dir, _files) = setup_multi_file_harness();
+
+    // Step 1: drag the first tab to the right edge to create a new split.
+    // The new split is initialized via `SplitViewState::with_buffer`,
+    // so its `keyed_states` contains only the dragged buffer.
+    let tabs = get_all_tabs(&harness);
+    assert!(tabs.len() >= 2, "Need at least two tabs to set up the test");
+    let first_tab = &tabs[0];
+    let split_areas = harness.editor().get_split_areas().to_vec();
+    let (_, _, content_rect, _, _, _) = split_areas[0];
+    let right_edge_col = content_rect.x + content_rect.width - 2;
+    let content_center_row = content_rect.y + content_rect.height / 2;
+
+    let dragged_first = first_tab.buffer_id;
+    harness
+        .mouse_drag(
+            first_tab.center_col(),
+            first_tab.tab_row,
+            right_edge_col,
+            content_center_row,
+        )
+        .unwrap();
+    assert_eq!(harness.editor().get_split_count(), 2);
+
+    // Step 2: identify the new (right) split and pick a tab in the
+    // remaining (left) split that is *not* present in the new split's
+    // `keyed_states`.
+    let new_active_split = harness.editor().get_active_split();
+    assert_eq!(
+        harness.editor().get_split_buffer(new_active_split.into()),
+        Some(dragged_first)
+    );
+
+    // Advance time so the next mouse_down isn't treated as a double-click
+    // of the first drag's mouse_down (the tab centers can collide).
+    harness.advance_time(std::time::Duration::from_millis(1000));
+    harness.render().unwrap();
+    let tabs = get_all_tabs(&harness);
+    let other_tab = tabs
+        .iter()
+        .find(|t| t.split_id != new_active_split && t.buffer_id != dragged_first)
+        .expect("expected a tab in the source split with a different buffer");
+    let other_buffer = other_tab.buffer_id;
+    let source_split_id = other_tab.split_id;
+    // Avoid landing on the exact same coordinate as the first drag's
+    // mouse_down (which would trigger the multi-click detector and
+    // suppress the drag init); offset slightly within the tab area.
+    let other_center = other_tab.center_col().saturating_add(2);
+    let other_row = other_tab.tab_row;
+
+    // Find the new split's tab bar position to use as the drop target.
+    let target_tab = tabs
+        .iter()
+        .find(|t| t.split_id == new_active_split)
+        .expect("new split should have at least one tab");
+    let target_center = target_tab.center_col();
+    let target_row = target_tab.tab_row;
+
+    // Sanity-check the drop zone before the drag so we know the test is
+    // actually exercising `move_tab_to_split` (TabBar drop zone) rather
+    // than some adjacent edge zone.
+    let drop_zone = harness
+        .editor()
+        .compute_drop_zone(target_center, target_row, source_split_id);
+    assert!(
+        matches!(drop_zone, Some(TabDropZone::TabBar(sid, _)) if sid == new_active_split),
+        "Expected TabBar drop zone over new split's tab bar, got {:?}",
+        drop_zone
+    );
+
+    // Step 3: drag the other tab onto the new split's tab bar.
+    harness
+        .mouse_drag(other_center, other_row, target_center, target_row)
+        .unwrap();
+
+    // Sanity: the buffer landed in the new split's tab list.
+    let target_tabs = harness.editor().get_split_tabs(new_active_split);
+    assert!(
+        target_tabs.contains(&other_buffer),
+        "Dragged buffer should appear in the new split's tabs (got {:?})",
+        target_tabs
+    );
+
+    // Step 4: type a character. Without the fix, this panics in
+    // `apply_event_to_state` because the new split's `keyed_states`
+    // never got an entry for the dropped buffer.
+    harness.type_text("Z").unwrap();
+    harness.render().unwrap();
+
+    // Observe the rendered screen: the typed 'Z' should be visible
+    // somewhere in the new split's content area.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('Z'),
+        "Typed character 'Z' should render after drag-and-type. Screen:\n{}",
+        screen
+    );
+}

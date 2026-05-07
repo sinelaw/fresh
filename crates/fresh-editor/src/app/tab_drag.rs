@@ -299,9 +299,19 @@ impl Editor {
             }
         }
 
-        // Focus the target split and switch to the dropped buffer
-        self.split_manager
-            .set_split_buffer(target_split_id, buffer_id);
+        // Focus the target split and switch to the dropped buffer.
+        //
+        // Use `set_pane_buffer` (not raw `set_split_buffer`) so the target
+        // split's `SplitViewState` gets a `keyed_states` entry for the
+        // dropped buffer. Without this, dragging a tab into a split that
+        // never hosted that buffer (e.g. a search-replace results tab
+        // dragged out of the utility dock onto another split) leaves the
+        // target SVS missing the entry. `set_active_buffer` below would
+        // then early-return because the split tree already reports
+        // `buffer_id` as active, so it never reaches `set_pane_buffer`
+        // either — and the next keystroke panics in
+        // `apply_event_to_state` on `keyed_states.get_mut(...).unwrap()`.
+        self.set_pane_buffer(target_split_id, buffer_id);
         self.split_manager.set_active_split(target_split_id);
         self.set_active_buffer(buffer_id);
 
