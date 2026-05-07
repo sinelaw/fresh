@@ -49,10 +49,12 @@ impl crate::app::Editor {
 
     /// Switch the active session to `id`.
     ///
-    /// MVP "rebuild on swap": updates `working_dir`, drops the
-    /// cached file explorer (forcing rebuild on next open), and
-    /// fires `active_session_changed`. Warm file-tree / LSP / etc.
-    /// is deferred to the per-subsystem migration commits.
+    /// Atomic swap: per-session live state (currently the file
+    /// explorer view) is moved out of `Editor` into the outgoing
+    /// session's stash and the incoming session's stash is moved
+    /// onto `Editor`. The dive is now warm — switching back
+    /// preserves the previous file-tree expansion / scroll /
+    /// selection rather than rebuilding from scratch.
     ///
     /// No-op when `id` is already active. Logs and returns when
     /// `id` is unknown — the design treats unknown ids as a plugin
@@ -73,12 +75,22 @@ impl crate::app::Editor {
         // self.sessions.
         let new_root = self.sessions[&id].root.clone();
 
+        // Stash the outgoing session's live file explorer.
+        let outgoing_explorer = self.file_explorer.take();
+        if let Some(outgoing) = self.sessions.get_mut(&previous_id) {
+            outgoing.file_explorer_stash = outgoing_explorer;
+        }
+
         self.active_session = id;
         self.working_dir = new_root;
 
-        // Drop cached file explorer — see module docs. Next toggle
-        // rebuilds at the new root.
-        self.file_explorer = None;
+        // Restore the incoming session's stashed view, if any. A
+        // never-activated session has `None` here, in which case
+        // the next toggle rebuilds at the new root — same fallback
+        // as the cold-swap MVP.
+        if let Some(incoming) = self.sessions.get_mut(&id) {
+            self.file_explorer = incoming.file_explorer_stash.take();
+        }
 
         self.plugin_manager.run_hook(
             "active_session_changed",

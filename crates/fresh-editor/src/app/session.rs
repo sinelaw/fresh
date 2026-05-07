@@ -19,13 +19,21 @@
 //! commits move those into Session one subsystem at a time, each
 //! step preserving today's single-root behaviour.
 
-use fresh_core::SessionId;
+use crate::view::file_tree::FileTreeView;
+use fresh_core::{BufferId, SessionId};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// A project-rooted unit of editor state.
 ///
-/// Initial fields are intentionally minimal — see module docs.
-#[derive(Debug, Clone)]
+/// "Stash" fields hold the inactive session's snapshot of state
+/// that for the *active* session lives directly on `Editor`. This
+/// is the warm-switching pattern: `setActiveSession` swaps the
+/// active session's live state out into the outgoing session's
+/// stash, then pulls the incoming session's stash into the active
+/// slots — O(1) and lossless. New code that reads any of these
+/// stash fields directly is a bug; only the swap path on
+/// `setActiveSession` should touch them.
 pub struct Session {
     /// Stable identifier. The base session is always `SessionId(1)`.
     pub id: SessionId,
@@ -39,6 +47,20 @@ pub struct Session {
     /// construction; closing a session and creating a new one is the
     /// way to "rename" the root.
     pub root: PathBuf,
+
+    /// **Stash.** File-explorer view (expansion, scroll, selection)
+    /// when this session is *inactive*. The active session's view
+    /// lives on `Editor.file_explorer`; on switch we move both at
+    /// once. `None` means "never opened" — the caller rebuilds at
+    /// `root` on first toggle.
+    pub file_explorer_stash: Option<FileTreeView>,
+
+    /// Buffers attached to this session (membership only — the
+    /// buffer storage stays on `Editor`, see "Why buffer storage
+    /// stays Editor-global" in the design doc). Used by
+    /// `closeSession` to drop session-private buffers and by
+    /// future per-session quick-open scoping.
+    pub buffers: HashSet<BufferId>,
 }
 
 impl Session {
@@ -56,7 +78,13 @@ impl Session {
                 .map(str::to_owned)
                 .unwrap_or_else(|| "main".to_owned());
         }
-        Self { id, label, root }
+        Self {
+            id,
+            label,
+            root,
+            file_explorer_stash: None,
+            buffers: HashSet::new(),
+        }
     }
 }
 

@@ -165,6 +165,55 @@ fn close_session_refuses_active_session() {
     assert_eq!(harness.editor().session_count(), 2);
 }
 
+/// `setActiveSession` warm-swaps file explorer state: each session
+/// sees its own view (or rebuilds at its root on first toggle),
+/// rather than every dive losing the outgoing session's expansion.
+///
+/// Concretely: open the file explorer in the base session (so it
+/// has a `Some` view), dive away, dive back — the base's view
+/// returns instead of being rebuilt from scratch. The "rebuild
+/// from scratch" path was the MVP behaviour pre-warm-swap.
+#[test]
+fn dive_stashes_and_restores_file_explorer_view() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+
+    // Spawn a side session to dive into.
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(PathBuf::from("/tmp/wt-alpha-warm"), "alpha".into());
+
+    // Force the base session's explorer into a `Some` state by
+    // toggling, then pumping async until the lazy build settles.
+    harness.editor_mut().toggle_file_explorer();
+    for _ in 0..40 {
+        harness.process_async_and_render().unwrap();
+        if harness.editor().file_explorer().is_some() {
+            break;
+        }
+        harness.sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        harness.editor().file_explorer().is_some(),
+        "file explorer should be built after toggle + async pump"
+    );
+
+    // Dive into alpha. Base session's view is stashed; the active
+    // explorer slot is None (alpha has never opened one).
+    harness.editor_mut().set_active_session(alpha);
+    assert!(
+        harness.editor().file_explorer().is_none(),
+        "alpha session has no stashed explorer; active slot \
+         must be None until alpha first toggles"
+    );
+
+    // Dive back. Base's stashed view returns.
+    harness.editor_mut().set_active_session(SessionId(1));
+    assert!(
+        harness.editor().file_explorer().is_some(),
+        "base session's file explorer should be restored from its stash"
+    );
+}
+
 #[test]
 fn close_session_refuses_base_session() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
