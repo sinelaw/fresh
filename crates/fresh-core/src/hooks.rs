@@ -314,6 +314,36 @@ pub enum HookArgs {
         data: String,
     },
 
+    /// PTY terminal received output bytes from the spawned process.
+    /// Fires for every async batch the editor reads off the PTY, so it
+    /// is hot — consumers should be cheap. The payload includes only a
+    /// snapshot of the last visible (cursor) row so plugins can detect
+    /// prompt patterns (`(Y/n)`, `Press enter`, `> `) without an extra
+    /// readback API. Plugins that need full output should tail the
+    /// terminal's backing file via the existing buffer.
+    TerminalOutput {
+        /// Stable terminal session id (matches `TerminalId.0`).
+        terminal_id: u64,
+        /// Snapshot of the cursor row's text content. May be empty
+        /// (just-resized terminal, cleared screen). Trailing whitespace
+        /// is preserved because prompt detection often depends on it
+        /// (e.g. `"... (Y/n): "` ends in a space).
+        last_line: String,
+    },
+
+    /// PTY terminal's spawned process has ended. Fires once per
+    /// terminal lifetime, after the editor has flushed any final
+    /// scrollback to the backing file.
+    TerminalExited {
+        /// Stable terminal session id (matches `TerminalId.0`).
+        terminal_id: u64,
+        /// Process exit code if known. `None` when the platform did
+        /// not report a status (signal, detach, kill before wait).
+        /// Plugins that can't distinguish should treat `None` as
+        /// "errored, cause unknown" rather than "ready".
+        exit_code: Option<i32>,
+    },
+
     /// Buffer language was changed (e.g. via "Set Language" command or Save-As)
     LanguageChanged {
         buffer_id: BufferId,
@@ -552,6 +582,48 @@ mod tests {
                 "variant should serialize as {{}}"
             );
         }
+    }
+
+    #[test]
+    fn hook_args_to_json_terminal_output_fields_are_flat() {
+        let json = hook_args_to_json(&HookArgs::TerminalOutput {
+            terminal_id: 7,
+            last_line: "Do you want me to attempt a fix? (Y/n): ".into(),
+        })
+        .unwrap();
+        assert_eq!(json["terminal_id"], 7);
+        assert_eq!(
+            json["last_line"],
+            "Do you want me to attempt a fix? (Y/n): "
+        );
+    }
+
+    #[test]
+    fn hook_args_to_json_terminal_exited_serializes_exit_code() {
+        let json_some = hook_args_to_json(&HookArgs::TerminalExited {
+            terminal_id: 3,
+            exit_code: Some(0),
+        })
+        .unwrap();
+        assert_eq!(json_some["terminal_id"], 3);
+        assert_eq!(json_some["exit_code"], 0);
+
+        let json_err = hook_args_to_json(&HookArgs::TerminalExited {
+            terminal_id: 4,
+            exit_code: Some(2),
+        })
+        .unwrap();
+        assert_eq!(json_err["exit_code"], 2);
+
+        let json_none = hook_args_to_json(&HookArgs::TerminalExited {
+            terminal_id: 5,
+            exit_code: None,
+        })
+        .unwrap();
+        assert!(
+            json_none["exit_code"].is_null(),
+            "exit_code: None should serialize as JSON null, not omitted: got {json_none}"
+        );
     }
 
     #[test]

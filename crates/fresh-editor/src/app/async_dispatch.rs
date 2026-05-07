@@ -449,8 +449,28 @@ impl Editor {
                             }
                         }
                     }
+
+                    // Notify plugins. Snapshot the cursor row's text so the
+                    // listener can match prompt patterns without a separate
+                    // readback API. The grid lock is released before
+                    // `run_hook` runs to avoid holding it across plugin code.
+                    let last_line = self
+                        .terminal_manager
+                        .get(terminal_id)
+                        .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
+                        .unwrap_or_default();
+                    self.plugin_manager.run_hook(
+                        "terminal_output",
+                        crate::services::plugins::hooks::HookArgs::TerminalOutput {
+                            terminal_id: terminal_id.0 as u64,
+                            last_line,
+                        },
+                    );
                 }
-                AsyncMessage::TerminalExited { terminal_id } => {
+                AsyncMessage::TerminalExited {
+                    terminal_id,
+                    exit_code,
+                } => {
                     tracing::info!("Terminal {:?} exited", terminal_id);
                     // Find the buffer associated with this terminal
                     if let Some((&buffer_id, _)) = self
@@ -505,6 +525,19 @@ impl Editor {
                         );
                     }
                     self.terminal_manager.close(terminal_id);
+
+                    // Notify plugins after the editor's own exit handling
+                    // is complete. Conductor's state machine reads this
+                    // to transition agents to READY (code 0) or ERRORED.
+                    // `exit_code` is currently always `None` here; full
+                    // wait-status capture is a follow-up commit.
+                    self.plugin_manager.run_hook(
+                        "terminal_exit",
+                        crate::services::plugins::hooks::HookArgs::TerminalExited {
+                            terminal_id: terminal_id.0 as u64,
+                            exit_code,
+                        },
+                    );
                 }
 
                 AsyncMessage::LspServerRequest {

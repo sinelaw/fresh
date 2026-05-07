@@ -172,6 +172,31 @@ impl TerminalState {
         true
     }
 
+    /// Snapshot of the cursor row's text content as a plain string.
+    ///
+    /// Used by the `terminal_output` plugin hook so listeners (e.g.
+    /// the Conductor agent state machine) can match prompt patterns
+    /// without a separate readback API. Trailing spaces from the
+    /// terminal grid are trimmed (alacritty pads each row to the full
+    /// column count); spaces inside the visible run are preserved
+    /// because prompts like `"... (Y/n): "` end in a space that is
+    /// *not* grid padding — it's typed by the program.
+    pub fn last_visible_line(&self) -> String {
+        let (_col, row) = self.cursor_position();
+        if row >= self.rows {
+            return String::new();
+        }
+        let cells = self.get_line(row);
+        let mut s: String = cells.iter().map(|cell| cell.c).collect();
+        // Strip alacritty's right-edge padding (the row is always
+        // `cols` cells wide; unused cells are spaces). We keep
+        // intra-line spaces by only trimming the trailing run that
+        // extends to the grid edge.
+        let trimmed_len = s.trim_end_matches(' ').len();
+        s.truncate(trimmed_len);
+        s
+    }
+
     /// Get a line of content for rendering
     ///
     /// Returns cells as (char, foreground_color, background_color, flags) tuples.
@@ -697,6 +722,38 @@ mod tests {
         state.resize(100, 30);
         assert_eq!(state.size(), (100, 30));
         assert!(state.is_dirty());
+    }
+
+    /// `last_visible_line` returns the text on the cursor row, with
+    /// the alacritty right-edge padding trimmed. This is the payload
+    /// the `terminal_output` plugin hook surfaces to the Conductor
+    /// state machine for prompt detection.
+    #[test]
+    fn test_last_visible_line_returns_cursor_row() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"hello\r\nworld");
+        // Cursor is now on the second line after writing "world".
+        assert_eq!(state.last_visible_line(), "world");
+    }
+
+    /// Empty cells past the visible run are stripped, but a single
+    /// trailing space typed by the program (typical for prompts like
+    /// `"(Y/n): "`) is preserved.
+    #[test]
+    fn test_last_visible_line_preserves_prompt_trailing_space() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"Continue? (Y/n): ");
+        // The literal trailing space is real prompt text, not grid
+        // padding past the cursor, so it must survive.
+        assert_eq!(state.last_visible_line(), "Continue? (Y/n): ");
+    }
+
+    /// A row that has only ever been the right-edge padding renders
+    /// as the empty string, not 80 spaces.
+    #[test]
+    fn test_last_visible_line_blank_row_is_empty() {
+        let state = TerminalState::new(80, 24);
+        assert_eq!(state.last_visible_line(), "");
     }
 
     #[test]

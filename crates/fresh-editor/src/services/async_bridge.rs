@@ -195,8 +195,17 @@ pub enum AsyncMessage {
     /// Terminal output received (triggers redraw)
     TerminalOutput { terminal_id: TerminalId },
 
-    /// Terminal process exited
-    TerminalExited { terminal_id: TerminalId },
+    /// Terminal process exited.
+    ///
+    /// `exit_code` is `None` when the editor cannot determine a status
+    /// (the wait happens in a separate thread, signal exits, kill
+    /// before wait, etc.). Populated end-to-end is a follow-up; the
+    /// initial wiring sends `None` so plugin handlers see the variant
+    /// shape that matches `HookArgs::TerminalExited`.
+    TerminalExited {
+        terminal_id: TerminalId,
+        exit_code: Option<i32>,
+    },
 
     /// LSP progress notification ($/progress)
     LspProgress {

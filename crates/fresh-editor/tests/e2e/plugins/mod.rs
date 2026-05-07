@@ -43,5 +43,6 @@ pub mod plugin;
 pub mod plugin_keybinding_execution;
 pub mod plugins_dir_in_working_dir;
 pub mod review_diff_ux_bugs;
+pub mod terminal_hooks;
 pub mod theme_editor;
 pub mod unified_keybindings;

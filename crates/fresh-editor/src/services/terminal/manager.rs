@@ -427,10 +427,19 @@ impl TerminalManager {
                     let _ = w.flush();
                 }
                 // Notify that terminal exited (receiver may be dropped during shutdown).
+                //
+                // `exit_code: None` for now — the actual `child.wait()`
+                // lives in the writer thread (see closure below) and we
+                // do not yet plumb its status back here. Plugins that
+                // need a code should treat `None` as "ended, status
+                // unknown" until that wiring lands.
                 if let Some(ref bridge) = async_bridge {
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = bridge.sender().send(
-                        crate::services::async_bridge::AsyncMessage::TerminalExited { terminal_id },
+                        crate::services::async_bridge::AsyncMessage::TerminalExited {
+                            terminal_id,
+                            exit_code: None,
+                        },
                     );
                 }
             });
