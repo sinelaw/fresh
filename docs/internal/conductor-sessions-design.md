@@ -501,6 +501,132 @@ remember not to evict the Control Room. Strictly more error-prone.
 
 This design picks **(A)**.
 
+## Rich Control Room rendering — the two complementary primitives
+
+The Screen 2 mockup (header line + 8-column SESSIONS table + dual
+preview/collision-radar panes + hotkey footer + summary line, all
+full-screen) is more than the existing `CenteredOverlay` (Live
+Grep–style centered prompt with input + suggestions + path-driven
+preview pane) can render. The two primitives below are designed to
+compose to deliver it, and to be independently useful for any
+future plugin that needs embedded editor views or full-screen
+chrome.
+
+### Primitive #1 — `render_content` becomes session-pluggable
+
+Refactor the existing renderer so its dependencies are explicit
+parameters rather than implicit `&mut self.*` reads. Concretely:
+
+- `cell_theme_map` and `pending_hardware_cursor` (the two pieces
+  of per-frame scratch state currently shared with the active
+  render) become **per-call scratch buffers** the caller owns.
+  Calling the renderer twice in one frame for two different
+  `(SplitManager, view_states)` pairs no longer clobbers
+  hit-testing or cursor placement of the first pass.
+- The per-frame render path then makes a second call, after
+  drawing the active session, with a previewed session's
+  stashed `(SplitManager, view_states)` into a sub-rect.
+- New plugin API: `editor.previewSessionInRect(sessionId)` —
+  one-shot "for the next frame, render this session in the
+  designated preview pane." Cleared on overlay close.
+
+This consumes the warm-swap state from Step 1f (split tree +
+view_states stash on `Session`) directly: the previewed session's
+splits are already structured exactly the same way as the active
+session's, just parked in `Session.splits_stash`. Rendering them
+needs no transformation, just temporary access.
+
+### Primitive #2 — plugin-owned full-screen overlay
+
+A virtual buffer can declare itself a **full-screen overlay**: the
+renderer treats it as editor chrome (drawn over the active
+session, doesn't mutate splits, doesn't take over the buffer set),
+and the plugin owns layout via a `Vec<Region>` callback. Each
+region is either:
+
+- **plugin-rendered text** — styled tokens from the existing
+  virtual-buffer entry mechanism (header, table rows, footer,
+  status — anything the plugin builds), or
+- **a delegate** — `{kind: "session_preview", session_id}` that
+  core fulfils via primitive #1.
+
+Input flows through the existing `defineMode` mechanism — the
+overlay declares a mode, plugin registers bindings (`Up`, `Down`,
+`Enter`, `n`, `d`, `m`, `k`, `r`, `Esc`, etc.), and key events
+route through the same dispatcher used by every other buffer
+mode. No new input model.
+
+### How Conductor composes both
+
+```
++-----------------------------------------------------------+
+| HEADER          (plugin region: styled text)              |
++-----------------------------------------------------------+
+| SESSIONS TABLE  (plugin region: 8-column rows w/ styling) |
+|                                                           |
++---------------------+-------------------------------------+
+| PREVIEW (delegate)  | COLLISION RADAR (plugin region)     |
+|                     |                                     |
+| { kind:             |                                     |
+|   "session_preview",|                                     |
+|   session_id: <sel> |                                     |
+| }                   |                                     |
++---------------------+-------------------------------------+
+| FOOTER          (plugin region: hotkey hints)             |
++-----------------------------------------------------------+
+| SUMMARY         (plugin region: aggregate counts)         |
++-----------------------------------------------------------+
+```
+
+The preview pane shows the **highlighted session's full editor
+UI** — splits, terminals, syntax-highlighted buffers, LSP
+markers, inline decorations — rendered natively. Live PTY output
+streams in for free because the renderer reads the terminal grid
+state directly each frame; no plugin TS code in the per-frame
+path.
+
+### Why this is the destination, not a steppingstone
+
+- **Zero plugin frame-loop cost on the live content.** The agent
+  terminal, the heaviest live data, is rendered by the same Rust
+  code that draws the active session. No QuickJS bridge in the
+  hot path.
+- **Composable.** Primitive #1 unblocks any future plugin that
+  wants embedded session/buffer views: side-by-side diff, code
+  review, multi-session dashboards, picture-in-picture.
+  Primitive #2 unblocks any plugin chrome: which-key menus,
+  status dashboards, custom REPLs.
+- **Clean ownership.** Chrome is plugin-rendered; embedded
+  editor content is core-rendered; one delegate kind bridges
+  them. There's no third layout system to maintain.
+- **Bug-for-bug parity with the active session.** When the
+  renderer adds a new feature (decorations, ANSI cell flags,
+  fold rendering), the previewed session inherits it
+  automatically.
+- **No new IPC, daemon, or process.** Both primitives are local
+  extensions of existing structures: parameters on the renderer,
+  attachment-kind flag on virtual buffers.
+
+### Effort breakdown
+
+- Primitive #1 — Medium. Borrow-checker work to lift
+  `cell_theme_map` and `pending_hardware_cursor` out of `Editor`
+  into per-call scratch; one new render-call site for the
+  preview rect; one plugin API.
+- Primitive #2 — Medium. New attachment kind for virtual
+  buffers; layout-region callback in the rendering path; plugin
+  API surface (similar in spirit to PR #1880's Global Panel,
+  but full-screen rather than edge-anchored, and with
+  delegate-region support).
+
+Status: not yet implemented. The current build delivers a
+**transient-dive workaround** — selecting a row in the floating
+prompt dives into that session, so the editor visible behind the
+overlay shows the session's full UI live. That's plugin-only
+(uses Step 1f warm-swap) and gives the same *effect* as the
+preview-pane delegate, but without the chrome around it (no
+table, no collision pane, no footer).
+
 ## User-facing screens
 
 This section catalogues every screen the user can see, in the order
