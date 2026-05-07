@@ -75,6 +75,19 @@ let promptSessionIds: number[] = [];
 // which row the user is pointing at.
 let promptSelectedIndex = 0;
 
+// "Live preview by transient dive": while the prompt is open we
+// dive into whichever session the user has highlighted, so the
+// editor visible behind the floating overlay shows that
+// session's full UI (splits, terminals, buffers, all of it,
+// updating live). On Esc we restore the original active
+// session; on Enter we leave the dive in place.
+//
+// The warm-swap migration (Step 1f, splits + view_states +
+// LSPs + file explorer) makes these dives cheap — picking
+// up/down through the list is a sequence of pointer swaps,
+// not a UI rebuild.
+let originalActiveSessionBeforePrompt: number | null = null;
+
 // =============================================================================
 // Session-list reconciliation
 // =============================================================================
@@ -162,29 +175,34 @@ const PROMPT_TYPE = "conductor-room";
 
 function openControlRoom(): void {
   promptSelectedIndex = 0;
+  originalActiveSessionBeforePrompt = editor.activeSession();
   editor.startPrompt("Conductor — sessions", PROMPT_TYPE, true);
   editor.setPromptSuggestions(buildSuggestions());
   editor.setStatus(
-    "Up/Down: select  Enter: dive  Ctrl-P → 'Conductor: …' for new/kill",
+    "Up/Down: live preview  Enter: keep dive  Esc: cancel",
   );
 }
 
 editor.on("prompt_selection_changed", (e) => {
   if (e.prompt_type !== PROMPT_TYPE) return;
   promptSelectedIndex = e.selected_index;
+  // Live preview: dive into the highlighted session so the
+  // editor visible behind the floating prompt shows its full
+  // UI. Cheap thanks to warm-swap.
+  const id = promptSessionIds[promptSelectedIndex];
+  if (typeof id === "number" && id !== editor.activeSession()) {
+    editor.setActiveSession(id);
+  }
 });
 
 editor.on("prompt_confirmed", async (e) => {
   if (e.prompt_type === PROMPT_TYPE) {
-    // Dive: the selected suggestion's `value` is the session id
-    // as a string. `selected_index` is null when the user hit
-    // Enter on free-form text; we treat that as "first match"
-    // (matching the Live Grep / Quick Open convention).
-    const idx = e.selected_index ?? 0;
-    if (idx < 0 || idx >= promptSessionIds.length) return;
-    const id = promptSessionIds[idx];
-    if (id === editor.activeSession()) return;
-    editor.setActiveSession(id);
+    // The transient-dive preview already moved active_session
+    // to the highlighted row. Confirm just leaves it there —
+    // no further action needed. We do clear the
+    // "before-prompt" snapshot so a subsequent Esc on a
+    // separate prompt doesn't try to restore stale state.
+    originalActiveSessionBeforePrompt = null;
     return;
   }
 
@@ -218,6 +236,24 @@ editor.on("prompt_confirmed", async (e) => {
 });
 
 editor.on("prompt_cancelled", (e) => {
+  if (e.prompt_type === PROMPT_TYPE) {
+    // Esc on the Conductor prompt rolls back the transient
+    // dive: restore the session that was active before the
+    // prompt opened. If the original session has since been
+    // closed (rare — would mean the user killed it from a
+    // sub-command while the prompt was open), do nothing.
+    const orig = originalActiveSessionBeforePrompt;
+    originalActiveSessionBeforePrompt = null;
+    if (orig === null) return;
+    if (orig === editor.activeSession()) return;
+    const stillExists = editor
+      .listSessions()
+      .some((s) => s.id === orig);
+    if (stillExists) {
+      editor.setActiveSession(orig);
+    }
+    return;
+  }
   if (
     e.prompt_type === "conductor-new-branch" ||
     e.prompt_type === "conductor-new-cmd"
