@@ -1045,20 +1045,24 @@ The session namespace is `[v1.1+]` and exists for other plugins
 that genuinely want per-project state.
 
 ```ts
-editor.setGlobalState(key: string, value: string): void;
-editor.getGlobalState(key: string): string | null;
+editor.setGlobalState(key: string, value: unknown): boolean;
+editor.getGlobalState(key: string): unknown;          // undefined if missing
 
-editor.setSessionState(key: string, value: unknown): void;
-editor.getSessionState(key: string): unknown;
+editor.setSessionState(key: string, value: unknown): void;  // v1.1+
+editor.getSessionState(key: string): unknown;               // v1.1+
 ```
 
-Persistence is editor-driven: the global namespace is flushed to
-`.fresh/state/<plugin>.json`, the session namespace to the session's
-record in `.fresh/sessions.json`.
+The global namespace **already exists in core** as of this
+design's authoring — `setGlobalState`/`getGlobalState` accept any
+JSON-compatible value, are namespaced by the calling plugin's
+name automatically, and treat `null`/`undefined` as delete. Plugin
+isolation is verified by existing tests (Plugin A's keys are
+invisible to Plugin B).
 
-In MVP, even the global namespace's *cross-restart persistence* is
-`[v1.1+]` — `set/getGlobalState` work in-memory only for v1, so
-plugin state survives plugin reloads but not editor restarts.
+Cross-restart persistence is `[v1.1+]` — values live in the state
+snapshot only, so they survive plugin reloads (good enough for
+Conductor reloading itself) but not editor restarts. Persisting
+to `.fresh/state/<plugin>.json` is the v1.1+ extension.
 
 ### Diff rendering  `[v1.1+]`
 
@@ -1121,11 +1125,14 @@ at the two `async_dispatch.rs` arms.
 Wrap `notify` crate. Surface `path_changed` event. Required for the
 collision radar.
 
-### Step 5 — plugin state scopes  `[MVP for global; v1.1+ for session and persistence]`
+### Step 5 — plugin state scopes  `[MVP — already implemented in core; v1.1+ for session and persistence]`
 
-Add `setGlobalState`/`getGlobalState` (MVP, in-memory) and
-`setSessionState`/`getSessionState` (deferred). Persistence to
-`.fresh/` is `[v1.1+]`.
+`setGlobalState`/`getGlobalState` are already in core at the time
+this design was written, with per-plugin namespacing and
+roundtrip/isolation/delete tests. No further work needed for MVP.
+
+`setSessionState`/`getSessionState` (per-session scope) and
+cross-restart persistence to `.fresh/` are `[v1.1+]`.
 
 ### Step 6 — Conductor plugin (separate doc)  `[MVP — minimum viable plugin]`
 
