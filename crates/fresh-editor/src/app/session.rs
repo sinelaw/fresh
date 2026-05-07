@@ -19,8 +19,10 @@
 //! commits move those into Session one subsystem at a time, each
 //! step preserving today's single-root behaviour.
 
+use crate::model::event::LeafId;
 use crate::services::lsp::manager::LspManager;
 use crate::view::file_tree::FileTreeView;
+use crate::view::split::{SplitManager, SplitViewState};
 use fresh_core::{BufferId, SessionId};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -55,6 +57,17 @@ pub struct Session {
     /// once. `None` means "never opened" — the caller rebuilds at
     /// `root` on first toggle.
     pub file_explorer_stash: Option<FileTreeView>,
+
+    /// **Stash.** Split-tree layout (split tree + per-leaf view
+    /// state — scroll, cursor positions, focused buffer in each
+    /// leaf) when this session is *inactive*. The active session's
+    /// layout lives on `Editor.split_manager` and
+    /// `Editor.split_view_states`; on dive we move all of it.
+    ///
+    /// `None` means "this session has never been activated and so
+    /// has no layout yet"; the dive code creates a fresh layout
+    /// rooted at a new empty unnamed buffer for that session.
+    pub splits_stash: Option<(SplitManager, HashMap<LeafId, SplitViewState>)>,
 
     /// **Stash.** Polling-based mtime cache for auto-revert when
     /// this session is *inactive*. Auto-revert only fires for
@@ -115,6 +128,7 @@ impl Session {
             file_mod_times_stash: HashMap::new(),
             lsp_stash: None,
             panel_ids_stash: HashMap::new(),
+            splits_stash: None,
             buffers: HashSet::new(),
         }
     }

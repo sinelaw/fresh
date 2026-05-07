@@ -17,7 +17,9 @@
 
 use crate::app::session::Session;
 use crate::services::plugins::hooks::HookArgs;
-use fresh_core::SessionId;
+use crate::view::split::{SplitManager, SplitViewState};
+use fresh_core::{BufferId, SessionId};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 impl crate::app::Editor {
@@ -75,30 +77,98 @@ impl crate::app::Editor {
         // self.sessions.
         let new_root = self.sessions[&id].root.clone();
 
+        let needs_fresh_layout = self
+            .sessions
+            .get(&id)
+            .is_some_and(|s| s.splits_stash.is_none());
+
+        // For a never-activated incoming session, allocate a
+        // fresh seed buffer + a SplitManager rooted at it
+        // BEFORE we touch `Editor.split_manager`. We deliberately
+        // build the buffer state directly (not via `new_buffer`)
+        // so the outgoing session's split manager — still
+        // installed in `self.split_manager` — is not mutated.
+        // After the swap below, the active session is the
+        // incoming one and the seed buffer attaches to it.
+        let fresh_layout = if needs_fresh_layout {
+            let buf = BufferId(self.next_buffer_id);
+            self.next_buffer_id += 1;
+            let mut state = crate::state::EditorState::new(
+                self.terminal_width,
+                self.terminal_height,
+                self.config.editor.large_file_threshold_bytes as usize,
+                std::sync::Arc::clone(&self.authority.filesystem),
+            );
+            state
+                .margins
+                .configure_for_line_numbers(self.config.editor.line_numbers);
+            state
+                .buffer
+                .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
+            self.buffers.insert(buf, state);
+            // Skip `attach_buffer_to_active_session` — at this
+            // point `active_session` is still the outgoing one.
+            // We attach to the incoming session below, after the
+            // active pointer moves.
+            self.event_logs
+                .insert(buf, crate::model::event::EventLog::new());
+            self.buffer_metadata
+                .insert(buf, crate::app::types::BufferMetadata::new());
+            let manager = SplitManager::new(buf);
+            let active_leaf = manager.active_split();
+            let mut view_states = HashMap::new();
+            view_states.insert(
+                active_leaf,
+                SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf),
+            );
+            Some((buf, manager, view_states))
+        } else {
+            None
+        };
+
         // Stash the outgoing session's live state.
         let outgoing_explorer = self.file_explorer.take();
         let outgoing_panel_ids = std::mem::take(&mut self.panel_ids);
         let outgoing_lsp = self.lsp.take();
         let outgoing_mtimes = std::mem::take(&mut self.file_mod_times);
+        let outgoing_splits = std::mem::replace(
+            &mut self.split_manager,
+            SplitManager::new(BufferId(usize::MAX)),
+        );
+        let outgoing_view_states = std::mem::take(&mut self.split_view_states);
         if let Some(outgoing) = self.sessions.get_mut(&previous_id) {
             outgoing.file_explorer_stash = outgoing_explorer;
             outgoing.panel_ids_stash = outgoing_panel_ids;
             outgoing.lsp_stash = outgoing_lsp;
             outgoing.file_mod_times_stash = outgoing_mtimes;
+            outgoing.splits_stash = Some((outgoing_splits, outgoing_view_states));
         }
 
         self.active_session = id;
         self.working_dir = new_root;
 
-        // Restore the incoming session's stashed state. A
-        // never-activated session has empty stashes; the dock,
-        // file explorer, LSP set, and mtime cache rebuild on
-        // demand at the new root.
+        // Restore the incoming session's stashed state. Buffers,
+        // file explorer, LSP set, mtime cache.
         if let Some(incoming) = self.sessions.get_mut(&id) {
             self.file_explorer = incoming.file_explorer_stash.take();
             self.panel_ids = std::mem::take(&mut incoming.panel_ids_stash);
             self.lsp = incoming.lsp_stash.take();
             self.file_mod_times = std::mem::take(&mut incoming.file_mod_times_stash);
+            if let Some((mgr, vs)) = incoming.splits_stash.take() {
+                self.split_manager = mgr;
+                self.split_view_states = vs;
+            }
+        }
+
+        // For a never-activated incoming session, install the
+        // freshly-built layout and attach the seed buffer to the
+        // (now-active) incoming session.
+        if let Some((buf, mgr, vs)) = fresh_layout {
+            self.split_manager = mgr;
+            self.split_view_states = vs;
+            if let Some(s) = self.sessions.get_mut(&id) {
+                s.buffers.insert(buf);
+            }
         }
 
         self.plugin_manager.run_hook(

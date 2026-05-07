@@ -165,6 +165,48 @@ fn close_session_refuses_active_session() {
     assert_eq!(harness.editor().session_count(), 2);
 }
 
+/// `setActiveSession` warm-swaps the split-tree layout (split
+/// tree + per-leaf view state). Each session has its own splits
+/// — the active buffer in the base session does not appear as
+/// active in alpha, and the buffer set visible in tabs differs.
+///
+/// Concretely: the base session has its initial scratch buffer
+/// active. Diving into a never-activated alpha brings up alpha's
+/// fresh empty unnamed buffer (different id). Diving back brings
+/// the base's active buffer back.
+#[test]
+fn dive_swaps_split_tree_and_active_buffer() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let base_active = harness.editor().active_buffer();
+
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(PathBuf::from("/tmp/wt-alpha-splits"), "alpha".into());
+
+    harness.editor_mut().set_active_session(alpha);
+    let alpha_active = harness.editor().active_buffer();
+    assert_ne!(
+        alpha_active, base_active,
+        "alpha's fresh dive must allocate a new seed buffer, \
+         not inherit the base session's active buffer"
+    );
+
+    harness.editor_mut().set_active_session(SessionId(1));
+    assert_eq!(
+        harness.editor().active_buffer(),
+        base_active,
+        "diving back must restore the base session's split tree \
+         and active buffer"
+    );
+
+    harness.editor_mut().set_active_session(alpha);
+    assert_eq!(
+        harness.editor().active_buffer(),
+        alpha_active,
+        "diving back into alpha (now warm) must restore alpha's seed buffer"
+    );
+}
+
 /// `setActiveSession` warm-swaps the per-session mtime cache for
 /// auto-revert. Each session tracks its own files; when the user
 /// dives, the active mtime map switches with the rest of the
