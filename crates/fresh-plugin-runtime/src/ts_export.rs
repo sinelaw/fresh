@@ -504,6 +504,15 @@ interface HookEventMap {
   language_changed: { buffer_id: number; language: string };
   theme_inspect_key: { theme_name: string; key: string };
   keyboard_shortcuts: { bindings: { key: string; action: string }[] };
+
+  // ── PTY terminals (see crates/fresh-core/src/hooks.rs) ───────────────────
+  terminal_output: { terminal_id: number; last_line: string };
+  terminal_exit: { terminal_id: number; exit_code: number | null };
+
+  // ── editor sessions (Conductor; see conductor-sessions-design.md) ────────
+  session_created: { id: number; label: string; root: string };
+  session_closed: { id: number };
+  active_session_changed: { previous_id: number | null; active_id: number };
 }
 
 /**
