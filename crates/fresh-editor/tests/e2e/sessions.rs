@@ -18,7 +18,7 @@
 //! invariants that have no screen surface yet.
 
 use crate::common::harness::EditorTestHarness;
-use fresh_core::SessionId;
+use fresh_core::{BufferId, SessionId};
 
 #[test]
 fn editor_boots_with_one_base_session() {
@@ -163,6 +163,38 @@ fn close_session_refuses_active_session() {
 
     assert!(!removed, "close_session must refuse the active session");
     assert_eq!(harness.editor().session_count(), 2);
+}
+
+/// `setActiveSession` warm-swaps utility-dock panel-id occupancy.
+/// Each session has its own dock — a search panel claimed in the
+/// base session disappears when diving to alpha and reappears on
+/// dive-back, even though Editor.panel_ids is the only live map.
+#[test]
+fn dive_stashes_and_restores_panel_ids() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(PathBuf::from("/tmp/wt-alpha-panel"), "alpha".into());
+
+    // Pretend the base session has a search panel claimed in the dock.
+    harness
+        .editor_mut()
+        .insert_panel_id_for_test("search".to_string(), BufferId(42));
+    assert!(harness.editor().panel_ids_for_test().contains_key("search"));
+
+    harness.editor_mut().set_active_session(alpha);
+    assert!(
+        !harness.editor().panel_ids_for_test().contains_key("search"),
+        "alpha's dock starts empty — base's claim must have been stashed away"
+    );
+
+    harness.editor_mut().set_active_session(SessionId(1));
+    assert_eq!(
+        harness.editor().panel_ids_for_test().get("search").copied(),
+        Some(BufferId(42)),
+        "diving back must restore the base session's panel claim"
+    );
 }
 
 /// `setActiveSession` warm-swaps file explorer state: each session

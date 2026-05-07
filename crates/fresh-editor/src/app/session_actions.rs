@@ -75,21 +75,23 @@ impl crate::app::Editor {
         // self.sessions.
         let new_root = self.sessions[&id].root.clone();
 
-        // Stash the outgoing session's live file explorer.
+        // Stash the outgoing session's live state.
         let outgoing_explorer = self.file_explorer.take();
+        let outgoing_panel_ids = std::mem::take(&mut self.panel_ids);
         if let Some(outgoing) = self.sessions.get_mut(&previous_id) {
             outgoing.file_explorer_stash = outgoing_explorer;
+            outgoing.panel_ids_stash = outgoing_panel_ids;
         }
 
         self.active_session = id;
         self.working_dir = new_root;
 
-        // Restore the incoming session's stashed view, if any. A
-        // never-activated session has `None` here, in which case
-        // the next toggle rebuilds at the new root — same fallback
-        // as the cold-swap MVP.
+        // Restore the incoming session's stashed state. A
+        // never-activated session has empty stashes; the dock and
+        // file explorer rebuild on demand at the new root.
         if let Some(incoming) = self.sessions.get_mut(&id) {
             self.file_explorer = incoming.file_explorer_stash.take();
+            self.panel_ids = std::mem::take(&mut incoming.panel_ids_stash);
         }
 
         self.plugin_manager.run_hook(

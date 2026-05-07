@@ -560,6 +560,22 @@ impl Editor {
         self.sessions.get(&id)
     }
 
+    /// Active session's utility-dock panel-id → buffer-id map.
+    /// Used by tests to assert that warm-swap restored a
+    /// session's stashed dock occupancy.
+    #[doc(hidden)]
+    pub fn panel_ids_for_test(&self) -> &std::collections::HashMap<String, fresh_core::BufferId> {
+        &self.panel_ids
+    }
+
+    /// Inject a panel_ids entry. Used by tests to populate the
+    /// active session's dock occupancy without going through the
+    /// async plugin command path.
+    #[doc(hidden)]
+    pub fn insert_panel_id_for_test(&mut self, key: String, buffer_id: fresh_core::BufferId) {
+        self.panel_ids.insert(key, buffer_id);
+    }
+
     /// Mutable access to the active session. Used by lifecycle code
     /// that re-targets per-session state (renaming, etc.). Same
     /// panic invariant as `active_session()`.

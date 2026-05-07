@@ -21,7 +21,7 @@
 
 use crate::view::file_tree::FileTreeView;
 use fresh_core::{BufferId, SessionId};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// A project-rooted unit of editor state.
@@ -55,6 +55,14 @@ pub struct Session {
     /// `root` on first toggle.
     pub file_explorer_stash: Option<FileTreeView>,
 
+    /// **Stash.** Utility-dock panel-id → buffer-id occupancy when
+    /// this session is *inactive*. The active session's
+    /// occupancy lives on `Editor.panel_ids`. Each session gets
+    /// its own dock — when one session has the search panel
+    /// claimed and the user dives elsewhere, the new session
+    /// starts with an empty dock and rebuilds on demand.
+    pub panel_ids_stash: HashMap<String, BufferId>,
+
     /// Buffers attached to this session (membership only — the
     /// buffer storage stays on `Editor`, see "Why buffer storage
     /// stays Editor-global" in the design doc). Used by
@@ -83,6 +91,7 @@ impl Session {
             label,
             root,
             file_explorer_stash: None,
+            panel_ids_stash: HashMap::new(),
             buffers: HashSet::new(),
         }
     }
