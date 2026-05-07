@@ -110,6 +110,14 @@ the index.
 - Up / Down / `Ctrl+n` / `Ctrl+p` (navigate)
 - `Enter` (dive), `n` (new), `d` (diff), `m` (merge), `k`
   (kill+drop), `Esc` (close)
+- Mouse: click row to select, double-click to dive
+
+**Diff invocation (`d`)**
+- Spawns the existing review-diff feature (see
+  `docs/internal/REVIEW_DIFF_*.md`) on the selected session's
+  worktree against the base. No new diff renderer is needed for
+  MVP. The native side-by-side renderer in `§ Plugin API surface`
+  is a v1.1+ refinement, not a prerequisite.
 
 **Migration steps from `§ Migration sequence`**
 - Step 1, Step 2, Step 3, Step 5 (global namespace only), Step 6.
@@ -125,8 +133,10 @@ status-bar awareness or pre-merge collision warnings.
 - `watchPath` / `unwatchPath` / `path_changed` event (enables
   collision radar)
 - `setSessionState` / `getSessionState` (other plugins' concern)
-- `openDiffView` (MVP shells out `git diff --color` in a session
-  terminal buffer)
+- `openDiffView` for a *native* side-by-side diff renderer
+  invoked programmatically with arbitrary `oldText`/`newText`.
+  MVP uses the existing review-diff feature instead, invoked from
+  Conductor's `d` action.
 - `openFile({ sessionId })` (MVP only opens in active session)
 
 **Control Room enrichments**
@@ -139,7 +149,6 @@ status-bar awareness or pre-merge collision warnings.
 - "Promote one, kill the rest" cluster action on `m`
 - Rename (`r`)
 - Tab to cycle preview/collision pane focus
-- Mouse: click to select, double-click to dive
 
 **Lifecycle**
 - Cross-restart persistence of session list and layout snapshots
@@ -722,14 +731,14 @@ via config.
 | Ctrl + n / Ctrl + p | Cycle selection (with wrap) | always | MVP |
 | Enter | Dive into selected | session is not the active one | MVP |
 | n | New session | always | MVP |
-| d | Show diff | selection has changes | MVP (via `git diff` in terminal) |
+| d | Show diff | selection has changes | MVP (invokes existing review-diff) |
 | m | Merge selected into base | state == READY | MVP |
 | k | Kill agent (first press) / drop worktree (second press on tombstone) | not the base session | MVP — single press kills+drops |
 | r | Rename / re-label session | always | v1.1+ |
 | Tab | Cycle preview pane focus (terminal / collisions) | always | v1.1+ |
 | Esc | Close Control Room | always | MVP |
-| Mouse: click row | Select | always | v1.1+ |
-| Mouse: double-click row | Dive | session is not the active one | v1.1+ |
+| Mouse: click row | Select | always | MVP |
+| Mouse: double-click row | Dive | session is not the active one | MVP |
 
 `m` and `k`-on-non-tombstone both prompt for confirmation via
 `showActionPopup` because both are destructive (work that hasn't
@@ -1053,8 +1062,15 @@ plugin state survives plugin reloads but not editor restarts.
 
 ### Diff rendering  `[v1.1+]`
 
-MVP shells out `git diff --color` into a session terminal buffer
-opened by Conductor. Native side-by-side diff is `[v1.1+]`.
+MVP invokes the existing review-diff feature
+(`docs/internal/REVIEW_DIFF_*.md`,
+`docs/internal/SIDE_BY_SIDE_HUNK_NAV_REBINDABLE.md`) from
+Conductor's `d` action — Fresh already has a side-by-side review
+diff with hunk navigation, and Conductor reuses it pointed at the
+selected session's worktree against the base. The
+`openDiffView` API below is a programmatic entry point with
+arbitrary `oldText`/`newText` for plugins that need to diff
+non-git content; it is `[v1.1+]`.
 
 ```ts
 editor.openDiffView(opts: {
@@ -1118,10 +1134,12 @@ Drives the whole feature. Uses only the APIs introduced above. The
 MVP plugin implements Screens 1–4 with the reduced column set and
 state set defined in `§ MVP scope`.
 
-### Step 7 — diff renderer  `[v1.1+]`
+### Step 7 — programmatic diff API  `[v1.1+]`
 
-Native vertical diff. Falls back to `git diff` in a terminal until
-this lands.
+A plugin-callable `openDiffView` with arbitrary content (not just
+two refs in a git repo). MVP doesn't need this because the existing
+review-diff feature covers the only Conductor diff use case
+(worktree vs base).
 
 ### Step 8 — session persistence across restart  `[v1.1+]`
 
