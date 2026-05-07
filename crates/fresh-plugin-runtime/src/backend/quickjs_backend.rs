@@ -3298,6 +3298,78 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    // === Sessions ===
+    //
+    // See docs/internal/conductor-sessions-design.md. The base
+    // session is always id 1 and survives every editor session.
+    // Plugins observe lifecycle through the `session_created`,
+    // `session_closed`, and `active_session_changed` hooks; the
+    // current snapshot of all sessions and the active id is
+    // available synchronously from `listSessions` / `activeSession`.
+
+    /// Create a new editor session rooted at `root`. `root` must be
+    /// an absolute path; relative paths are rejected by the editor
+    /// (logged, no session created). The new session's id is
+    /// reported via the `session_created` hook payload — plugins
+    /// that need the id should listen for that event rather than
+    /// polling `listSessions`.
+    ///
+    /// Returns `false` only when the IPC channel to the editor is
+    /// closed (editor is shutting down).
+    pub fn create_session(&self, root: String, label: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::CreateSession {
+                root: std::path::PathBuf::from(root),
+                label,
+            })
+            .is_ok()
+    }
+
+    /// Make the session with id `id` the active one. No-op if
+    /// already active. Errors (id not found) are logged on the
+    /// editor side; the JS caller can verify by reading
+    /// `activeSession()` after.
+    pub fn set_active_session(&self, id: u64) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetActiveSession {
+                id: fresh_core::SessionId(id),
+            })
+            .is_ok()
+    }
+
+    /// Close session `id`. Refuses to close the active session or
+    /// the base session (id 1). Logs and no-ops on failure.
+    pub fn close_session(&self, id: u64) -> bool {
+        self.command_sender
+            .send(PluginCommand::CloseSession {
+                id: fresh_core::SessionId(id),
+            })
+            .is_ok()
+    }
+
+    /// All editor sessions, sorted by id (creation order). Always
+    /// non-empty (the base session is always present).
+    #[plugin_api(ts_return = "SessionInfo[]")]
+    pub fn list_sessions<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let sessions: Vec<fresh_core::api::SessionInfo> = self
+            .state_snapshot
+            .read()
+            .map(|s| s.sessions.clone())
+            .unwrap_or_default();
+        rquickjs_serde::to_value(ctx, &sessions).map_err(|e| {
+            rquickjs::Error::new_from_js_message("serialize", "SessionInfo", &e.to_string())
+        })
+    }
+
+    /// The currently active session id. Always present in
+    /// `listSessions()`.
+    pub fn active_session(&self) -> u64 {
+        self.state_snapshot
+            .read()
+            .map(|s| s.active_session_id.0)
+            .unwrap_or(1)
+    }
+
     /// Set scroll position of a split
     pub fn set_split_scroll(&self, split_id: u32, top_byte: u32) -> bool {
         self.command_sender
@@ -7727,6 +7799,112 @@ mod tests {
             }
             _ => panic!("Expected FocusSplit, got {:?}", cmd),
         }
+    }
+
+    /// `editor.createSession`, `setActiveSession`, and `closeSession`
+    /// each dispatch the matching `PluginCommand`, with arguments
+    /// preserved.
+    #[test]
+    fn test_api_session_lifecycle_dispatches_commands() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.createSession("/tmp/wt-feat", "feat");
+            editor.setActiveSession(7);
+            editor.closeSession(3);
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        let create = rx.try_recv().unwrap();
+        match create {
+            fresh_core::api::PluginCommand::CreateSession { root, label } => {
+                assert_eq!(root, std::path::PathBuf::from("/tmp/wt-feat"));
+                assert_eq!(label, "feat");
+            }
+            other => panic!("Expected CreateSession, got {:?}", other),
+        }
+
+        let activate = rx.try_recv().unwrap();
+        match activate {
+            fresh_core::api::PluginCommand::SetActiveSession { id } => {
+                assert_eq!(id, fresh_core::SessionId(7));
+            }
+            other => panic!("Expected SetActiveSession, got {:?}", other),
+        }
+
+        let close = rx.try_recv().unwrap();
+        match close {
+            fresh_core::api::PluginCommand::CloseSession { id } => {
+                assert_eq!(id, fresh_core::SessionId(3));
+            }
+            other => panic!("Expected CloseSession, got {:?}", other),
+        }
+    }
+
+    /// `editor.listSessions()` reads from the state snapshot and
+    /// returns `SessionInfo` objects shaped for plugin consumption.
+    /// `editor.activeSession()` returns the snapshot's active id.
+    #[test]
+    fn test_api_list_sessions_reads_snapshot() {
+        let (tx, _rx) = mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+
+        {
+            let mut state = state_snapshot.write().unwrap();
+            state.sessions = vec![
+                fresh_core::api::SessionInfo {
+                    id: fresh_core::SessionId(1),
+                    label: "main".into(),
+                    root: std::path::PathBuf::from("/repo"),
+                },
+                fresh_core::api::SessionInfo {
+                    id: fresh_core::SessionId(2),
+                    label: "feat-auth".into(),
+                    root: std::path::PathBuf::from("/wt/feat-auth"),
+                },
+            ];
+            state.active_session_id = fresh_core::SessionId(2);
+        }
+
+        let services = Arc::new(fresh_core::services::NoopServiceBridge);
+        let mut backend = QuickJsBackend::with_state(state_snapshot, tx, services).unwrap();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const list = editor.listSessions();
+            globalThis._sessionCount = list.length;
+            globalThis._secondLabel = list[1].label;
+            globalThis._secondRoot = list[1].root;
+            globalThis._activeId = editor.activeSession();
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let count: u32 = global.get("_sessionCount").unwrap();
+                let label: String = global.get("_secondLabel").unwrap();
+                let root: String = global.get("_secondRoot").unwrap();
+                let active: u32 = global.get("_activeId").unwrap();
+                assert_eq!(count, 2);
+                assert_eq!(label, "feat-auth");
+                assert_eq!(root, "/wt/feat-auth");
+                assert_eq!(active, 2);
+            });
     }
 
     #[test]

@@ -66,6 +66,7 @@ mod scrollbar_math;
 mod search_ops;
 mod search_scan;
 pub mod session;
+mod session_actions;
 mod settings_actions;
 mod settings_prompts;
 mod shell_command;

@@ -314,6 +314,38 @@ pub enum HookArgs {
         data: String,
     },
 
+    /// A new editor session was created. Fires after the session is
+    /// added to `Editor.sessions`, before any UI retarget. Plugins
+    /// (like Conductor) use this to reconcile their per-session
+    /// bookkeeping with the editor.
+    SessionCreated {
+        /// The new session's stable id.
+        id: u64,
+        /// Resolved label (basename fallback applied).
+        label: String,
+        /// Absolute project root.
+        root: String,
+    },
+
+    /// An editor session was closed and its state dropped. The id
+    /// is still valid in the payload but is no longer present in
+    /// `editor.listSessions()`.
+    SessionClosed { id: u64 },
+
+    /// The active session changed. Fires after the editor's UI has
+    /// retargeted (file tree, working_dir, snapshot). Plugins
+    /// observing for "the editor's project root just changed" use
+    /// this rather than polling.
+    ActiveSessionChanged {
+        /// The previously active session id, or `None` only on
+        /// first switch from the initial base session — currently
+        /// always `Some` since the base session always exists.
+        previous_id: Option<u64>,
+        /// The newly active session id. Always present in the
+        /// `sessions` list.
+        active_id: u64,
+    },
+
     /// PTY terminal received output bytes from the spawned process.
     /// Fires for every async batch the editor reads off the PTY, so it
     /// is hot — consumers should be cheap. The payload includes only a

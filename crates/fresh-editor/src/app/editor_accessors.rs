@@ -553,6 +553,13 @@ impl Editor {
         self.sessions.len()
     }
 
+    /// Look up a session by id. Returns `None` if `id` is not in
+    /// the sessions map. Useful for tests; production code that
+    /// needs the active session should use `active_session()`.
+    pub fn session(&self, id: fresh_core::SessionId) -> Option<&crate::app::session::Session> {
+        self.sessions.get(&id)
+    }
+
     /// Mutable access to the active session. Used by lifecycle code
     /// that re-targets per-session state (renaming, etc.). Same
     /// panic invariant as `active_session()`.

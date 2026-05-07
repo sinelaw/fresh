@@ -50,6 +50,7 @@ use crate::menu::{Menu, MenuItem};
 use crate::overlay::{OverlayHandle, OverlayNamespace};
 use crate::text_property::{TextProperty, TextPropertyEntry};
 use crate::BufferId;
+use crate::SessionId;
 use crate::SplitId;
 use crate::TerminalId;
 use lsp_types;
@@ -384,6 +385,31 @@ pub struct ActionSpec {
 
 fn default_action_count() -> u32 {
     1
+}
+
+/// `serde(default)` fallback for `EditorStateSnapshot.active_session_id`
+/// — old serialized snapshots predate the field. Falls back to the
+/// always-present base session (id 1).
+fn default_session_id() -> SessionId {
+    SessionId(1)
+}
+
+/// Information about an editor session (plugin-visible). Returned
+/// by `editor.listSessions()` and carried in the snapshot. Mirrors
+/// the editor-side `Session` struct — see
+/// `crates/fresh-editor/src/app/session.rs` and
+/// `docs/internal/conductor-sessions-design.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SessionInfo {
+    /// Stable session id. The base session is always `1`.
+    #[ts(type = "number")]
+    pub id: SessionId,
+    /// User-visible label (defaults to root basename).
+    pub label: String,
+    /// Absolute project root.
+    #[ts(type = "string")]
+    pub root: PathBuf,
 }
 
 /// Information about a buffer
@@ -886,8 +912,21 @@ pub struct EditorStateSnapshot {
     pub selected_text: Option<String>,
     /// Internal clipboard content (for plugins that need clipboard access)
     pub clipboard: String,
-    /// Editor's working directory (for file operations and spawning processes)
+    /// Editor's working directory (for file operations and spawning processes).
+    ///
+    /// Equal to `sessions[i].root` where `sessions[i].id == active_session_id`.
+    /// Plugins that just need "where am I" can read this directly; plugins
+    /// orchestrating multiple sessions (Conductor) iterate `sessions`.
     pub working_dir: PathBuf,
+    /// All editor sessions, in id order. Always non-empty (the base
+    /// session is `id == 1`). Updated when sessions are
+    /// created/closed or relabelled.
+    #[serde(default)]
+    pub sessions: Vec<SessionInfo>,
+    /// Id of the currently active session. Always present in
+    /// `sessions`. Read by plugins via `editor.activeSession()`.
+    #[serde(default = "default_session_id")]
+    pub active_session_id: SessionId,
     /// Status-bar / explorer label for the active authority.
     ///
     /// Empty = the local (default) authority with nothing to render.
@@ -996,6 +1035,8 @@ impl EditorStateSnapshot {
             selected_text: None,
             clipboard: String::new(),
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            sessions: Vec::new(),
+            active_session_id: SessionId(1),
             authority_label: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
@@ -1117,6 +1158,32 @@ pub enum PluginCommand {
 
     /// Unregister a command by name
     UnregisterCommand { name: String },
+
+    /// Create a new editor session rooted at `root`.
+    ///
+    /// `root` must be an absolute path; relative paths are rejected
+    /// rather than silently joined onto the active session's root —
+    /// that ambiguity would leak the wrong cwd into agent processes.
+    /// `label` may be empty; the editor falls back to the basename
+    /// of `root` (matching `Session::new`).
+    ///
+    /// The new session's id is assigned by the editor and reported
+    /// back via the `session_created` plugin hook (id, label, root
+    /// in payload). Sessions are not made active on creation;
+    /// follow up with `SetActiveSession` to dive.
+    CreateSession { root: PathBuf, label: String },
+
+    /// Make `id` the active session. No-op if `id` is already
+    /// active. Fires `active_session_changed` on transition.
+    /// Errors (id not found) are logged via tracing rather than
+    /// surfaced to the plugin — the plugin can verify by reading
+    /// `editor.activeSession()` after.
+    SetActiveSession { id: SessionId },
+
+    /// Close a session and drop its associated state. Refuses to
+    /// close the currently active session — the caller must switch
+    /// first. Fires `session_closed` on success.
+    CloseSession { id: SessionId },
 
     /// Open a file in the editor (in background, without switching focus)
     OpenFileInBackground { path: PathBuf },

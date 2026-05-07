@@ -289,6 +289,25 @@ impl Editor {
 
             // Update working directory (for spawning processes in correct directory)
             snapshot.working_dir = self.working_dir.clone();
+
+            // Publish the session list so plugins (Conductor, etc.)
+            // see updates from createSession/closeSession without
+            // a separate notification path. Sorted by id for
+            // deterministic order — `next_session_id` is monotonic
+            // so this is "creation order".
+            let mut session_infos: Vec<fresh_core::api::SessionInfo> = self
+                .sessions
+                .values()
+                .map(|s| fresh_core::api::SessionInfo {
+                    id: s.id,
+                    label: s.label.clone(),
+                    root: s.root.clone(),
+                })
+                .collect();
+            session_infos.sort_by_key(|s| s.id.0);
+            snapshot.sessions = session_infos;
+            snapshot.active_session_id = self.active_session;
+
             snapshot.authority_label = self.authority.display_label.clone();
 
             // Update LSP diagnostics: Arc refcount bump; no clone.
@@ -808,6 +827,25 @@ impl Editor {
                 if let Some(prompt) = &mut self.prompt {
                     prompt.title = title;
                 }
+            }
+
+            // ==================== Session lifecycle ====================
+            // See docs/internal/conductor-sessions-design.md.
+            PluginCommand::CreateSession { root, label } => {
+                if !root.is_absolute() {
+                    tracing::warn!(
+                        "CreateSession rejected: root must be absolute, got {:?}",
+                        root
+                    );
+                } else {
+                    let _ = self.create_session_at(root, label);
+                }
+            }
+            PluginCommand::SetActiveSession { id } => {
+                self.set_active_session(id);
+            }
+            PluginCommand::CloseSession { id } => {
+                let _ = self.close_session(id);
             }
 
             // ==================== Command/Mode Registration ====================

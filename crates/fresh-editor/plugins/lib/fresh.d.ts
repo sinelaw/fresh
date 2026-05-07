@@ -420,6 +420,20 @@ type BufferInfo = {
 	*/
 	splits: number[];
 };
+type SessionInfo = {
+	/**
+	* Stable session id. The base session is always `1`.
+	*/
+	id: number;
+	/**
+	* User-visible label (defaults to root basename).
+	*/
+	label: string;
+	/**
+	* Absolute project root.
+	*/
+	root: string;
+};
 type JsDiagnostic = {
 	/**
 	* Document URI
@@ -1773,6 +1787,40 @@ interface EditorAPI {
 	* Focus a specific split
 	*/
 	focusSplit(splitId: number): boolean;
+	/**
+	* Create a new editor session rooted at `root`. `root` must be
+	* an absolute path; relative paths are rejected by the editor
+	* (logged, no session created). The new session's id is
+	* reported via the `session_created` hook payload — plugins
+	* that need the id should listen for that event rather than
+	* polling `listSessions`.
+	* 
+	* Returns `false` only when the IPC channel to the editor is
+	* closed (editor is shutting down).
+	*/
+	createSession(root: string, label: string): boolean;
+	/**
+	* Make the session with id `id` the active one. No-op if
+	* already active. Errors (id not found) are logged on the
+	* editor side; the JS caller can verify by reading
+	* `activeSession()` after.
+	*/
+	setActiveSession(id: number): boolean;
+	/**
+	* Close session `id`. Refuses to close the active session or
+	* the base session (id 1). Logs and no-ops on failure.
+	*/
+	closeSession(id: number): boolean;
+	/**
+	* All editor sessions, sorted by id (creation order). Always
+	* non-empty (the base session is always present).
+	*/
+	listSessions(): SessionInfo[];
+	/**
+	* The currently active session id. Always present in
+	* `listSessions()`.
+	*/
+	activeSession(): number;
 	/**
 	* Set scroll position of a split
 	*/
