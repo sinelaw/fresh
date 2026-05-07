@@ -103,6 +103,25 @@ impl crate::app::Editor {
         );
     }
 
+    /// Attach a buffer to the active session's membership set.
+    /// Called from every `Editor.buffers.insert` site so the
+    /// `Session.buffers` field stays in sync. Idempotent.
+    pub(crate) fn attach_buffer_to_active_session(&mut self, buffer_id: fresh_core::BufferId) {
+        let id = self.active_session;
+        if let Some(s) = self.sessions.get_mut(&id) {
+            s.buffers.insert(buffer_id);
+        }
+    }
+
+    /// Detach a buffer from every session's membership set.
+    /// Called from buffer-close sites. Cheap when the buffer was
+    /// only attached to one session (the common case).
+    pub(crate) fn detach_buffer_from_all_sessions(&mut self, buffer_id: fresh_core::BufferId) {
+        for s in self.sessions.values_mut() {
+            s.buffers.remove(&buffer_id);
+        }
+    }
+
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch
     /// to a different session first. Refuses to close the base

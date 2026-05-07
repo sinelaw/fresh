@@ -318,6 +318,7 @@ impl Editor {
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -465,6 +466,7 @@ impl Editor {
         let state = EditorState::from_buffer_with_language(buffer, detected);
 
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -579,6 +581,7 @@ impl Editor {
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -728,6 +731,7 @@ impl Editor {
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -1079,6 +1083,7 @@ impl Editor {
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 

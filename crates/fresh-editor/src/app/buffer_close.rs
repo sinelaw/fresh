@@ -246,6 +246,7 @@ impl Editor {
         }
 
         self.buffers.remove(&id);
+        self.detach_buffer_from_all_sessions(id);
         self.event_logs.remove(&id);
         self.seen_byte_ranges.remove(&id);
         self.buffer_metadata.remove(&id);

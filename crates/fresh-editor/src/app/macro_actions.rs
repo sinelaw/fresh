@@ -199,6 +199,7 @@ impl Editor {
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs.insert(buffer_id, EventLog::new());
 
         // Set buffer content
@@ -273,6 +274,7 @@ impl Editor {
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs.insert(buffer_id, EventLog::new());
 
         // Set buffer content

@@ -1163,6 +1163,7 @@ impl Editor {
         for id in orphans {
             tracing::debug!("Removing orphaned empty unnamed buffer {:?}", id);
             self.buffers.remove(&id);
+            self.detach_buffer_from_all_sessions(id);
             self.event_logs.remove(&id);
             self.buffer_metadata.remove(&id);
         }

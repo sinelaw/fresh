@@ -246,6 +246,37 @@ fn dive_stashes_and_restores_file_explorer_view() {
     );
 }
 
+/// Buffer membership is attached on open. A file opened while
+/// the active session is alpha shows up in alpha.buffers, not in
+/// the base session's buffers.
+#[test]
+fn opening_a_file_attaches_buffer_to_active_session() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(PathBuf::from("/tmp/wt-alpha-bufs"), "alpha".into());
+    harness.editor_mut().set_active_session(alpha);
+
+    let file_path = project_dir.join("attaches.txt");
+    std::fs::write(&file_path, "hello").unwrap();
+    harness.open_file(&file_path).unwrap();
+    let buffer_id = harness.editor().active_buffer();
+
+    // The buffer is in alpha's set, not the base's.
+    let alpha_set = &harness.editor().session(alpha).unwrap().buffers;
+    assert!(
+        alpha_set.contains(&buffer_id),
+        "buffer must be attached to active session at open time"
+    );
+    let base_set = &harness.editor().session(SessionId(1)).unwrap().buffers;
+    assert!(
+        !base_set.contains(&buffer_id),
+        "buffer must NOT be attached to non-active sessions"
+    );
+}
+
 #[test]
 fn close_session_refuses_base_session() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();

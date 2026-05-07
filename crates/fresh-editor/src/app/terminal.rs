@@ -208,6 +208,7 @@ impl Editor {
         // Terminal buffers should never show line numbers
         state.margins.configure_for_line_numbers(false);
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
 
         // Use virtual metadata so the tab shows "*Terminal N*" and LSP stays off.
         // The backing file is still tracked separately for syncing scrollback.
@@ -270,6 +271,7 @@ impl Editor {
         );
         state.margins.configure_for_line_numbers(false);
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
 
         let metadata = BufferMetadata::virtual_buffer(
             format!("*Terminal {}*", terminal_id.0),

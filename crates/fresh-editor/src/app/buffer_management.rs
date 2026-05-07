@@ -529,6 +529,7 @@ impl Editor {
             .buffer
             .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
         self.buffer_metadata

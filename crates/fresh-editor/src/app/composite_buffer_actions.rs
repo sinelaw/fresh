@@ -240,6 +240,7 @@ impl Editor {
         state.editing_disabled = true;
         state.mode = mode;
         self.buffers.insert(buffer_id, state);
+        self.attach_buffer_to_active_session(buffer_id);
 
         // Create an event log entry (required for many editor operations)
         self.event_logs
