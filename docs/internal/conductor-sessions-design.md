@@ -619,13 +619,29 @@ path.
   but full-screen rather than edge-anchored, and with
   delegate-region support).
 
-Status: not yet implemented. The current build delivers a
-**transient-dive workaround** — selecting a row in the floating
-prompt dives into that session, so the editor visible behind the
-overlay shows the session's full UI live. That's plugin-only
-(uses Step 1f warm-swap) and gives the same *effect* as the
-preview-pane delegate, but without the chrome around it (no
-table, no collision pane, no footer).
+Status:
+- **Primitive #1 — implemented.** `editor.previewSessionInRect(id)`
+  renders the previewed session's stashed split tree (with
+  syntax highlighting, terminal grid, decorations) into the
+  floating overlay's preview pane. The active session's
+  rendering is unchanged; `cell_theme_map` and
+  `pending_hardware_cursor` were lifted into per-call scratch
+  so a second render-pass per frame doesn't clobber the active
+  area's hit-testing.
+- **Primitive #2 chrome — implemented in minimum form.**
+  `editor.setPromptTitle(...)` (header) and
+  `editor.setPromptFooter(...)` (footer hotkey row) supply the
+  styled chrome around the prompt + preview pane. Combined
+  with Primitive #1's preview delegate, this composes to the
+  screenshot's header / table / preview / footer layout
+  without introducing a brand-new buffer-attachment kind.
+- **Primitive #2 full attachment kind — deferred.** The
+  fully-general "plugin-owned full-screen overlay" with
+  arbitrary `Vec<Region>` layout is not implemented. Adding a
+  side-by-side *collision radar* pane, multi-region custom
+  layouts, or non-prompt overlays still requires this work.
+  Tracked as a follow-up; the floating-prompt path covers the
+  Conductor MVP's needs.
 
 ## User-facing screens
 
@@ -1295,7 +1311,18 @@ this design was written, with per-plugin namespacing and
 roundtrip/isolation/delete tests. No further work needed for MVP.
 
 `setSessionState`/`getSessionState` (per-session scope) and
-cross-restart persistence to `.fresh/` are `[v1.1+]`.
+cross-restart persistence to `.fresh/` are implemented.
+Persistence flushes:
+- `<wd>/.fresh/sessions.json` — `{ active, next_id, sessions[] }`
+  with each session's id, label, root, and per-session
+  plugin_state.
+- `<wd>/.fresh/state/<plugin>.json` — one file per plugin
+  with that plugin's `setGlobalState(...)` map.
+Reload runs after authority install and before plugins load,
+so plugin on-load handlers see the previous run's
+`getGlobalState(...)` values. Persisted sessions reload as
+inert shells — first dive re-warms exactly like a freshly
+created session.
 
 ### Step 6 — Conductor plugin (separate doc)  `[MVP — minimum viable plugin]`
 
@@ -1311,11 +1338,19 @@ two refs in a git repo). MVP doesn't need this because the existing
 review-diff feature covers the only Conductor diff use case
 (worktree vs base).
 
-### Step 8 — session persistence across restart  `[v1.1+]`
+### Step 8 — session persistence across restart  `[implemented]`
 
-Lazy rehydration: only the active session boots LSPs / watchers on
-startup; others spin up on first activation. MVP starts cold every
-time — the user re-spawns sessions after restart.
+Implemented as cold rehydration: persisted sessions load as
+inert shells (no LSP, no warm split tree). The first dive
+into a previously persisted session re-warms it the same way
+a freshly created session is warmed. Storage lives at
+`<wd>/.fresh/sessions.json` and `<wd>/.fresh/state/<plugin>.json`
+(see Step 5 above).
+
+Hot/lazy rehydration of inactive sessions (warm LSPs at boot,
+warm split layout, warm file watchers) is the v1.1+ extension
+— useful when the user has many always-on agents and wants
+zero-latency dive-back at startup.
 
 ## Risks
 
