@@ -122,8 +122,8 @@ impl Editor {
 
         self.macros.begin_play();
         let action_count = actions.len();
-        let width = self.cached_layout.last_frame_width;
-        let height = self.cached_layout.last_frame_height;
+        let width = self.chrome_layout.last_frame_width;
+        let height = self.chrome_layout.last_frame_height;
         for action in actions {
             if let Err(e) = self.handle_action(action) {
                 tracing::warn!("Macro action failed: {}", e);

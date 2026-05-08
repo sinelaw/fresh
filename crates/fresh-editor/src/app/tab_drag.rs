@@ -50,7 +50,7 @@ impl Editor {
         source_split_id: LeafId,
     ) -> Option<TabDropZone> {
         // First check if we're over a tab bar (for reordering/moving to another split)
-        for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
+        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
             if matches!(
                 tab_layout.hit_test(col, row),
                 Some(TabHit::TabName(_) | TabHit::CloseButton(_))
@@ -63,7 +63,7 @@ impl Editor {
 
         // Check if we're in the tab row area of any split (for moving to end of tab bar)
         for (split_id, _buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.cached_layout.split_areas
+            &self.active_layout().split_areas
         {
             // The tab row is typically at content_rect.y - 1 (assuming 1 row for tabs)
             let tab_row = content_rect.y.saturating_sub(1);
@@ -75,7 +75,7 @@ impl Editor {
 
         // Check if we're over a split content area for edge-based splitting
         for (split_id, _buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.cached_layout.split_areas
+            &self.active_layout().split_areas
         {
             if col >= content_rect.x
                 && col < content_rect.x + content_rect.width
@@ -122,7 +122,7 @@ impl Editor {
     /// Find the index where a tab should be inserted based on mouse x position
     fn find_tab_insert_index(&self, split_id: LeafId, col: u16) -> Option<usize> {
         // Get the tab layout for this split
-        let tab_layout = self.cached_layout.tab_layouts.get(&split_id)?;
+        let tab_layout = self.active_layout().tab_layouts.get(&split_id)?;
 
         if tab_layout.tabs.is_empty() {
             return Some(0);

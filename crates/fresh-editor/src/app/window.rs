@@ -28,6 +28,7 @@
 //! `buffers`, `terminal_manager`, `event_logs` onto Window so each
 //! window is a fully self-contained editor state.
 
+use crate::app::types::WindowLayoutCache;
 use crate::model::event::LeafId;
 use crate::services::lsp::manager::LspManager;
 use crate::view::file_tree::FileTreeView;
@@ -120,6 +121,16 @@ pub struct Window {
     /// `editor.setWindowState(key, value)`. Persisted to
     /// `.fresh/windows.json` so it survives editor restarts.
     pub plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
+
+    /// Window-scoped layout hit-test cache: split-leaf rects, tab
+    /// rects, the file-explorer rect, separators, scrollbars, and
+    /// per-leaf `view_line_mappings` that mouse positioning and
+    /// visual-line motion read. Repopulated by the renderer on every
+    /// frame; stale until the next render after a window switch (the
+    /// post-switch render fills it in before any input handling).
+    /// Editor-chrome rects (status bar, menu, popups, prompt overlay)
+    /// live on `Editor::chrome_layout` instead.
+    pub(crate) layout_cache: WindowLayoutCache,
 }
 
 impl Window {
@@ -148,6 +159,7 @@ impl Window {
             panel_ids_stash: HashMap::new(),
             splits_stash: None,
             buffers: HashSet::new(),
+            layout_cache: WindowLayoutCache::default(),
         }
     }
 }

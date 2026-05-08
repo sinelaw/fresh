@@ -15,11 +15,11 @@ impl Editor {
         self.animations.capture_before_all();
 
         // Save frame dimensions for recompute_layout (used by macro replay)
-        self.cached_layout.last_frame_width = size.width;
-        self.cached_layout.last_frame_height = size.height;
+        self.chrome_layout.last_frame_width = size.width;
+        self.chrome_layout.last_frame_height = size.height;
 
         // Reset per-cell theme key map for this frame
-        self.cached_layout.reset_cell_theme_map();
+        self.chrome_layout.reset_cell_theme_map();
 
         // For scroll sync groups, we need to update the active split's viewport position BEFORE
         // calling sync_scroll_groups, so that the sync reads the correct position.
@@ -211,7 +211,7 @@ impl Editor {
                 }
             };
 
-            self.cached_layout.file_explorer_area = Some(explorer_area);
+            self.active_layout_mut().file_explorer_area = Some(explorer_area);
             editor_content_area = editor_area;
 
             // Get connection string before mutable borrow of file_explorer.
@@ -264,7 +264,7 @@ impl Editor {
             // we just leave the area blank (or could render a placeholder)
         } else {
             // No file explorer: use entire main content area for editor
-            self.cached_layout.file_explorer_area = None;
+            self.active_layout_mut().file_explorer_area = None;
             editor_content_area = main_content_area;
         }
 
@@ -587,7 +587,7 @@ impl Editor {
             self.config.editor.diagnostics_inline_text,
             self.config.editor.show_tilde,
             self.config.editor.highlight_current_column,
-            &mut self.cached_layout.cell_theme_map,
+            &mut self.chrome_layout.cell_theme_map,
             size.width,
             &mut pending_hardware_cursor,
         );
@@ -675,12 +675,12 @@ impl Editor {
         // Render terminal content on top of split content for terminal buffers
         self.render_terminal_splits(frame, &split_areas);
 
-        self.cached_layout.split_areas = split_areas;
-        self.cached_layout.horizontal_scrollbar_areas = horizontal_scrollbar_areas;
-        self.cached_layout.tab_layouts = tab_layouts;
-        self.cached_layout.close_split_areas = close_split_areas;
-        self.cached_layout.maximize_split_areas = maximize_split_areas;
-        self.cached_layout.view_line_mappings = view_line_mappings;
+        self.active_layout_mut().split_areas = split_areas;
+        self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
+        self.active_layout_mut().tab_layouts = tab_layouts;
+        self.active_layout_mut().close_split_areas = close_split_areas;
+        self.active_layout_mut().maximize_split_areas = maximize_split_areas;
+        self.active_layout_mut().view_line_mappings = view_line_mappings;
 
         // Promote any deferred virtual-buffer animations whose Rect is now
         // known. Done here (after split_areas is recomputed, before
@@ -695,15 +695,15 @@ impl Editor {
         // above. The renderer collected them (using the same content rect it
         // drew them at) — merge so clicks on those rendered columns register.
         separator_areas.extend(grouped_separator_areas);
-        self.cached_layout.separator_areas = separator_areas;
-        self.cached_layout.editor_content_area = Some(editor_content_area);
+        self.active_layout_mut().separator_areas = separator_areas;
+        self.active_layout_mut().editor_content_area = Some(editor_content_area);
 
         // Render hover highlights for separators and scrollbars
         self.render_hover_highlights(frame);
 
         // Initialize popup/suggestion layout state (rendered after status bar below)
-        self.cached_layout.suggestions_area = None;
-        self.cached_layout.suggestions_outer_area = None;
+        self.chrome_layout.suggestions_area = None;
+        self.chrome_layout.suggestions_outer_area = None;
         self.file_browser_layout = None;
 
         // Clone all immutable values before the mutable borrow
@@ -872,16 +872,16 @@ impl Editor {
 
             // Store status bar layout for click detection
             let status_bar_area = main_chunks[status_bar_idx];
-            self.cached_layout.status_bar_area =
+            self.chrome_layout.status_bar_area =
                 Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
-            self.cached_layout.status_bar_lsp_area = status_bar_layout.lsp_indicator;
-            self.cached_layout.status_bar_warning_area = status_bar_layout.warning_badge;
-            self.cached_layout.status_bar_line_ending_area =
+            self.chrome_layout.status_bar_lsp_area = status_bar_layout.lsp_indicator;
+            self.chrome_layout.status_bar_warning_area = status_bar_layout.warning_badge;
+            self.chrome_layout.status_bar_line_ending_area =
                 status_bar_layout.line_ending_indicator;
-            self.cached_layout.status_bar_encoding_area = status_bar_layout.encoding_indicator;
-            self.cached_layout.status_bar_language_area = status_bar_layout.language_indicator;
-            self.cached_layout.status_bar_message_area = status_bar_layout.message_area;
-            self.cached_layout.status_bar_remote_area = status_bar_layout.remote_indicator;
+            self.chrome_layout.status_bar_encoding_area = status_bar_layout.encoding_indicator;
+            self.chrome_layout.status_bar_language_area = status_bar_layout.language_indicator;
+            self.chrome_layout.status_bar_message_area = status_bar_layout.message_area;
+            self.chrome_layout.status_bar_remote_area = status_bar_layout.remote_indicator;
         }
 
         // Render search options bar when in search prompt
@@ -922,9 +922,9 @@ impl Editor {
                 &keybindings_cloned,
                 search_options_hover,
             );
-            self.cached_layout.search_options_layout = Some(search_options_layout);
+            self.chrome_layout.search_options_layout = Some(search_options_layout);
         } else {
-            self.cached_layout.search_options_layout = None;
+            self.chrome_layout.search_options_layout = None;
         }
 
         // Render prompt line if active. Overlay prompts (Live Grep)
@@ -984,7 +984,7 @@ impl Editor {
         let hover_target = self.mouse_state.hover_target.clone();
 
         // Clear popup areas and recalculate
-        self.cached_layout.popup_areas.clear();
+        self.chrome_layout.popup_areas.clear();
 
         // Collect popup information without holding a mutable borrow
         let popup_info: Vec<_> = {
@@ -1000,7 +1000,7 @@ impl Editor {
             // tab bar, scrollbars, etc.). The gutter is rendered inside this rect,
             // so we add gutter_width to get the text content origin.
             let content_rect = self
-                .cached_layout
+                .active_layout()
                 .split_areas
                 .iter()
                 .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
@@ -1127,7 +1127,7 @@ impl Editor {
         };
 
         // Store popup areas for mouse hit testing
-        self.cached_layout.popup_areas = popup_info.clone();
+        self.chrome_layout.popup_areas = popup_info.clone();
 
         // Now render popups
         let state = self.active_state_mut();
@@ -1154,7 +1154,7 @@ impl Editor {
         // but only the top one renders & receives input. Deeper popups
         // surface as the top is resolved — the alternative (drawing all at
         // the same BottomRight slot) makes them illegible.
-        self.cached_layout.global_popup_areas.clear();
+        self.chrome_layout.global_popup_areas.clear();
         if let Some(popup) = self.global_popups.top() {
             let top_idx = self.global_popups.all().len() - 1;
             let popup_area = popup.calculate_area(size, None);
@@ -1178,7 +1178,7 @@ impl Editor {
                 crate::view::popup::PopupContent::List { items, .. } => items.len(),
                 _ => 0,
             };
-            self.cached_layout.global_popup_areas.push((
+            self.chrome_layout.global_popup_areas.push((
                 top_idx,
                 popup_area,
                 inner_area,
@@ -1212,7 +1212,7 @@ impl Editor {
                     settings_state,
                     &self.theme,
                 );
-                self.cached_layout.settings_layout = Some(settings_layout);
+                self.chrome_layout.settings_layout = Some(settings_layout);
             }
         }
 
@@ -1257,7 +1257,7 @@ impl Editor {
             );
             let expanded = self.expanded_menus_cache.get().expect("just updated");
             let keybindings = self.keybindings.read().unwrap();
-            self.cached_layout.menu_layout = Some(crate::view::ui::MenuRenderer::render(
+            self.chrome_layout.menu_layout = Some(crate::view::ui::MenuRenderer::render(
                 frame,
                 menu_bar_area,
                 expanded,
@@ -1268,7 +1268,7 @@ impl Editor {
                 self.config.editor.menu_bar_mnemonics,
             ));
         } else {
-            self.cached_layout.menu_layout = None;
+            self.chrome_layout.menu_layout = None;
         }
 
         // Render tab context menu if open
@@ -1319,7 +1319,7 @@ impl Editor {
             // Find the active split's content area
             let active_split = self.split_manager.active_split();
             let active_split_area = self
-                .cached_layout
+                .active_layout()
                 .split_areas
                 .iter()
                 .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
@@ -1459,7 +1459,7 @@ impl Editor {
         };
 
         if self
-            .cached_layout
+            .chrome_layout
             .popup_areas
             .iter()
             .any(|entry| inside(entry.1))
@@ -1467,14 +1467,14 @@ impl Editor {
             return true;
         }
         if self
-            .cached_layout
+            .chrome_layout
             .global_popup_areas
             .iter()
             .any(|entry| inside(entry.1))
         {
             return true;
         }
-        if let Some((rect, _, _, _)) = self.cached_layout.suggestions_area {
+        if let Some((rect, _, _, _)) = self.chrome_layout.suggestions_area {
             if inside(rect) {
                 return true;
             }
@@ -1596,7 +1596,7 @@ impl Editor {
         }
         let Some(prompt) = &self.prompt else { return };
 
-        self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
+        self.chrome_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
             frame,
             suggestions_area,
             prompt,
@@ -1604,8 +1604,8 @@ impl Editor {
             self.mouse_state.hover_target.as_ref(),
             true,
         );
-        if self.cached_layout.suggestions_area.is_some() {
-            self.cached_layout.suggestions_outer_area = Some(suggestions_area);
+        if self.chrome_layout.suggestions_area.is_some() {
+            self.chrome_layout.suggestions_outer_area = Some(suggestions_area);
         }
 
         if is_quick_open {
@@ -2305,7 +2305,7 @@ impl Editor {
                 width: results_area.width.saturating_sub(scrollbar_w),
                 height: results_area.height - chrome_above_list - footer_h,
             };
-            self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
+            self.chrome_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
                 frame,
                 list_area,
                 &prompt,
@@ -2313,8 +2313,8 @@ impl Editor {
                 self.mouse_state.hover_target.as_ref(),
                 false,
             );
-            if self.cached_layout.suggestions_area.is_some() {
-                self.cached_layout.suggestions_outer_area = Some(list_area);
+            if self.chrome_layout.suggestions_area.is_some() {
+                self.chrome_layout.suggestions_outer_area = Some(list_area);
             }
             // Render the scrollbar in the carved lane. Reuses the
             // shared `view::ui::scrollbar` widget so thumb sizing
@@ -2346,12 +2346,12 @@ impl Editor {
                 );
                 // Cache the rect for mouse hit testing in
                 // `mouse_input.rs::handle_click_prompt_scrollbar`.
-                self.cached_layout.suggestions_scrollbar_rect = Some(scrollbar_rect);
+                self.chrome_layout.suggestions_scrollbar_rect = Some(scrollbar_rect);
             } else {
-                self.cached_layout.suggestions_scrollbar_rect = None;
+                self.chrome_layout.suggestions_scrollbar_rect = None;
             }
         } else {
-            self.cached_layout.suggestions_scrollbar_rect = None;
+            self.chrome_layout.suggestions_scrollbar_rect = None;
         }
 
         // Plugin-supplied footer chrome row (Primitive #2 chrome
@@ -2438,7 +2438,7 @@ impl Editor {
                 let ansi_ref = self.ansi_background.as_ref();
                 let buffers = &mut self.buffers;
                 let event_logs = &mut self.event_logs;
-                let cell_theme_map = &mut self.cached_layout.cell_theme_map;
+                let cell_theme_map = &mut self.chrome_layout.cell_theme_map;
                 let Some(preview_state) = self.overlay_preview_state.as_mut() else {
                     return;
                 };
@@ -2510,7 +2510,7 @@ impl Editor {
         match &self.mouse_state.hover_target {
             Some(HoverTarget::SplitSeparator(split_id, direction)) => {
                 // Highlight the separator with hover color
-                for (sid, dir, x, y, length) in &self.cached_layout.separator_areas {
+                for (sid, dir, x, y, length) in &self.active_layout().separator_areas {
                     if sid == split_id && dir == direction {
                         let hover_style = Style::default().fg(self.theme.split_separator_hover_fg);
                         match dir {
@@ -2539,7 +2539,7 @@ impl Editor {
             Some(HoverTarget::ScrollbarThumb(split_id)) => {
                 // Highlight scrollbar thumb
                 for (sid, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-                    &self.cached_layout.split_areas
+                    &self.active_layout().split_areas
                 {
                     if sid == split_id {
                         let hover_style = Style::default().bg(self.theme.scrollbar_thumb_hover_fg);
@@ -2561,7 +2561,7 @@ impl Editor {
             Some(HoverTarget::ScrollbarTrack(split_id, hovered_row)) => {
                 // Highlight only the hovered cell on the scrollbar track
                 for (sid, _buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
-                    &self.cached_layout.split_areas
+                    &self.active_layout().split_areas
                 {
                     if sid == split_id {
                         let track_hover_style =
@@ -2581,7 +2581,7 @@ impl Editor {
             }
             Some(HoverTarget::FileExplorerBorder) => {
                 // Highlight the file explorer border for resize
-                if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+                if let Some(explorer_area) = self.active_layout().file_explorer_area {
                     let hover_style = Style::default().fg(self.theme.split_separator_hover_fg);
                     let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
                     for row_offset in 0..explorer_area.height {
@@ -2727,7 +2727,7 @@ impl Editor {
 
         // Find the content area for the target split
         let split_area = self
-            .cached_layout
+            .active_layout()
             .split_areas
             .iter()
             .find(|(sid, _, _, _, _, _)| *sid == split_id)
@@ -2916,7 +2916,7 @@ impl Editor {
             self.config.editor.show_tilde,
         );
 
-        self.cached_layout.view_line_mappings = view_line_mappings;
+        self.active_layout_mut().view_line_mappings = view_line_mappings;
     }
 
     /// Clear the search history

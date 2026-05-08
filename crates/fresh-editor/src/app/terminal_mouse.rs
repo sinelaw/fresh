@@ -46,7 +46,7 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<(BufferId, Rect)> {
-        for (_, buffer_id, content_rect, _, _, _) in &self.cached_layout.split_areas {
+        for (_, buffer_id, content_rect, _, _, _) in &self.active_layout().split_areas {
             // Check if position is within content area
             if col >= content_rect.x
                 && col < content_rect.x + content_rect.width

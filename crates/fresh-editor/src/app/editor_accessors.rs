@@ -631,6 +631,20 @@ impl Editor {
             .expect("active_window id must be a member of sessions")
     }
 
+    /// The active window's layout-cache (split-leaf rects, tab rects,
+    /// file-explorer rect, view-line mappings). Mouse hit-testing and
+    /// visual-line motion read from here.
+    pub(crate) fn active_layout(&self) -> &crate::app::types::WindowLayoutCache {
+        &self.active_window().layout_cache
+    }
+
+    /// Mutable handle to the active window's layout cache. Renderer
+    /// writes split / tab / file-explorer hit-test rects here at the
+    /// end of each frame.
+    pub(crate) fn active_layout_mut(&mut self) -> &mut crate::app::types::WindowLayoutCache {
+        &mut self.active_session_mut().layout_cache
+    }
+
     /// Return buffer ids whose on-disk path sits at or under `root`.
     /// Used by file-explorer operations that need to react when a file
     /// or directory on disk goes away or moves.

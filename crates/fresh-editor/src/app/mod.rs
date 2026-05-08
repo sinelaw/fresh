@@ -167,7 +167,7 @@ pub fn editor_tick(
 pub(crate) use path_utils::normalize_path;
 
 use self::types::{
-    CachedLayout, FileExplorerContextMenu, InteractiveReplaceState, LspMessageEntry,
+    ChromeLayout, FileExplorerContextMenu, InteractiveReplaceState, LspMessageEntry,
     LspProgressInfo, MouseState, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
@@ -783,8 +783,12 @@ pub struct Editor {
     /// Theme inspector popup state (Ctrl+Right-Click)
     theme_info_popup: Option<types::ThemeInfoPopup>,
 
-    /// Cached layout areas from last render (for mouse hit testing)
-    pub(crate) cached_layout: CachedLayout,
+    /// Editor-chrome layout from last render (status bar, menu, prompt
+    /// overlay, popups, full-frame cell-theme map). Per-window
+    /// content-area layout (split panes, tabs, file explorer) lives on
+    /// the active window's `Window::layout_cache`; `Editor::active_layout()`
+    /// is the accessor to use for those.
+    pub(crate) chrome_layout: ChromeLayout,
 
     /// Command registry for dynamic commands
     command_registry: Arc<RwLock<CommandRegistry>>,

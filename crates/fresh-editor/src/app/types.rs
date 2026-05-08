@@ -877,7 +877,7 @@ impl FileExplorerContextMenu {
 }
 
 /// Lightweight per-cell theme key provenance recorded during rendering.
-/// Stored in `CachedLayout::cell_theme_map` so the theme inspector popup
+/// Stored in `ChromeLayout::cell_theme_map` so the theme inspector popup
 /// can look up the exact keys used for any screen position.
 #[derive(Debug, Clone, Default)]
 pub struct CellThemeInfo {
@@ -1047,7 +1047,7 @@ pub(super) struct MouseState {
     pub drag_start_popup_scroll: Option<usize>,
     /// Whether we're currently dragging the prompt's suggestion-list
     /// scrollbar (Live Grep floating overlay, issue #1796). The
-    /// rect is held in `cached_layout.suggestions_scrollbar_rect`
+    /// rect is held in `ChromeLayout::suggestions_scrollbar_rect`
     /// and the math is shared with the buffer-popup scrollbar via
     /// `view::ui::scrollbar::ScrollbarState::click_to_offset`.
     pub dragging_prompt_scrollbar: bool,
@@ -1126,22 +1126,13 @@ impl ViewLineMapping {
 /// Fields: (popup_index, rect, inner_rect, scroll_offset, num_items, scrollbar_rect, total_lines)
 pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>, usize);
 
-/// Cached layout information for mouse hit testing
+/// Editor-chrome layout cache: full-frame and chrome-region rects
+/// (status bar, menu bar, prompt overlay, popups) plus the screen-
+/// indexed cell-theme map. Per-window layout (split-leaf rects, tab
+/// rects, file-explorer rects, view-line mappings) lives on
+/// [`WindowLayoutCache`] instead.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct CachedLayout {
-    /// File explorer area (if visible)
-    pub file_explorer_area: Option<Rect>,
-    /// Editor content area (excluding file explorer)
-    pub editor_content_area: Option<Rect>,
-    /// Individual split areas with their scrollbar areas and thumb positions
-    /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
-    pub split_areas: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
-    /// Horizontal scrollbar areas per split
-    /// (split_id, buffer_id, horizontal_scrollbar_rect, max_content_width, thumb_start_col, thumb_end_col)
-    pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
-    /// Split separator positions for drag resize
-    /// (container_id, direction, x, y, length)
-    pub separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
+pub(crate) struct ChromeLayout {
     /// Popup areas for mouse hit testing
     /// scrollbar_rect is Some if popup has a scrollbar
     pub popup_areas: Vec<PopupAreaLayout>,
@@ -1162,18 +1153,6 @@ pub(crate) struct CachedLayout {
     /// list fits in the visible window. Click/drag handlers in
     /// `mouse_input.rs` read this to update `prompt.scroll_offset`.
     pub suggestions_scrollbar_rect: Option<Rect>,
-    /// Tab layouts per split for mouse interaction
-    pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-    /// Close split button hit areas
-    /// (split_id, row, start_col, end_col)
-    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
-    /// Maximize split button hit areas
-    /// (split_id, row, start_col, end_col)
-    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
-    /// View line mappings for accurate mouse click positioning per split
-    /// Maps visual row index to character position mappings
-    /// Used to translate screen coordinates to buffer byte positions
-    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
     /// Settings modal layout for hit testing
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
     /// Status bar area (row, x, width)
@@ -1205,7 +1184,7 @@ pub(crate) struct CachedLayout {
     pub cell_theme_map: Vec<CellThemeInfo>,
 }
 
-impl CachedLayout {
+impl ChromeLayout {
     /// Reset the cell theme map for a new frame
     pub fn reset_cell_theme_map(&mut self) {
         let total = self.last_frame_width as usize * self.last_frame_height as usize;
@@ -1218,7 +1197,43 @@ impl CachedLayout {
         let idx = row as usize * self.last_frame_width as usize + col as usize;
         self.cell_theme_map.get(idx)
     }
+}
 
+/// Per-window layout cache: hit-test rects for content scoped to a
+/// single window (split panes, tabs, the file explorer, separators,
+/// scrollbars) plus the per-leaf visual-row→source-byte mappings used
+/// by mouse positioning and visual-line motion. Lives on `Window`;
+/// editor-chrome rects live on [`ChromeLayout`].
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WindowLayoutCache {
+    /// File explorer area (if visible)
+    pub file_explorer_area: Option<Rect>,
+    /// Editor content area (excluding file explorer)
+    pub editor_content_area: Option<Rect>,
+    /// Individual split areas with their scrollbar areas and thumb positions
+    /// (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end)
+    pub split_areas: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
+    /// Horizontal scrollbar areas per split
+    /// (split_id, buffer_id, horizontal_scrollbar_rect, max_content_width, thumb_start_col, thumb_end_col)
+    pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
+    /// Split separator positions for drag resize
+    /// (container_id, direction, x, y, length)
+    pub separator_areas: Vec<(ContainerId, SplitDirection, u16, u16, u16)>,
+    /// Tab layouts per split for mouse interaction
+    pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
+    /// Close split button hit areas
+    /// (split_id, row, start_col, end_col)
+    pub close_split_areas: Vec<(LeafId, u16, u16, u16)>,
+    /// Maximize split button hit areas
+    /// (split_id, row, start_col, end_col)
+    pub maximize_split_areas: Vec<(LeafId, u16, u16, u16)>,
+    /// View line mappings for accurate mouse click positioning per split
+    /// Maps visual row index to character position mappings
+    /// Used to translate screen coordinates to buffer byte positions
+    pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
+}
+
+impl WindowLayoutCache {
     /// Find which visual row contains the given byte position for a split
     pub fn find_visual_row(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
         let mappings = self.view_line_mappings.get(&split_id)?;

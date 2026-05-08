@@ -529,7 +529,7 @@ impl Editor {
         // from the same cached layout so the popup hugs the status bar
         // even in prompt-auto-hide mode.
         let position = self
-            .cached_layout
+            .chrome_layout
             .status_bar_lsp_area
             .map(
                 |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
@@ -790,7 +790,7 @@ impl Editor {
         // from the same cached layout so the popup hugs the status bar
         // even in prompt-auto-hide mode.
         let position = self
-            .cached_layout
+            .chrome_layout
             .status_bar_remote_area
             .map(
                 |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {

@@ -903,7 +903,7 @@ impl Editor {
             tab_context_menu: None,
             file_explorer_context_menu: None,
             theme_info_popup: None,
-            cached_layout: CachedLayout::default(),
+            chrome_layout: ChromeLayout::default(),
             command_registry,
             quick_open_registry,
             plugin_manager,

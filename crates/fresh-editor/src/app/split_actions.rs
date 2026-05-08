@@ -348,14 +348,14 @@ impl Editor {
     /// Get cached separator areas for testing
     /// Returns (split_id, direction, x, y, length) tuples
     pub fn get_separator_areas(&self) -> &[(ContainerId, SplitDirection, u16, u16, u16)] {
-        &self.cached_layout.separator_areas
+        &self.active_layout().separator_areas
     }
 
     /// Get cached tab layouts for testing
     pub fn get_tab_layouts(
         &self,
     ) -> &std::collections::HashMap<LeafId, crate::view::ui::tabs::TabLayout> {
-        &self.cached_layout.tab_layouts
+        &self.active_layout().tab_layouts
     }
 
     /// Get cached split content areas for testing
@@ -370,7 +370,7 @@ impl Editor {
         usize,
         usize,
     )] {
-        &self.cached_layout.split_areas
+        &self.active_layout().split_areas
     }
 
     /// Get the ratio of a specific split (for testing).

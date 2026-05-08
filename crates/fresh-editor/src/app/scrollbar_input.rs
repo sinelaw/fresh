@@ -33,7 +33,7 @@ impl Editor {
         );
 
         // Check if scroll is over the file explorer
-        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+        if let Some(explorer_area) = self.active_layout().file_explorer_area {
             if col >= explorer_area.x
                 && col < explorer_area.x + explorer_area.width
                 && row >= explorer_area.y

@@ -112,7 +112,7 @@ impl Editor {
     /// the cached layout.
     ///
     /// Normally a split_id maps 1:1 to a single entry in
-    /// `cached_layout.split_areas` (the split's content rect). When a
+    /// `WindowLayoutCache::split_areas` (the split's content rect). When a
     /// buffer-group tab is active, however, the split renders the
     /// group's inner subtree — split_areas then has one entry per
     /// inner panel (log / detail / toolbar etc.) and NO entry for the
@@ -122,7 +122,7 @@ impl Editor {
     /// group occupies on screen.
     fn split_or_group_content_rect(&self, split_id: LeafId) -> Option<ratatui::layout::Rect> {
         if let Some(rect) = self
-            .cached_layout
+            .active_layout()
             .split_areas
             .iter()
             .find(|(sid, _, _, _, _, _)| *sid == split_id)
@@ -144,7 +144,7 @@ impl Editor {
         collect_leaf_ids(subtree, &mut inner_leaves);
 
         let mut union: Option<ratatui::layout::Rect> = None;
-        for (sid, _, content, _, _, _) in &self.cached_layout.split_areas {
+        for (sid, _, content, _, _, _) in &self.active_layout().split_areas {
             if !inner_leaves.contains(sid) {
                 continue;
             }

@@ -55,7 +55,7 @@ impl Editor {
 
         // Gather layout info and cursor from split_view_states (immutable borrows)
         let (content_rect, gutter_width, compose_width, primary_cursor) = match self
-            .cached_layout
+            .active_layout()
             .split_areas
             .iter()
             .find(|(sid, bid, ..)| *sid == active_split && *bid == active_buffer)
@@ -98,7 +98,7 @@ impl Editor {
     /// Resolve which theme key(s) style the character at screen position (col, row).
     /// Looks up the per-cell theme key map populated during rendering.
     fn resolve_theme_key_at(&self, col: u16, row: u16) -> Option<ThemeKeyInfo> {
-        let cell = self.cached_layout.cell_theme_at(col, row)?;
+        let cell = self.chrome_layout.cell_theme_at(col, row)?;
         let theme = &self.theme;
 
         // Resolve actual colors from theme keys
@@ -127,10 +127,10 @@ impl Editor {
     pub(super) fn record_non_editor_theme_regions(&mut self) {
         use super::types::CellThemeInfo;
 
-        let sw = self.cached_layout.last_frame_width as usize;
+        let sw = self.chrome_layout.last_frame_width as usize;
 
         // Status bar
-        if let Some((row, x, width)) = self.cached_layout.status_bar_area {
+        if let Some((row, x, width)) = self.chrome_layout.status_bar_area {
             let info = CellThemeInfo {
                 fg_key: Some("ui.status_bar_fg"),
                 bg_key: Some("ui.status_bar_bg"),
@@ -139,14 +139,14 @@ impl Editor {
             };
             for col in x..x + width {
                 let idx = row as usize * sw + col as usize;
-                if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                if let Some(cell) = self.chrome_layout.cell_theme_map.get_mut(idx) {
                     *cell = info.clone();
                 }
             }
         }
 
         // Menu bar
-        if let Some(bar_area) = self.cached_layout.menu_layout.as_ref().map(|m| m.bar_area) {
+        if let Some(bar_area) = self.chrome_layout.menu_layout.as_ref().map(|m| m.bar_area) {
             let info = CellThemeInfo {
                 fg_key: Some("ui.menu_fg"),
                 bg_key: Some("ui.menu_bg"),
@@ -156,7 +156,7 @@ impl Editor {
             for row in bar_area.y..bar_area.y + bar_area.height {
                 for col in bar_area.x..bar_area.x + bar_area.width {
                     let idx = row as usize * sw + col as usize;
-                    if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                    if let Some(cell) = self.chrome_layout.cell_theme_map.get_mut(idx) {
                         *cell = info.clone();
                     }
                 }
@@ -164,7 +164,7 @@ impl Editor {
         }
 
         // File explorer
-        if let Some(area) = self.cached_layout.file_explorer_area {
+        if let Some(area) = self.active_layout().file_explorer_area {
             let info = CellThemeInfo {
                 fg_key: Some("editor.fg"),
                 bg_key: Some("editor.bg"),
@@ -174,7 +174,7 @@ impl Editor {
             for row in area.y..area.y + area.height {
                 for col in area.x..area.x + area.width {
                     let idx = row as usize * sw + col as usize;
-                    if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                    if let Some(cell) = self.chrome_layout.cell_theme_map.get_mut(idx) {
                         *cell = info.clone();
                     }
                 }
@@ -182,7 +182,7 @@ impl Editor {
         }
 
         // Scrollbars
-        let split_areas = self.cached_layout.split_areas.clone();
+        let split_areas = self.active_layout().split_areas.clone();
         for (_, _, _, scrollbar_rect, thumb_start, thumb_end) in &split_areas {
             for row in scrollbar_rect.y..scrollbar_rect.y + scrollbar_rect.height {
                 let rel_row = (row - scrollbar_rect.y) as usize;
@@ -203,7 +203,7 @@ impl Editor {
                 };
                 for col in scrollbar_rect.x..scrollbar_rect.x + scrollbar_rect.width {
                     let idx = row as usize * sw + col as usize;
-                    if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                    if let Some(cell) = self.chrome_layout.cell_theme_map.get_mut(idx) {
                         *cell = info.clone();
                     }
                 }
@@ -211,7 +211,7 @@ impl Editor {
         }
 
         // Tab bars — record from tab layouts
-        let tab_layouts = self.cached_layout.tab_layouts.clone();
+        let tab_layouts = self.active_layout().tab_layouts.clone();
         for tab_layout in tab_layouts.values() {
             {
                 let area = tab_layout.bar_area;
@@ -224,7 +224,7 @@ impl Editor {
                 for row in area.y..area.y + area.height {
                     for col in area.x..area.x + area.width {
                         let idx = row as usize * sw + col as usize;
-                        if let Some(cell) = self.cached_layout.cell_theme_map.get_mut(idx) {
+                        if let Some(cell) = self.chrome_layout.cell_theme_map.get_mut(idx) {
                             *cell = info.clone();
                         }
                     }
@@ -340,8 +340,8 @@ impl Editor {
         let button_row_offset = line_count; // 0-indexed from popup y + 1 (top border)
 
         // Use the same screen-aware positioning as render to match the actual drawn rect
-        let screen_w = self.cached_layout.last_frame_width;
-        let screen_h = self.cached_layout.last_frame_height;
+        let screen_w = self.chrome_layout.last_frame_width;
+        let screen_h = self.chrome_layout.last_frame_height;
         let rect = compute_popup_rect(popup.position, width, height, screen_w, screen_h);
 
         Some((rect, button_row_offset))

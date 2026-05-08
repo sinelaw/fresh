@@ -195,7 +195,7 @@ impl Editor {
                 {
                     // Find content rect for the split under the mouse
                     let content_rect = self
-                        .cached_layout
+                        .active_layout()
                         .split_areas
                         .iter()
                         .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
@@ -548,7 +548,7 @@ impl Editor {
 
         // Find which split the mouse is over
         let split_info = self
-            .cached_layout
+            .active_layout()
             .split_areas
             .iter()
             .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
@@ -568,7 +568,7 @@ impl Editor {
 
         // Get cached mappings and gutter width for this split
         let cached_mappings = self
-            .cached_layout
+            .active_layout()
             .view_line_mappings
             .get(&split_id)
             .cloned();
@@ -692,7 +692,7 @@ impl Editor {
 
     /// Check if mouse position is over a transient popup (hover, signature help)
     fn is_mouse_over_transient_popup(&self, col: u16, row: u16) -> bool {
-        let layouts = popup_areas_to_layout_info(&self.cached_layout.popup_areas);
+        let layouts = popup_areas_to_layout_info(&self.chrome_layout.popup_areas);
         let hit_tester = PopupHitTester::new(&layouts, &self.active_state().popups);
         hit_tester.is_over_transient_popup(col, row)
     }
@@ -701,7 +701,7 @@ impl Editor {
     fn is_mouse_over_any_popup(&self, col: u16, row: u16) -> bool {
         // Editor-level popup overlays absorb every click within their outer
         // rect so the buffer below doesn't receive a stray cursor placement.
-        for (_, popup_area, _, _, _) in &self.cached_layout.global_popup_areas {
+        for (_, popup_area, _, _, _) in &self.chrome_layout.global_popup_areas {
             if in_rect(col, row, *popup_area) {
                 return true;
             }
@@ -709,12 +709,12 @@ impl Editor {
         // The prompt's suggestions popup also absorbs clicks across its full
         // outer rect (border + items): clicking the chrome must not move the
         // buffer cursor below.
-        if let Some(outer) = self.cached_layout.suggestions_outer_area {
+        if let Some(outer) = self.chrome_layout.suggestions_outer_area {
             if in_rect(col, row, outer) {
                 return true;
             }
         }
-        let layouts = popup_areas_to_layout_info(&self.cached_layout.popup_areas);
+        let layouts = popup_areas_to_layout_info(&self.chrome_layout.popup_areas);
         let hit_tester = PopupHitTester::new(&layouts, &self.active_state().popups);
         hit_tester.is_over_popup(col, row)
     }
@@ -730,7 +730,7 @@ impl Editor {
     /// Returns the split id and its buffer id, or None if not over any split.
     pub(super) fn split_at_position(&self, col: u16, row: u16) -> Option<(LeafId, BufferId)> {
         for &(split_id, buffer_id, content_rect, scrollbar_rect, _, _) in
-            &self.cached_layout.split_areas
+            &self.active_layout().split_areas
         {
             let in_content = in_rect(col, row, content_rect);
             let in_scrollbar = scrollbar_rect.width > 0
@@ -747,8 +747,8 @@ impl Editor {
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
         if let Some(ref menu) = self.file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(
-                self.cached_layout.last_frame_width,
-                self.cached_layout.last_frame_height,
+                self.chrome_layout.last_frame_width,
+                self.chrome_layout.last_frame_height,
             );
             let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
             let menu_height = menu.height();
@@ -787,7 +787,7 @@ impl Editor {
 
         // Check suggestions area first (command palette, autocomplete)
         if let Some((inner_rect, start_idx, _visible_count, total_count)) =
-            &self.cached_layout.suggestions_area
+            &self.chrome_layout.suggestions_area
         {
             if in_rect(col, row, *inner_rect) {
                 let relative_row = (row - inner_rect.y) as usize;
@@ -802,7 +802,7 @@ impl Editor {
         // Check popups (they're rendered on top)
         // Check from top to bottom (reverse order since last popup is on top)
         for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
-            self.cached_layout.popup_areas.iter().rev()
+            self.chrome_layout.popup_areas.iter().rev()
         {
             if in_rect(col, row, *inner_rect) && *num_items > 0 {
                 // Calculate which item is being hovered
@@ -825,7 +825,7 @@ impl Editor {
         // Check menu bar (row 0, only when visible)
         // Check menu bar using cached layout from previous render
         if self.menu_bar_visible {
-            if let Some(ref menu_layout) = self.cached_layout.menu_layout {
+            if let Some(ref menu_layout) = self.chrome_layout.menu_layout {
                 if let Some(menu_idx) = menu_layout.menu_at(col, row) {
                     return Some(HoverTarget::MenuBarItem(menu_idx));
                 }
@@ -840,7 +840,7 @@ impl Editor {
         }
 
         // Check file explorer close button and border (for resize)
-        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+        if let Some(explorer_area) = self.active_layout().file_explorer_area {
             // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
             let close_button_x = explorer_area.x + explorer_area.width.saturating_sub(3);
             if row == explorer_area.y
@@ -891,7 +891,8 @@ impl Editor {
         }
 
         // Check split separators
-        for (split_id, direction, sep_x, sep_y, sep_length) in &self.cached_layout.separator_areas {
+        for (split_id, direction, sep_x, sep_y, sep_length) in &self.active_layout().separator_areas
+        {
             let is_on_separator = match direction {
                 SplitDirection::Horizontal => {
                     row == *sep_y && col >= *sep_x && col < sep_x + sep_length
@@ -908,19 +909,19 @@ impl Editor {
 
         // Check tab areas using cached hit regions (computed during rendering)
         // Check split control buttons first (they're on top of the tab row)
-        for (split_id, btn_row, start_col, end_col) in &self.cached_layout.close_split_areas {
+        for (split_id, btn_row, start_col, end_col) in &self.active_layout().close_split_areas {
             if row == *btn_row && col >= *start_col && col < *end_col {
                 return Some(HoverTarget::CloseSplitButton(*split_id));
             }
         }
 
-        for (split_id, btn_row, start_col, end_col) in &self.cached_layout.maximize_split_areas {
+        for (split_id, btn_row, start_col, end_col) in &self.active_layout().maximize_split_areas {
             if row == *btn_row && col >= *start_col && col < *end_col {
                 return Some(HoverTarget::MaximizeSplitButton(*split_id));
             }
         }
 
-        for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
+        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
             match tab_layout.hit_test(col, row) {
                 Some(TabHit::CloseButton(target)) => {
                     return Some(HoverTarget::TabCloseButton(target, *split_id));
@@ -937,7 +938,7 @@ impl Editor {
 
         // Check scrollbars
         for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-            &self.cached_layout.split_areas
+            &self.active_layout().split_areas
         {
             if in_rect(col, row, *scrollbar_rect) {
                 let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
@@ -952,31 +953,31 @@ impl Editor {
         }
 
         // Check status bar indicators
-        if let Some((status_row, _status_x, _status_width)) = self.cached_layout.status_bar_area {
+        if let Some((status_row, _status_x, _status_width)) = self.chrome_layout.status_bar_area {
             if row == status_row {
                 let indicators = [
                     (
-                        self.cached_layout.status_bar_line_ending_area,
+                        self.chrome_layout.status_bar_line_ending_area,
                         HoverTarget::StatusBarLineEndingIndicator,
                     ),
                     (
-                        self.cached_layout.status_bar_encoding_area,
+                        self.chrome_layout.status_bar_encoding_area,
                         HoverTarget::StatusBarEncodingIndicator,
                     ),
                     (
-                        self.cached_layout.status_bar_language_area,
+                        self.chrome_layout.status_bar_language_area,
                         HoverTarget::StatusBarLanguageIndicator,
                     ),
                     (
-                        self.cached_layout.status_bar_lsp_area,
+                        self.chrome_layout.status_bar_lsp_area,
                         HoverTarget::StatusBarLspIndicator,
                     ),
                     (
-                        self.cached_layout.status_bar_remote_area,
+                        self.chrome_layout.status_bar_remote_area,
                         HoverTarget::StatusBarRemoteIndicator,
                     ),
                     (
-                        self.cached_layout.status_bar_warning_area,
+                        self.chrome_layout.status_bar_warning_area,
                         HoverTarget::StatusBarWarningBadge,
                     ),
                 ];
@@ -991,7 +992,7 @@ impl Editor {
         }
 
         // Check search options bar checkboxes
-        if let Some(ref layout) = self.cached_layout.search_options_layout {
+        if let Some(ref layout) = self.chrome_layout.search_options_layout {
             use crate::view::ui::status_bar::SearchOptionsHover;
             if let Some(hover) = layout.checkbox_at(col, row) {
                 return Some(match hover {
@@ -1035,7 +1036,7 @@ impl Editor {
         }
 
         // Is it in the file explorer? Double-click opens file AND focuses editor
-        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+        if let Some(explorer_area) = self.active_layout().file_explorer_area {
             if col >= explorer_area.x
                 && col < explorer_area.x + explorer_area.width
                 && row > explorer_area.y // Skip title bar
@@ -1048,7 +1049,7 @@ impl Editor {
         }
 
         // Find which split/buffer was clicked and handle double-click
-        let split_areas = self.cached_layout.split_areas.clone();
+        let split_areas = self.active_layout().split_areas.clone();
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             &split_areas
         {
@@ -1094,7 +1095,7 @@ impl Editor {
 
         // Get cached view line mappings for this split
         let cached_mappings = self
-            .cached_layout
+            .active_layout()
             .view_line_mappings
             .get(&split_id)
             .cloned();
@@ -1193,7 +1194,7 @@ impl Editor {
         }
 
         // Find which split/buffer was clicked
-        let split_areas = self.cached_layout.split_areas.clone();
+        let split_areas = self.active_layout().split_areas.clone();
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             &split_areas
         {
@@ -1234,7 +1235,7 @@ impl Editor {
 
         // Get cached view line mappings for this split
         let cached_mappings = self
-            .cached_layout
+            .active_layout()
             .view_line_mappings
             .get(&split_id)
             .cloned();
@@ -1368,12 +1369,12 @@ impl Editor {
         // Check if click is in editor content area
         tracing::debug!(
             "handle_mouse_click: checking {} split_areas for click at ({}, {})",
-            self.cached_layout.split_areas.len(),
+            self.active_layout().split_areas.len(),
             col,
             row
         );
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.cached_layout.split_areas
+            &self.active_layout().split_areas
         {
             tracing::debug!(
                 "  split_id={:?}, content_rect=({}, {}, {}x{})",
@@ -1424,7 +1425,7 @@ impl Editor {
     /// the inner item area or no suggestions are visible.
     fn suggestion_at(&self, col: u16, row: u16) -> Option<usize> {
         let (inner_rect, start_idx, _visible_count, total_count) =
-            self.cached_layout.suggestions_area?;
+            self.chrome_layout.suggestions_area?;
         if col < inner_rect.x
             || col >= inner_rect.x + inner_rect.width
             || row < inner_rect.y
@@ -1482,7 +1483,7 @@ impl Editor {
     /// behaviour is consistent across the editor.
     fn handle_click_prompt_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         use crate::view::ui::scrollbar::ScrollbarState;
-        let sb_rect = self.cached_layout.suggestions_scrollbar_rect?;
+        let sb_rect = self.chrome_layout.suggestions_scrollbar_rect?;
         if col < sb_rect.x
             || col >= sb_rect.x + sb_rect.width
             || row < sb_rect.y
@@ -1495,7 +1496,7 @@ impl Editor {
         // the user sees. `suggestions_area` carries
         // (inner_rect, scroll_start_idx, visible_count, total_count).
         let visible = self
-            .cached_layout
+            .chrome_layout
             .suggestions_area
             .map(|(_, _, v, _)| v)
             .unwrap_or(prompt.suggestions.len().min(10));
@@ -1513,7 +1514,7 @@ impl Editor {
     fn handle_click_popup_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         // Collect all needed data before mutating self.
         let scrollbar_info: Option<(usize, i32)> =
-            self.cached_layout.popup_areas.iter().rev().find_map(
+            self.chrome_layout.popup_areas.iter().rev().find_map(
                 |(popup_idx, _popup_rect, inner_rect, _scroll, _n, scrollbar_rect, total_lines)| {
                     let sb_rect = scrollbar_rect.as_ref()?;
                     if col >= sb_rect.x
@@ -1559,7 +1560,7 @@ impl Editor {
 
     fn handle_click_global_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         for (popup_idx, popup_rect, inner_rect, scroll_offset, num_items) in self
-            .cached_layout
+            .chrome_layout
             .global_popup_areas
             .clone()
             .into_iter()
@@ -1591,7 +1592,7 @@ impl Editor {
 
     fn handle_click_buffer_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         // Check close-button overlay ("[×]") on each popup.
-        let close_hit = self.cached_layout.popup_areas.iter().rev().find_map(
+        let close_hit = self.chrome_layout.popup_areas.iter().rev().find_map(
             |(_idx, popup_rect, _inner, _scroll, _n, _sb, _tl)| {
                 if popup_rect.width < 5 {
                     return None;
@@ -1609,7 +1610,7 @@ impl Editor {
         }
 
         // Content area clicks — clone to allow &mut self calls inside the loop.
-        let popup_areas = self.cached_layout.popup_areas.clone();
+        let popup_areas = self.chrome_layout.popup_areas.clone();
         for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
             popup_areas.iter().rev()
         {
@@ -1679,11 +1680,11 @@ impl Editor {
         if self.menu_bar_visible {
             // Resolve the hit before any &mut operations to avoid borrow conflicts.
             let hit = self
-                .cached_layout
+                .chrome_layout
                 .menu_layout
                 .as_ref()
                 .and_then(|ml| ml.menu_at(col, row));
-            let layout_exists = self.cached_layout.menu_layout.is_some();
+            let layout_exists = self.chrome_layout.menu_layout.is_some();
             if layout_exists {
                 if let Some(menu_idx) = hit {
                     if self.menu_state.active_menu == Some(menu_idx) {
@@ -1723,7 +1724,7 @@ impl Editor {
     }
 
     fn handle_click_file_explorer_area(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let explorer_area = self.cached_layout.file_explorer_area?;
+        let explorer_area = self.active_layout().file_explorer_area?;
         let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
         if col == border_x && row >= explorer_area.y && row < explorer_area.y + explorer_area.height
         {
@@ -1740,7 +1741,7 @@ impl Editor {
 
     fn handle_click_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         let (split_id, buffer_id, scrollbar_rect, is_on_thumb) =
-            self.cached_layout.split_areas.iter().find_map(
+            self.active_layout().split_areas.iter().find_map(
                 |(split_id, buffer_id, _content, scrollbar_rect, thumb_start, thumb_end)| {
                     if in_rect(col, row, *scrollbar_rect) {
                         let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
@@ -1783,7 +1784,7 @@ impl Editor {
         row: u16,
     ) -> Option<AnyhowResult<()>> {
         let (split_id, buffer_id, hscrollbar_rect, max_content_width, is_on_thumb) = self
-            .cached_layout
+            .active_layout()
             .horizontal_scrollbar_areas
             .iter()
             .find_map(
@@ -1844,41 +1845,41 @@ impl Editor {
     }
 
     fn handle_click_status_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let (status_row, _status_x, _status_width) = self.cached_layout.status_bar_area?;
+        let (status_row, _status_x, _status_width) = self.chrome_layout.status_bar_area?;
         if row != status_row {
             return None;
         }
-        if let Some((r, s, e)) = self.cached_layout.status_bar_line_ending_area {
+        if let Some((r, s, e)) = self.chrome_layout.status_bar_line_ending_area {
             if row == r && col >= s && col < e {
                 return Some(self.handle_action(Action::SetLineEnding));
             }
         }
-        if let Some((r, s, e)) = self.cached_layout.status_bar_encoding_area {
+        if let Some((r, s, e)) = self.chrome_layout.status_bar_encoding_area {
             if row == r && col >= s && col < e {
                 return Some(self.handle_action(Action::SetEncoding));
             }
         }
-        if let Some((r, s, e)) = self.cached_layout.status_bar_language_area {
+        if let Some((r, s, e)) = self.chrome_layout.status_bar_language_area {
             if row == r && col >= s && col < e {
                 return Some(self.handle_action(Action::SetLanguage));
             }
         }
-        if let Some((r, s, e)) = self.cached_layout.status_bar_lsp_area {
+        if let Some((r, s, e)) = self.chrome_layout.status_bar_lsp_area {
             if row == r && col >= s && col < e {
                 return Some(self.handle_action(Action::ShowLspStatus));
             }
         }
-        if let Some((r, s, e)) = self.cached_layout.status_bar_remote_area {
+        if let Some((r, s, e)) = self.chrome_layout.status_bar_remote_area {
             if row == r && col >= s && col < e {
                 return Some(self.handle_action(Action::ShowRemoteIndicatorMenu));
             }
         }
-        if let Some((r, s, e)) = self.cached_layout.status_bar_warning_area {
+        if let Some((r, s, e)) = self.chrome_layout.status_bar_warning_area {
             if row == r && col >= s && col < e {
                 return Some(self.handle_action(Action::ShowWarnings));
             }
         }
-        if let Some((r, s, e)) = self.cached_layout.status_bar_message_area {
+        if let Some((r, s, e)) = self.chrome_layout.status_bar_message_area {
             if row == r && col >= s && col < e {
                 return Some(self.handle_action(Action::ShowStatusLog));
             }
@@ -1888,7 +1889,7 @@ impl Editor {
 
     fn handle_click_search_options(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         use crate::view::ui::status_bar::SearchOptionsHover;
-        let layout = self.cached_layout.search_options_layout.clone()?;
+        let layout = self.chrome_layout.search_options_layout.clone()?;
         match layout.checkbox_at(col, row)? {
             SearchOptionsHover::CaseSensitive => {
                 Some(self.handle_action(Action::ToggleSearchCaseSensitive))
@@ -1905,7 +1906,7 @@ impl Editor {
     }
 
     fn handle_click_split_separator(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let separator_areas = self.cached_layout.separator_areas.clone();
+        let separator_areas = self.active_layout().separator_areas.clone();
         for (split_id, direction, sep_x, sep_y, sep_length) in &separator_areas {
             let is_on_separator = match direction {
                 SplitDirection::Horizontal => {
@@ -1933,7 +1934,7 @@ impl Editor {
 
     fn handle_click_split_controls(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         let close_split_id = self
-            .cached_layout
+            .active_layout()
             .close_split_areas
             .iter()
             .find(|(_, btn_row, start_col, end_col)| {
@@ -1955,7 +1956,7 @@ impl Editor {
             return Some(Ok(()));
         }
 
-        let maximize_hit = self.cached_layout.maximize_split_areas.iter().any(
+        let maximize_hit = self.active_layout().maximize_split_areas.iter().any(
             |(_, btn_row, start_col, end_col)| {
                 row == *btn_row && col >= *start_col && col < *end_col
             },
@@ -1979,7 +1980,7 @@ impl Editor {
     }
 
     fn handle_click_tab_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        for (split_id, tab_layout) in &self.cached_layout.tab_layouts {
+        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
             tracing::debug!(
                 "Tab layout for split {:?}: bar_area={:?}, left_scroll={:?}, right_scroll={:?}",
                 split_id,
@@ -1989,7 +1990,7 @@ impl Editor {
             );
         }
         let tab_hit = self
-            .cached_layout
+            .active_layout()
             .tab_layouts
             .iter()
             .find_map(|(split_id, tab_layout)| {
@@ -2074,7 +2075,7 @@ impl Editor {
         if let Some(dragging_split_id) = self.mouse_state.dragging_scrollbar {
             // Find the buffer and scrollbar rect for this split
             for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
-                &self.cached_layout.split_areas
+                &self.active_layout().split_areas
             {
                 if *split_id == dragging_split_id {
                     // Check if we started dragging from the thumb (have drag_start_row)
@@ -2103,6 +2104,11 @@ impl Editor {
 
         // If dragging horizontal scrollbar, update horizontal scroll position
         if let Some(dragging_split_id) = self.mouse_state.dragging_horizontal_scrollbar {
+            // Clone the scrollbar layout so the loop doesn't hold an
+            // immutable borrow on `self` while it mutates
+            // `self.split_view_states`. The active window's layout cache
+            // is repopulated each frame, so a one-frame snapshot is fine.
+            let hscrollbar_areas = self.active_layout().horizontal_scrollbar_areas.clone();
             for (
                 split_id,
                 _buffer_id,
@@ -2110,7 +2116,7 @@ impl Editor {
                 max_content_width,
                 thumb_start,
                 thumb_end,
-            ) in &self.cached_layout.horizontal_scrollbar_areas
+            ) in &hscrollbar_areas
             {
                 if *split_id == dragging_split_id {
                     let track_width = hscrollbar_rect.width as f64;
@@ -2165,7 +2171,7 @@ impl Editor {
         if let Some(popup_idx) = self.mouse_state.selecting_in_popup {
             // Find the popup area from cached layout
             if let Some((_, _, inner_rect, scroll_offset, _, _, _)) = self
-                .cached_layout
+                .chrome_layout
                 .popup_areas
                 .iter()
                 .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
@@ -2196,11 +2202,11 @@ impl Editor {
         if self.mouse_state.dragging_prompt_scrollbar {
             use crate::view::ui::scrollbar::ScrollbarState;
             if let (Some(sb_rect), Some(prompt)) = (
-                self.cached_layout.suggestions_scrollbar_rect,
+                self.chrome_layout.suggestions_scrollbar_rect,
                 self.prompt.as_mut(),
             ) {
                 let visible = self
-                    .cached_layout
+                    .chrome_layout
                     .suggestions_area
                     .map(|(_, _, v, _)| v)
                     .unwrap_or(prompt.suggestions.len().min(10));
@@ -2222,7 +2228,7 @@ impl Editor {
         if let Some(popup_idx) = self.mouse_state.dragging_popup_scrollbar {
             // Find the popup's scrollbar rect from cached layout
             if let Some((_, _, inner_rect, _, _, Some(sb_rect), total_lines)) = self
-                .cached_layout
+                .chrome_layout
                 .popup_areas
                 .iter()
                 .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
@@ -2291,7 +2297,7 @@ impl Editor {
 
         // Find the buffer and content rect for this split in one pass
         let Some((buffer_id, content_rect)) = self
-            .cached_layout
+            .active_layout()
             .split_areas
             .iter()
             .find(|(sid, _, _, _, _, _)| *sid == split_id)
@@ -2302,7 +2308,7 @@ impl Editor {
 
         // Get cached view line mappings for this split
         let cached_mappings = self
-            .cached_layout
+            .active_layout()
             .view_line_mappings
             .get(&split_id)
             .cloned();
@@ -2451,7 +2457,7 @@ impl Editor {
         let Some(start_ratio) = self.mouse_state.drag_start_ratio else {
             return Ok(());
         };
-        let Some(editor_area) = self.cached_layout.editor_content_area else {
+        let Some(editor_area) = self.active_layout().editor_content_area else {
             return Ok(());
         };
 
@@ -2495,8 +2501,8 @@ impl Editor {
     pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         if let Some(ref menu) = self.file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(
-                self.cached_layout.last_frame_width,
-                self.cached_layout.last_frame_height,
+                self.chrome_layout.last_frame_width,
+                self.chrome_layout.last_frame_height,
             );
             let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
             let menu_height = menu.height();
@@ -2527,7 +2533,7 @@ impl Editor {
             }
         }
 
-        if let Some(explorer_area) = self.cached_layout.file_explorer_area {
+        if let Some(explorer_area) = self.active_layout().file_explorer_area {
             if col >= explorer_area.x
                 && col < explorer_area.x + explorer_area.width
                 && row < explorer_area.y + explorer_area.height
@@ -2565,8 +2571,11 @@ impl Editor {
         self.file_explorer_context_menu = None;
 
         // Check if right-click is on a tab
-        let tab_hit =
-            self.cached_layout.tab_layouts.iter().find_map(
+        let tab_hit = self
+            .active_layout()
+            .tab_layouts
+            .iter()
+            .find_map(
                 |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
                     Some(TabHit::TabName(target) | TabHit::CloseButton(target)) => {
                         // Context menu only makes sense for buffer tabs; groups are
@@ -2721,8 +2730,8 @@ impl Editor {
         let clicked_item: Option<super::types::FileExplorerContextMenuItem> = {
             let menu = self.file_explorer_context_menu.as_ref()?;
             let (menu_x, menu_y) = menu.clamped_position(
-                self.cached_layout.last_frame_width,
-                self.cached_layout.last_frame_height,
+                self.chrome_layout.last_frame_width,
+                self.chrome_layout.last_frame_height,
             );
             let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
             let menu_height = menu.height();

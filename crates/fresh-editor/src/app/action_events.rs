@@ -289,7 +289,7 @@ impl Editor {
 
                     // Calculate current visual column from cached layout
                     let current_visual_col = self
-                        .cached_layout
+                        .active_layout()
                         .byte_to_visual_column(split_id, from_pos)?;
 
                     let goal_visual_col = if sticky_column > 0 {
@@ -298,7 +298,7 @@ impl Editor {
                         current_visual_col
                     };
 
-                    match self.cached_layout.move_visual_line(
+                    match self.active_layout().move_visual_line(
                         split_id,
                         from_pos,
                         goal_visual_col,
@@ -334,7 +334,7 @@ impl Editor {
                     // Allow advancing to next visual segment only if not at a physical line ending
                     let allow_advance = !at_line_ending;
                     match self
-                        .cached_layout
+                        .active_layout()
                         .visual_line_end(split_id, position, allow_advance)
                     {
                         Some(end_pos) => (end_pos, 0),
@@ -345,7 +345,7 @@ impl Editor {
                     // Allow advancing to previous visual segment only if not at a physical line start
                     let allow_advance = !at_line_start;
                     match self
-                        .cached_layout
+                        .active_layout()
                         .visual_line_start(split_id, position, allow_advance)
                     {
                         Some(start_pos) => (start_pos, 0),
@@ -433,8 +433,10 @@ impl Editor {
             // authoritative "end of current visual row" position that the
             // renderer itself uses.
             let cur_row_line_end = {
-                let mappings = self.cached_layout.view_line_mappings.get(&active_split)?;
-                let row_idx = self.cached_layout.find_visual_row(active_split, from_pos)?;
+                let mappings = self.active_layout().view_line_mappings.get(&active_split)?;
+                let row_idx = self
+                    .active_layout()
+                    .find_visual_row(active_split, from_pos)?;
                 mappings.get(row_idx)?.line_end_byte
             };
 
@@ -489,8 +491,10 @@ impl Editor {
             // stepping back one byte lands on the previous line's
             // trailing newline — again the end of its last visual row.
             let (cur_row_anchor, row_is_empty) = {
-                let mappings = self.cached_layout.view_line_mappings.get(&active_split)?;
-                let row_idx = self.cached_layout.find_visual_row(active_split, from_pos)?;
+                let mappings = self.active_layout().view_line_mappings.get(&active_split)?;
+                let row_idx = self
+                    .active_layout()
+                    .find_visual_row(active_split, from_pos)?;
                 let row = mappings.get(row_idx)?;
                 match row.char_source_bytes.iter().find_map(|b| *b) {
                     Some(start) => (start, false),

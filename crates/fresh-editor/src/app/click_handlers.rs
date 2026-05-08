@@ -121,7 +121,7 @@ impl Editor {
         row: u16,
     ) -> Option<(BufferId, usize)> {
         for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.cached_layout.split_areas
+            &self.active_layout().split_areas
         {
             if col < content_rect.x
                 || col >= content_rect.x + content_rect.width
@@ -148,7 +148,11 @@ impl Editor {
                 (state.margins.left_total_width() as u16, headers)
             };
 
-            let cached_mappings = self.cached_layout.view_line_mappings.get(split_id).cloned();
+            let cached_mappings = self
+                .active_layout()
+                .view_line_mappings
+                .get(split_id)
+                .cloned();
             let fallback = self
                 .split_view_states
                 .get(split_id)
@@ -215,7 +219,7 @@ impl Editor {
         // result.
         let (mc_buffer_row, mc_buffer_col) = {
             let cached_mappings = self
-                .cached_layout
+                .active_layout()
                 .view_line_mappings
                 .get(&split_id)
                 .cloned();
@@ -362,7 +366,7 @@ impl Editor {
 
         // Get cached view line mappings for this split (before mutable borrow of buffers)
         let cached_mappings = self
-            .cached_layout
+            .active_layout()
             .view_line_mappings
             .get(&split_id)
             .cloned();

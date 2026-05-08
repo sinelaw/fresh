@@ -2907,7 +2907,7 @@ impl Editor {
         &self,
         buffer_id: BufferId,
     ) -> Option<ratatui::layout::Rect> {
-        self.cached_layout
+        self.active_layout()
             .split_areas
             .iter()
             .find(|(_, bid, _, _, _, _)| *bid == buffer_id)

@@ -187,7 +187,7 @@ impl Editor {
         row: u16,
         menu_index: usize,
     ) -> Option<HoverTarget> {
-        let menu_layout = self.cached_layout.menu_layout.as_ref()?;
+        let menu_layout = self.chrome_layout.menu_layout.as_ref()?;
 
         // Check submenu items first (they're rendered on top)
         if let Some((depth, item_idx)) = menu_layout.submenu_item_at(col, row) {
@@ -213,7 +213,7 @@ impl Editor {
     ) -> AnyhowResult<Option<AnyhowResult<()>>> {
         use crate::view::ui::menu::MenuHit;
 
-        let menu_layout = match &self.cached_layout.menu_layout {
+        let menu_layout = match &self.chrome_layout.menu_layout {
             Some(layout) => layout.clone(),
             None => return Ok(None),
         };
