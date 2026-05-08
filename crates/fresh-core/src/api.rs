@@ -1027,6 +1027,17 @@ pub struct EditorStateSnapshot {
     /// explicit cross-plugin state sharing APIs).
     #[ts(type = "any")]
     pub plugin_global_states: HashMap<String, HashMap<String, serde_json::Value>>,
+
+    /// Plugin-managed per-session state, snapshotted as the
+    /// **active** session's plugin_state map. Updated wholesale
+    /// on `setActiveSession` (alongside the rest of the
+    /// per-session state) — plugins that read this via
+    /// `editor.getSessionState(key)` see the active session's
+    /// values without crossing the IPC boundary on every read.
+    /// Outer key is plugin name, inner is the plugin-defined key.
+    #[serde(default)]
+    #[ts(type = "any")]
+    pub active_session_plugin_states: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 impl EditorStateSnapshot {
@@ -1059,6 +1070,7 @@ impl EditorStateSnapshot {
             plugin_view_states_split: 0,
             keybinding_labels: HashMap::new(),
             plugin_global_states: HashMap::new(),
+            active_session_plugin_states: HashMap::new(),
         }
     }
 }
@@ -1318,6 +1330,17 @@ pub enum PluginCommand {
     /// Isolated per plugin by plugin_name.
     /// TODO: Need to think about plugin isolation / namespacing strategy for these APIs.
     SetGlobalState {
+        plugin_name: String,
+        key: String,
+        #[ts(type = "any")]
+        value: Option<serde_json::Value>,
+    },
+
+    /// Plugin-managed per-session state. Writes to the **currently
+    /// active** session's `plugin_state` map keyed by
+    /// `(plugin_name, key)`. Other sessions' state is unaffected.
+    /// `None` means delete (matches `SetGlobalState` semantics).
+    SetSessionState {
         plugin_name: String,
         key: String,
         #[ts(type = "any")]

@@ -103,6 +103,14 @@ pub struct Session {
     /// `closeSession` to drop session-private buffers and by
     /// future per-session quick-open scoping.
     pub buffers: HashSet<BufferId>,
+
+    /// Plugin-managed per-session state. Outer key is plugin name,
+    /// inner is the plugin-defined key. Read via
+    /// `editor.getSessionState(key)` and written via
+    /// `editor.setSessionState(key, value)`. Survives editor
+    /// restarts only when the cross-restart persistence step
+    /// flushes it; for now lives in memory only.
+    pub plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 impl Session {
@@ -126,6 +134,7 @@ impl Session {
             root,
             file_explorer_stash: None,
             file_mod_times_stash: HashMap::new(),
+            plugin_state: HashMap::new(),
             lsp_stash: None,
             panel_ids_stash: HashMap::new(),
             splits_stash: None,

@@ -3753,6 +3753,78 @@ impl JsEditorApi {
         Ok(Value::new_undefined(ctx.clone()))
     }
 
+    /// Set per-session state on the **active** session. Same
+    /// shape as `setGlobalState` (write-through to snapshot +
+    /// dispatched to editor; null/undefined deletes), but the
+    /// underlying storage lives on `Session.plugin_state` and
+    /// swaps with the rest of session state on `setActiveSession`.
+    /// Plugins that genuinely want per-project state use this;
+    /// Conductor itself uses `setGlobalState` because its session
+    /// list lives above session boundaries.
+    pub fn set_session_state<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        key: String,
+        value: Value<'js>,
+    ) -> bool {
+        let json_value = if value.is_undefined() || value.is_null() {
+            None
+        } else {
+            Some(js_to_json(&ctx, value))
+        };
+        // Write-through to snapshot's active-session map so the
+        // very next getSessionState observes our write without
+        // waiting for a tick.
+        if let Ok(mut snapshot) = self.state_snapshot.write() {
+            match &json_value {
+                Some(v) => {
+                    snapshot
+                        .active_session_plugin_states
+                        .entry(self.plugin_name.clone())
+                        .or_default()
+                        .insert(key.clone(), v.clone());
+                }
+                None => {
+                    if let Some(map) = snapshot
+                        .active_session_plugin_states
+                        .get_mut(&self.plugin_name)
+                    {
+                        map.remove(&key);
+                        if map.is_empty() {
+                            snapshot
+                                .active_session_plugin_states
+                                .remove(&self.plugin_name);
+                        }
+                    }
+                }
+            }
+        }
+        self.command_sender
+            .send(PluginCommand::SetSessionState {
+                plugin_name: self.plugin_name.clone(),
+                key,
+                value: json_value,
+            })
+            .is_ok()
+    }
+
+    /// Get per-session state from the **active** session
+    /// (snapshot read). `undefined` if missing.
+    pub fn get_session_state<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        key: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        if let Ok(snapshot) = self.state_snapshot.read() {
+            if let Some(map) = snapshot.active_session_plugin_states.get(&self.plugin_name) {
+                if let Some(json_val) = map.get(&key) {
+                    return json_to_js_value(&ctx, json_val);
+                }
+            }
+        }
+        Ok(Value::new_undefined(ctx.clone()))
+    }
+
     // === Scroll Sync ===
 
     /// Create a scroll sync group for anchor-based synchronized scrolling
@@ -8827,6 +8899,51 @@ mod tests {
                 assert!(
                     result,
                     "getGlobalState should return the value set by setGlobalState"
+                );
+            });
+    }
+
+    /// `setSessionState` writes through to the snapshot's
+    /// active-session map; `getSessionState` reads it back.
+    /// Mirrors the global-state roundtrip test — the only
+    /// behavioural difference is the storage namespace.
+    #[test]
+    fn test_api_set_session_state_roundtrip() {
+        let (mut backend, _rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            editor.setSessionState("draft", { count: 7 });
+            globalThis._result = editor.getSessionState("draft");
+            globalThis._missing = editor.getSessionState("absent");
+        "#,
+                "test_plugin.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test_plugin")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                let count: i64 = global
+                    .get::<_, rquickjs::Object>("_result")
+                    .unwrap()
+                    .get("count")
+                    .unwrap();
+                assert_eq!(
+                    count, 7,
+                    "getSessionState should return the value set by setSessionState"
+                );
+                let missing = global.get::<_, rquickjs::Value>("_missing").unwrap();
+                assert!(
+                    missing.is_undefined(),
+                    "getSessionState for an unset key must be undefined"
                 );
             });
     }

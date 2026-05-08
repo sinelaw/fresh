@@ -1259,6 +1259,38 @@ impl Editor {
         }
     }
 
+    /// Set per-session state on the **active** session. Mirrors
+    /// `handle_set_global_state` semantics: `None` deletes,
+    /// per-plugin namespacing, empty map drops the plugin entry.
+    pub(super) fn handle_set_session_state(
+        &mut self,
+        plugin_name: String,
+        key: String,
+        value: Option<serde_json::Value>,
+    ) {
+        let id = self.active_session;
+        let Some(session) = self.sessions.get_mut(&id) else {
+            return;
+        };
+        match value {
+            Some(v) => {
+                session
+                    .plugin_state
+                    .entry(plugin_name)
+                    .or_default()
+                    .insert(key, v);
+            }
+            None => {
+                if let Some(map) = session.plugin_state.get_mut(&plugin_name) {
+                    map.remove(&key);
+                    if map.is_empty() {
+                        session.plugin_state.remove(&plugin_name);
+                    }
+                }
+            }
+        }
+    }
+
     /// Handle SetLineNumbers command
     ///
     /// Sets line number visibility on the specified buffer's per-split view state,

@@ -1936,6 +1936,22 @@ interface EditorAPI {
 	*/
 	getGlobalState(key: string): unknown;
 	/**
+	* Set per-session state on the **active** session. Same
+	* shape as `setGlobalState` (write-through to snapshot +
+	* dispatched to editor; null/undefined deletes), but the
+	* underlying storage lives on `Session.plugin_state` and
+	* swaps with the rest of session state on `setActiveSession`.
+	* Plugins that genuinely want per-project state use this;
+	* Conductor itself uses `setGlobalState` because its session
+	* list lives above session boundaries.
+	*/
+	setSessionState(key: string, value: unknown): boolean;
+	/**
+	* Get per-session state from the **active** session
+	* (snapshot read). `undefined` if missing.
+	*/
+	getSessionState(key: string): unknown;
+	/**
 	* Create a scroll sync group for anchor-based synchronized scrolling
 	*/
 	createScrollSyncGroup(groupId: number, leftSplit: number, rightSplit: number): boolean;

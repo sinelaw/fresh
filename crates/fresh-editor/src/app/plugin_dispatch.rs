@@ -308,6 +308,20 @@ impl Editor {
             snapshot.sessions = session_infos;
             snapshot.active_session_id = self.active_session;
 
+            // Mirror the active session's plugin_state into the
+            // snapshot so getSessionState reads cheaply. Cloning
+            // is fine here: the per-session state is small (one
+            // entry per plugin per key); plugins that store
+            // megabyte-scale blobs in setSessionState will see
+            // proportional snapshot-update cost, which is the
+            // desired feedback signal — store large blobs in
+            // global state or out-of-band instead.
+            if let Some(session) = self.sessions.get(&self.active_session) {
+                snapshot.active_session_plugin_states = session.plugin_state.clone();
+            } else {
+                snapshot.active_session_plugin_states.clear();
+            }
+
             snapshot.authority_label = self.authority.display_label.clone();
 
             // Update LSP diagnostics: Arc refcount bump; no clone.
@@ -690,6 +704,13 @@ impl Editor {
                 value,
             } => {
                 self.handle_set_global_state(plugin_name, key, value);
+            }
+            PluginCommand::SetSessionState {
+                plugin_name,
+                key,
+                value,
+            } => {
+                self.handle_set_session_state(plugin_name, key, value);
             }
             PluginCommand::RefreshLines { buffer_id } => {
                 self.handle_refresh_lines(buffer_id);
