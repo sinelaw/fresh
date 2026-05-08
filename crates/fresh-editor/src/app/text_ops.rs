@@ -110,7 +110,12 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_buffer_id()?;
-        let state = self.buffers.get_mut(&buffer_id)?;
+        let state = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)?;
         let mut iter = state
             .buffer
             .line_iterator(visual_start, estimated_line_length);

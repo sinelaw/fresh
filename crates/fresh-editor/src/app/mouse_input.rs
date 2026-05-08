@@ -573,12 +573,12 @@ impl Editor {
             .get(&split_id)
             .cloned();
         let gutter_width = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .map(|s| s.margins.left_total_width() as u16)
             .unwrap_or(0);
         let fallback = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .map(|s| s.buffer.len())
             .unwrap_or(0);
@@ -1126,8 +1126,19 @@ impl Editor {
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
-        // Calculate clicked position in buffer
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        // Calculate clicked position in buffer.
+        // Single &mut on active window, split-borrow buffers + view states.
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let (__mgr, __vs_map) = __win
+            .splits
+            .as_mut()
+            .map(|(m, vs)| (&*m, vs))
+            .expect("active window must have a populated split layout");
+        let _ = __mgr;
+        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
 
             let Some(target_position) = super::click_geometry::screen_to_buffer_position(
@@ -1144,12 +1155,7 @@ impl Editor {
             };
 
             // Move cursor to clicked position first
-            let primary_cursor_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+            let primary_cursor_id = __vs_map
                 .get(&leaf_id)
                 .map(|vs| vs.cursors.primary_id())
                 .unwrap_or(CursorId(0));
@@ -1166,15 +1172,7 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
-            let active_id = self.active_window;
-            if let Some(cursors) = self
-                .windows
-                .get_mut(&active_id)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&leaf_id)
-                .map(|vs| &mut vs.cursors)
-            {
+            if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
                 state.apply(cursors, &event);
             }
         }
@@ -1285,8 +1283,19 @@ impl Editor {
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
-        // Calculate clicked position in buffer
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        // Calculate clicked position in buffer.
+        // Single &mut on active window, split-borrow buffers + view states.
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let (__mgr, __vs_map) = __win
+            .splits
+            .as_mut()
+            .map(|(m, vs)| (&*m, vs))
+            .expect("active window must have a populated split layout");
+        let _ = __mgr;
+        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
 
             let Some(target_position) = super::click_geometry::screen_to_buffer_position(
@@ -1303,12 +1312,7 @@ impl Editor {
             };
 
             // Move cursor to clicked position first
-            let primary_cursor_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+            let primary_cursor_id = __vs_map
                 .get(&leaf_id)
                 .map(|vs| vs.cursors.primary_id())
                 .unwrap_or(CursorId(0));
@@ -1325,15 +1329,7 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
-            let active_id = self.active_window;
-            if let Some(cursors) = self
-                .windows
-                .get_mut(&active_id)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&leaf_id)
-                .map(|vs| &mut vs.cursors)
-            {
+            if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
                 state.apply(cursors, &event);
             }
         }
@@ -2448,7 +2444,16 @@ impl Editor {
             .and_then(|vs| vs.compose_width);
 
         // Calculate the target position from screen coordinates
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let __vs_map = &mut __win
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1;
+        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
             let gutter_width = state.margins.left_total_width() as u16;
 
             let Some(target_position) = super::click_geometry::screen_to_buffer_position(
@@ -2464,10 +2469,6 @@ impl Editor {
                 return Ok(());
             };
 
-            // When drag started with double-click, snap to word boundaries.
-            // When dragging forward, anchor at word start and extend to word end.
-            // When dragging backward, anchor at word end and extend to word start,
-            // so the initially double-clicked word stays selected.
             let (new_position, anchor_position) = if self.mouse_state.drag_selection_by_words {
                 if target_position >= anchor_position {
                     (
@@ -2485,12 +2486,7 @@ impl Editor {
                 (target_position, anchor_position)
             };
 
-            let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+            let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = __vs_map
                 .get(&leaf_id)
                 .map(|vs| {
                     let cursor = vs.cursors.primary();
@@ -2513,7 +2509,7 @@ impl Editor {
                 old_position,
                 new_position,
                 old_anchor,
-                new_anchor: Some(anchor_position), // Keep anchor to maintain selection
+                new_anchor: Some(anchor_position),
                 old_sticky_column,
                 new_sticky_column,
             };
@@ -2521,15 +2517,7 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
-            let active_id = self.active_window;
-            if let Some(cursors) = self
-                .windows
-                .get_mut(&active_id)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&leaf_id)
-                .map(|vs| &mut vs.cursors)
-            {
+            if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
                 state.apply(cursors, &event);
             }
         }
@@ -2943,25 +2931,35 @@ impl Editor {
         // Check if file/folder has unsaved changes in editor
         let has_unsaved_changes = if is_directory {
             // Check if any buffer under this directory has unsaved changes
-            self.buffers.iter().any(|(buffer_id, state)| {
-                if state.buffer.is_modified() {
-                    if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
-                        if let Some(file_path) = metadata.file_path() {
-                            return file_path.starts_with(&path);
+            self.windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .iter()
+                .any(|(buffer_id, state)| {
+                    if state.buffer.is_modified() {
+                        if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
+                            if let Some(file_path) = metadata.file_path() {
+                                return file_path.starts_with(&path);
+                            }
                         }
                     }
-                }
-                false
-            })
+                    false
+                })
         } else {
-            self.buffers.iter().any(|(buffer_id, state)| {
-                if state.buffer.is_modified() {
-                    if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
-                        return metadata.file_path() == Some(&path);
+            self.windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .iter()
+                .any(|(buffer_id, state)| {
+                    if state.buffer.is_modified() {
+                        if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
+                            return metadata.file_path() == Some(&path);
+                        }
                     }
-                }
-                false
-            })
+                    false
+                })
         };
 
         // Build tooltip content
@@ -3042,7 +3040,14 @@ impl Editor {
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
         // Show the popup
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+        let __buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+        {
             state.popups.show(popup);
         }
     }
@@ -3050,7 +3055,14 @@ impl Editor {
     /// Dismiss the file explorer status tooltip
     fn dismiss_file_explorer_status_tooltip(&mut self) {
         // Dismiss any transient popups
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+        let __buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+        {
             state.popups.dismiss_transient();
         }
     }

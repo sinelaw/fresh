@@ -287,7 +287,13 @@ impl super::Editor {
                 let scrollable = scrollable.unwrap_or(true);
                 let buffer_id =
                     self.create_virtual_buffer(format!("*{}*", id), mode.to_string(), true);
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     state.show_cursors = false;
                     state.editing_disabled = true;
                     state.scrollable = scrollable;
@@ -308,7 +314,13 @@ impl super::Editor {
                 let scrollable = scrollable.unwrap_or(false);
                 let buffer_id =
                     self.create_virtual_buffer(format!("*{}*", id), mode.to_string(), true);
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     state.show_cursors = false;
                     state.editing_disabled = true;
                     state.scrollable = scrollable;
@@ -628,7 +640,12 @@ impl super::Editor {
     /// panels can set `scrollable: false` (and Fixed panels default to
     /// it) so the mouse wheel is a no-op and no scrollbar is drawn.
     pub(crate) fn is_non_scrollable_buffer(&self, buffer_id: BufferId) -> bool {
-        self.buffers.get(&buffer_id).is_some_and(|s| !s.scrollable)
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .is_some_and(|s| !s.scrollable)
     }
 }
 

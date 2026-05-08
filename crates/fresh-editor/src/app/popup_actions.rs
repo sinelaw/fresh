@@ -223,12 +223,18 @@ impl Editor {
                     .expect("active window must have a populated split layout")
                     .active_split();
                 let buffer_id = self.active_buffer();
-                let state = self.buffers.get_mut(&buffer_id).unwrap();
-                let cursors = &mut self
+                let __win = self
                     .windows
                     .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must exist");
+
+                let state = __win.buffers.get_mut(&buffer_id).unwrap();
+
+                let cursors = &mut __win
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .get_mut(&split_id)
                     .unwrap()
                     .cursors;
@@ -531,7 +537,13 @@ impl Editor {
         // Close old popup and show new one
         self.hide_popup();
         let buffer_id = self.active_buffer();
-        let state = self.buffers.get_mut(&buffer_id).unwrap();
+        let state = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+            .unwrap();
         let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
         popup_obj.accept_key_hint = accept_hint;
         popup_obj.resolver = crate::view::popup::PopupResolver::Completion;

@@ -140,7 +140,13 @@ impl Editor {
             }
             PromptType::GotoLine => {
                 let buffer_id = self.active_buffer();
-                if let Some(state) = self.buffers.get(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&buffer_id)
+                {
                     let max_line = state.buffer.line_count().unwrap_or(1);
                     let current_line = state.primary_cursor_line_number.value() + 1;
                     match crate::input::quick_open::parse_goto_line_input(&input) {
@@ -751,7 +757,14 @@ impl Editor {
                 // This ensures syntax highlighting works immediately after "Save As"
                 let mut language_changed = false;
                 let mut new_language = String::new();
-                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+                let __buffer_id = self.active_buffer();
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&__buffer_id)
+                {
                     if state.language == "text" {
                         let first_line = state.buffer.first_line_lossy();
                         let detected =
@@ -995,7 +1008,13 @@ impl Editor {
 
         match trimmed.parse::<usize>() {
             Ok(val) if val > 0 => {
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     state.buffer_settings.tab_size = val;
                 }
                 self.set_status_message(t!("settings.tab_size_set", value = val).to_string());
@@ -1198,7 +1217,13 @@ impl Editor {
         // Check for "Plain Text" (no highlighting)
         if trimmed == "Plain Text" || trimmed.to_lowercase() == "text" {
             let buffer_id = self.active_buffer();
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 state.apply_language(DetectedLanguage::plain_text());
                 self.set_status_message("Language set to Plain Text".to_string());
             }
@@ -1222,7 +1247,13 @@ impl Editor {
         ) {
             let language = detected.name.clone();
             let buffer_id = self.active_buffer();
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 state.apply_language(detected);
                 self.set_status_message(format!("Language set to {}", trimmed));
             }
@@ -1274,7 +1305,7 @@ impl Editor {
         if first_char == save_first {
             // Save and close
             let has_path = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .map(|s| s.buffer.file_path().is_some())
                 .unwrap_or(false);
@@ -1357,7 +1388,13 @@ impl Editor {
             // on every buffer ensures `end_recovery_session` will not preserve
             // their recovery files when hot_exit is enabled — the user has
             // explicitly asked to throw the changes away.
-            for (_, state) in self.buffers.iter_mut() {
+            for (_, state) in self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .iter_mut()
+            {
                 state.buffer.clear_modified();
                 state.buffer.set_recovery_pending(false);
             }
@@ -1417,7 +1454,7 @@ impl Editor {
             // per-URI stored diagnostics, which is what we want when the
             // user has asked for the server to go away entirely.
             let buffer_ids: Vec<_> = self
-                .buffers
+                .buffers()
                 .iter()
                 .filter(|(_, s)| s.language == language)
                 .map(|(id, _)| *id)
@@ -1589,7 +1626,13 @@ impl Editor {
             }
             QuickOpenResult::ShowBuffer(buffer_id) => {
                 let buffer_id = crate::model::event::BufferId(buffer_id);
-                if self.buffers.contains_key(&buffer_id) {
+                if self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .contains_key(&buffer_id)
+                {
                     self.set_active_buffer(buffer_id);
                     if let Some(name) = self.active_state().buffer.file_path() {
                         self.set_status_message(
@@ -1601,7 +1644,13 @@ impl Editor {
             }
             QuickOpenResult::GotoLine(target) => {
                 let buffer_id = self.active_buffer();
-                if let Some(state) = self.buffers.get(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&buffer_id)
+                {
                     let max_line = state.buffer.line_count().unwrap_or(1);
                     let current_line = state.primary_cursor_line_number.value() + 1;
                     let line = resolve_goto_line_target(target, current_line, max_line);

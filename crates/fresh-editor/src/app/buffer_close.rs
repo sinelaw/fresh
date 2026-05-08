@@ -20,7 +20,13 @@ impl Editor {
     /// Close the given buffer
     pub fn close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
         // Check for unsaved changes
-        if let Some(state) = self.buffers.get(&id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&id)
+        {
             if state.buffer.is_modified() {
                 return Err(anyhow::anyhow!("Buffer has unsaved changes"));
             }
@@ -117,7 +123,14 @@ impl Editor {
                             .get(bid)
                             .map(|m| m.hidden_from_tabs)
                             .unwrap_or(false);
-                        if hidden || !self.buffers.contains_key(bid) {
+                        if hidden
+                            || !self
+                                .windows
+                                .get(&self.active_window)
+                                .map(|w| &w.buffers)
+                                .expect("active window present")
+                                .contains_key(bid)
+                        {
                             None
                         } else {
                             Some(*t)
@@ -137,7 +150,7 @@ impl Editor {
         // Any visible buffer other than the one being closed. Used as the
         // general fallback (no LRU target or LRU points at a gone group).
         let fallback_buffer: Option<BufferId> = self
-            .buffers
+            .buffers()
             .keys()
             .find(|&&bid| {
                 bid != id
@@ -192,8 +205,15 @@ impl Editor {
         // Absolute last-resort pool for the Group case: any buffer at all,
         // including hidden panel ones. The shadow cleanup below keeps
         // those invisible.
-        let any_remaining =
-            return_to_group.and_then(|_| self.buffers.keys().copied().find(|&bid| bid != id));
+        let any_remaining = return_to_group.and_then(|_| {
+            self.windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .keys()
+                .copied()
+                .find(|&bid| bid != id)
+        });
 
         let (replacement_buffer, created_empty_buffer) = match direct_replacement
             .or(already_keyed)
@@ -273,7 +293,11 @@ impl Editor {
             self.set_pane_buffer(split_id, replacement_buffer);
         }
 
-        self.buffers.remove(&id);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .remove(&id);
         self.detach_buffer_from_all_windows(id);
         self.event_logs.remove(&id);
         self.seen_byte_ranges.remove(&id);
@@ -329,7 +353,14 @@ impl Editor {
 
     /// Switch to the given buffer
     pub fn switch_buffer(&mut self, id: BufferId) {
-        if self.buffers.contains_key(&id) && id != self.active_buffer() {
+        if self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .contains_key(&id)
+            && id != self.active_buffer()
+        {
             // Save current position before switching buffers
             self.position_history.commit_pending_movement();
 
@@ -428,7 +459,13 @@ impl Editor {
 
         if is_last_viewport {
             // Last viewport of this buffer - need to close buffer entirely
-            if let Some(state) = self.buffers.get(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            {
                 if state.buffer.is_modified() {
                     // Buffer has unsaved changes - prompt for confirmation
                     let name = self.get_buffer_display_name(buffer_id);
@@ -705,7 +742,13 @@ impl Editor {
         if is_last_viewport {
             // Last viewport of this buffer - need to close buffer entirely
             // Skip modified buffers to avoid prompting during batch operations
-            if let Some(state) = self.buffers.get(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            {
                 if state.buffer.is_modified() {
                     // Skip modified buffers - don't close them
                     return false;
@@ -874,7 +917,13 @@ impl Editor {
             let target_anchor = entry.anchor;
 
             // Switch to the target buffer
-            if self.buffers.contains_key(&target_buffer) {
+            if self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .contains_key(&target_buffer)
+            {
                 self.set_active_buffer(target_buffer);
 
                 // Move cursor to the saved position
@@ -899,12 +948,18 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                let state = self.buffers.get_mut(&target_buffer).unwrap();
-                let view_state = self
+                let __window = self
                     .windows
                     .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must exist");
+
+                let state = __window.buffers.get_mut(&target_buffer).unwrap();
+
+                let view_state = __window
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .get_mut(&split_id)
                     .unwrap();
                 state.apply(&mut view_state.cursors, &event);
@@ -930,7 +985,13 @@ impl Editor {
             let target_anchor = entry.anchor;
 
             // Switch to the target buffer
-            if self.buffers.contains_key(&target_buffer) {
+            if self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .contains_key(&target_buffer)
+            {
                 self.set_active_buffer(target_buffer);
 
                 // Move cursor to the saved position
@@ -955,12 +1016,18 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                let state = self.buffers.get_mut(&target_buffer).unwrap();
-                let view_state = self
+                let __window = self
                     .windows
                     .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must exist");
+
+                let state = __window.buffers.get_mut(&target_buffer).unwrap();
+
+                let view_state = __window
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .get_mut(&split_id)
                     .unwrap();
                 state.apply(&mut view_state.cursors, &event);

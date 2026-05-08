@@ -325,8 +325,12 @@ pub(crate) struct GotoLinePreviewSnapshot {
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
-    /// All open buffers
-    buffers: HashMap<BufferId, EditorState>,
+    // Buffers moved onto `Window` (Step 0c). Each window owns its
+    // own buffer storage; opening the same file in two windows
+    // produces two independent buffers. Access through
+    // `Editor::buffers()` / `buffers_mut()` (active window) or by
+    // direct `self.windows.get_mut(&id).unwrap().buffers` for
+    // cross-window iteration.
 
     // NOTE: There is no `active_buffer` field. The active buffer is derived from
     // `split_manager.active_buffer_id()` to maintain a single source of truth.
@@ -1326,7 +1330,11 @@ impl Editor {
     /// scenario migration).
     #[doc(hidden)]
     pub fn buffer_count_for_tests(&self) -> usize {
-        self.buffers.len()
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .len()
     }
 
     /// Buffer IDs in stable order (sorted by inner value). Used by
@@ -1334,19 +1342,37 @@ impl Editor {
     /// depend on `HashMap` iteration order.
     #[doc(hidden)]
     pub fn all_buffer_ids_for_tests(&self) -> Vec<BufferId> {
-        let mut ids: Vec<BufferId> = self.buffers.keys().copied().collect();
+        let mut ids: Vec<BufferId> = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .keys()
+            .copied()
+            .collect();
         ids.sort_by_key(|id| id.0);
         ids
     }
 
     /// Get the currently active buffer state
     pub fn active_state(&self) -> &EditorState {
-        self.buffers.get(&self.active_buffer()).unwrap()
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&self.active_buffer())
+            .unwrap()
     }
 
     /// Get the currently active buffer state (mutable)
     pub fn active_state_mut(&mut self) -> &mut EditorState {
-        self.buffers.get_mut(&self.active_buffer()).unwrap()
+        let __buffer_id = self.active_buffer();
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+            .unwrap()
     }
 
     /// Get the cursors for the active buffer in the active split.
@@ -1433,14 +1459,19 @@ impl Editor {
             .get(&buffer_id)
             .map(|m| m.display_name.clone())
             .or_else(|| {
-                self.buffers.get(&buffer_id).and_then(|state| {
-                    state
-                        .buffer
-                        .file_path()
-                        .and_then(|p| p.file_name())
-                        .and_then(|n| n.to_str())
-                        .map(|s| s.to_string())
-                })
+                self.windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&buffer_id)
+                    .and_then(|state| {
+                        state
+                            .buffer
+                            .file_path()
+                            .and_then(|p| p.file_name())
+                            .and_then(|n| n.to_str())
+                            .map(|s| s.to_string())
+                    })
             })
             .unwrap_or_else(|| "[No Name]".to_string())
     }
@@ -1473,7 +1504,15 @@ impl Editor {
             .map(|log| log.is_at_saved_position())
             .unwrap_or(false);
 
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+        let __buffer_id = self.active_buffer();
+
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+        {
             state.buffer.set_modified(!is_at_saved);
         }
     }
@@ -1583,7 +1622,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(editor.buffers.len(), 1);
+        assert_eq!(editor.buffers().len(), 1);
         assert!(!editor.should_quit());
     }
 
@@ -1602,7 +1641,7 @@ mod tests {
         .unwrap();
 
         let id = editor.new_buffer();
-        assert_eq!(editor.buffers.len(), 2);
+        assert_eq!(editor.buffers().len(), 2);
         assert_eq!(editor.active_buffer(), id);
     }
 
@@ -3295,21 +3334,21 @@ mod tests {
         // Create three buffers with long names to force scrolling.
         let buf1 = editor.new_buffer();
         editor
-            .buffers
+            .buffers_mut()
             .get_mut(&buf1)
             .unwrap()
             .buffer
             .rename_file_path(std::path::PathBuf::from("aaa_long_name_01.txt"));
         let buf2 = editor.new_buffer();
         editor
-            .buffers
+            .buffers_mut()
             .get_mut(&buf2)
             .unwrap()
             .buffer
             .rename_file_path(std::path::PathBuf::from("bbb_long_name_02.txt"));
         let buf3 = editor.new_buffer();
         editor
-            .buffers
+            .buffers_mut()
             .get_mut(&buf3)
             .unwrap()
             .buffer
@@ -3348,7 +3387,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(idx, id)| {
-                let state = editor.buffers.get(id).unwrap();
+                let state = editor.buffers().get(id).unwrap();
                 let name_len = state
                     .buffer
                     .file_path()

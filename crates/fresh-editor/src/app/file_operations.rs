@@ -98,7 +98,13 @@ impl Editor {
     ) -> anyhow::Result<()> {
         // Auto-detect language if it's currently "text" and we have a path
         if let Some(ref p) = path {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 if state.language == "text" {
                     let first_line = state.buffer.first_line_lossy();
                     let detected =
@@ -225,7 +231,12 @@ impl Editor {
 
         // Collect info for modified buffers that have a file path
         let mut to_save = Vec::new();
-        for (id, state) in &self.buffers {
+        for (id, state) in self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+        {
             if state.buffer.is_modified() {
                 if let Some(path) = state.buffer.file_path() {
                     to_save.push((*id, path.to_path_buf()));
@@ -235,7 +246,13 @@ impl Editor {
 
         let mut count = 0;
         for (id, path) in to_save {
-            if let Some(state) = self.buffers.get_mut(&id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&id)
+            {
                 match state.buffer.save() {
                     Ok(()) => {
                         self.finalize_save_buffer(id, Some(path), true)?;
@@ -265,7 +282,12 @@ impl Editor {
     /// unnamed buffer before the editor actually exits.
     pub(crate) fn collect_unnamed_modified_buffers(&self) -> Vec<BufferId> {
         let mut out = Vec::new();
-        for (id, state) in &self.buffers {
+        for (id, state) in self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+        {
             if !state.buffer.is_modified() {
                 continue;
             }
@@ -288,7 +310,7 @@ impl Editor {
         while let Some(buffer_id) = self.pending_quit_unnamed_save.first().copied() {
             // Skip ids that vanished or were already saved out from under us.
             let still_dirty_unnamed = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .map(|s| {
                     s.buffer.is_modified()
@@ -318,7 +340,12 @@ impl Editor {
     /// named file-backed buffers (not unnamed buffers).
     pub fn save_all_on_exit(&mut self) -> anyhow::Result<usize> {
         let mut to_save = Vec::new();
-        for (id, state) in &self.buffers {
+        for (id, state) in self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+        {
             if state.buffer.is_modified() {
                 if let Some(path) = state.buffer.file_path() {
                     if !path.as_os_str().is_empty() {
@@ -330,7 +357,13 @@ impl Editor {
 
         let mut count = 0;
         for (id, path) in to_save {
-            if let Some(state) = self.buffers.get_mut(&id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&id)
+            {
                 match state.buffer.save() {
                     Ok(()) => {
                         self.finalize_save_buffer(id, Some(path), true)?;
@@ -423,7 +456,13 @@ impl Editor {
 
         // Replace the current buffer with the new state
         let buffer_id = self.active_buffer();
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             *state = new_state;
             // Note: line_wrap_enabled is now in SplitViewState.viewport
         }
@@ -540,7 +579,7 @@ impl Editor {
 
         // Collect paths of open files that need checking
         let files_to_check: Vec<PathBuf> = self
-            .buffers
+            .buffers()
             .values()
             .filter_map(|state| state.buffer.file_path().map(PathBuf::from))
             .collect();
@@ -913,7 +952,14 @@ impl Editor {
         metadata: &mut BufferMetadata,
     ) {
         // Get language from buffer state
-        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+        let Some(language) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        else {
             tracing::debug!("No buffer state for file: {}", path.display());
             return;
         };
@@ -947,7 +993,7 @@ impl Editor {
 
         // Get text before borrowing lsp
         let text = match self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .and_then(|state| state.buffer.to_string())
         {
@@ -963,7 +1009,7 @@ impl Editor {
 
         // Get buffer line count and version for inlay hints
         let (last_line, last_char, buffer_version) = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .map(|state| {
                 let line_count = state.buffer.line_count().unwrap_or(1000);
@@ -1117,7 +1163,7 @@ impl Editor {
 
         // Find the buffer ID, content, and language for this path
         let Some((buffer_id, content, language)) = self
-            .buffers
+            .buffers()
             .iter()
             .find(|(_, s)| s.buffer.file_path() == Some(path))
             .and_then(|(id, state)| {
@@ -1249,7 +1295,7 @@ impl Editor {
             })
             .unwrap_or_default();
         let (old_buffer_settings, old_editing_disabled) = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .map(|s| (s.buffer_settings.clone(), s.editing_disabled))
             .unwrap_or_default();
@@ -1280,7 +1326,13 @@ impl Editor {
         // Line number visibility is in per-split BufferViewState (survives buffer replacement)
 
         // Replace the buffer content
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             *state = new_state;
         }
 
@@ -1324,7 +1376,7 @@ impl Editor {
 
         // Find buffers that have this file open
         let buffer_ids: Vec<BufferId> = self
-            .buffers
+            .buffers()
             .iter()
             .filter(|(_, state)| state.buffer.file_path() == Some(&path))
             .map(|(id, _)| *id)
@@ -1341,7 +1393,13 @@ impl Editor {
                 continue;
             }
 
-            let state = match self.buffers.get(&buffer_id) {
+            let state = match self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            {
                 Some(s) => s,
                 None => continue,
             };

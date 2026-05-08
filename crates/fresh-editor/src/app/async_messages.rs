@@ -66,7 +66,10 @@ impl Editor {
         &self,
         language: &str,
     ) -> Vec<(BufferId, crate::app::types::LspUri)> {
-        self.buffers
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
             .iter()
             .filter_map(|(buffer_id, state)| {
                 if state.language != language {
@@ -89,7 +92,12 @@ impl Editor {
         diagnostics: &[Diagnostic],
     ) -> Option<(BufferId, bool)> {
         let buffer_id = self.find_buffer_by_uri(uri)?;
-        let state = self.buffers.get_mut(&buffer_id)?;
+        let state = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)?;
         let updated = crate::services::lsp::diagnostics::apply_diagnostics_to_state_cached(
             state,
             diagnostics,
@@ -306,7 +314,13 @@ impl Editor {
         // positions reference stale byte offsets and would render at
         // the wrong place. A fresh request was (or will be) scheduled
         // by the debounced inlay-hints timer on every didChange.
-        if let Some(state) = self.buffers.get(&request.buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&request.buffer_id)
+        {
             if state.buffer.version() != request.version {
                 tracing::debug!(
                     "Ignoring stale inlay hints for {} (request_id={}, version={}, current={})",
@@ -329,7 +343,13 @@ impl Editor {
             request_id
         );
 
-        if let Some(state) = self.buffers.get_mut(&request.buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&request.buffer_id)
+        {
             Self::apply_inlay_hints_to_state(state, &hints);
             tracing::info!(
                 "Applied {} inlay hints as virtual text to buffer {:?}",
@@ -357,7 +377,13 @@ impl Editor {
         self.folding_ranges_in_flight.remove(&request.buffer_id);
 
         // Ignore stale responses (buffer changed since request)
-        if let Some(state) = self.buffers.get(&request.buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&request.buffer_id)
+        {
             if state.buffer.version() != request.version {
                 tracing::debug!(
                     "Ignoring stale folding ranges for {} (request_id={}, version={}, current={})",
@@ -379,7 +405,13 @@ impl Editor {
             self.stored_folding_ranges_mut().insert(uri.clone(), ranges);
         }
 
-        if let Some(state) = self.buffers.get_mut(&request.buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&request.buffer_id)
+        {
             let lsp_ranges = self
                 .stored_folding_ranges
                 .get(&uri)
@@ -434,7 +466,14 @@ impl Editor {
         };
 
         // Get language from buffer's stored state
-        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+        let Some(language) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        else {
             return;
         };
 
@@ -450,7 +489,13 @@ impl Editor {
             }
         };
 
-        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        else {
             return;
         };
 
@@ -741,7 +786,7 @@ impl Editor {
             .into_iter()
             .map(|(buffer_id, uri)| {
                 let (line_count, version) = self
-                    .buffers
+                    .buffers()
                     .get(&buffer_id)
                     .map(|s| (s.buffer.line_count().unwrap_or(1000), s.buffer.version()))
                     .unwrap_or((1000, 0));
@@ -986,7 +1031,7 @@ impl Editor {
                 match scope {
                     Some(scope) if scope.is_universal() => {
                         let languages: Vec<String> = self
-                            .buffers
+                            .buffers()
                             .values()
                             .map(|s| s.language.clone())
                             .collect::<std::collections::HashSet<_>>()
@@ -1160,7 +1205,7 @@ impl Editor {
 
         // Only track events for files that are actually open in the editor
         let is_file_open = self
-            .buffers
+            .buffers()
             .iter()
             .any(|(_, state)| state.buffer.file_path() == Some(&path_buf));
 
@@ -1430,7 +1475,7 @@ impl Editor {
     pub(super) fn resend_did_open_for_language(&mut self, language: &str) {
         // Find all open buffers for this language using stored buffer language
         let buffers_for_language: Vec<_> = self
-            .buffers
+            .buffers()
             .iter()
             .filter_map(|(buf_id, state)| {
                 if state.language == language {
@@ -1445,7 +1490,13 @@ impl Editor {
 
         // Re-send didOpen for each buffer
         for (buffer_id, path) in buffers_for_language {
-            if let Some(state) = self.buffers.get(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            {
                 let content = match state.buffer.to_string() {
                     Some(c) => c,
                     None => continue, // Skip buffers that aren't fully loaded

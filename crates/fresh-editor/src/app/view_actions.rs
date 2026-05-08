@@ -28,7 +28,7 @@ impl Editor {
         let default_wrap = self.resolve_line_wrap_for_buffer(active_buffer);
         let default_line_numbers = self.config.editor.line_numbers;
         let page_width = self
-            .buffers
+            .buffers()
             .get(&active_buffer)
             .and_then(|s| self.config.languages.get(&s.language))
             .and_then(|lc| lc.page_width)

@@ -19,7 +19,9 @@ use lsp_types::TextDocumentContentChangeEvent;
 
 use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
+use crate::state::EditorState;
 use crate::view::prompt::{Prompt, PromptType};
+use std::collections::HashMap;
 
 use crate::services::lsp::async_handler::LspHandle;
 use crate::types::LspFeature;
@@ -175,7 +177,13 @@ impl Editor {
 
         {
             let buffer_id = self.active_buffer();
-            let state = self.buffers.get_mut(&buffer_id).unwrap();
+            let state = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+                .unwrap();
             // Convert PopupData to Popup and use show_or_replace to avoid stacking
             let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
             popup_obj.accept_key_hint = accept_hint;
@@ -248,7 +256,7 @@ impl Editor {
         let line = location.range.start.line as usize;
         let character = location.range.start.character as usize;
         let position = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .map(|state| state.buffer.line_col_to_position(line, character));
 
@@ -280,12 +288,16 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                let cursors = &mut self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+            let __win = self
+                .windows
+                .get_mut(&self.active_window)
+                .expect("active window must exist");
+            if let Some(state) = __win.buffers.get_mut(&buffer_id) {
+                let cursors = &mut __win
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .get_mut(&split_id)
                     .unwrap()
                     .cursors;
@@ -298,7 +310,7 @@ impl Editor {
         }
 
         let display_path = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .and_then(|s| s.buffer.file_path().map(|p| p.display().to_string()))
             .unwrap_or_default();
@@ -347,7 +359,14 @@ impl Editor {
     fn send_lsp_cancel_request(&mut self, request_id: u64) {
         // Get language from buffer state
         let buffer_id = self.active_buffer();
-        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+        let Some(language) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        else {
             return;
         };
 
@@ -391,7 +410,14 @@ impl Editor {
             }
             let uri = metadata.file_uri()?.clone();
             let file_path = metadata.file_path().cloned();
-            let language = self.buffers.get(&buffer_id)?.language.clone();
+            let language = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)?
+                .language
+                .clone();
             (uri, language, file_path)
         };
 
@@ -432,7 +458,14 @@ impl Editor {
             }
             let uri = metadata.file_uri()?.clone();
             let file_path = metadata.file_path().cloned();
-            let language = self.buffers.get(&buffer_id)?.language.clone();
+            let language = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)?
+                .language
+                .clone();
             Some((uri, language, file_path))
         })() {
             Some(v) => v,
@@ -486,7 +519,14 @@ impl Editor {
             }
             let uri = metadata.file_uri()?.clone();
             let file_path = metadata.file_path().cloned();
-            let language = self.buffers.get(&buffer_id)?.language.clone();
+            let language = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)?
+                .language
+                .clone();
             Some((uri, language, file_path))
         })() {
             Some(v) => v,
@@ -543,7 +583,14 @@ impl Editor {
         };
 
         if !needs_open.is_empty() {
-            let text = self.buffers.get(&buffer_id)?.buffer.to_string()?;
+            let text = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)?
+                .buffer
+                .to_string()?;
             let active_id = self.active_window;
             let lsp = self
                 .windows
@@ -670,7 +717,13 @@ impl Editor {
         let focus_hint = self.popup_focus_key_hint();
 
         let buffer_id = self.active_buffer();
-        let state = self.buffers.get_mut(&buffer_id).unwrap();
+        let state = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+            .unwrap();
         let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
         popup_obj.accept_key_hint = accept_hint;
         popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
@@ -976,7 +1029,13 @@ impl Editor {
             };
             self.apply_event_to_active_buffer(&event);
             // Store the handle for later removal
-            if let Some(state) = self.buffers.get(&self.active_buffer()) {
+            if let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&self.active_buffer())
+            {
                 if let Some(handle) = state.overlays.all().last().map(|o| o.handle.clone()) {
                     self.hover.set_symbol_overlay(handle);
                 }
@@ -1096,7 +1155,14 @@ impl Editor {
         // Show the popup. Replace any existing transient (hover/signature)
         // popup so successive hovers don't pile up on the popup stack —
         // the user expects exactly one hover card on screen at a time.
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+        let __buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+        {
             while state.popups.top().is_some_and(|p| p.transient) {
                 state.popups.hide();
             }
@@ -1498,7 +1564,14 @@ impl Editor {
         popup.focus_key_hint = self.popup_focus_key_hint();
 
         // Show the popup
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+        let __buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+        {
             state.popups.show(popup);
             tracing::info!(
                 "Showing signature help popup for {} signatures",
@@ -1725,7 +1798,14 @@ impl Editor {
         popup.focused = true;
 
         // Show the popup, replacing any existing action popup to avoid stacking
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+        let __buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+        {
             state.popups.show_or_replace(popup);
             tracing::info!(
                 "Showing code actions popup with {} actions",
@@ -1809,7 +1889,7 @@ impl Editor {
 
         // Get the language for this buffer to find the right LSP handle
         let language = match self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
         {
@@ -1838,7 +1918,7 @@ impl Editor {
     /// Send codeAction/resolve to the LSP server
     fn send_code_action_resolve(&mut self, action: lsp_types::CodeAction) {
         let language = match self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
         {
@@ -1867,7 +1947,7 @@ impl Editor {
     /// Check if any LSP server for the current buffer supports codeAction/resolve
     fn server_supports_code_action_resolve(&self) -> bool {
         let language = match self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
         {
@@ -1888,7 +1968,7 @@ impl Editor {
     /// Check if any LSP server for the current buffer supports completionItem/resolve
     pub(crate) fn server_supports_completion_resolve(&self) -> bool {
         let language = match self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
         {
@@ -1909,7 +1989,7 @@ impl Editor {
     /// Send completionItem/resolve to the LSP server
     pub(crate) fn send_completion_resolve(&mut self, item: lsp_types::CompletionItem) {
         let language = match self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
         {
@@ -1997,7 +2077,14 @@ impl Editor {
             None => return,
         };
 
-        let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
+        let language = match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        {
             Some(l) => l,
             None => return,
         };
@@ -2161,7 +2248,7 @@ impl Editor {
         // Create events for all edits
         for edit in edits {
             let state = self
-                .buffers
+                .buffers_mut()
                 .get_mut(&buffer_id)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
 
@@ -2247,7 +2334,7 @@ impl Editor {
             {
                 if let Some(lsp) = self.lsp() {
                     let language = self
-                        .buffers
+                        .buffers()
                         .get(&self.active_buffer())
                         .map(|s| s.language.clone())
                         .unwrap_or_default();
@@ -2615,7 +2702,16 @@ impl Editor {
             })
             .unwrap_or_default();
 
-        let state = self
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let __vs_map = &mut __win
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1;
+        let state = __win
             .buffers
             .get_mut(&buffer_id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Buffer not found"))?;
@@ -2692,13 +2788,7 @@ impl Editor {
         state.highlighter.invalidate_all();
 
         // Apply new cursor positions to split view state
-        if let Some(vs) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id_for_cursors)
-        {
+        if let Some(vs) = __vs_map.get_mut(&split_id_for_cursors) {
             if let Some(bvs) = vs.keyed_states.get_mut(&buffer_id) {
                 for (cursor_id, new_pos, new_anchor) in &new_cursors {
                     if let Some(cursor) = bvs.cursors.get_mut(*cursor_id) {
@@ -2807,7 +2897,14 @@ impl Editor {
         let file_path = metadata.file_path().cloned();
 
         // Get language from buffer state
-        let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
+        let language = match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        {
             Some(l) => l,
             None => {
                 tracing::debug!(
@@ -2859,7 +2956,7 @@ impl Editor {
         if !handles_needing_open.is_empty() {
             // Get text for didOpen
             let text = match self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .and_then(|s| s.buffer.to_string())
             {
@@ -2940,7 +3037,13 @@ impl Editor {
 
             // Invalidate diagnostic cache so the next diagnostic apply recomputes
             // overlay positions from fresh byte offsets (the buffer content changed)
-            if let Some(state) = self.buffers.get(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            {
                 if let Some(path) = state.buffer.file_path() {
                     crate::services::lsp::diagnostics::invalidate_cache_for_file(
                         &path.to_string_lossy(),
@@ -3003,7 +3106,7 @@ impl Editor {
     /// Check if any LSP server for the current buffer supports prepareRename
     fn server_supports_prepare_rename(&self) -> bool {
         let language = match self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
         {
@@ -3040,7 +3143,14 @@ impl Editor {
             Some(u) => u.clone(),
             None => return,
         };
-        let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
+        let language = match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        {
             Some(l) => l,
             None => return,
         };
@@ -3205,7 +3315,13 @@ impl Editor {
         // Get line count and version from buffer state — both are needed so
         // the response handler can drop stale data if the buffer has moved
         // on by the time hints arrive.
-        let (line_count, version) = if let Some(state) = self.buffers.get(&buffer_id) {
+        let (line_count, version) = if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             (
                 state.buffer.line_count().unwrap_or(1000),
                 state.buffer.version(),
@@ -3287,11 +3403,26 @@ impl Editor {
         };
         let file_path = metadata.file_path().cloned();
 
-        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+        let Some(language) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        else {
             return;
         };
 
         let __active_id = self.active_window;
+        // Pre-collect buffer version so we don't re-read self.buffers
+        // while the &mut lsp borrow is alive.
+        let __buffer_version_for_request = self
+            .windows
+            .get(&__active_id)
+            .and_then(|w| w.buffers.get(&buffer_id))
+            .map(|s| s.buffer.version())
+            .unwrap_or(0);
 
         let Some(lsp) = self
             .windows
@@ -3318,11 +3449,7 @@ impl Editor {
 
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
-        let buffer_version = self
-            .buffers
-            .get(&buffer_id)
-            .map(|s| s.buffer.version())
-            .unwrap_or(0);
+        let buffer_version = __buffer_version_for_request;
 
         match handle.folding_ranges(request_id, uri.as_uri().clone()) {
             Ok(()) => {
@@ -3364,11 +3491,40 @@ impl Editor {
         };
         let file_path_for_spawn = metadata.file_path().cloned();
         // Get language from buffer state
-        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+        let Some(language) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        else {
             return;
         };
 
         let __active_id = self.active_window;
+        // Pre-extract buffer state info so we don't re-borrow self
+        // while the &mut lsp borrow is alive.
+        let Some((buffer_version, existing_version, previous_result_id)) = self
+            .windows
+            .get(&__active_id)
+            .and_then(|w| w.buffers.get(&buffer_id))
+            .map(|state| {
+                (
+                    state.buffer.version(),
+                    state.semantic_tokens.as_ref().map(|s| s.version),
+                    state
+                        .semantic_tokens
+                        .as_ref()
+                        .and_then(|s| s.result_id.clone()),
+                )
+            })
+        else {
+            return;
+        };
+        if Some(buffer_version) == existing_version {
+            return; // Already up to date
+        }
 
         let Some(lsp) = self
             .windows
@@ -3391,21 +3547,6 @@ impl Editor {
         if lsp.semantic_tokens_legend(&language).is_none() {
             return;
         }
-
-        let Some(state) = self.buffers.get(&buffer_id) else {
-            return;
-        };
-        let buffer_version = state.buffer.version();
-        if let Some(store) = state.semantic_tokens.as_ref() {
-            if store.version == buffer_version {
-                return; // Already up to date
-            }
-        }
-
-        let previous_result_id = state
-            .semantic_tokens
-            .as_ref()
-            .and_then(|store| store.result_id.clone());
 
         let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::SemanticTokens) else {
             return;
@@ -3500,19 +3641,28 @@ impl Editor {
         };
         let file_path = metadata.file_path().cloned();
         // Get language from buffer state
-        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+        let Some(language) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        else {
             return;
         };
 
         let __active_id = self.active_window;
-
-        let Some(lsp) = self
+        // Single &mut on the active window — split-borrow into &mut lsp
+        // and &buffers so we can use both concurrently.
+        let __win = self
             .windows
             .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+            .expect("active window must exist");
+        let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
+        let __buffers_ref: &HashMap<BufferId, EditorState> = &__win.buffers;
 
         // Ensure there is a running server
         use crate::services::lsp::manager::LspSpawnResult;
@@ -3522,6 +3672,8 @@ impl Editor {
 
         if !lsp.semantic_tokens_range_supported(&language) {
             // Fall back to full document tokens if no server supports range.
+            // Drop the borrow first so the recursive call can re-borrow.
+            drop(__buffers_ref);
             self.maybe_request_semantic_tokens(buffer_id);
             return;
         }
@@ -3538,7 +3690,7 @@ impl Editor {
             return;
         }
         let handle = &mut sh.handle;
-        let Some(state) = self.buffers.get(&buffer_id) else {
+        let Some(state) = __buffers_ref.get(&buffer_id) else {
             return;
         };
 

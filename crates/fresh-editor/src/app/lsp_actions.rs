@@ -17,7 +17,13 @@ impl Editor {
     pub fn handle_lsp_restart(&mut self) {
         // Get the language and file path from the active buffer
         let buffer_id = self.active_buffer();
-        let Some(state) = self.buffers.get(&buffer_id) else {
+        let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        else {
             return;
         };
         let language = state.language.clone();
@@ -122,7 +128,7 @@ impl Editor {
         // Collect buffer info first to avoid borrow conflicts
         // Use buffer's stored language rather than detecting from path
         let buffers_for_language: Vec<_> = self
-            .buffers
+            .buffers()
             .iter()
             .filter_map(|(buf_id, state)| {
                 if state.language == language {
@@ -138,7 +144,13 @@ impl Editor {
         let enable_inlay_hints = self.config.editor.enable_inlay_hints;
 
         for (buffer_id, buf_path) in buffers_for_language {
-            let Some(state) = self.buffers.get(&buffer_id) else {
+            let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            else {
                 continue;
             };
 
@@ -337,7 +349,13 @@ impl Editor {
 
         // Get the buffer's language to check if LSP is configured
         let language = {
-            let Some(state) = self.buffers.get(&buffer_id) else {
+            let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            else {
                 return;
             };
             state.language.clone()
@@ -629,7 +647,13 @@ impl Editor {
     /// delegates to [`Self::toggle_fold_at_byte`].
     pub fn toggle_fold_at_line(&mut self, buffer_id: BufferId, line: usize) {
         let byte_pos = {
-            let Some(state) = self.buffers.get(&buffer_id) else {
+            let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            else {
                 return;
             };
             state.buffer.line_start_offset(line).unwrap_or_else(|| {
@@ -650,13 +674,16 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        let (buffers, split_view_states) = (
-            &mut self.buffers,
-            self.windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout"),
-        );
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let buffers = &mut __win.buffers;
+        let split_view_states = &mut __win
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1;
 
         let Some(state) = buffers.get_mut(&buffer_id) else {
             return;
@@ -823,7 +850,7 @@ impl Editor {
     /// where we don't want to fully disable LSP for the buffers.
     pub(crate) fn send_did_close_to_server(&mut self, language: &str, server_name: &str) {
         let uris: Vec<_> = self
-            .buffers
+            .buffers()
             .iter()
             .filter(|(_, s)| s.language == language)
             .filter_map(|(id, _)| {
@@ -969,7 +996,7 @@ impl Editor {
             .cloned()
         {
             let language = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .map(|s| s.language.clone())
                 .unwrap_or_default();
@@ -1053,13 +1080,16 @@ impl Editor {
 
         // Clear all LSP-related overlays for this buffer (diagnostics + inlay hints)
         let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
-        let (buffers, split_view_states) = (
-            &mut self.buffers,
-            self.windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout"),
-        );
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let buffers = &mut __win.buffers;
+        let split_view_states = &mut __win
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1;
         if let Some(state) = buffers.get_mut(&buffer_id) {
             state
                 .overlays
@@ -1105,7 +1135,7 @@ impl Editor {
             let metadata = self.buffer_metadata.get(&buffer_id);
             let uri = metadata.and_then(|m| m.file_uri()).cloned();
             let text = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .and_then(|state| state.buffer.to_string());
             (uri, text)
@@ -1121,6 +1151,21 @@ impl Editor {
             .get(&buffer_id)
             .and_then(|m| m.file_path())
             .cloned();
+        // Pre-collect buffer info needed later (line/char/version) so
+        // we don't have to read self.buffers() while holding the
+        // &mut self.windows borrow on lsp.
+        let inlay_buffer_info: Option<(u32, u32, u64)> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.get(&buffer_id))
+            .map(|state| {
+                let line_count = state.buffer.line_count().unwrap_or(1000);
+                (
+                    line_count.saturating_sub(1) as u32,
+                    10000u32,
+                    state.buffer.version(),
+                )
+            });
         let __active_id = self.active_window;
         let Some(lsp) = self
             .windows
@@ -1161,18 +1206,8 @@ impl Editor {
 
         // Request inlay hints if enabled
         if self.config.editor.enable_inlay_hints {
-            let (last_line, last_char, buffer_version) = self
-                .buffers
-                .get(&buffer_id)
-                .map(|state| {
-                    let line_count = state.buffer.line_count().unwrap_or(1000);
-                    (
-                        line_count.saturating_sub(1) as u32,
-                        10000u32,
-                        state.buffer.version(),
-                    )
-                })
-                .unwrap_or((999, 10000, 0));
+            let (last_line, last_char, buffer_version) =
+                inlay_buffer_info.unwrap_or((999, 10000, 0));
 
             let request_id = self.next_lsp_request_id;
             self.next_lsp_request_id += 1;
@@ -1271,7 +1306,13 @@ impl Editor {
                 }
 
                 // Set buffer language to TypeScript so LSP requests use the right handle
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     let first_line = state.buffer.first_line_lossy();
                     let detected =
                         crate::primitives::detected_language::DetectedLanguage::from_path(

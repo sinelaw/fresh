@@ -33,7 +33,13 @@ impl Editor {
         );
 
         // Set the content
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.buffer.insert(0, help::HELP_MANUAL_CONTENT);
             state.buffer.clear_modified();
             state.editing_disabled = true;
@@ -104,7 +110,13 @@ impl Editor {
         );
 
         // Set the content
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.buffer.insert(0, &content);
             state.buffer.clear_modified();
             state.editing_disabled = true;

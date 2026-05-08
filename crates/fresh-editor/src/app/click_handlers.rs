@@ -40,7 +40,13 @@ impl Editor {
             return;
         };
 
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let buffer_len = state.buffer.len();
 
             // Find the bottom byte of the viewport
@@ -148,7 +154,12 @@ impl Editor {
             }
 
             let (gutter_width, collapsed_header_bytes) = {
-                let state = self.buffers.get(buffer_id)?;
+                let state = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(buffer_id)?;
                 let headers = self
                     .windows
                     .get(&self.active_window)
@@ -203,7 +214,12 @@ impl Editor {
                 compose_width,
             );
             let content_col = col.saturating_sub(adjusted_rect.x);
-            let state = self.buffers.get(buffer_id)?;
+            let state = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(buffer_id)?;
             if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
@@ -265,7 +281,7 @@ impl Editor {
                 .get(&split_id)
                 .and_then(|vs| vs.compose_width);
             let gutter_width = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .map(|s| s.margins.left_total_width() as u16)
                 .unwrap_or(0);
@@ -281,7 +297,12 @@ impl Editor {
             );
             match target {
                 Some(byte_pos) => {
-                    let state = self.buffers.get(&buffer_id);
+                    let state = self
+                        .windows
+                        .get(&self.active_window)
+                        .map(|w| &w.buffers)
+                        .expect("active window present")
+                        .get(&buffer_id);
                     if let Some(s) = state {
                         let (line, col_b) = s.buffer.position_to_line_col(byte_pos);
                         (
@@ -426,7 +447,13 @@ impl Editor {
 
         // Calculate clicked position in buffer
         let (toggle_fold_byte, onclick_action, target_position, cursor_snapshot) =
-            if let Some(state) = self.buffers.get(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            {
                 let gutter_width = state.margins.left_total_width() as u16;
 
                 let Some(target_position) = super::click_geometry::screen_to_buffer_position(
@@ -544,7 +571,7 @@ impl Editor {
         };
 
         let new_sticky_column = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .and_then(|state| state.buffer.offset_to_position(target_position))
             .map(|pos| pos.column)

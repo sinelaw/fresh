@@ -114,18 +114,22 @@ impl Editor {
                 active_buf,
             );
             let active_id = self.active_window;
-            let cursors = &mut self
+            let window = self
                 .windows
                 .get_mut(&active_id)
-                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must exist");
+            let state = window.buffers.get_mut(&active_buf).unwrap();
+            let cursors = &mut window
+                .splits
+                .as_mut()
                 .expect("active window must have a populated split layout")
+                .1
                 .get_mut(&split_id)
                 .unwrap()
                 .keyed_states
                 .get_mut(&active_buf)
                 .unwrap()
                 .cursors;
-            let state = self.buffers.get_mut(&active_buf).unwrap();
             state.apply(cursors, event);
         }
 
@@ -250,7 +254,13 @@ impl Editor {
             .map(|(id, c)| (id, c.position, c.anchor))
             .collect();
 
-        let state = self.buffers.get_mut(&active_buf).unwrap();
+        let state = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&active_buf)
+            .unwrap();
 
         // Snapshot buffer state for undo (piece tree + buffers)
         let old_snapshot = state.buffer.snapshot_buffer_state();
@@ -463,7 +473,10 @@ impl Editor {
         }
 
         // Invalidate highlighter
-        self.buffers
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
             .get_mut(&active_buf)
             .unwrap()
             .highlighter
@@ -491,7 +504,7 @@ impl Editor {
         // send the full document content which is always correct.
         let buffer_id = self.active_buffer();
         let full_content_change = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .and_then(|s| s.buffer.to_string())
             .map(|text| {
@@ -780,20 +793,22 @@ impl Editor {
                 .and_then(|vs| vs.view_transform.as_ref())
                 .map(|vt| vt.tokens.clone());
 
-            // Get mutable references to both buffer and view state
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                // Collect plugin soft-break positions BEFORE re-borrowing the
-                // buffer so the viewport's visual-row math matches the renderer
-                // (avoids the wheel-absorbed / empty-bottom mouse-scroll bugs
-                // for compose-mode markdown — see scroll_down_visual).
+            // Get mutable references to both buffer and view state via
+            // a single window borrow split into disjoint sub-fields.
+            let active_id = self.active_window;
+            let window = self
+                .windows
+                .get_mut(&active_id)
+                .expect("active window must exist");
+            if let Some(state) = window.buffers.get_mut(&buffer_id) {
                 let soft_breaks = state.collect_soft_break_positions();
                 let virtual_lines = state.collect_virtual_line_positions();
                 let buffer = &mut state.buffer;
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+                if let Some(view_state) = window
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .get_mut(&split_id)
                 {
                     if let Some(tokens) = view_transform_tokens {
@@ -927,13 +942,18 @@ impl Editor {
                 continue;
             };
 
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let active_id = self.active_window;
+            let window = self
+                .windows
+                .get_mut(&active_id)
+                .expect("active window must exist");
+            if let Some(state) = window.buffers.get_mut(&buffer_id) {
                 let buffer = &mut state.buffer;
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+                if let Some(view_state) = window
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .get_mut(&split_id)
                 {
                     view_state.viewport.scroll_to(buffer, top_line);
@@ -995,13 +1015,18 @@ impl Editor {
                 continue;
             };
 
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let active_id = self.active_window;
+            let window = self
+                .windows
+                .get_mut(&active_id)
+                .expect("active window must exist");
+            if let Some(state) = window.buffers.get_mut(&buffer_id) {
                 let buffer = &mut state.buffer;
-                let view_state = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+                let view_state = window
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .get_mut(&split_id);
 
                 if let Some(view_state) = view_state {

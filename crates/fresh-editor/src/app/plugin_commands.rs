@@ -56,7 +56,13 @@ impl Editor {
         range: std::ops::Range<usize>,
         options: OverlayOptions,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let face = OverlayFace::from_options(options.clone());
             let event = Event::AddOverlay {
                 namespace,
@@ -82,7 +88,13 @@ impl Editor {
 
     /// Handle RemoveOverlay command
     pub(super) fn handle_remove_overlay(&mut self, buffer_id: BufferId, handle: OverlayHandle) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let event = Event::RemoveOverlay { handle };
             state.apply(&mut Cursors::default(), &event);
             // Note: Overlays are ephemeral, not added to event log for undo/redo
@@ -91,7 +103,13 @@ impl Editor {
 
     /// Handle ClearAllOverlays command
     pub(super) fn handle_clear_all_overlays(&mut self, buffer_id: BufferId) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             // Use the OverlayManager's clear method
             state.overlays.clear(&mut state.marker_list);
 
@@ -107,7 +125,13 @@ impl Editor {
         buffer_id: BufferId,
         namespace: OverlayNamespace,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .overlays
                 .clear_namespace(&namespace, &mut state.marker_list);
@@ -122,7 +146,13 @@ impl Editor {
         start: usize,
         end: usize,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .overlays
                 .remove_in_range(&(start..end), &mut state.marker_list);
@@ -144,7 +174,13 @@ impl Editor {
         use_bg: bool,
         before: bool,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             use crate::view::virtual_text::VirtualTextPosition;
             use ratatui::style::{Color, Style};
 
@@ -196,7 +232,13 @@ impl Editor {
         italic: bool,
         before: bool,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             use crate::view::virtual_text::VirtualTextPosition;
             use fresh_core::api::OverlayColorSpec;
             use ratatui::style::{Color, Modifier, Style};
@@ -263,7 +305,13 @@ impl Editor {
         buffer_id: BufferId,
         virtual_text_id: String,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .virtual_texts
                 .remove_by_id(&mut state.marker_list, &virtual_text_id);
@@ -276,7 +324,13 @@ impl Editor {
         buffer_id: BufferId,
         prefix: String,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .virtual_texts
                 .remove_by_prefix(&mut state.marker_list, &prefix);
@@ -285,7 +339,13 @@ impl Editor {
 
     /// Handle ClearVirtualTexts command
     pub(super) fn handle_clear_virtual_texts(&mut self, buffer_id: BufferId) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.virtual_texts.clear(&mut state.marker_list);
         }
     }
@@ -344,7 +404,13 @@ impl Editor {
             style = style.bg(c);
         }
 
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let placement = if above {
                 VirtualTextPosition::LineAbove
             } else {
@@ -372,7 +438,13 @@ impl Editor {
         buffer_id: BufferId,
         namespace: String,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             use crate::view::virtual_text::VirtualTextNamespace;
             let ns = VirtualTextNamespace::from_string(namespace);
             state
@@ -392,7 +464,13 @@ impl Editor {
         end: usize,
         replacement: Option<String>,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .conceals
                 .add(&mut state.marker_list, namespace, start..end, replacement);
@@ -409,7 +487,13 @@ impl Editor {
         buffer_id: BufferId,
         namespace: OverlayNamespace,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .conceals
                 .clear_namespace(&namespace, &mut state.marker_list);
@@ -423,7 +507,13 @@ impl Editor {
         start: usize,
         end: usize,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .conceals
                 .remove_in_range(&(start..end), &mut state.marker_list);
@@ -444,14 +534,18 @@ impl Editor {
         end: usize,
         placeholder: Option<String>,
     ) {
-        let Some(state) = self.buffers.get_mut(&buffer_id) else {
-            return;
-        };
-        for vs in self
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let Some(state) = __win.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        for vs in __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .values_mut()
         {
             if vs.keyed_states.contains_key(&buffer_id) {
@@ -470,14 +564,18 @@ impl Editor {
     /// Handle ClearFolds command — drop every collapsed fold range on
     /// the buffer (across all view states that host it).
     pub(super) fn handle_clear_folds(&mut self, buffer_id: BufferId) {
-        let Some(state) = self.buffers.get_mut(&buffer_id) else {
-            return;
-        };
-        for vs in self
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let Some(state) = __win.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        for vs in __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .values_mut()
         {
             if vs.keyed_states.contains_key(&buffer_id) {
@@ -501,7 +599,13 @@ impl Editor {
         position: usize,
         indent: u16,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .soft_breaks
                 .add(&mut state.marker_list, namespace, position, indent);
@@ -518,7 +622,13 @@ impl Editor {
         buffer_id: BufferId,
         namespace: OverlayNamespace,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .soft_breaks
                 .clear_namespace(&namespace, &mut state.marker_list);
@@ -532,7 +642,13 @@ impl Editor {
         start: usize,
         end: usize,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .soft_breaks
                 .remove_in_range(start, end, &mut state.marker_list);
@@ -711,7 +827,13 @@ impl Editor {
     /// Handle SetSplitBuffer command
     pub(super) fn handle_set_split_buffer(&mut self, split_id: SplitId, buffer_id: BufferId) {
         // Verify the buffer exists
-        if !self.buffers.contains_key(&buffer_id) {
+        if !self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .contains_key(&buffer_id)
+        {
             tracing::error!("Buffer {:?} not found for SetSplitBuffer", buffer_id);
             return;
         }
@@ -856,17 +978,20 @@ impl Editor {
         }
 
         // Get the buffer for ensure_visible
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let __vs_map = &mut __win
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1;
+        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
             for leaf_id in &splits {
                 let is_active = *leaf_id == active_split;
 
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(leaf_id)
-                {
+                if let Some(view_state) = __vs_map.get_mut(leaf_id) {
                     // Set cursor position in the split's view state
                     view_state.cursors.primary_mut().move_to(position, false);
                     // Ensure the cursor is visible by scrolling the split's viewport
@@ -903,14 +1028,19 @@ impl Editor {
             tracing::warn!("SetSplitScroll: buffer for split {:?} not found", split_id);
             return;
         };
-        if let Some(view_state) = self
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let __buffers_mut = &mut __win.buffers;
+        if let Some(view_state) = __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .get_mut(&leaf_id)
         {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                 // Manually set top_byte, then perform validity check with scroll_to logic if needed,
                 // or just clamp it. viewport.scroll_to takes a line number, not byte.
                 // But viewport.top_byte is public.
@@ -949,7 +1079,13 @@ impl Editor {
         range: std::ops::Range<usize>,
         request_id: u64,
     ) {
-        let spans = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        let spans = if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let spans = state.highlighter.highlight_viewport(
                 &state.buffer,
                 range.start,
@@ -991,7 +1127,13 @@ impl Editor {
         text: String,
     ) {
         let text_len = text.len();
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let event = Event::Insert {
                 position,
                 text,
@@ -1032,7 +1174,13 @@ impl Editor {
     ) {
         let delete_start = range.start;
         let delete_len = range.end.saturating_sub(range.start);
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let deleted_text = state.get_text_range(range.start, range.end);
             let event = Event::Delete {
                 range,
@@ -1087,15 +1235,21 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .active_split();
             let active_buf = self.active_buffer();
-            let cursors = &mut self
+            let __win = self
                 .windows
                 .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must exist");
+
+            let state = __win.buffers.get_mut(&active_buf).unwrap();
+
+            let cursors = &mut __win
+                .splits
+                .as_mut()
                 .expect("active window must have a populated split layout")
+                .1
                 .get_mut(&split_id)
                 .unwrap()
                 .cursors;
-            let state = self.buffers.get_mut(&active_buf).unwrap();
             state.apply(cursors, &event);
         }
         self.active_event_log_mut().append(event);
@@ -1263,12 +1417,14 @@ impl Editor {
             }
         };
 
-        // Re-target buffer membership: open_file_no_focus
-        // attached to the active session as part of its normal
-        // path. Detach and reattach to the target.
-        self.detach_buffer_from_all_windows(buffer_id);
-        if let Some(s) = self.windows.get_mut(&target) {
-            s.buffers.insert(buffer_id);
+        // Re-target buffer storage: open_file_no_focus inserted the
+        // state into the active window's buffer map. Move it to the
+        // target window's map. Step 0c: each window owns its
+        // EditorState outright.
+        if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {
+            if let Some(s) = self.windows.get_mut(&target) {
+                s.buffers.insert(buffer_id, state);
+            }
         }
 
         // Remove the buffer from the active session's split tree
@@ -1326,7 +1482,13 @@ impl Editor {
     /// instead of clobbering the current split's leaf with the panel buffer —
     /// which would bypass the group-tab dispatch path and break rendering.
     pub(super) fn handle_show_buffer(&mut self, buffer_id: BufferId) {
-        if !self.buffers.contains_key(&buffer_id) {
+        if !self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .contains_key(&buffer_id)
+        {
             tracing::warn!("Buffer {:?} not found", buffer_id);
             return;
         }
@@ -1667,7 +1829,13 @@ impl Editor {
         color: (u8, u8, u8),
         priority: i32,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             // Convert line number to byte offset for marker-based tracking
             let byte_offset = state.buffer.line_start_offset(line).unwrap_or(0);
             let indicator = crate::view::margin::LineIndicator::new(
@@ -1691,7 +1859,13 @@ impl Editor {
         color: (u8, u8, u8),
         priority: i32,
     ) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let indicator = crate::view::margin::LineIndicator::new(
                 symbol,
                 ratatui::style::Color::Rgb(color.0, color.1, color.2),
@@ -1708,7 +1882,13 @@ impl Editor {
 
     /// Handle ClearLineIndicators command
     pub(super) fn handle_clear_line_indicators(&mut self, buffer_id: BufferId, namespace: String) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state
                 .margins
                 .clear_line_indicators_for_namespace(&namespace);
@@ -2415,7 +2595,12 @@ impl Editor {
         // Build a map of open buffer paths -> BufferId
         let mut open_buffer_paths: std::collections::HashMap<std::path::PathBuf, BufferId> =
             std::collections::HashMap::new();
-        for (bid, state) in &self.buffers {
+        for (bid, state) in self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+        {
             if let Some(path) = state.buffer.file_path() {
                 open_buffer_paths.insert(path.to_path_buf(), *bid);
             }
@@ -2446,7 +2631,13 @@ impl Editor {
             if let Some(&bid) = open_buffer_paths.get(file_path) {
                 // Search the open buffer — hybrid search uses fs.search_file
                 // for unloaded regions (avoids transferring large files)
-                if let Some(state) = self.buffers.get_mut(&bid) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&bid)
+                {
                     let matches = match state.buffer.search_hybrid(
                         &pattern,
                         &fs_opts,
@@ -2568,7 +2759,12 @@ impl Editor {
             std::path::PathBuf,
             (BufferId, crate::model::buffer::HybridSearchPlan),
         > = std::collections::HashMap::new();
-        for (bid, state) in &mut self.buffers {
+        for (bid, state) in self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+        {
             if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
                 if state.buffer.is_modified() {
                     if let Some(plan) = state.buffer.search_hybrid_plan() {
@@ -2840,7 +3036,7 @@ impl Editor {
 
         // Find or open the buffer for this file
         let buffer_id = if let Some((&bid, _)) = self
-            .buffers
+            .buffers()
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(&file_path))
         {
@@ -2923,7 +3119,13 @@ impl Editor {
         // meaningful cursor positions to restore on undo, so we pass empty
         // cursor lists.
         let mut saved_path: Option<std::path::PathBuf> = None;
-        let bulk_edit_event = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        let bulk_edit_event = if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let old_snapshot = state.buffer.snapshot_buffer_state();
             let displaced_markers = state.capture_displaced_markers_bulk(&edits_owned);
 
@@ -3016,7 +3218,7 @@ impl Editor {
             // Notify LSP with full document content (bulk edits collapse
             // incremental ranges).
             let full_content_change = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .and_then(|s| s.buffer.to_string())
                 .map(|text| {

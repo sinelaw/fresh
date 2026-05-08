@@ -155,7 +155,7 @@ impl Editor {
     /// Build a QuickOpenContext from current editor state
     pub(super) fn build_quick_open_context(&self) -> QuickOpenContext {
         let open_buffers = self
-            .buffers
+            .buffers()
             .iter()
             .filter_map(|(buffer_id, state)| {
                 let path = state.buffer.file_path()?;
@@ -174,7 +174,7 @@ impl Editor {
 
         let has_lsp_config = {
             let language = self
-                .buffers
+                .buffers()
                 .get(&self.active_buffer())
                 .map(|s| s.language.as_str());
             language
@@ -362,12 +362,16 @@ impl Editor {
             new_sticky_column: snap.sticky_column,
         };
 
-        let state = self.buffers.get_mut(&snap.buffer_id).unwrap();
-        let view_state = self
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let state = __win.buffers.get_mut(&snap.buffer_id).unwrap();
+        let view_state = __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .get_mut(&snap.split_id)
             .unwrap();
         state.apply(&mut view_state.cursors, &event);

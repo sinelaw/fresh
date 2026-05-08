@@ -23,7 +23,7 @@ impl Editor {
     /// position it returns is offset by the net byte delta.
     pub(crate) fn sync_lsp_after_recovery_replay(&mut self, buffer_id: BufferId) {
         let Some(text) = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .and_then(|state| state.buffer.to_string())
         else {
@@ -49,7 +49,13 @@ impl Editor {
         if hot_exit {
             // Force all modified buffers to be re-saved by marking them pending,
             // then reuse the existing periodic recovery save logic.
-            for (_, state) in self.buffers.iter_mut() {
+            for (_, state) in self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .iter_mut()
+            {
                 if state.buffer.is_modified() {
                     state.buffer.set_recovery_pending(true);
                 }
@@ -79,7 +85,12 @@ impl Editor {
                 if !hot_exit {
                     return None;
                 }
-                let state = self.buffers.get(buffer_id)?;
+                let state = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(buffer_id)?;
                 if !state.buffer.is_modified() {
                     return None;
                 }
@@ -422,7 +433,7 @@ impl Editor {
         // Collect buffer IDs that need recovery (immutable pass).
         // Skip composite/hidden buffers — they are not real user content.
         let buffers_needing_recovery: Vec<_> = self
-            .buffers
+            .buffers()
             .iter()
             .filter_map(|(buffer_id, state)| {
                 if state.is_composite_buffer {
@@ -465,7 +476,12 @@ impl Editor {
         let buffer_info: Vec<_> = buffers_needing_recovery
             .into_iter()
             .filter_map(|buffer_id| {
-                let state = self.buffers.get(&buffer_id)?;
+                let state = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&buffer_id)?;
                 let meta = self.buffer_metadata.get(&buffer_id)?;
                 let path = state.buffer.file_path().map(|p| p.to_path_buf());
                 let recovery_id = if let Some(ref stored_id) = meta.recovery_id {
@@ -497,7 +513,13 @@ impl Editor {
     /// Check if the active buffer is marked dirty for auto-recovery-save
     /// Used for testing to verify that edits properly trigger recovery tracking
     pub fn is_active_buffer_recovery_dirty(&self) -> bool {
-        if let Some(state) = self.buffers.get(&self.active_buffer()) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&self.active_buffer())
+        {
             state.buffer.is_recovery_pending()
         } else {
             false
@@ -509,7 +531,12 @@ impl Editor {
         // Get recovery_id: use stored one for unnamed buffers, compute from path otherwise
         let recovery_id = {
             let meta = self.buffer_metadata.get(&buffer_id);
-            let state = self.buffers.get(&buffer_id);
+            let state = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id);
 
             if let Some(stored_id) = meta.and_then(|m| m.recovery_id.clone()) {
                 stored_id
@@ -524,7 +551,13 @@ impl Editor {
         self.recovery_service.delete_buffer_recovery(&recovery_id)?;
 
         // Clear recovery_pending since buffer is now saved
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.buffer.set_recovery_pending(false);
         }
         Ok(())
@@ -541,7 +574,13 @@ impl Editor {
         recovery_id: &str,
         path: Option<&std::path::Path>,
     ) -> AnyhowResult<bool> {
-        let state = match self.buffers.get_mut(buffer_id) {
+        let state = match self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(buffer_id)
+        {
             Some(s) => s,
             None => return Ok(false),
         };

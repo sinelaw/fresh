@@ -757,7 +757,6 @@ impl Editor {
         let config_snapshot_anchor = Arc::clone(&config_arc);
 
         let mut editor = Editor {
-            buffers,
             event_logs,
             next_buffer_id: 2,
             config: config_arc,
@@ -857,6 +856,7 @@ impl Editor {
                 // they live now (Step 0b).
                 base.lsp = Some(lsp);
                 base.splits = Some((split_manager, split_view_states));
+                base.buffers = buffers;
                 m.insert(fresh_core::WindowId(1), base);
                 m
             },

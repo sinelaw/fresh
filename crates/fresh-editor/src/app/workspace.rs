@@ -250,7 +250,10 @@ impl Editor {
             let active_buffer = active_buffers.get(leaf_id).copied();
             let serialized = serialize_split_view_state(
                 view_state,
-                &self.buffers,
+                self.windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present"),
                 &self.buffer_metadata,
                 &self.working_dir,
                 active_buffer,
@@ -401,7 +404,12 @@ impl Editor {
                         return None;
                     }
                     // Skip if buffer has no content
-                    let state = self.buffers.get(buffer_id)?;
+                    let state = self
+                        .windows
+                        .get(&self.active_window)
+                        .map(|w| &w.buffers)
+                        .expect("active window present")
+                        .get(buffer_id)?;
                     if state.buffer.total_bytes() == 0 {
                         return None;
                     }
@@ -631,7 +639,7 @@ impl Editor {
 
         // Collect buffer IDs and their file paths
         let buffer_files: Vec<_> = self
-            .buffers
+            .buffers()
             .iter()
             .filter_map(|(buffer_id, state)| {
                 let path = state.buffer.file_path()?.to_path_buf();
@@ -652,7 +660,13 @@ impl Editor {
                         content, ..
                     }) => {
                         let mut mutated = false;
-                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        if let Some(state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .map(|w| &mut w.buffers)
+                            .expect("active window present")
+                            .get_mut(&buffer_id)
+                        {
                             let current_len = state.buffer.total_bytes();
                             let text = String::from_utf8_lossy(&content).into_owned();
                             let current = state.buffer.get_text_range_mut(0, current_len).ok();
@@ -686,7 +700,13 @@ impl Editor {
                         ..
                     }) => {
                         let mut mutated = false;
-                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        if let Some(state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .map(|w| &mut w.buffers)
+                            .expect("active window present")
+                            .get_mut(&buffer_id)
+                        {
                             for chunk in chunks.into_iter().rev() {
                                 let text = String::from_utf8_lossy(&chunk.content).into_owned();
                                 if chunk.original_len > 0 {
@@ -984,7 +1004,7 @@ impl Editor {
         let buffer_ids: Vec<BufferId> = path_to_buffer.values().copied().collect();
         for buffer_id in buffer_ids {
             let file_path = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()));
             let Some(file_path) = file_path else { continue };
@@ -996,7 +1016,13 @@ impl Editor {
             match self.recovery_service.load_recovery(entry) {
                 Ok(crate::services::recovery::RecoveryResult::Recovered { content, .. }) => {
                     let mut mutated = false;
-                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    if let Some(state) = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .map(|w| &mut w.buffers)
+                        .expect("active window present")
+                        .get_mut(&buffer_id)
+                    {
                         let current_len = state.buffer.total_bytes();
                         let text = String::from_utf8_lossy(&content).into_owned();
                         let current = state.buffer.get_text_range_mut(0, current_len).ok();
@@ -1026,7 +1052,13 @@ impl Editor {
                     chunks, ..
                 }) => {
                     let mut mutated = false;
-                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                    if let Some(state) = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .map(|w| &mut w.buffers)
+                        .expect("active window present")
+                        .get_mut(&buffer_id)
+                    {
                         for chunk in chunks.into_iter().rev() {
                             let text = String::from_utf8_lossy(&chunk.content).into_owned();
                             if chunk.original_len > 0 {
@@ -1177,7 +1209,13 @@ impl Editor {
             let Some(&buffer_id) = path_to_buffer.get(&bookmark.file_path) else {
                 continue;
             };
-            if let Some(buffer) = self.buffers.get(&buffer_id) {
+            if let Some(buffer) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&buffer_id)
+            {
                 let pos = bookmark.position.min(buffer.buffer.len());
                 self.bookmarks.set(
                     *key,
@@ -1202,20 +1240,31 @@ impl Editor {
             .values()
             .flat_map(|vs| vs.buffer_tab_ids())
             .collect();
-        let orphans: Vec<BufferId> =
-            self.buffers
-                .keys()
-                .copied()
-                .filter(|id| {
-                    !referenced.contains(id)
-                        && self.buffers.get(id).is_some_and(|s| {
-                            s.buffer.file_path().is_none() && !s.buffer.is_modified()
-                        })
-                })
-                .collect();
+        let orphans: Vec<BufferId> = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .keys()
+            .copied()
+            .filter(|id| {
+                !referenced.contains(id)
+                    && self
+                        .windows
+                        .get(&self.active_window)
+                        .map(|w| &w.buffers)
+                        .expect("active window present")
+                        .get(id)
+                        .is_some_and(|s| s.buffer.file_path().is_none() && !s.buffer.is_modified())
+            })
+            .collect();
         for id in orphans {
             tracing::debug!("Removing orphaned empty unnamed buffer {:?}", id);
-            self.buffers.remove(&id);
+            self.windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .remove(&id);
             self.detach_buffer_from_all_windows(id);
             self.event_logs.remove(&id);
             self.buffer_metadata.remove(&id);
@@ -1233,10 +1282,14 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .len(),
-            self.buffers.len()
+            self.windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .len()
         );
         let restored_count = self
-            .buffers
+            .buffers()
             .keys()
             .filter(|id| {
                 self.buffer_metadata
@@ -1362,16 +1415,20 @@ impl Editor {
             &self.config.languages,
             std::sync::Arc::clone(&self.authority.filesystem),
         ) {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let __win = self
+                .windows
+                .get_mut(&self.active_window)
+                .expect("active window must exist");
+            if let Some(state) = __win.buffers.get_mut(&buffer_id) {
                 *state = new_state;
                 // Move cursor to end of buffer
                 let total = state.buffer.total_bytes();
                 // Update cursor position in all splits that show this buffer
-                for vs in self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
+                for vs in __win
+                    .splits
+                    .as_mut()
                     .expect("active window must have a populated split layout")
+                    .1
                     .values_mut()
                 {
                     if vs.has_buffer(buffer_id) {
@@ -1664,11 +1721,19 @@ impl Editor {
         // any subsequent reads.
         let split_buf_for_current = self.split_manager().buffer_for_split(current_split_id);
         let active_id = self.active_window;
-        let Some(view_state) = self
+        // Split-borrow on the active window: keep the view_state (&mut)
+        // and the buffers map (&mut) live at once so per-buffer
+        // operations below don't have to re-borrow self.windows.
+        let __win = self
             .windows
             .get_mut(&active_id)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let __buffers_mut = &mut __win.buffers;
+        let Some(view_state) = __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .get_mut(&current_split_id)
         else {
             return;
@@ -1772,8 +1837,7 @@ impl Editor {
                     None => continue,
                 }
             };
-            let max_pos = self
-                .buffers
+            let max_pos = __buffers_mut
                 .get(&buffer_id)
                 .map(|b| b.buffer.len())
                 .unwrap_or(0);
@@ -1799,7 +1863,7 @@ impl Editor {
             // in `viewport.rs::ensure_visible` no-ops for any cursor whose
             // byte position is `>= viewport.top_byte`). Reconcile so the
             // restored view always shows the cursor (#1689 follow-up).
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                 super::navigation::reconcile_restored_buffer_view(buf_state, &mut state.buffer);
             }
 
@@ -1810,7 +1874,7 @@ impl Editor {
             };
             buf_state.compose_width = file_state.compose_width;
             buf_state.plugin_state = file_state.plugin_state.clone();
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                 buf_state.folds.clear(&mut state.marker_list);
                 for fold in &file_state.folds {
                     // Resolve the stored line numbers against the current

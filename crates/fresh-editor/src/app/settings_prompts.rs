@@ -129,7 +129,7 @@ impl Editor {
 
         // Check if buffer has a file path
         let has_file = self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .and_then(|s| s.buffer.file_path())
             .is_some();
@@ -141,7 +141,7 @@ impl Editor {
 
         // Check for unsaved modifications
         let is_modified = self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.buffer.is_modified())
             .unwrap_or(false);
@@ -454,7 +454,13 @@ impl Editor {
             .collect();
         for (uri, diagnostics) in entries {
             if let Some(buffer_id) = self.find_buffer_by_uri(&uri) {
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     crate::services::lsp::diagnostics::apply_diagnostics_to_state_cached(
                         state,
                         &diagnostics,
@@ -465,15 +471,28 @@ impl Editor {
         }
 
         // --- Semantic tokens ---
-        let buffer_ids: Vec<_> = self.buffers.keys().cloned().collect();
+        let buffer_ids: Vec<_> = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .keys()
+            .cloned()
+            .collect();
         for buffer_id in buffer_ids {
             let tokens = self
-                .buffers
+                .buffers()
                 .get(&buffer_id)
                 .and_then(|s| s.semantic_tokens.as_ref())
                 .map(|store| store.tokens.clone());
             if let Some(tokens) = tokens {
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
                         state,
                         &tokens,

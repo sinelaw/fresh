@@ -24,7 +24,13 @@ impl Editor {
     /// opens automatically when the scan completes.
     pub fn start_incremental_line_scan(&mut self, open_goto_line: bool) {
         let buffer_id = self.active_buffer();
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let (chunks, total_bytes) = state.buffer.prepare_line_scan();
             let leaves = state.buffer.piece_tree_leaves();
             self.line_scan
@@ -68,7 +74,12 @@ impl Editor {
         let _span = tracing::info_span!("process_line_scan_batch").entered();
         let concurrency = self.config.editor.read_concurrency.max(1);
 
-        let state = self.buffers.get(&buffer_id);
+        let state = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id);
 
         let mut results: Vec<(usize, usize)> = Vec::new();
         let mut io_work: Vec<(usize, std::path::PathBuf, u64, usize)> = Vec::new();
@@ -155,7 +166,13 @@ impl Editor {
         let Some(finished) = self.line_scan.take_finished() else {
             return;
         };
-        if let Some(state) = self.buffers.get_mut(&finished.buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&finished.buffer_id)
+        {
             let _span = tracing::info_span!(
                 "rebuild_with_pristine_saved_root",
                 updates = finished.updates.len()
@@ -239,7 +256,13 @@ impl Editor {
             let Some(mut chunked) = self.search_scan.take_chunked() else {
                 return Ok(());
             };
-            let result = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let result = if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 state.buffer.search_scan_next_chunk(&mut chunked)
             } else {
                 Ok(false)
@@ -267,7 +290,13 @@ impl Editor {
         // The search scan loaded chunks via chunk_split_and_load, which
         // restructures the piece tree.  Refresh saved_root so that
         // diff_since_saved() can take the fast Arc::ptr_eq path.
-        if let Some(state) = self.buffers.get_mut(&finished.buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&finished.buffer_id)
+        {
             state.buffer.refresh_saved_root_if_unmodified();
         }
 

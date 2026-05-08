@@ -9,6 +9,8 @@
 //!   anchor.
 
 use crate::model::event::{BufferId, LeafId, SplitId};
+use crate::state::EditorState;
+use std::collections::HashMap;
 
 use super::Editor;
 
@@ -28,11 +30,16 @@ impl Editor {
             active_buffer,
             available_width
         );
-        let Some(view_state) = self
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let __window_buffers: &HashMap<BufferId, EditorState> = &__win.buffers;
+        let Some(view_state) = __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .get_mut(&split_id)
         else {
             tracing::debug!("  -> no view_state for split");
@@ -56,7 +63,7 @@ impl Editor {
         // Use the shared function to calculate tab widths (same as render_for_split)
         let (tab_widths, rendered_targets) = crate::view::ui::tabs::calculate_tab_widths(
             &split_buffers,
-            &self.buffers,
+            __window_buffers,
             &self.buffer_metadata,
             &self.composite_buffers,
             &group_names,
@@ -173,7 +180,7 @@ impl Editor {
 
                 // Get active split's buffer to convert bytes → line
                 let active_buffer_id = self.windows.get(&self.active_window).and_then(|w| w.splits.as_ref()).map(|(mgr, _)| mgr).expect("active window must have a populated split layout").buffer_for_split(active_split)?;
-                let buffer_state = self.buffers.get(&active_buffer_id)?;
+                let buffer_state = self.windows.get(&self.active_window).map(|w| &w.buffers).expect("active window present").get(&active_buffer_id)?;
                 let buffer_len = buffer_state.buffer.len();
                 let active_line = buffer_state.buffer.get_line_number(active_top_byte);
 
@@ -216,13 +223,17 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .buffer_for_split(other_leaf)
             {
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let __win = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .expect("active window must exist");
+                if let Some(state) = __win.buffers.get_mut(&buffer_id) {
                     let buffer = &mut state.buffer;
-                    if let Some(view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
+                    if let Some(view_state) = __win
+                        .splits
+                        .as_mut()
                         .expect("active window must have a populated split layout")
+                        .1
                         .get_mut(&other_leaf)
                     {
                         view_state.viewport.scroll_to(buffer, target_line);
@@ -296,7 +307,13 @@ impl Editor {
                 if !other_splits.is_empty() {
                     // Detect whether the active split is at the bottom of the
                     // buffer (remaining lines fit within the viewport).
-                    let at_bottom = if let Some(state) = self.buffers.get_mut(&active_buf_id) {
+                    let at_bottom = if let Some(state) = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .map(|w| &mut w.buffers)
+                        .expect("active window present")
+                        .get_mut(&active_buf_id)
+                    {
                         let mut iter = state.buffer.line_iterator(top_byte, 80);
                         let mut lines_remaining = 0;
                         while iter.next_line().is_some() {
@@ -354,12 +371,16 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .buffer_for_split(active_split)
             {
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                    if let Some(view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
+                let __win = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .expect("active window must exist");
+                if let Some(state) = __win.buffers.get_mut(&buffer_id) {
+                    if let Some(view_state) = __win
+                        .splits
+                        .as_mut()
                         .expect("active window must have a populated split layout")
+                        .1
                         .get_mut(&active_split)
                     {
                         // Update viewport to show cursor

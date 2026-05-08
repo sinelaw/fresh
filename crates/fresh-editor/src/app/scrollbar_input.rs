@@ -122,13 +122,21 @@ impl Editor {
             .map(|vt| vt.tokens.clone());
 
         // Get mutable references to both buffer state and view state
-        let state = self.buffers.get_mut(&buffer_id);
-        let view_state = self
+        // via a single &mut window borrow split into disjoint sub-fields.
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split);
+            .expect("active window must exist");
+        let (__win_buffers, __win_splits) = (
+            &mut __win.buffers,
+            __win
+                .splits
+                .as_mut()
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout"),
+        );
+        let state = __win_buffers.get_mut(&buffer_id);
+        let view_state = __win_splits.get_mut(&target_split);
 
         if let (Some(state), Some(view_state)) = (state, view_state) {
             // Collect plugin soft-break positions BEFORE re-borrowing the buffer
@@ -330,7 +338,13 @@ impl Editor {
 
         // Get the buffer state and calculate target position using RELATIVE movement
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
-        let scroll_position = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        let scroll_position = if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let scrollbar_height = scrollbar_rect.height as usize;
             if scrollbar_height == 0 {
                 return Ok(());
@@ -539,7 +553,13 @@ impl Editor {
 
         // Get the buffer state and calculate scroll position
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
-        let scroll_position = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        let scroll_position = if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let buffer_len = state.buffer.len();
             let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 

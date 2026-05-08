@@ -219,7 +219,10 @@ impl Editor {
         let hot_exit = self.config.editor.hot_exit;
         let auto_save = self.config.editor.auto_save_enabled;
 
-        self.buffers
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
             .iter()
             .filter(|(buffer_id, state)| {
                 if !state.buffer.is_modified() {

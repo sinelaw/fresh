@@ -201,7 +201,7 @@ impl Editor {
         // Get the file path for language detection
         // Use buffer's stored language
         let language = match self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
         {

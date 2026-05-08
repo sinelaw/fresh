@@ -133,7 +133,12 @@ impl Editor {
             snapshot.buffer_cursor_positions.clear();
             snapshot.buffer_text_properties.clear();
 
-            for (buffer_id, state) in &self.buffers {
+            for (buffer_id, state) in self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+            {
                 let is_virtual = self
                     .buffer_metadata
                     .get(buffer_id)
@@ -264,23 +269,23 @@ impl Editor {
                 }
             }
 
-            // Update cursor information for active buffer
-            if let Some(active_vs) = self
+            // Update cursor information for active buffer.
+            // Pre-extract active_buffer id before taking the &mut window
+            // borrow (since active_buffer() reads self).
+            let __active_buf_id = self.active_buffer();
+            // Single &mut window borrow, split-access into mgr + vs_map + buffers.
+            let __win_dispatch = self
                 .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(
-                    &self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.splits.as_ref())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .active_split(),
-                )
-            {
+                .get_mut(&self.active_window)
+                .expect("active window must exist");
+            let __buffers_dispatch = &mut __win_dispatch.buffers;
+            let (__mgr_dispatch, __vs_dispatch) = __win_dispatch
+                .splits
+                .as_mut()
+                .map(|(m, vs)| (&*m, &*vs))
+                .expect("active window must have a populated split layout");
+            let __active_split_id = __mgr_dispatch.active_split();
+            if let Some(active_vs) = __vs_dispatch.get(&__active_split_id) {
                 // Primary cursor (from SplitViewState)
                 let active_cursors = &active_vs.cursors;
                 let primary = active_cursors.primary();
@@ -303,14 +308,14 @@ impl Editor {
 
                 // Selected text from primary cursor (for clipboard plugin)
                 if let Some(range) = primary_selection {
-                    if let Some(active_state) = self.buffers.get_mut(&self.active_buffer()) {
+                    if let Some(active_state) = __buffers_dispatch.get_mut(&__active_buf_id) {
                         snapshot.selected_text =
                             Some(active_state.get_text_range(range.start, range.end));
                     }
                 }
 
                 // Viewport - get from SplitViewState (the authoritative source)
-                let top_line = self.buffers.get(&self.active_buffer()).and_then(|state| {
+                let top_line = __buffers_dispatch.get(&__active_buf_id).and_then(|state| {
                     if state.buffer.line_count().is_some() {
                         Some(state.buffer.get_line_number(active_vs.viewport.top_byte))
                     } else {
@@ -344,13 +349,19 @@ impl Editor {
                 .expect("active window must have a populated split layout")
             {
                 let buf_id = vs.active_buffer;
-                let top_line = self.buffers.get(&buf_id).and_then(|state| {
-                    if state.buffer.line_count().is_some() {
-                        Some(state.buffer.get_line_number(vs.viewport.top_byte))
-                    } else {
-                        None
-                    }
-                });
+                let top_line = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&buf_id)
+                    .and_then(|state| {
+                        if state.buffer.line_count().is_some() {
+                            Some(state.buffer.get_line_number(vs.viewport.top_byte))
+                        } else {
+                            None
+                        }
+                    });
                 snapshot.splits.push(fresh_core::api::SplitSnapshot {
                     split_id: leaf_id.0 .0,
                     buffer_id: buf_id,
@@ -1576,7 +1587,13 @@ impl Editor {
 
     /// Save a buffer to a specific file path (for :w filename)
     fn handle_save_buffer_to_path(&mut self, buffer_id: BufferId, path: std::path::PathBuf) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             // Save to the specified path
             match state.buffer.save_to_file(&path) {
                 Ok(()) => {
@@ -1721,7 +1738,13 @@ impl Editor {
         end: usize,
         request_id: u64,
     ) {
-        let result = if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        let result = if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             // Get text from the buffer using the mutable get_text_range method
             let len = state.buffer.len();
             if start <= end && end <= len {
@@ -1775,11 +1798,17 @@ impl Editor {
     /// Get the byte offset of the start of a line in the active buffer
     fn handle_get_line_start_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
         let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self.buffers.get_mut(&actual_buffer_id).and_then(|state| {
-            let len = state.buffer.len();
-            let content = state.get_text_range(0, len);
-            buffer_line_byte_offset(&content, len, line as usize, false)
-        });
+        let result = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&actual_buffer_id)
+            .and_then(|state| {
+                let len = state.buffer.len();
+                let content = state.get_text_range(0, len);
+                buffer_line_byte_offset(&content, len, line as usize, false)
+            });
         self.resolve_json_callback(request_id, result);
     }
 
@@ -1787,11 +1816,17 @@ impl Editor {
     /// or `buffer_len` for the last line without a trailing newline).
     fn handle_get_line_end_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
         let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self.buffers.get_mut(&actual_buffer_id).and_then(|state| {
-            let len = state.buffer.len();
-            let content = state.get_text_range(0, len);
-            buffer_line_byte_offset(&content, len, line as usize, true)
-        });
+        let result = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&actual_buffer_id)
+            .and_then(|state| {
+                let len = state.buffer.len();
+                let content = state.get_text_range(0, len);
+                buffer_line_byte_offset(&content, len, line as usize, true)
+            });
         self.resolve_json_callback(request_id, result);
     }
 
@@ -1799,7 +1834,13 @@ impl Editor {
     fn handle_get_buffer_line_count(&mut self, buffer_id: BufferId, request_id: u64) {
         let actual_buffer_id = self.resolve_buffer_id(buffer_id);
 
-        let result = if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
+        let result = if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&actual_buffer_id)
+        {
             let buffer_len = state.buffer.len();
             let content = state.get_text_range(0, buffer_len);
 
@@ -1861,17 +1902,20 @@ impl Editor {
         let target_line = line.saturating_sub(lines_above);
 
         // Get the buffer and scroll
-        if let Some(state) = self.buffers.get_mut(&actual_buffer_id) {
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        if let Some(state) = __win.buffers.get_mut(&actual_buffer_id) {
             let buffer = &mut state.buffer;
-            if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
+            if let Some(view_state) = __win
+                .splits
+                .as_mut()
                 .expect("active window must have a populated split layout")
+                .1
                 .get_mut(&actual_split_id)
             {
                 view_state.viewport.scroll_to(buffer, target_line);
-                // Mark to skip ensure_visible on next render so the scroll isn't undone
                 view_state.viewport.set_skip_ensure_visible();
             }
         }
@@ -1887,7 +1931,13 @@ impl Editor {
     /// all Grouped subtrees stored in `grouped_subtrees`, because the
     /// latter are not represented in `split_manager`'s tree.
     fn handle_scroll_buffer_to_line(&mut self, buffer_id: BufferId, line: usize) {
-        if !self.buffers.contains_key(&buffer_id) {
+        if !self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .contains_key(&buffer_id)
+        {
             return;
         }
 
@@ -1942,19 +1992,22 @@ impl Editor {
             return;
         }
 
-        let state = match self.buffers.get_mut(&buffer_id) {
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let __vs_map = &mut __win
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1;
+        let state = match __win.buffers.get_mut(&buffer_id) {
             Some(s) => s,
             None => return,
         };
 
         for leaf_id in target_leaves {
-            let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&leaf_id)
-            else {
+            let Some(view_state) = __vs_map.get_mut(&leaf_id) else {
                 continue;
             };
             let viewport_height = view_state.viewport.height as usize;
@@ -2228,7 +2281,13 @@ impl Editor {
         // margins each frame via configure_for_line_numbers(), making the margin
         // setting here effectively write-only. Consider removing the margin call
         // and only setting BufferViewState.show_line_numbers.
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.margins.configure_for_line_numbers(show_line_numbers);
             state.show_cursors = show_cursors;
             state.editing_disabled = editing_disabled;
@@ -2350,7 +2409,13 @@ impl Editor {
                     .expect("active window must have a populated split layout")
                     .active_split();
                 let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     state.margins.configure_for_line_numbers(show_line_numbers);
                     state.show_cursors = show_cursors;
                     state.editing_disabled = editing_disabled;
@@ -2411,7 +2476,13 @@ impl Editor {
         if let Some(pid) = &panel_id {
             if let Some(&existing_buffer_id) = self.panel_ids().get(pid) {
                 // Verify the buffer actually exists (defensive check for stale entries)
-                if self.buffers.contains_key(&existing_buffer_id) {
+                if self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .contains_key(&existing_buffer_id)
+                {
                     // Panel exists, just update its content
                     if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries) {
                         tracing::error!("Failed to update panel content: {}", e);
@@ -2487,7 +2558,13 @@ impl Editor {
         );
 
         // Apply view options to the buffer
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.margins.configure_for_line_numbers(show_line_numbers);
             state.show_cursors = show_cursors;
             state.editing_disabled = editing_disabled;
@@ -2660,7 +2737,13 @@ impl Editor {
         );
 
         // Apply view options to the buffer
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.margins.configure_for_line_numbers(show_line_numbers);
             state.show_cursors = show_cursors;
             state.editing_disabled = editing_disabled;
@@ -3113,9 +3196,10 @@ impl Editor {
         // storage but attach it to the *target* session's
         // membership instead of the active session's.
         let buffer_id = self.create_terminal_buffer_detached(terminal_id);
-        self.detach_buffer_from_all_windows(buffer_id);
-        if let Some(s) = self.windows.get_mut(&target) {
-            s.buffers.insert(buffer_id);
+        if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {
+            if let Some(s) = self.windows.get_mut(&target) {
+                s.buffers.insert(buffer_id, state);
+            }
         }
 
         // Mutate the target session's stashed split tree to add
@@ -3195,7 +3279,13 @@ impl Editor {
     }
 
     fn handle_set_buffer_show_cursors(&mut self, buffer_id: BufferId, show: bool) {
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.show_cursors = show;
         } else {
             tracing::warn!("SetBufferShowCursors: buffer {:?} not found", buffer_id);
@@ -3508,7 +3598,13 @@ impl Editor {
             prefix + fc.byte_in_row as usize
         });
 
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.show_cursors = absolute_byte.is_some();
         }
 
@@ -4411,7 +4507,13 @@ impl Editor {
     }
 
     fn handle_get_text_properties_at_cursor(&self, buffer_id: BufferId) {
-        if let Some(state) = self.buffers.get(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             let cursor_pos = self
                 .windows
                 .get(&self.active_window)

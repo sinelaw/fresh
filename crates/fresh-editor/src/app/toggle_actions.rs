@@ -59,7 +59,14 @@ impl Editor {
     /// Toggle debug highlight mode for the active buffer
     /// When enabled, shows byte positions and highlight span info for debugging
     pub fn toggle_debug_highlights(&mut self) {
-        if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+        let __buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&__buffer_id)
+        {
             state.debug_highlight_mode = !state.debug_highlight_mode;
             if state.debug_highlight_mode {
                 self.set_status_message(t!("toggle.debug_mode_on").to_string());
@@ -174,7 +181,13 @@ impl Editor {
         let mut whitespace = WhitespaceVisibility::from_editor_config(&self.config.editor);
         let mut auto_close = self.config.editor.auto_close;
         let mut word_characters = String::new();
-        let (tab_size, use_tabs) = if let Some(state) = self.buffers.get(&buffer_id) {
+        let (tab_size, use_tabs) = if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             let language = &state.language;
             if let Some(lang_config) = self.config.languages.get(language) {
                 whitespace =
@@ -200,7 +213,13 @@ impl Editor {
         };
 
         // Apply settings to buffer
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.buffer_settings.tab_size = tab_size;
             state.buffer_settings.use_tabs = use_tabs;
             state.buffer_settings.auto_close = auto_close;
@@ -291,7 +310,13 @@ impl Editor {
             self.set_status_message(t!("toggle.inlay_hints_enabled").to_string());
         } else {
             // Clear inlay hints from all buffers
-            for state in self.buffers.values_mut() {
+            for state in self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .values_mut()
+            {
                 state.virtual_texts.clear(&mut state.marker_list);
             }
             self.set_status_message(t!("toggle.inlay_hints_disabled").to_string());

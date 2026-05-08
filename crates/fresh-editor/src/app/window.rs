@@ -42,7 +42,7 @@ use crate::services::lsp::manager::LspManager;
 use crate::view::file_tree::FileTreeView;
 use crate::view::split::{SplitManager, SplitViewState};
 use fresh_core::{BufferId, WindowId};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// A project-rooted unit of editor state.
@@ -106,11 +106,11 @@ pub struct Window {
     /// with an empty dock and rebuilds on demand.
     pub panel_ids: HashMap<String, BufferId>,
 
-    /// Buffers attached to this window (membership only — the
-    /// buffer storage stays on `Editor` until Step 0c moves it).
-    /// Used by `closeWindow` to drop window-private buffers and
-    /// by future per-window quick-open scoping.
-    pub buffers: HashSet<BufferId>,
+    /// Buffers attached to this window. Each window owns the
+    /// `EditorState` for its buffers outright; closing the window
+    /// drops them. Opening the same file in two windows produces
+    /// two independent buffers.
+    pub buffers: HashMap<BufferId, crate::state::EditorState>,
 
     /// Plugin-managed per-window state. Outer key is plugin name,
     /// inner is the plugin-defined key. Read via
@@ -177,7 +177,7 @@ impl Window {
             lsp: None,
             panel_ids: HashMap::new(),
             splits: None,
-            buffers: HashSet::new(),
+            buffers: HashMap::new(),
             layout_cache: WindowLayoutCache::default(),
         }
     }

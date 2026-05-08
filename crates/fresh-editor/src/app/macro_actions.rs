@@ -198,12 +198,22 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs.insert(buffer_id, EventLog::new());
 
         // Set buffer content
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.buffer = crate::model::buffer::Buffer::from_str(
                 &content,
                 self.config.editor.large_file_threshold_bytes as usize,
@@ -273,12 +283,22 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs.insert(buffer_id, EventLog::new());
 
         // Set buffer content
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.buffer = crate::model::buffer::Buffer::from_str(
                 &content,
                 self.config.editor.large_file_threshold_bytes as usize,

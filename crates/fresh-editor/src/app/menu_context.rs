@@ -215,7 +215,10 @@ impl Editor {
         }
 
         // Use buffer's stored language
-        self.buffers
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
             .get(&buffer_id)
             .and_then(|state| self.lsp().map(|lsp| lsp.is_server_ready(&state.language)))
             .unwrap_or(false)
@@ -265,7 +268,10 @@ impl Editor {
         let buffer_id = self.active_buffer();
 
         // Use buffer's stored language
-        self.buffers
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
             .get(&buffer_id)
             .and_then(|state| {
                 self.config

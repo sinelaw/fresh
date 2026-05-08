@@ -234,7 +234,12 @@ impl Editor {
                         .get(&inner_leaf)
                     {
                         let inner_buf = inner_vs.active_buffer;
-                        if self.buffers.contains_key(&inner_buf)
+                        if self
+                            .windows
+                            .get(&self.active_window)
+                            .map(|w| &w.buffers)
+                            .expect("active window present")
+                            .contains_key(&inner_buf)
                             && inner_vs.keyed_states.contains_key(&inner_buf)
                         {
                             return (inner_leaf, inner_buf);
@@ -287,7 +292,13 @@ impl Editor {
         if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
             metadata.read_only = read_only;
         }
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.editing_disabled = read_only;
         }
     }
@@ -725,6 +736,24 @@ impl Editor {
         self.active_session_mut().file_explorer.as_mut()
     }
 
+    /// Active window's buffer storage. Each window owns its
+    /// `EditorState` map outright; closing the window drops them.
+    /// Cross-window iteration goes through `self.windows.values()`
+    /// directly.
+    pub(crate) fn buffers(&self) -> &HashMap<BufferId, EditorState> {
+        &self.active_window().buffers
+    }
+
+    /// Mutable handle to the active window's buffer storage.
+    /// Holds `&mut self` for the call's lifetime — at sites that
+    /// need a concurrent mutable borrow on another Window field
+    /// (`splits`, `event_logs`, etc.) take a single
+    /// `let window = self.windows.get_mut(&self.active_window).unwrap()`
+    /// and split-access the disjoint sub-fields directly.
+    pub(crate) fn buffers_mut(&mut self) -> &mut HashMap<BufferId, EditorState> {
+        &mut self.active_session_mut().buffers
+    }
+
     /// Active window's LSP manager (`None` if no LSP has been spawned
     /// for this window yet). Each window has its own LSP set rooted
     /// at its project root.
@@ -796,7 +825,10 @@ impl Editor {
     /// Used by file-explorer operations that need to react when a file
     /// or directory on disk goes away or moves.
     pub fn buffer_ids_under_path(&self, root: &std::path::Path) -> Vec<BufferId> {
-        self.buffers
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
             .iter()
             .filter_map(|(id, state)| {
                 let p = state.buffer.file_path()?;
@@ -1001,7 +1033,13 @@ impl Editor {
     /// and semantic highlights need to be recomputed.
     pub fn check_semantic_highlight_timer(&self) -> bool {
         // Check all buffers for pending semantic highlight redraws
-        for state in self.buffers.values() {
+        for state in self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .values()
+        {
             if let Some(remaining) = state.reference_highlight_overlay.needs_redraw() {
                 if remaining.is_zero() {
                     return true;
@@ -1033,7 +1071,14 @@ impl Editor {
         let Some(uri) = metadata.file_uri().cloned() else {
             return false;
         };
-        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+        let Some(language) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        else {
             return false;
         };
 

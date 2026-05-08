@@ -60,7 +60,7 @@ impl Editor {
 
         let has_error = self.warning_domains.lsp.level() == crate::app::WarningLevel::Error;
         let language = self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_else(|| "unknown".to_string());
@@ -125,7 +125,7 @@ impl Editor {
             return;
         }
         let language = self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_else(|| "unknown".to_string());
@@ -574,7 +574,13 @@ impl Editor {
         };
 
         let buffer_id = self.active_buffer();
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.popups.show(popup);
         }
     }
@@ -833,7 +839,13 @@ impl Editor {
         };
 
         let buffer_id = self.active_buffer();
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.popups.show(popup);
         }
     }
@@ -932,7 +944,13 @@ impl Editor {
         popup.background_style = Style::default().bg(self.theme.popup_bg);
 
         let buffer_id = self.active_buffer();
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.popups.show(popup);
         }
     }
@@ -941,7 +959,12 @@ impl Editor {
     pub fn get_text_properties_at_cursor(
         &self,
     ) -> Option<Vec<&crate::primitives::text_property::TextProperty>> {
-        let state = self.buffers.get(&self.active_buffer())?;
+        let state = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&self.active_buffer())?;
         let cursor_pos = self.active_cursors().primary().position;
         Some(state.text_properties.get_at(cursor_pos))
     }

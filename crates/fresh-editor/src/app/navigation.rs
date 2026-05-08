@@ -91,7 +91,13 @@ impl Editor {
             if opts.clear_anchor {
                 view_state.cursors.primary_mut().anchor = None;
             }
-            if let Some(state) = self.buffers.get_mut(&active_buffer) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&active_buffer)
+            {
                 if let Some(pos) = state.buffer.offset_to_position(position) {
                     state.primary_cursor_line_number = LineNumber::Absolute(pos.line);
                 }
@@ -129,16 +135,21 @@ impl Editor {
             .active_split();
         let active_buffer = self.active_buffer();
 
-        let Some(view_state) = self
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let __buffers_mut = &mut __win.buffers;
+        let Some(view_state) = __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .get_mut(&active_split)
         else {
             return;
         };
-        let Some(state) = self.buffers.get_mut(&active_buffer) else {
+        let Some(state) = __buffers_mut.get_mut(&active_buffer) else {
             return;
         };
 

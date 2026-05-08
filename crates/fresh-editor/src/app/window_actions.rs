@@ -74,9 +74,9 @@ impl crate::app::Editor {
         let needs_fresh_layout = self.windows.get(&id).is_some_and(|s| s.splits.is_none());
 
         // For a never-activated incoming window, allocate a fresh
-        // seed buffer + SplitManager rooted at it. The buffer is
-        // attached to the incoming window's membership set after the
-        // active pointer moves.
+        // seed buffer + SplitManager rooted at it. The state is
+        // installed into the incoming window's `buffers` map after
+        // the active pointer moves.
         let fresh_layout = if needs_fresh_layout {
             let buf = BufferId(self.next_buffer_id);
             self.next_buffer_id += 1;
@@ -92,10 +92,6 @@ impl crate::app::Editor {
             state
                 .buffer
                 .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
-            self.buffers.insert(buf, state);
-            // Skip `attach_buffer_to_active_window` — at this
-            // point `active_window` is still the outgoing one.
-            // Attach below after the pointer moves.
             self.event_logs
                 .insert(buf, crate::model::event::EventLog::new());
             self.buffer_metadata
@@ -107,7 +103,7 @@ impl crate::app::Editor {
                 active_leaf,
                 SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf),
             );
-            Some((buf, manager, view_states))
+            Some((buf, state, manager, view_states))
         } else {
             None
         };
@@ -119,10 +115,10 @@ impl crate::app::Editor {
         // For a never-activated incoming window, install the freshly
         // built layout into the window's `splits` field and attach
         // the seed buffer.
-        if let Some((buf, mgr, vs)) = fresh_layout {
+        if let Some((buf, state, mgr, vs)) = fresh_layout {
             if let Some(s) = self.windows.get_mut(&id) {
                 s.splits = Some((mgr, vs));
-                s.buffers.insert(buf);
+                s.buffers.insert(buf, state);
             }
         }
 
@@ -154,24 +150,43 @@ impl crate::app::Editor {
         // Placeholder for eager warm-up of file_explorer / LSP.
     }
 
-    /// Attach a buffer to the active session's membership set.
-    /// Called from every `Editor.buffers.insert` site so the
-    /// `Session.buffers` field stays in sync. Idempotent.
-    pub(crate) fn attach_buffer_to_active_window(&mut self, buffer_id: fresh_core::BufferId) {
+    /// Insert a buffer into the active window's storage. Step 0c
+    /// made `Window.buffers` the authoritative store; this is the
+    /// canonical attach path.
+    pub(crate) fn insert_buffer_into_active_window(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        state: crate::state::EditorState,
+    ) {
         let id = self.active_window;
-        if let Some(s) = self.windows.get_mut(&id) {
-            s.buffers.insert(buffer_id);
+        if let Some(w) = self.windows.get_mut(&id) {
+            w.buffers.insert(buffer_id, state);
         }
     }
 
-    /// Detach a buffer from every session's membership set.
-    /// Called from buffer-close sites. Cheap when the buffer was
-    /// only attached to one session (the common case).
-    pub(crate) fn detach_buffer_from_all_windows(&mut self, buffer_id: fresh_core::BufferId) {
-        for s in self.windows.values_mut() {
-            s.buffers.remove(&buffer_id);
+    /// Remove a buffer from whichever window holds it. Returns the
+    /// removed `EditorState` if the buffer was found. Step 0c: each
+    /// buffer lives in exactly one window, so this is at most one
+    /// successful removal.
+    pub(crate) fn detach_buffer_from_all_windows(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+    ) -> Option<crate::state::EditorState> {
+        for w in self.windows.values_mut() {
+            if let Some(state) = w.buffers.remove(&buffer_id) {
+                return Some(state);
+            }
         }
+        None
     }
+
+    /// Backwards-compat shim: pre-0c, every `self.windows.get_mut(&self.active_window).map(|w| &mut w.buffers).expect("active window present").insert(id,
+    /// state)` site also called `attach_buffer_to_active_window(id)`
+    /// to track membership. After 0c the insert goes directly into
+    /// the active window's `buffers` HashMap, so this is a no-op.
+    /// Kept around so the call sites compile during the migration;
+    /// removed in 0i.
+    pub(crate) fn attach_buffer_to_active_window(&mut self, _buffer_id: fresh_core::BufferId) {}
 
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch

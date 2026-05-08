@@ -214,7 +214,11 @@ impl Editor {
         );
         // Terminal buffers should never show line numbers
         state.margins.configure_for_line_numbers(false);
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
 
         // Use virtual metadata so the tab shows "*Terminal N*" and LSP stays off.
@@ -283,7 +287,11 @@ impl Editor {
             backing_file.clone(),
         );
         state.margins.configure_for_line_numbers(false);
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
 
         let metadata = BufferMetadata::virtual_buffer(
@@ -598,7 +606,13 @@ impl Editor {
                 std::sync::Arc::clone(&self.authority.filesystem),
             ) {
                 // Replace buffer state
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     let total_bytes = new_state.buffer.total_bytes();
                     *state = new_state;
                     // Terminal buffers should never be considered "modified"
@@ -613,33 +627,36 @@ impl Editor {
             }
 
             // Mark buffer as editing-disabled while in non-terminal mode
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 state.editing_disabled = true;
                 state.margins.configure_for_line_numbers(false);
             }
 
             // In read-only view, keep line wrapping disabled for terminal buffers
             // Also scroll viewport to show the end of the buffer where the cursor is.
-            // Disjoint borrow: split-view-state via direct windows.get_mut so
-            // `self.buffers.get_mut(...)` can still run inside the body.
             let __active_split = self.split_manager().active_split();
-            let active_id = self.active_window;
-            if let Some(view_state) = self
+            let __win = self
                 .windows
-                .get_mut(&active_id)
-                .and_then(|w| w.split_view_states_mut())
+                .get_mut(&self.active_window)
+                .expect("active window must exist");
+            let __buffers_mut = &mut __win.buffers;
+            if let Some(view_state) = __win
+                .splits
+                .as_mut()
                 .expect("active window must have a populated split layout")
+                .1
                 .get_mut(&__active_split)
             {
                 view_state.viewport.line_wrap_enabled = false;
-
-                // Clear skip_ensure_visible flag so the viewport scrolls to cursor
-                // This fixes the bug where re-entering scrollback mode would jump to the
-                // previous scroll position because the flag was still set from scrolling
                 view_state.viewport.clear_skip_ensure_visible();
 
-                // Scroll viewport to make cursor visible at the end of buffer
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
             }
@@ -657,7 +674,14 @@ impl Editor {
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
 
             // Re-enable editing when in terminal mode (input goes to PTY)
-            if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+            let __buffer_id = self.active_buffer();
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&__buffer_id)
+            {
                 state.editing_disabled = false;
                 state.margins.configure_for_line_numbers(false);
             }
@@ -761,7 +785,10 @@ impl Editor {
 
     /// Get buffer content as a string (for testing)
     pub fn get_buffer_content(&self, buffer_id: BufferId) -> Option<String> {
-        self.buffers
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
             .get(&buffer_id)
             .and_then(|state| state.buffer.to_string())
     }

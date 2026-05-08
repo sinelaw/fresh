@@ -527,7 +527,13 @@ impl Editor {
                         }
 
                         // Ensure buffer remains read-only with no line numbers
-                        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        if let Some(state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .map(|w| &mut w.buffers)
+                            .expect("active window present")
+                            .get_mut(&buffer_id)
+                        {
                             state.editing_disabled = true;
                             state.margins.configure_for_line_numbers(false);
                             state.buffer.set_modified(false);
@@ -620,7 +626,13 @@ impl Editor {
                         .collect();
 
                     for (buf_id, path) in buffers_to_update {
-                        if let Some(state) = self.buffers.get_mut(&buf_id) {
+                        if let Some(state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .map(|w| &mut w.buffers)
+                            .expect("active window present")
+                            .get_mut(&buf_id)
+                        {
                             let first_line = state.buffer.first_line_lossy();
                             let detected =
                                 crate::primitives::detected_language::DetectedLanguage::from_path(

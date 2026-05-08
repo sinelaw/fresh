@@ -484,12 +484,12 @@ fn opening_a_file_attaches_buffer_to_active_session() {
     // The buffer is in alpha's set, not the base's.
     let alpha_set = &harness.editor().session(alpha).unwrap().buffers;
     assert!(
-        alpha_set.contains(&buffer_id),
+        alpha_set.contains_key(&buffer_id),
         "buffer must be attached to active session at open time"
     );
     let base_set = &harness.editor().session(WindowId(1)).unwrap().buffers;
     assert!(
-        !base_set.contains(&buffer_id),
+        !base_set.contains_key(&buffer_id),
         "buffer must NOT be attached to non-active sessions"
     );
 }

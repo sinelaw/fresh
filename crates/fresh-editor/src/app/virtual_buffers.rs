@@ -45,7 +45,13 @@ impl Editor {
         // If the current buffer is empty and unmodified, replace it instead of creating a new one
         // Note: Don't replace composite buffers (they appear empty but are special views)
         let replace_current = {
-            let current_state = self.buffers.get(&self.active_buffer()).unwrap();
+            let current_state = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&self.active_buffer())
+                .unwrap();
             !current_state.is_composite_buffer
                 && current_state.buffer.is_empty()
                 && !current_state.buffer.is_modified()
@@ -93,7 +99,11 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -173,7 +183,13 @@ impl Editor {
 
         // If file grew, extend the buffer
         if self.stdin_stream.record_growth(current_size) {
-            if let Some(editor_state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(editor_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 editor_state
                     .buffer
                     .extend_streaming(&temp_path, current_size);
@@ -226,7 +242,13 @@ impl Editor {
             .unwrap_or(self.stdin_stream.last_known_size());
 
         if self.stdin_stream.record_growth(final_size) {
-            if let Some(editor_state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(editor_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 editor_state.buffer.extend_streaming(&temp_path, final_size);
             }
         }
@@ -284,7 +306,11 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -321,7 +347,11 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -390,7 +420,7 @@ impl Editor {
         entries: Vec<crate::primitives::text_property::TextPropertyEntry>,
     ) -> Result<(), String> {
         let state = self
-            .buffers
+            .buffers_mut()
             .get_mut(&buffer_id)
             .ok_or_else(|| "Buffer not found".to_string())?;
 
@@ -448,19 +478,22 @@ impl Editor {
         // past the new buffer end and snap to a char boundary. Don't read
         // one split's cursor and write it into the others.
         let new_len = state.buffer.len();
-        // `state` is no longer used past this point — re-borrow `self.buffers`
-        // immutably for the snap and `self.split_view_states` mutably for the
-        // write. These are disjoint fields of `self`.
-        let buffer = &self
+        // Single &mut window borrow split into buffers (read) +
+        // split_view_states (mut) — disjoint sub-fields of Window.
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let buffer = &__win
             .buffers
             .get(&buffer_id)
             .expect("buffer still present")
             .buffer;
-        for view_state in self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+        for view_state in __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .values_mut()
         {
             let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) else {

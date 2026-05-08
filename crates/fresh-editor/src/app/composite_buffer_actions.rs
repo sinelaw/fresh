@@ -243,7 +243,11 @@ impl Editor {
         state.is_composite_buffer = true;
         state.editing_disabled = true;
         state.mode = mode;
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
 
         // Create an event log entry (required for many editor operations)
@@ -456,7 +460,10 @@ impl Editor {
 
             let line_bytes = pane_line.and_then(|line_ref| {
                 let source = composite.sources.get(view_state.focused_pane)?;
-                self.buffers
+                self.windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
                     .get(&source.buffer_id)?
                     .buffer
                     .get_line(line_ref.line)
@@ -812,7 +819,13 @@ impl Editor {
             .map(|line_ref| line_ref.line)
             .unwrap_or(cursor_row); // Fall back to cursor_row if no source line
 
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.primary_cursor_line_number =
                 crate::model::buffer::LineNumber::Absolute(display_line);
         }
@@ -1082,7 +1095,13 @@ impl Editor {
                 None => return,
             };
 
-            let source_state = match self.buffers.get(&source.buffer_id) {
+            let source_state = match self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&source.buffer_id)
+            {
                 Some(s) => s,
                 None => return,
             };
@@ -1182,12 +1201,12 @@ impl Editor {
 
             // Get line counts from source buffers
             let old_line_count = self
-                .buffers
+                .buffers()
                 .get(&self.composite_buffers.get(&buffer_id).unwrap().sources[0].buffer_id)
                 .and_then(|s| s.buffer.line_count())
                 .unwrap_or(0);
             let new_line_count = self
-                .buffers
+                .buffers()
                 .get(&self.composite_buffers.get(&buffer_id).unwrap().sources[1].buffer_id)
                 .and_then(|s| s.buffer.line_count())
                 .unwrap_or(0);
@@ -1239,12 +1258,12 @@ impl Editor {
 
             // Get line counts from source buffers
             let old_line_count = self
-                .buffers
+                .buffers()
                 .get(&composite.sources[0].buffer_id)
                 .and_then(|s| s.buffer.line_count())
                 .unwrap_or(0);
             let new_line_count = self
-                .buffers
+                .buffers()
                 .get(&composite.sources[1].buffer_id)
                 .and_then(|s| s.buffer.line_count())
                 .unwrap_or(0);
@@ -1325,7 +1344,10 @@ impl Editor {
                 .and_then(|row| row.get_pane_line(pane_idx))
                 .and_then(|line_ref| {
                     let source = composite.sources.get(pane_idx)?;
-                    self.buffers
+                    self.windows
+                        .get(&self.active_window)
+                        .map(|w| &w.buffers)
+                        .expect("active window present")
                         .get(&source.buffer_id)?
                         .buffer
                         .get_line(line_ref.line)

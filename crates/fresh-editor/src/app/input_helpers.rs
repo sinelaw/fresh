@@ -118,7 +118,7 @@ impl Editor {
 
                 let is_current = buffer_id == self.active_buffer();
                 let is_modified = self
-                    .buffers
+                    .buffers()
                     .get(&buffer_id)
                     .is_some_and(|b| b.buffer.is_modified());
 

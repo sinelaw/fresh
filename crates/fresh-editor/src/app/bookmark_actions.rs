@@ -33,7 +33,13 @@ impl Editor {
 
         // Switch to the buffer if needed, or forget the bookmark if it's gone.
         if bookmark.buffer_id != self.active_buffer() {
-            if self.buffers.contains_key(&bookmark.buffer_id) {
+            if self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .contains_key(&bookmark.buffer_id)
+            {
                 self.set_active_buffer(bookmark.buffer_id);
             } else {
                 self.set_status_message(t!("bookmark.buffer_gone", key = key).to_string());

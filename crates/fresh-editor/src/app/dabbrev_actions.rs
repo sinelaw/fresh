@@ -169,7 +169,12 @@ impl Editor {
     ) -> Vec<OtherBufferSlice> {
         let mut slices = Vec::new();
 
-        for (&buf_id, state) in &self.buffers {
+        for (&buf_id, state) in self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+        {
             if buf_id == exclude_buffer_id {
                 continue;
             }

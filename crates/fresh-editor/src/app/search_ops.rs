@@ -482,7 +482,13 @@ impl Editor {
     /// consume a few chunks per frame.
     fn start_search_scan(&mut self, query: &str, regex: regex::Regex) {
         let buffer_id = self.active_buffer();
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             let leaves = state.buffer.piece_tree_leaves();
             // Build a bytes::Regex from the same pattern for the chunked scanner
             let bytes_regex = regex::bytes::RegexBuilder::new(regex.as_str())

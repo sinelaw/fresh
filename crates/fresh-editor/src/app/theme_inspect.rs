@@ -68,7 +68,7 @@ impl Editor {
         {
             Some((split_id, buffer_id, rect, ..)) => {
                 let gw = self
-                    .buffers
+                    .buffers()
                     .get(buffer_id)
                     .map(|s| s.margins.left_total_width() as u16)
                     .unwrap_or(0);
@@ -88,18 +88,24 @@ impl Editor {
             None => return,
         };
 
-        // Compute cursor screen position (needs &mut buffer for line_iterator)
-        let state = match self.buffers.get_mut(&active_buffer) {
+        // Compute cursor screen position (needs &mut buffer for line_iterator).
+        // Single &mut window borrow; clone the viewport so we don't hold a
+        // borrow into __win.splits while mutating __win.buffers.
+        let __win = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window must exist");
+        let viewport = __win
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout")
+            .1[&active_split]
+            .viewport
+            .clone();
+        let state = match __win.buffers.get_mut(&active_buffer) {
             Some(s) => s,
             None => return,
         };
-        let viewport = &self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")[&active_split]
-            .viewport;
         let cursor_rel = viewport.cursor_screen_position(&mut state.buffer, &primary_cursor);
 
         let adjusted_rect =

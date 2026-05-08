@@ -101,7 +101,13 @@ impl Editor {
         // update its content in place. Otherwise create one.
         let panel_key = "quickfix".to_string();
         if let Some(&existing) = self.panel_ids().get(&panel_key) {
-            if self.buffers.contains_key(&existing) {
+            if self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .contains_key(&existing)
+            {
                 if let Err(e) = self.set_virtual_buffer_content(existing, entries) {
                     tracing::error!("Failed to update quickfix buffer: {}", e);
                     return;
@@ -139,7 +145,13 @@ impl Editor {
             "quickfix-list".to_string(),
             true,
         );
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.margins.configure_for_line_numbers(false);
             state.show_cursors = true;
             state.editing_disabled = true;
@@ -812,7 +824,7 @@ impl Editor {
             }
             Action::GotoLine => {
                 let has_line_index = self
-                    .buffers
+                    .buffers()
                     .get(&self.active_buffer())
                     .is_none_or(|s| s.buffer.line_count().is_some());
                 if has_line_index {
@@ -1696,7 +1708,7 @@ impl Editor {
             // Buffer settings
             Action::SetTabSize => {
                 let current = self
-                    .buffers
+                    .buffers()
                     .get(&self.active_buffer())
                     .map(|s| s.buffer_settings.tab_size.to_string())
                     .unwrap_or_else(|| "4".to_string());
@@ -1719,7 +1731,14 @@ impl Editor {
                 self.start_set_language_prompt();
             }
             Action::ToggleIndentationStyle => {
-                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+                let __buffer_id = self.active_buffer();
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&__buffer_id)
+                {
                     state.buffer_settings.use_tabs = !state.buffer_settings.use_tabs;
                     let status = if state.buffer_settings.use_tabs {
                         "Indentation: Tabs"
@@ -1730,7 +1749,14 @@ impl Editor {
                 }
             }
             Action::ToggleTabIndicators | Action::ToggleWhitespaceIndicators => {
-                if let Some(state) = self.buffers.get_mut(&self.active_buffer()) {
+                let __buffer_id = self.active_buffer();
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&__buffer_id)
+                {
                     state.buffer_settings.whitespace.toggle_all();
                     let status = if state.buffer_settings.whitespace.any_visible() {
                         t!("toggle.whitespace_indicators_shown")
@@ -1789,14 +1815,19 @@ impl Editor {
                         .expect("active window must have a populated split layout")
                         .active_split();
                     let active_buffer = self.active_buffer();
-                    if let Some(view_state) = self
+                    let __win = self
                         .windows
                         .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
+                        .expect("active window must exist");
+                    let __buffers_mut = &mut __win.buffers;
+                    if let Some(view_state) = __win
+                        .splits
+                        .as_mut()
                         .expect("active window must have a populated split layout")
+                        .1
                         .get_mut(&active_split)
                     {
-                        let state = self.buffers.get_mut(&active_buffer).unwrap();
+                        let state = __buffers_mut.get_mut(&active_buffer).unwrap();
                         view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                     }
                 }

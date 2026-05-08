@@ -685,7 +685,7 @@ impl Editor {
     /// left untouched.
     pub fn copy_buffer_path(&mut self, buffer_id: crate::model::event::BufferId, relative: bool) {
         let path = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()));
         let Some(path) = path else {

@@ -31,7 +31,7 @@ impl Editor {
         // If it didn't, open_file_no_focus may replace the empty initial buffer
         // in-place (same buffer ID, new content), and we need to notify plugins.
         let active_had_path = self
-            .buffers
+            .buffers()
             .get(&self.active_buffer())
             .and_then(|s| s.buffer.file_path())
             .is_some();
@@ -83,7 +83,7 @@ impl Editor {
 
         // Check if buffer is binary for status message
         let is_binary = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .map(|s| s.buffer.is_binary())
             .unwrap_or(false);
@@ -206,7 +206,7 @@ impl Editor {
 
         // Check if file is already open - return existing buffer without switching
         let already_open = self
-            .buffers
+            .buffers()
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(path))
             .map(|(id, _)| *id);
@@ -220,7 +220,13 @@ impl Editor {
         // Suppressed when `allow_replace_empty` is false — see
         // `open_file_for_preview` for the rationale.
         let replace_current = allow_replace_empty && {
-            let current_state = self.buffers.get(&self.active_buffer()).unwrap();
+            let current_state = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&self.active_buffer())
+                .unwrap();
             !current_state.is_composite_buffer
                 && current_state.buffer.is_empty()
                 && !current_state.buffer.is_modified()
@@ -317,7 +323,11 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -344,7 +354,13 @@ impl Editor {
 
         // Mark read-only files (library, binary, or filesystem-readonly) as editing-disabled
         if metadata.read_only {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
                 state.editing_disabled = true;
             }
         }
@@ -439,7 +455,7 @@ impl Editor {
 
         // Check if already open
         let already_open = self
-            .buffers
+            .buffers()
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(path))
             .map(|(id, _)| *id);
@@ -471,7 +487,11 @@ impl Editor {
             );
         let state = EditorState::from_buffer_with_language(buffer, detected);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -547,14 +567,20 @@ impl Editor {
 
         // Check if already open
         let already_open = self
-            .buffers
+            .buffers()
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(path))
             .map(|(id, _)| *id);
 
         if let Some(id) = already_open {
             // File is already open - update its encoding and reload
-            if let Some(state) = self.buffers.get_mut(&id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&id)
+            {
                 state.buffer.set_encoding(encoding);
             }
             self.set_active_buffer(id);
@@ -592,7 +618,11 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -644,13 +674,19 @@ impl Editor {
 
         // Get the file path
         let path = self
-            .buffers
+            .buffers()
             .get(&buffer_id)
             .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()))
             .ok_or_else(|| anyhow::anyhow!("Buffer has no file path"))?;
 
         // Check for unsaved modifications
-        if let Some(state) = self.buffers.get(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             if state.buffer.is_modified() {
                 anyhow::bail!("Cannot reload: buffer has unsaved modifications");
             }
@@ -667,7 +703,13 @@ impl Editor {
         )?;
 
         // Update the buffer in the editor state
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
             state.buffer = new_buffer;
             // Invalidate highlighting
             state.highlighter.invalidate_all();
@@ -723,7 +765,7 @@ impl Editor {
 
         // Check if already open
         let already_open = self
-            .buffers
+            .buffers()
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(path))
             .map(|(id, _)| *id);
@@ -760,7 +802,11 @@ impl Editor {
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
 
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
@@ -824,7 +870,13 @@ impl Editor {
         };
 
         // Get the buffer to validate positions
-        let max_pos = match self.buffers.get(&buffer_id) {
+        let max_pos = match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             Some(buffer) => buffer.buffer.len(),
             None => return,
         };
@@ -839,13 +891,17 @@ impl Editor {
         // different file inside the Live Grep overlay scrolls the
         // background buffer by one line — issue surfaced by the
         // preview-pane file-load path).
-        let view_state_opt = self
+        let __win = self
             .windows
             .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let buffer_state_opt = __win.buffers.get_mut(&buffer_id);
+        let view_state_opt = __win
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .get_mut(&split_id);
-        let buffer_state_opt = self.buffers.get_mut(&buffer_id);
         if let (Some(view_state), Some(buffer_state)) = (view_state_opt, buffer_state_opt) {
             if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
                 let cursor_pos = file_state.cursor.position.min(max_pos);
@@ -1071,7 +1127,7 @@ impl Editor {
         // Don't double-open. The file_path matches by container path,
         // since that's what we set after build.
         let already_open = self
-            .buffers
+            .buffers()
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(container_path.as_path()))
             .map(|(id, _)| *id);
@@ -1127,7 +1183,11 @@ impl Editor {
 
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());

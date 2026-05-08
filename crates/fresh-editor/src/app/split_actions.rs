@@ -57,7 +57,7 @@ impl Editor {
                     .filter(|(&buf_id, _)| buf_id != current_buffer_id)
                     .map(|(&buf_id, buf_state)| {
                         let folds = self
-                            .buffers
+                            .buffers()
                             .get(&buf_id)
                             .map(|state| {
                                 buf_state
@@ -97,7 +97,13 @@ impl Editor {
                 // The active buffer gets a fresh cursor in the new split.
                 if let Some(source) = source_keyed_states {
                     for (buf_id, mut buf_state, folds) in source {
-                        if let Some(state) = self.buffers.get_mut(&buf_id) {
+                        if let Some(state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .map(|w| &mut w.buffers)
+                            .expect("active window present")
+                            .get_mut(&buf_id)
+                        {
                             buf_state.folds.clear(&mut state.marker_list);
                             for fold in folds {
                                 let start_line = fold.header_line.saturating_add(1);
@@ -319,7 +325,7 @@ impl Editor {
 
             // Get buffer length to clamp cursor positions
             let buffer_len = self
-                .buffers
+                .buffers()
                 .get(&current_buffer_id)
                 .map(|s| s.buffer.len())
                 .unwrap_or(0);

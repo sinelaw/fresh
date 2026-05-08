@@ -402,7 +402,14 @@ impl Editor {
         let active_buffer = self.active_buffer();
 
         // Use buffer's stored language to verify it matches the LSP server
-        let file_language = match self.buffers.get(&active_buffer).map(|s| s.language.clone()) {
+        let file_language = match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&active_buffer)
+            .map(|s| s.language.clone())
+        {
             Some(l) => l,
             None => {
                 tracing::debug!("notify_lsp_current_file_opened: no buffer state");
@@ -419,21 +426,26 @@ impl Editor {
             );
             return;
         }
-        let (text, line_count, buffer_version) =
-            if let Some(state) = self.buffers.get(&active_buffer) {
-                let text = match state.buffer.to_string() {
-                    Some(t) => t,
-                    None => {
-                        tracing::debug!("notify_lsp_current_file_opened: buffer not fully loaded");
-                        return;
-                    }
-                };
-                let line_count = state.buffer.line_count().unwrap_or(1000);
-                (text, line_count, state.buffer.version())
-            } else {
-                tracing::debug!("notify_lsp_current_file_opened: no buffer state");
-                return;
+        let (text, line_count, buffer_version) = if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&active_buffer)
+        {
+            let text = match state.buffer.to_string() {
+                Some(t) => t,
+                None => {
+                    tracing::debug!("notify_lsp_current_file_opened: buffer not fully loaded");
+                    return;
+                }
             };
+            let line_count = state.buffer.line_count().unwrap_or(1000);
+            (text, line_count, state.buffer.version())
+        } else {
+            tracing::debug!("notify_lsp_current_file_opened: no buffer state");
+            return;
+        };
 
         // Send didOpen to all LSP handles (use force_spawn to ensure they're started)
         let __active_id = self.active_window;

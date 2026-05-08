@@ -22,7 +22,13 @@ use super::Editor;
 impl Editor {
     /// Resolve the effective line_wrap setting for a buffer, considering language overrides.
     pub(super) fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
-        match self.buffers.get(&buffer_id) {
+        match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             Some(state) => buffer_config_resolve::line_wrap(&state.language, &self.config),
             None => self.config.editor.line_wrap,
         }
@@ -33,13 +39,24 @@ impl Editor {
         &self,
         buffer_id: BufferId,
     ) -> Option<Option<usize>> {
-        let state = self.buffers.get(&buffer_id)?;
+        let state = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)?;
         buffer_config_resolve::page_view(&state.language, &self.config)
     }
 
     /// Resolve the effective wrap_column for a buffer, considering language overrides.
     pub(super) fn resolve_wrap_column_for_buffer(&self, buffer_id: BufferId) -> Option<usize> {
-        match self.buffers.get(&buffer_id) {
+        match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             Some(state) => buffer_config_resolve::wrap_column(&state.language, &self.config),
             None => self.config.editor.wrap_column,
         }
@@ -133,7 +150,7 @@ impl Editor {
         // `open_file_no_focus` may *repurpose* that buffer (same ID, new
         // content) for the newly-opened file.
         let previously_file_backed: HashSet<BufferId> = self
-            .buffers
+            .buffers()
             .iter()
             .filter_map(|(id, state)| {
                 state.buffer.file_path().and_then(|p| {
@@ -250,7 +267,13 @@ impl Editor {
     ) -> Vec<BufferId> {
         let affected = self.buffer_ids_under_path(old_root);
         for &id in &affected {
-            let Some(state) = self.buffers.get(&id) else {
+            let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&id)
+            else {
                 continue;
             };
             let Some(current) = state.buffer.file_path().map(|p| p.to_path_buf()) else {
@@ -269,7 +292,13 @@ impl Editor {
                 continue;
             };
 
-            if let Some(state) = self.buffers.get_mut(&id) {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&id)
+            {
                 state.buffer.rename_file_path(new_path.clone());
             }
             if let Some(metadata) = self.buffer_metadata.get_mut(&id) {
@@ -323,7 +352,11 @@ impl Editor {
     /// Number of open buffers (including hidden/virtual buffers).
     /// Intended for tests that verify preview tabs don't accumulate.
     pub fn open_buffer_count(&self) -> usize {
-        self.buffers.len()
+        self.windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .len()
     }
 
     /// The (split, buffer) tuple of the current preview tab, if any.
@@ -352,7 +385,13 @@ impl Editor {
         let old_anchor = cursors.primary().anchor;
         let old_sticky_column = cursors.primary().sticky_column;
 
-        if let Some(state) = self.buffers.get(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             let has_line_index = state.buffer.line_count().is_some();
             let has_line_scan = state.buffer.has_line_feed_scan();
             let buffer_len = state.buffer.len();
@@ -372,7 +411,13 @@ impl Editor {
                 let actual_line = target_line.min(max_line);
                 known_line = Some(actual_line);
                 // Need mutable access to potentially read chunk data from disk
-                if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&buffer_id)
+                {
                     state
                         .buffer
                         .resolve_line_byte_offset(actual_line)
@@ -413,12 +458,18 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            let state = self.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = self
+            // Single window borrow split into disjoint sub-fields.
+            let active_id = self.active_window;
+            let window = self
                 .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
+                .get_mut(&active_id)
+                .expect("active window must exist");
+            let state = window.buffers.get_mut(&buffer_id).unwrap();
+            let view_state = window
+                .splits
+                .as_mut()
                 .expect("active window must have a populated split layout")
+                .1
                 .get_mut(&split_id)
                 .unwrap();
             state.apply(&mut view_state.cursors, &event);
@@ -462,7 +513,13 @@ impl Editor {
         let old_anchor = cursors.primary().anchor;
         let old_sticky_column = cursors.primary().sticky_column;
 
-        if let Some(state) = self.buffers.get(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             let buffer_len = state.buffer.len();
 
             // Convert 1-indexed to 0-indexed
@@ -499,12 +556,18 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            let state = self.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = self
+            // Single window borrow split into disjoint sub-fields.
+            let active_id = self.active_window;
+            let window = self
                 .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
+                .get_mut(&active_id)
+                .expect("active window must exist");
+            let state = window.buffers.get_mut(&buffer_id).unwrap();
+            let view_state = window
+                .splits
+                .as_mut()
                 .expect("active window must have a populated split layout")
+                .1
                 .get_mut(&split_id)
                 .unwrap();
             state.apply(&mut view_state.cursors, &event);
@@ -521,7 +584,13 @@ impl Editor {
         let old_anchor = cursors.primary().anchor;
         let old_sticky_column = cursors.primary().sticky_column;
 
-        if let Some(state) = self.buffers.get(&buffer_id) {
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
             let buffer_len = state.buffer.len();
             let position = offset.min(buffer_len);
 
@@ -542,12 +611,18 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            let state = self.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = self
+            // Single window borrow split into disjoint sub-fields.
+            let active_id = self.active_window;
+            let window = self
                 .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
+                .get_mut(&active_id)
+                .expect("active window must exist");
+            let state = window.buffers.get_mut(&buffer_id).unwrap();
+            let view_state = window
+                .splits
+                .as_mut()
                 .expect("active window must have a populated split layout")
+                .1
                 .get_mut(&split_id)
                 .unwrap();
             state.apply(&mut view_state.cursors, &event);
@@ -584,7 +659,11 @@ impl Editor {
         state
             .buffer
             .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
-        self.buffers.insert(buffer_id, state);
+        self.windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .insert(buffer_id, state);
         self.attach_buffer_to_active_window(buffer_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());

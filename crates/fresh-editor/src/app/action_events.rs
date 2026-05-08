@@ -64,17 +64,21 @@ impl Editor {
 
         let buffer_id = self.active_buffer();
         let active_id = self.active_window;
-        // Take split-view-state borrow first via direct windows.get_mut
-        // so it stays disjoint from the &mut self.buffers borrow below.
-        let cursors = &mut self
+        // Single &mut borrow on the active window, split-access into
+        // disjoint sub-fields (buffers + split-view-state cursors).
+        let window = self
             .windows
             .get_mut(&active_id)
-            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must exist");
+        let state = window.buffers.get_mut(&buffer_id).unwrap();
+        let cursors = &mut window
+            .splits
+            .as_mut()
             .expect("active window must have a populated split layout")
+            .1
             .get_mut(&active_split)
             .unwrap()
             .cursors;
-        let state = self.buffers.get_mut(&buffer_id).unwrap();
 
         // Use per-buffer settings which respect language overrides and user changes
         let tab_size = state.buffer_settings.tab_size;
@@ -255,7 +259,13 @@ impl Editor {
                 .get(&active_split)
                 .unwrap()
                 .cursors;
-            let state = self.buffers.get(&active_buffer).unwrap();
+            let state = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .get(&active_buffer)
+                .unwrap();
             cursors
                 .iter()
                 .map(|(cursor_id, cursor)| {
@@ -480,7 +490,12 @@ impl Editor {
                 mappings.get(row_idx)?.line_end_byte
             };
 
-            let state = self.buffers.get_mut(&active_buffer)?;
+            let state = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&active_buffer)?;
             let buffer = &mut state.buffer;
             let buffer_len = buffer.len();
             if cur_row_line_end >= buffer_len {
@@ -555,7 +570,12 @@ impl Editor {
             // the user wouldn't expect (issue #1574, Windows-CRLF
             // variant).  For LF or a lone CR the byte arithmetic falls
             // through to a one-byte step.
-            let state = self.buffers.get_mut(&active_buffer)?;
+            let state = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&active_buffer)?;
             let buffer = &mut state.buffer;
             let _ = row_is_empty;
             let target_pos = step_before_line_break(buffer, cur_row_anchor);
