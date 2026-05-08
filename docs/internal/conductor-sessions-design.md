@@ -45,6 +45,125 @@ surface a Conductor plugin needs on top of it. It deliberately does
 not specify the Conductor plugin itself; that is a follow-up doc once
 this design is settled.
 
+## Architecture priority: complete the session-as-window model first
+
+> **This is the top priority.** All further Conductor feature work
+> (Control Room polish, hotkeys, diff/merge actions, collision
+> radar) is gated on completing the session-as-window architecture
+> below. The interim warm-swap implementation that currently sits
+> on the branch (`§ Implementation status snapshot`) is a
+> transitional bridge, not the destination.
+
+### The model
+
+Each `Session` is the editor-state equivalent of a **VS Code
+window**: an isolated bundle of everything the user sees and acts
+on within that session. Closing a session evicts everything it
+owned; opening the same file in two sessions creates two
+independent buffers; "save all" / "close all" / quick-open / find-
+in-files act on **this session only**.
+
+Concretely:
+
+| Lives on `Session` (per-window state) | Lives on `Editor` (cross-session) |
+|---|---|
+| `buffers: HashMap<BufferId, EditorState>` | `next_buffer_id` (still globally unique) |
+| `event_logs` (undo history per buffer) | Plugin runtime (single QuickJS) |
+| `terminal_manager`, `terminal_buffers`, `terminal_backing_files` | Theme, config, keybindings (user-level) |
+| `splits`, `split_view_states` | `plugin_global_state` (cross-session by definition) |
+| `file_explorer`, `lsp`, `panel_ids`, `file_mod_times` | `sessions: HashMap<SessionId, Session>`, `active_session` |
+| `position_history`, `bookmarks` | Workspace recovery framework |
+| `cached_layout` (split / tab / file-explorer rects) | Chrome layout (status bar, menu, prompt overlay rects) |
+
+`Editor` becomes the multiplexer: it holds the session map, the
+active-session pointer, the cross-session shared infrastructure,
+and editor chrome. **Almost no command logic reads editor-global
+state directly** — commands are dispatched on the active session.
+
+### Why this is the right target
+
+1. **Render becomes trivially session-pluggable.** A
+   `render_session(frame, area, &Session, &Editor /* chrome */)`
+   call works for any session — active, previewed, or
+   off-screen. The "preview the entire editor UI" requirement
+   from `§ Rich Control Room rendering` falls out for free, with
+   no swap gymnastics and no risk of side-effects bleeding across
+   sessions.
+2. **Commands are correct by default.** "Save all," "close all,"
+   quick-open, find-in-files, list-buffers all enumerate
+   `active_session.buffers` because that's where buffers live.
+   No risk of acting on another session's content. Cross-session
+   operations (e.g. compare alpha vs base for a diff) become
+   explicit, opt-in APIs.
+3. **`closeSession` is principled.** Drop the `Session` struct;
+   its buffers, terminals, undo logs, watchers all go with it.
+   No refcounting, no "is anyone else using this buffer?" logic.
+4. **Crash isolation per session is feasible later** (each
+   session in its own panic boundary / thread), though not free
+   today.
+5. **Eliminates the entire warm-swap pattern.** `setActiveSession`
+   becomes a single field write; there are no stashes to keep
+   in sync; the bug class "I forgot to swap field X back" goes
+   away.
+
+### Why the alternative (global storage + membership) was rejected
+
+Earlier in this doc's history, buffer storage was deliberately
+kept Editor-global with `Session.buffers: HashSet<BufferId>` as
+a membership pointer (`§ Why each session owns its buffers`).
+The rationale was "two sessions might want to share a buffer"
+and "Conductor's terminal buffers need to be addressable from
+the Control Room."
+
+In practice both arguments fold:
+
+- **Sharing.** The parallel-agents use case wants edits in
+  alpha and beta to *diverge*, not propagate — that's the whole
+  point of running independent worktrees. Forcing shared storage
+  is the wrong default.
+- **Cross-session addressability.** Conductor lives in
+  editor-global plugin state and naturally has session ids; if
+  it needs a buffer from another session it asks via
+  `editor.sessions.get(sid).buffer(id)`, which is a one-line
+  helper. The "global lookup" benefit was illusory.
+
+The half-migrated state on the branch — buffers and terminals
+global, view state per-session — is **architecturally
+inconsistent**: rendering correctly scopes to the active
+session, but commands operate on the global buffer pool. Every
+command that doesn't go through the session is a latent bug
+("save-all from alpha saves base's files too" is one such bug
+already observed).
+
+### Status of the interim implementation
+
+The work landed on this branch is **not wasted**:
+
+- The `Session` struct, the `sessions` map, `active_session`
+  pointer, `createSession`/`setActiveSession`/`closeSession`
+  plugin APIs, the lifecycle hooks, and cross-restart
+  persistence all stay.
+- The warm-swap stashes (`splits_stash`, `lsp_stash`, etc.)
+  become live fields on `Session` rather than `Option<…>`
+  stashes — most of the storage shape is right; only the
+  ownership semantics flip.
+- The Conductor plugin (Step 6) keeps working because its
+  plugin-API surface doesn't change.
+
+What gets discarded:
+
+- The `swap_active_session_state` implementation
+  (`session_actions.rs::set_active_session`) — replaced by a
+  pointer write.
+- The "transient swap for preview" approach
+  (`render_session_preview_into_rect`) — replaced by
+  `render_session(&Session, area, &Editor)`.
+- The half-finished "global buffer pool with session
+  membership" model — replaced by per-session ownership.
+
+The migration sequence is laid out in `§ Migration sequence`,
+**Step 0** below.
+
 ## Non-goals
 
 - Multi-process isolation. Crash isolation between worktrees is not a
@@ -71,6 +190,14 @@ The minimum viable Conductor delivers the load-bearing UX claim:
 Everything else in this document is wanted but deferrable. Items
 throughout the doc are tagged `[MVP]` or `[v1.1+]`. This section is
 the index.
+
+> **Gating constraint (May 2026):** `Step 0 — Session-as-window
+> migration` (`§ Migration sequence`) is the new top priority and
+> blocks every MVP item below that hasn't already shipped. The
+> warm-swap interim that delivered the items below is being
+> replaced by the window model; UX features built on top of the
+> warm-swap interim accumulate technical debt and must wait for
+> Step 0 to complete.
 
 ### `[MVP]` — load-bearing for the core UX promise
 
@@ -343,30 +470,91 @@ Everything `Conductor` owns is in `plugin_global_state`, which the
 swap pointer does not touch — that is the structural property that
 makes "Conductor lives above sessions" true.
 
-### Why buffer storage stays Editor-global
+### Why each session owns its buffers (window model)
 
-Buffers are owned by `Editor.buffers`; sessions hold a `HashSet<BufferId>` of
-which buffers belong to them. Three reasons:
+> **Revised.** The earlier "buffer storage stays Editor-global"
+> framing has been rejected (`§ Architecture priority`). This
+> section describes the target model.
 
-1. The same physical file can in principle be open in two sessions
-   (e.g. a shared header outside both worktrees). De-duplicating at
-   the buffer-storage level keeps undo, mtime tracking, and LSP
-   text-sync coherent.
-2. Conductor's terminal buffers (one per agent) need to be
-   addressable from the Control Room, which lives editor-globally. If
-   buffers were owned by sessions, the Control Room would either need
-   to peek into other sessions' storage or duplicate.
-3. Migration cost: keeping `Editor.buffers` flat means every existing
-   `BufferId` lookup keeps working unchanged. Only the question
-   "which session is this buffer attached to?" is new.
+Each `Session` owns its own `HashMap<BufferId, EditorState>`.
+Opening the same file in two sessions creates two independent
+buffers; edits diverge. `BufferId` allocation stays globally
+unique (single `Editor.next_buffer_id` counter) so plugin APIs
+that thread buffer ids around don't have to disambiguate by
+session, but the *storage* lives in whichever session the buffer
+was opened into.
+
+Why this is the right ownership:
+
+1. **Parallel-agents semantics.** Alpha and beta are
+   independent worktrees, possibly on independent branches.
+   Edits the user makes in alpha's view of `foo.rs` should
+   *not* echo into beta's view. Independent buffers per
+   session is the model that delivers this.
+2. **`closeSession` becomes trivial.** Drop the `Session`,
+   take its buffer map and terminal manager with it. No
+   refcount, no "shared with another session" check.
+3. **Commands scope correctly by construction.** "Save all"
+   iterates `active_session.buffers` — there's nothing else to
+   iterate. "Close all," buffer cycling (Ctrl+Tab),
+   quick-open, find-in-files, list-buffers all naturally act
+   on this session's buffers because that's where buffers
+   live.
+4. **Cross-session operations stay explicit.** A diff that
+   compares alpha's `foo.rs` against base's `foo.rs` calls
+   `editor.sessions[base].buffers[id]` — a one-line helper.
+   Cross-session is opt-in and visible at every call site,
+   which is what we want for a feature whose UX promise is
+   "each session is its own world."
+
+### Why terminals live on `Session` too
+
+Terminal PTYs (the OS process), terminal grid state, and
+backing-file paths all live on `Session` alongside its buffer
+map. The `terminal_manager`'s read/wait threads are owned by
+the session that created them. Closing a session sends SIGTERM
+to its agents and joins the threads — no orphan PTYs.
+
+This matches user expectation: closing alpha's worktree should
+clean up alpha's agent. With editor-global terminal storage we'd
+need a separate "which session does this PTY belong to" lookup
+plus closure logic; with per-session storage it falls out.
+
+### Cross-session shared state lives on `Editor`
+
+Some state genuinely is cross-session and stays on `Editor`:
+
+- `next_buffer_id` — single counter so buffer ids are globally
+  unique.
+- Plugin runtime — single QuickJS instance.
+- `plugin_global_state` — explicitly cross-session by
+  definition.
+- Theme / config / keybindings — user-level, not project-level.
+- `sessions: HashMap<SessionId, Session>` — the multiplexer's
+  table.
+- `active_session: SessionId` — the pointer.
+- Workspace recovery framework — the *infrastructure* is
+  cross-session; per-session recovery files live under
+  `.fresh/sessions/<id>/`.
+
+Editor chrome (status bar rects, menu rects, prompt overlay
+rects) also lives on `Editor` via a separate `chrome_layout`
+struct, so mouse hit-testing on chrome doesn't collide with
+session-scoped hit-testing on splits and tabs.
 
 ### Active session is a single pointer
 
 `active_session: SessionId` is the only piece of session state read
 on every render. Switching is atomic from the renderer's perspective:
 update the pointer, redraw. All cached state — file tree expansion,
-LSP clients, watchers — already lives on the (now-active) session
-and was kept warm while inactive.
+LSP clients, watchers — already lives on the (now-active) session.
+
+> **In the window model:** there is no swap. `setActiveSession`
+> is a single field write — `self.active_session = id`. Each
+> render reads from `self.sessions[self.active_session]`. The
+> warm-swap pattern that the interim implementation uses
+> (`§ Implementation status snapshot`) is replaced by direct
+> per-session field ownership.
 
 ### Session-global vs session-scoped plugin state
 
@@ -391,7 +579,13 @@ top-level scope persists for the lifetime of the editor — and we do
 not want to silently change the meaning of existing plugins' module
 state.
 
-## Dive: the atomic swap
+## Dive: pointer write (window model) / atomic swap (interim)
+
+> **Window model (target):** `setActiveSession(id)` is a single
+> field write — `self.active_session = id`. Every render reads
+> from `self.sessions[self.active_session]`; nothing is moved.
+> The "swap" framing below describes the **interim warm-swap
+> implementation** that the migration replaces.
 
 What visibly changes during `setActiveSession(1 -> 2)`:
 
@@ -1232,12 +1426,129 @@ editor.openDiffView(opts: {
 The work is large (`§ Risks`) but factorable. Each step is a
 reviewable PR.
 
+> **Re-prioritised May 2026.** The branch landed the warm-swap
+> migration and a working Conductor MVP plugin, but identified
+> the warm-swap pattern itself as a half-finished architecture
+> (`§ Architecture priority`). **Step 0 below — the
+> session-as-window migration — is the new top priority and
+> blocks all other Conductor feature work** (single-key prompt
+> hotkeys, `d`/`m` actions, AGENT/DIFF columns, full Primitive
+> #2, collision radar). Steps 4 / 7 / v1.1+ items resume after
+> Step 0 lands.
+
+### Step 0 — Session-as-window migration  `[BLOCKING — top priority]`
+
+Goal: each `Session` owns the storage for everything it needs
+to render and operate on, exactly like a VS Code window. The
+warm-swap pattern goes away. `setActiveSession` becomes a
+pointer write. Render becomes session-pluggable as
+`render_session(frame, area, &Session, &Editor /* chrome */)`.
+
+Sub-steps, in dependency order:
+
+**0a — Move `cached_layout` (split / tab / file-explorer
+parts) onto `Session`.** Smallest, lowest-risk. Audit
+`Editor::cached_layout` reads/writes; split into
+`Session.layout_cache` (split-leaf rects, tab rects,
+file-explorer rects) and `Editor.chrome_layout` (status bar,
+menu, prompt overlay). Mouse hit-testing routes through the
+right one.
+
+**0b — Convert warm-swap stashes to live fields on `Session`.**
+The fields that today are `Option<…>` stashes
+(`splits_stash`, `file_explorer_stash`, `lsp_stash`,
+`panel_ids_stash`, `file_mod_times_stash`) become required
+non-stash fields on `Session`. The matching live fields on
+`Editor` go away. Every site that reads
+`self.<field>` becomes `self.active_session_mut().<field>` (via
+helpers like `active_splits()` / `active_lsp()` to keep the
+common case readable). The `setActiveSession` swap
+implementation in `session_actions.rs` becomes
+`self.active_session = id;`.
+
+This is the bulk of the mechanical churn — hundreds of call
+sites across `fresh-editor`. Use compiler enforcement: delete
+the live `Editor` fields, follow the errors. Borrow-checker
+friction at sites that touch the active session AND another
+field on `Editor` (split-borrow patterns; pre-extract a
+`&mut Session` early in the function and use it).
+
+**0c — Move `Editor.buffers` onto `Session`.** The biggest
+single move. `Session.buffers: HashMap<BufferId, EditorState>`
+replaces today's `Session.buffers: HashSet<BufferId>` and
+`Editor.buffers: HashMap<BufferId, EditorState>`. `next_buffer_id`
+stays on `Editor` so ids remain globally unique. Plugin API
+lookup helpers gain a "which session" disambiguation pass
+(default: active; explicit cross-session is opt-in). Audit
+every `self.buffers` reference (~hundreds) and route through
+the active session — or, where the operation is genuinely
+cross-session (find references across all sessions, the diff
+helper), through an explicit cross-session iterator.
+
+**0d — Move terminal manager + terminal-buffer indexes onto
+`Session`.** `terminal_manager`, `terminal_buffers`,
+`terminal_backing_files` all become per-session. PTY threads
+are owned by the session that created them. `closeSession`
+joins those threads. `terminal_id` allocation also stays
+global on `Editor` for plugin-API stability. Active-session
+helpers cover the common case
+(`active_terminal_manager_mut()`).
+
+**0e — Move `event_logs` (undo per buffer) onto `Session`.**
+Falls out of 0c — undo logs follow the buffer.
+
+**0f — Move `position_history`, `bookmarks`, and similar
+session-scoped per-buffer metadata onto `Session`.**
+
+**0g — Audit commands.** Every command that today iterates
+`self.buffers` directly is now a compile error after 0c. The
+right fix is almost always "iterate the active session's
+buffers." A small number of commands are genuinely
+editor-global (Quit, theme apply, plugin reload) — those
+become explicit. Goal: zero remaining `editor.buffers`
+references outside the session helpers.
+
+**0h — Refactor render to `render_session`.** Lift
+`Editor::render` to call `render_session(frame, frame.area(),
+&self.sessions[self.active_session], self)`. The preview
+path (`previewSessionInRect`) becomes the same call with a
+sub-rect and a different `&Session`. The transient-swap
+hack and the side-effect-flag plumbing both go away.
+
+**0i — Remove the warm-swap helpers and Conductor's reliance
+on them.** The migration is done; delete
+`session_actions.rs::set_active_session`'s swap body in
+favour of the pointer write, drop the stash fields from
+`Session`, simplify the e2e session tests that pinned each
+swap individually.
+
+After Step 0 lands:
+
+- "Save all," quick-open, find-in-files, list-buffers all
+  scope to the active session by construction.
+- Same file open in two sessions = two independent buffers,
+  edits diverge. Matches the parallel-agents promise.
+- Preview renders the entire session UI (file explorer,
+  splits, terminals, status bar, tabs) for free via
+  `render_session`.
+- Closing a session is a single `Session::drop` — buffers,
+  PTYs, undo logs, watchers all evicted.
+- The "transient session swap" code path I built for the
+  preview goes away.
+
+Estimated effort: 5–10× the work that has gone into the
+branch so far. Multiple commits per sub-step. The mechanical
+churn is large but the per-commit risk is bounded; tests
+catch regressions immediately because they exercise the
+active-session path.
+
 ### Implementation status snapshot (May 2026)
 
-The branch implementing this design landed the **full Step 1
-migration** plus the surrounding plumbing. Every per-subsystem
-state field listed in `§ The Session abstraction` warm-swaps on
-`setActiveSession`. Commits, in order:
+The branch implementing this design landed the **interim
+warm-swap migration** plus the surrounding Conductor plugin
+plumbing. Every per-subsystem state field listed in `§ The
+Session abstraction` warm-swaps on `setActiveSession`. Commits,
+in order:
 
 - Step 3 — `terminal_output` / `terminal_exit` plugin hooks
 - Step 1a — `Session` struct + base session wiring
@@ -1269,7 +1580,10 @@ The 16 e2e tests in `crates/fresh-editor/tests/e2e/sessions.rs`
 pin each warm-swap individually (open file_explorer, dive away,
 dive back, assert restored — same shape for every subsystem).
 
-### Step 1 — `Session` struct, single forced session  `[MVP]`
+### Step 1 — `Session` struct, single forced session  `[interim — superseded by Step 0]`
+
+> **Status:** landed on the branch as the warm-swap interim.
+> Step 0 above replaces this with the window model.
 
 - Introduce `Session` with the fields above.
 - Construct exactly one session at startup, rooted at process cwd.
@@ -1282,8 +1596,11 @@ dive back, assert restored — same shape for every subsystem).
 - Existing plugin APIs (`getCwd`, etc.) read from the active session.
 - All existing tests must pass unchanged.
 
-This is the bulk of the refactor and the riskiest step. It is purely
-a rearrangement: behavior is identical to today's editor.
+This was the bulk of the warm-swap refactor and the riskiest
+step. It is purely a rearrangement: behavior is identical to
+today's editor. **Step 0 (window model) inverts this step's
+"buffer storage stays on Editor" choice and lifts the
+warm-swap stashes into per-session live fields.**
 
 ### Step 2 — multiple sessions, manual switching  `[MVP]`
 
