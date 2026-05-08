@@ -2187,6 +2187,17 @@ pub enum PluginCommand {
         /// leaks in. Plugin-created terminals default to `false` since they
         /// are typically one-off tool UIs (rebuilds, exec shells, etc.).
         persistent: bool,
+        /// Optional session id to attach the new terminal buffer to.
+        /// `None` (default) attaches to the active session at creation
+        /// time — the historical behaviour. `Some(id)` lets Conductor
+        /// (and any plugin spawning agents in worktrees) attach the
+        /// terminal to its target session without diving first; the
+        /// terminal's split is created in that session's stashed split
+        /// tree, and the buffer is added to the target session's
+        /// `Session.buffers` membership rather than the active one's.
+        /// Falls back to active session if the id is unknown.
+        #[serde(default)]
+        session_id: Option<SessionId>,
         /// Callback ID for async response
         request_id: u64,
     },
@@ -2820,6 +2831,16 @@ pub struct CreateTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub persistent: Option<bool>,
+    /// Optional session id to attach the new terminal buffer to.
+    /// Defaults to the active session at creation time. Setting this
+    /// lets Conductor and similar plugins spawn a terminal *into* an
+    /// inactive session (e.g. an agent in a worktree the user hasn't
+    /// dived into yet). The terminal's split is created in that
+    /// session's stashed split tree; the buffer is attached to the
+    /// target session's membership set rather than the active one's.
+    #[serde(default, rename = "sessionId")]
+    #[ts(optional, rename = "sessionId")]
+    pub session_id: Option<SessionId>,
 }
 
 /// Result of getTextPropertiesAtCursor - array of property objects

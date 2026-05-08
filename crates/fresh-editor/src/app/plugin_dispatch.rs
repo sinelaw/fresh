@@ -1289,9 +1289,12 @@ impl Editor {
                 ratio,
                 focus,
                 persistent,
+                session_id,
                 request_id,
             } => {
-                self.handle_create_terminal(cwd, direction, ratio, focus, persistent, request_id);
+                self.handle_create_terminal(
+                    cwd, direction, ratio, focus, persistent, session_id, request_id,
+                );
             }
 
             PluginCommand::SendTerminalInput { terminal_id, data } => {
@@ -2444,8 +2447,23 @@ impl Editor {
         ratio: Option<f32>,
         focus: Option<bool>,
         persistent: bool,
+        target_session_id: Option<fresh_core::SessionId>,
         request_id: u64,
     ) {
+        // If the caller specified an inactive session, route the new
+        // terminal into that session's stashed split tree without
+        // diving. The active session's UI is undisturbed; on next
+        // dive into the target session, the terminal appears in its
+        // restored split layout. Conductor uses this so spawning an
+        // agent doesn't pull the user away from the base session.
+        let route_to_inactive = match target_session_id {
+            Some(id) if id != self.active_session && self.sessions.contains_key(&id) => Some(id),
+            _ => None,
+        };
+        if let Some(target) = route_to_inactive {
+            self.handle_create_terminal_in_inactive_session(target, cwd, persistent, request_id);
+            return;
+        }
         let (cols, rows) = self.get_terminal_dimensions();
 
         // Set up async bridge for terminal manager if not already done
@@ -2638,6 +2656,161 @@ impl Editor {
             }
         }
     }
+    /// Spawn a terminal whose buffer attaches to an *inactive*
+    /// session. The user's active editor view is undisturbed. The
+    /// terminal lands as a new tab in the target session's stashed
+    /// split tree, ready to be revealed on next dive.
+    ///
+    /// This bypasses split-direction / ratio / focus options
+    /// because the target session isn't active — there's nothing
+    /// to focus, and laying out a split in a stashed tree without
+    /// known dimensions is fragile. The active-path handler still
+    /// honours all those options when target == active session
+    /// (or session_id is omitted).
+    fn handle_create_terminal_in_inactive_session(
+        &mut self,
+        target: fresh_core::SessionId,
+        cwd: Option<String>,
+        persistent: bool,
+        request_id: u64,
+    ) {
+        let (cols, rows) = self.get_terminal_dimensions();
+        if let Some(ref bridge) = self.async_bridge {
+            self.terminal_manager.set_async_bridge(bridge.clone());
+        }
+
+        // Default cwd to the *target session's* root, not the
+        // active session's, so plugins that omit `cwd` get the
+        // expected behaviour ("spawn this agent in its worktree").
+        let working_dir = cwd.map(std::path::PathBuf::from).unwrap_or_else(|| {
+            self.sessions
+                .get(&target)
+                .map(|s| s.root.clone())
+                .unwrap_or_else(|| self.working_dir.clone())
+        });
+
+        let terminal_root = self.dir_context.terminal_dir_for(&working_dir);
+        if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
+            tracing::warn!("Failed to create terminal directory: {}", e);
+        }
+        let predicted_terminal_id = self.terminal_manager.next_terminal_id();
+        let name_stem = if persistent {
+            format!("fresh-terminal-{}", predicted_terminal_id.0)
+        } else {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("fresh-terminal-eph-{}-{}", predicted_terminal_id.0, nanos)
+        };
+        let log_path = terminal_root.join(format!("{}.log", name_stem));
+        let backing_path = terminal_root.join(format!("{}.txt", name_stem));
+        self.terminal_backing_files
+            .insert(predicted_terminal_id, backing_path);
+        let backing_path_for_spawn = self
+            .terminal_backing_files
+            .get(&predicted_terminal_id)
+            .cloned();
+
+        let terminal_id = match self.terminal_manager.spawn(
+            cols,
+            rows,
+            Some(working_dir),
+            Some(log_path.clone()),
+            backing_path_for_spawn,
+            self.resolved_terminal_wrapper(),
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!("Failed to create terminal for inactive session: {}", e);
+                self.plugin_manager.reject_callback(
+                    fresh_core::api::JsCallbackId::from(request_id),
+                    format!("Failed to create terminal: {}", e),
+                );
+                return;
+            }
+        };
+        self.terminal_log_files
+            .insert(terminal_id, log_path.clone());
+        if terminal_id != predicted_terminal_id {
+            self.terminal_backing_files.remove(&predicted_terminal_id);
+            let backing_path = terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
+            self.terminal_backing_files
+                .insert(terminal_id, backing_path);
+        }
+        if !persistent {
+            self.ephemeral_terminals.insert(terminal_id);
+        }
+
+        // Allocate a buffer for the terminal in editor-global
+        // storage but attach it to the *target* session's
+        // membership instead of the active session's.
+        let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+        self.detach_buffer_from_all_sessions(buffer_id);
+        if let Some(s) = self.sessions.get_mut(&target) {
+            s.buffers.insert(buffer_id);
+        }
+
+        // Mutate the target session's stashed split tree to add
+        // the terminal as a new horizontal split off its current
+        // active leaf. If the session has no stash yet (never
+        // dived into), we seed one rooted at the terminal buffer.
+        let target_session = self.sessions.get_mut(&target);
+        let new_split_id = if let Some(session) = target_session {
+            if let Some((mgr, view_states)) = session.splits_stash.as_mut() {
+                let split_dir = crate::model::event::SplitDirection::Horizontal;
+                match mgr.split_active(split_dir, buffer_id, 0.5) {
+                    Ok(new_split_id) => {
+                        let mut view_state = SplitViewState::with_buffer(
+                            self.terminal_width,
+                            self.terminal_height,
+                            buffer_id,
+                        );
+                        view_state.viewport.line_wrap_enabled = false;
+                        view_states.insert(new_split_id, view_state);
+                        Some(new_split_id)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to split target session's tree for terminal: {}; \
+                             buffer is attached to the session but not visible in any leaf",
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                // Never-activated session: seed its splits stash
+                // rooted at the terminal. First dive will pick up
+                // this layout and the terminal is the active leaf.
+                let manager = crate::view::split::SplitManager::new(buffer_id);
+                let active_leaf = manager.active_split();
+                let mut view_states = std::collections::HashMap::new();
+                let mut vs = SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                vs.viewport.line_wrap_enabled = false;
+                view_states.insert(active_leaf, vs);
+                session.splits_stash = Some((manager, view_states));
+                Some(active_leaf.into())
+            }
+        } else {
+            None
+        };
+
+        let result = fresh_core::api::TerminalResult {
+            buffer_id: buffer_id.0 as u64,
+            terminal_id: terminal_id.0 as u64,
+            split_id: new_split_id.map(|s| s.0 .0 as u64),
+        };
+        self.plugin_manager.resolve_callback(
+            fresh_core::api::JsCallbackId::from(request_id),
+            serde_json::to_string(&result).unwrap(),
+        );
+    }
+
     // ==================== Extracted handlers for previously inline match arms ====================
 
     fn handle_get_split_by_label(&mut self, label: String, request_id: u64) {

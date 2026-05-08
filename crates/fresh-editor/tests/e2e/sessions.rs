@@ -64,6 +64,74 @@ fn active_session_has_non_empty_label() {
 
 use std::path::PathBuf;
 
+/// `createTerminal({ sessionId })` for an inactive session attaches
+/// the buffer to that session's membership and seeds (or extends)
+/// its stashed split tree — without disturbing the active session.
+/// Conductor uses this to spawn agents in worktrees without diving.
+#[test]
+fn create_terminal_targets_inactive_session_via_session_id() {
+    use fresh_core::api::PluginCommand;
+
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(project_dir.join("wt-alpha-term"), "alpha".into());
+
+    let active_before = harness.editor().active_session_id();
+    let active_buffer_before = harness.editor().active_buffer();
+
+    // Drive the dispatch path directly — going through the JS
+    // runtime would require a full plugin load with TS compile.
+    // The wiring on the JS side is just `session_id: opts.session_id`.
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::CreateTerminal {
+            cwd: None,
+            direction: None,
+            ratio: None,
+            focus: None,
+            persistent: false,
+            session_id: Some(alpha),
+            request_id: 9999,
+        })
+        .unwrap();
+
+    // Active session is unchanged — the user's editor view is
+    // not pulled away from base.
+    assert_eq!(
+        harness.editor().active_session_id(),
+        active_before,
+        "createTerminal with inactive sessionId must not switch active"
+    );
+    assert_eq!(
+        harness.editor().active_buffer(),
+        active_buffer_before,
+        "active buffer must not change when terminal targets an inactive session"
+    );
+
+    // Alpha's membership set has gained a new buffer (the terminal).
+    let alpha_buffers_count = harness.editor().session(alpha).unwrap().buffers.len();
+    assert_eq!(
+        alpha_buffers_count, 1,
+        "alpha should have exactly the new terminal buffer attached"
+    );
+
+    // Alpha's stashed splits now have a leaf for the terminal,
+    // ready to render on next dive. (Was None before — alpha had
+    // never been activated.)
+    assert!(
+        harness
+            .editor()
+            .session(alpha)
+            .unwrap()
+            .splits_stash
+            .is_some(),
+        "alpha's split stash should be seeded with the terminal's leaf"
+    );
+}
+
 #[test]
 fn create_session_inserts_with_monotonic_id() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();

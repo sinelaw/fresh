@@ -596,6 +596,16 @@ type CreateTerminalOptions = {
 	* across editor restarts.
 	*/
 	persistent?: boolean;
+	/**
+	* Optional session id to attach the new terminal buffer to.
+	* Defaults to the active session at creation time. Setting this
+	* lets Conductor and similar plugins spawn a terminal *into* an
+	* inactive session (e.g. an agent in a worktree the user hasn't
+	* dived into yet). The terminal's split is created in that
+	* session's stashed split tree; the buffer is attached to the
+	* target session's membership set rather than the active one's.
+	*/
+	sessionId?: SessionId;
 };
 type CursorInfo = {
 	/**
