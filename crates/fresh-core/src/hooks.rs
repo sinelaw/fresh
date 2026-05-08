@@ -318,7 +318,7 @@ pub enum HookArgs {
     /// added to `Editor.sessions`, before any UI retarget. Plugins
     /// (like Conductor) use this to reconcile their per-session
     /// bookkeeping with the editor.
-    SessionCreated {
+    WindowCreated {
         /// The new session's stable id.
         id: u64,
         /// Resolved label (basename fallback applied).
@@ -330,13 +330,13 @@ pub enum HookArgs {
     /// An editor session was closed and its state dropped. The id
     /// is still valid in the payload but is no longer present in
     /// `editor.listSessions()`.
-    SessionClosed { id: u64 },
+    WindowClosed { id: u64 },
 
     /// The active session changed. Fires after the editor's UI has
     /// retargeted (file tree, working_dir, snapshot). Plugins
     /// observing for "the editor's project root just changed" use
     /// this rather than polling.
-    ActiveSessionChanged {
+    ActiveWindowChanged {
         /// The previously active session id, or `None` only on
         /// first switch from the initial base session — currently
         /// always `Some` since the base session always exists.

@@ -22,9 +22,9 @@ use fresh_core::api::{
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, WindowInfo,
-    SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan,
-    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SpawnResult,
+    SplitSnapshot, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
+    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -222,7 +222,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "PromptSuggestion",               // Used by plugins for prompt suggestions
     "DirEntry",                       // Used by plugins for directory entries
     "BufferInfo",                     // Used by listBuffers, getBufferInfo
-    "WindowInfo",                    // Used by listWindows
+    "WindowInfo",                     // Used by listWindows
     "JsDiagnostic",                   // Used by getAllDiagnostics
     "JsRange",                        // Used by JsDiagnostic
     "JsPosition",                     // Used by JsRange

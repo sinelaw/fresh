@@ -1139,27 +1139,34 @@ removeScrollSyncGroup(group_id: number): boolean
 |------|------|-------------|
 | `group_id` | `number` | - |
 
-## Sessions / Conductor API
+## Windows / Conductor API
 
-A *session* is a project-rooted bundle of editor state — file
-explorer, LSP set, file watchers, split layout, and buffer
-membership — that can be swapped in and out as a unit. The
-"base" session at startup is `SessionId(1)`. Subsequent
-sessions are created by plugins (typically the first-party
-Conductor plugin, which uses sessions to drive parallel-agent
-worktrees).
+A *window* (modelled on a VS Code window) is a project-rooted
+bundle of editor state — file explorer, LSP set, file watchers,
+split layout, and buffer membership — that can be swapped in
+and out as a unit. The "base" window at startup is
+`WindowId(1)`. Subsequent windows are created by plugins
+(typically the first-party Conductor plugin, which uses windows
+to drive parallel-agent worktrees).
+
+> **Naming note.** Internally the editor calls these "windows"
+> to disambiguate from Fresh's pre-existing workspace-recovery
+> and config-layer "session" concepts. Conductor's UX still
+> presents them as "agent sessions" because that's the
+> parallel-agents domain language users see. Plugin API names
+> all use `Window` / `windowId`.
 
 See `docs/internal/conductor-sessions-design.md` for the full
 architecture rationale.
 
-### `createSession`
+### `createWindow`
 
 Allocate a new session rooted at `root` with the given label.
-Does not switch to it — call `setActiveSession` to dive.
+Does not switch to it — call `setActiveWindow` to dive.
 Returns the new session's id.
 
 ```typescript
-createSession(root: string, label: string): Promise<number>
+createWindow(root: string, label: string): Promise<number>
 ```
 
 | Name | Type | Description |
@@ -1167,7 +1174,7 @@ createSession(root: string, label: string): Promise<number>
 | `root` | `string` | Absolute path to the session root |
 | `label` | `string` | Display label (empty string defaults to root basename) |
 
-### `setActiveSession`
+### `setActiveWindow`
 
 Make `id` the active session. The previous active session's
 state (file explorer, LSP set, splits, view states) is stashed
@@ -1175,36 +1182,36 @@ on its `Session` and the incoming session's stash is swapped
 into the editor — O(1), no buffer recreation, no LSP restart.
 
 ```typescript
-setActiveSession(id: number): boolean
+setActiveWindow(id: number): boolean
 ```
 
-### `closeSession`
+### `closeWindow`
 
 Close a session. Buffers attached only to this session are
 dropped; shared buffers stay open. Closing the active session
 falls back to the base session.
 
 ```typescript
-closeSession(id: number): boolean
+closeWindow(id: number): boolean
 ```
 
-### `listSessions`
+### `listWindows`
 
 Snapshot of every session with its id, label, and root.
 
 ```typescript
-listSessions(): SessionInfo[]
+listWindows(): WindowInfo[]
 ```
 
-### `activeSession`
+### `activeWindow`
 
 Return the currently active session id.
 
 ```typescript
-activeSession(): number
+activeWindow(): number
 ```
 
-### `prewarmSession`
+### `prewarmWindow`
 
 Spin up the session's LSP set + split layout in the
 background, without diving. The first dive into a prewarmed
@@ -1212,16 +1219,16 @@ session is then instant. Useful when a plugin knows the user
 will likely visit a session soon.
 
 ```typescript
-prewarmSession(id: number): boolean
+prewarmWindow(id: number): boolean
 ```
 
-### `previewSessionInRect`
+### `previewWindowInRect`
 
 Render the entire stashed UI of session `id` (splits,
 terminals, syntax-highlighted buffers, decorations) into the
 floating-overlay prompt's preview pane on the next frame.
 Cleared automatically when the prompt closes; call
-`clearSessionPreview` to clear earlier.
+`clearWindowPreview` to clear earlier.
 
 This is *Primitive #1* of the Conductor design and is the
 mechanism the Conductor plugin uses to show a live preview of
@@ -1229,19 +1236,19 @@ the highlighted session as the user moves the selection in
 the session list.
 
 ```typescript
-previewSessionInRect(id: number): boolean
+previewWindowInRect(id: number): boolean
 ```
 
-### `clearSessionPreview`
+### `clearWindowPreview`
 
-Clear an earlier `previewSessionInRect` so the preview pane
+Clear an earlier `previewWindowInRect` so the preview pane
 falls back to the prompt's default behaviour.
 
 ```typescript
-clearSessionPreview(): boolean
+clearWindowPreview(): boolean
 ```
 
-### `setSessionState` / `getSessionState`
+### `setWindowState` / `getWindowState`
 
 Per-session, per-plugin state map. Like `setGlobalState` but
 scoped to a single session — useful for plugin state that
@@ -1249,20 +1256,20 @@ should follow a session across saves/restores rather than
 applying globally. Persists to `.fresh/sessions.json`.
 
 ```typescript
-setSessionState(key: string, value: unknown): boolean
-getSessionState(key: string): unknown | null
+setWindowState(key: string, value: unknown): boolean
+getWindowState(key: string): unknown | null
 ```
 
 ### `openFileInBackground`
 
-Open a file without switching to it. With `opts.sessionId`,
+Open a file without switching to it. With `opts.windowId`,
 the buffer is attached to that session's stashed tab strip
 instead of the active session's. Pairs with `createTerminal`'s
-`sessionId` for setting up an inactive session's contents
+`windowId` for setting up an inactive session's contents
 without diving.
 
 ```typescript
-openFileInBackground(path: string, opts?: { sessionId?: number }): Promise<number>
+openFileInBackground(path: string, opts?: { windowId?: number }): Promise<number>
 ```
 
 ### `watchPath` / `unwatchPath`
@@ -1284,7 +1291,7 @@ unwatchPath(handle: number): boolean
 Create a new terminal in a split. Returns a `TerminalResult`
 with buffer, terminal, and split IDs.
 
-When `opts.sessionId` is set the terminal attaches to that
+When `opts.windowId` is set the terminal attaches to that
 session's stashed split tree without diving — the user's
 current view stays put and the terminal becomes visible only
 when the user dives into the named session. This is how

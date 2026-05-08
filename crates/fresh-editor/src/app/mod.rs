@@ -66,8 +66,6 @@ mod scrollbar_input;
 mod scrollbar_math;
 mod search_ops;
 mod search_scan;
-pub mod window;
-mod window_actions;
 mod settings_actions;
 mod settings_prompts;
 mod shell_command;
@@ -86,6 +84,8 @@ mod undo_actions;
 mod view_actions;
 mod virtual_buffers;
 pub mod warning_domains;
+pub mod window;
+mod window_actions;
 pub mod workspace;
 
 use anyhow::Result as AnyhowResult;

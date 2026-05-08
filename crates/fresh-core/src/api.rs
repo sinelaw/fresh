@@ -50,9 +50,9 @@ use crate::menu::{Menu, MenuItem};
 use crate::overlay::{OverlayHandle, OverlayNamespace};
 use crate::text_property::{TextProperty, TextPropertyEntry};
 use crate::BufferId;
-use crate::WindowId;
 use crate::SplitId;
 use crate::TerminalId;
+use crate::WindowId;
 use lsp_types;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -1192,20 +1192,20 @@ pub enum PluginCommand {
     /// The new session's id is assigned by the editor and reported
     /// back via the `session_created` plugin hook (id, label, root
     /// in payload). Sessions are not made active on creation;
-    /// follow up with `SetActiveSession` to dive.
-    CreateSession { root: PathBuf, label: String },
+    /// follow up with `SetActiveWindow` to dive.
+    CreateWindow { root: PathBuf, label: String },
 
     /// Make `id` the active session. No-op if `id` is already
     /// active. Fires `active_session_changed` on transition.
     /// Errors (id not found) are logged via tracing rather than
     /// surfaced to the plugin — the plugin can verify by reading
     /// `editor.activeSession()` after.
-    SetActiveSession { id: WindowId },
+    SetActiveWindow { id: WindowId },
 
     /// Close a session and drop its associated state. Refuses to
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.
-    CloseSession { id: WindowId },
+    CloseWindow { id: WindowId },
 
     /// Eagerly initialise an inactive session's per-session state
     /// (file tree walk, ignore matcher, etc.) without diving. The
@@ -1214,7 +1214,7 @@ pub enum PluginCommand {
     /// open and watcher setup happens on first `watchPath` call,
     /// so those are unaffected. No-op for the active session
     /// (already warm) or unknown id.
-    PrewarmSession { id: WindowId },
+    PrewarmWindow { id: WindowId },
 
     /// Register a filesystem path watcher. The editor returns the
     /// allocated `handle` via the async response so the plugin can
@@ -1248,7 +1248,7 @@ pub enum PluginCommand {
     /// syntax highlighting, decorations) — rendered natively
     /// by reusing the editor's existing render_content path
     /// against the previewed session's stashed split tree.
-    PreviewSessionInRect { id: Option<WindowId> },
+    PreviewWindowInRect { id: Option<WindowId> },
 
     /// Open a file in the editor (in background, without switching focus).
     ///
@@ -1365,7 +1365,7 @@ pub enum PluginCommand {
     /// active** session's `plugin_state` map keyed by
     /// `(plugin_name, key)`. Other sessions' state is unaffected.
     /// `None` means delete (matches `SetGlobalState` semantics).
-    SetSessionState {
+    SetWindowState {
         plugin_name: String,
         key: String,
         #[ts(type = "any")]

@@ -705,7 +705,7 @@ impl Editor {
             } => {
                 self.handle_set_global_state(plugin_name, key, value);
             }
-            PluginCommand::SetSessionState {
+            PluginCommand::SetWindowState {
                 plugin_name,
                 key,
                 value,
@@ -857,23 +857,23 @@ impl Editor {
 
             // ==================== Session lifecycle ====================
             // See docs/internal/conductor-sessions-design.md.
-            PluginCommand::CreateSession { root, label } => {
+            PluginCommand::CreateWindow { root, label } => {
                 if !root.is_absolute() {
                     tracing::warn!(
-                        "CreateSession rejected: root must be absolute, got {:?}",
+                        "CreateWindow rejected: root must be absolute, got {:?}",
                         root
                     );
                 } else {
                     let _ = self.create_window_at(root, label);
                 }
             }
-            PluginCommand::SetActiveSession { id } => {
+            PluginCommand::SetActiveWindow { id } => {
                 self.set_active_window(id);
             }
-            PluginCommand::CloseSession { id } => {
+            PluginCommand::CloseWindow { id } => {
                 let _ = self.close_window(id);
             }
-            PluginCommand::PrewarmSession { id } => {
+            PluginCommand::PrewarmWindow { id } => {
                 self.prewarm_window(id);
             }
 
@@ -901,7 +901,7 @@ impl Editor {
                 self.file_watcher_manager.unwatch(handle);
             }
 
-            PluginCommand::PreviewSessionInRect { id } => {
+            PluginCommand::PreviewWindowInRect { id } => {
                 // Validate: only honour if the session exists and
                 // is not the active one (no point previewing the
                 // session whose UI is already on screen).

@@ -42,9 +42,9 @@ interface AgentSession {
   // The terminal id Conductor spawned in this session, if any.
   terminalId: number | null;
   // Last parsed agent state. "active" is computed at render
-  // time from `editor.activeSession()`, not stored.
+  // time from `editor.activeWindow()`, not stored.
   state: AgentState;
-  // Wall-clock ms when conductor.new fired createSession.
+  // Wall-clock ms when conductor.new fired createWindow.
   createdAt: number;
 }
 
@@ -59,8 +59,10 @@ const conductorSessions = new Map<number, AgentSession>();
 let pendingBranchName: string | null = null;
 
 // Pending session-creation intent. Stashed across the
-// async `createSession → session_created hook` handoff so the
-// hook handler can attach the spawned terminal.
+// async `createWindow → window_created hook` handoff so the
+// hook handler can attach the spawned terminal. (Internally
+// the editor calls these "windows"; Conductor still presents
+// them as "sessions" in its UX.)
 let pendingNewSession:
   | { branch: string; cmd: string; root: string }
   | null = null;
@@ -93,7 +95,7 @@ let originalActiveSessionBeforePrompt: number | null = null;
 // =============================================================================
 
 function reconcileSessions(): void {
-  const editorSessions = editor.listSessions();
+  const editorSessions = editor.listWindows();
   const seen = new Set<number>();
   for (const s of editorSessions) {
     seen.add(s.id);
@@ -145,7 +147,7 @@ function buildSuggestions(): PromptSuggestion[] {
     (a, b) => a - b,
   );
   promptSessionIds = ids;
-  const activeId = editor.activeSession();
+  const activeId = editor.activeWindow();
   return ids.map((id) => {
     const s = conductorSessions.get(id)!;
     const stateText = id === activeId ? "ACT " : STATE_GLYPH[s.state];
@@ -175,7 +177,7 @@ const PROMPT_TYPE = "conductor-room";
 
 function openControlRoom(): void {
   promptSelectedIndex = 0;
-  originalActiveSessionBeforePrompt = editor.activeSession();
+  originalActiveSessionBeforePrompt = editor.activeWindow();
   editor.startPrompt("Conductor — sessions", PROMPT_TYPE, true);
   editor.setPromptSuggestions(buildSuggestions());
   // Primitive #2 chrome: hotkey-hint footer rendered along the
@@ -205,10 +207,10 @@ editor.on("prompt_selection_changed", (e) => {
   // mutation, no flicker — the editor under the prompt stays
   // put while the right pane shows the previewed session.
   const id = promptSessionIds[promptSelectedIndex];
-  if (typeof id === "number" && id !== editor.activeSession()) {
-    editor.previewSessionInRect(id);
+  if (typeof id === "number" && id !== editor.activeWindow()) {
+    editor.previewWindowInRect(id);
   } else {
-    editor.clearSessionPreview();
+    editor.clearWindowPreview();
   }
 });
 
@@ -217,10 +219,10 @@ editor.on("prompt_confirmed", async (e) => {
     // Enter commits: dive into the highlighted session for
     // real. Clear the preview override so the next prompt
     // session doesn't accidentally inherit it.
-    editor.clearSessionPreview();
+    editor.clearWindowPreview();
     const id = promptSessionIds[promptSelectedIndex];
-    if (typeof id === "number" && id !== editor.activeSession()) {
-      editor.setActiveSession(id);
+    if (typeof id === "number" && id !== editor.activeWindow()) {
+      editor.setActiveWindow(id);
     }
     originalActiveSessionBeforePrompt = null;
     return;
@@ -251,7 +253,7 @@ editor.on("prompt_confirmed", async (e) => {
       // best-effort; createTerminal will surface failures
     }
     pendingNewSession = { branch, cmd, root };
-    editor.createSession(root, branch);
+    editor.createWindow(root, branch);
   }
 });
 
@@ -259,7 +261,7 @@ editor.on("prompt_cancelled", (e) => {
   if (e.prompt_type === PROMPT_TYPE) {
     // Esc clears the preview override; active_session was
     // never mutated so there's nothing to roll back.
-    editor.clearSessionPreview();
+    editor.clearWindowPreview();
     originalActiveSessionBeforePrompt = null;
     return;
   }
@@ -298,7 +300,7 @@ function killSelected(): void {
     editor.setStatus("Conductor: cannot kill the base session");
     return;
   }
-  if (id === editor.activeSession()) {
+  if (id === editor.activeWindow()) {
     editor.setStatus(
       "Conductor: dive elsewhere first, then kill this session",
     );
@@ -308,14 +310,14 @@ function killSelected(): void {
   if (s && s.terminalId !== null) {
     editor.closeTerminal(s.terminalId);
   }
-  editor.closeSession(id);
+  editor.closeWindow(id);
 }
 
 // =============================================================================
 // Lifecycle hook handlers
 // =============================================================================
 
-editor.on("session_created", async (payload) => {
+editor.on("window_created", async (payload) => {
   const id = payload.id;
   if (
     pendingNewSession &&
@@ -329,7 +331,7 @@ editor.on("session_created", async (payload) => {
     const term = await editor.createTerminal({
       cwd: intent.root,
       focus: false,
-      sessionId: id,
+      windowId: id,
     });
     const tracked: AgentSession = {
       id,
@@ -345,11 +347,11 @@ editor.on("session_created", async (payload) => {
   refreshPromptIfOpen();
 });
 
-editor.on("session_closed", () => {
+editor.on("window_closed", () => {
   refreshPromptIfOpen();
 });
 
-editor.on("active_session_changed", () => {
+editor.on("active_window_changed", () => {
   refreshPromptIfOpen();
 });
 

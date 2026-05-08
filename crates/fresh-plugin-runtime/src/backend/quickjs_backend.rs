@@ -3354,9 +3354,9 @@ impl JsEditorApi {
     ///
     /// Returns `false` only when the IPC channel to the editor is
     /// closed (editor is shutting down).
-    pub fn create_session(&self, root: String, label: String) -> bool {
+    pub fn create_window(&self, root: String, label: String) -> bool {
         self.command_sender
-            .send(PluginCommand::CreateSession {
+            .send(PluginCommand::CreateWindow {
                 root: std::path::PathBuf::from(root),
                 label,
             })
@@ -3369,7 +3369,7 @@ impl JsEditorApi {
     /// `activeSession()` after.
     pub fn set_active_window(&self, id: u64) -> bool {
         self.command_sender
-            .send(PluginCommand::SetActiveSession {
+            .send(PluginCommand::SetActiveWindow {
                 id: fresh_core::WindowId(id),
             })
             .is_ok()
@@ -3379,7 +3379,7 @@ impl JsEditorApi {
     /// the base session (id 1). Logs and no-ops on failure.
     pub fn close_window(&self, id: u64) -> bool {
         self.command_sender
-            .send(PluginCommand::CloseSession {
+            .send(PluginCommand::CloseWindow {
                 id: fresh_core::WindowId(id),
             })
             .is_ok()
@@ -3390,7 +3390,7 @@ impl JsEditorApi {
     /// No-op for the active session or unknown id.
     pub fn prewarm_window(&self, id: u64) -> bool {
         self.command_sender
-            .send(PluginCommand::PrewarmSession {
+            .send(PluginCommand::PrewarmWindow {
                 id: fresh_core::WindowId(id),
             })
             .is_ok()
@@ -3445,29 +3445,29 @@ impl JsEditorApi {
     /// the right pane shows the highlighted session's full
     /// editor UI live — splits, terminals, syntax highlighting,
     /// decorations — at native rendering cost.
-    pub fn preview_session_in_rect(&self, id: u64) -> bool {
+    pub fn preview_window_in_rect(&self, id: u64) -> bool {
         let sid = if id == 0 {
             None
         } else {
             Some(fresh_core::WindowId(id))
         };
         self.command_sender
-            .send(PluginCommand::PreviewSessionInRect { id: sid })
+            .send(PluginCommand::PreviewWindowInRect { id: sid })
             .is_ok()
     }
 
     /// Clear the session-preview override. Equivalent to
     /// `previewSessionInRect(0)` but reads better at call sites.
-    pub fn clear_session_preview(&self) -> bool {
+    pub fn clear_window_preview(&self) -> bool {
         self.command_sender
-            .send(PluginCommand::PreviewSessionInRect { id: None })
+            .send(PluginCommand::PreviewWindowInRect { id: None })
             .is_ok()
     }
 
     /// All editor sessions, sorted by id (creation order). Always
     /// non-empty (the base session is always present).
     #[plugin_api(ts_return = "WindowInfo[]")]
-    pub fn list_sessions<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    pub fn list_windows<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let sessions: Vec<fresh_core::api::WindowInfo> = self
             .state_snapshot
             .read()
@@ -3824,7 +3824,7 @@ impl JsEditorApi {
     /// Plugins that genuinely want per-project state use this;
     /// Conductor itself uses `setGlobalState` because its session
     /// list lives above session boundaries.
-    pub fn set_session_state<'js>(
+    pub fn set_window_state<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
         key: String,
@@ -3863,7 +3863,7 @@ impl JsEditorApi {
             }
         }
         self.command_sender
-            .send(PluginCommand::SetSessionState {
+            .send(PluginCommand::SetWindowState {
                 plugin_name: self.plugin_name.clone(),
                 key,
                 value: json_value,
@@ -3873,7 +3873,7 @@ impl JsEditorApi {
 
     /// Get per-session state from the **active** session
     /// (snapshot read). `undefined` if missing.
-    pub fn get_session_state<'js>(
+    pub fn get_window_state<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
         key: String,
@@ -8022,27 +8022,27 @@ mod tests {
 
         let create = rx.try_recv().unwrap();
         match create {
-            fresh_core::api::PluginCommand::CreateSession { root, label } => {
+            fresh_core::api::PluginCommand::CreateWindow { root, label } => {
                 assert_eq!(root, std::path::PathBuf::from("/tmp/wt-feat"));
                 assert_eq!(label, "feat");
             }
-            other => panic!("Expected CreateSession, got {:?}", other),
+            other => panic!("Expected CreateWindow, got {:?}", other),
         }
 
         let activate = rx.try_recv().unwrap();
         match activate {
-            fresh_core::api::PluginCommand::SetActiveSession { id } => {
+            fresh_core::api::PluginCommand::SetActiveWindow { id } => {
                 assert_eq!(id, fresh_core::WindowId(7));
             }
-            other => panic!("Expected SetActiveSession, got {:?}", other),
+            other => panic!("Expected SetActiveWindow, got {:?}", other),
         }
 
         let close = rx.try_recv().unwrap();
         match close {
-            fresh_core::api::PluginCommand::CloseSession { id } => {
+            fresh_core::api::PluginCommand::CloseWindow { id } => {
                 assert_eq!(id, fresh_core::WindowId(3));
             }
-            other => panic!("Expected CloseSession, got {:?}", other),
+            other => panic!("Expected CloseWindow, got {:?}", other),
         }
     }
 
@@ -8056,7 +8056,7 @@ mod tests {
 
         {
             let mut state = state_snapshot.write().unwrap();
-            state.sessions = vec![
+            state.windows = vec![
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(1),
                     label: "main".into(),
@@ -8068,7 +8068,7 @@ mod tests {
                     root: std::path::PathBuf::from("/wt/feat-auth"),
                 },
             ];
-            state.active_session_id = fresh_core::WindowId(2);
+            state.active_window_id = fresh_core::WindowId(2);
         }
 
         let services = Arc::new(fresh_core::services::NoopServiceBridge);

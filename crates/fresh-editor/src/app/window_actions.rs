@@ -27,7 +27,7 @@ impl crate::app::Editor {
     /// `session_created`. Does not switch active.
     ///
     /// Caller is responsible for ensuring `root` is absolute. The
-    /// `PluginCommand::CreateSession` dispatcher rejects relative
+    /// `PluginCommand::CreateWindow` dispatcher rejects relative
     /// paths before reaching here.
     pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
         let id = WindowId(self.next_window_id);
@@ -38,8 +38,8 @@ impl crate::app::Editor {
         self.windows.insert(id, session);
 
         self.plugin_manager.run_hook(
-            "session_created",
-            HookArgs::SessionCreated {
+            "window_created",
+            HookArgs::WindowCreated {
                 id: id.0,
                 label: resolved_label,
                 root: root.to_string_lossy().into_owned(),
@@ -172,8 +172,8 @@ impl crate::app::Editor {
         }
 
         self.plugin_manager.run_hook(
-            "active_session_changed",
-            HookArgs::ActiveSessionChanged {
+            "active_window_changed",
+            HookArgs::ActiveWindowChanged {
                 previous_id: Some(previous_id.0),
                 active_id: id.0,
             },
@@ -242,7 +242,7 @@ impl crate::app::Editor {
         }
 
         self.plugin_manager
-            .run_hook("session_closed", HookArgs::SessionClosed { id: id.0 });
+            .run_hook("window_closed", HookArgs::WindowClosed { id: id.0 });
 
         true
     }

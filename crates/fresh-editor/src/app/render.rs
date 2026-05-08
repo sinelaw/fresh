@@ -2411,9 +2411,9 @@ impl Editor {
             // session override is set.
             if inner.height > 0
                 && inner.width > 0
-                && self.preview_window_id.is_some_and(|sid| {
-                    sid != self.active_window && self.windows.contains_key(&sid)
-                })
+                && self
+                    .preview_window_id
+                    .is_some_and(|sid| sid != self.active_window && self.windows.contains_key(&sid))
             {
                 self.render_session_preview_into_rect(frame, inner, &theme);
             } else if inner.height > 0 && inner.width > 0 {

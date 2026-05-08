@@ -570,7 +570,7 @@ interface CreateTerminalOptions {
   direction?: string;
   ratio?: number;
   focus?: boolean;
-  sessionId?: number;
+  windowId?: number;
 }
 ```
 
@@ -580,14 +580,14 @@ interface CreateTerminalOptions {
 | `direction` | Split direction: `"horizontal"` or `"vertical"` (default: `"vertical"`) |
 | `ratio` | Split ratio 0.0–1.0 (default: 0.5) |
 | `focus` | Whether to focus the new terminal split (default: true) |
-| `sessionId` | When set, attach the terminal to the named session's stashed split tree instead of the active session. The user's current view stays put; the terminal appears on dive-in. Used by Conductor to spawn agents into background worktrees. |
+| `windowId` | When set, attach the terminal to the named session's stashed split tree instead of the active session. The user's current view stays put; the terminal appears on dive-in. Used by Conductor to spawn agents into background worktrees. |
 
-### SessionInfo
+### WindowInfo
 
-Snapshot of one session as returned by `listSessions`.
+Snapshot of one session as returned by `listWindows`.
 
 ```typescript
-interface SessionInfo {
+interface WindowInfo {
   id: number;
   label: string;
   root: string;

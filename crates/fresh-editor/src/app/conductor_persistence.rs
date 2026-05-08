@@ -2,7 +2,7 @@
 //! plugin global state.
 //!
 //! On quit, `save_conductor_state` writes:
-//!   - `<working_dir>/.fresh/sessions.json` — list of sessions
+//!   - `<working_dir>/.fresh/windows.json` — list of sessions
 //!     (id, label, root, per-session plugin_state) plus the
 //!     last-active session id and the next id to allocate so
 //!     id-based references on disk stay stable across restarts.
@@ -44,7 +44,7 @@ struct PersistedWindow {
     plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
-/// Top-level shape of `.fresh/sessions.json`.
+/// Top-level shape of `.fresh/windows.json`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct PersistedWindows {
     /// Last active session id at quit time. The loader makes
@@ -58,8 +58,8 @@ struct PersistedWindows {
     windows: Vec<PersistedWindow>,
 }
 
-fn sessions_path(working_dir: &Path) -> PathBuf {
-    working_dir.join(".fresh").join("sessions.json")
+fn windows_path(working_dir: &Path) -> PathBuf {
+    working_dir.join(".fresh").join("windows.json")
 }
 
 fn state_dir(working_dir: &Path) -> PathBuf {
@@ -118,7 +118,7 @@ impl Editor {
         };
         match serde_json::to_vec_pretty(&envelope) {
             Ok(bytes) => {
-                let path = sessions_path(&working_dir);
+                let path = windows_path(&working_dir);
                 if let Err(e) = self.authority.filesystem.write_file(&path, &bytes) {
                     tracing::warn!("conductor persistence: failed to write {path:?}: {e}");
                 }
@@ -164,7 +164,7 @@ impl Editor {
         }
     }
 
-    /// Read `.fresh/sessions.json` + `.fresh/state/*.json` and
+    /// Read `.fresh/windows.json` + `.fresh/state/*.json` and
     /// reconstitute `self.windows` + `self.plugin_global_state`.
     /// Idempotent: if no files exist, leaves the editor at the
     /// default single-base-session shape.
@@ -177,19 +177,17 @@ impl Editor {
         let working_dir = self.working_dir().to_path_buf();
 
         // Sessions.
-        let sessions_p = sessions_path(&working_dir);
-        if self.authority.filesystem.exists(&sessions_p) {
-            match self.authority.filesystem.read_file(&sessions_p) {
+        let windows_p = windows_path(&working_dir);
+        if self.authority.filesystem.exists(&windows_p) {
+            match self.authority.filesystem.read_file(&windows_p) {
                 Ok(bytes) => match serde_json::from_slice::<PersistedWindows>(&bytes) {
                     Ok(env) => self.apply_persisted_windows(env),
                     Err(e) => {
-                        tracing::warn!(
-                            "conductor persistence: failed to parse {sessions_p:?}: {e}"
-                        );
+                        tracing::warn!("conductor persistence: failed to parse {windows_p:?}: {e}");
                     }
                 },
                 Err(e) => {
-                    tracing::warn!("conductor persistence: failed to read {sessions_p:?}: {e}");
+                    tracing::warn!("conductor persistence: failed to read {windows_p:?}: {e}");
                 }
             }
         }
