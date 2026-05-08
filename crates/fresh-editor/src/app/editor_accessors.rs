@@ -673,6 +673,22 @@ impl Editor {
         &mut self.active_session_mut().file_mod_times
     }
 
+    /// Active window's file-explorer view (`None` if it's never been
+    /// opened in this window). Each window has its own tree;
+    /// switching windows shows that window's view (or none).
+    pub fn file_explorer(&self) -> Option<&FileTreeView> {
+        self.active_window().file_explorer.as_ref()
+    }
+
+    /// Mutable handle to the active window's file-explorer view.
+    /// Holds `&mut self` for the call's lifetime — for sites that
+    /// also need to read other Editor fields, use direct
+    /// `self.windows.get_mut(&self.active_window).and_then(|w| w.file_explorer.as_mut())`
+    /// instead so the borrow on `self.windows` stays disjoint.
+    pub fn file_explorer_mut(&mut self) -> Option<&mut FileTreeView> {
+        self.active_session_mut().file_explorer.as_mut()
+    }
+
     /// Return buffer ids whose on-disk path sits at or under `root`.
     /// Used by file-explorer operations that need to react when a file
     /// or directory on disk goes away or moves.

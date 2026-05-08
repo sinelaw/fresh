@@ -40,7 +40,7 @@ impl Editor {
                 && row < explorer_area.y + explorer_area.height
             {
                 // Scroll the file explorer
-                if let Some(explorer) = &mut self.file_explorer {
+                if let Some(explorer) = self.file_explorer_mut() {
                     let count = explorer.visible_count();
                     if count == 0 {
                         return Ok(());

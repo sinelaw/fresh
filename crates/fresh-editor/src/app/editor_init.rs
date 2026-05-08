@@ -812,7 +812,6 @@ impl Editor {
             split_view_states,
             previous_viewports: HashMap::new(),
             scroll_sync_manager: ScrollSyncManager::new(),
-            file_explorer: None,
             preview: None,
             suppress_position_history_once: false,
             fs_manager,

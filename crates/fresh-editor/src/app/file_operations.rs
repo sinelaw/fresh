@@ -138,7 +138,7 @@ impl Editor {
                 if let Some(parent) = p.parent() {
                     let parent = parent.to_path_buf();
                     let fs = self.authority.filesystem.clone();
-                    if let Some(explorer) = self.file_explorer.as_mut() {
+                    if let Some(explorer) = self.file_explorer_mut().as_mut() {
                         load_gitignore_via_fs(fs.as_ref(), explorer, &parent);
                     }
                 }
@@ -635,7 +635,7 @@ impl Editor {
         }
 
         // Get file explorer reference
-        let Some(explorer) = &self.file_explorer else {
+        let Some(explorer) = self.file_explorer() else {
             return any_refreshed;
         };
 
@@ -746,7 +746,7 @@ impl Editor {
         let refreshed_dirs: Vec<PathBuf> = dirs_to_refresh.iter().map(|(_, p)| p.clone()).collect();
         self.refresh_file_tree_dirs(&refreshed_dirs);
         let fs = self.authority.filesystem.clone();
-        if let Some(explorer) = self.file_explorer.as_mut() {
+        if let Some(explorer) = self.file_explorer_mut().as_mut() {
             for dir in refreshed_dirs {
                 load_gitignore_via_fs(fs.as_ref(), explorer, &dir);
             }
@@ -780,7 +780,13 @@ impl Editor {
     /// without relying on filesystem mtime detection, which is too
     /// environment-sensitive (especially across CI filesystems).
     pub fn refresh_file_tree_dirs(&mut self, paths: &[PathBuf]) {
-        let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) else {
+        let active_id = self.active_window;
+        let (Some(runtime), Some(explorer)) = (
+            self.tokio_runtime.as_ref(),
+            self.windows
+                .get_mut(&active_id)
+                .and_then(|w| w.file_explorer.as_mut()),
+        ) else {
             return;
         };
         let cursor_path: Option<PathBuf> = explorer.get_selected_entry().map(|e| e.path.clone());
@@ -811,7 +817,7 @@ impl Editor {
     /// reload or drop as needed. Returns true if anything changed.
     fn sync_gitignores_from_disk(&mut self) -> bool {
         let fs = self.authority.filesystem.clone();
-        let Some(explorer) = self.file_explorer.as_mut() else {
+        let Some(explorer) = self.file_explorer_mut() else {
             return false;
         };
         let dirs = explorer.ignore_patterns().loaded_gitignore_dirs();

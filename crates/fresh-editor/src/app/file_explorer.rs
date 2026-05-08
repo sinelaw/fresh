@@ -71,15 +71,11 @@ impl Editor {
         self.file_explorer_visible
     }
 
-    pub fn file_explorer(&self) -> Option<&FileTreeView> {
-        self.file_explorer.as_ref()
-    }
-
     pub fn toggle_file_explorer(&mut self) {
         self.file_explorer_visible = !self.file_explorer_visible;
 
         if self.file_explorer_visible {
-            if self.file_explorer.is_none() {
+            if self.file_explorer().is_none() {
                 self.init_file_explorer();
             }
             self.key_context = KeyContext::FileExplorer;
@@ -122,7 +118,12 @@ impl Editor {
                 let working_dir = self.working_dir.clone();
 
                 if target_path.starts_with(&working_dir) {
-                    if let Some(mut view) = self.file_explorer.take() {
+                    let active_id = self.active_window;
+                    if let Some(mut view) = self
+                        .windows
+                        .get_mut(&active_id)
+                        .and_then(|w| w.file_explorer.take())
+                    {
                         tracing::trace!(
                             "sync_file_explorer_to_active_file: taking file_explorer for async expand to {:?}",
                             target_path
@@ -141,7 +142,7 @@ impl Editor {
                                 let _ = sender.send(AsyncMessage::FileExplorerExpandedToPath(view));
                             });
                         } else {
-                            self.file_explorer = Some(view);
+                            self.active_session_mut().file_explorer = Some(view);
                         }
                     }
                 }
@@ -222,7 +223,7 @@ impl Editor {
     }
 
     pub fn file_explorer_navigate_up(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_prev_match();
             explorer.update_scroll_for_selection();
         }
@@ -230,7 +231,7 @@ impl Editor {
     }
 
     pub fn file_explorer_navigate_down(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_next_match();
             explorer.update_scroll_for_selection();
         }
@@ -238,7 +239,7 @@ impl Editor {
     }
 
     pub fn file_explorer_page_up(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_page_up();
             explorer.update_scroll_for_selection();
         }
@@ -246,7 +247,7 @@ impl Editor {
     }
 
     pub fn file_explorer_page_down(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_page_down();
             explorer.update_scroll_for_selection();
         }
@@ -268,7 +269,7 @@ impl Editor {
         }
 
         let path = match self
-            .file_explorer
+            .file_explorer()
             .as_ref()
             .and_then(|explorer| explorer.get_selected_entry())
         {
@@ -289,7 +290,7 @@ impl Editor {
     /// - If on expanded directory: collapse it
     /// - If on file or collapsed directory: select parent directory
     pub fn file_explorer_collapse(&mut self) {
-        let Some(explorer) = &self.file_explorer else {
+        let Some(explorer) = self.file_explorer() else {
             return;
         };
 
@@ -308,14 +309,14 @@ impl Editor {
         }
 
         // Otherwise, select parent
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_parent();
             explorer.update_scroll_for_selection();
         }
     }
 
     pub fn file_explorer_toggle_expand(&mut self) {
-        let selected_id = if let Some(explorer) = &self.file_explorer {
+        let selected_id = if let Some(explorer) = self.file_explorer() {
             explorer.get_selected()
         } else {
             return;
@@ -325,7 +326,7 @@ impl Editor {
             return;
         };
 
-        let (is_dir, is_expanded, name) = if let Some(explorer) = &self.file_explorer {
+        let (is_dir, is_expanded, name) = if let Some(explorer) = self.file_explorer() {
             let node = explorer.tree().get_node(selected_id);
             if let Some(node) = node {
                 (node.is_dir(), node.is_expanded(), node.entry.name.clone())
@@ -347,7 +348,17 @@ impl Editor {
         };
         self.set_status_message(status_msg);
 
-        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
+        let active_id = self.active_window;
+        // Disjoint borrow: `self.windows.get_mut(...)` keeps the
+        // mutable explorer scoped to `self.windows`; the body still
+        // reads `self.tokio_runtime`, `self.authority.filesystem`,
+        // etc. on different fields.
+        if let (Some(runtime), Some(explorer)) = (
+            self.tokio_runtime.as_ref(),
+            self.windows
+                .get_mut(&active_id)
+                .and_then(|w| w.file_explorer.as_mut()),
+        ) {
             let tree = explorer.tree_mut();
             let result = runtime.block_on(tree.toggle_node(selected_id));
 
@@ -417,7 +428,7 @@ impl Editor {
 
     pub fn file_explorer_open_file(&mut self) -> AnyhowResult<()> {
         let entry_type = self
-            .file_explorer
+            .file_explorer()
             .as_ref()
             .and_then(|explorer| explorer.get_selected_entry())
             .map(|entry| (entry.is_dir(), entry.path.clone(), entry.name.clone()));
@@ -458,7 +469,7 @@ impl Editor {
     }
 
     pub fn file_explorer_refresh(&mut self) {
-        let (selected_id, node_name) = if let Some(explorer) = &self.file_explorer {
+        let (selected_id, node_name) = if let Some(explorer) = self.file_explorer() {
             if let Some(selected_id) = explorer.get_selected() {
                 let node_name = explorer
                     .tree()
@@ -480,7 +491,13 @@ impl Editor {
             self.set_status_message(t!("explorer.refreshing", name = name).to_string());
         }
 
-        if let (Some(runtime), Some(explorer)) = (&self.tokio_runtime, &mut self.file_explorer) {
+        let active_id = self.active_window;
+        if let (Some(runtime), Some(explorer)) = (
+            self.tokio_runtime.as_ref(),
+            self.windows
+                .get_mut(&active_id)
+                .and_then(|w| w.file_explorer.as_mut()),
+        ) {
             let tree = explorer.tree_mut();
             let result = runtime.block_on(tree.refresh_node(selected_id));
             match result {
@@ -501,7 +518,12 @@ impl Editor {
     }
 
     pub fn file_explorer_new_file(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        let active_id = self.active_window;
+        if let Some(explorer) = self
+            .windows
+            .get_mut(&active_id)
+            .and_then(|w| w.file_explorer.as_mut())
+        {
             if let Some(selected_id) = explorer.get_selected() {
                 let node = explorer.tree().get_node(selected_id);
                 if let Some(node) = node {
@@ -527,7 +549,7 @@ impl Editor {
                                 {
                                     tracing::warn!("Failed to refresh file tree: {}", e);
                                 }
-                                if let Some(ref mut explorer) = self.file_explorer {
+                                if let Some(explorer) = self.file_explorer_mut().as_mut() {
                                     explorer.navigate_to_path(&path_clone);
                                 }
                                 self.set_status_message(
@@ -564,7 +586,12 @@ impl Editor {
     }
 
     pub fn file_explorer_new_directory(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        let active_id = self.active_window;
+        if let Some(explorer) = self
+            .windows
+            .get_mut(&active_id)
+            .and_then(|w| w.file_explorer.as_mut())
+        {
             if let Some(selected_id) = explorer.get_selected() {
                 let node = explorer.tree().get_node(selected_id);
                 if let Some(node) = node {
@@ -587,7 +614,7 @@ impl Editor {
                                 {
                                     tracing::warn!("Failed to refresh file tree: {}", e);
                                 }
-                                if let Some(ref mut explorer) = self.file_explorer {
+                                if let Some(explorer) = self.file_explorer_mut().as_mut() {
                                     explorer.navigate_to_path(&path_clone);
                                 }
                                 self.set_status_message(
@@ -620,7 +647,7 @@ impl Editor {
     }
 
     pub fn file_explorer_delete(&mut self) {
-        let Some(explorer) = &self.file_explorer else {
+        let Some(explorer) = self.file_explorer() else {
             return;
         };
         let root_id = explorer.tree().root_id();
@@ -714,7 +741,12 @@ impl Editor {
                 }
 
                 // Refresh the parent directory in the file explorer
-                if let Some(explorer) = &mut self.file_explorer {
+                let active_id = self.active_window;
+                if let Some(explorer) = self
+                    .windows
+                    .get_mut(&active_id)
+                    .and_then(|w| w.file_explorer.as_mut())
+                {
                     if let Some(runtime) = &self.tokio_runtime {
                         // Find the node for the deleted path and get its parent
                         if let Some(node) = explorer.tree().get_node_by_path(&path) {
@@ -796,7 +828,7 @@ impl Editor {
     }
 
     pub fn file_explorer_rename(&mut self) {
-        if let Some(explorer) = &self.file_explorer {
+        if let Some(explorer) = self.file_explorer() {
             if let Some(selected_id) = explorer.get_selected() {
                 // Don't allow renaming the root directory
                 if selected_id == explorer.tree().root_id() {
@@ -859,13 +891,21 @@ impl Editor {
             .map(|p| p.join(&new_name))
             .unwrap_or_else(|| original_path.clone());
 
-        if let Some(runtime) = &self.tokio_runtime {
+        if self.tokio_runtime.is_some() {
             let result = self.authority.filesystem.rename(&original_path, &new_path);
 
             match result {
                 Ok(_) => {
-                    // Refresh the parent directory and select the renamed item
-                    if let Some(explorer) = &mut self.file_explorer {
+                    // Refresh the parent directory and select the renamed item.
+                    // Direct `self.windows.get_mut(...)` keeps the explorer
+                    // borrow disjoint from `self.tokio_runtime`.
+                    let active_id = self.active_window;
+                    if let (Some(runtime), Some(explorer)) = (
+                        self.tokio_runtime.as_ref(),
+                        self.windows
+                            .get_mut(&active_id)
+                            .and_then(|w| w.file_explorer.as_mut()),
+                    ) {
                         if let Some(selected_id) = explorer.get_selected() {
                             let parent_id = get_parent_node_id(explorer.tree(), selected_id, false);
                             let tree = explorer.tree_mut();
@@ -912,7 +952,7 @@ impl Editor {
     }
 
     pub fn file_explorer_toggle_hidden(&mut self) {
-        let show_hidden = if let Some(explorer) = &mut self.file_explorer {
+        let show_hidden = if let Some(explorer) = self.file_explorer_mut() {
             explorer.toggle_show_hidden();
             explorer.ignore_patterns().show_hidden()
         } else {
@@ -935,7 +975,7 @@ impl Editor {
     }
 
     pub fn file_explorer_toggle_gitignored(&mut self) {
-        let show_gitignored = if let Some(explorer) = &mut self.file_explorer {
+        let show_gitignored = if let Some(explorer) = self.file_explorer_mut() {
             explorer.toggle_show_gitignored();
             explorer.ignore_patterns().show_gitignored()
         } else {
@@ -972,7 +1012,7 @@ impl Editor {
             self.set_status_message(t!("explorer.cut_cancelled").to_string());
             return;
         }
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             if explorer.has_multi_selection() {
                 explorer.clear_multi_selection();
             } else if explorer.is_search_active() {
@@ -984,32 +1024,32 @@ impl Editor {
     }
 
     pub fn file_explorer_extend_selection_up(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.extend_selection_up();
         }
     }
 
     pub fn file_explorer_extend_selection_down(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.extend_selection_down();
         }
     }
 
     pub fn file_explorer_toggle_select(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.toggle_select();
         }
     }
 
     pub fn file_explorer_select_all(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.select_all();
         }
     }
 
     /// Add a character to the file explorer search
     pub fn file_explorer_search_push_char(&mut self, c: char) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.search_push_char(c);
             explorer.update_scroll_for_selection();
         }
@@ -1017,7 +1057,7 @@ impl Editor {
 
     /// Remove a character from the file explorer search (backspace)
     pub fn file_explorer_search_pop_char(&mut self) {
-        if let Some(explorer) = &mut self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut() {
             explorer.search_pop_char();
             explorer.update_scroll_for_selection();
         }
@@ -1063,7 +1103,7 @@ impl Editor {
 
         // Collect symlink mappings from the file explorer
         let symlink_mappings = self
-            .file_explorer
+            .file_explorer()
             .as_ref()
             .map(|fe| fe.collect_symlink_mappings())
             .unwrap_or_default();
@@ -1089,7 +1129,7 @@ impl Editor {
     }
 
     fn set_explorer_clipboard(&mut self, is_cut: bool) {
-        let Some(explorer) = &self.file_explorer else {
+        let Some(explorer) = self.file_explorer() else {
             return;
         };
         let root_id = explorer.tree().root_id();
@@ -1140,7 +1180,7 @@ impl Editor {
             }
         };
 
-        let dst_dir = if let Some(explorer) = &self.file_explorer {
+        let dst_dir = if let Some(explorer) = self.file_explorer() {
             if let Some(selected_id) = explorer.get_selected() {
                 if let Some(node) = explorer.tree().get_node(selected_id) {
                     get_parent_dir_path(node)
@@ -1489,7 +1529,14 @@ impl Editor {
     /// the cursor to `dst`. Factored out so multi-paste can invoke it
     /// exactly once for a whole batch rather than N times.
     fn refresh_tree_after_paste(&mut self, src: &Path, dst: &Path, is_cut: bool) {
-        let Some(explorer) = &mut self.file_explorer else {
+        let active_id = self.active_window;
+        // Disjoint borrow on `self.windows` so the body can also read
+        // `self.tokio_runtime`.
+        let Some(explorer) = self
+            .windows
+            .get_mut(&active_id)
+            .and_then(|w| w.file_explorer.as_mut())
+        else {
             return;
         };
         if let Some(runtime) = &self.tokio_runtime {
@@ -1619,7 +1666,7 @@ impl Editor {
     /// Multi-selection duplicates each item independently; the project
     /// root is skipped (you can't duplicate the project root itself).
     pub fn file_explorer_duplicate(&mut self) {
-        let Some(explorer) = &self.file_explorer else {
+        let Some(explorer) = self.file_explorer() else {
             return;
         };
         let root_id = explorer.tree().root_id();
@@ -1703,7 +1750,7 @@ impl Editor {
     /// are joined by newlines, in the same visible order shown by the
     /// tree, so the result is friendly for pasting into a shell or list.
     pub fn file_explorer_copy_path(&mut self, relative: bool) {
-        let Some(explorer) = &self.file_explorer else {
+        let Some(explorer) = self.file_explorer() else {
             return;
         };
         let selected_ids = explorer.effective_selection();

@@ -182,13 +182,13 @@ impl Editor {
         // Also keep the layout split if a sync is in progress (to avoid flicker)
         let editor_content_area;
         let file_explorer_should_show = self.file_explorer_visible
-            && (self.file_explorer.is_some() || self.file_explorer_sync_in_progress);
+            && (self.file_explorer().is_some() || self.file_explorer_sync_in_progress);
 
         if file_explorer_should_show {
             // Split horizontally based on side placement
             tracing::trace!(
                 "render: file explorer layout active (present={}, sync_in_progress={}, side={:?})",
-                self.file_explorer.is_some(),
+                self.file_explorer().is_some(),
                 self.file_explorer_sync_in_progress,
                 self.file_explorer_side
             );
@@ -217,8 +217,16 @@ impl Editor {
             // Get connection string before mutable borrow of file_explorer.
             let remote_connection = self.connection_display_string();
 
-            // Render file explorer (only if we have it - during sync we just keep the area reserved)
-            if let Some(ref mut explorer) = self.file_explorer {
+            // Render file explorer (only if we have it - during sync we just keep the area reserved).
+            // Uses direct `self.windows.get_mut(...)` (not `file_explorer_mut()`) so the body
+            // can keep reading other Editor fields (buffers, theme, keybindings, …) — Rust
+            // splits the borrow on `self.windows` from the borrows on those other fields.
+            let active_id = self.active_window;
+            if let Some(explorer) = self
+                .windows
+                .get_mut(&active_id)
+                .and_then(|w| w.file_explorer.as_mut())
+            {
                 let is_focused = self.key_context == KeyContext::FileExplorer;
 
                 // Build set of files with unsaved changes
@@ -2883,7 +2891,7 @@ impl Editor {
 
         // Compute editor_content_area (with file explorer split if visible)
         let file_explorer_should_show = self.file_explorer_visible
-            && (self.file_explorer.is_some() || self.file_explorer_sync_in_progress);
+            && (self.file_explorer().is_some() || self.file_explorer_sync_in_progress);
         let editor_content_area = if file_explorer_should_show {
             let explorer_cols = self.file_explorer_width.to_cols(main_content_area.width);
             let horizontal_chunks = Layout::default()

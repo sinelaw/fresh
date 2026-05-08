@@ -56,7 +56,7 @@ impl Editor {
         let can_copy = has_selection
             || file_explorer_focused
             || self
-                .file_explorer
+                .file_explorer()
                 .as_ref()
                 .map(|fe| fe.get_selected().is_some())
                 .unwrap_or(false);
@@ -157,7 +157,7 @@ impl Editor {
 
     /// Check if the file explorer is showing hidden files.
     fn is_file_explorer_showing_hidden(&self) -> bool {
-        self.file_explorer
+        self.file_explorer()
             .as_ref()
             .map(|fe| fe.ignore_patterns().show_hidden())
             .unwrap_or(false)
@@ -165,7 +165,7 @@ impl Editor {
 
     /// Check if the file explorer is showing gitignored files.
     fn is_file_explorer_showing_gitignored(&self) -> bool {
-        self.file_explorer
+        self.file_explorer()
             .as_ref()
             .map(|fe| fe.ignore_patterns().show_gitignored())
             .unwrap_or(false)

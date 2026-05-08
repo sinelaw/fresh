@@ -64,12 +64,11 @@ pub struct Window {
     /// way to "rename" the root.
     pub root: PathBuf,
 
-    /// **Stash.** File-explorer view (expansion, scroll, selection)
-    /// when this window is *inactive*. The active window's view
-    /// lives on `Editor.file_explorer`; on switch we move both at
-    /// once. `None` means "never opened" — the caller rebuilds at
-    /// `root` on first toggle.
-    pub file_explorer_stash: Option<FileTreeView>,
+    /// File-explorer view (expansion, scroll, selection). `None`
+    /// means "never opened" — the caller rebuilds at `root` on first
+    /// toggle. Each window has its own view; switching windows shows
+    /// the new window's tree (or none, if it hasn't been opened yet).
+    pub file_explorer: Option<FileTreeView>,
 
     /// **Stash.** Split-tree layout (split tree + per-leaf view
     /// state — scroll, cursor positions, focused buffer in each
@@ -150,7 +149,7 @@ impl Window {
             id,
             label,
             root,
-            file_explorer_stash: None,
+            file_explorer: None,
             file_mod_times: HashMap::new(),
             plugin_state: HashMap::new(),
             lsp_stash: None,

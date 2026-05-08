@@ -172,7 +172,12 @@ impl Editor {
         // and width are shadows of config, not read live on each render).
         self.file_explorer_width = self.config.file_explorer.width;
         self.file_explorer_side = self.config.file_explorer.side;
-        if let Some(ref mut explorer) = self.file_explorer {
+        let active_id = self.active_window;
+        if let Some(explorer) = self
+            .windows
+            .get_mut(&active_id)
+            .and_then(|w| w.file_explorer.as_mut())
+        {
             let patterns = explorer.ignore_patterns_mut();
             patterns.set_show_hidden(self.config.file_explorer.show_hidden);
             patterns.set_show_gitignored(self.config.file_explorer.show_gitignored);

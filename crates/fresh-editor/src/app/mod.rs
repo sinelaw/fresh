@@ -505,9 +505,9 @@ pub struct Editor {
     /// Used for side-by-side diff views where two panes need to scroll together
     scroll_sync_manager: ScrollSyncManager,
 
-    /// File explorer view (optional, only when open)
-    file_explorer: Option<FileTreeView>,
-
+    // file_explorer moved onto `Window`. Access via
+    // `Editor::file_explorer()` / `file_explorer_mut()` —
+    // each window has its own tree view.
     /// Buffer currently opened in "preview" (ephemeral) mode, together with
     /// the split (pane) it lives in. At most one preview exists editor-wide.
     ///
@@ -1317,7 +1317,7 @@ impl Editor {
     /// When the file explorer is visible, tabs only get a portion of the
     /// terminal width. Matches the layout calculation in render.rs.
     fn effective_tabs_width(&self) -> u16 {
-        if self.file_explorer_visible && self.file_explorer.is_some() {
+        if self.file_explorer_visible && self.file_explorer().is_some() {
             let explorer = self.file_explorer_width.to_cols(self.terminal_width);
             self.terminal_width.saturating_sub(explorer)
         } else {

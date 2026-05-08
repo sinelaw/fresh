@@ -862,7 +862,7 @@ impl Editor {
                 && col < explorer_area.x + explorer_area.width.saturating_sub(1)
             {
                 // Determine which item is at this row
-                if let Some(ref explorer) = self.file_explorer {
+                if let Some(explorer) = self.file_explorer().as_ref() {
                     let relative_row = row.saturating_sub(content_start_y) as usize;
                     let scroll_offset = explorer.get_scroll_offset();
                     let item_index = relative_row + scroll_offset;
@@ -2542,7 +2542,7 @@ impl Editor {
             {
                 let relative_row = row.saturating_sub(explorer_area.y + 1);
                 let (is_multi, is_root_selected) =
-                    if let Some(ref mut explorer) = self.file_explorer {
+                    if let Some(explorer) = self.file_explorer_mut().as_mut() {
                         let display_nodes = explorer.get_display_nodes();
                         let scroll_offset = explorer.get_scroll_offset();
                         let clicked_index = (relative_row as usize) + scroll_offset;

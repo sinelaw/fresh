@@ -549,7 +549,7 @@ impl Editor {
         // The file explorer has a 1-line border at top and bottom
         let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
 
-        if let Some(ref mut explorer) = self.file_explorer {
+        if let Some(explorer) = self.file_explorer_mut().as_mut() {
             let display_nodes = explorer.get_display_nodes();
             let scroll_offset = explorer.get_scroll_offset();
             let clicked_index = (relative_row as usize) + scroll_offset;

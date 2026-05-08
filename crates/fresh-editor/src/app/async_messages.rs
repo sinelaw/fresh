@@ -1228,7 +1228,7 @@ impl Editor {
             .set_show_gitignored(show_gitignored);
         tracing::debug!("Applied show_gitignored={} on init", show_gitignored);
 
-        self.file_explorer = Some(view);
+        self.active_session_mut().file_explorer = Some(view);
         self.set_status_message(t!("status.file_explorer_ready").to_string());
 
         // If the user opened the explorer while a file from a nested
@@ -1258,7 +1258,7 @@ impl Editor {
             "handle_file_explorer_expanded_to_path: restoring file_explorer after async expand"
         );
         view.update_scroll_for_selection();
-        self.file_explorer = Some(view);
+        self.active_session_mut().file_explorer = Some(view);
         self.file_explorer_sync_in_progress = false;
     }
 }

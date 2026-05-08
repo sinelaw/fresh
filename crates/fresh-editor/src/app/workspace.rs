@@ -253,7 +253,7 @@ impl Editor {
         );
 
         // Capture file explorer state
-        let file_explorer = if let Some(ref explorer) = self.file_explorer {
+        let file_explorer = if let Some(explorer) = self.file_explorer().as_ref() {
             // Get expanded directories from the tree
             let expanded_dirs = get_expanded_dirs(explorer, &self.working_dir);
             FileExplorerState {
@@ -830,7 +830,7 @@ impl Editor {
         }
 
         // Keep key_context as Normal so the editor (not the explorer) has focus.
-        if self.file_explorer_visible && self.file_explorer.is_none() {
+        if self.file_explorer_visible && self.file_explorer().is_none() {
             self.init_file_explorer();
         }
     }
