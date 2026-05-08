@@ -896,6 +896,18 @@ impl Editor {
                 self.file_watcher_manager.unwatch(handle);
             }
 
+            PluginCommand::PreviewSessionInRect { id } => {
+                // Validate: only honour if the session exists and
+                // is not the active one (no point previewing the
+                // session whose UI is already on screen).
+                self.preview_session_id = match id {
+                    Some(sid) if sid != self.active_session && self.sessions.contains_key(&sid) => {
+                        Some(sid)
+                    }
+                    _ => None,
+                };
+            }
+
             // ==================== Command/Mode Registration ====================
             PluginCommand::RegisterCommand { command } => {
                 self.handle_register_command(command);

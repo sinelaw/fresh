@@ -1007,6 +1007,7 @@ impl Editor {
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             last_path_change_for_test: None,
             last_watch_response_for_test: None,
+            preview_session_id: None,
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),

@@ -1235,6 +1235,21 @@ pub enum PluginCommand {
     /// reconcile.
     UnwatchPath { handle: u64 },
 
+    /// Tell the editor that the floating-overlay prompt's
+    /// preview pane should render the **entire** split tree of
+    /// session `id` (Primitive #1 in
+    /// `docs/internal/conductor-sessions-design.md`). `None`
+    /// clears the override and falls back to the existing
+    /// path-based phantom-leaf preview.
+    ///
+    /// Conductor sets this when the user navigates the session
+    /// list so the right-hand pane shows the highlighted
+    /// session's full editor UI live (splits, terminals,
+    /// syntax highlighting, decorations) — rendered natively
+    /// by reusing the editor's existing render_content path
+    /// against the previewed session's stashed split tree.
+    PreviewSessionInRect { id: Option<SessionId> },
+
     /// Open a file in the editor (in background, without switching focus).
     ///
     /// `session_id` defaults to the active session at dispatch

@@ -1625,6 +1625,102 @@ impl Editor {
     /// reuse the regular per-leaf renderer (with syntax highlighting,
     /// gutter, scrollbars, folding). No-op when the prompt has no
     /// selection or its label is not a `path:line[:col]` triple.
+    /// Render the entire stashed split tree of `self.preview_session_id`
+    /// into `inner` — Primitive #1 of
+    /// `docs/internal/conductor-sessions-design.md`'s "Rich
+    /// Control Room rendering". Reuses the editor's existing
+    /// `render_content` path against the previewed session's
+    /// stashed `(SplitManager, view_states)` so syntax
+    /// highlighting, terminal grids, decorations, and folding
+    /// all surface natively in the preview pane.
+    ///
+    /// The previewed session's splits stash is `take`n out for
+    /// the duration of the call (so we can pass `&mut` through
+    /// the renderer without re-entering `self.sessions`) and put
+    /// back after. `pending_hardware_cursor` and
+    /// `cell_theme_map` use scratch locals so the active editor
+    /// area's hit-testing isn't clobbered by the preview pass.
+    fn render_session_preview_into_rect(
+        &mut self,
+        frame: &mut ratatui::Frame,
+        inner: ratatui::layout::Rect,
+        theme: &crate::view::theme::Theme,
+    ) {
+        let Some(sid) = self.preview_session_id else {
+            return;
+        };
+        // Move the stash out so the rest of the function holds
+        // `&mut self.buffers` etc. without conflicting with
+        // `&mut self.sessions`. Bail if the session has no stash
+        // yet (never been activated and never had a terminal /
+        // file routed in via createTerminal({sessionId})).
+        let Some((mgr, mut view_states)) = self
+            .sessions
+            .get_mut(&sid)
+            .and_then(|s| s.splits_stash.take())
+        else {
+            return;
+        };
+
+        // Per-call scratch — keeps the preview pass from
+        // clobbering the active editor area's hit-testing /
+        // hardware-cursor placement.
+        let mut scratch_cell_theme_map: Vec<crate::app::types::CellThemeInfo> = Vec::new();
+        let mut scratch_pending_cursor: Option<(u16, u16)> = None;
+        let lsp_waiting = false; // preview never shows LSP-waiting chrome
+        let no_grouped_subtrees: std::collections::HashMap<
+            crate::model::event::LeafId,
+            crate::view::split::SplitNode,
+        > = std::collections::HashMap::new();
+
+        let _ = crate::view::ui::SplitRenderer::render_content(
+            frame,
+            inner,
+            &mgr,
+            &mut self.buffers,
+            &self.buffer_metadata,
+            &mut self.event_logs,
+            &mut self.composite_buffers,
+            &mut self.composite_view_states,
+            theme,
+            self.ansi_background.as_ref(),
+            self.background_fade,
+            lsp_waiting,
+            self.config.editor.large_file_threshold_bytes,
+            self.config.editor.line_wrap,
+            self.config.editor.estimated_line_length,
+            self.config.editor.highlight_context_bytes,
+            Some(&mut view_states),
+            &no_grouped_subtrees,
+            true, // hide_cursor — the active session owns the hardware caret
+            None, // no tab-hover routing in the preview
+            None,
+            None,
+            false, // not maximized
+            self.config.editor.relative_line_numbers,
+            self.tab_bar_visible,
+            self.config.editor.use_terminal_bg,
+            self.session_mode || !self.software_cursor_only,
+            self.software_cursor_only,
+            // Scrollbars are noisy in a small preview rect; the
+            // active session's chrome is the source of truth.
+            false,
+            false,
+            self.config.editor.diagnostics_inline_text,
+            false, // hide tilde markers in the preview
+            self.config.editor.highlight_current_column,
+            &mut scratch_cell_theme_map,
+            inner.width,
+            &mut scratch_pending_cursor,
+        );
+
+        // Put the stash back so the next dive into this session
+        // sees its full state.
+        if let Some(s) = self.sessions.get_mut(&sid) {
+            s.splits_stash = Some((mgr, view_states));
+        }
+    }
+
     fn prepare_overlay_preview(&mut self) {
         use crate::input::quick_open::parse_path_line_col;
 
@@ -2210,7 +2306,20 @@ impl Editor {
             let inner = block.inner(preview_rect);
             frame.render_widget(block, preview_rect);
 
-            if inner.height > 0 && inner.width > 0 {
+            // Primitive #1: if the active plugin asked us to
+            // preview a specific (inactive) session in this
+            // rect, render that session's entire stashed split
+            // tree natively into `inner`. Falls back to the
+            // existing path-based phantom-leaf preview when no
+            // session override is set.
+            if inner.height > 0
+                && inner.width > 0
+                && self.preview_session_id.is_some_and(|sid| {
+                    sid != self.active_session && self.sessions.contains_key(&sid)
+                })
+            {
+                self.render_session_preview_into_rect(frame, inner, &theme);
+            } else if inner.height > 0 && inner.width > 0 {
                 // Snapshot scalar config values up front so the
                 // mutable-borrow split below has minimal scope.
                 // AnsiBackground isn't Clone, so it's taken as a

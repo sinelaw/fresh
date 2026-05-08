@@ -1107,6 +1107,14 @@ pub struct Editor {
     /// `watch_path` e2e tests to read back the allocated handle.
     pub(crate) last_watch_response_for_test: Option<(u64, Result<u64, String>)>,
 
+    /// Plugin-driven session preview override. When `Some(sid)`
+    /// and the floating-overlay prompt is open, the overlay's
+    /// preview pane renders the *entire* split tree of session
+    /// `sid` natively — Primitive #1 in
+    /// `docs/internal/conductor-sessions-design.md` §
+    /// "Rich Control Room rendering".
+    pub(crate) preview_session_id: Option<fresh_core::SessionId>,
+
     /// Maps buffer ID to terminal ID (for terminal buffers)
     terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
 

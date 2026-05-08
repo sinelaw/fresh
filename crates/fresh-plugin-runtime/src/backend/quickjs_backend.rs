@@ -3421,6 +3421,35 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Tell the editor that the floating-overlay prompt's
+    /// preview pane should render the entire split tree of
+    /// session `id` natively. `0` (or any unknown id) clears the
+    /// override and the preview falls back to the existing
+    /// path-based phantom-leaf renderer.
+    ///
+    /// Conductor calls this on each prompt-selection-change so
+    /// the right pane shows the highlighted session's full
+    /// editor UI live — splits, terminals, syntax highlighting,
+    /// decorations — at native rendering cost.
+    pub fn preview_session_in_rect(&self, id: u64) -> bool {
+        let sid = if id == 0 {
+            None
+        } else {
+            Some(fresh_core::SessionId(id))
+        };
+        self.command_sender
+            .send(PluginCommand::PreviewSessionInRect { id: sid })
+            .is_ok()
+    }
+
+    /// Clear the session-preview override. Equivalent to
+    /// `previewSessionInRect(0)` but reads better at call sites.
+    pub fn clear_session_preview(&self) -> bool {
+        self.command_sender
+            .send(PluginCommand::PreviewSessionInRect { id: None })
+            .is_ok()
+    }
+
     /// All editor sessions, sorted by id (creation order). Always
     /// non-empty (the base session is always present).
     #[plugin_api(ts_return = "SessionInfo[]")]
