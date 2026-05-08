@@ -293,20 +293,20 @@ impl Editor {
             // Publish the session list so plugins (Conductor, etc.)
             // see updates from createSession/closeSession without
             // a separate notification path. Sorted by id for
-            // deterministic order — `next_session_id` is monotonic
+            // deterministic order — `next_window_id` is monotonic
             // so this is "creation order".
-            let mut session_infos: Vec<fresh_core::api::SessionInfo> = self
-                .sessions
+            let mut session_infos: Vec<fresh_core::api::WindowInfo> = self
+                .windows
                 .values()
-                .map(|s| fresh_core::api::SessionInfo {
+                .map(|s| fresh_core::api::WindowInfo {
                     id: s.id,
                     label: s.label.clone(),
                     root: s.root.clone(),
                 })
                 .collect();
             session_infos.sort_by_key(|s| s.id.0);
-            snapshot.sessions = session_infos;
-            snapshot.active_session_id = self.active_session;
+            snapshot.windows = session_infos;
+            snapshot.active_window_id = self.active_window;
 
             // Mirror the active session's plugin_state into the
             // snapshot so getSessionState reads cheaply. Cloning
@@ -316,7 +316,7 @@ impl Editor {
             // proportional snapshot-update cost, which is the
             // desired feedback signal — store large blobs in
             // global state or out-of-band instead.
-            if let Some(session) = self.sessions.get(&self.active_session) {
+            if let Some(session) = self.windows.get(&self.active_window) {
                 snapshot.active_session_plugin_states = session.plugin_state.clone();
             } else {
                 snapshot.active_session_plugin_states.clear();
@@ -864,17 +864,17 @@ impl Editor {
                         root
                     );
                 } else {
-                    let _ = self.create_session_at(root, label);
+                    let _ = self.create_window_at(root, label);
                 }
             }
             PluginCommand::SetActiveSession { id } => {
-                self.set_active_session(id);
+                self.set_active_window(id);
             }
             PluginCommand::CloseSession { id } => {
-                let _ = self.close_session(id);
+                let _ = self.close_window(id);
             }
             PluginCommand::PrewarmSession { id } => {
-                self.prewarm_session(id);
+                self.prewarm_window(id);
             }
 
             // ==================== File watching ====================
@@ -905,8 +905,8 @@ impl Editor {
                 // Validate: only honour if the session exists and
                 // is not the active one (no point previewing the
                 // session whose UI is already on screen).
-                self.preview_session_id = match id {
-                    Some(sid) if sid != self.active_session && self.sessions.contains_key(&sid) => {
+                self.preview_window_id = match id {
+                    Some(sid) if sid != self.active_window && self.windows.contains_key(&sid) => {
                         Some(sid)
                     }
                     _ => None,
@@ -941,7 +941,7 @@ impl Editor {
             // ==================== File/Navigation Commands ====================
             PluginCommand::OpenFileInBackground { path, session_id } => {
                 let route_to_inactive = match session_id {
-                    Some(id) if id != self.active_session && self.sessions.contains_key(&id) => {
+                    Some(id) if id != self.active_window && self.windows.contains_key(&id) => {
                         Some(id)
                     }
                     _ => None,
@@ -2522,7 +2522,7 @@ impl Editor {
         ratio: Option<f32>,
         focus: Option<bool>,
         persistent: bool,
-        target_session_id: Option<fresh_core::SessionId>,
+        target_session_id: Option<fresh_core::WindowId>,
         request_id: u64,
     ) {
         // If the caller specified an inactive session, route the new
@@ -2532,7 +2532,7 @@ impl Editor {
         // restored split layout. Conductor uses this so spawning an
         // agent doesn't pull the user away from the base session.
         let route_to_inactive = match target_session_id {
-            Some(id) if id != self.active_session && self.sessions.contains_key(&id) => Some(id),
+            Some(id) if id != self.active_window && self.windows.contains_key(&id) => Some(id),
             _ => None,
         };
         if let Some(target) = route_to_inactive {
@@ -2744,7 +2744,7 @@ impl Editor {
     /// (or session_id is omitted).
     fn handle_create_terminal_in_inactive_session(
         &mut self,
-        target: fresh_core::SessionId,
+        target: fresh_core::WindowId,
         cwd: Option<String>,
         persistent: bool,
         request_id: u64,
@@ -2758,7 +2758,7 @@ impl Editor {
         // active session's, so plugins that omit `cwd` get the
         // expected behaviour ("spawn this agent in its worktree").
         let working_dir = cwd.map(std::path::PathBuf::from).unwrap_or_else(|| {
-            self.sessions
+            self.windows
                 .get(&target)
                 .map(|s| s.root.clone())
                 .unwrap_or_else(|| self.working_dir.clone())
@@ -2821,8 +2821,8 @@ impl Editor {
         // storage but attach it to the *target* session's
         // membership instead of the active session's.
         let buffer_id = self.create_terminal_buffer_detached(terminal_id);
-        self.detach_buffer_from_all_sessions(buffer_id);
-        if let Some(s) = self.sessions.get_mut(&target) {
+        self.detach_buffer_from_all_windows(buffer_id);
+        if let Some(s) = self.windows.get_mut(&target) {
             s.buffers.insert(buffer_id);
         }
 
@@ -2830,7 +2830,7 @@ impl Editor {
         // the terminal as a new horizontal split off its current
         // active leaf. If the session has no stash yet (never
         // dived into), we seed one rooted at the terminal buffer.
-        let target_session = self.sessions.get_mut(&target);
+        let target_session = self.windows.get_mut(&target);
         let new_split_id = if let Some(session) = target_session {
             if let Some((mgr, view_states)) = session.splits_stash.as_mut() {
                 let split_dir = crate::model::event::SplitDirection::Horizontal;

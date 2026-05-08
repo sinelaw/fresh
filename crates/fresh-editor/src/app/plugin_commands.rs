@@ -1125,7 +1125,7 @@ impl Editor {
     /// with it for never-activated sessions).
     pub(super) fn handle_open_file_in_inactive_session(
         &mut self,
-        target: fresh_core::SessionId,
+        target: fresh_core::WindowId,
         path: std::path::PathBuf,
     ) {
         let buffer_id = match self.open_file_no_focus(&path) {
@@ -1139,8 +1139,8 @@ impl Editor {
         // Re-target buffer membership: open_file_no_focus
         // attached to the active session as part of its normal
         // path. Detach and reattach to the target.
-        self.detach_buffer_from_all_sessions(buffer_id);
-        if let Some(s) = self.sessions.get_mut(&target) {
+        self.detach_buffer_from_all_windows(buffer_id);
+        if let Some(s) = self.windows.get_mut(&target) {
             s.buffers.insert(buffer_id);
         }
 
@@ -1157,7 +1157,7 @@ impl Editor {
         // Add it to the target session's stashed split tree as a
         // tab in its current active leaf. If the session has no
         // stash yet, seed one rooted at this buffer.
-        if let Some(session) = self.sessions.get_mut(&target) {
+        if let Some(session) = self.windows.get_mut(&target) {
             if let Some((mgr, view_states)) = session.splits_stash.as_mut() {
                 let active_leaf = mgr.active_split();
                 if let Some(vs) = view_states.get_mut(&active_leaf) {
@@ -1329,8 +1329,8 @@ impl Editor {
         key: String,
         value: Option<serde_json::Value>,
     ) {
-        let id = self.active_session;
-        let Some(session) = self.sessions.get_mut(&id) else {
+        let id = self.active_window;
+        let Some(session) = self.windows.get_mut(&id) else {
             return;
         };
         match value {

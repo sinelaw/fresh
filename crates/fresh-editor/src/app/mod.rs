@@ -66,8 +66,8 @@ mod scrollbar_input;
 mod scrollbar_math;
 mod search_ops;
 mod search_scan;
-pub mod session;
-mod session_actions;
+pub mod window;
+mod window_actions;
 mod settings_actions;
 mod settings_prompts;
 mod shell_command;
@@ -636,27 +636,27 @@ pub struct Editor {
     ///
     /// During the Session migration this field still backs every
     /// existing read site. New code should prefer
-    /// `self.active_session().root` so the eventual swap to a real
+    /// `self.active_window().root` so the eventual swap to a real
     /// active-session pointer is a no-op for the call site. See
     /// `docs/internal/conductor-sessions-design.md` Step 1.
     working_dir: PathBuf,
 
     /// All editor sessions, keyed by id. Initially holds exactly one
-    /// session (`SessionId(1)`, the "base") rooted at `working_dir`.
+    /// session (`WindowId(1)`, the "base") rooted at `working_dir`.
     /// Step 1 of the migration adds the abstraction without yet
     /// allowing more than one entry.
-    pub(crate) sessions: HashMap<fresh_core::SessionId, crate::app::session::Session>,
+    pub(crate) windows: HashMap<fresh_core::WindowId, crate::app::window::Window>,
 
-    /// Id of the currently active session. Always `SessionId(1)` for
+    /// Id of the currently active session. Always `WindowId(1)` for
     /// now; multi-session support arrives in a follow-up commit.
-    pub(crate) active_session: fresh_core::SessionId,
+    pub(crate) active_window: fresh_core::WindowId,
 
     /// Monotonic counter for the next session id. The base session
     /// uses 1; new sessions take 2, 3, …. Closing a session does
     /// not free its id (per design, ids are stable within a process).
     /// Unused until `createSession` lands in the next migration step.
     #[allow(dead_code)]
-    pub(crate) next_session_id: u64,
+    pub(crate) next_window_id: u64,
 
     /// Position history for back/forward navigation
     pub position_history: PositionHistory,
@@ -1114,7 +1114,7 @@ pub struct Editor {
     /// `sid` natively — Primitive #1 in
     /// `docs/internal/conductor-sessions-design.md` §
     /// "Rich Control Room rendering".
-    pub(crate) preview_session_id: Option<fresh_core::SessionId>,
+    pub(crate) preview_window_id: Option<fresh_core::WindowId>,
 
     /// Maps buffer ID to terminal ID (for terminal buffers)
     terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,

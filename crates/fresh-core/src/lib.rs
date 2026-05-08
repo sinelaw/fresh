@@ -69,22 +69,28 @@ impl std::fmt::Display for TerminalId {
     }
 }
 
-/// Unique identifier for an editor `Session` — a project-rooted unit
+/// Unique identifier for an editor `Window` — a project-rooted unit
 /// of editor state (file tree, LSP set, splits, buffer set, …) that
-/// the user can switch between as a whole. See
-/// `docs/internal/conductor-sessions-design.md`.
+/// the user can switch between as a whole. Modelled on a VS Code
+/// window. See `docs/internal/conductor-sessions-design.md`.
 ///
-/// Sessions are 1-indexed; the editor always boots with id=1 (the
-/// "base" session) so the previous single-root behaviour is the
-/// SessionId(1) special case. Ids are stable within a process and
-/// monotonic — closing a session does not free its id.
+/// Windows are 1-indexed; the editor always boots with id=1 (the
+/// "base" window) so the previous single-root behaviour is the
+/// WindowId(1) special case. Ids are stable within a process and
+/// monotonic — closing a window does not free its id.
+///
+/// Note on naming: Conductor presents windows as "agent sessions"
+/// in its UX (matching the parallel-agents domain language), but
+/// internally the editor calls them windows to disambiguate from
+/// Fresh's pre-existing workspace-recovery and config-layer
+/// "session" concepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, TS)]
 #[ts(export)]
-pub struct SessionId(pub u64);
+pub struct WindowId(pub u64);
 
-impl std::fmt::Display for SessionId {
+impl std::fmt::Display for WindowId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Session-{}", self.0)
+        write!(f, "Window-{}", self.0)
     }
 }
 pub mod config;
@@ -106,8 +112,8 @@ mod tests {
     }
 
     #[test]
-    fn session_id_display_format() {
-        assert_eq!(SessionId(1).to_string(), "Session-1");
-        assert_eq!(SessionId(42).to_string(), "Session-42");
+    fn window_id_display_format() {
+        assert_eq!(WindowId(1).to_string(), "Window-1");
+        assert_eq!(WindowId(42).to_string(), "Window-42");
     }
 }

@@ -50,7 +50,7 @@ use crate::menu::{Menu, MenuItem};
 use crate::overlay::{OverlayHandle, OverlayNamespace};
 use crate::text_property::{TextProperty, TextPropertyEntry};
 use crate::BufferId;
-use crate::SessionId;
+use crate::WindowId;
 use crate::SplitId;
 use crate::TerminalId;
 use lsp_types;
@@ -397,11 +397,11 @@ fn default_action_count() -> u32 {
     1
 }
 
-/// `serde(default)` fallback for `EditorStateSnapshot.active_session_id`
+/// `serde(default)` fallback for `EditorStateSnapshot.active_window_id`
 /// — old serialized snapshots predate the field. Falls back to the
 /// always-present base session (id 1).
-fn default_session_id() -> SessionId {
-    SessionId(1)
+fn default_session_id() -> WindowId {
+    WindowId(1)
 }
 
 /// Information about an editor session (plugin-visible). Returned
@@ -411,10 +411,10 @@ fn default_session_id() -> SessionId {
 /// `docs/internal/conductor-sessions-design.md`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct SessionInfo {
+pub struct WindowInfo {
     /// Stable session id. The base session is always `1`.
     #[ts(type = "number")]
-    pub id: SessionId,
+    pub id: WindowId,
     /// User-visible label (defaults to root basename).
     pub label: String,
     /// Absolute project root.
@@ -924,7 +924,7 @@ pub struct EditorStateSnapshot {
     pub clipboard: String,
     /// Editor's working directory (for file operations and spawning processes).
     ///
-    /// Equal to `sessions[i].root` where `sessions[i].id == active_session_id`.
+    /// Equal to `sessions[i].root` where `sessions[i].id == active_window_id`.
     /// Plugins that just need "where am I" can read this directly; plugins
     /// orchestrating multiple sessions (Conductor) iterate `sessions`.
     pub working_dir: PathBuf,
@@ -932,11 +932,11 @@ pub struct EditorStateSnapshot {
     /// session is `id == 1`). Updated when sessions are
     /// created/closed or relabelled.
     #[serde(default)]
-    pub sessions: Vec<SessionInfo>,
+    pub windows: Vec<WindowInfo>,
     /// Id of the currently active session. Always present in
     /// `sessions`. Read by plugins via `editor.activeSession()`.
     #[serde(default = "default_session_id")]
-    pub active_session_id: SessionId,
+    pub active_window_id: WindowId,
     /// Status-bar / explorer label for the active authority.
     ///
     /// Empty = the local (default) authority with nothing to render.
@@ -1056,8 +1056,8 @@ impl EditorStateSnapshot {
             selected_text: None,
             clipboard: String::new(),
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            sessions: Vec::new(),
-            active_session_id: SessionId(1),
+            windows: Vec::new(),
+            active_window_id: WindowId(1),
             authority_label: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
@@ -1200,12 +1200,12 @@ pub enum PluginCommand {
     /// Errors (id not found) are logged via tracing rather than
     /// surfaced to the plugin — the plugin can verify by reading
     /// `editor.activeSession()` after.
-    SetActiveSession { id: SessionId },
+    SetActiveSession { id: WindowId },
 
     /// Close a session and drop its associated state. Refuses to
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.
-    CloseSession { id: SessionId },
+    CloseSession { id: WindowId },
 
     /// Eagerly initialise an inactive session's per-session state
     /// (file tree walk, ignore matcher, etc.) without diving. The
@@ -1214,7 +1214,7 @@ pub enum PluginCommand {
     /// open and watcher setup happens on first `watchPath` call,
     /// so those are unaffected. No-op for the active session
     /// (already warm) or unknown id.
-    PrewarmSession { id: SessionId },
+    PrewarmSession { id: WindowId },
 
     /// Register a filesystem path watcher. The editor returns the
     /// allocated `handle` via the async response so the plugin can
@@ -1248,7 +1248,7 @@ pub enum PluginCommand {
     /// syntax highlighting, decorations) — rendered natively
     /// by reusing the editor's existing render_content path
     /// against the previewed session's stashed split tree.
-    PreviewSessionInRect { id: Option<SessionId> },
+    PreviewSessionInRect { id: Option<WindowId> },
 
     /// Open a file in the editor (in background, without switching focus).
     ///
@@ -1260,7 +1260,7 @@ pub enum PluginCommand {
     OpenFileInBackground {
         path: PathBuf,
         #[serde(default)]
-        session_id: Option<SessionId>,
+        session_id: Option<WindowId>,
     },
 
     /// Insert text at the current cursor position in the active buffer
@@ -2291,7 +2291,7 @@ pub enum PluginCommand {
         /// `Session.buffers` membership rather than the active one's.
         /// Falls back to active session if the id is unknown.
         #[serde(default)]
-        session_id: Option<SessionId>,
+        session_id: Option<WindowId>,
         /// Callback ID for async response
         request_id: u64,
     },
@@ -2934,7 +2934,7 @@ pub struct CreateTerminalOptions {
     /// target session's membership set rather than the active one's.
     #[serde(default, rename = "sessionId")]
     #[ts(optional, rename = "sessionId")]
-    pub session_id: Option<SessionId>,
+    pub session_id: Option<WindowId>,
 }
 
 /// Result of getTextPropertiesAtCursor - array of property objects

@@ -1625,7 +1625,7 @@ impl Editor {
     /// reuse the regular per-leaf renderer (with syntax highlighting,
     /// gutter, scrollbars, folding). No-op when the prompt has no
     /// selection or its label is not a `path:line[:col]` triple.
-    /// Render the entire stashed split tree of `self.preview_session_id`
+    /// Render the entire stashed split tree of `self.preview_window_id`
     /// into `inner` — Primitive #1 of
     /// `docs/internal/conductor-sessions-design.md`'s "Rich
     /// Control Room rendering". Reuses the editor's existing
@@ -1636,7 +1636,7 @@ impl Editor {
     ///
     /// The previewed session's splits stash is `take`n out for
     /// the duration of the call (so we can pass `&mut` through
-    /// the renderer without re-entering `self.sessions`) and put
+    /// the renderer without re-entering `self.windows`) and put
     /// back after. `pending_hardware_cursor` and
     /// `cell_theme_map` use scratch locals so the active editor
     /// area's hit-testing isn't clobbered by the preview pass.
@@ -1646,7 +1646,7 @@ impl Editor {
         inner: ratatui::layout::Rect,
         theme: &crate::view::theme::Theme,
     ) {
-        let Some(sid) = self.preview_session_id else {
+        let Some(sid) = self.preview_window_id else {
             return;
         };
 
@@ -1660,7 +1660,7 @@ impl Editor {
         // safe to run from a foreign session: append visible
         // screen to backing file, then reload that one buffer.
         let preview_buffers: Vec<fresh_core::BufferId> = self
-            .sessions
+            .windows
             .get(&sid)
             .map(|s| s.buffers.iter().copied().collect())
             .unwrap_or_default();
@@ -1711,11 +1711,11 @@ impl Editor {
 
         // Move the stash out so the rest of the function holds
         // `&mut self.buffers` etc. without conflicting with
-        // `&mut self.sessions`. Bail if the session has no stash
+        // `&mut self.windows`. Bail if the session has no stash
         // yet (never been activated and never had a terminal /
         // file routed in via createTerminal({sessionId})).
         let Some((mgr, mut view_states)) = self
-            .sessions
+            .windows
             .get_mut(&sid)
             .and_then(|s| s.splits_stash.take())
         else {
@@ -1776,7 +1776,7 @@ impl Editor {
 
         // Put the stash back so the next dive into this session
         // sees its full state.
-        if let Some(s) = self.sessions.get_mut(&sid) {
+        if let Some(s) = self.windows.get_mut(&sid) {
             s.splits_stash = Some((mgr, view_states));
         }
     }
@@ -2411,8 +2411,8 @@ impl Editor {
             // session override is set.
             if inner.height > 0
                 && inner.width > 0
-                && self.preview_session_id.is_some_and(|sid| {
-                    sid != self.active_session && self.sessions.contains_key(&sid)
+                && self.preview_window_id.is_some_and(|sid| {
+                    sid != self.active_window && self.windows.contains_key(&sid)
                 })
             {
                 self.render_session_preview_into_rect(frame, inner, &theme);

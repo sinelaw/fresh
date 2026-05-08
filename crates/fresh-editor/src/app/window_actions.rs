@@ -6,7 +6,7 @@
 //! sessions can be created, switched, and closed, and the
 //! corresponding hooks fire — but does not yet move per-subsystem
 //! state (file tree, LSP, ignore matcher) into `Session`. As a
-//! result, `set_active_session` here updates `working_dir` and
+//! result, `set_active_window` here updates `working_dir` and
 //! discards the cached file explorer (so it rebuilds on next open),
 //! but warm-LSP swap and warm-file-tree swap are deferred to the
 //! per-subsystem migration commits.
@@ -15,10 +15,10 @@
 //! sequence regardless of whether the swap is warm or cold; the
 //! difference is performance only.
 
-use crate::app::session::Session;
+use crate::app::window::Window;
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::split::{SplitManager, SplitViewState};
-use fresh_core::{BufferId, SessionId};
+use fresh_core::{BufferId, WindowId};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -29,13 +29,13 @@ impl crate::app::Editor {
     /// Caller is responsible for ensuring `root` is absolute. The
     /// `PluginCommand::CreateSession` dispatcher rejects relative
     /// paths before reaching here.
-    pub fn create_session_at(&mut self, root: PathBuf, label: String) -> SessionId {
-        let id = SessionId(self.next_session_id);
-        self.next_session_id += 1;
+    pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
+        let id = WindowId(self.next_window_id);
+        self.next_window_id += 1;
 
-        let session = Session::new(id, label, root.clone());
+        let session = Window::new(id, label, root.clone());
         let resolved_label = session.label.clone();
-        self.sessions.insert(id, session);
+        self.windows.insert(id, session);
 
         self.plugin_manager.run_hook(
             "session_created",
@@ -62,23 +62,23 @@ impl crate::app::Editor {
     /// `id` is unknown — the design treats unknown ids as a plugin
     /// bug (caller verifies with `listSessions`), not a recoverable
     /// error worth surfacing through the channel.
-    pub fn set_active_session(&mut self, id: SessionId) {
-        if self.active_session == id {
+    pub fn set_active_window(&mut self, id: WindowId) {
+        if self.active_window == id {
             return;
         }
-        if !self.sessions.contains_key(&id) {
-            tracing::warn!("set_active_session: unknown session id {id}; active session unchanged");
+        if !self.windows.contains_key(&id) {
+            tracing::warn!("set_active_window: unknown session id {id}; active session unchanged");
             return;
         }
 
-        let previous_id = self.active_session;
+        let previous_id = self.active_window;
 
         // Snapshot the new root before mutating fields that borrow
-        // self.sessions.
-        let new_root = self.sessions[&id].root.clone();
+        // self.windows.
+        let new_root = self.windows[&id].root.clone();
 
         let needs_fresh_layout = self
-            .sessions
+            .windows
             .get(&id)
             .is_some_and(|s| s.splits_stash.is_none());
 
@@ -106,8 +106,8 @@ impl crate::app::Editor {
                 .buffer
                 .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
             self.buffers.insert(buf, state);
-            // Skip `attach_buffer_to_active_session` — at this
-            // point `active_session` is still the outgoing one.
+            // Skip `attach_buffer_to_active_window` — at this
+            // point `active_window` is still the outgoing one.
             // We attach to the incoming session below, after the
             // active pointer moves.
             self.event_logs
@@ -136,7 +136,7 @@ impl crate::app::Editor {
             SplitManager::new(BufferId(usize::MAX)),
         );
         let outgoing_view_states = std::mem::take(&mut self.split_view_states);
-        if let Some(outgoing) = self.sessions.get_mut(&previous_id) {
+        if let Some(outgoing) = self.windows.get_mut(&previous_id) {
             outgoing.file_explorer_stash = outgoing_explorer;
             outgoing.panel_ids_stash = outgoing_panel_ids;
             outgoing.lsp_stash = outgoing_lsp;
@@ -144,12 +144,12 @@ impl crate::app::Editor {
             outgoing.splits_stash = Some((outgoing_splits, outgoing_view_states));
         }
 
-        self.active_session = id;
+        self.active_window = id;
         self.working_dir = new_root;
 
         // Restore the incoming session's stashed state. Buffers,
         // file explorer, LSP set, mtime cache.
-        if let Some(incoming) = self.sessions.get_mut(&id) {
+        if let Some(incoming) = self.windows.get_mut(&id) {
             self.file_explorer = incoming.file_explorer_stash.take();
             self.panel_ids = std::mem::take(&mut incoming.panel_ids_stash);
             self.lsp = incoming.lsp_stash.take();
@@ -166,7 +166,7 @@ impl crate::app::Editor {
         if let Some((buf, mgr, vs)) = fresh_layout {
             self.split_manager = mgr;
             self.split_view_states = vs;
-            if let Some(s) = self.sessions.get_mut(&id) {
+            if let Some(s) = self.windows.get_mut(&id) {
                 s.buffers.insert(buf);
             }
         }
@@ -189,12 +189,12 @@ impl crate::app::Editor {
     /// explorer rebuilds and LSP boot still happen on first dive.
     /// The API exists so callers don't have to be rewritten when
     /// eager warm-up wires up later.
-    pub fn prewarm_session(&mut self, id: SessionId) {
-        if id == self.active_session {
+    pub fn prewarm_window(&mut self, id: WindowId) {
+        if id == self.active_window {
             return;
         }
-        if !self.sessions.contains_key(&id) {
-            tracing::warn!("prewarm_session: unknown session id {id}");
+        if !self.windows.contains_key(&id) {
+            tracing::warn!("prewarm_window: unknown session id {id}");
         }
         // Placeholder for eager warm-up of file_explorer / LSP.
     }
@@ -202,9 +202,9 @@ impl crate::app::Editor {
     /// Attach a buffer to the active session's membership set.
     /// Called from every `Editor.buffers.insert` site so the
     /// `Session.buffers` field stays in sync. Idempotent.
-    pub(crate) fn attach_buffer_to_active_session(&mut self, buffer_id: fresh_core::BufferId) {
-        let id = self.active_session;
-        if let Some(s) = self.sessions.get_mut(&id) {
+    pub(crate) fn attach_buffer_to_active_window(&mut self, buffer_id: fresh_core::BufferId) {
+        let id = self.active_window;
+        if let Some(s) = self.windows.get_mut(&id) {
             s.buffers.insert(buffer_id);
         }
     }
@@ -212,8 +212,8 @@ impl crate::app::Editor {
     /// Detach a buffer from every session's membership set.
     /// Called from buffer-close sites. Cheap when the buffer was
     /// only attached to one session (the common case).
-    pub(crate) fn detach_buffer_from_all_sessions(&mut self, buffer_id: fresh_core::BufferId) {
-        for s in self.sessions.values_mut() {
+    pub(crate) fn detach_buffer_from_all_windows(&mut self, buffer_id: fresh_core::BufferId) {
+        for s in self.windows.values_mut() {
             s.buffers.remove(&buffer_id);
         }
     }
@@ -221,23 +221,23 @@ impl crate::app::Editor {
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch
     /// to a different session first. Refuses to close the base
-    /// session (`SessionId(1)`) — that's the editor's anchor.
+    /// session (`WindowId(1)`) — that's the editor's anchor.
     ///
     /// Returns `true` on success, `false` on rejection.
-    pub fn close_session(&mut self, id: SessionId) -> bool {
-        if id == SessionId(1) {
-            tracing::warn!("close_session: refusing to close the base session (id 1)");
+    pub fn close_window(&mut self, id: WindowId) -> bool {
+        if id == WindowId(1) {
+            tracing::warn!("close_window: refusing to close the base session (id 1)");
             return false;
         }
-        if id == self.active_session {
+        if id == self.active_window {
             tracing::warn!(
-                "close_session: refusing to close the active session (id {id}); \
+                "close_window: refusing to close the active session (id {id}); \
                  switch first via setActiveSession"
             );
             return false;
         }
-        if self.sessions.remove(&id).is_none() {
-            tracing::warn!("close_session: unknown session id {id}");
+        if self.windows.remove(&id).is_none() {
+            tracing::warn!("close_window: unknown session id {id}");
             return false;
         }
 

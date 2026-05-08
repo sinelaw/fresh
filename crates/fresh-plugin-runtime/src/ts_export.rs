@@ -22,7 +22,7 @@ use fresh_core::api::{
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SessionInfo,
+    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, WindowInfo,
     SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan,
     ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
 };
@@ -46,7 +46,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
 
         // Core types
         "BufferInfo" => Some(BufferInfo::decl(&cfg)),
-        "SessionInfo" => Some(SessionInfo::decl(&cfg)),
+        "WindowInfo" => Some(WindowInfo::decl(&cfg)),
         "CursorInfo" => Some(CursorInfo::decl(&cfg)),
         "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
         "KeyEventPayload" => Some(KeyEventPayload::decl(&cfg)),
@@ -222,7 +222,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "PromptSuggestion",               // Used by plugins for prompt suggestions
     "DirEntry",                       // Used by plugins for directory entries
     "BufferInfo",                     // Used by listBuffers, getBufferInfo
-    "SessionInfo",                    // Used by listSessions
+    "WindowInfo",                    // Used by listWindows
     "JsDiagnostic",                   // Used by getAllDiagnostics
     "JsRange",                        // Used by JsDiagnostic
     "JsPosition",                     // Used by JsRange
@@ -674,7 +674,7 @@ mod tests {
     fn test_get_type_decl_returns_all_expected_types() {
         let expected_types = vec![
             "BufferInfo",
-            "SessionInfo",
+            "WindowInfo",
             "CursorInfo",
             "ViewportInfo",
             "KeyEventPayload",

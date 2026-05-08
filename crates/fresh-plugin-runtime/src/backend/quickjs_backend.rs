@@ -1436,7 +1436,7 @@ impl JsEditorApi {
         self.command_sender
             .send(PluginCommand::OpenFileInBackground {
                 path: PathBuf::from(path),
-                session_id: session_id.0.map(fresh_core::SessionId),
+                session_id: session_id.0.map(fresh_core::WindowId),
             })
             .is_ok()
     }
@@ -3367,20 +3367,20 @@ impl JsEditorApi {
     /// already active. Errors (id not found) are logged on the
     /// editor side; the JS caller can verify by reading
     /// `activeSession()` after.
-    pub fn set_active_session(&self, id: u64) -> bool {
+    pub fn set_active_window(&self, id: u64) -> bool {
         self.command_sender
             .send(PluginCommand::SetActiveSession {
-                id: fresh_core::SessionId(id),
+                id: fresh_core::WindowId(id),
             })
             .is_ok()
     }
 
     /// Close session `id`. Refuses to close the active session or
     /// the base session (id 1). Logs and no-ops on failure.
-    pub fn close_session(&self, id: u64) -> bool {
+    pub fn close_window(&self, id: u64) -> bool {
         self.command_sender
             .send(PluginCommand::CloseSession {
-                id: fresh_core::SessionId(id),
+                id: fresh_core::WindowId(id),
             })
             .is_ok()
     }
@@ -3388,10 +3388,10 @@ impl JsEditorApi {
     /// Eagerly initialise an inactive session's per-session state
     /// (file tree walk, ignore matcher, etc.) without diving.
     /// No-op for the active session or unknown id.
-    pub fn prewarm_session(&self, id: u64) -> bool {
+    pub fn prewarm_window(&self, id: u64) -> bool {
         self.command_sender
             .send(PluginCommand::PrewarmSession {
-                id: fresh_core::SessionId(id),
+                id: fresh_core::WindowId(id),
             })
             .is_ok()
     }
@@ -3449,7 +3449,7 @@ impl JsEditorApi {
         let sid = if id == 0 {
             None
         } else {
-            Some(fresh_core::SessionId(id))
+            Some(fresh_core::WindowId(id))
         };
         self.command_sender
             .send(PluginCommand::PreviewSessionInRect { id: sid })
@@ -3466,24 +3466,24 @@ impl JsEditorApi {
 
     /// All editor sessions, sorted by id (creation order). Always
     /// non-empty (the base session is always present).
-    #[plugin_api(ts_return = "SessionInfo[]")]
+    #[plugin_api(ts_return = "WindowInfo[]")]
     pub fn list_sessions<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-        let sessions: Vec<fresh_core::api::SessionInfo> = self
+        let sessions: Vec<fresh_core::api::WindowInfo> = self
             .state_snapshot
             .read()
-            .map(|s| s.sessions.clone())
+            .map(|s| s.windows.clone())
             .unwrap_or_default();
         rquickjs_serde::to_value(ctx, &sessions).map_err(|e| {
-            rquickjs::Error::new_from_js_message("serialize", "SessionInfo", &e.to_string())
+            rquickjs::Error::new_from_js_message("serialize", "WindowInfo", &e.to_string())
         })
     }
 
     /// The currently active session id. Always present in
     /// `listSessions()`.
-    pub fn active_session(&self) -> u64 {
+    pub fn active_window(&self) -> u64 {
         self.state_snapshot
             .read()
-            .map(|s| s.active_session_id.0)
+            .map(|s| s.active_window_id.0)
             .unwrap_or(1)
     }
 
@@ -8032,7 +8032,7 @@ mod tests {
         let activate = rx.try_recv().unwrap();
         match activate {
             fresh_core::api::PluginCommand::SetActiveSession { id } => {
-                assert_eq!(id, fresh_core::SessionId(7));
+                assert_eq!(id, fresh_core::WindowId(7));
             }
             other => panic!("Expected SetActiveSession, got {:?}", other),
         }
@@ -8040,14 +8040,14 @@ mod tests {
         let close = rx.try_recv().unwrap();
         match close {
             fresh_core::api::PluginCommand::CloseSession { id } => {
-                assert_eq!(id, fresh_core::SessionId(3));
+                assert_eq!(id, fresh_core::WindowId(3));
             }
             other => panic!("Expected CloseSession, got {:?}", other),
         }
     }
 
     /// `editor.listSessions()` reads from the state snapshot and
-    /// returns `SessionInfo` objects shaped for plugin consumption.
+    /// returns `WindowInfo` objects shaped for plugin consumption.
     /// `editor.activeSession()` returns the snapshot's active id.
     #[test]
     fn test_api_list_sessions_reads_snapshot() {
@@ -8057,18 +8057,18 @@ mod tests {
         {
             let mut state = state_snapshot.write().unwrap();
             state.sessions = vec![
-                fresh_core::api::SessionInfo {
-                    id: fresh_core::SessionId(1),
+                fresh_core::api::WindowInfo {
+                    id: fresh_core::WindowId(1),
                     label: "main".into(),
                     root: std::path::PathBuf::from("/repo"),
                 },
-                fresh_core::api::SessionInfo {
-                    id: fresh_core::SessionId(2),
+                fresh_core::api::WindowInfo {
+                    id: fresh_core::WindowId(2),
                     label: "feat-auth".into(),
                     root: std::path::PathBuf::from("/wt/feat-auth"),
                 },
             ];
-            state.active_session_id = fresh_core::SessionId(2);
+            state.active_session_id = fresh_core::WindowId(2);
         }
 
         let services = Arc::new(fresh_core::services::NoopServiceBridge);

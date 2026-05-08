@@ -26,14 +26,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use fresh_core::SessionId;
+use fresh_core::WindowId;
 
-use super::session::Session;
+use super::window::Window;
 use super::Editor;
 
 /// One session as it appears on disk.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct PersistedSession {
+struct PersistedWindow {
     id: u64,
     label: String,
     root: PathBuf,
@@ -46,16 +46,16 @@ struct PersistedSession {
 
 /// Top-level shape of `.fresh/sessions.json`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct PersistedSessions {
+struct PersistedWindows {
     /// Last active session id at quit time. The loader makes
     /// this session the active one again. If missing or
     /// dangling, falls back to the base session.
     active: u64,
-    /// `next_session_id` at quit time — preserved so newly
+    /// `next_window_id` at quit time — preserved so newly
     /// created sessions after restart don't collide with ids
     /// the user might still see in plugin state.
     next_id: u64,
-    sessions: Vec<PersistedSession>,
+    windows: Vec<PersistedWindow>,
 }
 
 fn sessions_path(working_dir: &Path) -> PathBuf {
@@ -96,11 +96,11 @@ impl Editor {
             return;
         }
 
-        // Sessions.
-        let mut sessions: Vec<PersistedSession> = self
-            .sessions
+        // Windows.
+        let mut windows: Vec<PersistedWindow> = self
+            .windows
             .values()
-            .map(|s| PersistedSession {
+            .map(|s| PersistedWindow {
                 id: s.id.0,
                 label: s.label.clone(),
                 root: s.root.clone(),
@@ -110,11 +110,11 @@ impl Editor {
         // Stable on-disk order — `HashMap` iteration order would
         // make the file diff differently every quit, which is
         // ugly for users who keep `.fresh/` in version control.
-        sessions.sort_by_key(|s| s.id);
-        let envelope = PersistedSessions {
-            active: self.active_session.0,
-            next_id: self.next_session_id,
-            sessions,
+        windows.sort_by_key(|s| s.id);
+        let envelope = PersistedWindows {
+            active: self.active_window.0,
+            next_id: self.next_window_id,
+            windows,
         };
         match serde_json::to_vec_pretty(&envelope) {
             Ok(bytes) => {
@@ -165,7 +165,7 @@ impl Editor {
     }
 
     /// Read `.fresh/sessions.json` + `.fresh/state/*.json` and
-    /// reconstitute `self.sessions` + `self.plugin_global_state`.
+    /// reconstitute `self.windows` + `self.plugin_global_state`.
     /// Idempotent: if no files exist, leaves the editor at the
     /// default single-base-session shape.
     ///
@@ -180,8 +180,8 @@ impl Editor {
         let sessions_p = sessions_path(&working_dir);
         if self.authority.filesystem.exists(&sessions_p) {
             match self.authority.filesystem.read_file(&sessions_p) {
-                Ok(bytes) => match serde_json::from_slice::<PersistedSessions>(&bytes) {
-                    Ok(env) => self.apply_persisted_sessions(env),
+                Ok(bytes) => match serde_json::from_slice::<PersistedWindows>(&bytes) {
+                    Ok(env) => self.apply_persisted_windows(env),
                     Err(e) => {
                         tracing::warn!(
                             "conductor persistence: failed to parse {sessions_p:?}: {e}"
@@ -237,37 +237,37 @@ impl Editor {
         }
     }
 
-    fn apply_persisted_sessions(&mut self, env: PersistedSessions) {
+    fn apply_persisted_windows(&mut self, env: PersistedWindows) {
         // Drop the synthetic default base session — we'll recreate
         // it from disk so its id matches what plugin state may
         // reference. If the persisted set didn't include the
         // current active session's id we still keep the active
         // one (so the user has somewhere to be).
-        let current_active = self.active_session;
-        let preserve_active = !env.sessions.iter().any(|s| s.id == current_active.0);
+        let current_active = self.active_window;
+        let preserve_active = !env.windows.iter().any(|s| s.id == current_active.0);
 
         if !preserve_active {
             // Wipe the seeded default session so we can replace it
             // with the persisted version that has the same id.
-            self.sessions.remove(&current_active);
+            self.windows.remove(&current_active);
         }
 
-        for ps in env.sessions {
-            let id = SessionId(ps.id);
-            let mut s = Session::new(id, ps.label, ps.root);
+        for ps in env.windows {
+            let id = WindowId(ps.id);
+            let mut s = Window::new(id, ps.label, ps.root);
             s.plugin_state = ps.plugin_state;
-            self.sessions.insert(id, s);
+            self.windows.insert(id, s);
         }
 
         // Allocate next from max(persisted next_id, max
         // existing+1) to avoid collisions with the synthetic
         // session above.
-        let max_existing = self.sessions.keys().map(|k| k.0).max().unwrap_or(0);
-        self.next_session_id = env.next_id.max(max_existing + 1);
+        let max_existing = self.windows.keys().map(|k| k.0).max().unwrap_or(0);
+        self.next_window_id = env.next_id.max(max_existing + 1);
 
         // Restore the active id if it's still resolvable.
-        if self.sessions.contains_key(&SessionId(env.active)) {
-            self.active_session = SessionId(env.active);
+        if self.windows.contains_key(&WindowId(env.active)) {
+            self.active_window = WindowId(env.active);
         }
     }
 }

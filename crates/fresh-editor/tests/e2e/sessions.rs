@@ -6,9 +6,9 @@
 //! them silently:
 //!
 //! - The editor boots with exactly one session.
-//! - That session's id is `SessionId(1)` (the "base").
+//! - That session's id is `WindowId(1)` (the "base").
 //! - Its `root` matches `editor.working_dir()` — call sites can swap
-//!   from `working_dir()` to `active_session().root` and read the
+//!   from `working_dir()` to `active_window().root` and read the
 //!   same value.
 //! - Its `label` is non-empty.
 //!
@@ -18,21 +18,21 @@
 //! invariants that have no screen surface yet.
 
 use crate::common::harness::EditorTestHarness;
-use fresh_core::{BufferId, SessionId};
+use fresh_core::{BufferId, WindowId};
 
 #[test]
 fn editor_boots_with_one_base_session() {
     let harness = EditorTestHarness::new(80, 24).unwrap();
     let editor = harness.editor();
     assert_eq!(editor.session_count(), 1, "expected exactly one session");
-    assert_eq!(editor.active_session_id(), SessionId(1));
+    assert_eq!(editor.active_session_id(), WindowId(1));
 }
 
 #[test]
 fn active_session_root_matches_working_dir() {
     let harness = EditorTestHarness::new(80, 24).unwrap();
     let editor = harness.editor();
-    let session = editor.active_session();
+    let session = editor.active_window();
     assert_eq!(
         session.root,
         editor.working_dir(),
@@ -44,11 +44,11 @@ fn active_session_root_matches_working_dir() {
 #[test]
 fn active_session_has_non_empty_label() {
     let harness = EditorTestHarness::new(80, 24).unwrap();
-    let session = harness.editor().active_session();
+    let session = harness.editor().active_window();
     assert!(
         !session.label.is_empty(),
         "session label fell through to empty string; \
-         basename fallback in Session::new is broken"
+         basename fallback in Window::new is broken"
     );
 }
 
@@ -78,7 +78,7 @@ fn open_file_in_background_targets_inactive_session() {
 
     let alpha = harness
         .editor_mut()
-        .create_session_at(project_dir.join("wt-alpha-open"), "alpha".into());
+        .create_window_at(project_dir.join("wt-alpha-open"), "alpha".into());
 
     let active_buffer_before = harness.editor().active_buffer();
 
@@ -130,7 +130,7 @@ fn create_terminal_targets_inactive_session_via_session_id() {
 
     let alpha = harness
         .editor_mut()
-        .create_session_at(project_dir.join("wt-alpha-term"), "alpha".into());
+        .create_window_at(project_dir.join("wt-alpha-term"), "alpha".into());
 
     let active_before = harness.editor().active_session_id();
     let active_buffer_before = harness.editor().active_buffer();
@@ -190,19 +190,19 @@ fn create_session_inserts_with_monotonic_id() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
     let editor = harness.editor_mut();
 
-    let id_a = editor.create_session_at(PathBuf::from("/tmp/wt-a"), "alpha".into());
-    let id_b = editor.create_session_at(PathBuf::from("/tmp/wt-b"), "beta".into());
+    let id_a = editor.create_window_at(PathBuf::from("/tmp/wt-a"), "alpha".into());
+    let id_b = editor.create_window_at(PathBuf::from("/tmp/wt-b"), "beta".into());
 
     assert_eq!(
         id_a,
-        SessionId(2),
+        WindowId(2),
         "first new session should take id 2 (after base)"
     );
-    assert_eq!(id_b, SessionId(3), "ids must be monotonic");
+    assert_eq!(id_b, WindowId(3), "ids must be monotonic");
     assert_eq!(editor.session_count(), 3);
 
     // Active session is unchanged by createSession alone.
-    assert_eq!(editor.active_session_id(), SessionId(1));
+    assert_eq!(editor.active_session_id(), WindowId(1));
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn create_session_falls_back_to_basename_label() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
     let id = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/feat-auth"), String::new());
+        .create_window_at(PathBuf::from("/tmp/feat-auth"), String::new());
 
     let session = harness.editor().session(id).unwrap();
     assert_eq!(
@@ -225,20 +225,20 @@ fn set_active_session_swaps_pointer_and_working_dir() {
     let new_root = PathBuf::from("/tmp/wt-feat-auth");
     let new_id = harness
         .editor_mut()
-        .create_session_at(new_root.clone(), "feat-auth".into());
+        .create_window_at(new_root.clone(), "feat-auth".into());
 
-    harness.editor_mut().set_active_session(new_id);
+    harness.editor_mut().set_active_window(new_id);
 
     assert_eq!(harness.editor().active_session_id(), new_id);
     assert_eq!(
-        harness.editor().active_session().root,
+        harness.editor().active_window().root,
         new_root,
         "active session's root must be the new path"
     );
     assert_eq!(
         harness.editor().working_dir(),
         new_root,
-        "working_dir must follow active_session().root for the migration \
+        "working_dir must follow active_window().root for the migration \
          to be a behaviour-preserving refactor"
     );
 }
@@ -249,7 +249,7 @@ fn set_active_session_unknown_id_is_noop() {
     let original_root = harness.editor().working_dir().to_path_buf();
     let original_active = harness.editor().active_session_id();
 
-    harness.editor_mut().set_active_session(SessionId(99));
+    harness.editor_mut().set_active_window(WindowId(99));
 
     assert_eq!(harness.editor().active_session_id(), original_active);
     assert_eq!(harness.editor().working_dir(), original_root);
@@ -260,16 +260,16 @@ fn close_session_drops_inactive_session() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
     let id = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-feat"), "feat".into());
+        .create_window_at(PathBuf::from("/tmp/wt-feat"), "feat".into());
 
-    let removed = harness.editor_mut().close_session(id);
+    let removed = harness.editor_mut().close_window(id);
 
     assert!(
         removed,
-        "close_session should succeed for an inactive session"
+        "close_window should succeed for an inactive session"
     );
     assert_eq!(harness.editor().session_count(), 1);
-    assert_eq!(harness.editor().active_session_id(), SessionId(1));
+    assert_eq!(harness.editor().active_session_id(), WindowId(1));
 }
 
 #[test]
@@ -277,12 +277,12 @@ fn close_session_refuses_active_session() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
     let id = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-feat"), "feat".into());
-    harness.editor_mut().set_active_session(id);
+        .create_window_at(PathBuf::from("/tmp/wt-feat"), "feat".into());
+    harness.editor_mut().set_active_window(id);
 
-    let removed = harness.editor_mut().close_session(id);
+    let removed = harness.editor_mut().close_window(id);
 
-    assert!(!removed, "close_session must refuse the active session");
+    assert!(!removed, "close_window must refuse the active session");
     assert_eq!(harness.editor().session_count(), 2);
 }
 
@@ -302,9 +302,9 @@ fn dive_swaps_split_tree_and_active_buffer() {
 
     let alpha = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-alpha-splits"), "alpha".into());
+        .create_window_at(PathBuf::from("/tmp/wt-alpha-splits"), "alpha".into());
 
-    harness.editor_mut().set_active_session(alpha);
+    harness.editor_mut().set_active_window(alpha);
     let alpha_active = harness.editor().active_buffer();
     assert_ne!(
         alpha_active, base_active,
@@ -312,7 +312,7 @@ fn dive_swaps_split_tree_and_active_buffer() {
          not inherit the base session's active buffer"
     );
 
-    harness.editor_mut().set_active_session(SessionId(1));
+    harness.editor_mut().set_active_window(WindowId(1));
     assert_eq!(
         harness.editor().active_buffer(),
         base_active,
@@ -320,7 +320,7 @@ fn dive_swaps_split_tree_and_active_buffer() {
          and active buffer"
     );
 
-    harness.editor_mut().set_active_session(alpha);
+    harness.editor_mut().set_active_window(alpha);
     assert_eq!(
         harness.editor().active_buffer(),
         alpha_active,
@@ -340,20 +340,20 @@ fn dive_stashes_and_restores_file_mod_times() {
 
     let alpha = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-alpha-mt"), "alpha".into());
+        .create_window_at(PathBuf::from("/tmp/wt-alpha-mt"), "alpha".into());
 
     let p = PathBuf::from("/tmp/some-file.txt");
     let t = std::time::SystemTime::now();
     harness.editor_mut().insert_mtime_for_test(p.clone(), t);
     assert!(harness.editor().has_mtime_for_test(&p));
 
-    harness.editor_mut().set_active_session(alpha);
+    harness.editor_mut().set_active_window(alpha);
     assert!(
         !harness.editor().has_mtime_for_test(&p),
         "alpha's mtime cache starts empty — base's entry must be stashed"
     );
 
-    harness.editor_mut().set_active_session(SessionId(1));
+    harness.editor_mut().set_active_window(WindowId(1));
     assert!(
         harness.editor().has_mtime_for_test(&p),
         "diving back must restore base's mtime entry from its stash"
@@ -372,20 +372,20 @@ fn dive_stashes_and_restores_lsp_manager() {
 
     let alpha = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-alpha-lsp"), "alpha".into());
+        .create_window_at(PathBuf::from("/tmp/wt-alpha-lsp"), "alpha".into());
 
     // Pretend the base session has LSPs running.
     harness.editor_mut().install_dummy_lsp_for_test();
     assert!(harness.editor().has_lsp_for_test());
 
-    harness.editor_mut().set_active_session(alpha);
+    harness.editor_mut().set_active_window(alpha);
     assert!(
         !harness.editor().has_lsp_for_test(),
         "alpha has no stashed LSP; active slot must be empty so a \
          fresh LspManager spawns rooted at alpha's path on demand"
     );
 
-    harness.editor_mut().set_active_session(SessionId(1));
+    harness.editor_mut().set_active_window(WindowId(1));
     assert!(
         harness.editor().has_lsp_for_test(),
         "diving back must restore the base's stashed LspManager"
@@ -402,7 +402,7 @@ fn dive_stashes_and_restores_panel_ids() {
 
     let alpha = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-alpha-panel"), "alpha".into());
+        .create_window_at(PathBuf::from("/tmp/wt-alpha-panel"), "alpha".into());
 
     // Pretend the base session has a search panel claimed in the dock.
     harness
@@ -410,13 +410,13 @@ fn dive_stashes_and_restores_panel_ids() {
         .insert_panel_id_for_test("search".to_string(), BufferId(42));
     assert!(harness.editor().panel_ids_for_test().contains_key("search"));
 
-    harness.editor_mut().set_active_session(alpha);
+    harness.editor_mut().set_active_window(alpha);
     assert!(
         !harness.editor().panel_ids_for_test().contains_key("search"),
         "alpha's dock starts empty — base's claim must have been stashed away"
     );
 
-    harness.editor_mut().set_active_session(SessionId(1));
+    harness.editor_mut().set_active_window(WindowId(1));
     assert_eq!(
         harness.editor().panel_ids_for_test().get("search").copied(),
         Some(BufferId(42)),
@@ -439,7 +439,7 @@ fn dive_stashes_and_restores_file_explorer_view() {
     // Spawn a side session to dive into.
     let alpha = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-alpha-warm"), "alpha".into());
+        .create_window_at(PathBuf::from("/tmp/wt-alpha-warm"), "alpha".into());
 
     // Force the base session's explorer into a `Some` state by
     // toggling, then pumping async until the lazy build settles.
@@ -458,7 +458,7 @@ fn dive_stashes_and_restores_file_explorer_view() {
 
     // Dive into alpha. Base session's view is stashed; the active
     // explorer slot is None (alpha has never opened one).
-    harness.editor_mut().set_active_session(alpha);
+    harness.editor_mut().set_active_window(alpha);
     assert!(
         harness.editor().file_explorer().is_none(),
         "alpha session has no stashed explorer; active slot \
@@ -466,7 +466,7 @@ fn dive_stashes_and_restores_file_explorer_view() {
     );
 
     // Dive back. Base's stashed view returns.
-    harness.editor_mut().set_active_session(SessionId(1));
+    harness.editor_mut().set_active_window(WindowId(1));
     assert!(
         harness.editor().file_explorer().is_some(),
         "base session's file explorer should be restored from its stash"
@@ -483,8 +483,8 @@ fn opening_a_file_attaches_buffer_to_active_session() {
 
     let alpha = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-alpha-bufs"), "alpha".into());
-    harness.editor_mut().set_active_session(alpha);
+        .create_window_at(PathBuf::from("/tmp/wt-alpha-bufs"), "alpha".into());
+    harness.editor_mut().set_active_window(alpha);
 
     let file_path = project_dir.join("attaches.txt");
     std::fs::write(&file_path, "hello").unwrap();
@@ -497,7 +497,7 @@ fn opening_a_file_attaches_buffer_to_active_session() {
         alpha_set.contains(&buffer_id),
         "buffer must be attached to active session at open time"
     );
-    let base_set = &harness.editor().session(SessionId(1)).unwrap().buffers;
+    let base_set = &harness.editor().session(WindowId(1)).unwrap().buffers;
     assert!(
         !base_set.contains(&buffer_id),
         "buffer must NOT be attached to non-active sessions"
@@ -512,14 +512,14 @@ fn close_session_refuses_base_session() {
     // alive.
     let id = harness
         .editor_mut()
-        .create_session_at(PathBuf::from("/tmp/wt-feat"), "feat".into());
-    harness.editor_mut().set_active_session(id);
+        .create_window_at(PathBuf::from("/tmp/wt-feat"), "feat".into());
+    harness.editor_mut().set_active_window(id);
 
-    let removed = harness.editor_mut().close_session(SessionId(1));
+    let removed = harness.editor_mut().close_window(WindowId(1));
 
     assert!(
         !removed,
-        "close_session must refuse the base session even when not active"
+        "close_window must refuse the base session even when not active"
     );
     assert_eq!(harness.editor().session_count(), 2);
 }

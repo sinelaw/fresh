@@ -846,23 +846,23 @@ impl Editor {
             // Boot with a single base session rooted at the process
             // cwd. Multi-session support arrives in a follow-up
             // commit; for now this exists so call sites can already
-            // read `editor.active_session().root` instead of
+            // read `editor.active_window().root` instead of
             // `editor.working_dir`, and the eventual switch to a
             // real active pointer is invisible to them.
-            sessions: {
+            windows: {
                 let mut m = HashMap::new();
                 m.insert(
-                    fresh_core::SessionId(1),
-                    crate::app::session::Session::new(
-                        fresh_core::SessionId(1),
+                    fresh_core::WindowId(1),
+                    crate::app::window::Window::new(
+                        fresh_core::WindowId(1),
                         "",
                         working_dir.clone(),
                     ),
                 );
                 m
             },
-            active_session: fresh_core::SessionId(1),
-            next_session_id: 2,
+            active_window: fresh_core::WindowId(1),
+            next_window_id: 2,
             position_history: PositionHistory::new(),
             in_navigation: false,
             next_lsp_request_id: 0,
@@ -1007,7 +1007,7 @@ impl Editor {
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             last_path_change_for_test: None,
             last_watch_response_for_test: None,
-            preview_session_id: None,
+            preview_window_id: None,
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
