@@ -176,25 +176,33 @@ impl TerminalState {
     ///
     /// Used by the `terminal_output` plugin hook so listeners (e.g.
     /// the Conductor agent state machine) can match prompt patterns
-    /// without a separate readback API. Trailing spaces from the
-    /// terminal grid are trimmed (alacritty pads each row to the full
-    /// column count); spaces inside the visible run are preserved
-    /// because prompts like `"... (Y/n): "` end in a space that is
-    /// *not* grid padding — it's typed by the program.
+    /// without a separate readback API. Returns cells `[0..cursor_col)`
+    /// of the cursor row so a legitimate trailing space typed by the
+    /// program (typical for prompts like `"... (Y/n): "`) is
+    /// preserved while the unwritten right-edge padding past the
+    /// cursor is dropped. Falls back to trimming the whole row when
+    /// the cursor has wrapped to the start of a freshly-allocated
+    /// next row (col == 0): the visible content lives one row up,
+    /// and the trailing space ambiguity doesn't apply (a wrap means
+    /// the line was full).
     pub fn last_visible_line(&self) -> String {
-        let (_col, row) = self.cursor_position();
+        let (col, row) = self.cursor_position();
         if row >= self.rows {
             return String::new();
         }
+        if col == 0 && row > 0 {
+            // Cursor wrapped to a fresh row; the meaningful prompt
+            // content sits on the row above. Take that row whole and
+            // strip any right-edge padding from it.
+            let cells = self.get_line(row - 1);
+            let mut s: String = cells.iter().map(|cell| cell.c).collect();
+            let trimmed_len = s.trim_end_matches(' ').len();
+            s.truncate(trimmed_len);
+            return s;
+        }
         let cells = self.get_line(row);
-        let mut s: String = cells.iter().map(|cell| cell.c).collect();
-        // Strip alacritty's right-edge padding (the row is always
-        // `cols` cells wide; unused cells are spaces). We keep
-        // intra-line spaces by only trimming the trailing run that
-        // extends to the grid edge.
-        let trimmed_len = s.trim_end_matches(' ').len();
-        s.truncate(trimmed_len);
-        s
+        let take = (col as usize).min(cells.len());
+        cells.iter().take(take).map(|cell| cell.c).collect()
     }
 
     /// Get a line of content for rendering
