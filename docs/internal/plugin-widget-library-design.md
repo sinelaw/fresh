@@ -58,7 +58,7 @@ clean, 70 widget tests passing, tsc clean, interactive tmux-verified.
 
 | Type | Notes |
 |---|---|
-| `WidgetSpec` (enum, tagged) | Variants: `Row`, `Col`, `HintBar`, `Toggle`, `Button`, `TextInput`, `List`, `Spacer`, `Raw`. |
+| `WidgetSpec` (enum, tagged) | Variants: `Row`, `Col`, `HintBar`, `Toggle`, `Button`, `TextInput`, `TextArea`, `List`, `Tree`, `Spacer`, `Raw`. |
 | `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` | Shapes referenced by the spec / IPC. |
 | `PluginCommand::MountWidgetPanel`, `UpdateWidgetPanel`, `UnmountWidgetPanel` | Spec lifecycle. |
 | `PluginCommand::WidgetCommand { panel_id, action }` | Routes a `WidgetAction` (key dispatch / focus / activate / select-move / text-input). |
@@ -78,7 +78,7 @@ clean, 70 widget tests passing, tsc clean, interactive tmux-verified.
 
 | File | Exports |
 |---|---|
-| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `textInput`, `list`, `spacer`, `flexSpacer`, `raw`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar`. `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `unmount`. |
+| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `textInput`, `textArea`, `list`, `tree`, `treeNode`, `spacer`, `flexSpacer`, `raw`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar`. `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `unmount`. |
 | `index.ts` | Re-exports the above. |
 | `fresh.d.ts` | Generated. `editor.mountWidgetPanel`, `updateWidgetPanel`, `unmountWidgetPanel`, `widgetCommand`, `widgetMutate`. `WidgetSpec`, `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` types. `widget_event` hook. |
 
@@ -120,17 +120,24 @@ per-spec `theme` override map yet.
 
 In rough decreasing user impact:
 
-1. **`Tree` widget.** Search_replace's match list is a tree (file ▶
-   matches) flattened to a `List` today; users lost click-to-expand
-   and Right-arrow-to-expand. Many other plugins want the same shape
-   (`audit_mode.ts`, file-explorer, find_references).
-2. **Targeted spec subtree replacement (`WidgetMutation::SetSpec`).**
-   The fast-path mutators handle the field-level cases; replacing one
-   subtree (e.g. swapping a toolbar's children) still needs a full
-   `updateWidgetPanel`.
-3. **`Tabs` / `Group` widget.** `git_log.ts` toolbar, settings
-   categories.
-4. **`TextArea` widget.** Multi-line input. Composer plugins.
+1. ~~**`Tree` widget.**~~ Shipped. `search_replace.ts` migrated to
+   `tree(...)` with host-owned expansion + scroll + selection.
+2. ~~**Targeted spec subtree replacement (`WidgetMutation::SetSpec`).**~~
+   Skipped. The reconciler already preserves instance state across
+   a full `panel.set(spec)` re-emit, so a SetSpec fast path is a
+   pure IPC-byte optimization with no UX consequence; revisit only
+   if profiling on a large-spec panel shows it matters.
+3. ~~**`Tabs` / `Group` widget.**~~ Skipped — no in-tree consumer.
+   `git_log.ts`'s "tab" toolbar is a strip of action buttons
+   (Tab/RET/y/r/q), not a UI tab switcher; the buffer-group panes
+   are managed by the editor's panel manager outside the widget
+   runtime. Revisit when a real consumer appears.
+4. ~~**`TextArea` widget.**~~ Shipped. Multi-line input with
+   host-owned value, cursor, and vertical scroll; `Enter` inserts
+   a newline (form-style "Enter submits" remains the `TextInput`
+   default), `Up`/`Down` walk lines preserving column,
+   `Home`/`End` jump within the current line. Smart-key dispatch
+   table extended in `WidgetAction::Key` doc.
 5. **`Prompt` / `Layer` / Compositor (§7 in this doc).** The big
    architectural piece. Today `Popup`, `Prompt`, `showActionPopup`,
    hover tooltips, completion popups all live in separate
