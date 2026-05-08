@@ -70,16 +70,13 @@ pub struct Window {
     /// the new window's tree (or none, if it hasn't been opened yet).
     pub file_explorer: Option<FileTreeView>,
 
-    /// **Stash.** Split-tree layout (split tree + per-leaf view
-    /// state — scroll, cursor positions, focused buffer in each
-    /// leaf) when this window is *inactive*. The active window's
-    /// layout lives on `Editor.split_manager` and
-    /// `Editor.split_view_states`; on dive we move all of it.
-    ///
-    /// `None` means "this window has never been activated and so
-    /// has no layout yet"; the dive code creates a fresh layout
-    /// rooted at a new empty unnamed buffer for that window.
-    pub splits_stash: Option<(SplitManager, HashMap<LeafId, SplitViewState>)>,
+    /// Split-tree layout (split tree + per-leaf view state — scroll,
+    /// cursor positions, focused buffer in each leaf). `None` means
+    /// "this window has never been activated and so has no layout
+    /// yet"; the dive code creates a fresh layout rooted at a new
+    /// empty unnamed buffer for that window. The base window has
+    /// this populated at editor init.
+    pub splits: Option<(SplitManager, HashMap<LeafId, SplitViewState>)>,
 
     /// Polling-based mtime cache for auto-revert. Auto-revert only
     /// fires for the active window's files; inactive windows' mtimes
@@ -130,6 +127,28 @@ pub struct Window {
 }
 
 impl Window {
+    /// Mutable handle to this window's split tree (or `None` when
+    /// the layout hasn't been seeded yet). Useful at sites where
+    /// the caller already has a `&mut Window` from a direct
+    /// `self.windows.get_mut(&id)` and wants the split layout
+    /// without going back through Editor's accessor.
+    pub fn split_manager_mut(&mut self) -> Option<&mut SplitManager> {
+        self.splits.as_mut().map(|(mgr, _)| mgr)
+    }
+
+    /// Mutable handle to this window's per-leaf view state map.
+    pub fn split_view_states_mut(&mut self) -> Option<&mut HashMap<LeafId, SplitViewState>> {
+        self.splits.as_mut().map(|(_, vs)| vs)
+    }
+
+    /// Both halves of the split layout at once. Returns `None` if
+    /// the layout hasn't been seeded yet.
+    pub fn splits_mut(
+        &mut self,
+    ) -> Option<(&mut SplitManager, &mut HashMap<LeafId, SplitViewState>)> {
+        self.splits.as_mut().map(|(m, vs)| (m, vs))
+    }
+
     /// Construct a window.
     ///
     /// `root` is taken as-is (the caller is responsible for
@@ -153,7 +172,7 @@ impl Window {
             plugin_state: HashMap::new(),
             lsp: None,
             panel_ids: HashMap::new(),
-            splits_stash: None,
+            splits: None,
             buffers: HashSet::new(),
             layout_cache: WindowLayoutCache::default(),
         }

@@ -140,7 +140,11 @@ impl Editor {
         use crate::view::composite_view::CompositeViewState;
 
         let visible = self
-            .split_manager
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
             .get_visible_buffers(ratatui::layout::Rect {
                 x: 0,
                 y: 0,
@@ -247,8 +251,20 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Register with the active split so it appears in tabs
-        let split_id = self.split_manager.active_split();
-        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        let split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+        {
             view_state.add_buffer(buffer_id);
         }
 
@@ -299,13 +315,25 @@ impl Editor {
 
     /// Navigate to the next hunk using the active split.
     pub fn composite_next_hunk_active(&mut self, buffer_id: BufferId) -> bool {
-        let split_id = self.split_manager.active_split();
+        let split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         self.composite_next_hunk(split_id, buffer_id)
     }
 
     /// Navigate to the previous hunk using the active split.
     pub fn composite_prev_hunk_active(&mut self, buffer_id: BufferId) -> bool {
-        let split_id = self.split_manager.active_split();
+        let split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         self.composite_prev_hunk(split_id, buffer_id)
     }
 
@@ -398,7 +426,11 @@ impl Editor {
         const COMPOSITE_HEADER_HEIGHT: u16 = 1;
         const DEFAULT_VIEWPORT_HEIGHT: usize = 24;
 
-        self.split_view_states
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.viewport.height.saturating_sub(COMPOSITE_HEADER_HEIGHT) as usize)
             .unwrap_or(DEFAULT_VIEWPORT_HEIGHT)
@@ -785,8 +817,20 @@ impl Editor {
                 crate::model::buffer::LineNumber::Absolute(display_line);
         }
         // Update cursor position in SplitViewState
-        let active_split = self.split_manager.active_split();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             view_state.cursors.primary_mut().position = cursor_column;
         }
     }
@@ -837,7 +881,13 @@ impl Editor {
     ) -> Option<bool> {
         use crate::input::keybindings::Action;
 
-        let split_id = self.split_manager.active_split();
+        let split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
 
         // Verify this is a valid composite buffer
         let _composite = self.composite_buffers.get(&buffer_id)?;

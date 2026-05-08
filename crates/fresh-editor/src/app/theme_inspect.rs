@@ -50,7 +50,13 @@ impl Editor {
 
     /// Inspect the theme key at the current cursor's screen position and open the theme editor.
     pub(super) fn inspect_theme_at_cursor(&mut self) {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let active_buffer = self.active_buffer();
 
         // Gather layout info and cursor from split_view_states (immutable borrows)
@@ -66,7 +72,14 @@ impl Editor {
                     .get(buffer_id)
                     .map(|s| s.margins.left_total_width() as u16)
                     .unwrap_or(0);
-                let vs = match self.split_view_states.get(split_id) {
+                let vs = match self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
+                    .get(split_id)
+                {
                     Some(vs) => vs,
                     None => return,
                 };
@@ -80,7 +93,13 @@ impl Editor {
             Some(s) => s,
             None => return,
         };
-        let viewport = &self.split_view_states[&active_split].viewport;
+        let viewport = &self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")[&active_split]
+            .viewport;
         let cursor_rel = viewport.cursor_screen_position(&mut state.buffer, &primary_cursor);
 
         let adjusted_rect =

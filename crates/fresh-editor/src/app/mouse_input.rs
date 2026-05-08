@@ -585,7 +585,11 @@ impl Editor {
 
         // Get compose width for this split
         let compose_width = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .and_then(|vs| vs.compose_width);
 
@@ -1103,14 +1107,22 @@ impl Editor {
         // Get fallback from SplitViewState viewport
         let leaf_id = split_id;
         let fallback = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&leaf_id)
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
         // Get compose width for this split
         let compose_width = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
@@ -1133,7 +1145,11 @@ impl Editor {
 
             // Move cursor to clicked position first
             let primary_cursor_id = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&leaf_id)
                 .map(|vs| vs.cursors.primary_id())
                 .unwrap_or(CursorId(0));
@@ -1150,8 +1166,12 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
+            let active_id = self.active_window;
             if let Some(cursors) = self
-                .split_view_states
+                .windows
+                .get_mut(&active_id)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
                 .get_mut(&leaf_id)
                 .map(|vs| &mut vs.cursors)
             {
@@ -1164,7 +1184,11 @@ impl Editor {
 
         // Set up drag state so subsequent drag events extend selection word-by-word
         if let Some(cursor) = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&leaf_id)
             .map(|vs| vs.cursors.primary())
         {
@@ -1242,14 +1266,22 @@ impl Editor {
 
         let leaf_id = split_id;
         let fallback = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&leaf_id)
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
         // Get compose width for this split
         let compose_width = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
@@ -1272,7 +1304,11 @@ impl Editor {
 
             // Move cursor to clicked position first
             let primary_cursor_id = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&leaf_id)
                 .map(|vs| vs.cursors.primary_id())
                 .unwrap_or(CursorId(0));
@@ -1289,8 +1325,12 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
+            let active_id = self.active_window;
             if let Some(cursors) = self
-                .split_view_states
+                .windows
+                .get_mut(&active_id)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
                 .get_mut(&leaf_id)
                 .map(|vs| &mut vs.cursors)
             {
@@ -1761,7 +1801,14 @@ impl Editor {
                 if let Some(vs) = self.composite_view_states.get(&(split_id, buffer_id)) {
                     self.mouse_state.drag_start_composite_scroll_row = Some(vs.scroll_row);
                 }
-            } else if let Some(vs) = self.split_view_states.get(&split_id) {
+            } else if let Some(vs) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+            {
                 self.mouse_state.drag_start_top_byte = Some(vs.viewport.top_byte);
                 self.mouse_state.drag_start_view_line_offset =
                     Some(vs.viewport.top_view_line_offset);
@@ -1820,7 +1867,14 @@ impl Editor {
         self.mouse_state.dragging_horizontal_scrollbar = Some(split_id);
         if is_on_thumb {
             self.mouse_state.drag_start_hcol = Some(col);
-            if let Some(vs) = self.split_view_states.get(&split_id) {
+            if let Some(vs) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+            {
                 self.mouse_state.drag_start_left_column = Some(vs.viewport.left_column);
             }
         } else {
@@ -1833,7 +1887,13 @@ impl Editor {
             } else {
                 0.0
             };
-            if let Some(vs) = self.split_view_states.get_mut(&split_id) {
+            if let Some(vs) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+            {
                 let visible_width = vs.viewport.width as usize;
                 let max_scroll = max_content_width.saturating_sub(visible_width);
                 let target_col = (ratio * max_scroll as f64).round() as usize;
@@ -1920,7 +1980,7 @@ impl Editor {
                 self.mouse_state.dragging_separator = Some((*split_id, *direction));
                 self.mouse_state.drag_start_position = Some((col, row));
                 let ratio = self
-                    .split_manager
+                    .split_manager_mut()
                     .get_ratio((*split_id).into())
                     .or_else(|| self.grouped_split_ratio(*split_id));
                 if let Some(ratio) = ratio {
@@ -1942,13 +2002,32 @@ impl Editor {
             })
             .map(|(split_id, _, _, _)| *split_id);
         if let Some(split_id) = close_split_id {
-            if let Err(e) = self.split_manager.close_split(split_id) {
+            if let Err(e) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .close_split(split_id)
+            {
                 self.set_status_message(
                     t!("error.cannot_close_split", error = e.to_string()).to_string(),
                 );
             } else {
-                let new_active = self.split_manager.active_split();
-                if let Some(buffer_id) = self.split_manager.buffer_for_split(new_active) {
+                let new_active = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
+                if let Some(buffer_id) = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .buffer_for_split(new_active)
+                {
                     self.set_active_buffer(buffer_id);
                 }
                 self.set_status_message(t!("split.closed").to_string());
@@ -1962,7 +2041,13 @@ impl Editor {
             },
         );
         if maximize_hit {
-            match self.split_manager.toggle_maximize() {
+            match self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .toggle_maximize()
+            {
                 Ok(maximized) => {
                     let msg = if maximized {
                         t!("split.maximized").to_string()
@@ -2020,7 +2105,11 @@ impl Editor {
             }
             TabHit::TabName(target) => {
                 let direction = self
-                    .split_view_states
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(&split_id)
                     .map(|vs| {
                         let open = &vs.open_buffers;
@@ -2053,14 +2142,26 @@ impl Editor {
             }
             TabHit::ScrollLeft => {
                 self.set_status_message("ScrollLeft clicked!".to_string());
-                if let Some(vs) = self.split_view_states.get_mut(&split_id) {
+                if let Some(vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                {
                     vs.tab_scroll_offset = vs.tab_scroll_offset.saturating_sub(10);
                 }
                 Some(Ok(()))
             }
             TabHit::ScrollRight => {
                 self.set_status_message("ScrollRight clicked!".to_string());
-                if let Some(vs) = self.split_view_states.get_mut(&split_id) {
+                if let Some(vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                {
                     vs.tab_scroll_offset = vs.tab_scroll_offset.saturating_add(10);
                 }
                 Some(Ok(()))
@@ -2131,7 +2232,12 @@ impl Editor {
                         // Relative drag from thumb - move proportionally to mouse offset
                         // Use thumb size to compute the correct ratio so thumb tracks with mouse
                         let col_offset = (col as i32) - (drag_start_hcol as i32);
-                        if let Some(view_state) = self.split_view_states.get_mut(&dragging_split_id)
+                        if let Some(view_state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .and_then(|w| w.split_view_states_mut())
+                            .expect("active window must have a populated split layout")
+                            .get_mut(&dragging_split_id)
                         {
                             let visible_width = view_state.viewport.width as usize;
                             let max_scroll = max_content_width.saturating_sub(visible_width);
@@ -2152,7 +2258,12 @@ impl Editor {
                         let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
                         let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
 
-                        if let Some(view_state) = self.split_view_states.get_mut(&dragging_split_id)
+                        if let Some(view_state) = self
+                            .windows
+                            .get_mut(&self.active_window)
+                            .and_then(|w| w.split_view_states_mut())
+                            .expect("active window must have a populated split layout")
+                            .get_mut(&dragging_split_id)
                         {
                             let visible_width = view_state.viewport.width as usize;
                             let max_scroll = max_content_width.saturating_sub(visible_width);
@@ -2317,14 +2428,22 @@ impl Editor {
 
         // Get fallback from SplitViewState viewport
         let fallback = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&leaf_id)
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
         // Get compose width for this split
         let compose_width = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
@@ -2367,7 +2486,11 @@ impl Editor {
             };
 
             let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&leaf_id)
                 .map(|vs| {
                     let cursor = vs.cursors.primary();
@@ -2398,8 +2521,12 @@ impl Editor {
             if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
+            let active_id = self.active_window;
             if let Some(cursors) = self
-                .split_view_states
+                .windows
+                .get_mut(&active_id)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
                 .get_mut(&leaf_id)
                 .map(|vs| &mut vs.cursors)
             {
@@ -2487,8 +2614,20 @@ impl Editor {
             // split tree or inside a stashed Grouped subtree (buffer group
             // panels like the theme editor); try the main tree first and
             // fall back to the grouped subtrees.
-            if self.split_manager.get_ratio(split_id.into()).is_some() {
-                self.split_manager.set_ratio(split_id, new_ratio);
+            if self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .get_ratio(split_id.into())
+                .is_some()
+            {
+                self.windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_manager_mut())
+                    .expect("active window must have a populated split layout")
+                    .set_ratio(split_id, new_ratio);
             } else {
                 self.set_grouped_split_ratio(split_id, new_ratio);
             }

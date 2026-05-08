@@ -160,7 +160,13 @@ impl Editor {
         }
 
         // Propagate editor config to all split and buffer view states
-        for view_state in self.split_view_states.values_mut() {
+        for view_state in self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .values_mut()
+        {
             view_state.show_line_numbers = self.config.editor.line_numbers;
             for buf_state in view_state.keyed_states.values_mut() {
                 buf_state.rulers = self.config.editor.rulers.clone();

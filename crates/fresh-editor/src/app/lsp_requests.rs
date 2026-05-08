@@ -273,9 +273,22 @@ impl Editor {
                 new_sticky_column: 0,
             };
 
-            let split_id = self.split_manager.active_split();
+            let split_id = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+                let cursors = &mut self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                    .unwrap()
+                    .cursors;
                 state.apply(cursors, &event);
             }
             // Without this the cursor lands at the definition but the
@@ -2123,12 +2136,23 @@ impl Editor {
         // Get cursor_id for this buffer from split view state
         let cursor_id = {
             let split_id = self
-                .split_manager
+                .split_manager_mut()
                 .splits_for_buffer(buffer_id)
                 .into_iter()
                 .next()
-                .unwrap_or_else(|| self.split_manager.active_split());
-            self.split_view_states
+                .unwrap_or_else(|| {
+                    self.windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .active_split()
+                });
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&split_id)
                 .map(|vs| vs.cursors.primary_id())
                 .unwrap_or_else(|| self.active_cursors().primary_id())
@@ -2548,20 +2572,39 @@ impl Editor {
         // switch to a read-only accessor that takes `buffer_id` directly
         // rather than mutating tree state.
         let original_active = self.active_buffer();
-        self.split_manager.set_active_buffer_id(buffer_id);
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_active_buffer_id(buffer_id);
         let lsp_changes = self.collect_lsp_changes(&batch_for_lsp);
-        self.split_manager.set_active_buffer_id(original_active);
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_active_buffer_id(original_active);
 
         // Capture old cursor states from split view state
         // Find a split that has this buffer in its keyed_states
         let split_id_for_cursors = self
-            .split_manager
+            .split_manager_mut()
             .splits_for_buffer(buffer_id)
             .into_iter()
             .next()
-            .unwrap_or_else(|| self.split_manager.active_split());
+            .unwrap_or_else(|| {
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split()
+            });
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id_for_cursors)
             .and_then(|vs| vs.keyed_states.get(&buffer_id))
             .map(|bvs| {
@@ -2649,7 +2692,13 @@ impl Editor {
         state.highlighter.invalidate_all();
 
         // Apply new cursor positions to split view state
-        if let Some(vs) = self.split_view_states.get_mut(&split_id_for_cursors) {
+        if let Some(vs) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id_for_cursors)
+        {
             if let Some(bvs) = vs.keyed_states.get_mut(&buffer_id) {
                 for (cursor_id, new_pos, new_anchor) in &new_cursors {
                     if let Some(cursor) = bvs.cursors.get_mut(*cursor_id) {

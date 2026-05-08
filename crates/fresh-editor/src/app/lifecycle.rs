@@ -256,7 +256,13 @@ impl Editor {
         self.terminal_height = height;
 
         // Resize all SplitViewState viewports (viewport is now owned by SplitViewState)
-        for view_state in self.split_view_states.values_mut() {
+        for view_state in self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .values_mut()
+        {
             view_state.viewport.resize(width, height);
         }
 

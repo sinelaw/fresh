@@ -79,7 +79,13 @@ impl super::Editor {
 
         // Allocate a LeafId for the Grouped node itself. This is what the
         // tab bar uses to reference this group (`TabTarget::Group(group_leaf_id)`).
-        let group_leaf_id = LeafId(self.split_manager.allocate_split_id());
+        let group_leaf_id = LeafId(
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .allocate_split_id(),
+        );
 
         // Build the Grouped SplitNode and stash it in the side map.
         let grouped_node = SplitNode::Grouped {
@@ -105,7 +111,11 @@ impl super::Editor {
                 bs.show_line_numbers = false;
                 bs.highlight_current_line = false;
             }
-            self.split_view_states.insert(*leaf_id, vs);
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .insert(*leaf_id, vs);
         }
 
         // Mark all panel buffers as hidden from tabs so they don't appear
@@ -125,7 +135,13 @@ impl super::Editor {
         let hidden_panel_ids: Vec<BufferId> = panel_buffers.values().copied().collect();
         let panel_leaf_ids: std::collections::HashSet<LeafId> =
             panel_splits.values().copied().collect();
-        for (leaf_id, vs) in self.split_view_states.iter_mut() {
+        for (leaf_id, vs) in self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .iter_mut()
+        {
             if panel_leaf_ids.contains(leaf_id) {
                 // The panel's own view state needs its buffer.
                 continue;
@@ -141,8 +157,20 @@ impl super::Editor {
         // Add the group as a tab in the CURRENT split's tab bar and make it
         // the active tab. (The main split tree is untouched — the group's
         // layout lives in `grouped_subtrees` and is dispatched at render time.)
-        let current_split_id = self.split_manager.active_split();
-        if let Some(current_vs) = self.split_view_states.get_mut(&current_split_id) {
+        let current_split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(current_vs) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&current_split_id)
+        {
             current_vs.add_group(group_leaf_id);
             current_vs.set_active_group_tab(group_leaf_id);
             current_vs.focused_group_leaf = Some(active_inner_leaf);
@@ -199,7 +227,12 @@ impl super::Editor {
                 buffer_id: Some(bid),
                 ..
             } => {
-                let split_id = self.split_manager.allocate_split_id();
+                let split_id = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_manager_mut())
+                    .expect("active window must have a populated split layout")
+                    .allocate_split_id();
                 panel_splits.insert(id.clone(), LeafId(split_id));
                 Ok(SplitNode::leaf(*bid, split_id))
             }
@@ -217,7 +250,12 @@ impl super::Editor {
             } => {
                 let first_node = self.build_split_tree(first, panel_splits)?;
                 let second_node = self.build_split_tree(second, panel_splits)?;
-                let split_id = self.split_manager.allocate_split_id();
+                let split_id = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_manager_mut())
+                    .expect("active window must have a populated split layout")
+                    .allocate_split_id();
                 let mut split =
                     SplitNode::split(*direction, first_node, second_node, *ratio, split_id);
                 // Apply fixed sizes from children
@@ -346,7 +384,13 @@ impl super::Editor {
                 self.grouped_subtrees.remove(&group_leaf_id);
                 // Remove the group tab from all splits' tab bars and clear
                 // any active/focused group markers that point at this group.
-                for vs in self.split_view_states.values_mut() {
+                for vs in self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .values_mut()
+                {
                     vs.open_buffers
                         .retain(|t| *t != TabTarget::Group(group_leaf_id));
                     vs.remove_group_from_history(group_leaf_id);
@@ -363,7 +407,11 @@ impl super::Editor {
 
             // Clean up SplitViewState for inner panel leaves
             for split_id in group.panel_splits.values() {
-                self.split_view_states.remove(split_id);
+                self.windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .remove(split_id);
             }
 
             // Close all panel buffers
@@ -375,8 +423,21 @@ impl super::Editor {
 
             // Ensure the active split now has a valid active_target.
             // If it was the group's tab, switch to the first available buffer tab.
-            let active_split = self.split_manager.active_split();
-            if let Some(vs) = self.split_view_states.get(&active_split) {
+            let active_split = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
+            if let Some(vs) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&active_split)
+            {
                 if let Some(first_buf) = vs.buffer_tab_ids().next() {
                     let _ = first_buf; // active_buffer is per-leaf; already set
                 }
@@ -406,15 +467,29 @@ impl super::Editor {
 
         // Find the host split whose open_buffers contains this group tab.
         let host_split = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .iter()
             .find(|(_, vs)| vs.has_group(group_leaf_id))
             .map(|(sid, _)| *sid);
 
         if let Some(host_split) = host_split {
             // Ensure the host split is the active one.
-            self.split_manager.set_active_split(host_split);
-            if let Some(vs) = self.split_view_states.get_mut(&host_split) {
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .set_active_split(host_split);
+            if let Some(vs) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&host_split)
+            {
                 vs.active_group_tab = Some(group_leaf_id);
                 vs.focused_group_leaf = Some(inner_leaf);
             }
@@ -454,19 +529,37 @@ impl super::Editor {
         // to that split first so subsequent keyboard input routes to the
         // group's inner panel rather than the previously-active pane. This
         // mirrors how clicking a buffer tab in another split moves focus.
-        if self.split_manager.active_split() != split_id {
+        if self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split()
+            != split_id
+        {
             self.promote_preview_if_not_in_split(split_id);
             if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
-            self.split_manager.set_active_split(split_id);
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .set_active_split(split_id);
         }
 
         // Record the group as the active-tab and focused inner leaf for
         // this split. The inner leaf is NOT in the main split tree — it
         // only exists inside the stashed Grouped subtree — so focus is
         // routed via `focused_group_leaf` rather than `focus_split`.
-        if let Some(vs) = self.split_view_states.get_mut(&split_id) {
+        if let Some(vs) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+        {
             vs.active_group_tab = Some(group_leaf);
             vs.focused_group_leaf = Some(inner_leaf);
         }

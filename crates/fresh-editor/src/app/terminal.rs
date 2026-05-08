@@ -129,8 +129,15 @@ impl Editor {
         };
 
         // Create a buffer for this terminal, attached to the active split
-        let buffer_id =
-            self.create_terminal_buffer_attached(terminal_id, self.split_manager.active_split());
+        let buffer_id = self.create_terminal_buffer_attached(
+            terminal_id,
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split(),
+        );
 
         // Switch to the terminal buffer
         self.set_active_buffer(buffer_id);
@@ -227,7 +234,13 @@ impl Editor {
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Set up split view state
-        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+        {
             view_state.add_buffer(buffer_id);
             // Terminal buffers should not wrap lines so escape sequences stay intact
             view_state.viewport.line_wrap_enabled = false;
@@ -475,7 +488,13 @@ impl Editor {
         );
 
         // Get visible buffers with their areas
-        let visible_buffers = self.split_manager.get_visible_buffers(editor_area);
+        let visible_buffers = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .get_visible_buffers(editor_area);
 
         // Resize each terminal buffer to match its split content area
         for (_split_id, buffer_id, split_area) in visible_buffers {
@@ -585,9 +604,8 @@ impl Editor {
                     // Terminal buffers should never be considered "modified"
                     state.buffer.set_modified(false);
                     // Move cursor to end of buffer in SplitViewState
-                    if let Some(view_state) = self
-                        .split_view_states
-                        .get_mut(&self.split_manager.active_split())
+                    let __active_split = self.split_manager().active_split();
+                    if let Some(view_state) = self.split_view_states_mut().get_mut(&__active_split)
                     {
                         view_state.cursors.primary_mut().position = total_bytes;
                     }
@@ -601,10 +619,17 @@ impl Editor {
             }
 
             // In read-only view, keep line wrapping disabled for terminal buffers
-            // Also scroll viewport to show the end of the buffer where the cursor is
+            // Also scroll viewport to show the end of the buffer where the cursor is.
+            // Disjoint borrow: split-view-state via direct windows.get_mut so
+            // `self.buffers.get_mut(...)` can still run inside the body.
+            let __active_split = self.split_manager().active_split();
+            let active_id = self.active_window;
             if let Some(view_state) = self
-                .split_view_states
-                .get_mut(&self.split_manager.active_split())
+                .windows
+                .get_mut(&active_id)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&__active_split)
             {
                 view_state.viewport.line_wrap_enabled = false;
 
@@ -636,10 +661,8 @@ impl Editor {
                 state.editing_disabled = false;
                 state.margins.configure_for_line_numbers(false);
             }
-            if let Some(view_state) = self
-                .split_view_states
-                .get_mut(&self.split_manager.active_split())
-            {
+            let __active_split = self.split_manager().active_split();
+            if let Some(view_state) = self.split_view_states_mut().get_mut(&__active_split) {
                 view_state.viewport.line_wrap_enabled = false;
             }
 
@@ -746,7 +769,11 @@ impl Editor {
     /// Get cursor position for a buffer (for testing)
     pub fn get_cursor_position(&self, buffer_id: BufferId) -> Option<usize> {
         // Find cursor from any split view state that has this buffer
-        self.split_view_states
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .values()
             .find_map(|vs| {
                 if vs.keyed_states.contains_key(&buffer_id) {
@@ -757,7 +784,11 @@ impl Editor {
             })
             .or_else(|| {
                 // Fallback: check active cursors
-                self.split_view_states
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .values()
                     .map(|vs| vs.cursors.primary().position)
                     .next()

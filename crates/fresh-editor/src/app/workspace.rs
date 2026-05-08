@@ -207,18 +207,32 @@ impl Editor {
         }
 
         let split_layout = serialize_split_node(
-            self.split_manager.root(),
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .root(),
             &self.buffer_metadata,
             &self.working_dir,
             &self.terminal_buffers,
             &terminal_indices,
-            self.split_manager.labels(),
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .labels(),
         );
 
         // Build a map of leaf_id -> active_buffer_id from the split tree
         // This tells us which buffer's cursor/scroll to save for each split
         let active_buffers: HashMap<LeafId, BufferId> = self
-            .split_manager
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
             .root()
             .get_leaves_with_rects(ratatui::layout::Rect::default())
             .into_iter()
@@ -226,7 +240,13 @@ impl Editor {
             .collect();
 
         let mut split_states = HashMap::new();
-        for (leaf_id, view_state) in &self.split_view_states {
+        for (leaf_id, view_state) in self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+        {
             let active_buffer = active_buffers.get(leaf_id).copied();
             let serialized = serialize_split_view_state(
                 view_state,
@@ -249,7 +269,15 @@ impl Editor {
         tracing::debug!(
             "Captured {} split states, active_split={}",
             split_states.len(),
-            SplitId::from(self.split_manager.active_split()).0
+            SplitId::from(
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split()
+            )
+            .0
         );
 
         // Capture file explorer state
@@ -396,7 +424,15 @@ impl Editor {
             version: WORKSPACE_VERSION,
             working_dir: self.working_dir.clone(),
             split_layout,
-            active_split_id: SplitId::from(self.split_manager.active_split()).0,
+            active_split_id: SplitId::from(
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split(),
+            )
+            .0,
             split_states,
             config_overrides,
             file_explorer,
@@ -440,10 +476,20 @@ impl Editor {
     /// Save global file states for all open file buffers
     fn save_all_global_file_states(&self) {
         // Collect all file states from all splits
-        for (leaf_id, view_state) in &self.split_view_states {
+        for (leaf_id, view_state) in self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+        {
             // Get the active buffer for this split
             let active_buffer = self
-                .split_manager
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
                 .root()
                 .get_leaves_with_rects(ratatui::layout::Rect::default())
                 .into_iter()
@@ -738,7 +784,10 @@ impl Editor {
         );
 
         if let Some(&new_active_split) = split_id_map.get(&workspace.active_split_id) {
-            self.split_manager
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
                 .set_active_split(LeafId(new_active_split));
         }
 
@@ -1145,7 +1194,11 @@ impl Editor {
     /// split after the workspace has been applied.
     fn clean_orphaned_buffers(&mut self) {
         let referenced: HashSet<BufferId> = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .values()
             .flat_map(|vs| vs.buffer_tab_ids())
             .collect();
@@ -1174,7 +1227,12 @@ impl Editor {
     fn log_restore_summary(&mut self) {
         tracing::debug!(
             "Workspace restore complete: {} splits, {} buffers",
-            self.split_view_states.len(),
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .len(),
             self.buffers.len()
         );
         let restored_count = self
@@ -1309,7 +1367,13 @@ impl Editor {
                 // Move cursor to end of buffer
                 let total = state.buffer.total_bytes();
                 // Update cursor position in all splits that show this buffer
-                for vs in self.split_view_states.values_mut() {
+                for vs in self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .values_mut()
+                {
                     if vs.has_buffer(buffer_id) {
                         vs.cursors.primary_mut().position = total;
                     }
@@ -1371,12 +1435,23 @@ impl Editor {
 
                 let current_leaf_id = if is_first_leaf {
                     // First leaf reuses the existing split
-                    let leaf_id = self.split_manager.active_split();
+                    let leaf_id = self
+                        .windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .active_split();
                     self.set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
                     // Non-first leaves use the active split (created by split_active)
-                    self.split_manager.active_split()
+                    self.windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .active_split()
                 };
 
                 // Map old split ID to new one
@@ -1384,14 +1459,25 @@ impl Editor {
 
                 // Restore label if present
                 if let Some(label) = label {
-                    self.split_manager.set_label(current_leaf_id, label.clone());
+                    self.windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_manager_mut())
+                        .expect("active window must have a populated split layout")
+                        .set_label(current_leaf_id, label.clone());
                 }
 
                 // Restore role tag if present (clearing any prior holder
                 // first to preserve the at-most-one-leaf-per-role invariant).
                 if let Some(role) = role {
-                    self.split_manager.clear_role(*role);
-                    self.split_manager
+                    self.windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_manager_mut())
+                        .expect("active window must have a populated split layout")
+                        .clear_role(*role);
+                    self.windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_manager_mut())
+                        .expect("active window must have a populated split layout")
                         .set_leaf_role(current_leaf_id, Some(*role));
                 }
 
@@ -1417,29 +1503,54 @@ impl Editor {
                     .unwrap_or(self.active_buffer());
 
                 let current_leaf_id = if is_first_leaf {
-                    let leaf_id = self.split_manager.active_split();
+                    let leaf_id = self
+                        .windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .active_split();
                     self.set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
-                    self.split_manager.active_split()
+                    self.windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .active_split()
                 };
 
                 split_id_map.insert(*split_id, current_leaf_id.into());
 
                 // Restore label if present
                 if let Some(label) = label {
-                    self.split_manager.set_label(current_leaf_id, label.clone());
+                    self.windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_manager_mut())
+                        .expect("active window must have a populated split layout")
+                        .set_label(current_leaf_id, label.clone());
                 }
 
                 // Restore role tag for terminal leaves (same one-per-role
                 // invariant as the file-leaf branch above).
                 if let Some(role) = role {
-                    self.split_manager.clear_role(*role);
-                    self.split_manager
+                    self.windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_manager_mut())
+                        .expect("active window must have a populated split layout")
+                        .clear_role(*role);
+                    self.windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_manager_mut())
+                        .expect("active window must have a populated split layout")
                         .set_leaf_role(current_leaf_id, Some(*role));
                 }
 
-                self.split_manager
+                self.windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_manager_mut())
+                    .expect("active window must have a populated split layout")
                     .set_split_buffer(current_leaf_id, buffer_id);
 
                 self.restore_split_view_state(
@@ -1485,10 +1596,11 @@ impl Editor {
                 };
 
                 // Create the split for the second child
-                match self
-                    .split_manager
-                    .split_active(split_direction, second_buffer_id, *ratio)
-                {
+                match self.split_manager_mut().split_active(
+                    split_direction,
+                    second_buffer_id,
+                    *ratio,
+                ) {
                     Ok(new_leaf_id) => {
                         // Create view state for the new split
                         let mut view_state = SplitViewState::with_buffer(
@@ -1504,7 +1616,11 @@ impl Editor {
                             self.resolve_wrap_column_for_buffer(second_buffer_id),
                             self.config.editor.rulers.clone(),
                         );
-                        self.split_view_states.insert(new_leaf_id, view_state);
+                        self.windows
+                            .get_mut(&self.active_window)
+                            .and_then(|w| w.split_view_states_mut())
+                            .expect("active window must have a populated split layout")
+                            .insert(new_leaf_id, view_state);
 
                         // Map the container split ID (though we mainly care about leaves)
                         split_id_map.insert(*split_id, new_leaf_id.into());
@@ -1543,7 +1659,18 @@ impl Editor {
             return;
         };
 
-        let Some(view_state) = self.split_view_states.get_mut(&current_split_id) else {
+        // Resolve the split-manager-assigned buffer before taking the
+        // &mut borrow on windows so the borrow stays disjoint from
+        // any subsequent reads.
+        let split_buf_for_current = self.split_manager().buffer_for_split(current_split_id);
+        let active_id = self.active_window;
+        let Some(view_state) = self
+            .windows
+            .get_mut(&active_id)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&current_split_id)
+        else {
             return;
         };
 
@@ -1599,7 +1726,7 @@ impl Editor {
             // this split so the orphan cleanup won't remove a buffer the split
             // manager still points to (#1278).
             if view_state.open_buffers.is_empty() {
-                if let Some(buf) = self.split_manager.buffer_for_split(current_split_id) {
+                if let Some(buf) = split_buf_for_current {
                     view_state.add_buffer(buf);
                     view_state.ensure_buffer_state(buf);
                 }
@@ -1745,27 +1872,34 @@ impl Editor {
             SerializedViewMode::PageView => ViewMode::PageView,
         };
 
-        if let Some(active_id) = active_buffer_id {
+        if let Some(active_buf_id) = active_buffer_id {
             // Switch the split to the active buffer
-            view_state.switch_buffer(active_id);
+            view_state.switch_buffer(active_buf_id);
 
             // If no per-buffer file_state was saved, apply split-level settings
             let active_has_file_state = split_state
                 .file_states
                 .keys()
-                .any(|rel_path| path_to_buffer.get(rel_path).copied() == Some(active_id));
+                .any(|rel_path| path_to_buffer.get(rel_path).copied() == Some(active_buf_id));
             if !active_has_file_state {
                 view_state.active_state_mut().view_mode = restored_view_mode.clone();
                 view_state.active_state_mut().compose_width = split_state.compose_width;
             }
 
             // Cursors now live in SplitViewState, no need to sync to EditorState
-
-            // Set this buffer as active in the split (fires buffer_activated hook)
-            self.split_manager
-                .set_split_buffer(current_split_id, active_id);
         }
         view_state.tab_scroll_offset = split_state.tab_scroll_offset;
+
+        // Set this buffer as active in the split (fires buffer_activated
+        // hook). Done after the view_state borrow ends so we can take a
+        // second &mut borrow on self.windows for the split manager.
+        if let Some(active_buf_id) = active_buffer_id {
+            self.windows
+                .get_mut(&active_id)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .set_split_buffer(current_split_id, active_buf_id);
+        }
     }
 }
 

@@ -21,16 +21,30 @@ impl Editor {
     /// Handles both buffer tabs and group tabs via the focus-history LRU.
     pub(super) fn switch_to_previous_tab(&mut self) {
         use crate::view::split::TabTarget;
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let previous_tab = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .and_then(|vs| vs.previous_tab());
 
         match previous_tab {
             Some(TabTarget::Buffer(prev_id)) => {
                 let is_valid = self
-                    .split_view_states
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(&active_split)
                     .is_some_and(|vs| vs.has_buffer(prev_id));
 
@@ -62,13 +76,25 @@ impl Editor {
 
     /// Start the switch-to-tab-by-name prompt with suggestions from open buffers
     pub(super) fn start_switch_to_tab_prompt(&mut self) {
-        let active_split = self.split_manager.active_split();
-        let open_buffers: Vec<BufferId> =
-            if let Some(view_state) = self.split_view_states.get(&active_split) {
-                view_state.buffer_tab_ids_vec()
-            } else {
-                return;
-            };
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let open_buffers: Vec<BufferId> = if let Some(view_state) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&active_split)
+        {
+            view_state.buffer_tab_ids_vec()
+        } else {
+            return;
+        };
 
         if open_buffers.is_empty() {
             self.set_status_message(t!("status.no_tabs_in_split").to_string());
@@ -130,9 +156,19 @@ impl Editor {
     /// Switch to a tab by its BufferId
     pub(crate) fn switch_to_tab(&mut self, buffer_id: BufferId) {
         // Verify the buffer exists and is open in the current split
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let is_valid = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .is_some_and(|vs| vs.has_buffer(buffer_id));
 

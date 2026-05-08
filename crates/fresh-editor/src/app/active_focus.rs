@@ -40,8 +40,18 @@ impl Editor {
     /// the SVS sync is skipped — the caller is responsible for ensuring
     /// the SVS exists by the time any input is routed.
     pub(super) fn set_pane_buffer(&mut self, leaf: LeafId, buffer_id: BufferId) {
-        self.split_manager.set_split_buffer(leaf, buffer_id);
-        if let Some(view_state) = self.split_view_states.get_mut(&leaf) {
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_split_buffer(leaf, buffer_id);
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&leaf)
+        {
             view_state.switch_buffer(buffer_id);
         }
     }
@@ -79,16 +89,32 @@ impl Editor {
 
         // Capture the previous focus target BEFORE set_pane_buffer runs,
         // so the LRU records the right thing.
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let previous_target = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| vs.active_target());
 
         // Atomic pane-buffer update: tree + SVS in lockstep.
         self.set_pane_buffer(active_split, buffer_id);
 
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             view_state.add_buffer(buffer_id);
             view_state.active_group_tab = None;
             view_state.focused_group_leaf = None;
@@ -169,7 +195,13 @@ impl Editor {
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
-        let previous_split = self.split_manager.active_split();
+        let previous_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let previous_buffer = self.active_buffer(); // Get BEFORE changing split
         let split_changed = previous_split != split_id;
 
@@ -186,7 +218,11 @@ impl Editor {
         // its `focused_group_leaf` marker so `active_buffer()` routes to
         // the clicked inner panel buffer.
         if !self
-            .split_manager
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
             .root()
             .leaf_split_ids()
             .contains(&split_id)
@@ -205,19 +241,39 @@ impl Editor {
                 .map(|(group_leaf_id, _)| *group_leaf_id)
                 .and_then(|group_leaf_id| {
                     // Find the split whose open_buffers has this group tab.
-                    self.split_view_states
+                    self.windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(_, vs)| vs)
+                        .expect("active window must have a populated split layout")
                         .iter()
                         .find(|(_, vs)| vs.has_group(group_leaf_id))
                         .map(|(sid, _)| (*sid, group_leaf_id))
                 });
 
             if let Some((host, group_leaf_id)) = host_split {
-                self.split_manager.set_active_split(host);
-                if let Some(vs) = self.split_view_states.get_mut(&host) {
+                self.windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_manager_mut())
+                    .expect("active window must have a populated split layout")
+                    .set_active_split(host);
+                if let Some(vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&host)
+                {
                     vs.active_group_tab = Some(group_leaf_id);
                     vs.focused_group_leaf = Some(split_id);
                 }
-                if let Some(inner_vs) = self.split_view_states.get_mut(&split_id) {
+                if let Some(inner_vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                {
                     inner_vs.switch_buffer(buffer_id);
                 }
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
@@ -235,7 +291,11 @@ impl Editor {
             }
 
             // Update split manager to focus this split
-            self.split_manager.set_active_split(split_id);
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .set_active_split(split_id);
 
             // Atomic pane-buffer update: tree + SVS in lockstep. Replaces
             // the previous pair of split_manager.set_active_buffer_id +
@@ -256,7 +316,13 @@ impl Editor {
             // Handle buffer change side effects
             if previous_buffer != buffer_id {
                 self.position_history.commit_pending_movement();
-                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                if let Some(view_state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                {
                     view_state.add_buffer(buffer_id);
                     view_state.push_focus(crate::view::split::TabTarget::Buffer(previous_buffer));
                 }

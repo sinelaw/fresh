@@ -807,8 +807,6 @@ impl Editor {
             mode_registry: ModeRegistry::new(),
             tokio_runtime,
             async_bridge: Some(async_bridge),
-            split_manager,
-            split_view_states,
             previous_viewports: HashMap::new(),
             scroll_sync_manager: ScrollSyncManager::new(),
             preview: None,
@@ -854,9 +852,11 @@ impl Editor {
                     "",
                     working_dir.clone(),
                 );
-                // Hand the eagerly-spawned LSP manager off to the base
-                // window — that's where LSP storage lives now (Step 0b).
+                // Hand the eagerly-spawned LSP manager + the initial
+                // split layout off to the base window — that's where
+                // they live now (Step 0b).
                 base.lsp = Some(lsp);
+                base.splits = Some((split_manager, split_view_states));
                 m.insert(fresh_core::WindowId(1), base);
                 m
             },
@@ -1457,7 +1457,11 @@ impl Editor {
     /// regression tests can assert on the structure directly.
     #[doc(hidden)]
     pub fn split_manager_for_tests(&self) -> &crate::view::split::SplitManager {
-        &self.split_manager
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
     }
 
     /// Test-only accessor for a leaf's `SplitViewState`, so tab-list
@@ -1469,7 +1473,12 @@ impl Editor {
         &self,
         leaf: crate::model::event::LeafId,
     ) -> Option<&crate::view::split::SplitViewState> {
-        self.split_view_states.get(&leaf)
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&leaf)
     }
 
     /// Refresh the plugin-readable keybinding-label snapshot from

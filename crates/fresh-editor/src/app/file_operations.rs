@@ -375,9 +375,19 @@ impl Editor {
         }
 
         // Save scroll position (from SplitViewState) and cursor positions before reloading
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let (old_top_byte, old_left_column) = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| (vs.viewport.top_byte, vs.viewport.left_column))
             .unwrap_or((0, 0));
@@ -419,13 +429,31 @@ impl Editor {
         }
 
         // Restore cursor positions in SplitViewState (clamped to valid range for new file size)
-        let active_split = self.split_manager.active_split();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             view_state.cursors = restored_cursors;
         }
 
         // Restore scroll position in SplitViewState (clamped to valid range for new file size)
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             view_state.viewport.top_byte = old_top_byte.min(new_file_size);
             view_state.viewport.left_column = old_left_column;
         }
@@ -1206,7 +1234,11 @@ impl Editor {
         // TODO: Consider moving line numbers to SplitViewState (per-view setting)
         // Get cursors from split view states for this buffer (find any split showing it)
         let old_cursors = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .values()
             .find_map(|vs| {
                 if vs.keyed_states.contains_key(&buffer_id) {
@@ -1253,7 +1285,13 @@ impl Editor {
         }
 
         // Restore cursors in any split view states that have this buffer
-        for vs in self.split_view_states.values_mut() {
+        for vs in self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .values_mut()
+        {
             if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
                 buf_state.cursors = restored_cursors.clone();
             }

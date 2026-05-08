@@ -100,7 +100,11 @@ impl Editor {
             let split_id = self.effective_active_split();
             let active_buf = self.active_buffer();
             debug_assert!(
-                self.split_view_states
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(&split_id)
                     .is_some_and(|vs| vs.keyed_states.contains_key(&active_buf)),
                 "pane-buffer invariant violated: split {:?} resolves to buffer {:?} \
@@ -109,8 +113,12 @@ impl Editor {
                 split_id,
                 active_buf,
             );
+            let active_id = self.active_window;
             let cursors = &mut self
-                .split_view_states
+                .windows
+                .get_mut(&active_id)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
                 .get_mut(&split_id)
                 .unwrap()
                 .keyed_states
@@ -227,7 +235,11 @@ impl Editor {
 
         // Capture old cursor states from SplitViewState (sole source of truth)
         let old_cursors: Vec<(CursorId, usize, Option<usize>)> = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .unwrap()
             .keyed_states
@@ -435,7 +447,7 @@ impl Editor {
         // Update cursors in SplitViewState (sole source of truth)
         {
             let cursors = &mut self
-                .split_view_states
+                .split_view_states_mut()
                 .get_mut(&split_id)
                 .unwrap()
                 .keyed_states
@@ -677,7 +689,13 @@ impl Editor {
     pub(super) fn handle_scroll_event(&mut self, line_offset: isize) {
         use crate::view::ui::view_pipeline::ViewLineIterator;
 
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
 
         // Check if this split is in a scroll sync group (anchor-based sync for diffs)
         // Mark both splits to skip ensure_visible so cursor doesn't override scroll
@@ -688,10 +706,22 @@ impl Editor {
         {
             let left = group.left_split;
             let right = group.right_split;
-            if let Some(vs) = self.split_view_states.get_mut(&LeafId(left)) {
+            if let Some(vs) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&LeafId(left))
+            {
                 vs.viewport.set_skip_ensure_visible();
             }
-            if let Some(vs) = self.split_view_states.get_mut(&LeafId(right)) {
+            if let Some(vs) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&LeafId(right))
+            {
                 vs.viewport.set_skip_ensure_visible();
             }
             // Continue to scroll the active split normally below
@@ -699,18 +729,40 @@ impl Editor {
 
         // Fall back to simple sync_group (same delta to all splits)
         let sync_group = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .and_then(|vs| vs.sync_group);
         let splits_to_scroll = if let Some(group_id) = sync_group {
-            self.split_manager
-                .get_splits_in_group(group_id, &self.split_view_states)
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .get_splits_in_group(
+                    group_id,
+                    self.windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(_, vs)| vs)
+                        .expect("active window must have a populated split layout"),
+                )
         } else {
             vec![active_split]
         };
 
         for split_id in splits_to_scroll {
-            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(split_id) {
+            let buffer_id = if let Some(id) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .buffer_for_split(split_id)
+            {
                 id
             } else {
                 continue;
@@ -719,7 +771,11 @@ impl Editor {
 
             // Get view_transform tokens from SplitViewState (if any)
             let view_transform_tokens = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&split_id)
                 .and_then(|vs| vs.view_transform.as_ref())
                 .map(|vt| vt.tokens.clone());
@@ -733,7 +789,13 @@ impl Editor {
                 let soft_breaks = state.collect_soft_break_positions();
                 let virtual_lines = state.collect_virtual_line_positions();
                 let buffer = &mut state.buffer;
-                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                if let Some(view_state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                {
                     if let Some(tokens) = view_transform_tokens {
                         // Use view-aware scrolling with the transform's tokens
                         let view_lines: Vec<_> =
@@ -768,7 +830,13 @@ impl Editor {
 
     /// Handle SetViewport event using SplitViewState's viewport
     fn handle_set_viewport_event(&mut self, top_line: usize) {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
 
         // Check if this split is in a scroll sync group (anchor-based sync for diffs)
         // If so, set the group's scroll_line and let render sync the viewports
@@ -796,10 +864,22 @@ impl Editor {
             {
                 let left = group.left_split;
                 let right = group.right_split;
-                if let Some(vs) = self.split_view_states.get_mut(&LeafId(left)) {
+                if let Some(vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&LeafId(left))
+                {
                     vs.viewport.set_skip_ensure_visible();
                 }
-                if let Some(vs) = self.split_view_states.get_mut(&LeafId(right)) {
+                if let Some(vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&LeafId(right))
+                {
                     vs.viewport.set_skip_ensure_visible();
                 }
             }
@@ -808,18 +888,40 @@ impl Editor {
 
         // Fall back to simple sync_group (same line to all splits)
         let sync_group = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .and_then(|vs| vs.sync_group);
         let splits_to_scroll = if let Some(group_id) = sync_group {
-            self.split_manager
-                .get_splits_in_group(group_id, &self.split_view_states)
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .get_splits_in_group(
+                    group_id,
+                    self.windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(_, vs)| vs)
+                        .expect("active window must have a populated split layout"),
+                )
         } else {
             vec![active_split]
         };
 
         for split_id in splits_to_scroll {
-            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(split_id) {
+            let buffer_id = if let Some(id) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .buffer_for_split(split_id)
+            {
                 id
             } else {
                 continue;
@@ -827,7 +929,13 @@ impl Editor {
 
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 let buffer = &mut state.buffer;
-                if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+                if let Some(view_state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                {
                     view_state.viewport.scroll_to(buffer, top_line);
                     // Mark to skip ensure_visible on next render so the scroll isn't undone
                     view_state.viewport.set_skip_ensure_visible();
@@ -838,22 +946,50 @@ impl Editor {
 
     /// Handle Recenter event using SplitViewState's viewport
     fn handle_recenter_event(&mut self) {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
 
         // Find other splits in the same sync group if any
         let sync_group = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .and_then(|vs| vs.sync_group);
         let splits_to_recenter = if let Some(group_id) = sync_group {
-            self.split_manager
-                .get_splits_in_group(group_id, &self.split_view_states)
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .get_splits_in_group(
+                    group_id,
+                    self.windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(_, vs)| vs)
+                        .expect("active window must have a populated split layout"),
+                )
         } else {
             vec![active_split]
         };
 
         for split_id in splits_to_recenter {
-            let buffer_id = if let Some(id) = self.split_manager.buffer_for_split(split_id) {
+            let buffer_id = if let Some(id) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .buffer_for_split(split_id)
+            {
                 id
             } else {
                 continue;
@@ -861,7 +997,12 @@ impl Editor {
 
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 let buffer = &mut state.buffer;
-                let view_state = self.split_view_states.get_mut(&split_id);
+                let view_state = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id);
 
                 if let Some(view_state) = view_state {
                     // Recenter viewport on cursor
@@ -893,11 +1034,23 @@ impl Editor {
     /// become stale after buffer edits.
     pub(super) fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
         // Find all splits that display this buffer
-        let splits_for_buffer = self.split_manager.splits_for_buffer(buffer_id);
+        let splits_for_buffer = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .splits_for_buffer(buffer_id);
 
         // Invalidate layout and clear stale view transform for each split
         for split_id in splits_for_buffer {
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+            {
                 view_state.invalidate_layout();
                 // Clear cached view transform — its token source_offsets are from
                 // before the edit and would cause conceals to be applied at wrong positions.

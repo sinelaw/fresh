@@ -10,9 +10,19 @@ use rust_i18n::t;
 impl Editor {
     /// Toggle between Compose and Source view modes.
     pub fn handle_toggle_page_view(&mut self) {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let active_buffer = self
-            .split_manager
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
             .get_buffer_id(active_split.into())
             .unwrap_or(crate::model::event::BufferId(0));
         let default_wrap = self.resolve_line_wrap_for_buffer(active_buffer);
@@ -26,7 +36,11 @@ impl Editor {
 
         let view_mode = {
             let current = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&active_split)
                 .map(|vs| vs.view_mode.clone())
                 .unwrap_or(ViewMode::Source);
@@ -37,7 +51,13 @@ impl Editor {
         };
 
         // Update split view state (source of truth for view mode and line numbers)
-        if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+        if let Some(vs) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             vs.view_mode = view_mode.clone();
             // In Compose mode, disable builtin line wrap - the plugin handles
             // wrapping by inserting Break tokens in the view transform pipeline.
@@ -135,7 +155,11 @@ impl Editor {
         // walk the group's inner subtree to collect its leaf ids and
         // union their cached content rects.
         let group_leaf = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .and_then(|vs| vs.active_group_tab)?;
         let subtree = self.grouped_subtrees.get(&group_leaf)?;

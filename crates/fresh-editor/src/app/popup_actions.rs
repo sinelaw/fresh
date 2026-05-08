@@ -215,10 +215,23 @@ impl Editor {
                     old_sticky_column: 0,
                     new_sticky_column: 0,
                 };
-                let split_id = self.split_manager.active_split();
+                let split_id = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
                 let buffer_id = self.active_buffer();
                 let state = self.buffers.get_mut(&buffer_id).unwrap();
-                let cursors = &mut self.split_view_states.get_mut(&split_id).unwrap().cursors;
+                let cursors = &mut self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                    .unwrap()
+                    .cursors;
                 state.apply(cursors, &move_event);
             }
         }

@@ -89,9 +89,19 @@ impl Editor {
         };
 
         // Get viewport from active split's SplitViewState
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let (top_byte, visible_height) = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
             .unwrap_or((0, 20));
@@ -352,9 +362,19 @@ impl Editor {
         let ns = self.search_namespace.clone();
 
         // Determine the visible byte range from the active viewport
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let (top_byte, visible_height) = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
             .unwrap_or((0, 20));
@@ -433,9 +453,19 @@ impl Editor {
         if !self.active_state().buffer.is_large_file() {
             return false;
         }
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let current_top = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| vs.viewport.top_byte);
         if current_top != self.search_overlay_top_byte {
@@ -565,8 +595,18 @@ impl Editor {
             }
 
             let cursor_pos = {
-                let active_split = self.split_manager.active_split();
-                self.split_view_states
+                let active_split = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(&active_split)
                     .map(|vs| vs.cursors.primary().position)
                     .unwrap_or(0)

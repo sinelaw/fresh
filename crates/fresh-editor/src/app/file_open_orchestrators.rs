@@ -363,7 +363,13 @@ impl Editor {
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
         let page_view = self.resolve_page_view_for_buffer(buffer_id);
-        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
             view_state.add_buffer(buffer_id);
             // Initialize per-buffer view state for the new buffer with config defaults
             let buf_state = view_state.ensure_buffer_state(buffer_id);
@@ -483,7 +489,13 @@ impl Editor {
         let target_split = self.preferred_split_for_file();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
-        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
@@ -597,7 +609,13 @@ impl Editor {
         let target_split = self.preferred_split_for_file();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
-        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
@@ -656,8 +674,20 @@ impl Editor {
         }
 
         // Reset cursor to start in the split view state
-        let split_id = self.split_manager.active_split();
-        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        let split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+        {
             if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
                 buf_state.cursors = crate::model::cursor::Cursors::new();
             }
@@ -747,7 +777,13 @@ impl Editor {
         let target_split = self.preferred_split_for_file();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
-        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(
@@ -803,7 +839,12 @@ impl Editor {
         // different file inside the Live Grep overlay scrolls the
         // background buffer by one line — issue surfaced by the
         // preview-pane file-load path).
-        let view_state_opt = self.split_view_states.get_mut(&split_id);
+        let view_state_opt = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id);
         let buffer_state_opt = self.buffers.get_mut(&buffer_id);
         if let (Some(view_state), Some(buffer_state)) = (view_state_opt, buffer_state_opt) {
             if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
@@ -846,7 +887,11 @@ impl Editor {
 
         // Find a split that has this buffer open to get the view state
         let view_state = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .values()
             .find(|vs| vs.has_buffer(buffer_id));
 
@@ -1102,7 +1147,13 @@ impl Editor {
         let target_split = self.preferred_split_for_file();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
-        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
             buf_state.apply_config_defaults(

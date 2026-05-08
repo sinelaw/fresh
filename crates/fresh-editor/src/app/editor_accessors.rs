@@ -208,11 +208,31 @@ impl Editor {
     /// validated before being returned.
     #[inline]
     fn effective_active_pair(&self) -> (crate::model::event::LeafId, BufferId) {
-        let active_split = self.split_manager.active_split();
-        if let Some(vs) = self.split_view_states.get(&active_split) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(vs) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&active_split)
+        {
             if vs.active_group_tab.is_some() {
                 if let Some(inner_leaf) = vs.focused_group_leaf {
-                    if let Some(inner_vs) = self.split_view_states.get(&inner_leaf) {
+                    if let Some(inner_vs) = self
+                        .windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.splits.as_ref())
+                        .map(|(_, vs)| vs)
+                        .expect("active window must have a populated split layout")
+                        .get(&inner_leaf)
+                    {
                         let inner_buf = inner_vs.active_buffer;
                         if self.buffers.contains_key(&inner_buf)
                             && inner_vs.keyed_states.contains_key(&inner_buf)
@@ -224,7 +244,11 @@ impl Editor {
             }
         }
         let outer_buf = self
-            .split_manager
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
             .active_buffer_id()
             .expect("Editor always has at least one buffer");
         (active_split, outer_buf)
@@ -714,6 +738,58 @@ impl Editor {
     /// `self.windows.get_mut(&self.active_window).and_then(|w| w.lsp.as_mut())`.
     pub(crate) fn lsp_mut(&mut self) -> Option<&mut crate::services::lsp::manager::LspManager> {
         self.active_session_mut().lsp.as_mut()
+    }
+
+    /// Active window's split tree. Panics if the window has no
+    /// layout yet — the invariant is "the active window always has
+    /// `splits` populated", upheld by `set_active_window` (which
+    /// seeds the layout on first dive) and by editor init (which
+    /// hands the initial layout to the base window).
+    pub(crate) fn split_manager(&self) -> &crate::view::split::SplitManager {
+        &self
+            .active_window()
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout")
+            .0
+    }
+
+    /// Mutable handle to the active window's split tree.
+    pub(crate) fn split_manager_mut(&mut self) -> &mut crate::view::split::SplitManager {
+        &mut self
+            .active_session_mut()
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .0
+    }
+
+    /// Active window's per-leaf view state map.
+    pub(crate) fn split_view_states(
+        &self,
+    ) -> &std::collections::HashMap<crate::model::event::LeafId, crate::view::split::SplitViewState>
+    {
+        &self
+            .active_window()
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout")
+            .1
+    }
+
+    /// Mutable handle to the active window's per-leaf view state map.
+    pub(crate) fn split_view_states_mut(
+        &mut self,
+    ) -> &mut std::collections::HashMap<
+        crate::model::event::LeafId,
+        crate::view::split::SplitViewState,
+    > {
+        &mut self
+            .active_session_mut()
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1
     }
 
     /// Return buffer ids whose on-disk path sits at or under `root`.

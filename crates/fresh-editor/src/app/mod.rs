@@ -488,14 +488,10 @@ pub struct Editor {
     /// Bridge for async messages from tokio tasks to main loop
     async_bridge: Option<AsyncBridge>,
 
-    /// Split view manager
-    split_manager: SplitManager,
-
-    /// Per-split view state (cursors and viewport for each split)
-    /// This allows multiple splits showing the same buffer to have independent
-    /// cursor positions and scroll positions
-    split_view_states: HashMap<LeafId, SplitViewState>,
-
+    // split_manager and split_view_states moved onto `Window`. Access
+    // via `Editor::split_manager()` / `split_manager_mut()` and
+    // `Editor::split_view_states()` / `split_view_states_mut()`.
+    // Each window owns its own split tree + per-leaf view state.
     /// Previous viewport states for viewport_changed hook detection
     /// Stores (top_byte, width, height) from the end of the last render frame
     /// Used to detect viewport changes that occur between renders (e.g., scroll events)
@@ -1358,13 +1354,28 @@ impl Editor {
     /// their own cursors (not the outer split's stale ones).
     pub fn active_cursors(&self) -> &Cursors {
         let split_id = self.effective_active_split();
-        &self.split_view_states.get(&split_id).unwrap().cursors
+        &self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&split_id)
+            .unwrap()
+            .cursors
     }
 
     /// Get the cursors for the active buffer in the active split (mutable)
     pub fn active_cursors_mut(&mut self) -> &mut Cursors {
         let split_id = self.effective_active_split();
-        &mut self.split_view_states.get_mut(&split_id).unwrap().cursors
+        &mut self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+            .unwrap()
+            .cursors
     }
 
     /// Set completion items for type-to-filter (for testing)
@@ -1374,15 +1385,38 @@ impl Editor {
 
     /// Get the viewport for the active split
     pub fn active_viewport(&self) -> &crate::view::viewport::Viewport {
-        let active_split = self.split_manager.active_split();
-        &self.split_view_states.get(&active_split).unwrap().viewport
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        &self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&active_split)
+            .unwrap()
+            .viewport
     }
 
     /// Get the viewport for the active split (mutable)
     pub fn active_viewport_mut(&mut self) -> &mut crate::view::viewport::Viewport {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         &mut self
-            .split_view_states
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
             .get_mut(&active_split)
             .unwrap()
             .viewport
@@ -3256,7 +3290,7 @@ mod tests {
             test_filesystem(),
         )
         .unwrap();
-        let split_id = editor.split_manager.active_split();
+        let split_id = editor.split_manager().active_split();
 
         // Create three buffers with long names to force scrolling.
         let buf1 = editor.new_buffer();
@@ -3283,7 +3317,7 @@ mod tests {
 
         {
             use crate::view::split::TabTarget;
-            let view_state = editor.split_view_states.get_mut(&split_id).unwrap();
+            let view_state = editor.split_view_states_mut().get_mut(&split_id).unwrap();
             view_state.open_buffers = vec![
                 TabTarget::Buffer(buf1),
                 TabTarget::Buffer(buf2),
@@ -3298,7 +3332,7 @@ mod tests {
         editor.ensure_active_tab_visible(split_id, buf1, 25);
         assert_eq!(
             editor
-                .split_view_states
+                .split_view_states()
                 .get(&split_id)
                 .unwrap()
                 .tab_scroll_offset,
@@ -3307,7 +3341,7 @@ mod tests {
 
         // Now make the last tab active and ensure offset moves forward but stays bounded.
         editor.ensure_active_tab_visible(split_id, buf3, 25);
-        let view_state = editor.split_view_states.get(&split_id).unwrap();
+        let view_state = editor.split_view_states().get(&split_id).unwrap();
         assert!(view_state.tab_scroll_offset > 0);
         let buffer_ids: Vec<_> = view_state.buffer_tab_ids_vec();
         let total_width: usize = buffer_ids

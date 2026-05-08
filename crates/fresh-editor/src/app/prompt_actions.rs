@@ -846,18 +846,36 @@ impl Editor {
 
     /// Handle SetPageWidth prompt confirmation.
     fn handle_set_page_width(&mut self, input: &str) {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let trimmed = input.trim();
 
         if trimmed.is_empty() {
-            if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+            if let Some(vs) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&active_split)
+            {
                 vs.compose_width = None;
             }
             self.set_status_message(t!("settings.page_width_cleared").to_string());
         } else {
             match trimmed.parse::<u16>() {
                 Ok(val) if val > 0 => {
-                    if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+                    if let Some(vs) = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_view_states_mut())
+                        .expect("active window must have a populated split layout")
+                        .get_mut(&active_split)
+                    {
                         vs.compose_width = Some(val);
                     }
                     self.set_status_message(t!("settings.page_width_set", value = val).to_string());
@@ -876,8 +894,20 @@ impl Editor {
         let trimmed = input.trim();
         match trimmed.parse::<usize>() {
             Ok(col) if col > 0 => {
-                let active_split = self.split_manager.active_split();
-                if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+                let active_split = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
+                if let Some(view_state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&active_split)
+                {
                     if !view_state.rulers.contains(&col) {
                         view_state.rulers.push(col);
                         view_state.rulers.sort();
@@ -885,7 +915,11 @@ impl Editor {
                 }
                 // Persist to user config
                 let new_rulers = self
-                    .split_view_states
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(&active_split)
                     .map(|vs| vs.rulers.clone())
                     .unwrap_or_default();
@@ -906,13 +940,29 @@ impl Editor {
     fn handle_remove_ruler(&mut self, input: &str) {
         let trimmed = input.trim();
         if let Ok(col) = trimmed.parse::<usize>() {
-            let active_split = self.split_manager.active_split();
-            if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+            let active_split = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&active_split)
+            {
                 view_state.rulers.retain(|&r| r != col);
             }
             // Persist to user config
             let new_rulers = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&active_split)
                 .map(|vs| vs.rulers.clone())
                 .unwrap_or_default();

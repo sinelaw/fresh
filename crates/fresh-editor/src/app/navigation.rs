@@ -72,9 +72,21 @@ impl Editor {
     /// build the event themselves and call
     /// [`Editor::ensure_active_cursor_visible_for_navigation`] afterwards.
     pub fn jump_active_cursor_to(&mut self, position: usize, opts: JumpOptions) {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let active_buffer = self.active_buffer();
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             view_state.cursors.primary_mut().position = position;
             if opts.clear_anchor {
                 view_state.cursors.primary_mut().anchor = None;
@@ -108,10 +120,22 @@ impl Editor {
     /// stalls" (#1689) impossible to reproduce regardless of what the
     /// lower-level scroll machinery decides to do.
     pub fn ensure_active_cursor_visible_for_navigation(&mut self, recenter_on_scroll: bool) {
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let active_buffer = self.active_buffer();
 
-        let Some(view_state) = self.split_view_states.get_mut(&active_split) else {
+        let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        else {
             return;
         };
         let Some(state) = self.buffers.get_mut(&active_buffer) else {

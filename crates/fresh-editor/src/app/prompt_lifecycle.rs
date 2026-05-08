@@ -276,7 +276,13 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let split_id = self.split_manager.active_split();
+        let split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let (cursor_id, position, anchor, sticky_column) = {
             let cursors = self.active_cursors();
             let primary = cursors.primary();
@@ -325,7 +331,14 @@ impl Editor {
         // If the active buffer/split has changed (shouldn't happen during a
         // quick-open prompt, but be defensive), just drop the snapshot.
         if self.active_buffer() != snap.buffer_id
-            || self.split_manager.active_split() != snap.split_id
+            || self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split()
+                != snap.split_id
         {
             return;
         }
@@ -350,7 +363,13 @@ impl Editor {
         };
 
         let state = self.buffers.get_mut(&snap.buffer_id).unwrap();
-        let view_state = self.split_view_states.get_mut(&snap.split_id).unwrap();
+        let view_state = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&snap.split_id)
+            .unwrap();
         state.apply(&mut view_state.cursors, &event);
 
         let vp = &mut view_state.viewport;

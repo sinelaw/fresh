@@ -125,8 +125,18 @@ impl Editor {
 
     /// Check if line numbers are visible in the active split.
     fn is_line_numbers_visible(&self) -> bool {
-        let active_split = self.split_manager.active_split();
-        self.split_view_states
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| vs.show_line_numbers)
             .unwrap_or(true)
@@ -134,8 +144,18 @@ impl Editor {
 
     /// Check if line wrap is enabled in the active split.
     fn is_line_wrap_enabled(&self) -> bool {
-        let active_split = self.split_manager.active_split();
-        self.split_view_states
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false)
@@ -143,8 +163,18 @@ impl Editor {
 
     /// Check if compose mode is active in the current buffer.
     fn is_page_view(&self) -> bool {
-        let active_split = self.split_manager.active_split();
-        self.split_view_states
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| vs.view_mode == crate::state::ViewMode::PageView)
             .unwrap_or(false)
@@ -193,12 +223,38 @@ impl Editor {
 
     /// Check if the active buffer is shown in more than one visible split.
     fn has_same_buffer_splits(&self) -> bool {
-        let active_split = self.split_manager.active_split();
-        let active_buf_id = self.split_manager.buffer_for_split(active_split);
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let active_buf_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .buffer_for_split(active_split);
         if let Some(buf_id) = active_buf_id {
-            self.split_view_states.keys().any(|&s| {
-                s != active_split && self.split_manager.buffer_for_split(s) == Some(buf_id)
-            })
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .keys()
+                .any(|&s| {
+                    s != active_split
+                        && self
+                            .windows
+                            .get(&self.active_window)
+                            .and_then(|w| w.splits.as_ref())
+                            .map(|(mgr, _)| mgr)
+                            .expect("active window must have a populated split layout")
+                            .buffer_for_split(s)
+                            == Some(buf_id)
+                })
         } else {
             false
         }

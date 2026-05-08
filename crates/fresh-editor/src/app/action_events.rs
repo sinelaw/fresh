@@ -28,7 +28,11 @@ impl Editor {
         // group host's.
         let active_split = self.effective_active_split();
         let viewport_height = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .map(|vs| vs.viewport.height)
             .unwrap_or(24);
@@ -59,18 +63,23 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
+        let active_id = self.active_window;
+        // Take split-view-state borrow first via direct windows.get_mut
+        // so it stays disjoint from the &mut self.buffers borrow below.
+        let cursors = &mut self
+            .windows
+            .get_mut(&active_id)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .unwrap()
+            .cursors;
         let state = self.buffers.get_mut(&buffer_id).unwrap();
 
         // Use per-buffer settings which respect language overrides and user changes
         let tab_size = state.buffer_settings.tab_size;
         let auto_close = state.buffer_settings.auto_close;
         let auto_surround = state.buffer_settings.auto_surround;
-
-        let cursors = &mut self
-            .split_view_states
-            .get_mut(&active_split)
-            .unwrap()
-            .cursors;
         convert_action_to_events(
             state,
             cursors,
@@ -113,9 +122,25 @@ impl Editor {
         let overlap = PAGE_OVERLAP.min(viewport_height.saturating_sub(1));
         let delta = (viewport_height.saturating_sub(overlap).max(1) as isize) * direction;
 
-        let old_top_byte = self.split_view_states.get(&split_id)?.viewport.top_byte;
+        let old_top_byte = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&split_id)?
+            .viewport
+            .top_byte;
         self.handle_scroll_event(delta);
-        let new_top_byte = self.split_view_states.get(&split_id)?.viewport.top_byte;
+        let new_top_byte = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&split_id)?
+            .viewport
+            .top_byte;
 
         if new_top_byte == old_top_byte {
             // Viewport couldn't move (already at top/bottom of buffer).  Fall
@@ -129,7 +154,14 @@ impl Editor {
         // top.  The cursor is guaranteed visible (it's at row 0 of the new
         // viewport) and each press advances by exactly a full page of view
         // rows — the same way it does when line wrap is off.
-        let cursors = &self.split_view_states.get(&split_id)?.cursors;
+        let cursors = &self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&split_id)?
+            .cursors;
         let events: Vec<Event> = cursors
             .iter()
             .map(|(cursor_id, cursor)| {
@@ -214,7 +246,15 @@ impl Editor {
         let cursor_data: Vec<_> = {
             let active_split = self.effective_active_split();
             let active_buffer = self.active_buffer();
-            let cursors = &self.split_view_states.get(&active_split).unwrap().cursors;
+            let cursors = &self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&active_split)
+                .unwrap()
+                .cursors;
             let state = self.buffers.get(&active_buffer).unwrap();
             cursors
                 .iter()

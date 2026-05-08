@@ -70,9 +70,17 @@ impl Editor {
 
         // Scroll the split under the mouse pointer (not necessarily the focused split).
         // Fall back to the active split if the pointer isn't over any split area.
-        let (target_split, buffer_id) = self
-            .split_at_position(col, row)
-            .unwrap_or_else(|| (self.split_manager.active_split(), self.active_buffer()));
+        let (target_split, buffer_id) = self.split_at_position(col, row).unwrap_or_else(|| {
+            (
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split(),
+                self.active_buffer(),
+            )
+        });
 
         // Panels marked non-scrollable (buffer-group toolbars/headers/footers
         // default to this) swallow the wheel event — their content is pinned
@@ -104,14 +112,23 @@ impl Editor {
 
         // Get view_transform tokens from SplitViewState (if any)
         let view_transform_tokens = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&target_split)
             .and_then(|vs| vs.view_transform.as_ref())
             .map(|vt| vt.tokens.clone());
 
         // Get mutable references to both buffer state and view state
         let state = self.buffers.get_mut(&buffer_id);
-        let view_state = self.split_view_states.get_mut(&target_split);
+        let view_state = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split);
 
         if let (Some(state), Some(view_state)) = (state, view_state) {
             // Collect plugin soft-break positions BEFORE re-borrowing the buffer
@@ -197,15 +214,29 @@ impl Editor {
         row: u16,
         delta: i32,
     ) -> AnyhowResult<()> {
-        let (target_split, buffer_id) = self
-            .split_at_position(col, row)
-            .unwrap_or_else(|| (self.split_manager.active_split(), self.active_buffer()));
+        let (target_split, buffer_id) = self.split_at_position(col, row).unwrap_or_else(|| {
+            (
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split(),
+                self.active_buffer(),
+            )
+        });
 
         if self.is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
-        if let Some(view_state) = self.split_view_states.get_mut(&target_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
             // Line wrap makes horizontal scroll a no-op.
             if view_state.viewport.line_wrap_enabled {
                 return Ok(());
@@ -263,14 +294,22 @@ impl Editor {
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
@@ -280,7 +319,11 @@ impl Editor {
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
         let (wrap_width, show_line_numbers) = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
             .unwrap_or((80, true));
@@ -409,7 +452,13 @@ impl Editor {
         };
 
         // Set viewport top to this position in SplitViewState
-        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+        {
             view_state.viewport.top_byte = scroll_position.0;
             view_state.viewport.top_view_line_offset = scroll_position.1;
             // Skip ensure_visible so the scroll position isn't undone during render
@@ -458,20 +507,32 @@ impl Editor {
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.viewport.height as usize)
             .unwrap_or(10);
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
         let (wrap_width, show_line_numbers) = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
             .unwrap_or((80, true));
@@ -568,7 +629,13 @@ impl Editor {
         };
 
         // Set viewport top to this position in SplitViewState
-        if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&split_id)
+        {
             view_state.viewport.top_byte = scroll_position.0;
             view_state.viewport.top_view_line_offset = scroll_position.1;
             // Skip ensure_visible so the scroll position isn't undone during render

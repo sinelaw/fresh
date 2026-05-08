@@ -32,8 +32,20 @@ impl Editor {
     }
 
     pub fn toggle_line_numbers(&mut self) {
-        let active_split = self.split_manager.active_split();
-        if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(vs) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             let currently_shown = vs.show_line_numbers;
             vs.show_line_numbers = !currently_shown;
             if currently_shown {

@@ -643,8 +643,20 @@ impl Editor {
 
     /// Toggle folding at the given byte position in the specified buffer.
     pub fn toggle_fold_at_byte(&mut self, buffer_id: BufferId, byte_pos: usize) {
-        let split_id = self.split_manager.active_split();
-        let (buffers, split_view_states) = (&mut self.buffers, &mut self.split_view_states);
+        let split_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let (buffers, split_view_states) = (
+            &mut self.buffers,
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout"),
+        );
 
         let Some(state) = buffers.get_mut(&buffer_id) else {
             return;
@@ -1041,7 +1053,13 @@ impl Editor {
 
         // Clear all LSP-related overlays for this buffer (diagnostics + inlay hints)
         let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
-        let (buffers, split_view_states) = (&mut self.buffers, &mut self.split_view_states);
+        let (buffers, split_view_states) = (
+            &mut self.buffers,
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout"),
+        );
         if let Some(state) = buffers.get_mut(&buffer_id) {
             state
                 .overlays

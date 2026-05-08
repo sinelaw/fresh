@@ -20,7 +20,13 @@ impl Editor {
 
         // When line wrap is on, use the visual (soft-wrapped) line boundaries
         if self.config.editor.line_wrap {
-            let split_id = self.split_manager.active_split();
+            let split_id = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
             if let Some(new_pos) =
                 self.smart_home_visual_line(split_id, cursor.position, estimated_line_length)
             {
@@ -97,7 +103,13 @@ impl Editor {
             .visual_line_start(split_id, cursor_pos, false)?;
 
         // Determine the physical line start to tell first-row from continuation.
-        let buffer_id = self.split_manager.active_buffer_id()?;
+        let buffer_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_buffer_id()?;
         let state = self.buffers.get_mut(&buffer_id)?;
         let mut iter = state
             .buffer

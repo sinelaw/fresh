@@ -91,10 +91,22 @@ impl Editor {
         // Walk the focus-history LRU (most recent first) to find the tab
         // the user should land on. This naturally handles both buffer and
         // group tabs — whichever the user was looking at most recently wins.
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
 
-        let replacement_target: Option<crate::view::split::TabTarget> =
-            self.split_view_states.get(&active_split).and_then(|vs| {
+        let replacement_target: Option<crate::view::split::TabTarget> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&active_split)
+            .and_then(|vs| {
                 use crate::view::split::TabTarget;
                 vs.focus_history.iter().rev().find_map(|t| match t {
                     TabTarget::Buffer(bid) if *bid == id => None, // skip the closing buffer
@@ -165,7 +177,11 @@ impl Editor {
         // keyed sidesteps that insert. (We clean up after the fact if a
         // shadow does get created — see below.)
         let already_keyed = return_to_group.and_then(|_| {
-            self.split_view_states
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&active_split)?
                 .keyed_states
                 .keys()
@@ -226,7 +242,13 @@ impl Editor {
                 .is_some_and(|m| m.hidden_from_tabs);
             if return_to_group.is_some() && hidden {
                 use crate::view::split::TabTarget;
-                if let Some(vs) = self.split_view_states.get_mut(&active_split) {
+                if let Some(vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&active_split)
+                {
                     vs.open_buffers
                         .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
                     vs.focus_history
@@ -240,7 +262,13 @@ impl Editor {
         // matching `SplitViewState` stay consistent — updating only the
         // tree left SVS pointing at the buffer we were about to free,
         // which caused the click panic in issue #1620.
-        let splits_to_update = self.split_manager.splits_for_buffer(id);
+        let splits_to_update = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .splits_for_buffer(id);
         for split_id in splits_to_update {
             self.set_pane_buffer(split_id, replacement_buffer);
         }
@@ -267,7 +295,13 @@ impl Editor {
         self.panel_ids_mut().retain(|_, &mut buf_id| buf_id != id);
 
         // Remove buffer from all splits' open_buffers lists and focus history
-        for view_state in self.split_view_states.values_mut() {
+        for view_state in self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .values_mut()
+        {
             view_state.remove_buffer(id);
             view_state.remove_from_history(id);
         }
@@ -324,9 +358,19 @@ impl Editor {
         // rather than just the focused panel buffer — only the Close-Tab
         // command (or keybinding) can express "close the group I'm viewing",
         // so this prelude stays here rather than in `close_tab_in_split`.
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         if let Some(group_leaf_id) = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&active_split)
             .and_then(|vs| vs.active_group_tab)
         {
@@ -360,14 +404,22 @@ impl Editor {
 
         // Count how many splits have this buffer in their open_buffers
         let buffer_in_other_splits = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .iter()
             .filter(|(&sid, view_state)| sid != split_id && view_state.has_buffer(buffer_id))
             .count();
 
         // Get the split's open buffers
         let split_tabs = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
@@ -403,7 +455,15 @@ impl Editor {
             // Close Buffer/Close Tab commands behave the same — without
             // this, the × button leaves a leftover split showing some
             // unrelated buffer (observed with the Search/Replace panel).
-            let has_other_splits = self.split_manager.root().count_leaves() > 1;
+            let has_other_splits = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .root()
+                .count_leaves()
+                > 1;
             if split_tabs.len() <= 1 && has_other_splits {
                 self.handle_close_split(split_id.into());
                 // handle_close_split also disposes the buffer-less split;
@@ -439,12 +499,21 @@ impl Editor {
             let replacement_buffer = split_tabs[replacement_idx];
 
             // Remove buffer from this split's tabs
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+            {
                 view_state.remove_buffer(buffer_id);
             }
 
             // Update the split to show the replacement buffer
-            self.split_manager
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
                 .set_split_buffer(split_id, replacement_buffer);
 
             self.set_status_message(t!("buffer.tab_closed").to_string());
@@ -456,7 +525,11 @@ impl Editor {
     pub fn close_other_tabs_in_split(&mut self, keep_buffer_id: BufferId, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
@@ -479,7 +552,10 @@ impl Editor {
         }
 
         // Make sure the kept buffer is active
-        self.split_manager
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
             .set_split_buffer(split_id, keep_buffer_id);
 
         self.set_batch_close_status_message(closed, skipped_modified);
@@ -489,7 +565,11 @@ impl Editor {
     pub fn close_tabs_to_right_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
@@ -519,7 +599,11 @@ impl Editor {
     pub fn close_tabs_to_left_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
@@ -549,7 +633,11 @@ impl Editor {
     pub fn close_all_tabs_in_split(&mut self, split_id: LeafId) {
         // Get the split's open buffers
         let split_tabs = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
@@ -592,14 +680,22 @@ impl Editor {
 
         // Count how many splits have this buffer in their open_buffers
         let buffer_in_other_splits = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .iter()
             .filter(|(&sid, view_state)| sid != split_id && view_state.has_buffer(buffer_id))
             .count();
 
         // Get the split's open buffers
         let split_tabs = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.buffer_tab_ids_vec())
             .unwrap_or_default();
@@ -636,7 +732,13 @@ impl Editor {
             let replacement_buffer = split_tabs.get(replacement_idx).copied();
 
             // Remove buffer from this split's tabs
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+            {
                 view_state.remove_buffer(buffer_id);
             }
 
@@ -664,8 +766,21 @@ impl Editor {
     fn cycle_tab(&mut self, direction: i32) {
         use crate::view::split::TabTarget;
 
-        let active_split = self.split_manager.active_split();
-        let Some(view_state) = self.split_view_states.get(&active_split) else {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(view_state) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&active_split)
+        else {
             return;
         };
 
@@ -777,9 +892,21 @@ impl Editor {
                     old_sticky_column,
                     new_sticky_column: 0, // Reset sticky column for navigation
                 };
-                let split_id = self.split_manager.active_split();
+                let split_id = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
                 let state = self.buffers.get_mut(&target_buffer).unwrap();
-                let view_state = self.split_view_states.get_mut(&split_id).unwrap();
+                let view_state = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                    .unwrap();
                 state.apply(&mut view_state.cursors, &event);
                 // Position-history entries can land anywhere in the buffer;
                 // the viewport must scroll to the restored cursor or the user
@@ -821,9 +948,21 @@ impl Editor {
                     old_sticky_column,
                     new_sticky_column: 0, // Reset sticky column for navigation
                 };
-                let split_id = self.split_manager.active_split();
+                let split_id = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
                 let state = self.buffers.get_mut(&target_buffer).unwrap();
-                let view_state = self.split_view_states.get_mut(&split_id).unwrap();
+                let view_state = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&split_id)
+                    .unwrap();
                 state.apply(&mut view_state.cursors, &event);
                 // Position-history entries can land anywhere in the buffer;
                 // the viewport must scroll to the restored cursor or the user

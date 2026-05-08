@@ -49,11 +49,31 @@ impl Editor {
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).
     pub(super) fn preferred_split_for_file(&self) -> LeafId {
-        let active = self.split_manager.active_split();
-        if self.split_manager.get_label(active.into()).is_none() {
+        let active = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .get_label(active.into())
+            .is_none()
+        {
             return active;
         }
-        self.split_manager.find_unlabeled_leaf().unwrap_or(active)
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .find_unlabeled_leaf()
+            .unwrap_or(active)
     }
 
     /// Open a file in "preview" (ephemeral) mode and return its buffer ID.
@@ -386,9 +406,21 @@ impl Editor {
                 new_sticky_column: target_col,
             };
 
-            let split_id = self.split_manager.active_split();
+            let split_id = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
             let state = self.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = self.split_view_states.get_mut(&split_id).unwrap();
+            let view_state = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+                .unwrap();
             state.apply(&mut view_state.cursors, &event);
 
             // For scanned large files, override the line number with the known exact value
@@ -460,9 +492,21 @@ impl Editor {
                 new_sticky_column: end_col_0,
             };
 
-            let split_id = self.split_manager.active_split();
+            let split_id = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
             let state = self.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = self.split_view_states.get_mut(&split_id).unwrap();
+            let view_state = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+                .unwrap();
             state.apply(&mut view_state.cursors, &event);
         }
     }
@@ -491,9 +535,21 @@ impl Editor {
                 new_sticky_column: 0,
             };
 
-            let split_id = self.split_manager.active_split();
+            let split_id = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
             let state = self.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = self.split_view_states.get_mut(&split_id).unwrap();
+            let view_state = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+                .unwrap();
             state.apply(&mut view_state.cursors, &event);
         }
     }
@@ -540,10 +596,22 @@ impl Editor {
         // Initialize per-buffer view state with config defaults.
         // Must happen AFTER set_active_buffer, because switch_buffer creates
         // the new BufferViewState with defaults (show_line_numbers=true).
-        let active_split = self.split_manager.active_split();
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
-        if let Some(view_state) = self.split_view_states.get_mut(&active_split) {
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
             view_state.apply_config_defaults(
                 self.config.editor.line_numbers,
                 self.config.editor.highlight_current_line,

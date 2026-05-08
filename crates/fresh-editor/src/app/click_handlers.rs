@@ -24,15 +24,21 @@ impl Editor {
     /// This is called after scrollbar operations to ensure the cursor is in view
     pub(super) fn move_cursor_to_visible_area(&mut self, split_id: LeafId, buffer_id: BufferId) {
         // Get viewport info from SplitViewState
-        let (top_byte, viewport_height) =
-            if let Some(view_state) = self.split_view_states.get(&split_id) {
-                (
-                    view_state.viewport.top_byte,
-                    view_state.viewport.height as usize,
-                )
-            } else {
-                return;
-            };
+        let (top_byte, viewport_height) = if let Some(view_state) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&split_id)
+        {
+            (
+                view_state.viewport.top_byte,
+                view_state.viewport.height as usize,
+            )
+        } else {
+            return;
+        };
 
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             let buffer_len = state.buffer.len();
@@ -55,7 +61,13 @@ impl Editor {
             }
 
             // Check if cursor is outside visible range and move it if needed
-            if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&split_id)
+            {
                 let cursor_pos = view_state.cursors.primary().position;
                 if cursor_pos < top_byte || cursor_pos > bottom_byte {
                     // Move cursor to the top of the viewport
@@ -138,7 +150,11 @@ impl Editor {
             let (gutter_width, collapsed_header_bytes) = {
                 let state = self.buffers.get(buffer_id)?;
                 let headers = self
-                    .split_view_states
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(split_id)
                     .map(|vs| {
                         vs.folds
@@ -154,12 +170,20 @@ impl Editor {
                 .get(split_id)
                 .cloned();
             let fallback = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(split_id)
                 .map(|vs| vs.viewport.top_byte)
                 .unwrap_or(0);
             let compose_width = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(split_id)
                 .and_then(|vs| vs.compose_width);
 
@@ -224,12 +248,20 @@ impl Editor {
                 .get(&split_id)
                 .cloned();
             let fallback = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&split_id)
                 .map(|vs| vs.viewport.top_byte)
                 .unwrap_or(0);
             let compose_width = self
-                .split_view_states
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
                 .get(&split_id)
                 .and_then(|vs| vs.compose_width);
             let gutter_width = self
@@ -373,14 +405,22 @@ impl Editor {
 
         // Get fallback from SplitViewState viewport
         let fallback = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| vs.viewport.top_byte)
             .unwrap_or(0);
 
         // Get compose width for this split (adjusts content rect for centered layout)
         let compose_width = self
-            .split_view_states
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
             .get(&split_id)
             .and_then(|vs| vs.compose_width);
 
@@ -409,7 +449,11 @@ impl Editor {
                 );
                 let content_col = col.saturating_sub(adjusted_rect.x);
                 let collapsed_header_bytes = self
-                    .split_view_states
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(&split_id)
                     .map(|vs| {
                         vs.folds
@@ -425,7 +469,11 @@ impl Editor {
                 );
 
                 let cursor_snapshot = self
-                    .split_view_states
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
                     .get(&split_id)
                     .map(|vs| {
                         let cursor = vs.cursors.primary();

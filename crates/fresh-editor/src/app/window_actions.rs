@@ -1,19 +1,13 @@
-//! Editor methods for session lifecycle (create, switch, close).
+//! Editor methods for window lifecycle (create, switch, close).
 //!
-//! Sessions are introduced in
-//! `docs/internal/conductor-sessions-design.md`. The MVP build of
-//! these actions implements the **plugin-visible behaviour** —
-//! sessions can be created, switched, and closed, and the
-//! corresponding hooks fire — but does not yet move per-subsystem
-//! state (file tree, LSP, ignore matcher) into `Session`. As a
-//! result, `set_active_window` here updates `working_dir` and
-//! discards the cached file explorer (so it rebuilds on next open),
-//! but warm-LSP swap and warm-file-tree swap are deferred to the
-//! per-subsystem migration commits.
-//!
-//! Plugins that listen for `active_session_changed` see the same
-//! sequence regardless of whether the swap is warm or cold; the
-//! difference is performance only.
+//! Windows are introduced in
+//! `docs/internal/conductor-sessions-design.md`. After Step 0b each
+//! window owns its file tree, file mod-times, LSP set, panel-id
+//! map, and split layout outright. `set_active_window` is therefore
+//! a pointer write (plus seed-buffer allocation when diving into a
+//! never-activated window) — there are no warm-swap stashes left to
+//! shuffle. Plugins that listen for `active_window_changed` see the
+//! same hook sequence as before.
 
 use crate::app::window::Window;
 use crate::services::plugins::hooks::HookArgs;
@@ -49,14 +43,14 @@ impl crate::app::Editor {
         id
     }
 
-    /// Switch the active session to `id`.
+    /// Switch the active window to `id`.
     ///
-    /// Atomic swap: per-session live state (currently the file
-    /// explorer view) is moved out of `Editor` into the outgoing
-    /// session's stash and the incoming session's stash is moved
-    /// onto `Editor`. The dive is now warm — switching back
-    /// preserves the previous file-tree expansion / scroll /
-    /// selection rather than rebuilding from scratch.
+    /// Pointer write: every per-window field
+    /// (panel_ids / file_mod_times / file_explorer / lsp / splits)
+    /// already lives on `Window`, so flipping `active_window` is the
+    /// whole switch. Diving into a never-activated window seeds it
+    /// with a fresh empty buffer + SplitManager so the renderer
+    /// finds a populated `splits` field.
     ///
     /// No-op when `id` is already active. Logs and returns when
     /// `id` is unknown — the design treats unknown ids as a plugin
@@ -67,7 +61,7 @@ impl crate::app::Editor {
             return;
         }
         if !self.windows.contains_key(&id) {
-            tracing::warn!("set_active_window: unknown session id {id}; active session unchanged");
+            tracing::warn!("set_active_window: unknown window id {id}; active window unchanged");
             return;
         }
 
@@ -77,19 +71,12 @@ impl crate::app::Editor {
         // self.windows.
         let new_root = self.windows[&id].root.clone();
 
-        let needs_fresh_layout = self
-            .windows
-            .get(&id)
-            .is_some_and(|s| s.splits_stash.is_none());
+        let needs_fresh_layout = self.windows.get(&id).is_some_and(|s| s.splits.is_none());
 
-        // For a never-activated incoming session, allocate a
-        // fresh seed buffer + a SplitManager rooted at it
-        // BEFORE we touch `Editor.split_manager`. We deliberately
-        // build the buffer state directly (not via `new_buffer`)
-        // so the outgoing session's split manager — still
-        // installed in `self.split_manager` — is not mutated.
-        // After the swap below, the active session is the
-        // incoming one and the seed buffer attaches to it.
+        // For a never-activated incoming window, allocate a fresh
+        // seed buffer + SplitManager rooted at it. The buffer is
+        // attached to the incoming window's membership set after the
+        // active pointer moves.
         let fresh_layout = if needs_fresh_layout {
             let buf = BufferId(self.next_buffer_id);
             self.next_buffer_id += 1;
@@ -108,8 +95,7 @@ impl crate::app::Editor {
             self.buffers.insert(buf, state);
             // Skip `attach_buffer_to_active_window` — at this
             // point `active_window` is still the outgoing one.
-            // We attach to the incoming session below, after the
-            // active pointer moves.
+            // Attach below after the pointer moves.
             self.event_logs
                 .insert(buf, crate::model::event::EventLog::new());
             self.buffer_metadata
@@ -126,37 +112,16 @@ impl crate::app::Editor {
             None
         };
 
-        // Stash the outgoing session's live state. `panel_ids`,
-        // `file_mod_times`, `file_explorer`, and `lsp` are already
-        // per-window fields (Step 0b), so they don't participate in
-        // the swap.
-        let outgoing_splits = std::mem::replace(
-            &mut self.split_manager,
-            SplitManager::new(BufferId(usize::MAX)),
-        );
-        let outgoing_view_states = std::mem::take(&mut self.split_view_states);
-        if let Some(outgoing) = self.windows.get_mut(&previous_id) {
-            outgoing.splits_stash = Some((outgoing_splits, outgoing_view_states));
-        }
-
+        // Pointer write — that's the whole switch.
         self.active_window = id;
         self.working_dir = new_root;
 
-        // Restore the incoming session's stashed split layout.
-        if let Some(incoming) = self.windows.get_mut(&id) {
-            if let Some((mgr, vs)) = incoming.splits_stash.take() {
-                self.split_manager = mgr;
-                self.split_view_states = vs;
-            }
-        }
-
-        // For a never-activated incoming session, install the
-        // freshly-built layout and attach the seed buffer to the
-        // (now-active) incoming session.
+        // For a never-activated incoming window, install the freshly
+        // built layout into the window's `splits` field and attach
+        // the seed buffer.
         if let Some((buf, mgr, vs)) = fresh_layout {
-            self.split_manager = mgr;
-            self.split_view_states = vs;
             if let Some(s) = self.windows.get_mut(&id) {
+                s.splits = Some((mgr, vs));
                 s.buffers.insert(buf);
             }
         }
