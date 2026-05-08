@@ -101,13 +101,11 @@ pub struct Window {
     /// the next LSP feature trigger will lazily create one.
     pub lsp_stash: Option<LspManager>,
 
-    /// **Stash.** Utility-dock panel-id → buffer-id occupancy when
-    /// this window is *inactive*. The active window's occupancy
-    /// lives on `Editor.panel_ids`. Each window gets its own dock —
-    /// when one window has the search panel claimed and the user
-    /// dives elsewhere, the new window starts with an empty dock
-    /// and rebuilds on demand.
-    pub panel_ids_stash: HashMap<String, BufferId>,
+    /// Utility-dock panel-id → buffer-id occupancy. Each window
+    /// gets its own dock — when one window has the search panel
+    /// claimed and the user dives elsewhere, the new window starts
+    /// with an empty dock and rebuilds on demand.
+    pub panel_ids: HashMap<String, BufferId>,
 
     /// Buffers attached to this window (membership only — the
     /// buffer storage stays on `Editor` until Step 0c moves it).
@@ -156,7 +154,7 @@ impl Window {
             file_mod_times_stash: HashMap::new(),
             plugin_state: HashMap::new(),
             lsp_stash: None,
-            panel_ids_stash: HashMap::new(),
+            panel_ids: HashMap::new(),
             splits_stash: None,
             buffers: HashSet::new(),
             layout_cache: WindowLayoutCache::default(),

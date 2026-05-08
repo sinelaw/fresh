@@ -565,7 +565,7 @@ impl Editor {
     /// session's stashed dock occupancy.
     #[doc(hidden)]
     pub fn panel_ids_for_test(&self) -> &std::collections::HashMap<String, fresh_core::BufferId> {
-        &self.panel_ids
+        self.panel_ids()
     }
 
     /// Inject a panel_ids entry. Used by tests to populate the
@@ -573,7 +573,7 @@ impl Editor {
     /// async plugin command path.
     #[doc(hidden)]
     pub fn insert_panel_id_for_test(&mut self, key: String, buffer_id: fresh_core::BufferId) {
-        self.panel_ids.insert(key, buffer_id);
+        self.panel_ids_mut().insert(key, buffer_id);
     }
 
     /// True iff the active session has an LSP manager attached.
@@ -643,6 +643,18 @@ impl Editor {
     /// end of each frame.
     pub(crate) fn active_layout_mut(&mut self) -> &mut crate::app::types::WindowLayoutCache {
         &mut self.active_session_mut().layout_cache
+    }
+
+    /// Active window's utility-dock panel-id → buffer-id map.
+    /// Each window owns its own dock; switching windows shows a
+    /// different (possibly empty) dock.
+    pub(crate) fn panel_ids(&self) -> &std::collections::HashMap<String, BufferId> {
+        &self.active_window().panel_ids
+    }
+
+    /// Mutable handle to the active window's panel-id map.
+    pub(crate) fn panel_ids_mut(&mut self) -> &mut std::collections::HashMap<String, BufferId> {
+        &mut self.active_session_mut().panel_ids
     }
 
     /// Return buffer ids whose on-disk path sits at or under `root`.

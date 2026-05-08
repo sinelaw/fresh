@@ -261,9 +261,10 @@ impl Editor {
         self.semantic_tokens_range_applied.remove(&id);
         self.semantic_tokens_full_debounce.remove(&id);
 
-        // Remove buffer from panel_ids mapping if it was a panel buffer
-        // This prevents stale entries when the same panel_id is reused later
-        self.panel_ids.retain(|_, &mut buf_id| buf_id != id);
+        // Remove buffer from the active window's panel_ids mapping
+        // if it was a panel buffer. Prevents stale entries when the
+        // same panel_id is reused later.
+        self.panel_ids_mut().retain(|_, &mut buf_id| buf_id != id);
 
         // Remove buffer from all splits' open_buffers lists and focus history
         for view_state in self.split_view_states.values_mut() {

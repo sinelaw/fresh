@@ -100,7 +100,7 @@ impl Editor {
         // If a Quickfix buffer already exists (panel_id "quickfix"),
         // update its content in place. Otherwise create one.
         let panel_key = "quickfix".to_string();
-        if let Some(&existing) = self.panel_ids.get(&panel_key) {
+        if let Some(&existing) = self.panel_ids().get(&panel_key) {
             if self.buffers.contains_key(&existing) {
                 if let Err(e) = self.set_virtual_buffer_content(existing, entries) {
                     tracing::error!("Failed to update quickfix buffer: {}", e);
@@ -117,7 +117,7 @@ impl Editor {
                 return;
             }
             // Stale entry — remove and fall through to create.
-            self.panel_ids.remove(&panel_key);
+            self.panel_ids_mut().remove(&panel_key);
         }
 
         // Create the virtual buffer detached — `create_virtual_buffer`
@@ -135,7 +135,7 @@ impl Editor {
             state.show_cursors = true;
             state.editing_disabled = true;
         }
-        self.panel_ids.insert(panel_key, buffer_id);
+        self.panel_ids_mut().insert(panel_key, buffer_id);
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set quickfix buffer content: {}", e);
             return;

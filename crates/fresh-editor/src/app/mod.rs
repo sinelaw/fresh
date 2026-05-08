@@ -810,10 +810,10 @@ pub struct Editor {
     /// Using byte ranges instead of line numbers makes this agnostic to line number shifts
     seen_byte_ranges: HashMap<BufferId, std::collections::HashSet<(usize, usize)>>,
 
-    /// Named panel IDs mapping (for idempotent panel operations)
-    /// Maps panel ID (e.g., "diagnostics") to buffer ID
-    panel_ids: HashMap<String, BufferId>,
-
+    // panel_ids moved onto `Window`. Access via
+    // `Editor::panel_ids()` / `panel_ids_mut()` — those resolve to
+    // the active window's dock occupancy. Each window owns its own
+    // utility-dock; switching windows doesn't share dock state.
     /// Live Grep "Return to Work" cache. Holds the prior query and
     /// selected index so `Action::ResumeLiveGrep` can re-open the
     /// floating overlay (issue #1796) with the same state. Cleared

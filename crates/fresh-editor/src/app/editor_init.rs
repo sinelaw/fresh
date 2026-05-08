@@ -909,7 +909,6 @@ impl Editor {
             plugin_manager,
             plugin_dev_workspaces: HashMap::new(),
             seen_byte_ranges: HashMap::new(),
-            panel_ids: HashMap::new(),
             live_grep_last_state: None,
             overlay_preview_state: None,
             buffer_groups: HashMap::new(),

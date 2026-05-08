@@ -2194,7 +2194,7 @@ impl Editor {
                     state.editing_disabled = editing_disabled;
                 }
                 if let Some(pid) = &panel_id {
-                    self.panel_ids.insert(pid.clone(), buffer_id);
+                    self.panel_ids_mut().insert(pid.clone(), buffer_id);
                 }
                 if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
                     tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
@@ -2239,7 +2239,7 @@ impl Editor {
 
         // Check if this panel already exists (for idempotent operations)
         if let Some(pid) = &panel_id {
-            if let Some(&existing_buffer_id) = self.panel_ids.get(pid) {
+            if let Some(&existing_buffer_id) = self.panel_ids().get(pid) {
                 // Verify the buffer actually exists (defensive check for stale entries)
                 if self.buffers.contains_key(&existing_buffer_id) {
                     // Panel exists, just update its content
@@ -2278,7 +2278,7 @@ impl Editor {
                         pid,
                         existing_buffer_id
                     );
-                    self.panel_ids.remove(pid);
+                    self.panel_ids_mut().remove(pid);
                     // Fall through to create a new buffer
                 }
             }
@@ -2316,7 +2316,7 @@ impl Editor {
 
         // Store the panel ID mapping if provided
         if let Some(pid) = panel_id {
-            self.panel_ids.insert(pid, buffer_id);
+            self.panel_ids_mut().insert(pid, buffer_id);
         }
 
         // Set the content
