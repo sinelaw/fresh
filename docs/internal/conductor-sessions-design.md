@@ -1449,8 +1449,36 @@ reviewable PR.
 Goal: each `Session` owns the storage for everything it needs
 to render and operate on, exactly like a VS Code window. The
 warm-swap pattern goes away. `setActiveSession` becomes a
-pointer write. Render becomes session-pluggable as
-`render_session(frame, area, &Session, &Editor /* chrome */)`.
+pointer write. Render becomes window-pluggable as
+`Window::render(frame, area, &EditorChrome)`.
+
+**Architectural rule for 0c onward (revised after 0b):** state
+moves to `Window`, *and so do the methods that mutate it*.
+Action handlers, edit operations, save/revert, undo/redo,
+render, terminal operations — anything whose body primarily
+mutates window-scoped state — relocates from `impl Editor`
+onto `impl Window`. `&mut self` inside those methods is the
+window; there is no "active window" lookup at the call site.
+Editor-global state that handlers need (config, theme,
+filesystem) is `Arc<…>` cloned into Window or threaded as
+parameters; plugin hooks that handlers want to fire become
+return values dispatched by the Editor shim. `impl Editor`
+keeps only window lifecycle, cross-window orchestration,
+editor-global mutations, and the top-level dispatcher.
+
+This rule was learned the hard way during 0b: the
+accessor-method strategy used there (`Editor::split_manager_mut`
+etc.) returns references bound to `&mut self`, which makes the
+borrow checker treat *every* such call as locking all of
+`Editor`. Two such accessors can't compose; nor can one
+accessor compose with a read of any other Editor field. The
+0b code worked around this with inline `self.windows.get_mut(
+&self.active_window)…` direct field access at conflict sites,
+which is correct but verbose and leaks the "active" concept
+into every handler. Putting the methods on `impl Window`
+eliminates the workaround: `self.X` becomes a normal Rust
+field access on the right type, and the borrow checker splits
+it cleanly.
 
 Sub-steps, in dependency order:
 
@@ -1482,117 +1510,183 @@ into a never-activated window. Editor accessors
 case. (Five commits on `claude/window-state-migration-RjEwX`,
 one per field.)
 
-**Borrow-checker friction observed during 0b.** Method-call
-accessors hold `&mut self` for the call's whole lifetime, so
-sites that need a mutable borrow on one window field *and* a
-read or mutable borrow on a different window field (or on
-another `Editor` field — `tokio_runtime`,
-`authority.filesystem`, `theme`, `config`, `terminal_*`) can't
-both go through `self.X_mut()`. The pattern that works is
-direct windows-field access at the conflict site:
+**Lessons from 0b — the accessor-method strategy was wrong.**
+The shipped 0b uses `Editor::X()` / `X_mut()` accessor methods
+that resolve to the active window's field
+(`Editor::split_manager_mut(&mut self) -> &mut SplitManager`,
+etc.). That works at sites that touch one window field at a
+time, but breaks at sites that compose two: the method's
+return reference is bound to `&mut self`, so it locks *all*
+of `Editor` for its lifetime. Concretely: `self.X_mut()` and
+`self.Y_mut()` (or `&self.Z`) cannot coexist even when X, Y, Z
+are disjoint fields, because the borrow checker only sees two
+overlapping `&mut self` borrows.
+
+Direct field access splits cleanly — `self.windows.get_mut(...)`
+locks `self.windows` only, leaving `self.config` / `self.theme`
+/ `self.event_logs` free. So in 0b's hot-path code, we worked
+around the accessor problem by inlining the field access at
+conflict sites:
 
 ```rust
 let active_id = self.active_window;
-if let Some(explorer) = self
-    .windows
-    .get_mut(&active_id)
-    .and_then(|w| w.file_explorer.as_mut())
-{
-    // body still reads `self.theme`, `self.config`, etc. —
-    // disjoint from `&mut self.windows`.
-}
-```
-
-For sites that need *two* mutable sub-borrows on the same
-window (e.g. `splits` and `buffers` together), take one
-`&mut Window` and split-access:
-
-```rust
 let window = self.windows.get_mut(&active_id).unwrap();
 let state = window.buffers.get_mut(&id).unwrap();
 let (mgr, vs) = window.splits.as_mut().unwrap();
-// state, mgr, vs all live at once because they're disjoint
-// fields of `Window`.
+// state, mgr, vs all live at once: disjoint sub-fields of Window.
 ```
 
-This pattern recurs in every subsequent sub-step (0c–0f) and
-the cost is roughly proportional to the number of call sites
-that compose the migrated field with another self-borrow.
+This pattern works but it's verbose, repetitive, and at the
+wrong layer — every action handler that operates on a window
+shouldn't have to thread "active" through its body or rebuild
+the same boilerplate.
+
+**The right primitive: methods on `impl Window`.** Most action
+handlers today live on `impl Editor` because that's where the
+state lived in the legacy single-window codebase. After Step 0,
+the state for those handlers (buffers, splits, file_explorer,
+lsp, event_logs, terminals, …) lives on `Window`. The methods
+should follow the data: handlers that mutate window-scoped
+state move to `impl Window`, where `&mut self` *is* the window
+and there is no "active" concept inside the method body. The
+borrow problem disappears structurally — `self.buffers` is a
+direct field access on Window, splits cleanly with
+`self.splits`, and Editor isn't involved.
+
+```rust
+impl Window {
+    pub fn handle_insert_char(&mut self, ch: char, cfg: &Config) {
+        let buf_id = self.active_buffer();
+        let state = self.buffers.get_mut(&buf_id).unwrap();
+        let cursors = &mut self.splits.as_mut().unwrap().1
+            .get_mut(&self.active_split()).unwrap().cursors;
+        // ... mutate state + cursors freely ...
+    }
+}
+```
+
+What stays on `impl Editor`:
+
+- Genuinely cross-window operations (Conductor's compare-alpha-
+  vs-base, find-references-across-all-windows).
+- Window lifecycle (`create_window`, `set_active_window`,
+  `close_window`).
+- Editor-global mutations (theme apply, config reload, plugin
+  reload, quit).
+- The thin top-level dispatcher that pulls the active window
+  out, calls the right `Window` method, and fires deferred
+  plugin hooks based on what changed.
+
+Editor-global state that handlers genuinely need (config,
+theme, filesystem) is shared via `Arc<…>` cloned into Window
+on construction, or passed as `&Config` parameters. Plugin
+hooks are *returned* from Window methods as event values so
+the Editor shim can dispatch them after the window mutation
+returns — keeps `plugin_manager` off Window.
+
+This shape removes the macro / inline-direct-field-access
+workarounds entirely. It also makes "operate on a non-active
+window" first-class: Conductor's diff helper just calls
+`alpha.X(...)` and `base.Y(...)` directly, no swap, no
+"setActiveWindow before the operation" gymnastics.
 
 **0c — Move `Editor.buffers` onto `Session`.** **Status: not
-yet shipped — first attempt reverted.** `Session.buffers:
-HashMap<BufferId, EditorState>` replaces today's
-`Session.buffers: HashSet<BufferId>` and
+yet shipped — first attempt reverted, recommended approach
+revised.**
+
+`Window.buffers: HashMap<BufferId, EditorState>` replaces
+today's `Window.buffers: HashSet<BufferId>` and
 `Editor.buffers: HashMap<BufferId, EditorState>`.
-`next_buffer_id` stays on `Editor` so ids remain globally
-unique.
+`next_buffer_id` stays globally unique (allocated via
+`Arc<AtomicUsize>` shared into windows, or a `&mut
+IdAllocator` parameter to the few methods that allocate ids).
 
-The first attempt landed the type/field changes plus a
-sed-driven rewrite of every `self.buffers.X` call site to
-`self.windows.get_mut(&self.active_window).map(|w| &mut
-w.buffers).expect(…).X`. That left ~50 unique borrow-checker
-conflict sites where the inline `windows.get_mut` borrow
-overlapped with another mutable borrow on the same window
-(typically `splits` or `split_view_states`) or with
-contemporaneous reads of `self.config` / `self.buffer_metadata`
-/ `self.event_logs` / etc. The pattern from 0b applies (single
-`&mut Window` + split-access into disjoint sub-fields), but
-the volume — render.rs's per-frame buffer loops, lsp_requests
-fanout, mouse_input click handlers, plugin_dispatch tab/window
-handlers — needs careful per-site analysis rather than a
-mechanical sweep. The attempt was reverted to keep the branch
-compiling cleanly with 0a + 0b shipped.
+**First attempt:** moved the type, then sed-rewrote every
+`self.buffers.X` call site to inline-windows-access. That
+left ~50 borrow-checker conflict sites because the inline
+expression locks `self.windows` while the body needs other
+window or Editor fields. Reverted to keep the branch
+compiling cleanly. The conflict pattern is the same one from
+the 0b lessons above — the accessor-method strategy can't
+support it.
 
-**Plan for the next attempt at 0c.** Either (a) a
-`buffers_mut!(self)` macro that expands inline to direct
-windows-field access (so the borrow checker can split it the
-same way 0b's hot paths do — methods can't, macros can), or
-(b) pre-extract `let window = self.windows.get_mut(&id).unwrap();`
-once at the top of every function that needs concurrent
-sub-borrows and use `window.buffers`, `window.splits`, etc.
-Approach (a) is the more general fix and unblocks the same
-shape for terminal_manager / event_logs in 0d–0e. Estimated
-4–6 hours of attentive per-site work to clear the conflict
-list once the macro is in place.
+**Recommended approach for the next attempt — three phases:**
 
-Plugin API lookup helpers gain a "which session" disambiguation
-pass (default: active; explicit cross-session is opt-in).
-Audit every `self.buffers` reference (~hundreds) and route
-through the active session — or, where the operation is
-genuinely cross-session (find references across all sessions,
-the diff helper), through an explicit cross-session iterator.
+1. **Move the field.** Change `Window.buffers` from
+   `HashSet<BufferId>` to `HashMap<BufferId, EditorState>`,
+   delete `Editor.buffers`, hand the seed buffers to the base
+   window in `editor_init`. No call-site rewrites yet — this
+   step intentionally breaks compilation.
+
+2. **Move the methods.** For each `impl Editor` method whose
+   body primarily mutates buffer state (action handlers, edit
+   ops, save/revert, undo/redo), relocate it to `impl Window`.
+   `&mut self` becomes `&mut Window` and `self.buffers` is now
+   direct field access. Editor-global needs become Arc-shared
+   fields on Window (`config`, `theme`, `filesystem`) or
+   parameters (`&Config`, `&mut PluginManager` if it really
+   has to fire a hook from inside; usually it shouldn't).
+   Plugin-hook side effects become return values that the
+   Editor dispatcher fires after the call.
+
+3. **Editor shim layer.** The top-level `Editor::handle_action`
+   / `Editor::handle_key` / `Editor::render` becomes a thin
+   dispatcher that pulls `&mut self.windows[&self.active_window]`
+   (direct field access — no accessor method), calls the
+   appropriate Window method, then handles the returned
+   plugin hooks / events.
+
+Cross-window operations (Conductor diff, find-references-all)
+stay on `impl Editor` because they really do touch multiple
+windows. They access them by id with explicit
+`self.windows.get(&id)` — no accessor wrappers needed.
+
+**Why this is faster than the macro / per-site refactor.**
+Both fix-the-symptoms approaches (macros, pre-extracted
+`&mut Window` at every conflict site) leave the methods on
+`impl Editor` and pay borrow-checker tax at every call.
+Moving the methods to `impl Window` fixes the cause — the
+methods belong there architecturally, and the borrow problem
+goes away because `self` is the right type. Each method
+relocation is mechanical (cut/paste + parameter changes for
+Editor-global needs), and the result is shorter, clearer
+code at every call site.
 
 **0d — Move terminal manager + terminal-buffer indexes onto
 `Session`.** `terminal_manager`, `terminal_buffers`,
-`terminal_backing_files` all become per-session. PTY threads
-are owned by the session that created them. `closeSession`
-joins those threads. `terminal_id` allocation also stays
-global on `Editor` for plugin-API stability. Active-session
-helpers cover the common case
-(`active_terminal_manager_mut()`). Same borrow-checker
-caveats as 0c apply — many terminal sites read/write
-buffers and split state in the same expression.
+`terminal_backing_files` all become per-window. PTY threads
+are owned by the window that created them. `closeWindow`
+joins those threads. `terminal_id` allocation stays global
+(`Arc<AtomicUsize>` or similar) for plugin-API stability.
+Terminal action handlers move to `impl Window` as part of 0d
+— same recipe as 0c.
 
 **0e — Move `event_logs` (undo per buffer) onto `Session`.**
-Falls out of 0c — undo logs follow the buffer.
+Falls out of 0c — undo logs follow the buffer. Undo/redo
+handlers move to `impl Window`.
 
 **0f — Move `position_history`, `bookmarks`, and similar
-session-scoped per-buffer metadata onto `Session`.**
+session-scoped per-buffer metadata onto `Session`.** Their
+handlers move to `impl Window` too.
 
-**0g — Audit commands.** Every command that today iterates
-`self.buffers` directly is now a compile error after 0c. The
-right fix is almost always "iterate the active session's
-buffers." A small number of commands are genuinely
-editor-global (Quit, theme apply, plugin reload) — those
-become explicit. Goal: zero remaining `editor.buffers`
-references outside the session helpers.
+**0g — Audit commands.** After 0c–0f, the only methods left
+on `impl Editor` should be cross-window orchestration, window
+lifecycle, editor-global mutations (theme apply, config
+reload, plugin reload, quit), and the dispatcher shim. Any
+leftover `self.buffers` / `self.event_logs` / etc. on
+`impl Editor` is a sign the method should have moved to
+`impl Window`. Goal: zero remaining `editor.buffers` references
+outside lifecycle / cross-window helpers.
 
-**0h — Refactor render to `render_session`.** Lift
-`Editor::render` to call `render_session(frame, frame.area(),
-&self.sessions[self.active_session], self)`. The preview
-path (`previewSessionInRect`) becomes the same call with a
-sub-rect and a different `&Session`. The transient-swap
-hack and the side-effect-flag plumbing both go away.
+**0h — Refactor render to `Window::render`.** Move the body
+of `Editor::render` onto `impl Window` as
+`Window::render(&self, frame: &mut Frame, area: Rect, chrome:
+&EditorChrome)`. The Editor entry point becomes
+`fn render(&mut self, frame) { self.windows[&self.active_window]
+.render(frame, frame.area(), &self.chrome()) }`. The preview
+path (`previewSessionInRect`) is the same call against a
+different `Window` with a sub-rect — no transient swap, no
+side-effect flag plumbing.
 
 **0i — Remove the warm-swap helpers and Conductor's reliance
 on them.** **Mostly already done as part of 0b.** The swap
@@ -1666,19 +1760,39 @@ unchanged.
 
 `Editor.buffers` is still editor-global. Step 0c was attempted
 on this branch and reverted because it ran into ~50 unique
-borrow-checker conflict sites where the inline windows-field
-access pattern that worked for 0b didn't compose with sites
+borrow-checker conflict sites — the inline windows-field
+access pattern that worked for 0b doesn't compose with sites
 that need *two* concurrent mutable sub-borrows on a window
-(typically `buffers` + `splits`). See the migration sequence
-above (`§ Step 0c`) for the recommended next-attempt
-strategy: a `buffers_mut!(self)` macro that expands inline so
-the borrow checker can split it, plus per-function
-pre-extraction of `&mut Window` at every site that touches
-both buffers and another window field.
+(typically `buffers` + `splits`). See `§ Step 0c` above for
+the diagnosis: the accessor-method strategy used in 0b was
+the wrong primitive. Methods that mutate window-scoped state
+should live on `impl Window`, not `impl Editor` — that's what
+makes the borrow problem go away by construction (`&mut self`
+becomes the window, not the editor; sub-fields split the
+normal way).
 
-0d–0i are downstream of 0c (terminal manager, event_logs,
-position history, command audit, `render_window` refactor,
-warm-swap helper deletion).
+The recommended next attempt for 0c–0f is the recipe in
+`§ Step 0c`:
+
+1. Move the field (deletes the Editor field, breaks
+   compilation intentionally).
+2. Move the methods that primarily mutate that field onto
+   `impl Window`. Editor-global needs become `Arc<Config>` /
+   `Arc<Theme>` / `Arc<dyn FileSystem>` shared into Window,
+   or `&Config` parameters. Plugin-hook side effects become
+   return values dispatched by the Editor shim.
+3. Editor's top-level dispatcher pulls `&mut self.windows[
+   &self.active_window]` directly (field access, splits the
+   borrow on `self.windows`) and calls the Window method.
+
+The same recipe drives 0d (terminal manager), 0e (event logs),
+0f (position history / bookmarks). 0g is the audit pass that
+makes sure no "operate on the active window" logic is left on
+`impl Editor`. 0h moves render to `impl Window`. 0i cleans up
+the last remnants of the warm-swap shape (drop `splits`
+`Option`, drop the `attach_buffer_to_active_window` /
+`detach_buffer_from_all_windows` shims, simplify the e2e
+tests' "stash" framing).
 
 ### Step 1 — `Session` struct, single forced session  `[interim — superseded by Step 0]`
 
