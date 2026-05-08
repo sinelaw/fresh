@@ -127,10 +127,17 @@ editor.on("terminal_output", function(payload) {
     harness.assert_no_plugin_errors();
 }
 
-/// `terminal_exit` fires once when the PTY process ends. The plugin
-/// records the event by calling `setStatus("term-exit:<code>")`.
-/// Closing the terminal via the editor's `close_terminal` action
-/// signals the PTY to shut down.
+/// `terminal_exit` fires once when the PTY process ends, with the
+/// real exit code captured from `child.wait()`. The plugin records
+/// the event by calling `setStatus("term-exit:<code>")`. Closing
+/// the terminal via the editor's `close_terminal` action signals
+/// the PTY to shut down — the killer sends SIGKILL/equivalent and
+/// the wait-thread reaps the status.
+///
+/// We don't assert on a *specific* numeric code because PTY
+/// shutdown semantics differ across platforms (SIGHUP, SIGTERM,
+/// shell-specific exit codes). The contract is: the plugin sees
+/// a *concrete* number, not the placeholder "none".
 #[test]
 fn test_terminal_exit_hook_fires_on_close() {
     init_tracing_from_env();
@@ -142,8 +149,6 @@ fn test_terminal_exit_hook_fires_on_close() {
 const editor = getEditor();
 editor.setStatus("plugin:ready");
 editor.on("terminal_exit", function(payload) {
-    // exit_code is `null` (None) until full wait-status capture
-    // lands; the test only verifies the hook fired, not the code.
     const code = payload && payload.exit_code;
     const codeStr = (code === null || code === undefined) ? "none" : String(code);
     editor.setStatus("term-exit:" + codeStr);
@@ -174,6 +179,17 @@ editor.on("terminal_exit", function(payload) {
             .contains("term-exit:")),
         "terminal_exit hook did not fire after close; screen:\n{}",
         harness.screen_to_string()
+    );
+
+    // Now the wait-thread carries the real exit code through, so
+    // "term-exit:none" indicates a regression in `child.wait()`
+    // capture. Any concrete number is acceptable — PTY shutdown
+    // semantics vary by platform.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("term-exit:none"),
+        "terminal_exit fired but exit_code was None — the wait-thread \
+         capture regressed; screen:\n{screen}"
     );
 
     harness.assert_no_plugin_errors();

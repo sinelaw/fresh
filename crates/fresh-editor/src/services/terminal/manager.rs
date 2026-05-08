@@ -238,6 +238,13 @@ impl TerminalManager {
 
             tracing::debug!("Shell process spawned successfully");
 
+            // Pull a separate killer handle so the writer thread
+            // can request termination on `Shutdown` without owning
+            // `child` itself. `child` moves into the dedicated
+            // wait-thread below, where its exit status is captured
+            // and propagated through `AsyncMessage::TerminalExited`.
+            let mut child_killer = child.clone_killer();
+
             // Create terminal state
             let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
 
@@ -426,19 +433,36 @@ impl TerminalManager {
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = w.flush();
                 }
-                // Notify that terminal exited (receiver may be dropped during shutdown).
-                //
-                // `exit_code: None` for now — the actual `child.wait()`
-                // lives in the writer thread (see closure below) and we
-                // do not yet plumb its status back here. Plugins that
-                // need a code should treat `None` as "ended, status
-                // unknown" until that wiring lands.
-                if let Some(ref bridge) = async_bridge {
+                // The wait-thread (spawned below) owns `child` and
+                // is the single source of `TerminalExited`, so the
+                // reader intentionally does not fire it here. Firing
+                // from both threads would race and sometimes produce
+                // `exit_code: None` despite a clean exit.
+            });
+
+            // Wait-thread: blocks on `child.wait()`, captures the
+            // exit status, and fires `TerminalExited` exactly once
+            // with the real code. The reader thread above has
+            // already dropped `alive_clone` to false on PTY EOF, so
+            // by the time we get here the child is either gone or
+            // about to be (the writer thread's killer.kill()
+            // accelerates the latter case for user-initiated
+            // shutdown).
+            let async_bridge_for_wait = self.async_bridge.clone();
+            thread::spawn(move || {
+                let exit_code = match child.wait() {
+                    Ok(status) => Some(status.exit_code() as i32),
+                    Err(e) => {
+                        tracing::warn!("child.wait() failed for {:?}: {}", terminal_id, e);
+                        None
+                    }
+                };
+                if let Some(ref bridge) = async_bridge_for_wait {
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = bridge.sender().send(
                         crate::services::async_bridge::AsyncMessage::TerminalExited {
                             terminal_id,
-                            exit_code: None,
+                            exit_code,
                         },
                     );
                 }
@@ -473,11 +497,13 @@ impl TerminalManager {
                         }
                     }
                 }
-                // Best-effort child process cleanup during teardown.
+                // User-initiated shutdown: ask the OS to terminate
+                // the child via the cloned killer. The wait-thread
+                // (above) owns `child` and will reap the exit status
+                // for us; we don't call `wait` here because that
+                // would race the wait-thread for the exit status.
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = child.kill();
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = child.wait();
+                let _ = child_killer.kill();
             });
 
             // Create handle
