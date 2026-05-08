@@ -178,6 +178,20 @@ function openControlRoom(): void {
   originalActiveSessionBeforePrompt = editor.activeSession();
   editor.startPrompt("Conductor — sessions", PROMPT_TYPE, true);
   editor.setPromptSuggestions(buildSuggestions());
+  // Primitive #2 chrome: hotkey-hint footer rendered along the
+  // bottom row of the floating overlay's results pane. Each
+  // segment is a styled-text span so the bracketed key letters
+  // pick up the theme's `ui.help_key_fg` colour the same way the
+  // overlay title does.
+  editor.setPromptFooter([
+    { text: " " },
+    { text: "↑↓", style: { fg: "ui.help_key_fg" } },
+    { text: " preview  " },
+    { text: "Enter", style: { fg: "ui.help_key_fg" } },
+    { text: " dive  " },
+    { text: "Esc", style: { fg: "ui.help_key_fg" } },
+    { text: " close" },
+  ]);
   editor.setStatus(
     "Up/Down: preview  Enter: dive  Esc: cancel",
   );

@@ -1697,6 +1697,14 @@ pub enum PluginCommand {
     /// visible effect on non-overlay prompts.
     SetPromptTitle { title: Vec<StyledText> },
 
+    /// Plugin-supplied footer chrome rendered along the bottom
+    /// row of the floating-overlay's results pane (Primitive #2
+    /// chrome region in
+    /// `docs/internal/conductor-sessions-design.md`). Conductor
+    /// uses this for hotkey-hint rows. Empty vec clears the
+    /// footer. Has no visible effect on non-overlay prompts.
+    SetPromptFooter { footer: Vec<StyledText> },
+
     /// Add a menu item to an existing menu
     /// Add a menu item to an existing menu
     AddMenuItem {
@@ -3406,6 +3414,13 @@ impl PluginApi {
     /// back to the prompt-type default.
     pub fn set_prompt_title(&self, title: Vec<StyledText>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptTitle { title })
+    }
+
+    /// Set the floating-overlay prompt's footer chrome row.
+    /// Plugins use this for hotkey hints / footer banners along
+    /// the bottom of the results pane. Empty vec clears.
+    pub fn set_prompt_footer(&self, footer: Vec<StyledText>) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptFooter { footer })
     }
 
     /// Add a menu item to an existing menu

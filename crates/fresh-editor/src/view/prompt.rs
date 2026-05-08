@@ -227,6 +227,17 @@ pub struct Prompt {
     /// `editor.setPromptTitle(segments)`. Has no effect on
     /// non-overlay prompts.
     pub title: Vec<fresh_core::api::StyledText>,
+    /// Optional footer chrome shown along the bottom of the
+    /// floating overlay's results pane (above the frame border).
+    /// Plugin-controlled via `editor.setPromptFooter(segments)`.
+    /// Conductor uses this for hotkey-hint rows
+    /// (e.g. " [n] new   [d] dive   [k] kill   [Esc] close").
+    /// Empty by default; has no effect on non-overlay prompts.
+    /// Implements the chrome-region piece of Primitive #2 in
+    /// docs/internal/conductor-sessions-design.md (the
+    /// session_preview delegate region was already provided by
+    /// Primitive #1 — `editor.previewSessionInRect`).
+    pub footer: Vec<fresh_core::api::StyledText>,
 }
 
 /// Maximum number of suggestion rows shown at once. Mirrors the cap used by
@@ -251,6 +262,7 @@ impl Prompt {
             sync_input_on_navigate: false,
             overlay: false,
             title: Vec::new(),
+            footer: Vec::new(),
         }
     }
 
@@ -282,6 +294,7 @@ impl Prompt {
             sync_input_on_navigate: false,
             overlay: false,
             title: Vec::new(),
+            footer: Vec::new(),
         }
     }
 
@@ -332,6 +345,7 @@ impl Prompt {
             sync_input_on_navigate: false,
             overlay: false,
             title: Vec::new(),
+            footer: Vec::new(),
         }
     }
 

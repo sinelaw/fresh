@@ -849,6 +849,11 @@ impl Editor {
                     prompt.title = title;
                 }
             }
+            PluginCommand::SetPromptFooter { footer } => {
+                if let Some(prompt) = &mut self.prompt {
+                    prompt.footer = footer;
+                }
+            }
 
             // ==================== Session lifecycle ====================
             // See docs/internal/conductor-sessions-design.md.

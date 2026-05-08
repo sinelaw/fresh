@@ -2283,18 +2283,25 @@ impl Editor {
         // exceeds the visible rows; otherwise the scrollbar is
         // visual noise.
         let chrome_above_list: u16 = 2 + toolbar_h;
-        if results_area.height > chrome_above_list {
+        // Plugin-supplied footer row (Primitive #2 chrome region).
+        // Reserves the bottom-most row of `results_area` for
+        // styled hotkey-hint segments. Skipped when the plugin
+        // hasn't set a footer — preserves existing behaviour for
+        // Live Grep et al.
+        let footer_h: u16 = if prompt.footer.is_empty() { 0 } else { 1 };
+        if results_area.height > chrome_above_list + footer_h {
             // No `-2` for popup-own-border — we render the
             // borderless variant below since the overlay frame is
             // already a border.
-            let inner_rows = (results_area.height - chrome_above_list) as usize;
+            let inner_rows =
+                (results_area.height - chrome_above_list - footer_h) as usize;
             let needs_scrollbar = prompt.suggestions.len() > inner_rows.max(1);
             let scrollbar_w: u16 = if needs_scrollbar { 1 } else { 0 };
             let list_area = Rect {
                 x: results_area.x,
                 y: results_area.y + chrome_above_list,
                 width: results_area.width.saturating_sub(scrollbar_w),
-                height: results_area.height - chrome_above_list,
+                height: results_area.height - chrome_above_list - footer_h,
             };
             self.cached_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
                 frame,
@@ -2343,6 +2350,39 @@ impl Editor {
             }
         } else {
             self.cached_layout.suggestions_scrollbar_rect = None;
+        }
+
+        // Plugin-supplied footer chrome row (Primitive #2 chrome
+        // region). Each segment is a `StyledText` — same styling
+        // primitive used by `setPromptTitle` and inline overlays,
+        // so plugins can theme hotkey hints with `ui.help_key_fg`,
+        // separators with `ui.popup_border_fg`, etc.
+        if footer_h == 1 && results_area.height >= 1 {
+            let footer_row = Rect {
+                x: results_area.x,
+                y: results_area.y + results_area.height - 1,
+                width: results_area.width,
+                height: 1,
+            };
+            let footer_default_style = Style::default()
+                .fg(theme.prompt_fg)
+                .bg(theme.suggestion_bg);
+            let footer_spans: Vec<Span> = prompt
+                .footer
+                .iter()
+                .map(|seg| {
+                    let style = match &seg.style {
+                        Some(opts) => Self::resolve_overlay_style(opts, &theme),
+                        None => footer_default_style,
+                    };
+                    Span::styled(seg.text.clone(), style)
+                })
+                .collect();
+            frame.render_widget(
+                Paragraph::new(Line::from(footer_spans))
+                    .style(Style::default().bg(theme.suggestion_bg)),
+                footer_row,
+            );
         }
 
         // Right-half preview pane: a real Buffer rendered via the

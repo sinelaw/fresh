@@ -3214,6 +3214,20 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Set the footer chrome row of the floating-overlay prompt's
+    /// results pane. Plugins use this for hotkey-hint banners
+    /// (Conductor's `[n] new   [d] dive   [Esc] close` row).
+    /// Empty array clears the footer. Has no visible effect on
+    /// non-overlay prompts.
+    pub fn set_prompt_footer(
+        &self,
+        #[plugin_api(ts_type = "StyledText[]")] footer: Vec<fresh_core::api::StyledText>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetPromptFooter { footer })
+            .is_ok()
+    }
+
     // === Modes ===
 
     /// Define a buffer mode (takes bindings as array of [key, command] pairs)
