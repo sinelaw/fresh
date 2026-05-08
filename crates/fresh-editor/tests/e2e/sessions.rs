@@ -86,7 +86,7 @@ fn open_file_in_background_targets_inactive_session() {
         .editor_mut()
         .handle_plugin_command(PluginCommand::OpenFileInBackground {
             path: f.clone(),
-            session_id: Some(alpha),
+            window_id: Some(alpha),
         })
         .unwrap();
 
@@ -137,7 +137,7 @@ fn create_terminal_targets_inactive_session_via_session_id() {
 
     // Drive the dispatch path directly — going through the JS
     // runtime would require a full plugin load with TS compile.
-    // The wiring on the JS side is just `session_id: opts.session_id`.
+    // The wiring on the JS side is just `window_id: opts.session_id`.
     harness
         .editor_mut()
         .handle_plugin_command(PluginCommand::CreateTerminal {
@@ -146,7 +146,7 @@ fn create_terminal_targets_inactive_session_via_session_id() {
             ratio: None,
             focus: None,
             persistent: false,
-            session_id: Some(alpha),
+            window_id: Some(alpha),
             request_id: 9999,
         })
         .unwrap();

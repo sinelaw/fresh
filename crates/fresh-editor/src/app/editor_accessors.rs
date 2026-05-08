@@ -534,7 +534,7 @@ impl Editor {
     ///
     /// Panics if the active session id is not present in the
     /// `sessions` map. That invariant is upheld by the constructor
-    /// and `setActiveSession` (when added) — if the panic ever fires
+    /// and `setActiveWindow` (when added) — if the panic ever fires
     /// it indicates a bug in session lifecycle code.
     pub fn active_window(&self) -> &crate::app::window::Window {
         self.windows

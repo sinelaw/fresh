@@ -236,7 +236,7 @@ pub struct Prompt {
     /// Implements the chrome-region piece of Primitive #2 in
     /// docs/internal/conductor-sessions-design.md (the
     /// session_preview delegate region was already provided by
-    /// Primitive #1 — `editor.previewSessionInRect`).
+    /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,
 }
 

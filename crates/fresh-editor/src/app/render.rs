@@ -1713,7 +1713,7 @@ impl Editor {
         // `&mut self.buffers` etc. without conflicting with
         // `&mut self.windows`. Bail if the session has no stash
         // yet (never been activated and never had a terminal /
-        // file routed in via createTerminal({sessionId})).
+        // file routed in via createTerminal({windowId})).
         let Some((mgr, mut view_states)) = self
             .windows
             .get_mut(&sid)

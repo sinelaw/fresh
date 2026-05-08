@@ -291,7 +291,7 @@ impl Editor {
             snapshot.working_dir = self.working_dir.clone();
 
             // Publish the session list so plugins (Conductor, etc.)
-            // see updates from createSession/closeSession without
+            // see updates from createWindow/closeWindow without
             // a separate notification path. Sorted by id for
             // deterministic order — `next_window_id` is monotonic
             // so this is "creation order".
@@ -309,10 +309,10 @@ impl Editor {
             snapshot.active_window_id = self.active_window;
 
             // Mirror the active session's plugin_state into the
-            // snapshot so getSessionState reads cheaply. Cloning
+            // snapshot so getWindowState reads cheaply. Cloning
             // is fine here: the per-session state is small (one
             // entry per plugin per key); plugins that store
-            // megabyte-scale blobs in setSessionState will see
+            // megabyte-scale blobs in setWindowState will see
             // proportional snapshot-update cost, which is the
             // desired feedback signal — store large blobs in
             // global state or out-of-band instead.
@@ -939,8 +939,8 @@ impl Editor {
             }
 
             // ==================== File/Navigation Commands ====================
-            PluginCommand::OpenFileInBackground { path, session_id } => {
-                let route_to_inactive = match session_id {
+            PluginCommand::OpenFileInBackground { path, window_id } => {
+                let route_to_inactive = match window_id {
                     Some(id) if id != self.active_window && self.windows.contains_key(&id) => {
                         Some(id)
                     }
@@ -1364,11 +1364,11 @@ impl Editor {
                 ratio,
                 focus,
                 persistent,
-                session_id,
+                window_id,
                 request_id,
             } => {
                 self.handle_create_terminal(
-                    cwd, direction, ratio, focus, persistent, session_id, request_id,
+                    cwd, direction, ratio, focus, persistent, window_id, request_id,
                 );
             }
 
@@ -2741,7 +2741,7 @@ impl Editor {
     /// to focus, and laying out a split in a stashed tree without
     /// known dimensions is fragile. The active-path handler still
     /// honours all those options when target == active session
-    /// (or session_id is omitted).
+    /// (or window_id is omitted).
     fn handle_create_terminal_in_inactive_session(
         &mut self,
         target: fresh_core::WindowId,

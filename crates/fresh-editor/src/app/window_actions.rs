@@ -60,7 +60,7 @@ impl crate::app::Editor {
     ///
     /// No-op when `id` is already active. Logs and returns when
     /// `id` is unknown — the design treats unknown ids as a plugin
-    /// bug (caller verifies with `listSessions`), not a recoverable
+    /// bug (caller verifies with `listWindows`), not a recoverable
     /// error worth surfacing through the channel.
     pub fn set_active_window(&mut self, id: WindowId) {
         if self.active_window == id {
@@ -232,7 +232,7 @@ impl crate::app::Editor {
         if id == self.active_window {
             tracing::warn!(
                 "close_window: refusing to close the active session (id {id}); \
-                 switch first via setActiveSession"
+                 switch first via setActiveWindow"
             );
             return false;
         }

@@ -1422,7 +1422,7 @@ impl JsEditorApi {
     }
 
     /// Open a file in the background — no focus change, no
-    /// active-split mutation. `sessionId` defaults to the active
+    /// active-split mutation. `windowId` defaults to the active
     /// session. Setting it to an inactive session id loads the
     /// file's buffer and adds it as a tab in that session's
     /// stashed split tree, ready to be revealed on next dive.
@@ -1431,12 +1431,12 @@ impl JsEditorApi {
     pub fn open_file_in_background(
         &self,
         path: String,
-        session_id: rquickjs::function::Opt<u64>,
+        window_id: rquickjs::function::Opt<u64>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::OpenFileInBackground {
                 path: PathBuf::from(path),
-                session_id: session_id.0.map(fresh_core::WindowId),
+                window_id: window_id.0.map(fresh_core::WindowId),
             })
             .is_ok()
     }
@@ -3340,17 +3340,17 @@ impl JsEditorApi {
     //
     // See docs/internal/conductor-sessions-design.md. The base
     // session is always id 1 and survives every editor session.
-    // Plugins observe lifecycle through the `session_created`,
-    // `session_closed`, and `active_session_changed` hooks; the
+    // Plugins observe lifecycle through the `window_created`,
+    // `window_closed`, and `active_window_changed` hooks; the
     // current snapshot of all sessions and the active id is
-    // available synchronously from `listSessions` / `activeSession`.
+    // available synchronously from `listWindows` / `activeSession`.
 
     /// Create a new editor session rooted at `root`. `root` must be
     /// an absolute path; relative paths are rejected by the editor
     /// (logged, no session created). The new session's id is
-    /// reported via the `session_created` hook payload — plugins
+    /// reported via the `window_created` hook payload — plugins
     /// that need the id should listen for that event rather than
-    /// polling `listSessions`.
+    /// polling `listWindows`.
     ///
     /// Returns `false` only when the IPC channel to the editor is
     /// closed (editor is shutting down).
@@ -3366,7 +3366,7 @@ impl JsEditorApi {
     /// Make the session with id `id` the active one. No-op if
     /// already active. Errors (id not found) are logged on the
     /// editor side; the JS caller can verify by reading
-    /// `activeSession()` after.
+    /// `activeWindow()` after.
     pub fn set_active_window(&self, id: u64) -> bool {
         self.command_sender
             .send(PluginCommand::SetActiveWindow {
@@ -3457,7 +3457,7 @@ impl JsEditorApi {
     }
 
     /// Clear the session-preview override. Equivalent to
-    /// `previewSessionInRect(0)` but reads better at call sites.
+    /// `previewWindowInRect(0)` but reads better at call sites.
     pub fn clear_window_preview(&self) -> bool {
         self.command_sender
             .send(PluginCommand::PreviewWindowInRect { id: None })
@@ -3479,7 +3479,7 @@ impl JsEditorApi {
     }
 
     /// The currently active session id. Always present in
-    /// `listSessions()`.
+    /// `listWindows()`.
     pub fn active_window(&self) -> u64 {
         self.state_snapshot
             .read()
@@ -3820,7 +3820,7 @@ impl JsEditorApi {
     /// shape as `setGlobalState` (write-through to snapshot +
     /// dispatched to editor; null/undefined deletes), but the
     /// underlying storage lives on `Session.plugin_state` and
-    /// swaps with the rest of session state on `setActiveSession`.
+    /// swaps with the rest of session state on `setActiveWindow`.
     /// Plugins that genuinely want per-project state use this;
     /// Conductor itself uses `setGlobalState` because its session
     /// list lives above session boundaries.
@@ -3836,7 +3836,7 @@ impl JsEditorApi {
             Some(js_to_json(&ctx, value))
         };
         // Write-through to snapshot's active-session map so the
-        // very next getSessionState observes our write without
+        // very next getWindowState observes our write without
         // waiting for a tick.
         if let Ok(mut snapshot) = self.state_snapshot.write() {
             match &json_value {
@@ -4674,7 +4674,7 @@ impl JsEditorApi {
             ratio: None,
             focus: None,
             persistent: None,
-            session_id: None,
+            window_id: None,
         });
 
         // Track request_id → plugin_name for async resource tracking
@@ -4686,7 +4686,7 @@ impl JsEditorApi {
             direction: opts.direction,
             ratio: opts.ratio,
             focus: opts.focus,
-            session_id: opts.session_id,
+            window_id: opts.window_id,
             // Plugin-created terminals default to ephemeral. Opt in explicitly
             // by passing `persistent: true` in the options if the plugin wants
             // the terminal to survive workspace save/restore.
@@ -8001,7 +8001,7 @@ mod tests {
         }
     }
 
-    /// `editor.createSession`, `setActiveSession`, and `closeSession`
+    /// `editor.createWindow`, `setActiveWindow`, and `closeWindow`
     /// each dispatch the matching `PluginCommand`, with arguments
     /// preserved.
     #[test]
@@ -8012,9 +8012,9 @@ mod tests {
             .execute_js(
                 r#"
             const editor = getEditor();
-            editor.createSession("/tmp/wt-feat", "feat");
-            editor.setActiveSession(7);
-            editor.closeSession(3);
+            editor.createWindow("/tmp/wt-feat", "feat");
+            editor.setActiveWindow(7);
+            editor.closeWindow(3);
         "#,
                 "test.js",
             )
@@ -8046,9 +8046,9 @@ mod tests {
         }
     }
 
-    /// `editor.listSessions()` reads from the state snapshot and
+    /// `editor.listWindows()` reads from the state snapshot and
     /// returns `WindowInfo` objects shaped for plugin consumption.
-    /// `editor.activeSession()` returns the snapshot's active id.
+    /// `editor.activeWindow()` returns the snapshot's active id.
     #[test]
     fn test_api_list_sessions_reads_snapshot() {
         let (tx, _rx) = mpsc::channel();
@@ -8078,11 +8078,11 @@ mod tests {
             .execute_js(
                 r#"
             const editor = getEditor();
-            const list = editor.listSessions();
+            const list = editor.listWindows();
             globalThis._sessionCount = list.length;
             globalThis._secondLabel = list[1].label;
             globalThis._secondRoot = list[1].root;
-            globalThis._activeId = editor.activeSession();
+            globalThis._activeId = editor.activeWindow();
         "#,
                 "test.js",
             )
@@ -8966,8 +8966,8 @@ mod tests {
             });
     }
 
-    /// `setSessionState` writes through to the snapshot's
-    /// active-session map; `getSessionState` reads it back.
+    /// `setWindowState` writes through to the snapshot's
+    /// active-session map; `getWindowState` reads it back.
     /// Mirrors the global-state roundtrip test — the only
     /// behavioural difference is the storage namespace.
     #[test]
@@ -8978,9 +8978,9 @@ mod tests {
             .execute_js(
                 r#"
             const editor = getEditor();
-            editor.setSessionState("draft", { count: 7 });
-            globalThis._result = editor.getSessionState("draft");
-            globalThis._missing = editor.getSessionState("absent");
+            editor.setWindowState("draft", { count: 7 });
+            globalThis._result = editor.getWindowState("draft");
+            globalThis._missing = editor.getWindowState("absent");
         "#,
                 "test_plugin.js",
             )
@@ -9001,12 +9001,12 @@ mod tests {
                     .unwrap();
                 assert_eq!(
                     count, 7,
-                    "getSessionState should return the value set by setSessionState"
+                    "getWindowState should return the value set by setWindowState"
                 );
                 let missing = global.get::<_, rquickjs::Value>("_missing").unwrap();
                 assert!(
                     missing.is_undefined(),
-                    "getSessionState for an unset key must be undefined"
+                    "getWindowState for an unset key must be undefined"
                 );
             });
     }

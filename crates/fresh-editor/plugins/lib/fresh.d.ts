@@ -420,7 +420,7 @@ type BufferInfo = {
 	*/
 	splits: number[];
 };
-type SessionInfo = {
+type WindowInfo = {
 	/**
 	* Stable session id. The base session is always `1`.
 	*/
@@ -605,7 +605,7 @@ type CreateTerminalOptions = {
 	* session's stashed split tree; the buffer is attached to the
 	* target session's membership set rather than the active one's.
 	*/
-	sessionId?: SessionId;
+	windowId?: WindowId;
 };
 type CursorInfo = {
 	/**
@@ -1236,14 +1236,14 @@ interface EditorAPI {
 	openFile(path: string, line: number | null, column: number | null): boolean;
 	/**
 	* Open a file in the background — no focus change, no
-	* active-split mutation. `sessionId` defaults to the active
+	* active-split mutation. `windowId` defaults to the active
 	* session. Setting it to an inactive session id loads the
 	* file's buffer and adds it as a tab in that session's
 	* stashed split tree, ready to be revealed on next dive.
 	* Conductor uses this to populate worktree sessions with
 	* preselected files.
 	*/
-	openFileInBackground(path: string, sessionId?: number): boolean;
+	openFileInBackground(path: string, windowId?: number): boolean;
 	/**
 	* Open a file in a specific split
 	*/
@@ -1784,6 +1784,14 @@ interface EditorAPI {
 	*/
 	setPromptTitle(title: StyledText[]): boolean;
 	/**
+	* Set the footer chrome row of the floating-overlay prompt's
+	* results pane. Plugins use this for hotkey-hint banners
+	* (Conductor's `[n] new   [d] dive   [Esc] close` row).
+	* Empty array clears the footer. Has no visible effect on
+	* non-overlay prompts.
+	*/
+	setPromptFooter(footer: StyledText[]): boolean;
+	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
@@ -1811,32 +1819,32 @@ interface EditorAPI {
 	* Create a new editor session rooted at `root`. `root` must be
 	* an absolute path; relative paths are rejected by the editor
 	* (logged, no session created). The new session's id is
-	* reported via the `session_created` hook payload — plugins
+	* reported via the `window_created` hook payload — plugins
 	* that need the id should listen for that event rather than
-	* polling `listSessions`.
+	* polling `listWindows`.
 	* 
 	* Returns `false` only when the IPC channel to the editor is
 	* closed (editor is shutting down).
 	*/
-	createSession(root: string, label: string): boolean;
+	createWindow(root: string, label: string): boolean;
 	/**
 	* Make the session with id `id` the active one. No-op if
 	* already active. Errors (id not found) are logged on the
 	* editor side; the JS caller can verify by reading
-	* `activeSession()` after.
+	* `activeWindow()` after.
 	*/
-	setActiveSession(id: number): boolean;
+	setActiveWindow(id: number): boolean;
 	/**
 	* Close session `id`. Refuses to close the active session or
 	* the base session (id 1). Logs and no-ops on failure.
 	*/
-	closeSession(id: number): boolean;
+	closeWindow(id: number): boolean;
 	/**
 	* Eagerly initialise an inactive session's per-session state
 	* (file tree walk, ignore matcher, etc.) without diving.
 	* No-op for the active session or unknown id.
 	*/
-	prewarmSession(id: number): boolean;
+	prewarmWindow(id: number): boolean;
 	/**
 	* Register a `notify`-backed watch on `path`. Returns a
 	* promise that resolves to a numeric `handle` (also passed
@@ -1866,22 +1874,22 @@ interface EditorAPI {
 	* editor UI live — splits, terminals, syntax highlighting,
 	* decorations — at native rendering cost.
 	*/
-	previewSessionInRect(id: number): boolean;
+	previewWindowInRect(id: number): boolean;
 	/**
 	* Clear the session-preview override. Equivalent to
-	* `previewSessionInRect(0)` but reads better at call sites.
+	* `previewWindowInRect(0)` but reads better at call sites.
 	*/
-	clearSessionPreview(): boolean;
+	clearWindowPreview(): boolean;
 	/**
 	* All editor sessions, sorted by id (creation order). Always
 	* non-empty (the base session is always present).
 	*/
-	listSessions(): SessionInfo[];
+	listWindows(): WindowInfo[];
 	/**
 	* The currently active session id. Always present in
-	* `listSessions()`.
+	* `listWindows()`.
 	*/
-	activeSession(): number;
+	activeWindow(): number;
 	/**
 	* Set scroll position of a split
 	*/
@@ -1968,17 +1976,17 @@ interface EditorAPI {
 	* shape as `setGlobalState` (write-through to snapshot +
 	* dispatched to editor; null/undefined deletes), but the
 	* underlying storage lives on `Session.plugin_state` and
-	* swaps with the rest of session state on `setActiveSession`.
+	* swaps with the rest of session state on `setActiveWindow`.
 	* Plugins that genuinely want per-project state use this;
 	* Conductor itself uses `setGlobalState` because its session
 	* list lives above session boundaries.
 	*/
-	setSessionState(key: string, value: unknown): boolean;
+	setWindowState(key: string, value: unknown): boolean;
 	/**
 	* Get per-session state from the **active** session
 	* (snapshot read). `undefined` if missing.
 	*/
-	getSessionState(key: string): unknown;
+	getWindowState(key: string): unknown;
 	/**
 	* Create a scroll sync group for anchor-based synchronized scrolling
 	*/
@@ -2463,15 +2471,15 @@ interface HookEventMap {
 		kind: string;
 	};
 	// ── editor sessions (Conductor; see conductor-sessions-design.md) ────────
-	session_created: {
+	window_created: {
 		id: number;
 		label: string;
 		root: string;
 	};
-	session_closed: {
+	window_closed: {
 		id: number;
 	};
-	active_session_changed: {
+	active_window_changed: {
 		previous_id: number | null;
 		active_id: number;
 	};

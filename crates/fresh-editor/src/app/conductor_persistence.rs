@@ -12,7 +12,7 @@
 //! On startup, `load_conductor_state` (called from `editor_init`)
 //! reads them back. Sessions are reconstituted as inert
 //! shells — no warm split tree, no warm LSP — exactly like a
-//! freshly-`createSession`-ed session, so the user sees the same
+//! freshly-`createWindow`-ed session, so the user sees the same
 //! list in `Conductor: Open` and can dive into any of them.
 //!
 //! The "warm" half of warm-swap (split layout, LSP, file

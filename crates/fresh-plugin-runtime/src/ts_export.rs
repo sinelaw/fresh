@@ -518,9 +518,9 @@ interface HookEventMap {
   };
 
   // ── editor sessions (Conductor; see conductor-sessions-design.md) ────────
-  session_created: { id: number; label: string; root: string };
-  session_closed: { id: number };
-  active_session_changed: { previous_id: number | null; active_id: number };
+  window_created: { id: number; label: string; root: string };
+  window_closed: { id: number };
+  active_window_changed: { previous_id: number | null; active_id: number };
 }
 
 /**

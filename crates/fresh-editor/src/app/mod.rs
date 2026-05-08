@@ -654,7 +654,7 @@ pub struct Editor {
     /// Monotonic counter for the next session id. The base session
     /// uses 1; new sessions take 2, 3, …. Closing a session does
     /// not free its id (per design, ids are stable within a process).
-    /// Unused until `createSession` lands in the next migration step.
+    /// Unused until `createWindow` lands in the next migration step.
     #[allow(dead_code)]
     pub(crate) next_window_id: u64,
 

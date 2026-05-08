@@ -400,12 +400,12 @@ fn default_action_count() -> u32 {
 /// `serde(default)` fallback for `EditorStateSnapshot.active_window_id`
 /// — old serialized snapshots predate the field. Falls back to the
 /// always-present base session (id 1).
-fn default_session_id() -> WindowId {
+fn default_window_id() -> WindowId {
     WindowId(1)
 }
 
 /// Information about an editor session (plugin-visible). Returned
-/// by `editor.listSessions()` and carried in the snapshot. Mirrors
+/// by `editor.listWindows()` and carried in the snapshot. Mirrors
 /// the editor-side `Session` struct — see
 /// `crates/fresh-editor/src/app/session.rs` and
 /// `docs/internal/conductor-sessions-design.md`.
@@ -934,8 +934,8 @@ pub struct EditorStateSnapshot {
     #[serde(default)]
     pub windows: Vec<WindowInfo>,
     /// Id of the currently active session. Always present in
-    /// `sessions`. Read by plugins via `editor.activeSession()`.
-    #[serde(default = "default_session_id")]
+    /// `sessions`. Read by plugins via `editor.activeWindow()`.
+    #[serde(default = "default_window_id")]
     pub active_window_id: WindowId,
     /// Status-bar / explorer label for the active authority.
     ///
@@ -1030,9 +1030,9 @@ pub struct EditorStateSnapshot {
 
     /// Plugin-managed per-session state, snapshotted as the
     /// **active** session's plugin_state map. Updated wholesale
-    /// on `setActiveSession` (alongside the rest of the
+    /// on `setActiveWindow` (alongside the rest of the
     /// per-session state) — plugins that read this via
-    /// `editor.getSessionState(key)` see the active session's
+    /// `editor.getWindowState(key)` see the active session's
     /// values without crossing the IPC boundary on every read.
     /// Outer key is plugin name, inner is the plugin-defined key.
     #[serde(default)]
@@ -1199,7 +1199,7 @@ pub enum PluginCommand {
     /// active. Fires `active_session_changed` on transition.
     /// Errors (id not found) are logged via tracing rather than
     /// surfaced to the plugin — the plugin can verify by reading
-    /// `editor.activeSession()` after.
+    /// `editor.activeWindow()` after.
     SetActiveWindow { id: WindowId },
 
     /// Close a session and drop its associated state. Refuses to
@@ -1252,7 +1252,7 @@ pub enum PluginCommand {
 
     /// Open a file in the editor (in background, without switching focus).
     ///
-    /// `session_id` defaults to the active session at dispatch
+    /// `window_id` defaults to the active session at dispatch
     /// time. When set to an inactive session, the file's buffer
     /// is loaded as usual but attached to that session's
     /// membership and split tree — the active session's UI is
@@ -1260,7 +1260,7 @@ pub enum PluginCommand {
     OpenFileInBackground {
         path: PathBuf,
         #[serde(default)]
-        session_id: Option<WindowId>,
+        window_id: Option<WindowId>,
     },
 
     /// Insert text at the current cursor position in the active buffer
@@ -2291,7 +2291,7 @@ pub enum PluginCommand {
         /// `Session.buffers` membership rather than the active one's.
         /// Falls back to active session if the id is unknown.
         #[serde(default)]
-        session_id: Option<WindowId>,
+        window_id: Option<WindowId>,
         /// Callback ID for async response
         request_id: u64,
     },
@@ -2932,9 +2932,9 @@ pub struct CreateTerminalOptions {
     /// dived into yet). The terminal's split is created in that
     /// session's stashed split tree; the buffer is attached to the
     /// target session's membership set rather than the active one's.
-    #[serde(default, rename = "sessionId")]
-    #[ts(optional, rename = "sessionId")]
-    pub session_id: Option<WindowId>,
+    #[serde(default, rename = "windowId")]
+    #[ts(optional, rename = "windowId")]
+    pub window_id: Option<WindowId>,
 }
 
 /// Result of getTextPropertiesAtCursor - array of property objects

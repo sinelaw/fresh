@@ -1916,7 +1916,7 @@ fn test_plugin_ephemeral_terminal_excluded_from_workspace() {
             ratio: None,
             focus: Some(false),
             persistent: false,
-            session_id: None,
+            window_id: None,
             request_id: 0,
         })
         .unwrap();
@@ -1960,7 +1960,7 @@ fn test_plugin_persistent_terminal_included_in_workspace() {
             ratio: None,
             focus: Some(false),
             persistent: true,
-            session_id: None,
+            window_id: None,
             request_id: 0,
         })
         .unwrap();
@@ -2010,7 +2010,7 @@ fn test_plugin_split_terminal_not_duplicated_in_active_split() {
             ratio: Some(0.5),
             focus: Some(false),
             persistent: true,
-            session_id: None,
+            window_id: None,
             request_id: 0,
         })
         .unwrap();

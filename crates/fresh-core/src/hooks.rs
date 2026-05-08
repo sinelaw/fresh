@@ -329,7 +329,7 @@ pub enum HookArgs {
 
     /// An editor session was closed and its state dropped. The id
     /// is still valid in the payload but is no longer present in
-    /// `editor.listSessions()`.
+    /// `editor.listWindows()`.
     WindowClosed { id: u64 },
 
     /// The active session changed. Fires after the editor's UI has
