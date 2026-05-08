@@ -14,6 +14,7 @@ mod click_geometry;
 mod click_handlers;
 mod clipboard;
 mod composite_buffer_actions;
+mod conductor_persistence;
 mod dabbrev_actions;
 mod diagnostic_jumps;
 mod editor_accessors;

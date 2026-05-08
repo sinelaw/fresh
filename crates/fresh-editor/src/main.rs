@@ -3579,6 +3579,12 @@ fn real_main() -> AnyhowResult<()> {
         // backend from the first tick.
         editor.set_boot_authority(current_authority.clone());
 
+        // Conductor cross-restart persistence: replay
+        // `.fresh/sessions.json` and `.fresh/state/*.json` *before*
+        // plugins load so plugin `getGlobalState(...)` calls during
+        // their on-load handlers see the previous run's values.
+        editor.load_conductor_state();
+
         // User init.ts: auto-load from ~/.config/fresh/init.ts through the
         // same pipeline as "Load Plugin from Buffer". Respects `--no-init`
         // and `--safe`, and is short-circuited by the crash fuse after
@@ -3966,6 +3972,11 @@ where
                     tracing::debug!("Workspace saved successfully");
                 }
             }
+
+            // Conductor cross-restart persistence: write
+            // `.fresh/sessions.json` and `.fresh/state/*.json`. Best-
+            // effort; failures are logged inside, never block quit.
+            editor.save_conductor_state();
             break;
         }
 
