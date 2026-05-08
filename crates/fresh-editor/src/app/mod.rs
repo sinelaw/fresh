@@ -1089,6 +1089,24 @@ pub struct Editor {
     /// Terminal manager for built-in terminal support
     terminal_manager: crate::services::terminal::TerminalManager,
 
+    /// Plugin-driven filesystem watchers (lazily constructed —
+    /// the underlying notify backend spawns a thread, so it's
+    /// nicer to defer until the first `watchPath` call). See
+    /// `services/file_watcher.rs`.
+    file_watcher_manager: crate::services::file_watcher::FileWatcherManager,
+
+    /// Test-only sink for `path_changed` plugin events. Captured
+    /// by `async_dispatch` whenever a PathChanged AsyncMessage
+    /// arrives, so e2e tests can assert filesystem events
+    /// reached the editor without standing up a JS plugin.
+    /// Production builds never read this.
+    pub(crate) last_path_change_for_test: Option<(u64, std::path::PathBuf, &'static str)>,
+
+    /// Test-only sink for the most-recent `WatchPathRegistered`
+    /// plugin response, keyed by request_id. Used by
+    /// `watch_path` e2e tests to read back the allocated handle.
+    pub(crate) last_watch_response_for_test: Option<(u64, Result<u64, String>)>,
+
     /// Maps buffer ID to terminal ID (for terminal buffers)
     terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
 

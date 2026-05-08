@@ -467,6 +467,17 @@ impl Editor {
                         },
                     );
                 }
+                AsyncMessage::PathChanged { handle, path, kind } => {
+                    self.last_path_change_for_test = Some((handle, path.clone(), kind.as_str()));
+                    self.plugin_manager.run_hook(
+                        "path_changed",
+                        crate::services::plugins::hooks::HookArgs::PathChanged {
+                            handle,
+                            path: path.to_string_lossy().into_owned(),
+                            kind: kind.as_str().to_owned(),
+                        },
+                    );
+                }
                 AsyncMessage::TerminalExited {
                     terminal_id,
                     exit_code,

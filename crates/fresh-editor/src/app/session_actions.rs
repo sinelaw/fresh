@@ -180,6 +180,25 @@ impl crate::app::Editor {
         );
     }
 
+    /// Eagerly initialise an inactive session's per-session
+    /// state without diving. Useful for plugins (Conductor) that
+    /// want to pay the warm-up cost (file-tree walk, ignore
+    /// matcher, etc.) ahead of the user's first dive.
+    ///
+    /// In the current build this is a placeholder — file
+    /// explorer rebuilds and LSP boot still happen on first dive.
+    /// The API exists so callers don't have to be rewritten when
+    /// eager warm-up wires up later.
+    pub fn prewarm_session(&mut self, id: SessionId) {
+        if id == self.active_session {
+            return;
+        }
+        if !self.sessions.contains_key(&id) {
+            tracing::warn!("prewarm_session: unknown session id {id}");
+        }
+        // Placeholder for eager warm-up of file_explorer / LSP.
+    }
+
     /// Attach a buffer to the active session's membership set.
     /// Called from every `Editor.buffers.insert` site so the
     /// `Session.buffers` field stays in sync. Idempotent.

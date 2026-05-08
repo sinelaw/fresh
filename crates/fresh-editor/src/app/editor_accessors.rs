@@ -592,6 +592,21 @@ impl Editor {
         self.lsp = Some(crate::services::lsp::manager::LspManager::new(None));
     }
 
+    /// Most-recent `path_changed` event the editor received.
+    /// Test-only — used by `watch_path` e2e tests to assert
+    /// kernel events surfaced to the editor.
+    #[doc(hidden)]
+    pub fn last_path_change_for_test(&self) -> Option<&(u64, std::path::PathBuf, &'static str)> {
+        self.last_path_change_for_test.as_ref()
+    }
+
+    /// Most-recent `WatchPathRegistered` plugin response, paired
+    /// with its request_id. Test-only.
+    #[doc(hidden)]
+    pub fn last_watch_response_for_test(&self) -> Option<&(u64, Result<u64, String>)> {
+        self.last_watch_response_for_test.as_ref()
+    }
+
     /// Inject an mtime entry into the active session's mod-time
     /// cache. Used by tests to verify warm-swap of the cache
     /// without going through real file I/O.

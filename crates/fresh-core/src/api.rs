@@ -277,6 +277,15 @@ pub enum PluginResponse {
         request_id: u64,
         split_id: Option<SplitId>,
     },
+    /// Response to `WatchPath`. `handle` is the editor's stable
+    /// id for this watcher, used both as the cancellation token
+    /// for `UnwatchPath` and as the routing key in
+    /// `path_changed` event payloads. `Err` indicates the watcher
+    /// could not be installed (path missing, kernel limit, etc.).
+    WatchPathRegistered {
+        request_id: u64,
+        result: Result<u64, String>,
+    },
 }
 
 impl PluginResponse {
@@ -291,7 +300,8 @@ impl PluginResponse {
             | Self::LineEndPosition { request_id, .. }
             | Self::BufferLineCount { request_id, .. }
             | Self::CompositeBufferCreated { request_id, .. }
-            | Self::SplitByLabel { request_id, .. } => *request_id,
+            | Self::SplitByLabel { request_id, .. }
+            | Self::WatchPathRegistered { request_id, .. } => *request_id,
         }
     }
 }
@@ -1184,6 +1194,34 @@ pub enum PluginCommand {
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.
     CloseSession { id: SessionId },
+
+    /// Eagerly initialise an inactive session's per-session state
+    /// (file tree walk, ignore matcher, etc.) without diving. The
+    /// only thing that's actually pre-warmed today is the file
+    /// explorer's root walk; LSP servers boot on first buffer
+    /// open and watcher setup happens on first `watchPath` call,
+    /// so those are unaffected. No-op for the active session
+    /// (already warm) or unknown id.
+    PrewarmSession { id: SessionId },
+
+    /// Register a filesystem path watcher. The editor returns the
+    /// allocated `handle` via the async response so the plugin can
+    /// match `path_changed` events back to the call. `recursive`
+    /// follows `notify::RecursiveMode`; non-recursive watches
+    /// cover only the named path itself (or its direct children
+    /// for directories on macOS — kqueue limitation).
+    WatchPath {
+        path: PathBuf,
+        recursive: bool,
+        request_id: u64,
+    },
+
+    /// Drop a path watcher previously registered via
+    /// `WatchPath`. Unknown handles are silently ignored — the
+    /// editor's view of "what's still watched" can drift if a
+    /// plugin reloads, and the design doesn't make plugins
+    /// reconcile.
+    UnwatchPath { handle: u64 },
 
     /// Open a file in the editor (in background, without switching focus)
     OpenFileInBackground { path: PathBuf },

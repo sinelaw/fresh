@@ -658,6 +658,10 @@ pub struct PluginTrackedState {
     pub composite_buffer_ids: Vec<BufferId>,
     /// Terminal IDs created by this plugin
     pub terminal_ids: Vec<fresh_core::TerminalId>,
+    /// File-watcher handles created by this plugin via
+    /// `editor.watchPath`. Cleaned up by sending UnwatchPath on
+    /// plugin unload.
+    pub watch_handles: Vec<u64>,
 }
 
 /// Type alias for the shared async resource owner map.
@@ -3347,6 +3351,56 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Eagerly initialise an inactive session's per-session state
+    /// (file tree walk, ignore matcher, etc.) without diving.
+    /// No-op for the active session or unknown id.
+    pub fn prewarm_session(&self, id: u64) -> bool {
+        self.command_sender
+            .send(PluginCommand::PrewarmSession {
+                id: fresh_core::SessionId(id),
+            })
+            .is_ok()
+    }
+
+    // === File watching ===
+
+    /// Register a `notify`-backed watch on `path`. Returns a
+    /// promise that resolves to a numeric `handle` (also passed
+    /// in subsequent `path_changed` event payloads). The promise
+    /// rejects on `notify` errors (path missing, kernel limit).
+    ///
+    /// `recursive` defaults to `false`. Non-recursive watches
+    /// cover the path itself plus its direct children for
+    /// directories — see `services/file_watcher.rs` for the
+    /// rationale.
+    #[plugin_api(async_promise, js_name = "watchPath", ts_return = "number")]
+    #[qjs(rename = "_watchPathStart")]
+    pub fn watch_path_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        path: String,
+        recursive: rquickjs::function::Opt<bool>,
+    ) -> rquickjs::Result<u64> {
+        let id = self.alloc_request_id();
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self.command_sender.send(PluginCommand::WatchPath {
+            path: std::path::PathBuf::from(path),
+            recursive: recursive.0.unwrap_or(false),
+            request_id: id,
+        });
+        Ok(id)
+    }
+
+    /// Drop a watcher by its handle. Unknown handles are
+    /// silently ignored.
+    pub fn unwatch_path(&self, handle: u64) -> bool {
+        self.command_sender
+            .send(PluginCommand::UnwatchPath { handle })
+            .is_ok()
+    }
+
     /// All editor sessions, sorted by id (creation order). Always
     /// non-empty (the base session is always present).
     #[plugin_api(ts_return = "SessionInfo[]")]
@@ -5572,6 +5626,15 @@ impl QuickJsBackend {
                 let _ = self.command_sender.send(PluginCommand::CloseTerminal {
                     terminal_id: *terminal_id,
                 });
+            }
+
+            // Drop any file watchers this plugin registered. The
+            // editor side ignores unknown handles, so it's safe to
+            // resend on partial failures.
+            for handle in &tracked.watch_handles {
+                let _ = self
+                    .command_sender
+                    .send(PluginCommand::UnwatchPath { handle: *handle });
             }
         }
 

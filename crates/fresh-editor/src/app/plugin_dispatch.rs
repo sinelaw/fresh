@@ -847,6 +847,33 @@ impl Editor {
             PluginCommand::CloseSession { id } => {
                 let _ = self.close_session(id);
             }
+            PluginCommand::PrewarmSession { id } => {
+                self.prewarm_session(id);
+            }
+
+            // ==================== File watching ====================
+            PluginCommand::WatchPath {
+                path,
+                recursive,
+                request_id,
+            } => {
+                let result = if let Some(ref bridge) = self.async_bridge {
+                    self.file_watcher_manager.watch(bridge, &path, recursive)
+                } else {
+                    Err(
+                        "watchPath: no async bridge — file watching is unavailable in this build"
+                            .to_string(),
+                    )
+                };
+                self.last_watch_response_for_test = Some((request_id, result.clone()));
+                self.send_plugin_response(fresh_core::api::PluginResponse::WatchPathRegistered {
+                    request_id,
+                    result,
+                });
+            }
+            PluginCommand::UnwatchPath { handle } => {
+                self.file_watcher_manager.unwatch(handle);
+            }
 
             // ==================== Command/Mode Registration ====================
             PluginCommand::RegisterCommand { command } => {

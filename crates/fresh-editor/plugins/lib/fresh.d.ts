@@ -1822,6 +1822,29 @@ interface EditorAPI {
 	*/
 	closeSession(id: number): boolean;
 	/**
+	* Eagerly initialise an inactive session's per-session state
+	* (file tree walk, ignore matcher, etc.) without diving.
+	* No-op for the active session or unknown id.
+	*/
+	prewarmSession(id: number): boolean;
+	/**
+	* Register a `notify`-backed watch on `path`. Returns a
+	* promise that resolves to a numeric `handle` (also passed
+	* in subsequent `path_changed` event payloads). The promise
+	* rejects on `notify` errors (path missing, kernel limit).
+	* 
+	* `recursive` defaults to `false`. Non-recursive watches
+	* cover the path itself plus its direct children for
+	* directories — see `services/file_watcher.rs` for the
+	* rationale.
+	*/
+	watchPath(path: string, recursive?: boolean): Promise<number>;
+	/**
+	* Drop a watcher by its handle. Unknown handles are
+	* silently ignored.
+	*/
+	unwatchPath(handle: number): boolean;
+	/**
 	* All editor sessions, sorted by id (creation order). Always
 	* non-empty (the base session is always present).
 	*/
@@ -2387,6 +2410,13 @@ interface HookEventMap {
 	terminal_exit: {
 		terminal_id: number;
 		exit_code: number | null;
+	};
+	// ── filesystem watching (watchPath plugin API) ────────────────────────────
+	path_changed: {
+		handle: number;
+		path: string;
+		/** "modify" | "create" | "delete" | "rename" | "other" */
+		kind: string;
 	};
 	// ── editor sessions (Conductor; see conductor-sessions-design.md) ────────
 	session_created: {

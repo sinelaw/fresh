@@ -195,6 +195,18 @@ pub enum AsyncMessage {
     /// Terminal output received (triggers redraw)
     TerminalOutput { terminal_id: TerminalId },
 
+    /// File watcher delivered an event for a path under a
+    /// `WatchPath`-registered watcher. Routed to the
+    /// `path_changed` plugin hook by the main loop.
+    PathChanged {
+        /// Watch handle the event came from (matches the value
+        /// returned by `WatchPath`).
+        handle: u64,
+        path: std::path::PathBuf,
+        /// Conservative bucketing of `notify::EventKind`.
+        kind: PathChangeKind,
+    },
+
     /// Terminal process exited.
     ///
     /// `exit_code` is `None` when the editor cannot determine a status
@@ -324,6 +336,32 @@ pub enum PluginInitScriptOutcome {
     CrashFused { failures: u32 },
     Loaded,
     Failed { message: String },
+}
+
+/// Conservative bucketing of `notify::EventKind`. We don't expose
+/// the full notify enum to plugins because the kind set varies by
+/// platform and changes between notify releases. Plugins switch on
+/// these strings; refining requires a new variant + a new string
+/// (additive, no breakage).
+#[derive(Debug, Clone, Copy)]
+pub enum PathChangeKind {
+    Modify,
+    Create,
+    Delete,
+    Rename,
+    Other,
+}
+
+impl PathChangeKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PathChangeKind::Modify => "modify",
+            PathChangeKind::Create => "create",
+            PathChangeKind::Delete => "delete",
+            PathChangeKind::Rename => "rename",
+            PathChangeKind::Other => "other",
+        }
+    }
 }
 
 /// LSP progress value types

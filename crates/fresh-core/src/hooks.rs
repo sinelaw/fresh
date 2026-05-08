@@ -376,6 +376,25 @@ pub enum HookArgs {
         exit_code: Option<i32>,
     },
 
+    /// A path under a `watchPath`-registered watcher changed.
+    /// Plugins (Conductor's collision radar, etc.) use this to
+    /// build path → modifying-session-set matrices. Fires once per
+    /// raw `notify` event — no debouncing in core; plugins coalesce
+    /// per their policy.
+    PathChanged {
+        /// Watch handle that delivered this event. Maps back to
+        /// the `watchPath()` call that registered it; lets plugins
+        /// route events to per-watcher state.
+        handle: u64,
+        /// Absolute path the kernel reported as changed.
+        path: String,
+        /// `"modify"` | `"create"` | `"delete"` | `"rename"` |
+        /// `"other"`. Conservative bucketing of `notify::EventKind`
+        /// — plugins that need finer detail can switch on more
+        /// specific strings the editor learns to emit later.
+        kind: String,
+    },
+
     /// Buffer language was changed (e.g. via "Set Language" command or Save-As)
     LanguageChanged {
         buffer_id: BufferId,

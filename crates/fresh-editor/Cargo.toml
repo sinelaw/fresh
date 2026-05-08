@@ -57,6 +57,7 @@ runtime = [
     "dep:async-trait",
 
     "dep:ignore",
+    "dep:notify",
     "dep:libc",
     "dep:libloading",
     "dep:nix",
@@ -144,6 +145,11 @@ tokio = { version = "1.49", features = ["fs", "io-util", "process", "rt", "rt-mu
 async-trait = { version = "0.1", optional = true }
 
 ignore = { version = "0.4", default-features = false, optional = true }
+# notify backs the watchPath plugin API. macros_only / debouncing
+# features stay off; we want raw events forwarded straight to
+# plugins so the collision-radar matrix can dedupe at the plugin
+# level (different debouncing policy than auto-revert wants).
+notify = { version = "8.2", default-features = false, features = ["macos_kqueue"], optional = true }
 # regex is always needed for model::buffer search functionality
 regex = { version = "1.12" }
 libc = { version = "0.2", optional = true }

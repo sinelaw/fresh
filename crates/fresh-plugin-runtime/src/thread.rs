@@ -141,6 +141,7 @@ pub enum TrackedAsyncResource {
     VirtualBuffer(fresh_core::BufferId),
     CompositeBuffer(fresh_core::BufferId),
     Terminal(fresh_core::TerminalId),
+    WatchHandle(u64),
 }
 
 /// Simple oneshot channel implementation
@@ -445,6 +446,18 @@ impl PluginThreadHandle {
             } => {
                 self.resolve_json_callback(request_id, split_id.map(|s| s.0), "null");
             }
+            PluginResponse::WatchPathRegistered { request_id, result } => match result {
+                Ok(handle) => {
+                    self.track_async_resource(
+                        request_id,
+                        TrackedAsyncResource::WatchHandle(handle),
+                    );
+                    self.resolve_callback(JsCallbackId(request_id), handle.to_string());
+                }
+                Err(e) => {
+                    self.reject_callback(JsCallbackId(request_id), e);
+                }
+            },
         }
     }
 
@@ -1234,6 +1247,9 @@ async fn handle_request(
                 }
                 TrackedAsyncResource::Terminal(terminal_id) => {
                     state.terminal_ids.push(terminal_id);
+                }
+                TrackedAsyncResource::WatchHandle(handle) => {
+                    state.watch_handles.push(handle);
                 }
             }
         }

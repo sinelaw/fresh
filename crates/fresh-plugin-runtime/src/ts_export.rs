@@ -509,6 +509,14 @@ interface HookEventMap {
   terminal_output: { terminal_id: number; last_line: string };
   terminal_exit: { terminal_id: number; exit_code: number | null };
 
+  // ── filesystem watching (watchPath plugin API) ────────────────────────────
+  path_changed: {
+    handle: number;
+    path: string;
+    /** "modify" | "create" | "delete" | "rename" | "other" */
+    kind: string;
+  };
+
   // ── editor sessions (Conductor; see conductor-sessions-design.md) ────────
   session_created: { id: number; label: string; root: string };
   session_closed: { id: number };
