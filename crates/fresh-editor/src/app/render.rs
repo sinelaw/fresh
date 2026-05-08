@@ -1650,29 +1650,58 @@ impl Editor {
             return;
         };
 
-        // Terminal grid → buffer text sync. The PTY read loop
-        // streams scrollback to each terminal's backing file,
-        // but the *visible screen* (cursor row + nearby lines)
-        // only lands in the buffer when sync_terminal_to_buffer
-        // is called. Active-session renders trigger that via
-        // terminal-mode entry/exit hooks; inactive-session
-        // terminals never get synced unless we do it here.
-        // Without this the preview shows an empty buffer for
-        // terminals that are still streaming live output.
+        // Terminal grid → buffer text sync, preview-safe variant.
+        // `sync_terminal_to_buffer` is the canonical sync but it
+        // also mutates `self.split_view_states[active_split]` —
+        // which during preview is the *active* (caller) session's
+        // view-state, not the previewed one. That corrupts the
+        // active session's viewport (cursor jumps past EOF, top
+        // line becomes blank). Here we do just the parts that are
+        // safe to run from a foreign session: append visible
+        // screen to backing file, then reload that one buffer.
         let preview_buffers: Vec<fresh_core::BufferId> = self
             .sessions
             .get(&sid)
             .map(|s| s.buffers.iter().copied().collect())
             .unwrap_or_default();
         for bid in preview_buffers {
-            if self.terminal_buffers.contains_key(&bid) {
-                self.sync_terminal_to_buffer(bid);
-                if let Some(path) = self
-                    .buffers
-                    .get(&bid)
-                    .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()))
-                {
-                    let _ = self.revert_buffer_by_id(bid, &path);
+            let Some(&terminal_id) = self.terminal_buffers.get(&bid) else {
+                continue;
+            };
+            let Some(backing_file) = self.terminal_backing_files.get(&terminal_id).cloned()
+            else {
+                continue;
+            };
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(mut state) = handle.state.lock() {
+                    if let Ok(metadata) = self.authority.filesystem.metadata(&backing_file) {
+                        state.set_backing_file_history_end(metadata.size);
+                    }
+                    if let Ok(mut file) = self
+                        .authority
+                        .filesystem
+                        .open_file_for_append(&backing_file)
+                    {
+                        use std::io::BufWriter;
+                        let mut writer = BufWriter::new(&mut *file);
+                        let _ = state.append_visible_screen(&mut writer);
+                    }
+                }
+            }
+            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
+            if let Ok(new_state) = crate::state::EditorState::from_file_with_languages(
+                &backing_file,
+                self.terminal_width,
+                self.terminal_height,
+                large_file_threshold,
+                &self.grammar_registry,
+                &self.config.languages,
+                std::sync::Arc::clone(&self.authority.filesystem),
+            ) {
+                if let Some(state) = self.buffers.get_mut(&bid) {
+                    *state = new_state;
+                    state.buffer.set_modified(false);
+                    state.editing_disabled = true;
                 }
             }
         }
