@@ -309,9 +309,13 @@ editor.on("session_created", async (payload) => {
   ) {
     const intent = pendingNewSession;
     pendingNewSession = null;
+    // sessionId routes the terminal into the new session's
+    // membership + stashed split tree without diving — the
+    // user's base view stays put.
     const term = await editor.createTerminal({
       cwd: intent.root,
       focus: false,
+      sessionId: id,
     });
     const tracked: AgentSession = {
       id,

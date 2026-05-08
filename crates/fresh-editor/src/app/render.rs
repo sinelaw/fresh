@@ -1649,6 +1649,34 @@ impl Editor {
         let Some(sid) = self.preview_session_id else {
             return;
         };
+
+        // Terminal grid → buffer text sync. The PTY read loop
+        // streams scrollback to each terminal's backing file,
+        // but the *visible screen* (cursor row + nearby lines)
+        // only lands in the buffer when sync_terminal_to_buffer
+        // is called. Active-session renders trigger that via
+        // terminal-mode entry/exit hooks; inactive-session
+        // terminals never get synced unless we do it here.
+        // Without this the preview shows an empty buffer for
+        // terminals that are still streaming live output.
+        let preview_buffers: Vec<fresh_core::BufferId> = self
+            .sessions
+            .get(&sid)
+            .map(|s| s.buffers.iter().copied().collect())
+            .unwrap_or_default();
+        for bid in preview_buffers {
+            if self.terminal_buffers.contains_key(&bid) {
+                self.sync_terminal_to_buffer(bid);
+                if let Some(path) = self
+                    .buffers
+                    .get(&bid)
+                    .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()))
+                {
+                    let _ = self.revert_buffer_by_id(bid, &path);
+                }
+            }
+        }
+
         // Move the stash out so the rest of the function holds
         // `&mut self.buffers` etc. without conflicting with
         // `&mut self.sessions`. Bail if the session has no stash
