@@ -335,6 +335,36 @@ setPromptSuggestions(suggestions: PromptSuggestion[]): boolean
 |------|------|-------------|
 | `suggestions` | `PromptSuggestion[]` | Array of suggestions to display |
 
+### `setPromptTitle`
+
+Set the title shown in a floating-overlay prompt's frame header
+as styled segments. An empty array clears it and falls back to
+the prompt-type default.
+
+```typescript
+setPromptTitle(title: StyledText[]): boolean
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `title` | `StyledText[]` | Styled segments rendered along the overlay's top toolbar row |
+
+### `setPromptFooter`
+
+Set the footer chrome row of the floating-overlay prompt's
+results pane. Plugins use this for hotkey-hint banners — for
+example, the Conductor plugin renders
+`↑↓ preview  Enter dive  Esc close`. Empty array clears the
+footer. Has no visible effect on non-overlay prompts.
+
+```typescript
+setPromptFooter(footer: StyledText[]): boolean
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `footer` | `StyledText[]` | Styled segments rendered along the overlay's bottom row |
+
 ## Buffer Mutations
 
 ### `applyTheme`
@@ -1109,11 +1139,157 @@ removeScrollSyncGroup(group_id: number): boolean
 |------|------|-------------|
 | `group_id` | `number` | - |
 
+## Sessions / Conductor API
+
+A *session* is a project-rooted bundle of editor state — file
+explorer, LSP set, file watchers, split layout, and buffer
+membership — that can be swapped in and out as a unit. The
+"base" session at startup is `SessionId(1)`. Subsequent
+sessions are created by plugins (typically the first-party
+Conductor plugin, which uses sessions to drive parallel-agent
+worktrees).
+
+See `docs/internal/conductor-sessions-design.md` for the full
+architecture rationale.
+
+### `createSession`
+
+Allocate a new session rooted at `root` with the given label.
+Does not switch to it — call `setActiveSession` to dive.
+Returns the new session's id.
+
+```typescript
+createSession(root: string, label: string): Promise<number>
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `root` | `string` | Absolute path to the session root |
+| `label` | `string` | Display label (empty string defaults to root basename) |
+
+### `setActiveSession`
+
+Make `id` the active session. The previous active session's
+state (file explorer, LSP set, splits, view states) is stashed
+on its `Session` and the incoming session's stash is swapped
+into the editor — O(1), no buffer recreation, no LSP restart.
+
+```typescript
+setActiveSession(id: number): boolean
+```
+
+### `closeSession`
+
+Close a session. Buffers attached only to this session are
+dropped; shared buffers stay open. Closing the active session
+falls back to the base session.
+
+```typescript
+closeSession(id: number): boolean
+```
+
+### `listSessions`
+
+Snapshot of every session with its id, label, and root.
+
+```typescript
+listSessions(): SessionInfo[]
+```
+
+### `activeSession`
+
+Return the currently active session id.
+
+```typescript
+activeSession(): number
+```
+
+### `prewarmSession`
+
+Spin up the session's LSP set + split layout in the
+background, without diving. The first dive into a prewarmed
+session is then instant. Useful when a plugin knows the user
+will likely visit a session soon.
+
+```typescript
+prewarmSession(id: number): boolean
+```
+
+### `previewSessionInRect`
+
+Render the entire stashed UI of session `id` (splits,
+terminals, syntax-highlighted buffers, decorations) into the
+floating-overlay prompt's preview pane on the next frame.
+Cleared automatically when the prompt closes; call
+`clearSessionPreview` to clear earlier.
+
+This is *Primitive #1* of the Conductor design and is the
+mechanism the Conductor plugin uses to show a live preview of
+the highlighted session as the user moves the selection in
+the session list.
+
+```typescript
+previewSessionInRect(id: number): boolean
+```
+
+### `clearSessionPreview`
+
+Clear an earlier `previewSessionInRect` so the preview pane
+falls back to the prompt's default behaviour.
+
+```typescript
+clearSessionPreview(): boolean
+```
+
+### `setSessionState` / `getSessionState`
+
+Per-session, per-plugin state map. Like `setGlobalState` but
+scoped to a single session — useful for plugin state that
+should follow a session across saves/restores rather than
+applying globally. Persists to `.fresh/sessions.json`.
+
+```typescript
+setSessionState(key: string, value: unknown): boolean
+getSessionState(key: string): unknown | null
+```
+
+### `openFileInBackground`
+
+Open a file without switching to it. With `opts.sessionId`,
+the buffer is attached to that session's stashed tab strip
+instead of the active session's. Pairs with `createTerminal`'s
+`sessionId` for setting up an inactive session's contents
+without diving.
+
+```typescript
+openFileInBackground(path: string, opts?: { sessionId?: number }): Promise<number>
+```
+
+### `watchPath` / `unwatchPath`
+
+Subscribe to filesystem changes under `path`. Returns a
+handle. Each change fires a `path_changed` hook with the
+handle id, the changed path, and the change kind. Releases via
+`unwatchPath(handle)`.
+
+```typescript
+watchPath(path: string): Promise<number>
+unwatchPath(handle: number): boolean
+```
+
 ## Terminal API
 
 ### `createTerminal`
 
-Create a new terminal in a split. Returns a `TerminalResult` with buffer, terminal, and split IDs.
+Create a new terminal in a split. Returns a `TerminalResult`
+with buffer, terminal, and split IDs.
+
+When `opts.sessionId` is set the terminal attaches to that
+session's stashed split tree without diving — the user's
+current view stays put and the terminal becomes visible only
+when the user dives into the named session. This is how
+Conductor spawns agents into background worktrees without
+disturbing the foreground session.
 
 ```typescript
 createTerminal(opts?: CreateTerminalOptions): Promise<TerminalResult>

@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 
 use fresh_core::SessionId;
 
-use super::Editor;
 use super::session::Session;
+use super::Editor;
 
 /// One session as it appears on disk.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -134,9 +134,7 @@ impl Editor {
         let state_dir = state_dir(&working_dir);
         if !self.plugin_global_state.is_empty() {
             if let Err(e) = self.authority.filesystem.create_dir_all(&state_dir) {
-                tracing::warn!(
-                    "conductor persistence: failed to create {state_dir:?}: {e}"
-                );
+                tracing::warn!("conductor persistence: failed to create {state_dir:?}: {e}");
                 return;
             }
         }
@@ -154,9 +152,7 @@ impl Editor {
                 Ok(bytes) => {
                     let path = plugin_state_path(&working_dir, plugin);
                     if let Err(e) = self.authority.filesystem.write_file(&path, &bytes) {
-                        tracing::warn!(
-                            "conductor persistence: failed to write {path:?}: {e}"
-                        );
+                        tracing::warn!("conductor persistence: failed to write {path:?}: {e}");
                     }
                 }
                 Err(e) => {
@@ -193,9 +189,7 @@ impl Editor {
                     }
                 },
                 Err(e) => {
-                    tracing::warn!(
-                        "conductor persistence: failed to read {sessions_p:?}: {e}"
-                    );
+                    tracing::warn!("conductor persistence: failed to read {sessions_p:?}: {e}");
                 }
             }
         }
@@ -209,9 +203,7 @@ impl Editor {
         let entries = match self.authority.filesystem.read_dir(&state_dir) {
             Ok(es) => es,
             Err(e) => {
-                tracing::warn!(
-                    "conductor persistence: failed to read {state_dir:?}: {e}"
-                );
+                tracing::warn!("conductor persistence: failed to read {state_dir:?}: {e}");
                 return;
             }
         };
@@ -227,24 +219,19 @@ impl Editor {
                 continue;
             }
             match self.authority.filesystem.read_file(&path) {
-                Ok(bytes) => match serde_json::from_slice::<
-                    HashMap<String, serde_json::Value>,
-                >(&bytes)
-                {
-                    Ok(map) if !map.is_empty() => {
-                        self.plugin_global_state.insert(stem.to_owned(), map);
+                Ok(bytes) => {
+                    match serde_json::from_slice::<HashMap<String, serde_json::Value>>(&bytes) {
+                        Ok(map) if !map.is_empty() => {
+                            self.plugin_global_state.insert(stem.to_owned(), map);
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!("conductor persistence: failed to parse {path:?}: {e}");
+                        }
                     }
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!(
-                            "conductor persistence: failed to parse {path:?}: {e}"
-                        );
-                    }
-                },
+                }
                 Err(e) => {
-                    tracing::warn!(
-                        "conductor persistence: failed to read {path:?}: {e}"
-                    );
+                    tracing::warn!("conductor persistence: failed to read {path:?}: {e}");
                 }
             }
         }
@@ -275,12 +262,7 @@ impl Editor {
         // Allocate next from max(persisted next_id, max
         // existing+1) to avoid collisions with the synthetic
         // session above.
-        let max_existing = self
-            .sessions
-            .keys()
-            .map(|k| k.0)
-            .max()
-            .unwrap_or(0);
+        let max_existing = self.sessions.keys().map(|k| k.0).max().unwrap_or(0);
         self.next_session_id = env.next_id.max(max_existing + 1);
 
         // Restore the active id if it's still resolvable.

@@ -57,3 +57,18 @@ getHandlers(event_name: string): string[]
 | Name | Type | Description |
 |------|------|-------------|
 | `event_name` | `string` | Name of the event |
+
+## Session / Conductor events
+
+These events fire as the editor's session set changes. See
+`docs/internal/conductor-sessions-design.md` for the full
+session model.
+
+| Event | Payload | When it fires |
+|-------|---------|---------------|
+| `session_created` | `{ id, label, root }` | A new session was created (via `editor.createSession` or session restore on startup) |
+| `session_closed` | `{ id }` | A session was closed |
+| `active_session_changed` | `{ previous, current }` | The active session changed (warm-swap completed) |
+| `terminal_output` | `{ terminal_id, data }` | A terminal produced output. Useful for plugins watching agent activity in background sessions. |
+| `terminal_exit` | `{ terminal_id, exit_code }` | A terminal's child process exited. `exit_code` may be `null` on signal-terminated processes. |
+| `path_changed` | `{ handle, path, kind }` | A path watched via `editor.watchPath(...)` changed. `kind` is `"create"`, `"modify"`, or `"remove"`. |

@@ -570,6 +570,7 @@ interface CreateTerminalOptions {
   direction?: string;
   ratio?: number;
   focus?: boolean;
+  sessionId?: number;
 }
 ```
 
@@ -579,6 +580,25 @@ interface CreateTerminalOptions {
 | `direction` | Split direction: `"horizontal"` or `"vertical"` (default: `"vertical"`) |
 | `ratio` | Split ratio 0.0–1.0 (default: 0.5) |
 | `focus` | Whether to focus the new terminal split (default: true) |
+| `sessionId` | When set, attach the terminal to the named session's stashed split tree instead of the active session. The user's current view stays put; the terminal appears on dive-in. Used by Conductor to spawn agents into background worktrees. |
+
+### SessionInfo
+
+Snapshot of one session as returned by `listSessions`.
+
+```typescript
+interface SessionInfo {
+  id: number;
+  label: string;
+  root: string;
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `id` | Stable session identifier (the base session is always `1`) |
+| `label` | User-visible label |
+| `root` | Absolute path of the session's project root |
 
 ### ActionSpecJs
 

@@ -1668,8 +1668,7 @@ impl Editor {
             let Some(&terminal_id) = self.terminal_buffers.get(&bid) else {
                 continue;
             };
-            let Some(backing_file) = self.terminal_backing_files.get(&terminal_id).cloned()
-            else {
+            let Some(backing_file) = self.terminal_backing_files.get(&terminal_id).cloned() else {
                 continue;
             };
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
@@ -1684,7 +1683,11 @@ impl Editor {
                     {
                         use std::io::BufWriter;
                         let mut writer = BufWriter::new(&mut *file);
-                        let _ = state.append_visible_screen(&mut writer);
+                        if let Err(e) = state.append_visible_screen(&mut writer) {
+                            tracing::error!(
+                                "preview: failed to append visible screen for terminal buffer {bid:?}: {e}"
+                            );
+                        }
                     }
                 }
             }
@@ -2293,8 +2296,7 @@ impl Editor {
             // No `-2` for popup-own-border — we render the
             // borderless variant below since the overlay frame is
             // already a border.
-            let inner_rows =
-                (results_area.height - chrome_above_list - footer_h) as usize;
+            let inner_rows = (results_area.height - chrome_above_list - footer_h) as usize;
             let needs_scrollbar = prompt.suggestions.len() > inner_rows.max(1);
             let scrollbar_w: u16 = if needs_scrollbar { 1 } else { 0 };
             let list_area = Rect {
@@ -2364,9 +2366,7 @@ impl Editor {
                 width: results_area.width,
                 height: 1,
             };
-            let footer_default_style = Style::default()
-                .fg(theme.prompt_fg)
-                .bg(theme.suggestion_bg);
+            let footer_default_style = Style::default().fg(theme.prompt_fg).bg(theme.suggestion_bg);
             let footer_spans: Vec<Span> = prompt
                 .footer
                 .iter()
