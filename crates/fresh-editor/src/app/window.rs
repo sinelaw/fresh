@@ -82,12 +82,12 @@ pub struct Window {
     /// rooted at a new empty unnamed buffer for that window.
     pub splits_stash: Option<(SplitManager, HashMap<LeafId, SplitViewState>)>,
 
-    /// **Stash.** Polling-based mtime cache for auto-revert when
-    /// this window is *inactive*. Auto-revert only fires for the
-    /// active window's files; an inactive window's mtimes stay
-    /// frozen at dive-out time and resync on dive-back — matching
-    /// the user's mental model that a dormant window "is paused".
-    pub file_mod_times_stash: HashMap<PathBuf, std::time::SystemTime>,
+    /// Polling-based mtime cache for auto-revert. Auto-revert only
+    /// fires for the active window's files; inactive windows' mtimes
+    /// stay frozen at dive-out time and resync on dive-back —
+    /// matching the user's mental model that a dormant window "is
+    /// paused".
+    pub file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
 
     /// **Stash.** LSP manager (running language servers, configs,
     /// per-language root URIs) when this window is *inactive*.
@@ -151,7 +151,7 @@ impl Window {
             label,
             root,
             file_explorer_stash: None,
-            file_mod_times_stash: HashMap::new(),
+            file_mod_times: HashMap::new(),
             plugin_state: HashMap::new(),
             lsp_stash: None,
             panel_ids: HashMap::new(),

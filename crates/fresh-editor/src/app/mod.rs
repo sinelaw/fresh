@@ -1008,10 +1008,9 @@ pub struct Editor {
     /// Whether we've resolved and seeded the .git/index path in dir_mod_times
     git_index_resolved: bool,
 
-    /// Last known modification times for open files (for auto-revert)
-    /// Maps file path to last known modification time
-    file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
-
+    // file_mod_times moved onto `Window`. Auto-revert is per-window
+    // (matches "a dormant window is paused"); access via
+    // `Editor::file_mod_times()` / `file_mod_times_mut()`.
     /// Last known modification times for expanded directories (for file tree refresh)
     /// Maps directory path to last known modification time
     dir_mod_times: HashMap<PathBuf, std::time::SystemTime>,

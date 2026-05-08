@@ -612,13 +612,13 @@ impl Editor {
     /// without going through real file I/O.
     #[doc(hidden)]
     pub fn insert_mtime_for_test(&mut self, path: std::path::PathBuf, t: std::time::SystemTime) {
-        self.file_mod_times.insert(path, t);
+        self.file_mod_times_mut().insert(path, t);
     }
 
     /// Whether the active session's mtime cache contains `path`.
     #[doc(hidden)]
     pub fn has_mtime_for_test(&self, path: &std::path::Path) -> bool {
-        self.file_mod_times.contains_key(path)
+        self.file_mod_times().contains_key(path)
     }
 
     /// Mutable access to the active session. Used by lifecycle code
@@ -655,6 +655,22 @@ impl Editor {
     /// Mutable handle to the active window's panel-id map.
     pub(crate) fn panel_ids_mut(&mut self) -> &mut std::collections::HashMap<String, BufferId> {
         &mut self.active_session_mut().panel_ids
+    }
+
+    /// Active window's open-file mtime cache. Auto-revert only
+    /// fires for files in the active window — dormant windows
+    /// keep their mtime snapshot until the next dive.
+    pub(crate) fn file_mod_times(
+        &self,
+    ) -> &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
+        &self.active_window().file_mod_times
+    }
+
+    /// Mutable handle to the active window's mtime cache.
+    pub(crate) fn file_mod_times_mut(
+        &mut self,
+    ) -> &mut std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
+        &mut self.active_session_mut().file_mod_times
     }
 
     /// Return buffer ids whose on-disk path sits at or under `root`.

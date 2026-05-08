@@ -966,7 +966,6 @@ impl Editor {
             last_auto_revert_poll: time_source.now(),
             last_file_tree_poll: time_source.now(),
             git_index_resolved: false,
-            file_mod_times: HashMap::new(),
             dir_mod_times: HashMap::new(),
             pending_file_poll_rx: None,
             pending_dir_poll_rx: None,

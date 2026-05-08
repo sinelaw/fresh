@@ -126,12 +126,11 @@ impl crate::app::Editor {
             None
         };
 
-        // Stash the outgoing session's live state. `panel_ids` is
-        // already a per-window field (Step 0b first migration), so it
-        // doesn't participate in the swap.
+        // Stash the outgoing session's live state. `panel_ids` and
+        // `file_mod_times` are already per-window fields (Step 0b),
+        // so they don't participate in the swap.
         let outgoing_explorer = self.file_explorer.take();
         let outgoing_lsp = self.lsp.take();
-        let outgoing_mtimes = std::mem::take(&mut self.file_mod_times);
         let outgoing_splits = std::mem::replace(
             &mut self.split_manager,
             SplitManager::new(BufferId(usize::MAX)),
@@ -140,7 +139,6 @@ impl crate::app::Editor {
         if let Some(outgoing) = self.windows.get_mut(&previous_id) {
             outgoing.file_explorer_stash = outgoing_explorer;
             outgoing.lsp_stash = outgoing_lsp;
-            outgoing.file_mod_times_stash = outgoing_mtimes;
             outgoing.splits_stash = Some((outgoing_splits, outgoing_view_states));
         }
 
@@ -148,11 +146,10 @@ impl crate::app::Editor {
         self.working_dir = new_root;
 
         // Restore the incoming session's stashed state. Buffers,
-        // file explorer, LSP set, mtime cache.
+        // file explorer, LSP set.
         if let Some(incoming) = self.windows.get_mut(&id) {
             self.file_explorer = incoming.file_explorer_stash.take();
             self.lsp = incoming.lsp_stash.take();
-            self.file_mod_times = std::mem::take(&mut incoming.file_mod_times_stash);
             if let Some((mgr, vs)) = incoming.splits_stash.take() {
                 self.split_manager = mgr;
                 self.split_view_states = vs;

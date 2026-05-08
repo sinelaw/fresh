@@ -126,7 +126,7 @@ impl Editor {
         if let Some(ref p) = path {
             if let Ok(metadata) = self.authority.filesystem.metadata(p) {
                 if let Some(mtime) = metadata.modified {
-                    self.file_mod_times.insert(p.clone(), mtime);
+                    self.file_mod_times_mut().insert(p.clone(), mtime);
                 }
             }
         }
@@ -441,7 +441,7 @@ impl Editor {
         // Update the file modification time
         if let Ok(metadata) = self.authority.filesystem.metadata(&path) {
             if let Some(mtime) = metadata.modified {
-                self.file_mod_times.insert(path.clone(), mtime);
+                self.file_mod_times_mut().insert(path.clone(), mtime);
             }
         }
 
@@ -555,7 +555,7 @@ impl Editor {
                 continue;
             };
 
-            if let Some(&stored_mtime) = self.file_mod_times.get(&path) {
+            if let Some(&stored_mtime) = self.file_mod_times().get(&path) {
                 if current_mtime != stored_mtime {
                     let path_str = path.display().to_string();
                     if self.handle_async_file_changed(path_str) {
@@ -564,7 +564,7 @@ impl Editor {
                 }
             } else {
                 // First time seeing this file, record its mtime
-                self.file_mod_times.insert(path, current_mtime);
+                self.file_mod_times_mut().insert(path, current_mtime);
             }
         }
         any_changed
@@ -1060,7 +1060,7 @@ impl Editor {
         // Record current modification time for polling
         if let Ok(metadata) = self.authority.filesystem.metadata(path) {
             if let Some(mtime) = metadata.modified {
-                self.file_mod_times.insert(path.to_path_buf(), mtime);
+                self.file_mod_times_mut().insert(path.to_path_buf(), mtime);
             }
         }
     }
@@ -1242,7 +1242,7 @@ impl Editor {
         // Update the file modification time
         if let Ok(metadata) = self.authority.filesystem.metadata(path) {
             if let Some(mtime) = metadata.modified {
-                self.file_mod_times.insert(path.to_path_buf(), mtime);
+                self.file_mod_times_mut().insert(path.to_path_buf(), mtime);
             }
         }
 
@@ -1295,7 +1295,7 @@ impl Editor {
             };
 
             let dominated_by_stored = self
-                .file_mod_times
+                .file_mod_times()
                 .get(&path)
                 .map(|stored| current_mtime <= *stored)
                 .unwrap_or(false);
@@ -1319,7 +1319,7 @@ impl Editor {
                 // A save may have completed between our first check and now,
                 // updating file_mod_times. If so, skip the revert.
                 let still_needs_revert = self
-                    .file_mod_times
+                    .file_mod_times()
                     .get(&path)
                     .map(|stored| current_mtime > *stored)
                     .unwrap_or(true);
@@ -1368,7 +1368,7 @@ impl Editor {
             .and_then(|m| m.modified)?;
 
         // Compare with our recorded modification time
-        match self.file_mod_times.get(path) {
+        match self.file_mod_times().get(path) {
             Some(recorded_mtime) if current_mtime > *recorded_mtime => {
                 // File was modified externally since we last loaded/saved it
                 Some(current_mtime)
