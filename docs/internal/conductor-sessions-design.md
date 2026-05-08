@@ -193,11 +193,19 @@ the index.
 
 > **Gating constraint (May 2026):** `Step 0 — Session-as-window
 > migration` (`§ Migration sequence`) is the new top priority and
-> blocks every MVP item below that hasn't already shipped. The
-> warm-swap interim that delivered the items below is being
-> replaced by the window model; UX features built on top of the
-> warm-swap interim accumulate technical debt and must wait for
-> Step 0 to complete.
+> blocks every MVP item below that hasn't already shipped.
+>
+> **Progress:** Step 0a (cached_layout split) and Step 0b (warm-
+> swap stashes → live Window fields) shipped on
+> `claude/window-state-migration-RjEwX`. `set_active_window` is
+> now a pointer write — the warm-swap pattern is dead for every
+> field except `Editor.buffers` (and the field-pairs that follow
+> from it: terminals, event_logs, position_history). Step 0c
+> (`Editor.buffers` → `Window.buffers`) is the gating piece for
+> 0d–0i; first attempt reverted on borrow-checker friction (see
+> `§ Step 0c`). UX features built on top of the warm-swap
+> interim still accumulate technical debt and must wait for the
+> rest of Step 0 to complete.
 
 ### `[MVP]` — load-bearing for the core UX promise
 
@@ -1447,43 +1455,112 @@ pointer write. Render becomes session-pluggable as
 Sub-steps, in dependency order:
 
 **0a — Move `cached_layout` (split / tab / file-explorer
-parts) onto `Session`.** Smallest, lowest-risk. Audit
+parts) onto `Session`.** **Status: shipped.** Audit
 `Editor::cached_layout` reads/writes; split into
-`Session.layout_cache` (split-leaf rects, tab rects,
-file-explorer rects) and `Editor.chrome_layout` (status bar,
-menu, prompt overlay). Mouse hit-testing routes through the
-right one.
+`Window.layout_cache` (split-leaf rects, tab rects,
+file-explorer rects, view-line mappings) and
+`Editor.chrome_layout` (status bar, menu, prompt overlay,
+popups, suggestions, settings modal, full-frame cell-theme
+map). Mouse hit-testing routes through the right one. Reached
+on the active window via `Editor::active_layout()` /
+`active_layout_mut()`. (One commit on
+`claude/window-state-migration-RjEwX`.)
 
 **0b — Convert warm-swap stashes to live fields on `Session`.**
-The fields that today are `Option<…>` stashes
-(`splits_stash`, `file_explorer_stash`, `lsp_stash`,
-`panel_ids_stash`, `file_mod_times_stash`) become required
-non-stash fields on `Session`. The matching live fields on
-`Editor` go away. Every site that reads
-`self.<field>` becomes `self.active_session_mut().<field>` (via
-helpers like `active_splits()` / `active_lsp()` to keep the
-common case readable). The `setActiveSession` swap
-implementation in `session_actions.rs` becomes
-`self.active_session = id;`.
+**Status: shipped.** The fields that today are `Option<…>`
+stashes (`splits_stash`, `file_explorer_stash`, `lsp_stash`,
+`panel_ids_stash`, `file_mod_times_stash`) become live
+`Window` fields (`splits` is `Option<(SplitManager,
+HashMap<LeafId, SplitViewState>)>` because layout allocation is
+deferred to first activation; the rest are direct).
+`set_active_window` is now a pointer write — the swap body is
+gone, replaced by seed-buffer/layout allocation on first dive
+into a never-activated window. Editor accessors
+(`split_manager()` / `_mut()`, `split_view_states()` / `_mut()`,
+`file_explorer()` / `_mut()`, `lsp()` / `_mut()`, `panel_ids()`
+/ `_mut()`, `file_mod_times()` / `_mut()`) cover the common
+case. (Five commits on `claude/window-state-migration-RjEwX`,
+one per field.)
 
-This is the bulk of the mechanical churn — hundreds of call
-sites across `fresh-editor`. Use compiler enforcement: delete
-the live `Editor` fields, follow the errors. Borrow-checker
-friction at sites that touch the active session AND another
-field on `Editor` (split-borrow patterns; pre-extract a
-`&mut Session` early in the function and use it).
+**Borrow-checker friction observed during 0b.** Method-call
+accessors hold `&mut self` for the call's whole lifetime, so
+sites that need a mutable borrow on one window field *and* a
+read or mutable borrow on a different window field (or on
+another `Editor` field — `tokio_runtime`,
+`authority.filesystem`, `theme`, `config`, `terminal_*`) can't
+both go through `self.X_mut()`. The pattern that works is
+direct windows-field access at the conflict site:
 
-**0c — Move `Editor.buffers` onto `Session`.** The biggest
-single move. `Session.buffers: HashMap<BufferId, EditorState>`
-replaces today's `Session.buffers: HashSet<BufferId>` and
-`Editor.buffers: HashMap<BufferId, EditorState>`. `next_buffer_id`
-stays on `Editor` so ids remain globally unique. Plugin API
-lookup helpers gain a "which session" disambiguation pass
-(default: active; explicit cross-session is opt-in). Audit
-every `self.buffers` reference (~hundreds) and route through
-the active session — or, where the operation is genuinely
-cross-session (find references across all sessions, the diff
-helper), through an explicit cross-session iterator.
+```rust
+let active_id = self.active_window;
+if let Some(explorer) = self
+    .windows
+    .get_mut(&active_id)
+    .and_then(|w| w.file_explorer.as_mut())
+{
+    // body still reads `self.theme`, `self.config`, etc. —
+    // disjoint from `&mut self.windows`.
+}
+```
+
+For sites that need *two* mutable sub-borrows on the same
+window (e.g. `splits` and `buffers` together), take one
+`&mut Window` and split-access:
+
+```rust
+let window = self.windows.get_mut(&active_id).unwrap();
+let state = window.buffers.get_mut(&id).unwrap();
+let (mgr, vs) = window.splits.as_mut().unwrap();
+// state, mgr, vs all live at once because they're disjoint
+// fields of `Window`.
+```
+
+This pattern recurs in every subsequent sub-step (0c–0f) and
+the cost is roughly proportional to the number of call sites
+that compose the migrated field with another self-borrow.
+
+**0c — Move `Editor.buffers` onto `Session`.** **Status: not
+yet shipped — first attempt reverted.** `Session.buffers:
+HashMap<BufferId, EditorState>` replaces today's
+`Session.buffers: HashSet<BufferId>` and
+`Editor.buffers: HashMap<BufferId, EditorState>`.
+`next_buffer_id` stays on `Editor` so ids remain globally
+unique.
+
+The first attempt landed the type/field changes plus a
+sed-driven rewrite of every `self.buffers.X` call site to
+`self.windows.get_mut(&self.active_window).map(|w| &mut
+w.buffers).expect(…).X`. That left ~50 unique borrow-checker
+conflict sites where the inline `windows.get_mut` borrow
+overlapped with another mutable borrow on the same window
+(typically `splits` or `split_view_states`) or with
+contemporaneous reads of `self.config` / `self.buffer_metadata`
+/ `self.event_logs` / etc. The pattern from 0b applies (single
+`&mut Window` + split-access into disjoint sub-fields), but
+the volume — render.rs's per-frame buffer loops, lsp_requests
+fanout, mouse_input click handlers, plugin_dispatch tab/window
+handlers — needs careful per-site analysis rather than a
+mechanical sweep. The attempt was reverted to keep the branch
+compiling cleanly with 0a + 0b shipped.
+
+**Plan for the next attempt at 0c.** Either (a) a
+`buffers_mut!(self)` macro that expands inline to direct
+windows-field access (so the borrow checker can split it the
+same way 0b's hot paths do — methods can't, macros can), or
+(b) pre-extract `let window = self.windows.get_mut(&id).unwrap();`
+once at the top of every function that needs concurrent
+sub-borrows and use `window.buffers`, `window.splits`, etc.
+Approach (a) is the more general fix and unblocks the same
+shape for terminal_manager / event_logs in 0d–0e. Estimated
+4–6 hours of attentive per-site work to clear the conflict
+list once the macro is in place.
+
+Plugin API lookup helpers gain a "which session" disambiguation
+pass (default: active; explicit cross-session is opt-in).
+Audit every `self.buffers` reference (~hundreds) and route
+through the active session — or, where the operation is
+genuinely cross-session (find references across all sessions,
+the diff helper), through an explicit cross-session iterator.
 
 **0d — Move terminal manager + terminal-buffer indexes onto
 `Session`.** `terminal_manager`, `terminal_buffers`,
@@ -1492,7 +1569,9 @@ are owned by the session that created them. `closeSession`
 joins those threads. `terminal_id` allocation also stays
 global on `Editor` for plugin-API stability. Active-session
 helpers cover the common case
-(`active_terminal_manager_mut()`).
+(`active_terminal_manager_mut()`). Same borrow-checker
+caveats as 0c apply — many terminal sites read/write
+buffers and split state in the same expression.
 
 **0e — Move `event_logs` (undo per buffer) onto `Session`.**
 Falls out of 0c — undo logs follow the buffer.
@@ -1516,11 +1595,17 @@ sub-rect and a different `&Session`. The transient-swap
 hack and the side-effect-flag plumbing both go away.
 
 **0i — Remove the warm-swap helpers and Conductor's reliance
-on them.** The migration is done; delete
-`session_actions.rs::set_active_session`'s swap body in
-favour of the pointer write, drop the stash fields from
-`Session`, simplify the e2e session tests that pinned each
-swap individually.
+on them.** **Mostly already done as part of 0b.** The swap
+body in `set_active_window` is gone (it's a pointer write
+plus first-dive seed). What remains for 0i: drop the
+`splits` field's `Option` wrapper once 0c lands and every
+window has buffers from the start, simplify the e2e
+session tests that pinned each warm-swap individually
+(currently they assert `window.splits.is_some()` after dive,
+which still exercises the right behaviour but the framing
+is now "layout allocation status," not "stash status"), and
+delete the `attach_buffer_to_active_window` /
+`detach_buffer_from_all_windows` shims after 0c.
 
 After Step 0 lands:
 
@@ -1542,43 +1627,58 @@ churn is large but the per-commit risk is bounded; tests
 catch regressions immediately because they exercise the
 active-session path.
 
-### Implementation status snapshot (May 2026)
+### Implementation status snapshot
 
-The branch implementing this design landed the **interim
-warm-swap migration** plus the surrounding Conductor plugin
-plumbing. Every per-subsystem state field listed in `§ The
-Session abstraction` warm-swaps on `setActiveSession`. Commits,
-in order:
+The branch `claude/window-state-migration-RjEwX` shipped the
+warm-swap interim (Steps 1a–1h, 2, 3, 5, 6) and then the first
+half of the Step 0 (window-model) migration. Where we are
+right now:
 
-- Step 3 — `terminal_output` / `terminal_exit` plugin hooks
-- Step 1a — `Session` struct + base session wiring
-- Step 2 — `createSession` / `setActiveSession` / `closeSession`
-  plugin API + `listSessions` / `activeSession` snapshot reads
-  + 3 lifecycle hooks
-- Step 5 — confirmed `setGlobalState` / `getGlobalState` already
-  exist in core
-- Step 6 — first-party `conductor.ts` plugin: Control Room,
-  two-step new-session prompt, dive/list/navigate/kill
-- Step 1c — warm-swap file-explorer view
-- Step 1d — warm-swap utility-dock `panel_ids`
-- Step 1e — `Session.buffers` membership tracking
-- Step 1g — warm-swap LSP set (each session's LspManager stays
-  alive in stash; diving back is instant)
-- Step 1h — warm-swap `file_mod_times` (auto-revert is now
-  per-session; dormant sessions don't auto-revert their files)
-- Step 1f — warm-swap split tree + per-leaf view state (split
-  layout, focus, scroll, cursor — each session has its own;
-  fresh sessions get a freshly-allocated seed buffer)
+**Shipped on branch (compiles cleanly):**
 
-The "switching sessions feels like swapping the entire Fresh
-state" promise from `§ Motivation` is now true by construction:
-file tree, ignore matcher, LSPs, watchers, split layout, dock
-occupancy, mtime cache, and buffer membership are all per-session
-and warm.
+- Steps 1–6 from the original interim (warm-swap rendering of
+  every per-session subsystem; Conductor plugin MVP).
+- **Step 0a** — `cached_layout` split into `Editor.chrome_layout`
+  (full-frame chrome rects + cell-theme map) and
+  `Window.layout_cache` (split / tab / file-explorer rects +
+  view-line mappings). One commit.
+- **Step 0b** — every warm-swap stash converted to a live
+  `Window` field. `set_active_window` is a pointer write
+  (plus first-dive seed allocation for windows that have never
+  been activated). Five commits, one per field:
+  `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`,
+  `splits` (the split tree + per-leaf view state pair).
+
+The "switching windows feels like swapping the entire Fresh
+state" promise from `§ Motivation` is now true by
+*construction*, not by warm-swap: file tree, ignore matcher,
+LSPs, watchers, split layout, dock occupancy, and mtime cache
+all live on `Window` outright; switching is a single
+`active_window = id` write.
 
 The 16 e2e tests in `crates/fresh-editor/tests/e2e/sessions.rs`
-pin each warm-swap individually (open file_explorer, dive away,
-dive back, assert restored — same shape for every subsystem).
+still pass — their assertions about "diving and diving back
+preserves state" are now satisfied by the per-window storage
+rather than by the swap, but the surface behaviour is
+unchanged.
+
+**Not yet shipped (Step 0c–0i):**
+
+`Editor.buffers` is still editor-global. Step 0c was attempted
+on this branch and reverted because it ran into ~50 unique
+borrow-checker conflict sites where the inline windows-field
+access pattern that worked for 0b didn't compose with sites
+that need *two* concurrent mutable sub-borrows on a window
+(typically `buffers` + `splits`). See the migration sequence
+above (`§ Step 0c`) for the recommended next-attempt
+strategy: a `buffers_mut!(self)` macro that expands inline so
+the borrow checker can split it, plus per-function
+pre-extraction of `&mut Window` at every site that touches
+both buffers and another window field.
+
+0d–0i are downstream of 0c (terminal manager, event_logs,
+position history, command audit, `render_window` refactor,
+warm-swap helper deletion).
 
 ### Step 1 — `Session` struct, single forced session  `[interim — superseded by Step 0]`
 

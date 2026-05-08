@@ -21,12 +21,20 @@
 //!
 //! ## Migration status
 //!
-//! This module is the foothold for the Window abstraction. In its
-//! initial form (the warm-swap interim) the struct holds id, label,
-//! root, plus stashes for splits / file-explorer / LSP / etc. Step 0
-//! in the design doc converts the stashes to live fields and moves
-//! `buffers`, `terminal_manager`, `event_logs` onto Window so each
-//! window is a fully self-contained editor state.
+//! Step 0a (cached_layout split) and Step 0b (warm-swap stashes →
+//! live `Window` fields) are shipped: every per-subsystem state
+//! field that used to warm-swap on `setActiveWindow`
+//! — `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`, and
+//! the `splits` pair — now lives directly on `Window`.
+//! `set_active_window` is a pointer write (plus first-dive seed
+//! allocation for windows that have never been activated).
+//!
+//! Still on `Editor` (move in Step 0c–0f): `buffers`,
+//! `terminal_manager` + `terminal_buffers` + `terminal_backing_files`,
+//! `event_logs`, `position_history`, `bookmarks`. Once those land,
+//! `closeWindow` becomes a single `Window::drop` and the
+//! `attach_buffer_to_active_window` /
+//! `detach_buffer_from_all_windows` shims go away.
 
 use crate::app::types::WindowLayoutCache;
 use crate::model::event::LeafId;
@@ -39,17 +47,13 @@ use std::path::PathBuf;
 
 /// A project-rooted unit of editor state.
 ///
-/// "Stash" fields hold the inactive window's snapshot of state
-/// that for the *active* window lives directly on `Editor`. This
-/// is the warm-switching pattern: `setActiveWindow` swaps the
-/// active window's live state out into the outgoing window's
-/// stash, then pulls the incoming window's stash into the active
-/// slots — O(1) and lossless. New code that reads any of these
-/// stash fields directly is a bug; only the swap path on
-/// `setActiveWindow` should touch them.
-///
-/// Step 0 of the design doc replaces these stashes with live
-/// fields per window and a pointer-write `setActiveWindow`.
+/// After Step 0b every per-subsystem field listed below is owned
+/// outright by the window — there are no warm-swap stashes.
+/// `setActiveWindow` is a pointer write; reads of the active
+/// window's state route through Editor accessors
+/// (`active_layout()`, `split_manager()`, `file_explorer()`, `lsp()`,
+/// `panel_ids()`, `file_mod_times()`, …). Cross-window access goes
+/// through `Editor.windows.get(&id)` directly.
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
