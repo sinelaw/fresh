@@ -175,6 +175,7 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::TextInput { key: Some(k), .. }
+        | WidgetSpec::TextArea { key: Some(k), .. }
         | WidgetSpec::List { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if !k.is_empty() =>
@@ -825,6 +826,85 @@ fn render_collected(
             ensure_trailing_newline(&mut entry);
             entries.push(entry);
         }
+        WidgetSpec::TextArea {
+            value,
+            cursor_byte,
+            focused,
+            label,
+            placeholder,
+            rows,
+            field_width,
+            key,
+        } => {
+            let is_focused = match key.as_deref() {
+                Some(k) if !k.is_empty() => k == focus_key,
+                _ => *focused,
+            };
+            // Host-owned value/cursor + scroll, mirroring TextInput.
+            // First render seeds from the spec; subsequent renders
+            // read the previous instance state and ignore the spec's
+            // value / cursor_byte.
+            let (effective_value, effective_cursor_byte, prev_scroll) = match key
+                .as_deref()
+                .filter(|k| !k.is_empty())
+                .and_then(|k| prev.get(k))
+            {
+                Some(WidgetInstanceState::TextArea {
+                    value,
+                    cursor_byte,
+                    scroll_row,
+                }) => (value.clone(), *cursor_byte as i32, *scroll_row),
+                _ => (value.clone(), *cursor_byte, 0),
+            };
+            // Default rows to a small value when the plugin omits
+            // it — keeps the editing region from collapsing.
+            let visible_rows = if *rows == 0 { 3 } else { *rows };
+            let rendered = render_text_area(
+                &effective_value,
+                effective_cursor_byte,
+                is_focused,
+                label,
+                placeholder.as_deref(),
+                visible_rows,
+                *field_width,
+                prev_scroll,
+                panel_width,
+            );
+            // Persist instance state for next render. Cursor is
+            // clamped into [0, value.len()]; scroll_row is the
+            // renderer's auto-clamped value (cursor's line stays in
+            // view).
+            if let Some(k) = key.as_deref().filter(|k| !k.is_empty()) {
+                let cb = effective_cursor_byte
+                    .max(0)
+                    .min(effective_value.len() as i32) as u32;
+                next_state.insert(
+                    k.to_string(),
+                    WidgetInstanceState::TextArea {
+                        value: effective_value.clone(),
+                        cursor_byte: cb,
+                        scroll_row: rendered.scroll_row,
+                    },
+                );
+            }
+            // Publish cursor for the hardware-cursor driver. The
+            // renderer's `cursor_buffer_row` is relative to the
+            // first rendered entry of this widget (label adds a
+            // row), and `cursor_byte_in_entry` is the byte within
+            // that row's text.
+            if let (Some(buffer_row), Some(byte_in_row)) =
+                (rendered.cursor_buffer_row, rendered.cursor_byte_in_row)
+            {
+                focus_cursor = Some(FocusCursor {
+                    buffer_row,
+                    byte_in_row: byte_in_row as u32,
+                });
+            }
+            for mut e in rendered.entries {
+                ensure_trailing_newline(&mut e);
+                entries.push(e);
+            }
+        }
         WidgetSpec::Raw {
             entries: raw_entries,
             ..
@@ -1294,6 +1374,231 @@ pub fn render_text_input(
             inline_overlays: overlays,
         },
         cursor_byte_in_entry,
+    }
+}
+
+/// Output of `render_text_area`. One entry per visible row of the
+/// editing region, plus optionally one preceding label row.
+pub struct RenderedTextArea {
+    /// The label row (if any) followed by `visible_rows` rows of
+    /// editing content. Empty `value` lines are rendered as blank
+    /// padded rows so the widget always occupies its full visual
+    /// height.
+    pub entries: Vec<TextPropertyEntry>,
+    /// Auto-clamped scroll row (first visible line of `value`)
+    /// after this render. Persisted into instance state by the
+    /// caller.
+    pub scroll_row: u32,
+    /// Buffer row (within `entries`) where the host should drop
+    /// the hardware cursor when focused. `None` when unfocused or
+    /// when `value` is empty and the placeholder is showing.
+    pub cursor_buffer_row: Option<u32>,
+    /// Byte offset within the cursor's row text where the cursor
+    /// lands. Pairs with `cursor_buffer_row`.
+    pub cursor_byte_in_row: Option<usize>,
+}
+
+/// Render a multi-line `TextArea`.
+///
+/// Layout:
+/// * If `label` is non-empty, one `Label:` row precedes the editing
+///   region.
+/// * Then exactly `visible_rows` rows of editing content. Lines of
+///   `value` between `[scroll_row, scroll_row + visible_rows)` are
+///   rendered; rows beyond the value are blanks (padded so the
+///   editing region's input-bg block keeps its rectangular shape).
+/// * The editing region uses `field_width` columns when set; `0`
+///   means "use up to `panel_width`". Long lines are truncated with
+///   `…` at the right when they exceed the field width — this is
+///   different from `TextInput`'s head-truncation, because the
+///   cursor is no longer pinned to end-of-value (it can be
+///   anywhere within multi-line content).
+/// * When focused, every visible content row gets the
+///   `ui.prompt_bg` overlay extended to the field width so the
+///   editing region reads as a single block.
+/// * Placeholder: shown on the *first* row only when unfocused and
+///   `value` is empty.
+///
+/// Cursor: returns the visible row index (relative to `entries`)
+/// and byte offset within that row's text. The auto-clamp policy:
+/// keep the cursor's line in view by adjusting `scroll_row` when
+/// the cursor's line falls outside `[scroll_row, scroll_row +
+/// visible_rows)`.
+#[allow(clippy::too_many_arguments)]
+pub fn render_text_area(
+    value: &str,
+    cursor_byte: i32,
+    focused: bool,
+    label: &str,
+    placeholder: Option<&str>,
+    visible_rows: u32,
+    field_width: u32,
+    prev_scroll: u32,
+    panel_width: u32,
+) -> RenderedTextArea {
+    // Resolve effective field width: caller's value if set, else
+    // `panel_width` (or a small default if the panel is unsized).
+    let target_width: usize = if field_width > 0 {
+        field_width as usize
+    } else if panel_width != u32::MAX && panel_width > 0 {
+        panel_width as usize
+    } else {
+        40
+    };
+
+    // Split value into lines (without the `\n`). Empty value still
+    // produces one (empty) line — matching how a single-line
+    // editor would treat an empty buffer.
+    let mut lines: Vec<&str> = value.split('\n').collect();
+    if lines.is_empty() {
+        lines.push("");
+    }
+
+    // Cursor → (line_index, byte_in_line). When `cursor_byte` is
+    // negative (no cursor), we still compute a line for scroll
+    // bookkeeping but don't emit a focus_cursor.
+    let raw_cursor_byte = if cursor_byte < 0 {
+        value.len()
+    } else {
+        (cursor_byte as usize).min(value.len())
+    };
+    let (cursor_line, cursor_col) = byte_to_line_col(value, raw_cursor_byte);
+
+    // Auto-clamp scroll: keep cursor's line in [scroll_row,
+    // scroll_row + visible_rows). On first render, prev_scroll == 0.
+    let visible_rows_usize = visible_rows.max(1) as usize;
+    let mut scroll_row = prev_scroll as usize;
+    if cursor_line < scroll_row {
+        scroll_row = cursor_line;
+    } else if cursor_line >= scroll_row + visible_rows_usize {
+        scroll_row = cursor_line + 1 - visible_rows_usize;
+    }
+    // Don't scroll past the last line.
+    let max_scroll = lines.len().saturating_sub(visible_rows_usize);
+    if scroll_row > max_scroll {
+        scroll_row = max_scroll;
+    }
+
+    let show_placeholder =
+        !focused && value.is_empty() && placeholder.is_some() && !placeholder.unwrap().is_empty();
+
+    let mut entries: Vec<TextPropertyEntry> = Vec::new();
+    let mut cursor_buffer_row: Option<u32> = None;
+    let mut cursor_byte_in_row: Option<usize> = None;
+
+    if !label.is_empty() {
+        let mut text = String::with_capacity(label.len() + 2);
+        text.push_str(label);
+        text.push(':');
+        entries.push(TextPropertyEntry {
+            text,
+            properties: Default::default(),
+            style: None,
+            inline_overlays: Vec::new(),
+        });
+    }
+    let label_offset: u32 = entries.len() as u32;
+
+    for row_in_view in 0..visible_rows_usize {
+        let line_idx = scroll_row + row_in_view;
+        let mut row_text;
+        let mut overlays: Vec<InlineOverlay> = Vec::new();
+
+        if line_idx < lines.len() {
+            row_text = pad_or_truncate_line(lines[line_idx], target_width);
+        } else {
+            row_text = " ".repeat(target_width);
+        }
+
+        // Placeholder shows on the first row only.
+        if show_placeholder && row_in_view == 0 {
+            let ph = placeholder.unwrap();
+            row_text = pad_or_truncate_line(ph, target_width);
+            overlays.push(InlineOverlay {
+                start: 0,
+                end: row_text.len(),
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+            });
+        }
+
+        // Focused-bg covers the full row width — the editing
+        // region reads as a single block.
+        if focused {
+            overlays.push(InlineOverlay {
+                start: 0,
+                end: row_text.len(),
+                style: OverlayOptions {
+                    bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+            });
+        }
+
+        // Drop the cursor on this row if it matches.
+        if focused && line_idx == cursor_line && cursor_byte >= 0 {
+            // The cursor's byte column on its line. If the line was
+            // truncated, the cursor may have shifted past the
+            // visible region — clamp to the last visible byte so
+            // the hardware cursor stays in the row.
+            let col_in_line = cursor_col.min(row_text.len());
+            cursor_buffer_row = Some(label_offset + row_in_view as u32);
+            cursor_byte_in_row = Some(col_in_line);
+        }
+
+        entries.push(TextPropertyEntry {
+            text: row_text,
+            properties: Default::default(),
+            style: None,
+            inline_overlays: overlays,
+        });
+    }
+
+    RenderedTextArea {
+        entries,
+        scroll_row: scroll_row as u32,
+        cursor_buffer_row,
+        cursor_byte_in_row,
+    }
+}
+
+/// Translate a byte offset in `value` to (line_index, byte_in_line).
+fn byte_to_line_col(value: &str, byte: usize) -> (usize, usize) {
+    let byte = byte.min(value.len());
+    let mut line = 0usize;
+    let mut line_start = 0usize;
+    for (i, &b) in value.as_bytes().iter().enumerate().take(byte) {
+        if b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
+    }
+    (line, byte - line_start)
+}
+
+/// Pad `line` with trailing spaces to `target` chars, or
+/// tail-truncate with `…` if it overflows. Operates on chars to keep
+/// the visual width predictable for ASCII; multibyte chars count as
+/// one char each (terminal column width != char count for CJK, but
+/// that's an acceptable v1 limitation matching `TextInput`).
+fn pad_or_truncate_line(line: &str, target: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= target {
+        let mut out = line.to_string();
+        let pad = target - chars.len();
+        for _ in 0..pad {
+            out.push(' ');
+        }
+        out
+    } else {
+        let keep = target.saturating_sub(1);
+        let mut out: String = chars.iter().take(keep).collect();
+        out.push('…');
+        out
     }
 }
 
@@ -2592,5 +2897,201 @@ mod tests {
         let mut tabbable = Vec::new();
         collect_tabbable(&spec, &mut tabbable);
         assert_eq!(tabbable, vec!["toggle", "tree"]);
+    }
+
+    // -------------------------------------------------------------
+    // TextArea
+    // -------------------------------------------------------------
+
+    fn make_text_area(
+        value: &str,
+        cursor_byte: i32,
+        focused: bool,
+        rows: u32,
+        field_width: u32,
+        key: Option<&str>,
+    ) -> WidgetSpec {
+        WidgetSpec::TextArea {
+            value: value.into(),
+            cursor_byte,
+            focused,
+            label: String::new(),
+            placeholder: None,
+            rows,
+            field_width,
+            key: key.map(|s| s.into()),
+        }
+    }
+
+    #[test]
+    fn text_area_renders_visible_rows_count() {
+        // Single line value, but rows=3 → 3 entries (line + 2
+        // blanks).
+        let spec = make_text_area("hi", -1, false, 3, 10, Some("ta"));
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "", 80);
+        assert_eq!(out.entries.len(), 3);
+    }
+
+    #[test]
+    fn text_area_pads_short_lines_to_field_width() {
+        let spec = make_text_area("hi", -1, false, 1, 6, Some("ta"));
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "", 80);
+        // First (only visible) row: "hi" padded to 6 chars → "hi    \n"
+        let first = &out.entries[0];
+        assert_eq!(first.text, "hi    \n");
+    }
+
+    #[test]
+    fn text_area_truncates_long_line_with_ellipsis() {
+        let spec = make_text_area("abcdefghi", -1, false, 1, 5, Some("ta"));
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "", 80);
+        // 9 chars trimmed to 5 → "abcd…\n".
+        assert_eq!(out.entries[0].text, "abcd…\n");
+    }
+
+    #[test]
+    fn text_area_focused_adds_input_bg_overlay_per_row() {
+        let spec = make_text_area("a\nb", -1, true, 3, 4, Some("ta"));
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "ta", 80);
+        for entry in &out.entries {
+            let has_bg = entry.inline_overlays.iter().any(|o| {
+                o.style
+                    .bg
+                    .as_ref()
+                    .and_then(|c| c.as_theme_key())
+                    .map(|k| k == "ui.prompt_bg")
+                    .unwrap_or(false)
+            });
+            assert!(has_bg, "every focused row gets input-bg");
+        }
+    }
+
+    #[test]
+    fn text_area_publishes_focus_cursor_at_value_position() {
+        // value="ab\ncd", cursor at byte 4 (col 1 on line 1, char
+        // 'd' position).
+        let spec = make_text_area("ab\ncd", 4, true, 3, 6, Some("ta"));
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "ta", 80);
+        let fc = out.focus_cursor.expect("focused → cursor published");
+        // Line 1 is the second visible row → buffer_row 1.
+        assert_eq!(fc.buffer_row, 1);
+        // Col 1 on the rendered row.
+        assert_eq!(fc.byte_in_row, 1);
+    }
+
+    #[test]
+    fn text_area_label_offsets_cursor_buffer_row() {
+        // With a label, the editing region starts on row 1, so a
+        // cursor on line 0 of the value lands on row 1 of the
+        // buffer.
+        let spec = WidgetSpec::TextArea {
+            value: "hi".into(),
+            cursor_byte: 1,
+            focused: true,
+            label: "Note".into(),
+            placeholder: None,
+            rows: 2,
+            field_width: 6,
+            key: Some("ta".into()),
+        };
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "ta", 80);
+        // entries[0] is the label row, entries[1..] are content.
+        assert!(out.entries[0].text.starts_with("Note:"));
+        let fc = out.focus_cursor.unwrap();
+        assert_eq!(fc.buffer_row, 1);
+    }
+
+    #[test]
+    fn text_area_persists_value_and_cursor_in_instance_state() {
+        let spec = make_text_area("abc", 2, true, 2, 8, Some("ta"));
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "ta", 80);
+        match out.instance_states.get("ta") {
+            Some(WidgetInstanceState::TextArea {
+                value, cursor_byte, ..
+            }) => {
+                assert_eq!(value, "abc");
+                assert_eq!(*cursor_byte, 2);
+            }
+            other => panic!("expected TextArea instance state, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn text_area_instance_state_overrides_spec_value() {
+        // Plugin's spec says "old" but instance state has "new" —
+        // the renderer reads from instance state.
+        let spec = make_text_area("old", 0, true, 2, 8, Some("ta"));
+        let mut prev = HashMap::new();
+        prev.insert(
+            "ta".into(),
+            WidgetInstanceState::TextArea {
+                value: "new".into(),
+                cursor_byte: 3,
+                scroll_row: 0,
+            },
+        );
+        let out = render_spec(&spec, &prev, "ta", 80);
+        // The first row should now read "new" (not "old").
+        assert!(out.entries[0].text.starts_with("new"));
+    }
+
+    #[test]
+    fn text_area_scroll_clamps_to_keep_cursor_visible() {
+        // 5-line value, rows=2. Cursor on line 4 (last). On first
+        // render the renderer should auto-scroll so line 4 is
+        // visible.
+        let spec = make_text_area("a\nb\nc\nd\ne", 8, true, 2, 4, Some("ta"));
+        // byte 8 is on the 5th line (line index 4).
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "ta", 80);
+        match out.instance_states.get("ta") {
+            Some(WidgetInstanceState::TextArea { scroll_row, .. }) => {
+                assert_eq!(*scroll_row, 3, "scroll so lines 3..5 are visible");
+            }
+            _ => panic!("expected TextArea instance state"),
+        }
+    }
+
+    #[test]
+    fn text_area_unfocused_empty_shows_placeholder_in_first_row() {
+        // Test the renderer directly (focused=false). Host-owned
+        // focus would otherwise auto-focus the only tabbable
+        // widget — see `text_area_publishes_focus_cursor_at_value_position`
+        // for the focused path.
+        let r = render_text_area("", -1, false, "", Some("write here"), 2, 12, 0, 80);
+        assert!(r.entries[0].text.starts_with("write here"));
+        // Placeholder uses the muted-fg overlay.
+        let fg = r.entries[0]
+            .inline_overlays
+            .iter()
+            .find_map(|o| o.style.fg.as_ref())
+            .and_then(|c| c.as_theme_key());
+        assert_eq!(fg, Some("ui.menu_disabled_fg"));
+    }
+
+    #[test]
+    fn text_area_tabbable_keys_include_text_area_with_key() {
+        let spec = WidgetSpec::Col {
+            children: vec![
+                WidgetSpec::Toggle {
+                    checked: false,
+                    label: "T".into(),
+                    focused: false,
+                    key: Some("toggle".into()),
+                },
+                make_text_area("", -1, false, 3, 10, Some("note")),
+            ],
+            key: None,
+        };
+        let mut tabbable = Vec::new();
+        collect_tabbable(&spec, &mut tabbable);
+        assert_eq!(tabbable, vec!["toggle", "note"]);
     }
 }

@@ -31,6 +31,7 @@ pub fn find_widget_by_key<'a>(spec: &'a WidgetSpec, target: &str) -> Option<&'a 
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::TextInput { key: Some(k), .. }
+        | WidgetSpec::TextArea { key: Some(k), .. }
         | WidgetSpec::List { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if k == target =>
@@ -108,6 +109,124 @@ pub fn apply_text_input_key(value: &str, cursor: usize, key: &str) -> (String, u
         "End" => (value.to_string(), value.len()),
         _ => (value.to_string(), cursor),
     }
+}
+
+/// Apply a non-printable editing key to a multi-line `(value,
+/// cursor)` pair, returning `(new_value, new_cursor)`. `cursor` is
+/// a UTF-8 byte offset clamped to `[0, value.len()]`.
+///
+/// Recognised keys: `"Backspace"`, `"Delete"`, `"Left"`, `"Right"`,
+/// `"Home"`, `"End"`, `"Up"`, `"Down"`, `"Enter"`. Any other key
+/// string is a no-op.
+///
+/// Compared to `apply_text_input_key`:
+/// * `"Home"`/`"End"` jump to the start/end of the *current line*
+///   (the line containing `cursor`), not the whole buffer.
+/// * `"Up"`/`"Down"` move between lines, preserving the byte column
+///   within the line where possible (clamped to each target line's
+///   length).
+/// * `"Enter"` inserts a `'\n'` at the cursor — TextArea's defining
+///   behaviour, separate from the smart-key dispatch path which also
+///   funnels Enter here when the focused widget is a TextArea.
+///
+/// `Left`/`Right`/`Backspace`/`Delete` are unchanged from
+/// `TextInput` semantics and respect UTF-8 char boundaries (an
+/// embedded `\n` is just another char that gets crossed by these
+/// keys).
+pub fn apply_text_area_key(value: &str, cursor: usize, key: &str) -> (String, usize) {
+    let cursor = cursor.min(value.len());
+    match key {
+        "Backspace" | "Delete" | "Left" | "Right" => apply_text_input_key(value, cursor, key),
+        "Home" => (value.to_string(), line_start(value, cursor)),
+        "End" => (value.to_string(), line_end(value, cursor)),
+        "Up" => {
+            let (line_start, col) = line_start_and_col(value, cursor);
+            if line_start == 0 {
+                // No previous line — clamp to start.
+                return (value.to_string(), 0);
+            }
+            // Previous line spans [prev_start, line_start - 1]; the
+            // newline at byte `line_start - 1` separates the two.
+            let prev_end = line_start - 1;
+            let prev_start = line_start_at(value, prev_end);
+            let prev_len = prev_end - prev_start;
+            let new_col = col.min(prev_len);
+            let new_cursor = clamp_to_char_boundary(value, prev_start + new_col);
+            (value.to_string(), new_cursor)
+        }
+        "Down" => {
+            let (line_start, col) = line_start_and_col(value, cursor);
+            let cur_line_end = line_end_at(value, line_start);
+            if cur_line_end >= value.len() {
+                // No next line — clamp to end.
+                return (value.to_string(), value.len());
+            }
+            let next_start = cur_line_end + 1;
+            let next_end = line_end_at(value, next_start);
+            let next_len = next_end - next_start;
+            let new_col = col.min(next_len);
+            let new_cursor = clamp_to_char_boundary(value, next_start + new_col);
+            (value.to_string(), new_cursor)
+        }
+        "Enter" => {
+            let mut new_value = String::with_capacity(value.len() + 1);
+            new_value.push_str(&value[..cursor]);
+            new_value.push('\n');
+            new_value.push_str(&value[cursor..]);
+            (new_value, cursor + 1)
+        }
+        _ => (value.to_string(), cursor),
+    }
+}
+
+/// Byte index of the start of the line containing `cursor`. The
+/// "start of a line" is either byte 0 or one byte past the most
+/// recent `\n`.
+fn line_start(value: &str, cursor: usize) -> usize {
+    line_start_at(value, cursor)
+}
+
+/// Byte index of the end of the line containing `cursor` — the
+/// position of the next `\n`, or `value.len()` if there is none
+/// after `cursor`.
+fn line_end(value: &str, cursor: usize) -> usize {
+    line_end_at(value, cursor)
+}
+
+fn line_start_at(value: &str, byte: usize) -> usize {
+    let bytes = value.as_bytes();
+    let mut i = byte;
+    while i > 0 && bytes[i - 1] != b'\n' {
+        i -= 1;
+    }
+    i
+}
+
+fn line_end_at(value: &str, byte: usize) -> usize {
+    let bytes = value.as_bytes();
+    let mut i = byte;
+    while i < bytes.len() && bytes[i] != b'\n' {
+        i += 1;
+    }
+    i
+}
+
+/// Returns `(line_start, col_in_bytes)` for `cursor`. `col_in_bytes`
+/// is `cursor - line_start`.
+fn line_start_and_col(value: &str, cursor: usize) -> (usize, usize) {
+    let s = line_start_at(value, cursor);
+    (s, cursor - s)
+}
+
+/// Snap `byte` down to the nearest UTF-8 char boundary at or before
+/// it. Used when projecting an Up/Down byte-column into a line that
+/// might split a multi-byte char at the target column.
+fn clamp_to_char_boundary(value: &str, byte: usize) -> usize {
+    let mut i = byte.min(value.len());
+    while i > 0 && !value.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 /// In-place mutate a `Toggle`'s `checked` field by walking the
@@ -465,6 +584,111 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    // ---- TextArea key tests --------------------------------------------
+
+    #[test]
+    fn text_area_enter_inserts_newline_at_cursor() {
+        let (v, c) = apply_text_area_key("hello", 2, "Enter");
+        assert_eq!(v, "he\nllo");
+        assert_eq!(c, 3);
+    }
+
+    #[test]
+    fn text_area_enter_at_end_appends_newline() {
+        let (v, c) = apply_text_area_key("ab", 2, "Enter");
+        assert_eq!(v, "ab\n");
+        assert_eq!(c, 3);
+    }
+
+    #[test]
+    fn text_area_left_right_share_text_input_semantics() {
+        assert_eq!(apply_text_area_key("abc", 2, "Left"), ("abc".into(), 1));
+        assert_eq!(apply_text_area_key("abc", 1, "Right"), ("abc".into(), 2));
+    }
+
+    #[test]
+    fn text_area_backspace_can_delete_a_newline() {
+        // Cursor right after the `\n` between line 0 and 1.
+        let (v, c) = apply_text_area_key("ab\ncd", 3, "Backspace");
+        assert_eq!(v, "abcd");
+        assert_eq!(c, 2);
+    }
+
+    #[test]
+    fn text_area_home_jumps_to_line_start_not_buffer_start() {
+        // Cursor is on line 1 (after "\n"). Home → byte 3 (line 1's
+        // start), not byte 0.
+        let (v, c) = apply_text_area_key("ab\ncd", 4, "Home");
+        assert_eq!(v, "ab\ncd");
+        assert_eq!(c, 3);
+    }
+
+    #[test]
+    fn text_area_end_jumps_to_line_end_not_buffer_end() {
+        // Cursor at start of line 0. End → byte 2 (line 0's end),
+        // not the value's full length.
+        let (v, c) = apply_text_area_key("ab\ncd", 0, "End");
+        assert_eq!(v, "ab\ncd");
+        assert_eq!(c, 2);
+    }
+
+    #[test]
+    fn text_area_up_moves_to_previous_line_preserving_column() {
+        // "abcd\nef" — cursor at byte 7 (col 2 on line 1, after 'f').
+        // Up → byte 2 (col 2 on line 0).
+        let (v, c) = apply_text_area_key("abcd\nef", 7, "Up");
+        assert_eq!(v, "abcd\nef");
+        assert_eq!(c, 2);
+    }
+
+    #[test]
+    fn text_area_up_clamps_column_to_short_target_line() {
+        // "ab\nxyz" — cursor at byte 6 (col 3 on line 1).
+        // Up → end of line 0 (byte 2), since col 3 exceeds line 0's
+        // length 2.
+        let (v, c) = apply_text_area_key("ab\nxyz", 6, "Up");
+        assert_eq!(c, 2);
+        assert_eq!(v, "ab\nxyz");
+    }
+
+    #[test]
+    fn text_area_up_at_top_line_clamps_to_buffer_start() {
+        let (_, c) = apply_text_area_key("abc\ndef", 2, "Up");
+        assert_eq!(c, 0);
+    }
+
+    #[test]
+    fn text_area_down_moves_to_next_line_preserving_column() {
+        // "abcd\nefgh" — cursor at byte 2 (col 2 on line 0).
+        // Down → byte 7 (col 2 on line 1, which starts at byte 5).
+        let (_, c) = apply_text_area_key("abcd\nefgh", 2, "Down");
+        assert_eq!(c, 7);
+    }
+
+    #[test]
+    fn text_area_down_at_last_line_clamps_to_buffer_end() {
+        let (v, c) = apply_text_area_key("abc\ndef", 5, "Down");
+        assert_eq!(v, "abc\ndef");
+        assert_eq!(c, 7);
+    }
+
+    #[test]
+    fn text_area_unknown_key_is_noop() {
+        assert_eq!(apply_text_area_key("abc", 1, "Wat"), ("abc".into(), 1));
+    }
+
+    #[test]
+    fn text_area_up_clamps_to_char_boundary() {
+        // Two-byte char `é` at start of line 1. Cursor at line 1,
+        // byte 1 (start of the second `\xa9` byte of `é`). Up
+        // shouldn't land mid-multibyte-char on line 0 either.
+        // Use "aé\nbé" — line 0 = "aé" (3 bytes), line 1 = "bé"
+        // (3 bytes). Cursor at byte 5 (mid-line 1 between 'b' and
+        // 'é'). Up → col 1 on line 0, byte 1 (between 'a' and 'é').
+        let (_, c) = apply_text_area_key("aé\nbé", 5, "Up");
+        assert_eq!(c, 1);
     }
 
     #[test]

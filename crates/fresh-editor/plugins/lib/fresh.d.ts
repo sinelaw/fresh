@@ -838,6 +838,49 @@ type WidgetSpec = {
 	fieldWidth: number;
 	key?: string | null;
 } | {
+	"kind": "textArea";
+	/**
+	* Initial text. Spec value is used at first render only;
+	* instance state takes over thereafter (matching
+	* `TextInput`'s host-owned value model).
+	*/
+	value: string;
+	/**
+	* Initial byte-offset cursor. Negative ⇒ "no cursor"; the
+	* host clamps to `[0, value.len()]`.
+	*/
+	cursorByte: number;
+	/**
+	* Visual focus flag (initial-only — instance state takes
+	* over once the panel has any tabbable widgets, see
+	* `focus_key` semantics).
+	*/
+	focused: boolean;
+	/**
+	* Optional label rendered on its own row above the
+	* editing region (`Label:` followed by the multi-line
+	* box). Empty = omitted.
+	*/
+	label?: string;
+	/**
+	* Placeholder text shown on the first row when the value
+	* is empty and the field is unfocused.
+	*/
+	placeholder?: string | null;
+	/**
+	* Number of visible rows of editing region. Plugin
+	* computes from its viewport; `0` falls back to a small
+	* default (3) at render time.
+	*/
+	rows: number;
+	/**
+	* Visible column width inside the editing region. `0`
+	* (default) = grow with the longest visible line up to
+	* the panel width.
+	*/
+	fieldWidth: number;
+	key?: string | null;
+} | {
 	"kind": "raw";
 	entries: Array<TextPropertyEntry>;
 	key?: string | null;

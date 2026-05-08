@@ -79,6 +79,19 @@ pub enum WidgetInstanceState {
     /// `WidgetCommand` mutations because the host doesn't read
     /// from the spec for value at all once instance state exists.
     TextInput { value: String, cursor_byte: u32 },
+    /// `TextArea` instance state: host-owned multi-line value,
+    /// cursor byte offset within `value`, and vertical scroll
+    /// offset (the index of the first visible line). Same
+    /// host-owned semantics as `TextInput` — once instance state
+    /// exists, the spec's `value` / `cursor_byte` are ignored.
+    /// `scroll_row` auto-clamps each render to keep the cursor's
+    /// line within the visible window; plugins never compute
+    /// scroll math.
+    TextArea {
+        value: String,
+        cursor_byte: u32,
+        scroll_row: u32,
+    },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become
     /// authoritative after first render — the spec's

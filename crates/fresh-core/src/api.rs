@@ -1426,6 +1426,63 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// Multi-line text input. The host owns value + cursor as
+    /// instance state (mirrors `TextInput`), plus a vertical scroll
+    /// offset that auto-clamps to keep the cursor's line visible
+    /// within `rows` visible rows.
+    ///
+    /// Smart-key dispatch differs from `TextInput`: `Enter` inserts
+    /// a newline at the cursor (rather than advancing focus), so
+    /// the multi-line shape is the natural one. Plugins that want
+    /// `Enter` to submit can intercept the key in their own mode
+    /// binding and call `panel.command(focusAdvance(1))` instead.
+    /// `Up`/`Down` move the cursor between lines (clamped to each
+    /// line's column count); `Home`/`End` jump within the current
+    /// line; `Left`/`Right`/`Backspace`/`Delete` and printable text
+    /// behave exactly as in `TextInput`.
+    ///
+    /// The widget renders `rows` lines tall, padded with blanks
+    /// when `value` is shorter, with `field_width` columns wide
+    /// when set (`0` = use the panel's natural width). When
+    /// unfocused and empty, `placeholder` is rendered in the first
+    /// row only.
+    TextArea {
+        /// Initial text. Spec value is used at first render only;
+        /// instance state takes over thereafter (matching
+        /// `TextInput`'s host-owned value model).
+        #[serde(default)]
+        value: String,
+        /// Initial byte-offset cursor. Negative ⇒ "no cursor"; the
+        /// host clamps to `[0, value.len()]`.
+        #[serde(default = "default_cursor_byte")]
+        cursor_byte: i32,
+        /// Visual focus flag (initial-only — instance state takes
+        /// over once the panel has any tabbable widgets, see
+        /// `focus_key` semantics).
+        #[serde(default)]
+        focused: bool,
+        /// Optional label rendered on its own row above the
+        /// editing region (`Label:` followed by the multi-line
+        /// box). Empty = omitted.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+        /// Placeholder text shown on the first row when the value
+        /// is empty and the field is unfocused.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        placeholder: Option<String>,
+        /// Number of visible rows of editing region. Plugin
+        /// computes from its viewport; `0` falls back to a small
+        /// default (3) at render time.
+        #[serde(default)]
+        rows: u32,
+        /// Visible column width inside the editing region. `0`
+        /// (default) = grow with the longest visible line up to
+        /// the panel width.
+        #[serde(default)]
+        field_width: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     /// Imperative-virtual-buffer escape hatch. The plugin supplies
     /// `TextPropertyEntry[]` exactly as it would for
     /// `setVirtualBufferContent`; the host inlines those entries into
@@ -1491,18 +1548,19 @@ pub enum WidgetAction {
     ///
     /// Dispatch table:
     ///
-    /// | Key                                   | TextInput   | Toggle / Button | List       | Tree                | (no focus) |
-    /// |---------------------------------------|-------------|-----------------|------------|---------------------|------------|
-    /// | `Tab`                                 | focus +1    | focus +1        | focus +1   | focus +1            | no-op      |
-    /// | `Shift+Tab`                           | focus -1    | focus -1        | focus -1   | focus -1            | no-op      |
-    /// | `Backspace` / `Delete` / `Home` / `End` | text-edit | no-op           | no-op      | no-op               | no-op      |
-    /// | `Left`                                | text-edit   | no-op           | no-op      | collapse / parent   | no-op      |
-    /// | `Right`                               | text-edit   | no-op           | no-op      | expand              | no-op      |
-    /// | `Up`                                  | no-op       | no-op           | select -1  | select -1 (visible) | no-op      |
-    /// | `Down`                                | no-op       | no-op           | select +1  | select +1 (visible) | no-op      |
-    /// | `Enter`                               | focus +1    | activate        | activate   | activate            | no-op      |
-    /// | `Space`                               | char " "    | activate        | activate   | activate            | no-op      |
-    /// | (anything else)                       | no-op       | no-op           | no-op      | no-op               | no-op      |
+    /// | Key                                   | TextInput   | TextArea          | Toggle / Button | List       | Tree                | (no focus) |
+    /// |---------------------------------------|-------------|-------------------|-----------------|------------|---------------------|------------|
+    /// | `Tab`                                 | focus +1    | focus +1          | focus +1        | focus +1   | focus +1            | no-op      |
+    /// | `Shift+Tab`                           | focus -1    | focus -1          | focus -1        | focus -1   | focus -1            | no-op      |
+    /// | `Backspace` / `Delete`                | text-edit   | text-edit         | no-op           | no-op      | no-op               | no-op      |
+    /// | `Home` / `End`                        | text-edit   | line-start / -end | no-op           | no-op      | no-op               | no-op      |
+    /// | `Left`                                | text-edit   | text-edit         | no-op           | no-op      | collapse / parent   | no-op      |
+    /// | `Right`                               | text-edit   | text-edit         | no-op           | no-op      | expand              | no-op      |
+    /// | `Up`                                  | no-op       | line up           | no-op           | select -1  | select -1 (visible) | no-op      |
+    /// | `Down`                                | no-op       | line down         | no-op           | select +1  | select +1 (visible) | no-op      |
+    /// | `Enter`                               | focus +1    | insert `\n`       | activate        | activate   | activate            | no-op      |
+    /// | `Space`                               | char " "    | char " "          | activate        | activate   | activate            | no-op      |
+    /// | (anything else)                       | no-op       | no-op             | no-op           | no-op      | no-op               | no-op      |
     ///
     /// "no-op" still returns successfully — plugins can rely on the
     /// command not erroring when the focused widget can't handle the

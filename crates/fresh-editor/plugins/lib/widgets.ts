@@ -219,6 +219,55 @@ export function tree(options: {
   };
 }
 
+/** Multi-line text input, rendered as a fixed-height block of
+ * `rows` rows. The host owns the value, cursor, and vertical scroll
+ * as instance state — same pattern as `textInput`, lifted to a
+ * 2-D buffer.
+ *
+ * **Smart-key dispatch differs from `textInput`**:
+ * `Enter` inserts a newline (instead of advancing focus);
+ * `Up`/`Down` move between lines; `Home`/`End` jump within the
+ * current line; `Left`/`Right`/`Backspace`/`Delete` and printable
+ * chars work as in `textInput`. Plugins that want `Enter` to
+ * submit can intercept the key in their own mode binding and call
+ * `panel.command(focusAdvance(1))` instead — this default is
+ * non-breaking because the smart-key dispatch is opt-in.
+ *
+ * `rows` controls visible height (default 3 if omitted).
+ * `fieldWidth` controls visible column width inside the editing
+ * region; `0` (default) uses the panel width. Long lines
+ * tail-truncate with `…`; short lines pad with trailing spaces so
+ * the focused-bg block keeps a rectangular shape.
+ *
+ * `key` is required for any TextArea that should preserve its
+ * value, cursor, and scroll across re-renders. */
+export function textArea(
+  options: {
+    value?: string;
+    cursorByte?: number;
+    focused?: boolean;
+    label?: string;
+    placeholder?: string;
+    /** Visible rows of editing area; default 3. */
+    rows?: number;
+    /** Visible column width; `0` = use panel width. */
+    fieldWidth?: number;
+    key?: string;
+  } = {},
+): WidgetSpec {
+  return {
+    kind: "textArea",
+    value: options.value ?? "",
+    cursorByte: options.cursorByte ?? -1,
+    focused: options.focused ?? false,
+    label: options.label ?? "",
+    placeholder: options.placeholder,
+    rows: options.rows ?? 3,
+    fieldWidth: options.fieldWidth ?? 0,
+    key: options.key,
+  };
+}
+
 /** Single-line text input, rendered as `[value]` (or
  * `Label: [value]` if `label` is provided). The host drives the
  * actual hardware cursor at `cursorByte` when focused — no painted
