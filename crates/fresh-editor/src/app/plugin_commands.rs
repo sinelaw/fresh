@@ -1838,7 +1838,12 @@ impl Editor {
             language,
             method
         );
-        let error = if let Some(lsp) = self.lsp.as_mut() {
+        let __active_id = self.active_window;
+        let error = if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             // Respect auto_start setting for plugin requests
             use crate::services::lsp::manager::LspSpawnResult;
             if lsp.try_spawn(&language, None) != LspSpawnResult::Spawned {
@@ -1945,7 +1950,12 @@ impl Editor {
             ..Default::default()
         };
         // Update LSP manager if available
-        if let Some(ref mut lsp) = self.lsp {
+        let __active_id = self.active_window;
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             lsp.set_language_config(language.clone(), lsp_config.clone());
         }
         // Also update runtime config

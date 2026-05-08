@@ -164,7 +164,7 @@ impl Editor {
         // Discard diagnostics from servers that have been shut down.  The async
         // bridge may still contain queued messages from a server that was stopped
         // between the time it sent the notification and when we drain the channel.
-        if let Some(lsp) = &self.lsp {
+        if let Some(lsp) = self.lsp() {
             if !lsp.has_server_named(&server_name) {
                 tracing::debug!(
                     "Dropping diagnostics from stopped server '{}' for {}",
@@ -439,7 +439,7 @@ impl Editor {
         };
 
         let legend = match self
-            .lsp
+            .lsp()
             .as_ref()
             .and_then(|manager| manager.semantic_tokens_legend(&language).cloned())
         {
@@ -749,7 +749,13 @@ impl Editor {
             })
             .collect();
 
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return;
         };
 
@@ -817,7 +823,13 @@ impl Editor {
             return;
         }
 
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return;
         };
         let Some(sh) = lsp.handle_for_feature_mut(language, crate::types::LspFeature::Diagnostics)
@@ -968,7 +980,7 @@ impl Editor {
                 .is_some_and(|s| matches!(s, LspServerStatus::Running));
             if !was_already_running {
                 let scope = self
-                    .lsp
+                    .lsp()
                     .as_ref()
                     .and_then(|lsp| lsp.server_scope(&server_name_ref).cloned());
                 match scope {
@@ -1009,7 +1021,13 @@ impl Editor {
                 // don't linger on screen while we wait for a restart.
                 self.clear_diagnostics_for_server(&server_name_ref);
 
-                if let Some(lsp) = self.lsp.as_mut() {
+                let __active_id = self.active_window;
+
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     let message = lsp.handle_server_crash(&language, &server_name_ref);
                     self.status_message = Some(message);
                 }
@@ -1388,7 +1406,12 @@ impl Editor {
 
     /// Process pending LSP server restarts (with exponential backoff)
     pub(super) fn process_pending_lsp_restarts(&mut self) {
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return;
         };
 
@@ -1435,7 +1458,12 @@ impl Editor {
 
                 if let Some(uri) = uri {
                     let lang_id = state.language.clone();
-                    if let Some(lsp) = self.lsp.as_mut() {
+                    let __active_id = self.active_window;
+                    if let Some(lsp) = self
+                        .windows
+                        .get_mut(&__active_id)
+                        .and_then(|w| w.lsp.as_mut())
+                    {
                         // Send didOpen to ALL handles for this language, not just the first.
                         // Each server needs its own didOpen notification.
                         for sh in lsp.get_handles_mut(&lang_id) {

@@ -227,7 +227,12 @@ impl Editor {
         );
 
         // Only send didSave if LSP is already running (respect auto_start setting)
-        if let Some(lsp) = &mut self.lsp {
+        let __active_id = self.active_window;
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             use crate::services::lsp::manager::LspSpawnResult;
             if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
                 tracing::debug!(

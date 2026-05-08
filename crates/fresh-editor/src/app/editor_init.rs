@@ -803,7 +803,6 @@ impl Editor {
             prompt: None,
             terminal_width: width,
             terminal_height: height,
-            lsp: Some(lsp),
             buffer_metadata,
             mode_registry: ModeRegistry::new(),
             tokio_runtime,
@@ -850,14 +849,15 @@ impl Editor {
             // real active pointer is invisible to them.
             windows: {
                 let mut m = HashMap::new();
-                m.insert(
+                let mut base = crate::app::window::Window::new(
                     fresh_core::WindowId(1),
-                    crate::app::window::Window::new(
-                        fresh_core::WindowId(1),
-                        "",
-                        working_dir.clone(),
-                    ),
+                    "",
+                    working_dir.clone(),
                 );
+                // Hand the eagerly-spawned LSP manager off to the base
+                // window — that's where LSP storage lives now (Step 0b).
+                base.lsp = Some(lsp);
+                m.insert(fresh_core::WindowId(1), base);
                 m
             },
             active_window: fresh_core::WindowId(1),

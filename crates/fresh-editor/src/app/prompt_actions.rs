@@ -1340,7 +1340,7 @@ impl Editor {
         };
 
         let has_server = self
-            .lsp
+            .lsp()
             .as_ref()
             .is_some_and(|lsp| lsp.has_handles(language));
 
@@ -1354,7 +1354,7 @@ impl Editor {
         // only send didClose to that server, not disable LSP for the buffers.
         let stopping_all = server_name.is_none()
             || self
-                .lsp
+                .lsp()
                 .as_ref()
                 .map(|lsp| lsp.handle_count(language) <= 1)
                 .unwrap_or(true);
@@ -1450,14 +1450,24 @@ impl Editor {
 
         let (success, message) = if let Some(name) = server_name {
             // Restart a specific server
-            if let Some(lsp) = self.lsp.as_mut() {
+            let __active_id = self.active_window;
+            if let Some(lsp) = self
+                .windows
+                .get_mut(&__active_id)
+                .and_then(|w| w.lsp.as_mut())
+            {
                 lsp.manual_restart_server(language, name, file_path.as_deref())
             } else {
                 (false, t!("lsp.no_manager").to_string())
             }
         } else {
             // Restart all enabled servers for the language
-            if let Some(lsp) = self.lsp.as_mut() {
+            let __active_id = self.active_window;
+            if let Some(lsp) = self
+                .windows
+                .get_mut(&__active_id)
+                .and_then(|w| w.lsp.as_mut())
+            {
                 lsp.manual_restart(language, file_path.as_deref())
             } else {
                 (false, t!("lsp.no_manager").to_string())

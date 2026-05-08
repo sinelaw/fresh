@@ -223,7 +223,7 @@ impl Editor {
         };
 
         // Get the server command for display
-        let server_info = if let Some(lsp) = &self.lsp {
+        let server_info = if let Some(lsp) = self.lsp() {
             if let Some(config) = lsp.get_config(language) {
                 if !config.command.is_empty() {
                     format!("{} ({})", language, config.command)
@@ -303,7 +303,12 @@ impl Editor {
         match action {
             "allow_once" => {
                 // Spawn the LSP server just this once (don't add to always-allowed)
-                if let Some(lsp) = &mut self.lsp {
+                let __active_id = self.active_window;
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     // Temporarily allow this language for spawning
                     lsp.allow_language(&language);
                     // Use force_spawn since user explicitly confirmed
@@ -323,7 +328,12 @@ impl Editor {
             }
             "allow_always" => {
                 // Spawn the LSP server and remember the preference
-                if let Some(lsp) = &mut self.lsp {
+                let __active_id = self.active_window;
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     lsp.allow_language(&language);
                     // Use force_spawn since user explicitly confirmed
                     if lsp.force_spawn(&language, file_path.as_deref()).is_some() {
@@ -426,7 +436,12 @@ impl Editor {
             };
 
         // Send didOpen to all LSP handles (use force_spawn to ensure they're started)
-        if let Some(lsp) = &mut self.lsp {
+        let __active_id = self.active_window;
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             // force_spawn starts all servers for this language
             if lsp.force_spawn(language, file_path.as_deref()).is_some() {
                 tracing::info!("Sending didOpen to LSP servers for: {}", uri.as_str());

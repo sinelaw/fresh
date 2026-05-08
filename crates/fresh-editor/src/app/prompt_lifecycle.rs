@@ -178,7 +178,7 @@ impl Editor {
                 .get(&self.active_buffer())
                 .map(|s| s.language.as_str());
             language
-                .and_then(|lang| self.lsp.as_ref().and_then(|lsp| lsp.get_config(lang)))
+                .and_then(|lang| self.lsp().and_then(|lsp| lsp.get_config(lang)))
                 .is_some()
         };
 

@@ -88,17 +88,16 @@ pub struct Window {
     /// paused".
     pub file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
 
-    /// **Stash.** LSP manager (running language servers, configs,
-    /// per-language root URIs) when this window is *inactive*.
-    /// The active window's LSP lives on `Editor.lsp`; on dive we
-    /// swap. Inactive-window LSPs remain running in the
+    /// LSP manager (running language servers, configs, per-language
+    /// root URIs). Each window owns its own LSP set, rooted at its
+    /// project root; inactive windows' servers remain running in the
     /// background — that's the warm-LSP property the design's
-    /// trade-off discussion calls out as a memory cost worth
-    /// paying so dive-back is instant.
+    /// trade-off discussion calls out as a memory cost worth paying
+    /// so dive-back is instant.
     ///
-    /// `None` means "this window has never spawned any LSP";
-    /// the next LSP feature trigger will lazily create one.
-    pub lsp_stash: Option<LspManager>,
+    /// `None` means "this window has never spawned any LSP"; the
+    /// next LSP feature trigger will lazily create one.
+    pub lsp: Option<LspManager>,
 
     /// Utility-dock panel-id → buffer-id occupancy. Each window
     /// gets its own dock — when one window has the search panel
@@ -152,7 +151,7 @@ impl Window {
             file_explorer: None,
             file_mod_times: HashMap::new(),
             plugin_state: HashMap::new(),
-            lsp_stash: None,
+            lsp: None,
             panel_ids: HashMap::new(),
             splits_stash: None,
             buffers: HashSet::new(),

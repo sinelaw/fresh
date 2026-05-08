@@ -473,9 +473,9 @@ pub struct Editor {
     terminal_width: u16,
     terminal_height: u16,
 
-    /// LSP manager
-    lsp: Option<LspManager>,
-
+    // LSP manager moved onto `Window`. Access via
+    // `Editor::lsp()` / `lsp_mut()` — each window has its own
+    // LspManager rooted at its project root.
     /// Metadata for each buffer (file paths, LSP status, etc.)
     buffer_metadata: HashMap<BufferId, BufferMetadata>,
 

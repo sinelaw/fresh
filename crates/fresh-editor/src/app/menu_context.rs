@@ -187,11 +187,7 @@ impl Editor {
         // Use buffer's stored language
         self.buffers
             .get(&buffer_id)
-            .and_then(|state| {
-                self.lsp
-                    .as_ref()
-                    .map(|lsp| lsp.is_server_ready(&state.language))
-            })
+            .and_then(|state| self.lsp().map(|lsp| lsp.is_server_ready(&state.language)))
             .unwrap_or(false)
     }
 

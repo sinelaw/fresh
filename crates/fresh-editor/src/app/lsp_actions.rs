@@ -28,7 +28,7 @@ impl Editor {
 
         // Get configured servers for this language
         let configs: Vec<_> = self
-            .lsp
+            .lsp()
             .as_ref()
             .and_then(|lsp| lsp.get_configs(&language))
             .map(|c| c.to_vec())
@@ -41,7 +41,12 @@ impl Editor {
 
         // Single server: restart immediately without a prompt (backward compat)
         if configs.len() == 1 {
-            let Some(lsp) = self.lsp.as_mut() else {
+            let __active_id = self.active_window;
+            let Some(lsp) = self
+                .windows
+                .get_mut(&__active_id)
+                .and_then(|w| w.lsp.as_mut())
+            else {
                 self.set_status_message(t!("lsp.no_manager").to_string());
                 return;
             };
@@ -152,7 +157,13 @@ impl Editor {
             let line_count = state.buffer.line_count().unwrap_or(1000);
             let buffer_version = state.buffer.version();
 
-            if let Some(lsp) = self.lsp.as_mut() {
+            let __active_id = self.active_window;
+
+            if let Some(lsp) = self
+                .windows
+                .get_mut(&__active_id)
+                .and_then(|w| w.lsp.as_mut())
+            {
                 // Respect auto_start setting for this user action
                 use crate::services::lsp::manager::LspSpawnResult;
                 if lsp.try_spawn(&lang_id, Some(&buf_path)) != LspSpawnResult::Spawned {
@@ -200,7 +211,12 @@ impl Editor {
             // done, but servers that don't would otherwise never get a
             // hints request unless the user edits the buffer.
             if enable_inlay_hints {
-                if let Some(lsp) = self.lsp.as_mut() {
+                let __active_id = self.active_window;
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     if let Some(sh) =
                         lsp.handle_for_feature_mut(&lang_id, crate::types::LspFeature::InlayHints)
                     {
@@ -237,7 +253,7 @@ impl Editor {
     /// for all currently running servers.
     pub fn handle_lsp_stop(&mut self) {
         let running_languages: Vec<String> = self
-            .lsp
+            .lsp()
             .as_ref()
             .map(|lsp| lsp.running_servers())
             .unwrap_or_default();
@@ -251,7 +267,7 @@ impl Editor {
         let mut suggestions: Vec<Suggestion> = Vec::new();
         for lang in &running_languages {
             let server_names: Vec<String> = self
-                .lsp
+                .lsp()
                 .as_ref()
                 .map(|lsp| lsp.server_names_for_language(lang))
                 .unwrap_or_default();
@@ -274,7 +290,7 @@ impl Editor {
             } else {
                 // Single server: show language only (value = just language)
                 let description = self
-                    .lsp
+                    .lsp()
                     .as_ref()
                     .and_then(|lsp| lsp.get_config(lang))
                     .filter(|c| !c.command.is_empty())
@@ -329,7 +345,7 @@ impl Editor {
 
         // Check if LSP is configured for this language
         let lsp_configured = self
-            .lsp
+            .lsp()
             .as_ref()
             .and_then(|lsp| lsp.get_config(&language))
             .is_some();
@@ -429,7 +445,12 @@ impl Editor {
                     .buffer_metadata
                     .get(&self.active_buffer())
                     .and_then(|meta| meta.file_path().cloned());
-                if let Some(lsp) = self.lsp.as_mut() {
+                let __active_id = self.active_window;
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     let (_, message) = lsp.manual_restart(language, file_path.as_deref());
                     self.status_message = Some(message);
                 }
@@ -442,7 +463,13 @@ impl Editor {
                 .get(&self.active_buffer())
                 .and_then(|meta| meta.file_path().cloned());
 
-            if let Some(lsp) = self.lsp.as_mut() {
+            let __active_id = self.active_window;
+
+            if let Some(lsp) = self
+                .windows
+                .get_mut(&__active_id)
+                .and_then(|w| w.lsp.as_mut())
+            {
                 let (_, message) = lsp.manual_restart(language, file_path.as_deref());
                 self.status_message = Some(message);
             } else {
@@ -457,14 +484,25 @@ impl Editor {
                     .get(&self.active_buffer())
                     .and_then(|meta| meta.file_path().cloned());
 
-                if let Some(lsp) = self.lsp.as_mut() {
+                let __active_id = self.active_window;
+
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     // Shutdown the specific server first, then re-spawn
                     lsp.shutdown_server_by_name(language, server_name);
                 }
                 // Remove the status entry so it gets re-created on spawn
                 self.lsp_server_statuses
                     .remove(&(language.to_string(), server_name.to_string()));
-                if let Some(lsp) = self.lsp.as_mut() {
+                let __active_id = self.active_window;
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     let _ = lsp.manual_restart(language, file_path.as_deref());
                 }
                 self.reopen_buffers_for_language(language);
@@ -784,7 +822,13 @@ impl Editor {
             })
             .collect();
 
-        if let Some(lsp) = self.lsp.as_mut() {
+        let __active_id = self.active_window;
+
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             for sh in lsp.get_handles_mut(language) {
                 if sh.name == server_name {
                     for uri in &uris {
@@ -840,13 +884,18 @@ impl Editor {
         let stopping_names: Vec<String> = if let Some(name) = server_name {
             vec![name.to_string()]
         } else {
-            self.lsp
-                .as_ref()
+            self.lsp()
                 .map(|lsp| lsp.server_names_for_language(language))
                 .unwrap_or_default()
         };
 
-        let stopped = if let Some(lsp) = self.lsp.as_mut() {
+        let __active_id = self.active_window;
+
+        let stopped = if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             if let Some(name) = server_name {
                 lsp.shutdown_server_by_name(language, name)
             } else {
@@ -883,7 +932,7 @@ impl Editor {
         // on that language is still the surviving server's business
         // and we leave it alone.
         let any_handle_left = self
-            .lsp
+            .lsp()
             .as_ref()
             .is_some_and(|lsp| lsp.has_handles(language));
         if !any_handle_left {
@@ -912,7 +961,12 @@ impl Editor {
                 .get(&buffer_id)
                 .map(|s| s.language.clone())
                 .unwrap_or_default();
-            if let Some(lsp) = self.lsp.as_mut() {
+            let __active_id = self.active_window;
+            if let Some(lsp) = self
+                .windows
+                .get_mut(&__active_id)
+                .and_then(|w| w.lsp.as_mut())
+            {
                 // Broadcast didClose to all handles for this language
                 if !lsp.has_handles(&language) {
                     tracing::warn!(
@@ -1049,7 +1103,12 @@ impl Editor {
             .get(&buffer_id)
             .and_then(|m| m.file_path())
             .cloned();
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return;
         };
 
@@ -1207,7 +1266,12 @@ impl Editor {
                 }
 
                 // Allow TypeScript language so LSP auto-spawns
-                if let Some(lsp) = &mut self.lsp {
+                let __active_id = self.active_window;
+                if let Some(lsp) = self
+                    .windows
+                    .get_mut(&__active_id)
+                    .and_then(|w| w.lsp.as_mut())
+                {
                     lsp.allow_language("typescript");
                 }
 
@@ -1219,7 +1283,7 @@ impl Editor {
                 self.send_lsp_did_open_for_buffer(buffer_id, "typescript");
 
                 // Add the plugin workspace folder so tsserver discovers tsconfig.json + fresh.d.ts
-                if let Some(lsp) = &self.lsp {
+                if let Some(lsp) = self.lsp() {
                     if let Some(handle) = lsp.get_handle("typescript") {
                         if let Some(uri) = super::types::file_path_to_lsp_uri_with_translation(
                             &workspace_dir,

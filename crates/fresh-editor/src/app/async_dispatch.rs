@@ -61,7 +61,12 @@ impl Editor {
                     self.status_message = Some(format!("LSP ({}) ready", language));
 
                     // Store capabilities on the specific server handle
-                    if let Some(lsp) = &mut self.lsp {
+                    let __active_id = self.active_window;
+                    if let Some(lsp) = self
+                        .windows
+                        .get_mut(&__active_id)
+                        .and_then(|w| w.lsp.as_mut())
+                    {
                         lsp.set_server_capabilities(&language, &server_name, capabilities);
                     }
 

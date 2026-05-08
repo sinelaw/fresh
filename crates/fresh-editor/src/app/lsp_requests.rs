@@ -338,7 +338,13 @@ impl Editor {
             return;
         };
 
-        if let Some(lsp) = self.lsp.as_mut() {
+        let __active_id = self.active_window;
+
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             // Only send cancel if LSP is already running (no need to spawn just to cancel)
             if let Some(handle) = lsp.get_handle_mut(&language) {
                 if let Err(e) = handle.cancel_request(request_id) {
@@ -376,7 +382,7 @@ impl Editor {
             (uri, language, file_path)
         };
 
-        let lsp = self.lsp.as_mut()?;
+        let lsp = self.lsp_mut()?;
         if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
             return None;
         }
@@ -385,7 +391,7 @@ impl Editor {
         self.ensure_did_open_all(buffer_id, &uri, &language)?;
 
         // Dispatch to the first handle that allows this feature
-        let lsp = self.lsp.as_mut()?;
+        let lsp = self.lsp_mut()?;
         let sh = lsp.handle_for_feature_mut(&language, feature)?;
         Some(f(&sh.handle, &uri, &language))
     }
@@ -420,7 +426,7 @@ impl Editor {
             None => return Vec::new(),
         };
 
-        let lsp = match self.lsp.as_mut() {
+        let lsp = match self.lsp_mut() {
             Some(l) => l,
             None => return Vec::new(),
         };
@@ -437,7 +443,7 @@ impl Editor {
         }
 
         // Dispatch to all handles that allow this feature
-        let lsp = match self.lsp.as_mut() {
+        let lsp = match self.lsp_mut() {
             Some(l) => l,
             None => return Vec::new(),
         };
@@ -474,7 +480,7 @@ impl Editor {
             None => return Vec::new(),
         };
 
-        let lsp = match self.lsp.as_mut() {
+        let lsp = match self.lsp_mut() {
             Some(l) => l,
             None => return Vec::new(),
         };
@@ -489,7 +495,7 @@ impl Editor {
             return Vec::new();
         }
 
-        let lsp = match self.lsp.as_mut() {
+        let lsp = match self.lsp_mut() {
             Some(l) => l,
             None => return Vec::new(),
         };
@@ -507,7 +513,7 @@ impl Editor {
         uri: &crate::app::types::LspUri,
         language: &str,
     ) -> Option<()> {
-        let lsp = self.lsp.as_mut()?;
+        let lsp = self.lsp_mut()?;
         let handle_ids: Vec<u64> = lsp
             .get_handles(language)
             .iter()
@@ -525,7 +531,11 @@ impl Editor {
 
         if !needs_open.is_empty() {
             let text = self.buffers.get(&buffer_id)?.buffer.to_string()?;
-            let lsp = self.lsp.as_mut()?;
+            let active_id = self.active_window;
+            let lsp = self
+                .windows
+                .get_mut(&active_id)
+                .and_then(|w| w.lsp.as_mut())?;
             for sh in lsp.get_handles_mut(language) {
                 if needs_open.contains(&sh.handle.id()) {
                     if let Err(e) =
@@ -675,7 +685,7 @@ impl Editor {
 
         // Check if this character is a trigger character for this language
         let is_lsp_trigger = self
-            .lsp
+            .lsp()
             .as_ref()
             .map(|lsp| lsp.is_completion_trigger_char(c, &language))
             .unwrap_or(false);
@@ -1794,7 +1804,13 @@ impl Editor {
             None => return,
         };
 
-        if let Some(lsp) = &mut self.lsp {
+        let __active_id = self.active_window;
+
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh
                     .handle
@@ -1820,7 +1836,13 @@ impl Editor {
         self.next_lsp_request_id += 1;
         let request_id = self.next_lsp_request_id;
 
-        if let Some(lsp) = &mut self.lsp {
+        let __active_id = self.active_window;
+
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh.handle.code_action_resolve(request_id, action.clone()) {
                     tracing::warn!("Failed to send codeAction/resolve to '{}': {}", sh.name, e);
@@ -1840,7 +1862,7 @@ impl Editor {
             None => return false,
         };
 
-        if let Some(lsp) = &self.lsp {
+        if let Some(lsp) = self.lsp() {
             for sh in lsp.get_handles(&language) {
                 if sh.capabilities.code_action_resolve {
                     return true;
@@ -1861,7 +1883,7 @@ impl Editor {
             None => return false,
         };
 
-        if let Some(lsp) = &self.lsp {
+        if let Some(lsp) = self.lsp() {
             for sh in lsp.get_handles(&language) {
                 if sh.capabilities.completion_resolve {
                     return true;
@@ -1885,7 +1907,13 @@ impl Editor {
         self.next_lsp_request_id += 1;
         let request_id = self.next_lsp_request_id;
 
-        if let Some(lsp) = &mut self.lsp {
+        let __active_id = self.active_window;
+
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             for sh in lsp.get_handles_mut(&language) {
                 if sh.capabilities.completion_resolve {
                     if let Err(e) = sh.handle.completion_resolve(request_id, item.clone()) {
@@ -1967,7 +1995,13 @@ impl Editor {
         self.next_lsp_request_id += 1;
         let request_id = self.next_lsp_request_id;
 
-        if let Some(lsp) = &mut self.lsp {
+        let __active_id = self.active_window;
+
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             if let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::Format) {
                 if let Err(e) = sh.handle.document_formatting(
                     request_id,
@@ -2187,7 +2221,7 @@ impl Editor {
             if let Ok(path) =
                 super::lsp_uri_to_host_path(&uri, self.authority.path_translation.as_ref())
             {
-                if let Some(lsp) = &self.lsp {
+                if let Some(lsp) = self.lsp() {
                     let language = self
                         .buffers
                         .get(&self.active_buffer())
@@ -2743,7 +2777,12 @@ impl Editor {
 
         // Check if we can use LSP (respects auto_start setting)
         use crate::services::lsp::manager::LspSpawnResult;
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
             return;
         };
@@ -2785,7 +2824,14 @@ impl Editor {
             };
 
             // Send didOpen to all handles that haven't been opened yet
-            let Some(lsp) = self.lsp.as_mut() else { return };
+            let __active_id = self.active_window;
+            let Some(lsp) = self
+                .windows
+                .get_mut(&__active_id)
+                .and_then(|w| w.lsp.as_mut())
+            else {
+                return;
+            };
             for sh in lsp.get_handles_mut(&language) {
                 if handles_needing_open
                     .iter()
@@ -2824,7 +2870,14 @@ impl Editor {
         }
 
         // Now send didChange to all handles for this language
-        let Some(lsp) = self.lsp.as_mut() else { return };
+        let __active_id = self.active_window;
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
+            return;
+        };
         let mut any_sent = false;
         for sh in lsp.get_handles_mut(&language) {
             if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), changes.clone()) {
@@ -2909,7 +2962,7 @@ impl Editor {
             None => return false,
         };
 
-        if let Some(lsp) = &self.lsp {
+        if let Some(lsp) = self.lsp() {
             for sh in lsp.get_handles(&language) {
                 if sh.capabilities.rename {
                     // prepareRename is advertised via prepare_support in client caps
@@ -2946,7 +2999,13 @@ impl Editor {
         self.next_lsp_request_id += 1;
         let request_id = self.next_lsp_request_id;
 
-        if let Some(lsp) = &mut self.lsp {
+        let __active_id = self.active_window;
+
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             if let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::Rename) {
                 if let Err(e) = sh.handle.prepare_rename(
                     request_id,
@@ -3183,7 +3242,13 @@ impl Editor {
             return;
         };
 
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return;
         };
 
@@ -3254,7 +3319,13 @@ impl Editor {
             return;
         };
 
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return;
         };
 
@@ -3384,7 +3455,13 @@ impl Editor {
             return;
         };
 
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return;
         };
 

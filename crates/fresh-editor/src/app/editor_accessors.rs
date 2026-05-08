@@ -303,8 +303,7 @@ impl Editor {
                     return true;
                 }
                 // Check if this server's scope accepts the queried language
-                self.lsp
-                    .as_ref()
+                self.lsp()
                     .and_then(|lsp| lsp.server_scope(server_name))
                     .map(|scope| scope.accepts(language))
                     .unwrap_or(false)
@@ -355,15 +354,19 @@ impl Editor {
 
     /// Configure LSP server for a specific language
     pub fn set_lsp_config(&mut self, language: String, config: Vec<LspServerConfig>) {
-        if let Some(ref mut lsp) = self.lsp {
+        let __active_id = self.active_window;
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             lsp.set_language_configs(language, config);
         }
     }
 
     /// Get a list of currently running LSP server languages
     pub fn running_lsp_servers(&self) -> Vec<String> {
-        self.lsp
-            .as_ref()
+        self.lsp()
             .map(|lsp| lsp.running_servers())
             .unwrap_or_default()
     }
@@ -380,8 +383,7 @@ impl Editor {
 
     /// Return the number of initialized LSP servers for a given language.
     pub fn initialized_lsp_server_count(&self, language: &str) -> usize {
-        self.lsp
-            .as_ref()
+        self.lsp()
             .map(|lsp| {
                 lsp.get_handles(language)
                     .iter()
@@ -395,7 +397,12 @@ impl Editor {
     ///
     /// Returns true if the server was found and shutdown, false otherwise
     pub fn shutdown_lsp_server(&mut self, language: &str) -> bool {
-        if let Some(ref mut lsp) = self.lsp {
+        let __active_id = self.active_window;
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             lsp.shutdown_server(language)
         } else {
             false
@@ -494,7 +501,12 @@ impl Editor {
         // single wiring point — no need for a hot-swap API. Path
         // translation rides along for the same reason — LSP URIs need
         // to be host↔container-translated under the new authority.
-        if let Some(lsp) = self.lsp.as_mut() {
+        let __active_id = self.active_window;
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             lsp.set_long_running_spawner(self.authority.long_running_spawner.clone());
             lsp.set_path_translation(self.authority.path_translation.clone());
         }
@@ -581,7 +593,7 @@ impl Editor {
     /// out of the active slot when the outgoing session had one.
     #[doc(hidden)]
     pub fn has_lsp_for_test(&self) -> bool {
-        self.lsp.is_some()
+        self.lsp().is_some()
     }
 
     /// Inject an LspManager so tests can prove the swap routes
@@ -589,7 +601,7 @@ impl Editor {
     /// LSP server spawn.
     #[doc(hidden)]
     pub fn install_dummy_lsp_for_test(&mut self) {
-        self.lsp = Some(crate::services::lsp::manager::LspManager::new(None));
+        self.active_session_mut().lsp = Some(crate::services::lsp::manager::LspManager::new(None));
     }
 
     /// Most-recent `path_changed` event the editor received.
@@ -687,6 +699,21 @@ impl Editor {
     /// instead so the borrow on `self.windows` stays disjoint.
     pub fn file_explorer_mut(&mut self) -> Option<&mut FileTreeView> {
         self.active_session_mut().file_explorer.as_mut()
+    }
+
+    /// Active window's LSP manager (`None` if no LSP has been spawned
+    /// for this window yet). Each window has its own LSP set rooted
+    /// at its project root.
+    pub(crate) fn lsp(&self) -> Option<&crate::services::lsp::manager::LspManager> {
+        self.active_window().lsp.as_ref()
+    }
+
+    /// Mutable handle to the active window's LSP manager. Same
+    /// borrow caveat as `file_explorer_mut()`: at sites that also
+    /// need to read other Editor fields, prefer direct
+    /// `self.windows.get_mut(&self.active_window).and_then(|w| w.lsp.as_mut())`.
+    pub(crate) fn lsp_mut(&mut self) -> Option<&mut crate::services::lsp::manager::LspManager> {
+        self.active_session_mut().lsp.as_mut()
     }
 
     /// Return buffer ids whose on-disk path sits at or under `root`.
@@ -934,7 +961,13 @@ impl Editor {
             return false;
         };
 
-        let Some(lsp) = self.lsp.as_mut() else {
+        let __active_id = self.active_window;
+
+        let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        else {
             return false;
         };
         let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)

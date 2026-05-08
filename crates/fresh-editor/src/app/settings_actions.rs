@@ -139,7 +139,12 @@ impl Editor {
         *self.keybindings.write().unwrap() = KeybindingResolver::new(&self.config);
 
         // Update LSP configs
-        if let Some(ref mut lsp) = self.lsp {
+        let __active_id = self.active_window;
+        if let Some(lsp) = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+        {
             for (language, lsp_configs) in &self.config.lsp {
                 lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
             }

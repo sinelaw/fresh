@@ -81,7 +81,7 @@ impl Editor {
                 cfg.as_slice()
                     .iter()
                     .filter(|c| c.enabled && !c.command.is_empty())
-                    .filter(|c| match self.lsp.as_ref() {
+                    .filter(|c| match self.lsp() {
                         Some(mgr) => !mgr.command_exists_via_authority(&c.command),
                         None => !crate::services::lsp::command_exists(&c.command),
                     })
@@ -184,7 +184,7 @@ impl Editor {
                     .iter()
                     .filter(|c| !c.command.is_empty())
                     .map(|c| {
-                        let missing = match self.lsp.as_ref() {
+                        let missing = match self.lsp() {
                             Some(mgr) => !mgr.command_exists_via_authority(&c.command),
                             None => !crate::services::lsp::command_exists(&c.command),
                         };
