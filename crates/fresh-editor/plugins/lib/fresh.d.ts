@@ -1855,6 +1855,24 @@ interface EditorAPI {
 	*/
 	unwatchPath(handle: number): boolean;
 	/**
+	* Tell the editor that the floating-overlay prompt's
+	* preview pane should render the entire split tree of
+	* session `id` natively. `0` (or any unknown id) clears the
+	* override and the preview falls back to the existing
+	* path-based phantom-leaf renderer.
+	* 
+	* Conductor calls this on each prompt-selection-change so
+	* the right pane shows the highlighted session's full
+	* editor UI live — splits, terminals, syntax highlighting,
+	* decorations — at native rendering cost.
+	*/
+	previewSessionInRect(id: number): boolean;
+	/**
+	* Clear the session-preview override. Equivalent to
+	* `previewSessionInRect(0)` but reads better at call sites.
+	*/
+	clearSessionPreview(): boolean;
+	/**
 	* All editor sessions, sorted by id (creation order). Always
 	* non-empty (the base session is always present).
 	*/

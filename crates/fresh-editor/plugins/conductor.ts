@@ -179,29 +179,35 @@ function openControlRoom(): void {
   editor.startPrompt("Conductor — sessions", PROMPT_TYPE, true);
   editor.setPromptSuggestions(buildSuggestions());
   editor.setStatus(
-    "Up/Down: live preview  Enter: keep dive  Esc: cancel",
+    "Up/Down: preview  Enter: dive  Esc: cancel",
   );
 }
 
 editor.on("prompt_selection_changed", (e) => {
   if (e.prompt_type !== PROMPT_TYPE) return;
   promptSelectedIndex = e.selected_index;
-  // Live preview: dive into the highlighted session so the
-  // editor visible behind the floating prompt shows its full
-  // UI. Cheap thanks to warm-swap.
+  // Primitive #1: render the highlighted session's full UI in
+  // the prompt's preview pane natively. No active-session
+  // mutation, no flicker — the editor under the prompt stays
+  // put while the right pane shows the previewed session.
   const id = promptSessionIds[promptSelectedIndex];
   if (typeof id === "number" && id !== editor.activeSession()) {
-    editor.setActiveSession(id);
+    editor.previewSessionInRect(id);
+  } else {
+    editor.clearSessionPreview();
   }
 });
 
 editor.on("prompt_confirmed", async (e) => {
   if (e.prompt_type === PROMPT_TYPE) {
-    // The transient-dive preview already moved active_session
-    // to the highlighted row. Confirm just leaves it there —
-    // no further action needed. We do clear the
-    // "before-prompt" snapshot so a subsequent Esc on a
-    // separate prompt doesn't try to restore stale state.
+    // Enter commits: dive into the highlighted session for
+    // real. Clear the preview override so the next prompt
+    // session doesn't accidentally inherit it.
+    editor.clearSessionPreview();
+    const id = promptSessionIds[promptSelectedIndex];
+    if (typeof id === "number" && id !== editor.activeSession()) {
+      editor.setActiveSession(id);
+    }
     originalActiveSessionBeforePrompt = null;
     return;
   }
@@ -237,21 +243,10 @@ editor.on("prompt_confirmed", async (e) => {
 
 editor.on("prompt_cancelled", (e) => {
   if (e.prompt_type === PROMPT_TYPE) {
-    // Esc on the Conductor prompt rolls back the transient
-    // dive: restore the session that was active before the
-    // prompt opened. If the original session has since been
-    // closed (rare — would mean the user killed it from a
-    // sub-command while the prompt was open), do nothing.
-    const orig = originalActiveSessionBeforePrompt;
+    // Esc clears the preview override; active_session was
+    // never mutated so there's nothing to roll back.
+    editor.clearSessionPreview();
     originalActiveSessionBeforePrompt = null;
-    if (orig === null) return;
-    if (orig === editor.activeSession()) return;
-    const stillExists = editor
-      .listSessions()
-      .some((s) => s.id === orig);
-    if (stillExists) {
-      editor.setActiveSession(orig);
-    }
     return;
   }
   if (
