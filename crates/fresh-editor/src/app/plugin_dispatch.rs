@@ -922,8 +922,18 @@ impl Editor {
             }
 
             // ==================== File/Navigation Commands ====================
-            PluginCommand::OpenFileInBackground { path } => {
-                self.handle_open_file_in_background(path);
+            PluginCommand::OpenFileInBackground { path, session_id } => {
+                let route_to_inactive = match session_id {
+                    Some(id) if id != self.active_session && self.sessions.contains_key(&id) => {
+                        Some(id)
+                    }
+                    _ => None,
+                };
+                if let Some(target) = route_to_inactive {
+                    self.handle_open_file_in_inactive_session(target, path);
+                } else {
+                    self.handle_open_file_in_background(path);
+                }
             }
             PluginCommand::OpenFileAtLocation { path, line, column } => {
                 return self.handle_open_file_at_location(path, line, column);

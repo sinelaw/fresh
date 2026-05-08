@@ -64,6 +64,59 @@ fn active_session_has_non_empty_label() {
 
 use std::path::PathBuf;
 
+/// `openFileInBackground({sessionId})` for an inactive session loads
+/// the buffer and routes it into the target session's membership
+/// + stashed split tree without disturbing the active session.
+#[test]
+fn open_file_in_background_targets_inactive_session() {
+    use fresh_core::api::PluginCommand;
+
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let f = project_dir.join("alpha-file.txt");
+    std::fs::write(&f, "alpha contents").unwrap();
+
+    let alpha = harness
+        .editor_mut()
+        .create_session_at(project_dir.join("wt-alpha-open"), "alpha".into());
+
+    let active_buffer_before = harness.editor().active_buffer();
+
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::OpenFileInBackground {
+            path: f.clone(),
+            session_id: Some(alpha),
+        })
+        .unwrap();
+
+    // Active buffer is unchanged — the user's view stays put.
+    assert_eq!(
+        harness.editor().active_buffer(),
+        active_buffer_before,
+        "openFileInBackground with inactive sessionId must not move active focus"
+    );
+
+    // Alpha's membership has gained the file's buffer.
+    let alpha_count = harness.editor().session(alpha).unwrap().buffers.len();
+    assert_eq!(
+        alpha_count, 1,
+        "alpha should own exactly the file we opened into it"
+    );
+
+    // Alpha's splits stash now has the buffer ready to render
+    // on next dive.
+    assert!(
+        harness
+            .editor()
+            .session(alpha)
+            .unwrap()
+            .splits_stash
+            .is_some(),
+        "alpha's splits_stash should be populated"
+    );
+}
+
 /// `createTerminal({ sessionId })` for an inactive session attaches
 /// the buffer to that session's membership and seeds (or extends)
 /// its stashed split tree — without disturbing the active session.

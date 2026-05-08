@@ -1235,6 +1235,16 @@ interface EditorAPI {
 	*/
 	openFile(path: string, line: number | null, column: number | null): boolean;
 	/**
+	* Open a file in the background — no focus change, no
+	* active-split mutation. `sessionId` defaults to the active
+	* session. Setting it to an inactive session id loads the
+	* file's buffer and adds it as a tab in that session's
+	* stashed split tree, ready to be revealed on next dive.
+	* Conductor uses this to populate worktree sessions with
+	* preselected files.
+	*/
+	openFileInBackground(path: string, sessionId?: number): boolean;
+	/**
 	* Open a file in a specific split
 	*/
 	openFileInSplit(splitId: number, path: string, line: number, column: number): boolean;

@@ -1235,8 +1235,18 @@ pub enum PluginCommand {
     /// reconcile.
     UnwatchPath { handle: u64 },
 
-    /// Open a file in the editor (in background, without switching focus)
-    OpenFileInBackground { path: PathBuf },
+    /// Open a file in the editor (in background, without switching focus).
+    ///
+    /// `session_id` defaults to the active session at dispatch
+    /// time. When set to an inactive session, the file's buffer
+    /// is loaded as usual but attached to that session's
+    /// membership and split tree — the active session's UI is
+    /// undisturbed.
+    OpenFileInBackground {
+        path: PathBuf,
+        #[serde(default)]
+        session_id: Option<SessionId>,
+    },
 
     /// Insert text at the current cursor position in the active buffer
     InsertAtCursor { text: String },

@@ -1421,6 +1421,26 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Open a file in the background — no focus change, no
+    /// active-split mutation. `sessionId` defaults to the active
+    /// session. Setting it to an inactive session id loads the
+    /// file's buffer and adds it as a tab in that session's
+    /// stashed split tree, ready to be revealed on next dive.
+    /// Conductor uses this to populate worktree sessions with
+    /// preselected files.
+    pub fn open_file_in_background(
+        &self,
+        path: String,
+        session_id: rquickjs::function::Opt<u64>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::OpenFileInBackground {
+                path: PathBuf::from(path),
+                session_id: session_id.0.map(fresh_core::SessionId),
+            })
+            .is_ok()
+    }
+
     /// Open a file in a specific split
     pub fn open_file_in_split(&self, split_id: u32, path: String, line: u32, column: u32) -> bool {
         self.command_sender

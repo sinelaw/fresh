@@ -1117,6 +1117,67 @@ impl Editor {
         }
     }
 
+    /// Open a file into an inactive session — load the buffer
+    /// (which `open_file_no_focus` attaches to the active
+    /// session by default), then re-target its membership to
+    /// the requested target session and add it as a leaf in
+    /// that session's stashed split tree (or seed the stash
+    /// with it for never-activated sessions).
+    pub(super) fn handle_open_file_in_inactive_session(
+        &mut self,
+        target: fresh_core::SessionId,
+        path: std::path::PathBuf,
+    ) {
+        let buffer_id = match self.open_file_no_focus(&path) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!("Failed to open file in inactive session: {}", e);
+                return;
+            }
+        };
+
+        // Re-target buffer membership: open_file_no_focus
+        // attached to the active session as part of its normal
+        // path. Detach and reattach to the target.
+        self.detach_buffer_from_all_sessions(buffer_id);
+        if let Some(s) = self.sessions.get_mut(&target) {
+            s.buffers.insert(buffer_id);
+        }
+
+        // Remove the buffer from the active session's split tree
+        // so it doesn't surface as a stray tab — the target
+        // session owns it.
+        let leaf_ids: Vec<_> = self.split_view_states.keys().copied().collect();
+        for leaf_id in leaf_ids {
+            if let Some(view_state) = self.split_view_states.get_mut(&leaf_id) {
+                view_state.remove_buffer(buffer_id);
+            }
+        }
+
+        // Add it to the target session's stashed split tree as a
+        // tab in its current active leaf. If the session has no
+        // stash yet, seed one rooted at this buffer.
+        if let Some(session) = self.sessions.get_mut(&target) {
+            if let Some((mgr, view_states)) = session.splits_stash.as_mut() {
+                let active_leaf = mgr.active_split();
+                if let Some(vs) = view_states.get_mut(&active_leaf) {
+                    vs.add_buffer(buffer_id);
+                }
+            } else {
+                let manager = crate::view::split::SplitManager::new(buffer_id);
+                let active_leaf = manager.active_split();
+                let mut view_states = std::collections::HashMap::new();
+                let vs = crate::view::split::SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                view_states.insert(active_leaf, vs);
+                session.splits_stash = Some((manager, view_states));
+            }
+        }
+    }
+
     /// Handle ShowBuffer command.
     ///
     /// If `buffer_id` belongs to a buffer group (i.e., it's one of the group's
