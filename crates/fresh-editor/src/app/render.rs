@@ -1887,14 +1887,22 @@ impl Editor {
         // sub-borrows (`buffers`, `event_logs`, `splits`) coexist
         // on the same `Window`, so the renderer call can take all
         // three by `&mut` while the rest of `&mut self` stays
-        // available for `composite_buffers` / `config` / etc. Bail
-        // if the session has no stash yet (never been activated and
-        // never had a terminal / file routed in via
+        // available for `composite_buffers` / `config` / etc.
+        //
+        // Step 0h: previously this used `splits.take()` + restore
+        // because the inline-borrow patterns elsewhere couldn't
+        // co-exist with a held `&mut sid.splits`. Now that all
+        // per-window state lives on `Window`, we destructure
+        // `splits.as_mut()` directly — no transient swap, no
+        // side-effect plumbing — matching design Primitive #1.
+        // Bail if the session has no stash yet (never been
+        // activated and never had a terminal / file routed in via
         // createTerminal({windowId})).
         let __win_for_preview = self.windows.get_mut(&sid).expect("preview window present");
         let __preview_buffers = &mut __win_for_preview.buffers;
         let __preview_event_logs = &mut __win_for_preview.event_logs;
-        let Some((mgr, mut view_states)) = __win_for_preview.splits.take() else {
+        let Some((mgr, view_states)) = __win_for_preview.splits.as_mut().map(|(m, vs)| (m, vs))
+        else {
             return;
         };
 
@@ -1912,7 +1920,7 @@ impl Editor {
         let _ = crate::view::ui::SplitRenderer::render_content(
             frame,
             inner,
-            &mgr,
+            &*mgr,
             __preview_buffers,
             &self.buffer_metadata,
             __preview_event_logs,
@@ -1926,7 +1934,7 @@ impl Editor {
             self.config.editor.line_wrap,
             self.config.editor.estimated_line_length,
             self.config.editor.highlight_context_bytes,
-            Some(&mut view_states),
+            Some(view_states),
             &no_grouped_subtrees,
             true, // hide_cursor — the active session owns the hardware caret
             None, // no tab-hover routing in the preview
@@ -1949,12 +1957,6 @@ impl Editor {
             inner.width,
             &mut scratch_pending_cursor,
         );
-
-        // Put the stash back so the next dive into this session
-        // sees its full state.
-        if let Some(s) = self.windows.get_mut(&sid) {
-            s.splits = Some((mgr, view_states));
-        }
     }
 
     fn prepare_overlay_preview(&mut self) {

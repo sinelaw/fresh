@@ -1718,15 +1718,32 @@ behavior change. Park until a concrete need surfaces (a
 plugin or test that wants the Window-pure operation
 independently of the chrome).
 
-**0h — Refactor render to `Window::render`.** Move the body
-of `Editor::render` onto `impl Window` as
-`Window::render(&self, frame: &mut Frame, area: Rect, chrome:
-&EditorChrome)`. The Editor entry point becomes
-`fn render(&mut self, frame) { self.windows[&self.active_window]
-.render(frame, frame.area(), &self.chrome()) }`. The preview
-path (`previewSessionInRect`) is the same call against a
-different `Window` with a sub-rect — no transient swap, no
-side-effect flag plumbing.
+**0h — Refactor render to `Window::render`.** *Shipped, in
+the form that turns out to matter.* The concrete pain point
+0h was meant to solve was the preview path's `splits.take()`
++ restore dance in `render_session_preview_into_rect`: it
+took the previewed window's split stash out, called the
+shared `SplitRenderer::render_content` against it, then
+swapped it back. After 0a–0g moved every per-window field
+onto `Window`, the preview path can split-borrow the
+previewed window's `buffers`, `event_logs`, and `splits`
+sub-fields directly under one `&mut Window` borrow — the
+take/restore is gone, and the foreign-window preview is now
+literally the same `SplitRenderer::render_content` call
+against a different `Window` with a sub-rect, matching the
+design's Primitive #1.
+* What we did *not* do, and why: a full move of
+  `Editor::render` onto `impl Window` would require
+  splitting the function's chrome (status bar, prompt,
+  popups, menus, mouse hit-testing, animations) from its
+  content (split tree, panels). The chrome is editor-global
+  and lives on `Editor` legitimately; the content rendering
+  already routes through the shared `SplitRenderer::render_content`
+  helper that both paths call. Moving `Editor::render`
+  itself would just relocate the chrome plumbing onto
+  `Window`, which is the wrong direction. Park unless a
+  consumer (e.g. a multi-window split-screen layout) needs
+  to render two windows side-by-side in one frame.
 
 **0i — Remove the warm-swap helpers and Conductor's reliance
 on them.** **Mostly already done as part of 0b.** The swap
