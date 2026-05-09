@@ -1539,26 +1539,6 @@ impl Editor {
                 );
             }
 
-            PluginCommand::GrepProjectStreaming {
-                pattern,
-                fixed_string,
-                case_sensitive,
-                max_results,
-                whole_words,
-                search_id,
-                callback_id,
-            } => {
-                self.handle_grep_project_streaming(
-                    pattern,
-                    fixed_string,
-                    case_sensitive,
-                    max_results,
-                    whole_words,
-                    search_id,
-                    callback_id,
-                );
-            }
-
             PluginCommand::BeginSearch {
                 pattern,
                 fixed_string,

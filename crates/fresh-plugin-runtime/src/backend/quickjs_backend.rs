@@ -4702,43 +4702,10 @@ impl JsEditorApi {
         id
     }
 
-    /// Streaming project-wide grep search
-    /// Returns a thenable with a searchId property. The progressCallback is called
-    /// with batches of matches as they are found.
-    #[plugin_api(
-        js_name = "grepProjectStreaming",
-        ts_raw = "grepProjectStreaming(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean }, progressCallback?: (matches: GrepMatch[], done: boolean) => void): PromiseLike<GrepMatch[]> & { searchId: number }"
-    )]
-    #[qjs(rename = "_grepProjectStreamingStart")]
-    pub fn grep_project_streaming_start(
-        &self,
-        _ctx: rquickjs::Ctx<'_>,
-        pattern: String,
-        fixed_string: bool,
-        case_sensitive: bool,
-        max_results: u32,
-        whole_words: bool,
-    ) -> u64 {
-        let id = self.alloc_request_id();
-        let _ = self
-            .command_sender
-            .send(PluginCommand::GrepProjectStreaming {
-                pattern,
-                fixed_string,
-                case_sensitive,
-                max_results: max_results as usize,
-                whole_words,
-                search_id: id,
-                callback_id: JsCallbackId::new(id),
-            });
-        id
-    }
-
     /// Begin a streaming project-wide search and return a `SearchHandle`.
     /// The producer (host) writes matches at full speed into shared state;
     /// the consumer drains via `handle.take()` at its own cadence. Call
-    /// `handle.cancel()` to abort. Replaces `grepProjectStreaming`'s
-    /// per-chunk callback dispatch with a pull-based observable.
+    /// `handle.cancel()` to abort.
     #[plugin_api(
         js_name = "beginSearch",
         ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean }): SearchHandle"
@@ -5547,20 +5514,6 @@ impl QuickJsBackend {
                     }
                 };
 
-                // Streaming callbacks: called multiple times with partial results
-                globalThis._streamingCallbacks = new Map();
-
-                // Called from Rust with partial data. When done=true, cleans up.
-                globalThis._callStreamingCallback = function(callbackId, result, done) {
-                    const cb = globalThis._streamingCallbacks.get(callbackId);
-                    if (cb) {
-                        cb(result, done);
-                        if (done) {
-                            globalThis._streamingCallbacks.delete(callbackId);
-                        }
-                    }
-                };
-
                 // Generic async wrapper decorator
                 // Wraps a function that returns a callbackId into a promise-returning function
                 // Usage: editor.foo = _wrapAsync("_fooStart", "foo");
@@ -5701,45 +5654,6 @@ impl QuickJsBackend {
                         searchId: handleId,
                         take: function() { return editor._searchHandleTake(handleId); },
                         cancel: function() { editor._searchHandleCancel(handleId); }
-                    };
-                };
-
-                // Streaming grep: takes a progress callback, returns a thenable with searchId
-                editor.grepProjectStreaming = function(pattern, opts, progressCallback) {
-                    opts = opts || {};
-                    const fixedString = opts.fixedString !== undefined ? opts.fixedString : true;
-                    const caseSensitive = opts.caseSensitive !== undefined ? opts.caseSensitive : true;
-                    const maxResults = opts.maxResults || 10000;
-                    const wholeWords = opts.wholeWords || false;
-
-                    const searchId = editor._grepProjectStreamingStart(
-                        pattern, fixedString, caseSensitive, maxResults, wholeWords
-                    );
-
-                    // Register streaming callback
-                    if (progressCallback) {
-                        globalThis._streamingCallbacks.set(searchId, progressCallback);
-                    }
-
-                    // Create completion promise (resolved via _resolveCallback when search finishes)
-                    const resultPromise = new Promise(function(resolve, reject) {
-                        globalThis._pendingCallbacks.set(searchId, {
-                            resolve: function(result) {
-                                globalThis._streamingCallbacks.delete(searchId);
-                                resolve(result);
-                            },
-                            reject: function(err) {
-                                globalThis._streamingCallbacks.delete(searchId);
-                                reject(err);
-                            }
-                        });
-                    });
-
-                    return {
-                        searchId: searchId,
-                        get result() { return resultPromise; },
-                        then: function(f, r) { return resultPromise.then(f, r); },
-                        catch: function(r) { return resultPromise.catch(r); }
                     };
                 };
 
@@ -6466,92 +6380,6 @@ impl QuickJsBackend {
 
             // IMPORTANT: Run pending jobs to process Promise continuations
             run_pending_jobs_checked(&ctx, &format!("reject_callback {}", id));
-        });
-    }
-
-    /// Call a streaming callback with partial data.
-    /// Unlike resolve_callback, this does NOT remove the callback from the context map.
-    /// When `done` is true, the JS side cleans up the streaming callback.
-    pub fn call_streaming_callback(
-        &mut self,
-        callback_id: fresh_core::api::JsCallbackId,
-        result_json: &str,
-        done: bool,
-    ) {
-        let id = callback_id.as_u64();
-
-        // Find the plugin name WITHOUT removing it (unlike resolve_callback)
-        let plugin_name = {
-            let contexts = self.callback_contexts.borrow();
-            contexts.get(&id).cloned()
-        };
-
-        let Some(name) = plugin_name else {
-            tracing::warn!(
-                "call_streaming_callback: No plugin found for callback_id={}",
-                id
-            );
-            return;
-        };
-
-        // If done, remove the callback context entry
-        if done {
-            self.callback_contexts.borrow_mut().remove(&id);
-        }
-
-        let plugin_contexts = self.plugin_contexts.borrow();
-        let Some(context) = plugin_contexts.get(&name) else {
-            tracing::warn!("call_streaming_callback: Context lost for plugin {}", name);
-            return;
-        };
-
-        context.with(|ctx| {
-            let json_value: serde_json::Value = match serde_json::from_str(result_json) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(
-                        "call_streaming_callback: failed to parse JSON for callback_id={}: {}",
-                        id,
-                        e
-                    );
-                    return;
-                }
-            };
-
-            let js_value = match rquickjs_serde::to_value(ctx.clone(), &json_value) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(
-                        "call_streaming_callback: failed to convert to JS value for callback_id={}: {}",
-                        id,
-                        e
-                    );
-                    return;
-                }
-            };
-
-            let globals = ctx.globals();
-            let call_fn: rquickjs::Function = match globals.get("_callStreamingCallback") {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::error!(
-                        "call_streaming_callback: _callStreamingCallback not found for callback_id={}: {:?}",
-                        id,
-                        e
-                    );
-                    return;
-                }
-            };
-
-            if let Err(e) = call_fn.call::<_, ()>((id, js_value, done)) {
-                log_js_error(
-                    &ctx,
-                    e,
-                    &format!("calling streaming callback {}", id),
-                );
-            }
-
-            run_pending_jobs_checked(&ctx, &format!("call_streaming_callback {}", id));
         });
     }
 }

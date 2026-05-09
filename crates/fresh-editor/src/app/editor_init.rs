@@ -791,7 +791,6 @@ impl Editor {
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
             needs_full_grammar_build: true,
-            streaming_grep_cancellation: None,
             pending_grammar_callbacks: Vec::new(),
             theme,
             theme_registry,

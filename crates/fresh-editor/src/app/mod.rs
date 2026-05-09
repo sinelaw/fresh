@@ -393,9 +393,6 @@ pub struct Editor {
     /// grammars from the first event-loop tick are included in a single build.
     needs_full_grammar_build: bool,
 
-    /// Cancellation flag for the current streaming grep search.
-    streaming_grep_cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-
     /// Plugin callback IDs waiting for the grammar build to complete.
     /// Multiple reloadGrammars() calls may accumulate here; all are resolved
     /// when the background build finishes.

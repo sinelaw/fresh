@@ -373,36 +373,6 @@ impl Editor {
                         PluginAsyncMessage::PluginResponse(response) => {
                             self.handle_plugin_response(response);
                         }
-                        PluginAsyncMessage::GrepStreamingProgress {
-                            search_id,
-                            matches_json,
-                        } => {
-                            tracing::info!(
-                                "GrepStreamingProgress: search_id={} json_len={}",
-                                search_id,
-                                matches_json.len()
-                            );
-                            self.plugin_manager.call_streaming_callback(
-                                JsCallbackId::from(search_id),
-                                matches_json,
-                                false,
-                            );
-                        }
-                        PluginAsyncMessage::GrepStreamingComplete {
-                            search_id: _,
-                            callback_id,
-                            total_matches,
-                            truncated,
-                        } => {
-                            self.streaming_grep_cancellation = None;
-                            self.plugin_manager.resolve_callback(
-                                JsCallbackId::from(callback_id),
-                                format!(
-                                    r#"{{"totalMatches":{},"truncated":{}}}"#,
-                                    total_matches, truncated
-                                ),
-                            );
-                        }
                     }
                 }
                 AsyncMessage::LspProgress {

@@ -345,26 +345,6 @@ pub enum PluginAsyncMessage {
     },
     /// Generic plugin response (e.g., GetBufferText result)
     PluginResponse(crate::api::PluginResponse),
-
-    /// Streaming grep: partial results for one file
-    GrepStreamingProgress {
-        /// Search ID to route to the correct progress callback
-        search_id: u64,
-        /// Matches from a single file
-        matches_json: String,
-    },
-
-    /// Streaming grep: search complete
-    GrepStreamingComplete {
-        /// Search ID
-        search_id: u64,
-        /// Callback ID for the completion promise
-        callback_id: u64,
-        /// Total number of matches found
-        total_matches: usize,
-        /// Whether the search was stopped early due to reaching max_results
-        truncated: bool,
-    },
 }
 
 /// Information about a cursor in the editor
@@ -2858,27 +2838,6 @@ pub enum PluginCommand {
         whole_words: bool,
         /// Handle ID — key into the shared `SearchHandleRegistry`
         handle_id: u64,
-    },
-
-    /// Project-wide streaming grep search (async, parallel)
-    /// Like GrepProject but streams results incrementally via progress callback.
-    /// Searches files in parallel using tokio tasks, sending per-file results
-    /// back to the plugin as they complete.
-    GrepProjectStreaming {
-        /// Search pattern
-        pattern: String,
-        /// Whether the pattern is a fixed string (true) or regex (false)
-        fixed_string: bool,
-        /// Whether the search is case-sensitive
-        case_sensitive: bool,
-        /// Maximum number of results to return
-        max_results: usize,
-        /// Whether to match whole words only
-        whole_words: bool,
-        /// Search ID — used to route progress callbacks and for cancellation
-        search_id: u64,
-        /// Callback ID for the completion promise
-        callback_id: JsCallbackId,
     },
 
     /// Replace matches in a buffer (async)

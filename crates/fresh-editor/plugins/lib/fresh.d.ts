@@ -2463,24 +2463,10 @@ interface EditorAPI {
 	*/
 	grepProject(pattern: string, fixedString: boolean | null, caseSensitive: boolean | null, maxResults: number | null, wholeWords: boolean | null): Promise<GrepMatch[]>;
 	/**
-	* Streaming project-wide grep search
-	* Returns a thenable with a searchId property. The progressCallback is called
-	* with batches of matches as they are found.
-	*/
-	grepProjectStreaming(pattern: string, opts?: {
-		fixedString?: boolean;
-		caseSensitive?: boolean;
-		maxResults?: number;
-		wholeWords?: boolean;
-	}, progressCallback?: (matches: GrepMatch[], done: boolean) => void): PromiseLike<GrepMatch[]> & {
-		searchId: number;
-	};
-	/**
 	* Begin a streaming project-wide search and return a `SearchHandle`.
 	* The producer (host) writes matches at full speed into shared state;
 	* the consumer drains via `handle.take()` at its own cadence. Call
-	* `handle.cancel()` to abort. Replaces `grepProjectStreaming`'s
-	* per-chunk callback dispatch with a pull-based observable.
+	* `handle.cancel()` to abort.
 	*/
 	beginSearch(pattern: string, opts?: {
 		fixedString?: boolean;

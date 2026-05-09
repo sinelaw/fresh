@@ -61,13 +61,6 @@ pub enum PluginRequest {
         error: String,
     },
 
-    /// Call a streaming callback with partial data (does not consume the callback)
-    CallStreamingCallback {
-        callback_id: fresh_core::api::JsCallbackId,
-        result_json: String,
-        done: bool,
-    },
-
     /// Load all plugins from a directory
     LoadPluginsFromDir {
         dir: PathBuf,
@@ -887,23 +880,6 @@ impl PluginThreadHandle {
             fire_and_forget(sender.send(PluginRequest::RejectCallback { callback_id, error }));
         }
     }
-
-    /// Call a streaming callback with partial data (does not consume the callback).
-    /// When `done` is true, the callback is cleaned up on the JS side.
-    pub fn call_streaming_callback(
-        &self,
-        callback_id: fresh_core::api::JsCallbackId,
-        result_json: String,
-        done: bool,
-    ) {
-        if let Some(sender) = self.request_sender.as_ref() {
-            fire_and_forget(sender.send(PluginRequest::CallStreamingCallback {
-                callback_id,
-                result_json,
-                done,
-            }));
-        }
-    }
 }
 
 impl Drop for PluginThreadHandle {
@@ -1238,16 +1214,6 @@ async fn handle_request(
         PluginRequest::RejectCallback { callback_id, error } => {
             runtime.borrow_mut().reject_callback(callback_id, &error);
             // reject_callback now runs execute_pending_job() internally
-        }
-
-        PluginRequest::CallStreamingCallback {
-            callback_id,
-            result_json,
-            done,
-        } => {
-            runtime
-                .borrow_mut()
-                .call_streaming_callback(callback_id, &result_json, done);
         }
 
         PluginRequest::TrackAsyncResource {
