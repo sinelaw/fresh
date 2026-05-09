@@ -1839,6 +1839,81 @@ allocator before the window is wired into `Editor.windows`.
 The `Option` accurately models "no layout allocated yet,"
 not "stash currently swapped out," so it stays.
 
+**0j — Move grouped_subtrees + composite buffers + composite
+view states onto `Window`.** *Shipped.* Three more per-window
+fields that were still on Editor for legacy reasons: buffer-
+group panel subtrees and the per-split composite view
+state. Each belongs to the window that opened the panel.
+
+**0k — LSP routing onto per-window async channels +
+handlers on `impl Window`.** *In progress.* The LSP
+subsystem still has all its per-window state (request-
+tracking maps, pending response data, chrome surfaces like
+status/prompt) on `impl Editor`. The plan:
+
+1. **Per-window async channels.** Each `Window` owns its
+   own `(Sender, Receiver)` pair. The window's
+   `LspManager` is constructed with the window's sender.
+   LSP responses flow through that window's channel
+   only — no shared editor-global LSP channel. Cleanup
+   on `closeWindow` is automatic (receiver drops, senders
+   error and stop).
+
+2. **Editor's main loop merges window receivers via
+   `StreamMap`.** One top-level `select!` in the editor
+   awaits "any window has a message" / "input" / "render
+   tick" / "editor-global async" (plugin runtime
+   callbacks, file dialog — kept on Editor's bridge
+   because they're genuinely editor-scoped). The
+   dispatcher is simply `windows[id].handle_message(
+   &self.plugin_manager, msg)`.
+
+3. **`Window::handle_message` on `impl Window`.** Single-
+   message synchronous dispatch — no nested `select!`,
+   no internal loop. Handler bodies live on `impl Window`
+   and mutate window state directly. Plugin hooks fire
+   via the `&PluginManager` parameter (the manager
+   already takes `&self`, no locking needed).
+
+4. **All per-window LSP state moves to `Window`.**
+   `next_lsp_request_id`, the 14 pending-/in-flight
+   maps (`pending_completion_requests`,
+   `pending_inlay_hints_requests`,
+   `semantic_tokens_in_flight`,
+   `semantic_tokens_range_*`, the folding/code-action
+   variants), and the response-data caches
+   (`completion_items`, `pending_code_actions`, etc.)
+   all become `Window` fields. Per-window
+   `next_lsp_request_id` works because each window's
+   `LspManager` talks to its own server connections —
+   each connection only cares about per-connection
+   request-id uniqueness, not cross-window.
+
+5. **Chrome surfaces move to `Window`.** `status_message`,
+   `plugin_status_message`, and `prompt` become per-
+   window. Only the active window's chrome is rendered,
+   so a status message from a background window is
+   naturally invisible (and that's the right semantics —
+   each window has its own context). Inactive windows
+   keep their last status / prompt across switches.
+
+6. **What stays on Editor.** Genuinely editor-global
+   subsystems: `plugin_manager` (one runtime), the
+   plugin async channel (callback delivery), the file-
+   open dialog state, terminal-input `key_translator`,
+   render-loop chrome glue, `chrome_layout`. The plugin
+   manager is passed as `&PluginManager` to window
+   handlers so they can fire hooks without leaking the
+   editor reference into Window's stored state.
+
+The architectural test: **if a Window handler body needs
+to know its own `WindowId` to call into editor-level
+logic, that's a sign the editor-level logic is in the
+wrong place** (it should be on `impl Window` or the data
+should be per-window). The user has flagged this — if
+implementation surfaces such a case, surface it before
+adding the parameter.
+
 After Step 0 lands:
 
 - "Save all," quick-open, find-in-files, list-buffers all
