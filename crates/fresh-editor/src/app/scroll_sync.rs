@@ -223,22 +223,12 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .buffer_for_split(other_leaf)
             {
-                let __win = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .expect("active window must exist");
-                if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-                    let buffer = &mut state.buffer;
-                    if let Some(view_state) = __win
-                        .splits
-                        .as_mut()
-                        .expect("active window must have a populated split layout")
-                        .1
-                        .get_mut(&other_leaf)
-                    {
-                        view_state.viewport.scroll_to(buffer, target_line);
-                    }
-                }
+                self.active_window_mut().scroll_split_viewport_to(
+                    buffer_id,
+                    other_leaf,
+                    target_line,
+                    false,
+                );
             }
         }
 

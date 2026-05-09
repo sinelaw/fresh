@@ -1815,21 +1815,8 @@ impl Editor {
                         .expect("active window must have a populated split layout")
                         .active_split();
                     let active_buffer = self.active_buffer();
-                    let __win = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .expect("active window must exist");
-                    let __buffers_mut = &mut __win.buffers;
-                    if let Some(view_state) = __win
-                        .splits
-                        .as_mut()
-                        .expect("active window must have a populated split layout")
-                        .1
-                        .get_mut(&active_split)
-                    {
-                        let state = __buffers_mut.get_mut(&active_buffer).unwrap();
-                        view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-                    }
+                    self.active_window_mut()
+                        .ensure_cursor_visible_for_split(active_buffer, active_split);
                 }
             }
 

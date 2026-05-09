@@ -955,21 +955,8 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                let __window = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .expect("active window must exist");
-
-                let state = __window.buffers.get_mut(&target_buffer).unwrap();
-
-                let view_state = __window
-                    .splits
-                    .as_mut()
-                    .expect("active window must have a populated split layout")
-                    .1
-                    .get_mut(&split_id)
-                    .unwrap();
-                state.apply(&mut view_state.cursors, &event);
+                self.active_window_mut()
+                    .apply_event_to_buffer(target_buffer, split_id, &event);
                 // Position-history entries can land anywhere in the buffer;
                 // the viewport must scroll to the restored cursor or the user
                 // sees the same page after Ctrl+- / Ctrl+= (#1689).
@@ -1023,21 +1010,8 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                let __window = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .expect("active window must exist");
-
-                let state = __window.buffers.get_mut(&target_buffer).unwrap();
-
-                let view_state = __window
-                    .splits
-                    .as_mut()
-                    .expect("active window must have a populated split layout")
-                    .1
-                    .get_mut(&split_id)
-                    .unwrap();
-                state.apply(&mut view_state.cursors, &event);
+                self.active_window_mut()
+                    .apply_event_to_buffer(target_buffer, split_id, &event);
                 // Position-history entries can land anywhere in the buffer;
                 // the viewport must scroll to the restored cursor or the user
                 // sees the same page after Ctrl+- / Ctrl+= (#1689).

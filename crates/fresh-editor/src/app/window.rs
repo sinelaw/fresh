@@ -147,6 +147,100 @@ pub struct Window {
 }
 
 impl Window {
+    /// Apply an event to a buffer + the cursors of a split inside this
+    /// window. Window-level method (not Editor-level) so the borrow
+    /// checker can split-borrow `self.buffers` and `self.splits`
+    /// cleanly without inline `self.windows.get_mut(...)` boilerplate
+    /// at the call site. No-op if the buffer or split is missing.
+    pub fn apply_event_to_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        split_id: LeafId,
+        event: &crate::model::event::Event,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let Some(vs) = vs_map.get_mut(&split_id) else {
+            return;
+        };
+        state.apply(&mut vs.cursors, event);
+    }
+
+    /// Same as [`apply_event_to_buffer`] but operates on a buffer-group
+    /// panel's keyed cursor (the `keyed_states[buffer_id].cursors`
+    /// inside the host split's view state, not the host's own cursors).
+    /// Used by event-apply paths that target a focused inner panel of
+    /// a Grouped split rather than the outer split's leaf buffer.
+    pub fn apply_event_to_keyed_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        split_id: LeafId,
+        event: &crate::model::event::Event,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let Some(vs) = vs_map.get_mut(&split_id) else {
+            return;
+        };
+        let Some(keyed) = vs.keyed_states.get_mut(&buffer_id) else {
+            return;
+        };
+        state.apply(&mut keyed.cursors, event);
+    }
+
+    /// Scroll the named split's viewport so the buffer's primary cursor
+    /// is visible. Calls into `SplitViewState::ensure_cursor_visible`
+    /// with the buffer's text + marker list. No-op if buffer/split is
+    /// missing.
+    pub fn ensure_cursor_visible_for_split(&mut self, buffer_id: BufferId, split_id: LeafId) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let Some(vs) = vs_map.get_mut(&split_id) else {
+            return;
+        };
+        vs.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+    }
+
+    /// Scroll a split's viewport to the given line, given a buffer to
+    /// resolve the line→byte offset. No-op if buffer/split is missing.
+    /// `lock_against_ensure_visible`: when true, sets the
+    /// skip-ensure-visible flag so the next render's cursor-visibility
+    /// pass doesn't undo this scroll. Plugin-driven jumps want true;
+    /// scroll-sync-from-active-to-other-splits wants false.
+    pub fn scroll_split_viewport_to(
+        &mut self,
+        buffer_id: BufferId,
+        split_id: LeafId,
+        target_line: usize,
+        lock_against_ensure_visible: bool,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let Some(vs) = vs_map.get_mut(&split_id) else {
+            return;
+        };
+        vs.viewport.scroll_to(&mut state.buffer, target_line);
+        if lock_against_ensure_visible {
+            vs.viewport.set_skip_ensure_visible();
+        }
+    }
+
     /// Mutable handle to this window's split tree (or `None` when
     /// the layout hasn't been seeded yet). Useful at sites where
     /// the caller already has a `&mut Window` from a direct

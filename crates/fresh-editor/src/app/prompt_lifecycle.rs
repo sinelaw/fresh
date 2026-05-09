@@ -362,27 +362,25 @@ impl Editor {
             new_sticky_column: snap.sticky_column,
         };
 
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let state = __win.buffers.get_mut(&snap.buffer_id).unwrap();
-        let view_state = __win
+        self.active_window_mut()
+            .apply_event_to_buffer(snap.buffer_id, snap.split_id, &event);
+
+        if let Some(view_state) = self
+            .active_window_mut()
             .splits
             .as_mut()
             .expect("active window must have a populated split layout")
             .1
             .get_mut(&snap.split_id)
-            .unwrap();
-        state.apply(&mut view_state.cursors, &event);
-
-        let vp = &mut view_state.viewport;
-        vp.top_byte = snap.viewport_top_byte;
-        vp.top_view_line_offset = snap.viewport_top_view_line_offset;
-        vp.left_column = snap.viewport_left_column;
-        // The cursor we just restored is already consistent with this
-        // viewport; don't let ensure_visible re-scroll on the next render.
-        vp.set_skip_ensure_visible();
+        {
+            let vp = &mut view_state.viewport;
+            vp.top_byte = snap.viewport_top_byte;
+            vp.top_view_line_offset = snap.viewport_top_view_line_offset;
+            vp.left_column = snap.viewport_left_column;
+            // The cursor we just restored is already consistent with this
+            // viewport; don't let ensure_visible re-scroll on the next render.
+            vp.set_skip_ensure_visible();
+        }
     }
 
     /// Cancel search/replace prompts if one is active.

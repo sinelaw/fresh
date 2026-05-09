@@ -288,21 +288,8 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            let __win = self
-                .windows
-                .get_mut(&self.active_window)
-                .expect("active window must exist");
-            if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-                let cursors = &mut __win
-                    .splits
-                    .as_mut()
-                    .expect("active window must have a populated split layout")
-                    .1
-                    .get_mut(&split_id)
-                    .unwrap()
-                    .cursors;
-                state.apply(cursors, &event);
-            }
+            self.active_window_mut()
+                .apply_event_to_buffer(buffer_id, split_id, &event);
             // Without this the cursor lands at the definition but the
             // viewport never scrolls when the target file is already
             // open (#1689).

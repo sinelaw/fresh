@@ -113,24 +113,8 @@ impl Editor {
                 split_id,
                 active_buf,
             );
-            let active_id = self.active_window;
-            let window = self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist");
-            let state = window.buffers.get_mut(&active_buf).unwrap();
-            let cursors = &mut window
-                .splits
-                .as_mut()
-                .expect("active window must have a populated split layout")
-                .1
-                .get_mut(&split_id)
-                .unwrap()
-                .keyed_states
-                .get_mut(&active_buf)
-                .unwrap()
-                .cursors;
-            state.apply(cursors, event);
+            self.active_window_mut()
+                .apply_event_to_keyed_buffer(active_buf, split_id, event);
         }
 
         // 1c. Invalidate layouts for all views of this buffer after content changes

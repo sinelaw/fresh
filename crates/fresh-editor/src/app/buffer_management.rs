@@ -458,26 +458,16 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            // Single window borrow split into disjoint sub-fields.
-            let active_id = self.active_window;
-            let window = self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist");
-            let state = window.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = window
-                .splits
-                .as_mut()
-                .expect("active window must have a populated split layout")
-                .1
-                .get_mut(&split_id)
-                .unwrap();
-            state.apply(&mut view_state.cursors, &event);
+            self.active_window_mut()
+                .apply_event_to_buffer(buffer_id, split_id, &event);
 
             // For scanned large files, override the line number with the known exact value
             // since offset_to_position may fall back to proportional estimation.
             if let Some(line) = known_line {
-                state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(line);
+                if let Some(state) = self.active_window_mut().buffers.get_mut(&buffer_id) {
+                    state.primary_cursor_line_number =
+                        crate::model::buffer::LineNumber::Absolute(line);
+                }
             }
 
             // Center the target line in the viewport. The default
@@ -556,21 +546,8 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            // Single window borrow split into disjoint sub-fields.
-            let active_id = self.active_window;
-            let window = self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist");
-            let state = window.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = window
-                .splits
-                .as_mut()
-                .expect("active window must have a populated split layout")
-                .1
-                .get_mut(&split_id)
-                .unwrap();
-            state.apply(&mut view_state.cursors, &event);
+            self.active_window_mut()
+                .apply_event_to_buffer(buffer_id, split_id, &event);
         }
     }
 
@@ -611,21 +588,8 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .active_split();
-            // Single window borrow split into disjoint sub-fields.
-            let active_id = self.active_window;
-            let window = self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist");
-            let state = window.buffers.get_mut(&buffer_id).unwrap();
-            let view_state = window
-                .splits
-                .as_mut()
-                .expect("active window must have a populated split layout")
-                .1
-                .get_mut(&split_id)
-                .unwrap();
-            state.apply(&mut view_state.cursors, &event);
+            self.active_window_mut()
+                .apply_event_to_buffer(buffer_id, split_id, &event);
         }
     }
 
