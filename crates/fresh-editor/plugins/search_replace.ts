@@ -811,11 +811,18 @@ function updatePanelContent(): void {
 
 /** Current search generation — incremented on each new search to discard stale results. */
 let currentSearchGeneration = 0;
+/** The active search handle, kept so a superseding search can cancel it. */
+let activeSearchHandle: SearchHandle | null = null;
+/** Pump cadence between successive `take()` drains (ms). The host writes
+ * matches at full speed; this knob bounds the UI rebuild rate. */
+const SEARCH_PUMP_INTERVAL_MS = 50;
 
 /**
- * Perform a streaming search. Results arrive incrementally per-file via the
- * progress callback and are merged into the panel state as they arrive.
- * Returns the final complete list of results.
+ * Perform a streaming search using a pull-based handle. The host writes
+ * matches at full speed into shared state; this loop drains them via
+ * `handle.take()` and rebuilds the UI between drains. There are no
+ * per-chunk callbacks crossing the FFI boundary, so the host's main
+ * thread is free to process input and render between pumps.
  */
 async function performSearch(pattern: string, silent?: boolean): Promise<SearchResult[]> {
   if (!panel) return [];
@@ -827,48 +834,76 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
   // result set isn't meaningful for the new one.
   panel.expandedFileKeys.clear();
   panel.knownFileKeys.clear();
-  let lastUiUpdate = Date.now();
-  const UI_UPDATE_INTERVAL_MS = 100; // Force maximum 10 UI updates per second
+
+  // Cancel any in-flight search before kicking off a new one. Without
+  // this the prior search would keep walking the project until it
+  // hit max_results, wasting CPU.
+  if (activeSearchHandle) {
+    try { activeSearchHandle.cancel(); } catch (_e) { /* ignore */ }
+    activeSearchHandle = null;
+  }
 
   try {
     const fixedString = !panel.useRegex;
-    let allResults: SearchResult[] = [];
+    const allResults: SearchResult[] = [];
 
     // Whole-word filtering is done Rust-side so maxResults is respected correctly
-    const result = await editor.grepProjectStreaming(
-      pattern,
-      {
-        fixedString,
-        caseSensitive: panel.caseSensitive,
-        maxResults: MAX_RESULTS,
-        wholeWords: panel.wholeWords,
-      },
-      (matches: GrepMatch[], done: boolean) => {
-        // Discard if a newer search has started
-        if (generation !== currentSearchGeneration || !panel) return;
+    const handle = editor.beginSearch(pattern, {
+      fixedString,
+      caseSensitive: panel.caseSensitive,
+      maxResults: MAX_RESULTS,
+      wholeWords: panel.wholeWords,
+    });
+    activeSearchHandle = handle;
 
-        if (matches.length > 0) {
-          // Use push loop instead of allResults.concat() to save massive memory allocations
-          for (const m of matches) {
-            allResults.push({ match: m, selected: true });
-          }
-          panel.searchResults = allResults;
-        }
+    let truncated = false;
+    let producerError: string | null = null;
 
-        const now = Date.now();
-        // Only trigger the expensive UI rebuild if enough time passed or stream finished
-        if (done || now - lastUiUpdate > UI_UPDATE_INTERVAL_MS) {
-          panel.fileGroups = buildFileGroups(allResults);
-          updatePanelContent();
-          lastUiUpdate = now;
-        }
+    while (true) {
+      // Discard the in-flight search if a newer one started while we slept.
+      if (generation !== currentSearchGeneration || !panel) {
+        try { handle.cancel(); } catch (_e) { /* ignore */ }
+        return allResults;
       }
-    );
+
+      const batch = handle.take();
+      if (batch.matches.length > 0) {
+        for (const m of batch.matches) {
+          allResults.push({ match: m, selected: true });
+        }
+        panel.searchResults = allResults;
+        panel.fileGroups = buildFileGroups(allResults);
+        updatePanelContent();
+      } else if (batch.done) {
+        // Final iteration with no new matches still needs a UI flush
+        // when the previous tick ended on a non-empty batch but didn't
+        // know it was the last one.
+        panel.searchResults = allResults;
+        panel.fileGroups = buildFileGroups(allResults);
+        updatePanelContent();
+      }
+
+      if (batch.done) {
+        truncated = batch.truncated;
+        producerError = batch.error ?? null;
+        break;
+      }
+
+      await editor.delay(SEARCH_PUMP_INTERVAL_MS);
+    }
+
+    if (activeSearchHandle === handle) {
+      activeSearchHandle = null;
+    }
 
     // Final state
     if (generation !== currentSearchGeneration || !panel) return allResults;
 
-    panel.truncated = !!(result && (result as any).truncated);
+    if (producerError) {
+      throw new Error(producerError);
+    }
+
+    panel.truncated = truncated;
 
     if (!silent) {
       if (allResults.length === 0) {
