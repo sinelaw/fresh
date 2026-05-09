@@ -724,6 +724,8 @@ fn test_next_buffer_skips_hidden_buffers() {
             properties: HashMap::new(),
             style: None,
             inline_overlays: Vec::new(),
+            pad_to_chars: None,
+            truncate_to_chars: None,
         }],
         show_line_numbers: true,
         show_cursors: true,

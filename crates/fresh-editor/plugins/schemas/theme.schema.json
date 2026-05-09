@@ -40,6 +40,7 @@
           79,
           120
         ],
+        "selection_modifier": null,
         "current_line_bg": [
           40,
           40,
@@ -180,6 +181,8 @@
         "status_palette_bg": null,
         "status_lsp_on_fg": null,
         "status_lsp_on_bg": null,
+        "status_lsp_actionable_fg": null,
+        "status_lsp_actionable_bg": null,
         "prompt_fg": "White",
         "prompt_bg": "Black",
         "prompt_selection_fg": "White",
@@ -246,6 +249,7 @@
           60,
           80
         ],
+        "semantic_highlight_modifier": null,
         "terminal_bg": "Default",
         "terminal_fg": "Default",
         "status_warning_indicator_bg": [

@@ -3257,6 +3257,14 @@ pub struct JsTextPropertyEntry {
     #[serde(default)]
     #[ts(optional)]
     pub inline_overlays: Option<Vec<crate::text_property::InlineOverlay>>,
+    /// See `TextPropertyEntry::pad_to_chars`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub pad_to_chars: Option<u32>,
+    /// See `TextPropertyEntry::truncate_to_chars`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub truncate_to_chars: Option<u32>,
 }
 
 /// Directory entry returned by readDir

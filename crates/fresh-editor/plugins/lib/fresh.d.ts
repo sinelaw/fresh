@@ -116,6 +116,14 @@ type TextPropertyEntry = {
 	* Optional sub-range styling within this entry
 	*/
 	inlineOverlays?: Array<InlineOverlay>;
+	/**
+	* See `TextPropertyEntry::pad_to_chars`.
+	*/
+	padToChars?: number;
+	/**
+	* See `TextPropertyEntry::truncate_to_chars`.
+	*/
+	truncateToChars?: number;
 };
 type TsCompositeLayoutConfig = {
 	/**
@@ -659,11 +667,11 @@ type OverlayOptions = {
 type OverlayColorSpec = [number, number, number] | string;
 type InlineOverlay = {
 	/**
-	* Start byte offset within the entry's text
+	* Start offset within the entry's text. See `unit`.
 	*/
 	start: number;
 	/**
-	* End byte offset within the entry's text (exclusive)
+	* End offset within the entry's text (exclusive). See `unit`.
 	*/
 	end: number;
 	/**
@@ -674,7 +682,12 @@ type InlineOverlay = {
 	* Optional properties for this sub-range (e.g., click target metadata)
 	*/
 	properties?: Record<string, any>;
+	/**
+	* Unit for `start` / `end`. Defaults to `byte`.
+	*/
+	unit?: OffsetUnit;
 };
+type OffsetUnit = "byte" | "char";
 type GrammarInfoSnapshot = {
 	/**
 	* The grammar name as used in config files (case-insensitive matching)

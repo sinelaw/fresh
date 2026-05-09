@@ -24,7 +24,7 @@ use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use fresh_core::api::{
     ButtonKind, HintEntry, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
 };
-use fresh_core::text_property::{InlineOverlay, TextPropertyEntry};
+use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 
@@ -323,6 +323,8 @@ fn render_collected(
                                 properties: Default::default(),
                                 style: None,
                                 inline_overlays: Vec::new(),
+                                pad_to_chars: None,
+                                truncate_to_chars: None,
                             };
                             match acc.as_mut() {
                                 Some(merged) => {
@@ -458,6 +460,8 @@ fn render_collected(
                 properties: Default::default(),
                 style: None,
                 inline_overlays: Vec::new(),
+                pad_to_chars: None,
+                truncate_to_chars: None,
             };
             ensure_trailing_newline(&mut entry);
             entries.push(entry);
@@ -537,6 +541,7 @@ fn render_collected(
             for (offset, item) in items[start..end].iter().enumerate() {
                 let i = start + offset;
                 let mut entry = item.clone();
+                entry.normalize_widths();
                 let is_selected = i as i32 == effective_sel;
                 if is_selected {
                     let mut style = entry.style.unwrap_or_default();
@@ -695,11 +700,16 @@ fn render_collected(
             let start = scroll as usize;
             let end = ((scroll + visible) as usize).min(visible_indices.len());
             for &abs_idx in &visible_indices[start..end] {
-                let node = &nodes[abs_idx];
+                // Apply pad/truncate hints and convert any char-unit
+                // overlays to byte offsets *before* the disclosure
+                // prefix is prepended; render_tree_row then byte-shifts
+                // the (now byte-unit) overlays uniformly.
+                let mut node = nodes[abs_idx].clone();
+                node.text.normalize_widths();
                 let item_key = item_keys.get(abs_idx).cloned().unwrap_or_default();
                 let is_expanded =
                     node.has_children && !item_key.is_empty() && prev_expanded.contains(&item_key);
-                let rendered = render_tree_row(node, is_expanded);
+                let rendered = render_tree_row(&node, is_expanded);
                 let mut entry = rendered.entry;
                 let is_selected = abs_idx as i32 == effective_sel_abs;
                 if is_selected {
@@ -919,6 +929,7 @@ fn render_collected(
             // unaffected.
             for raw_entry in raw_entries {
                 let mut e = raw_entry.clone();
+                e.normalize_widths();
                 ensure_trailing_newline(&mut e);
                 entries.push(e);
             }
@@ -957,6 +968,7 @@ pub fn render_hint_bar(entries: &[HintEntry]) -> TextPropertyEntry {
                     ..Default::default()
                 },
                 properties: Default::default(),
+                unit: OffsetUnit::Byte,
             });
         }
         if !entry.label.is_empty() {
@@ -969,6 +981,8 @@ pub fn render_hint_bar(entries: &[HintEntry]) -> TextPropertyEntry {
         properties: Default::default(),
         style: None,
         inline_overlays: overlays,
+        pad_to_chars: None,
+        truncate_to_chars: None,
     }
 }
 
@@ -1000,6 +1014,7 @@ pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyE
                 ..Default::default()
             },
             properties: Default::default(),
+            unit: OffsetUnit::Byte,
         });
     }
 
@@ -1015,6 +1030,7 @@ pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyE
                 ..Default::default()
             },
             properties: Default::default(),
+            unit: OffsetUnit::Byte,
         });
     }
 
@@ -1023,6 +1039,8 @@ pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyE
         properties: Default::default(),
         style: None,
         inline_overlays: overlays,
+        pad_to_chars: None,
+        truncate_to_chars: None,
     }
 }
 
@@ -1077,6 +1095,7 @@ pub fn render_button(label: &str, focused: bool, kind: ButtonKind) -> TextProper
             end: text.len(),
             style,
             properties: Default::default(),
+            unit: OffsetUnit::Byte,
         });
     }
 
@@ -1085,6 +1104,8 @@ pub fn render_button(label: &str, focused: bool, kind: ButtonKind) -> TextProper
         properties: Default::default(),
         style: None,
         inline_overlays: overlays,
+        pad_to_chars: None,
+        truncate_to_chars: None,
     }
 }
 
@@ -1168,6 +1189,7 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
                 ..Default::default()
             },
             properties: Default::default(),
+            unit: OffsetUnit::Byte,
         });
     }
 
@@ -1184,6 +1206,12 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
         properties: node.text.properties.clone(),
         style: node.text.style.clone(),
         inline_overlays: overlays,
+        // pad/truncate hints are consumed by the caller before
+        // render_tree_row is invoked (see normalize_widths in the
+        // Tree match arm). The output entry's text is already
+        // final, so these are cleared.
+        pad_to_chars: None,
+        truncate_to_chars: None,
     };
     RenderedTreeRow {
         entry,
@@ -1345,6 +1373,7 @@ pub fn render_text_input(
                 ..Default::default()
             },
             properties: Default::default(),
+            unit: OffsetUnit::Byte,
         });
     }
 
@@ -1357,6 +1386,7 @@ pub fn render_text_input(
                 ..Default::default()
             },
             properties: Default::default(),
+            unit: OffsetUnit::Byte,
         });
     }
 
@@ -1372,6 +1402,8 @@ pub fn render_text_input(
             properties: Default::default(),
             style: None,
             inline_overlays: overlays,
+            pad_to_chars: None,
+            truncate_to_chars: None,
         },
         cursor_byte_in_entry,
     }
@@ -1495,6 +1527,8 @@ pub fn render_text_area(
             properties: Default::default(),
             style: None,
             inline_overlays: Vec::new(),
+            pad_to_chars: None,
+            truncate_to_chars: None,
         });
     }
     let label_offset: u32 = entries.len() as u32;
@@ -1522,6 +1556,7 @@ pub fn render_text_area(
                     ..Default::default()
                 },
                 properties: Default::default(),
+                unit: OffsetUnit::Byte,
             });
         }
 
@@ -1536,6 +1571,7 @@ pub fn render_text_area(
                     ..Default::default()
                 },
                 properties: Default::default(),
+                unit: OffsetUnit::Byte,
             });
         }
 
@@ -1555,6 +1591,8 @@ pub fn render_text_area(
             properties: Default::default(),
             style: None,
             inline_overlays: overlays,
+            pad_to_chars: None,
+            truncate_to_chars: None,
         });
     }
 
@@ -1614,6 +1652,7 @@ fn merge_inline(merged: &mut TextPropertyEntry, next: &mut TextPropertyEntry) {
             end: overlay.end + shift,
             style: overlay.style,
             properties: overlay.properties,
+            unit: overlay.unit,
         });
     }
     // `style` and `properties` from `next` are dropped — Row inline
@@ -2657,6 +2696,7 @@ mod tests {
                 ..Default::default()
             },
             properties: Default::default(),
+            unit: OffsetUnit::Byte,
         });
         let r = render_tree_row(&node, false);
         // depth=1 → 2 indent + 2 alignment = 4 prefix bytes (ASCII).
@@ -2669,6 +2709,104 @@ mod tests {
             .expect("bold overlay carried through");
         assert_eq!(plugin_overlay.start, 4);
         assert_eq!(plugin_overlay.end, 9);
+    }
+
+    #[test]
+    fn tree_node_pad_to_chars_pads_text_before_prefix_offset_shift() {
+        // depth=0 prefix is "▶ " (1 codepoint glyph + 1 space).
+        // Plugin sends body "x" with pad_to_chars=5; renderer pads
+        // body to "x    " then prepends prefix.
+        let mut node = tnode("x", 0, true);
+        node.text.pad_to_chars = Some(5);
+        let spec = make_tree(vec![node], vec!["x"], -1, 10, vec!["x"], Some("T"));
+        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        assert_eq!(entries.len(), 1);
+        // The full row is prefix + padded body + trailing newline.
+        // Body region must be "x    " (5 columns).
+        let trimmed = entries[0].text.trim_end_matches('\n');
+        assert!(
+            trimmed.ends_with("x    "),
+            "row should end with the padded body, got {trimmed:?}"
+        );
+    }
+
+    #[test]
+    fn tree_node_truncate_to_chars_cuts_body_before_prefix_offset_shift() {
+        let mut node = tnode("abcdefghij", 0, false);
+        node.text.truncate_to_chars = Some(6);
+        let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
+        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let trimmed = entries[0].text.trim_end_matches('\n');
+        // With budget=6, truncation produces "abc..." (3 head chars
+        // + ellipsis), then prefix is prepended.
+        assert!(
+            trimmed.ends_with("abc..."),
+            "row should end with truncated body, got {trimmed:?}"
+        );
+    }
+
+    #[test]
+    fn tree_node_char_unit_overlay_resolves_against_padded_text_and_shifts_by_prefix() {
+        // Body text "x" padded to 5 codepoints — the host pads to
+        // "x    " before resolving overlays. A char-unit overlay at
+        // [0..5] must end up covering the full padded body in bytes,
+        // shifted right by the prefix length.
+        let mut node = tnode("x", 0, false);
+        node.text.pad_to_chars = Some(5);
+        node.text.inline_overlays.push(InlineOverlay {
+            start: 0,
+            end: 5,
+            style: OverlayOptions {
+                bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Char,
+        });
+        let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
+        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let entry = &entries[0];
+        let bold = entry
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("bold overlay carried through");
+        // depth=0, leaf → prefix is two spaces (no glyph). Body
+        // starts at byte 2 and is 5 bytes (ASCII pad), so [2..7].
+        assert_eq!(bold.start, 2);
+        assert_eq!(bold.end, 7);
+    }
+
+    #[test]
+    fn tree_node_char_unit_overlay_with_multibyte_body_resolves_correctly() {
+        // Body text "éxé" — 3 codepoints, 5 bytes. A char-unit
+        // overlay at [1..2] (just the "x") becomes byte [3..4]
+        // within the body, then shifted by leaf prefix (2 bytes).
+        let mut node = tnode("éxé", 0, false);
+        node.text.inline_overlays.push(InlineOverlay {
+            start: 1,
+            end: 2,
+            style: OverlayOptions {
+                bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Char,
+        });
+        let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
+        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let entry = &entries[0];
+        let bold = entry
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("bold overlay carried through");
+        // Prefix is 2 bytes (two ASCII spaces), char→byte [1..2]
+        // resolves to body byte [2..3], then shift +2 → [4..5].
+        let trimmed = entry.text.trim_end_matches('\n');
+        assert_eq!(bold.start, 4);
+        assert_eq!(bold.end, 5);
+        assert_eq!(&trimmed[bold.start..bold.end], "x");
     }
 
     #[test]

@@ -607,11 +607,22 @@ fn parse_text_property_entry(
         })
         .unwrap_or_default();
 
+    let pad_to_chars: Option<u32> = obj
+        .get::<_, f64>("padToChars")
+        .ok()
+        .map(|v| v.max(0.0) as u32);
+    let truncate_to_chars: Option<u32> = obj
+        .get::<_, f64>("truncateToChars")
+        .ok()
+        .map(|v| v.max(0.0) as u32);
+
     Some(TextPropertyEntry {
         text,
         properties,
         style,
         inline_overlays,
+        pad_to_chars,
+        truncate_to_chars,
     })
 }
 
@@ -4077,6 +4088,8 @@ impl JsEditorApi {
                 properties: e.properties.unwrap_or_default(),
                 style: e.style,
                 inline_overlays: e.inline_overlays.unwrap_or_default(),
+                pad_to_chars: e.pad_to_chars,
+                truncate_to_chars: e.truncate_to_chars,
             })
             .collect();
 
@@ -4128,6 +4141,8 @@ impl JsEditorApi {
                 properties: e.properties.unwrap_or_default(),
                 style: e.style,
                 inline_overlays: e.inline_overlays.unwrap_or_default(),
+                pad_to_chars: e.pad_to_chars,
+                truncate_to_chars: e.truncate_to_chars,
             })
             .collect();
 
@@ -4180,6 +4195,8 @@ impl JsEditorApi {
                 properties: e.properties.unwrap_or_default(),
                 style: e.style,
                 inline_overlays: e.inline_overlays.unwrap_or_default(),
+                pad_to_chars: e.pad_to_chars,
+                truncate_to_chars: e.truncate_to_chars,
             })
             .collect();
 
