@@ -317,6 +317,21 @@ impl PluginManager {
         self.inner.as_ref().map(|m| m.state_snapshot_handle())
     }
 
+    /// Streaming-search handle registry shared with the plugin runtime.
+    /// Producers spawned by `BeginSearch` look up the handle here and write
+    /// directly into its `SearchHandleState`; consumers (the plugin) drain
+    /// the same state via `_searchHandleTake`.
+    #[cfg(feature = "plugins")]
+    pub fn search_handles_handle(&self) -> Option<fresh_core::api::SearchHandleRegistry> {
+        self.inner.as_ref().map(|m| m.search_handles_handle())
+    }
+
+    /// Streaming-search registry accessor (no-op build).
+    #[cfg(not(feature = "plugins"))]
+    pub fn search_handles_handle(&self) -> Option<fresh_core::api::SearchHandleRegistry> {
+        None
+    }
+
     /// Execute a plugin action asynchronously.
     #[cfg(feature = "plugins")]
     pub fn execute_action_async(

@@ -90,7 +90,7 @@ use anyhow::{anyhow, Result};
 use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
     GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
-    PluginCommand, PluginResponse,
+    PluginCommand, PluginResponse, SearchHandleRegistry, SearchHandleState, SearchTakeResult,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -794,6 +794,11 @@ pub struct JsEditorApi {
     /// same Runtime so init.ts can reach another plugin's typed API.
     #[qjs(skip_trace)]
     plugin_api_exports: PluginApiExports,
+    /// Streaming-search handle registry. Shared with the editor thread so
+    /// host searcher tasks write into the same `SearchHandleState` the JS
+    /// side drains via `_searchHandleTake`.
+    #[qjs(skip_trace)]
+    search_handles: SearchHandleRegistry,
     pub plugin_name: String,
 }
 
@@ -4729,6 +4734,108 @@ impl JsEditorApi {
         id
     }
 
+    /// Begin a streaming project-wide search and return a `SearchHandle`.
+    /// The producer (host) writes matches at full speed into shared state;
+    /// the consumer drains via `handle.take()` at its own cadence. Call
+    /// `handle.cancel()` to abort. Replaces `grepProjectStreaming`'s
+    /// per-chunk callback dispatch with a pull-based observable.
+    #[plugin_api(
+        js_name = "beginSearch",
+        ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean }): SearchHandle"
+    )]
+    #[qjs(rename = "_beginSearch")]
+    pub fn begin_search(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        max_results: u32,
+        whole_words: bool,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        // Register the shared state before sending the command so the
+        // editor's task always sees an entry on lookup.
+        let entry = Arc::new(SearchHandleState::new());
+        if let Ok(mut map) = self.search_handles.lock() {
+            map.insert(id, entry);
+        }
+        let _ = self.command_sender.send(PluginCommand::BeginSearch {
+            pattern,
+            fixed_string,
+            case_sensitive,
+            max_results: max_results as usize,
+            whole_words,
+            handle_id: id,
+        });
+        id
+    }
+
+    /// Drain pending matches for a search handle. Returns the matches that
+    /// have arrived since the previous call plus terminal-state flags.
+    /// After `done` is observed, the handle entry is removed from the
+    /// registry.
+    #[plugin_api(ts_return = "SearchTakeResult")]
+    #[qjs(rename = "_searchHandleTake")]
+    pub fn search_handle_take<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        handle_id: u64,
+    ) -> rquickjs::Result<Value<'js>> {
+        let entry = self
+            .search_handles
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&handle_id).cloned());
+        let result = match entry {
+            Some(handle) => {
+                // Drain under the lock — O(1) `mem::take` of the pending vec.
+                let mut state = match handle.state.lock() {
+                    Ok(s) => s,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                let matches = std::mem::take(&mut state.pending);
+                let snapshot = SearchTakeResult {
+                    matches,
+                    done: state.done,
+                    total_seen: state.total_seen,
+                    truncated: state.truncated,
+                    error: state.error.clone(),
+                };
+                let done = snapshot.done;
+                drop(state);
+                if done {
+                    if let Ok(mut map) = self.search_handles.lock() {
+                        map.remove(&handle_id);
+                    }
+                }
+                snapshot
+            }
+            None => SearchTakeResult {
+                matches: Vec::new(),
+                done: true,
+                total_seen: 0,
+                truncated: false,
+                error: None,
+            },
+        };
+        rquickjs_serde::to_value(ctx, &result)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Cancel a streaming search. Idempotent and safe to call after the
+    /// handle has been removed from the registry.
+    #[qjs(rename = "_searchHandleCancel")]
+    pub fn search_handle_cancel(&self, handle_id: u64) {
+        if let Ok(map) = self.search_handles.lock() {
+            if let Some(entry) = map.get(&handle_id) {
+                entry
+                    .cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
     /// Replace matches in a file's buffer (async)
     /// Opens the file if not already in a buffer, applies edits via the buffer model,
     /// and saves. All edits are grouped as a single undo action.
@@ -5168,6 +5275,8 @@ pub struct QuickJsBackend {
     /// JS Object). Shared across every JsEditorApi instance on this
     /// Runtime.
     plugin_api_exports: PluginApiExports,
+    /// Streaming-search handle registry shared with the editor thread.
+    search_handles: SearchHandleRegistry,
 }
 
 impl Drop for QuickJsBackend {
@@ -5209,12 +5318,14 @@ impl QuickJsBackend {
     ) -> Result<Self> {
         let async_resource_owners: AsyncResourceOwners =
             Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let search_handles: SearchHandleRegistry = Arc::new(std::sync::Mutex::new(HashMap::new()));
         Self::with_state_responses_and_resources(
             state_snapshot,
             command_sender,
             pending_responses,
             services,
             async_resource_owners,
+            search_handles,
         )
     }
 
@@ -5226,6 +5337,7 @@ impl QuickJsBackend {
         pending_responses: PendingResponses,
         services: Arc<dyn fresh_core::services::PluginServiceBridge>,
         async_resource_owners: AsyncResourceOwners,
+        search_handles: SearchHandleRegistry,
     ) -> Result<Self> {
         tracing::debug!("QuickJsBackend::new: creating QuickJS runtime");
 
@@ -5293,6 +5405,7 @@ impl QuickJsBackend {
             registered_language_configs,
             registered_lsp_servers,
             plugin_api_exports,
+            search_handles,
         };
 
         // Initialize main context (for internal utilities if needed)
@@ -5338,6 +5451,7 @@ impl QuickJsBackend {
                 registered_language_configs: Rc::clone(&registered_language_configs),
                 registered_lsp_servers: Rc::clone(&registered_lsp_servers),
                 plugin_api_exports: Rc::clone(&plugin_api_exports),
+                search_handles: Arc::clone(&self.search_handles),
                 plugin_name: plugin_name.to_string(),
             };
             let editor = rquickjs::Class::<JsEditorApi>::instance(ctx.clone(), js_api)?;
@@ -5570,6 +5684,25 @@ impl QuickJsBackend {
                 editor.reloadGrammars = _wrapAsync("_reloadGrammarsStart", "reloadGrammars");
                 editor.grepProject = _wrapAsync("_grepProjectStart", "grepProject");
                 editor.replaceInFile = _wrapAsync("_replaceInFileStart", "replaceInFile");
+
+                // Pull-based streaming search. Producers (host searcher tasks)
+                // write into shared state at full speed; the consumer drains
+                // it via take() at its own cadence — no per-chunk JS dispatch.
+                editor.beginSearch = function(pattern, opts) {
+                    opts = opts || {};
+                    const fixedString = opts.fixedString !== undefined ? opts.fixedString : true;
+                    const caseSensitive = opts.caseSensitive !== undefined ? opts.caseSensitive : true;
+                    const maxResults = opts.maxResults || 10000;
+                    const wholeWords = opts.wholeWords || false;
+                    const handleId = editor._beginSearch(
+                        pattern, fixedString, caseSensitive, maxResults, wholeWords
+                    );
+                    return {
+                        searchId: handleId,
+                        take: function() { return editor._searchHandleTake(handleId); },
+                        cancel: function() { editor._searchHandleCancel(handleId); }
+                    };
+                };
 
                 // Streaming grep: takes a progress callback, returns a thenable with searchId
                 editor.grepProjectStreaming = function(pattern, opts, progressCallback) {

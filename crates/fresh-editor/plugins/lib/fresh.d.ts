@@ -961,6 +961,34 @@ type WidgetMutation = {
 	widgetKey: string;
 	keys: Array<string>;
 };
+type SearchTakeResult = {
+	/**
+	* Matches discovered since the previous take()
+	*/
+	matches: Array<GrepMatch>;
+	/**
+	* Whether the producer has finished (no more matches will arrive)
+	*/
+	done: boolean;
+	/**
+	* Total number of matches the producer has emitted across all batches
+	* (including ones already drained on prior take() calls)
+	*/
+	totalSeen: number;
+	/**
+	* Whether the producer stopped early because it hit `maxResults`
+	*/
+	truncated: boolean;
+	/**
+	* Producer error, if any (e.g., invalid regex). When set, `done` is also true.
+	*/
+	error?: string | null;
+};
+interface SearchHandle {
+	searchId: number;
+	take(): SearchTakeResult;
+	cancel(): void;
+}
 type AuthorityFilesystem = {
 	kind: "local";
 };
@@ -2447,6 +2475,19 @@ interface EditorAPI {
 	}, progressCallback?: (matches: GrepMatch[], done: boolean) => void): PromiseLike<GrepMatch[]> & {
 		searchId: number;
 	};
+	/**
+	* Begin a streaming project-wide search and return a `SearchHandle`.
+	* The producer (host) writes matches at full speed into shared state;
+	* the consumer drains via `handle.take()` at its own cadence. Call
+	* `handle.cancel()` to abort. Replaces `grepProjectStreaming`'s
+	* per-chunk callback dispatch with a pull-based observable.
+	*/
+	beginSearch(pattern: string, opts?: {
+		fixedString?: boolean;
+		caseSensitive?: boolean;
+		maxResults?: number;
+		wholeWords?: boolean;
+	}): SearchHandle;
 	/**
 	* Replace matches in a file's buffer (async)
 	* Opens the file if not already in a buffer, applies edits via the buffer model,

@@ -11,6 +11,7 @@ use fresh_core::api::{
     GrepMatch, JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse,
     ReplaceResult, ViewTransformPayload,
 };
+use std::sync::Arc;
 
 use super::Editor;
 
@@ -2587,6 +2588,291 @@ impl Editor {
 
         let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
         self.plugin_manager.resolve_callback(callback_id, json);
+    }
+
+    // ==================== Pull-Based Streaming Search ====================
+
+    /// Handle BeginSearch: spawn the parallel searcher tasks for a streaming
+    /// search whose `SearchHandleState` was pre-registered by the plugin in
+    /// the shared `SearchHandleRegistry`. Producers write matches directly
+    /// into the handle's `pending` vec; the consumer drains via
+    /// `_searchHandleTake` at its own cadence — there are no per-chunk JS
+    /// dispatches. Aborts when the handle's `cancel` flag flips (set by
+    /// `_searchHandleCancel` or by the next `BeginSearch` superseding this
+    /// one).
+    pub(super) fn handle_begin_search(
+        &mut self,
+        pattern: String,
+        fixed_string: bool,
+        case_sensitive: bool,
+        max_results: usize,
+        whole_words: bool,
+        handle_id: u64,
+    ) {
+        // Look up the handle the plugin pre-registered. If it's missing
+        // (registry races with a unit test), drop the request — there's no
+        // observer to deliver results to.
+        let Some(registry) = self.plugin_manager.search_handles_handle() else {
+            return;
+        };
+        let entry = match registry.lock() {
+            Ok(map) => map.get(&handle_id).cloned(),
+            Err(_) => None,
+        };
+        let Some(handle) = entry else {
+            tracing::warn!(
+                "BeginSearch: no handle registered for id {} — dropping request",
+                handle_id
+            );
+            return;
+        };
+
+        // Helper: mark the handle as terminal so the consumer's next take()
+        // observes `done = true` and the JS wrapper stops pumping.
+        let finish_with = |handle: &Arc<fresh_core::api::SearchHandleState>,
+                           truncated: bool,
+                           error: Option<String>| {
+            let mut state = match handle.state.lock() {
+                Ok(s) => s,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.done = true;
+            if truncated {
+                state.truncated = true;
+            }
+            if let Some(e) = error {
+                state.error = Some(e);
+            }
+        };
+
+        if pattern.is_empty() {
+            finish_with(&handle, false, None);
+            return;
+        }
+
+        let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
+        let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
+            Ok(re) => re,
+            Err(e) => {
+                finish_with(&handle, false, Some(format!("Invalid regex: {}", e)));
+                return;
+            }
+        };
+
+        // Snapshot dirty buffers' search plans on the main thread (same
+        // reasoning as the legacy streaming path: piece tree isn't Send).
+        let mut dirty_plans: std::collections::HashMap<
+            std::path::PathBuf,
+            (BufferId, crate::model::buffer::HybridSearchPlan),
+        > = std::collections::HashMap::new();
+        for (bid, state) in &mut self.buffers {
+            if let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) {
+                if state.buffer.is_modified() {
+                    if let Some(plan) = state.buffer.search_hybrid_plan() {
+                        dirty_plans.insert(path, (*bid, plan));
+                    }
+                }
+            }
+        }
+
+        let filesystem = self.authority.filesystem.clone();
+        let filesystem_walker = self.authority.filesystem.clone();
+        let cwd = self.working_dir.clone();
+        let query_len = pattern.len();
+
+        let Some(runtime) = &self.tokio_runtime else {
+            finish_with(
+                &handle,
+                false,
+                Some("No tokio runtime available".to_string()),
+            );
+            return;
+        };
+
+        let handle_for_task = Arc::clone(&handle);
+        runtime.spawn(async move {
+            let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<std::path::PathBuf>(256);
+
+            let walker_handle = Arc::clone(&handle_for_task);
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = filesystem_walker.walk_files(
+                    &cwd,
+                    IGNORED_DIRS,
+                    &walker_handle.cancel,
+                    &mut |path, _rel| path_tx.blocking_send(path.to_path_buf()).is_ok(),
+                ) {
+                    tracing::warn!("BeginSearch walk_files failed: {}", e);
+                }
+            });
+
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
+            let match_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let mut joins: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+            while let Some(file_path) = path_rx.recv().await {
+                if handle_for_task
+                    .cancel
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    break;
+                }
+                if match_count.load(std::sync::atomic::Ordering::Relaxed) >= max_results {
+                    break;
+                }
+
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+
+                let fs = filesystem.clone();
+                let match_count = match_count.clone();
+                let regex = regex.clone();
+                let pattern = pattern.clone();
+                let fs_opts = fs_opts.clone();
+                let dirty_plan = dirty_plans.remove(&file_path);
+                let task_handle = Arc::clone(&handle_for_task);
+
+                // Push matches into the shared state under the handle's
+                // mutex. Lock contention is bounded — the consumer's
+                // `take()` is O(1) (a `mem::take` swap of the pending
+                // vec).
+                let push_matches =
+                    move |task_handle: &Arc<fresh_core::api::SearchHandleState>,
+                          file_matches: Vec<GrepMatch>| {
+                        let count = file_matches.len();
+                        let mut state = match task_handle.state.lock() {
+                            Ok(s) => s,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        state.pending.extend(file_matches);
+                        state.total_seen += count;
+                    };
+
+                let join = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+
+                    if task_handle
+                        .cancel
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return;
+                    }
+                    let current = match_count.load(std::sync::atomic::Ordering::Relaxed);
+                    if current >= max_results {
+                        return;
+                    }
+                    let remaining = max_results - current;
+
+                    if let Some((bid, plan)) = dirty_plan {
+                        let matches = match plan
+                            .execute(&*fs, &pattern, &fs_opts, &regex, remaining, query_len)
+                        {
+                            Ok(m) => m,
+                            Err(e) => {
+                                tracing::debug!(
+                                    "BeginSearch: hybrid search failed {:?}: {}",
+                                    file_path,
+                                    e
+                                );
+                                return;
+                            }
+                        };
+
+                        if !matches.is_empty() {
+                            let file_str = file_path.to_string_lossy().to_string();
+                            let file_matches: Vec<GrepMatch> = matches
+                                .into_iter()
+                                .map(|m| GrepMatch {
+                                    file: file_str.clone(),
+                                    buffer_id: bid.0,
+                                    byte_offset: m.byte_offset,
+                                    length: m.length,
+                                    line: m.line,
+                                    column: m.column,
+                                    context: m.context,
+                                })
+                                .collect();
+                            match_count.fetch_add(
+                                file_matches.len(),
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            push_matches(&task_handle, file_matches);
+                        }
+                    } else {
+                        let fs_opts = crate::model::filesystem::FileSearchOptions {
+                            fixed_string,
+                            case_sensitive,
+                            whole_word: whole_words,
+                            max_matches: remaining,
+                        };
+                        let mut cursor = crate::model::filesystem::FileSearchCursor::new();
+                        while !cursor.done {
+                            if task_handle
+                                .cancel
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                break;
+                            }
+                            let current = match_count.load(std::sync::atomic::Ordering::Relaxed);
+                            if current >= max_results {
+                                break;
+                            }
+
+                            let batch =
+                                match fs.search_file(&file_path, &pattern, &fs_opts, &mut cursor) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            "search_file failed {:?}: {}",
+                                            file_path,
+                                            e
+                                        );
+                                        break;
+                                    }
+                                };
+                            if batch.is_empty() {
+                                continue;
+                            }
+
+                            match_count
+                                .fetch_add(batch.len(), std::sync::atomic::Ordering::Relaxed);
+                            let file_str = file_path.to_string_lossy().to_string();
+                            let file_matches: Vec<GrepMatch> = batch
+                                .into_iter()
+                                .map(|m| GrepMatch {
+                                    file: file_str.clone(),
+                                    buffer_id: 0,
+                                    byte_offset: m.byte_offset,
+                                    length: m.length,
+                                    line: m.line,
+                                    column: m.column,
+                                    context: m.context,
+                                })
+                                .collect();
+                            push_matches(&task_handle, file_matches);
+                        }
+                    }
+                });
+
+                joins.push(join);
+            }
+
+            for join in joins {
+                drop(join.await);
+            }
+
+            let total = match_count.load(std::sync::atomic::Ordering::Relaxed);
+            let truncated = total >= max_results;
+            let mut state = match handle_for_task.state.lock() {
+                Ok(s) => s,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if truncated {
+                state.truncated = true;
+            }
+            state.done = true;
+        });
     }
 
     // ==================== Streaming Grep ====================

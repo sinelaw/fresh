@@ -12,7 +12,7 @@
 use crate::backend::quickjs_backend::{AsyncResourceOwners, PendingResponses, TsPluginInfo};
 use crate::backend::QuickJsBackend;
 use anyhow::{anyhow, Result};
-use fresh_core::api::{EditorStateSnapshot, JsCallbackId, PluginCommand};
+use fresh_core::api::{EditorStateSnapshot, JsCallbackId, PluginCommand, SearchHandleRegistry};
 use fresh_core::hooks::HookArgs;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -217,6 +217,13 @@ pub struct PluginThreadHandle {
     /// JsEditorApi inserts entries at creation time; deliver_response reads them
     /// when the editor confirms resource creation to track the actual IDs.
     async_resource_owners: AsyncResourceOwners,
+
+    /// Streaming-search handle registry. JsEditorApi's `_beginSearch`
+    /// inserts an `Arc<SearchHandleState>`; the editor's `BeginSearch`
+    /// handler looks it up by handle id so its parallel searcher tasks
+    /// write directly into the same shared state the JS side drains via
+    /// `_searchHandleTake`.
+    search_handles: SearchHandleRegistry,
 }
 
 impl PluginThreadHandle {
@@ -239,6 +246,11 @@ impl PluginThreadHandle {
         let async_resource_owners: AsyncResourceOwners =
             Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let thread_async_resource_owners = Arc::clone(&async_resource_owners);
+
+        // Streaming-search handle registry shared with the editor thread.
+        let search_handles: SearchHandleRegistry =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let thread_search_handles = Arc::clone(&search_handles);
 
         // Create channel for requests (unbounded allows sync send, async recv)
         let (request_sender, request_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -273,6 +285,7 @@ impl PluginThreadHandle {
                 thread_pending_responses,
                 services.clone(),
                 thread_async_resource_owners,
+                thread_search_handles,
             ) {
                 Ok(rt) => {
                     tracing::debug!("Plugin thread: QuickJS runtime created successfully");
@@ -310,7 +323,13 @@ impl PluginThreadHandle {
             pending_responses,
             command_receiver,
             async_resource_owners,
+            search_handles,
         })
+    }
+
+    /// Accessor for the streaming-search handle registry.
+    pub fn search_handles_handle(&self) -> SearchHandleRegistry {
+        Arc::clone(&self.search_handles)
     }
 
     /// Check if the plugin thread is still alive

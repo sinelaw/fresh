@@ -2838,6 +2838,28 @@ pub enum PluginCommand {
         callback_id: JsCallbackId,
     },
 
+    /// Project-wide streaming search using a pull-based handle.
+    ///
+    /// The plugin allocates `handle_id` and registers an `Arc<SearchHandleState>`
+    /// in the shared `SearchHandleRegistry` before sending this command. The
+    /// editor's searcher tasks look up the same entry and write matches
+    /// directly into its `pending` vec — no per-chunk JS dispatch. The plugin
+    /// drains state via `editor._searchHandleTake(handle_id)` at its own pace.
+    BeginSearch {
+        /// Search pattern
+        pattern: String,
+        /// Whether the pattern is a fixed string (true) or regex (false)
+        fixed_string: bool,
+        /// Whether the search is case-sensitive
+        case_sensitive: bool,
+        /// Maximum number of results before the search self-truncates
+        max_results: usize,
+        /// Whether to match whole words only
+        whole_words: bool,
+        /// Handle ID — key into the shared `SearchHandleRegistry`
+        handle_id: u64,
+    },
+
     /// Project-wide streaming grep search (async, parallel)
     /// Like GrepProject but streams results incrementally via progress callback.
     /// Searches files in parallel using tokio tasks, sending per-file results
@@ -3224,6 +3246,75 @@ pub struct GrepMatch {
     /// The matched line content (for display)
     pub context: String,
 }
+
+/// Per-call result from `SearchHandle.take()` — the matches accumulated since
+/// the previous call plus terminal-state flags.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct SearchTakeResult {
+    /// Matches discovered since the previous take()
+    pub matches: Vec<GrepMatch>,
+    /// Whether the producer has finished (no more matches will arrive)
+    pub done: bool,
+    /// Total number of matches the producer has emitted across all batches
+    /// (including ones already drained on prior take() calls)
+    #[ts(type = "number")]
+    pub total_seen: usize,
+    /// Whether the producer stopped early because it hit `maxResults`
+    pub truncated: bool,
+    /// Producer error, if any (e.g., invalid regex). When set, `done` is also true.
+    #[ts(optional, type = "string | null")]
+    pub error: Option<String>,
+}
+
+/// Inner state of a streaming search, written by the host's parallel
+/// searchers and drained by the plugin via `SearchHandle.take()`. The plugin
+/// observes deltas (`mem::take` on `pending`) at its own cadence; producers
+/// write at full speed without per-chunk dispatches.
+#[derive(Debug, Default)]
+pub struct SearchState {
+    /// Matches accumulated since the consumer's last drain
+    pub pending: Vec<GrepMatch>,
+    /// Total matches the producer has emitted across the search's lifetime
+    pub total_seen: usize,
+    /// Set when the producer stopped early due to hitting max_results
+    pub truncated: bool,
+    /// Set when the producer is fully done — no more writes will occur
+    pub done: bool,
+    /// Producer error, if any (final state)
+    pub error: Option<String>,
+}
+
+/// A search handle's shared state plus its cancellation flag. Owned by an
+/// `Arc` so producers (host searcher tasks) and consumers (the JS plugin via
+/// the registry) can both reference it.
+#[derive(Debug)]
+pub struct SearchHandleState {
+    pub state: std::sync::Mutex<SearchState>,
+    pub cancel: std::sync::atomic::AtomicBool,
+}
+
+impl SearchHandleState {
+    pub fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(SearchState::default()),
+            cancel: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+impl Default for SearchHandleState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Registry mapping a handle ID to its shared `SearchHandleState`. Shared
+/// between the JS thread (where `JsEditorApi` registers handles and serves
+/// `take()`/`cancel()`) and the editor thread (where the host's searcher
+/// tasks write into the same state).
+pub type SearchHandleRegistry = Arc<std::sync::Mutex<HashMap<u64, Arc<SearchHandleState>>>>;
 
 /// Result from replacing matches in a buffer
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -5225,5 +5316,134 @@ mod tests {
             PluginCommand::KillHostProcess { process_id } => assert_eq!(process_id, 1234),
             other => panic!("expected KillHostProcess, got {:?}", other),
         }
+    }
+
+    // ==================== SearchHandle behavior ====================
+
+    fn dummy_match(line: usize) -> GrepMatch {
+        GrepMatch {
+            file: "fixture.rs".to_string(),
+            buffer_id: 0,
+            byte_offset: 0,
+            length: 4,
+            line,
+            column: 1,
+            context: "match".to_string(),
+        }
+    }
+
+    /// Pull-based handle batches matches between drains: a producer that
+    /// pushes N matches across multiple writes hands them to the consumer
+    /// in a single take(), and a follow-up take() with no new writes
+    /// returns an empty batch — proving the architectural property the
+    /// new API was built around (no per-chunk dispatch).
+    #[test]
+    fn search_handle_batches_between_takes() {
+        let handle = Arc::new(SearchHandleState::new());
+
+        // Three independent writer batches simulate three searcher tasks
+        // pushing into the shared state.
+        for chunk in [vec![dummy_match(1), dummy_match(2)], vec![dummy_match(3)]] {
+            let count = chunk.len();
+            let mut state = handle.state.lock().unwrap();
+            state.pending.extend(chunk);
+            state.total_seen += count;
+        }
+
+        // First take drains everything written so far.
+        let drained: Vec<_> = {
+            let mut s = handle.state.lock().unwrap();
+            std::mem::take(&mut s.pending)
+        };
+        assert_eq!(drained.len(), 3);
+        assert_eq!(handle.state.lock().unwrap().total_seen, 3);
+
+        // Second take with no producer activity yields an empty batch.
+        let empty: Vec<_> = {
+            let mut s = handle.state.lock().unwrap();
+            std::mem::take(&mut s.pending)
+        };
+        assert!(empty.is_empty());
+    }
+
+    /// `cancel` is a one-way latch visible to producers and consumers.
+    /// Setting it does not implicitly mark `done` — completion is the
+    /// producer's responsibility — but a producer observing the flag
+    /// should stop pushing.
+    #[test]
+    fn search_handle_cancel_is_observable() {
+        let handle = Arc::new(SearchHandleState::new());
+        assert!(!handle.cancel.load(std::sync::atomic::Ordering::Relaxed));
+
+        handle
+            .cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        assert!(handle.cancel.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!handle.state.lock().unwrap().done);
+    }
+
+    /// The terminal state transition: producers flip `done = true` once
+    /// no more matches will arrive, with `truncated` reflecting whether
+    /// the search hit `max_results`. Consumers learn the search is
+    /// finished from the same `take()` that drains the final batch.
+    #[test]
+    fn search_handle_done_transition_is_visible_to_consumer() {
+        let handle = Arc::new(SearchHandleState::new());
+
+        // Producer pushes a final batch, then marks done.
+        {
+            let mut s = handle.state.lock().unwrap();
+            s.pending.push(dummy_match(7));
+            s.total_seen += 1;
+            s.truncated = true;
+            s.done = true;
+        }
+
+        let (matches, done, truncated) = {
+            let mut s = handle.state.lock().unwrap();
+            (std::mem::take(&mut s.pending), s.done, s.truncated)
+        };
+
+        assert_eq!(matches.len(), 1);
+        assert!(done);
+        assert!(truncated);
+    }
+
+    /// Producers and consumers must be able to interleave without
+    /// blocking each other longer than a `mem::take` swap. This test
+    /// drives writes from a worker thread while the main thread drains;
+    /// it asserts the consumer eventually sees every match. With a
+    /// per-chunk dispatch model an analogous test would deadlock or
+    /// drop matches; with the pull model it converges.
+    #[test]
+    fn search_handle_concurrent_producer_consumer() {
+        let handle = Arc::new(SearchHandleState::new());
+        let producer = Arc::clone(&handle);
+        let writer = std::thread::spawn(move || {
+            for line in 1..=200 {
+                let mut s = producer.state.lock().unwrap();
+                s.pending.push(dummy_match(line));
+                s.total_seen += 1;
+            }
+            producer.state.lock().unwrap().done = true;
+        });
+
+        let mut drained: Vec<GrepMatch> = Vec::new();
+        loop {
+            let (mut batch, done) = {
+                let mut s = handle.state.lock().unwrap();
+                (std::mem::take(&mut s.pending), s.done)
+            };
+            drained.append(&mut batch);
+            if done {
+                let mut tail = handle.state.lock().unwrap();
+                drained.append(&mut std::mem::take(&mut tail.pending));
+                break;
+            }
+            std::thread::yield_now();
+        }
+        writer.join().unwrap();
+        assert_eq!(drained.len(), 200);
     }
 }

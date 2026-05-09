@@ -22,9 +22,10 @@ use fresh_core::api::{
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, SpawnResult,
-    SplitSnapshot, TerminalResult, TextPropertiesAtCursor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult,
+    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
+    TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
+    VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -62,6 +63,12 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Grep/Replace types
         "GrepMatch" => Some(GrepMatch::decl(&cfg)),
         "ReplaceResult" => Some(ReplaceResult::decl(&cfg)),
+        "SearchTakeResult" => Some(SearchTakeResult::decl(&cfg)),
+        // SearchHandle is the JS-side wrapper over a numeric handle id.
+        // The Rust type can't be exported (non-serializable runtime state).
+        "SearchHandle" => Some(
+            "interface SearchHandle { searchId: number; take(): SearchTakeResult; cancel(): void; }".to_string(),
+        ),
 
         // Terminal types
         "TerminalResult" => Some(TerminalResult::decl(&cfg)),
@@ -262,6 +269,9 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "WidgetSpec",     // Used by mountWidgetPanel/updateWidgetPanel
     "WidgetAction",   // Used by widgetCommand
     "WidgetMutation", // Used by widgetMutate
+    // Streaming-search pull handle (referenced via ts_raw on beginSearch)
+    "SearchTakeResult",
+    "SearchHandle",
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro

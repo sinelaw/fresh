@@ -1559,6 +1559,24 @@ impl Editor {
                 );
             }
 
+            PluginCommand::BeginSearch {
+                pattern,
+                fixed_string,
+                case_sensitive,
+                max_results,
+                whole_words,
+                handle_id,
+            } => {
+                self.handle_begin_search(
+                    pattern,
+                    fixed_string,
+                    case_sensitive,
+                    max_results,
+                    whole_words,
+                    handle_id,
+                );
+            }
+
             PluginCommand::ReplaceInBuffer {
                 file_path,
                 matches,
