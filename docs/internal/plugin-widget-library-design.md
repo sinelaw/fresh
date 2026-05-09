@@ -369,32 +369,15 @@ those are done.
 
 ## 4. Roadmap: what to build next, in order
 
-Most items build on the existing plumbing; only the Compositor
-(§4.2) and Spec-as-state persistence (§4.3) are major architectural
-lifts.
+The blocking work is the Compositor (§4.1), then plugin migrations
+that bring more surfaces under the widget runtime (§4.2), then
+Settings adoption (§4.3). The smaller follow-ups (§4.4) move
+the existing surface forward without architectural lifts.
 
-### 4.1 Role-based theming
+§4.5 covers items previously elevated in the roadmap that are now
+deferred — pick them up when a real consumer materializes.
 
-Today widgets pick theme keys themselves (constants in
-`widgets/render.rs`). Move to a `Role` enum + a `Role → theme key`
-mapping table:
-
-```rust
-pub enum Role {
-    HelpKey, ToggleOn, FocusedFg, FocusedBg, DangerFg, InputBg,
-    PlaceholderFg, ListSelectedBg, …
-}
-
-fn role_to_theme_key(role: Role, theme_overrides: &Option<HashMap<...>>) -> &str { … }
-```
-
-Plus a per-spec `theme: Option<HashMap<Role, OverlayColorSpec>>` that
-plugins can pass to override individual roles. The translation lives
-in one place (renderer); accessibility variants (high-contrast,
-color-blind) drop in by changing the role-resolution table without
-touching plugin code.
-
-### 4.2 Compositor / `Layer` (the big one)
+### 4.1 Compositor / `Layer` (the big one)
 
 This is §7 of this doc. Unifies `Popup`, `Prompt`,
 `showActionPopup`, hover tooltips, completion popup, plugin-mounted
@@ -402,6 +385,14 @@ modals/tooltips/context-menus into one `Component` trait + Z-ordered
 stack + `mountLayer` IPC. Subsumes a lot of duplicated focus / dismiss
 / event-routing logic. Touches a lot of files. Worth a dedicated
 multi-PR effort.
+
+Why this is the central blocker: the goal is "all plugin UI is
+declarative widgets". Today `editor.startPrompt` and friends work
+fine, but they don't share dismiss / focus / keymap rules with
+the widget runtime. The keymap-claim inversion from §8 (host
+claims widget keys *before* `defineMode` sees them) only reaches
+end-state across panels *and* overlays once one Compositor owns
+the focus stack.
 
 Key invariants to preserve during migration:
 * `editor.startPrompt`, `editor.showActionPopup` keep working —
@@ -412,41 +403,11 @@ Key invariants to preserve during migration:
   `event-dispatch-architecture.md` Phase 2; if that's not in tree
   yet, it lands first.
 
-### 4.3 Spec-as-state persistence
+### 4.2 Plugin migrations beyond `search_replace.ts`
 
-§10 tells the full story. Concretely:
+This is how reach (goal #5: same shape across every panel) gets
+done. Heaviest payoff order, per call-site density:
 
-* Per-workspace `state.json` gains a `widget_panels: { [panel_id]:
-  { spec, instance_states, focus_key } }` section. Persisted on
-  panel update; loaded on workspace open.
-* A new `editor_init` step iterates persisted panels: emits the
-  stored spec to whichever plugin "owns" it (the plugin's `init.ts`
-  can opt in by registering a panel-id → handler mapping).
-* Theme switching: on `theme_changed`, host iterates
-  `widget_registry.panel_ids()` and calls `rerender_widget_panel`
-  for each. Plugin not involved.
-* Replay capture: `--record-spec-stream` flag dumps every
-  Mount/Update/Mutate/WidgetEvent to a JSONL file. A `replay-spec`
-  binary feeds the file to a stub plugin and snapshots the
-  rendered output.
-
-Headless rendering and `embed` cross-plugin composition both fall
-out of "Spec is data" once the persistence layer exists.
-
-### 4.4 Accessibility
-
-* `lib-widgets.i18n.json` for default labels (`Confirm`, `Cancel`,
-  `Toggle`, …) translatable independent of plugins.
-* `aria` string per widget, emitted on focus change.
-* OSC 52 / IDE bridge: widget focus changes route through
-  `view/accessibility.rs` (new) which already serializes selection
-  for clipboard.
-* Motion-reduce: gate the two library animations (focus-flash,
-  hover-fade) on `theme.accessibility.reduce_motion`.
-
-### 4.5 Plugin migrations beyond `search_replace.ts`
-
-The heaviest payoff order, per call-site density:
 * `git_log.ts` — Toolbar + Table.
 * `lib/finder.ts` — already a panel manager; convert to `List` +
   `Prompt` (after Layer lands).
@@ -461,7 +422,12 @@ state machines (e.g. `search_replace`'s `focusPanel`/`queryField`/
 `optionIndex` triple), and (b) reconciling event flow with whatever
 async work the plugin already does (debounce, LSP, git).
 
-### 4.6 Settings adoption
+`Toolbar` (composes Button + Toggle into a horizontal Row) and
+`Table` (`git_log` log, `find_references`, audit) need to land as
+new widget kinds during this phase. `Transient` (Magit-style menu)
+falls out of the Compositor work.
+
+### 4.3 Settings adoption
 
 §11 says shared renderers. The shape today is
 `widgets/render.rs::render_*` for plugin widgets, separate
@@ -469,9 +435,59 @@ async work the plugin already does (debounce, LSP, git).
 extracting a common `(State, Layout, Colors) → TextPropertyEntry`
 shape; both already have it. The work is moving the renderers to
 a common location (probably `view/controls/`) and having
-`widgets/render.rs` call them. This is purely refactoring; no new
-behavior. Defer until role-based theming (§4.1) lands; without it
-the shared renderers would still pick theme keys in different ways.
+`widgets/render.rs` call them. Pure refactoring; no new behavior.
+
+Brings goal #5 to the built-in Settings surface so widgets really
+do paint everywhere.
+
+### 4.4 Smaller follow-ups
+
+* **Fault isolation.** `catch_unwind` around per-widget `render_<kind>`
+  calls so one panicking renderer paints a placeholder + logs a
+  `RenderError` instead of taking down the whole panel. Pure host
+  work; doesn't depend on §4.5 deferred items.
+* **IME composition in TextInput.** `mode_text_input` already
+  delivers composed text but the widget cursor model doesn't
+  track composition states. Needed for international input.
+* **Built-in chord support inside widgets.** Today
+  `apply_text_input_key` only handles single-key edits; chords
+  (`g g`) still bubble to the plugin's `defineMode`.
+* **Keymap-claim inversion (§2.3).** Host claims widget keys
+  before `defineMode` sees them, so plugins stop repeating the
+  Tab / Backspace / arrows binding table. A `defineMode`
+  extension or a "panel has a widget runtime" registry. Closes
+  goal #1 fully.
+
+### 4.5 Deferred (no current driver)
+
+These items remain valuable design work but are not blocking the
+end-state and have no in-tree consumer pushing for them. Pick up
+when real demand surfaces.
+
+* **Role-based theming.** Today widgets pick theme keys directly
+  from `widgets/render.rs` constants; only `Button.intent:
+  "primary" | "danger"` is a real role. The full design
+  (`Role` enum + `Role → theme key` table + per-spec override
+  map) lets accessibility variants and theme packs drop in
+  centrally. Pain point today: zero — every widget has a
+  reasonable default theme key. Revisit when a high-contrast
+  theme or a plugin needing per-widget color overrides arrives.
+* **Accessibility.** Library i18n defaults
+  (`lib-widgets.i18n.json`), `aria` strings on focus change,
+  OSC 52 / IDE screen-reader bridge, motion-reduce gating for
+  the (not-yet-shipped) library animations. Most of this depends
+  on role-based theming for the high-contrast piece.
+* **Spec-as-state persistence (§10).** Five separate features
+  bundled together: (a) session restore — panels survive
+  workspace close; (b) live theme-switch correctness — host
+  re-renders all mounted panels on `theme_changed` so plugins
+  don't have to subscribe; (c) `--record-spec-stream` JSONL
+  replay for plugin-bug repro; (d) headless rendering for
+  snapshot tests; (e) `embed` cross-plugin composition. None
+  blocks a user flow today; (a) and (b) are small UX wins, the
+  rest are developer / plugin-author tooling. Build the
+  persistence layer when a real consumer asks (a session-restore
+  feature request, a theme-switch bug report, etc.).
 
 ---
 
@@ -492,9 +508,9 @@ the shared renderers would still pick theme keys in different ways.
 | `Tree` | ✅ migrated | search_replace match tree, audit, file-explorer | host owns scroll + selection + expansion; disclosure-glyph hit area |
 | `TextArea` | ✅ | composer-style plugins | multi-line; host-owned value + cursor + vertical scroll; submit policy via panel HintBar |
 | `Tabs` / `Group` | ⏸ | (no current consumer) | skipped; revisit when needed |
-| `Layer` (compositor) | ❌ → §4.2 | tooltips, popovers, modals; subsumes Popup/Prompt | big architectural piece |
-| `Prompt` | ❌ → §4.2 | finder, every confirm | built on Layer |
-| `Transient` (Magit) | ❌ → §4.2 | discoverability | one of the Layer kinds |
+| `Layer` (compositor) | ❌ → §4.1 | tooltips, popovers, modals; subsumes Popup/Prompt | big architectural piece |
+| `Prompt` | ❌ → §4.1 | finder, every confirm | built on Layer |
+| `Transient` (Magit) | ❌ → §4.1 | discoverability | one of the Layer kinds |
 | `Table` | ❌ | git_log, find_references, audit | |
 | `Toolbar` | ❌ | git_log, audit_mode | composes Button + Toggle |
 | `Panel` | ⏸ | every panelled plugin | currently unbuilt as a widget; today's `Col` does the job |
@@ -763,18 +779,20 @@ applies a minimal patch.
   pay no per-row codepoint walks or per-overlay bridge calls.
 
 **Not yet implemented**:
-* Session restore (§4.3).
-* Live theme switching (§4.3).
-* Replay (`--record-spec-stream`) (§4.3).
-* Headless rendering (falls out of "Spec is data" + the renderer
-  being a pure function; the test harness already calls
-  `render_spec` directly).
-* Cross-plugin composition (`embed` widget kind) (§4.3).
+* Session restore — deferred (§4.5).
+* Live theme switching — deferred (§4.5).
+* Replay (`--record-spec-stream`) — deferred (§4.5).
+* Headless rendering — deferred (§4.5). Falls out of "Spec is
+  data" + the renderer being a pure function; the test harness
+  already calls `render_spec` directly.
+* Cross-plugin composition (`embed` widget kind) — deferred
+  (§4.5).
 * Versioning (`spec.version: 1`) — unused since v1 only.
-* Fault isolation: today a panicking renderer for one widget kind
-  takes down the whole panel render. The reconciler would need to
-  catch_unwind around per-widget `render_<kind>` calls, paint a
-  placeholder, log a `RenderError` event.
+* Fault isolation — small follow-up (§4.4). Today a panicking
+  renderer for one widget kind takes down the whole panel render;
+  the reconciler should `catch_unwind` around per-widget
+  `render_<kind>` calls, paint a placeholder, and log a
+  `RenderError` event.
 
 ---
 
@@ -794,7 +812,9 @@ Widgets carry **roles**, never colors. Partly implemented.
 * High-contrast / color-blind variant resolution path.
 * Role enum with three-level cap (e.g. `Button.danger.hover.fg`).
 
-The path forward is §4.1 in the roadmap.
+The path forward is §4.5 in the roadmap (deferred without a
+current driver — every widget has a reasonable default theme
+key today).
 
 ---
 
@@ -809,7 +829,7 @@ handles the existing per-plugin help strings.
 
 ## 13. Accessibility
 
-Required for v1:
+Deferred (§4.5) without a current driver. The full design:
 
 * High-contrast themes (blocked on role-based theming).
 * Configurable keybindings via `keybindings.json` against
@@ -817,13 +837,14 @@ Required for v1:
   commands once the plugin binds them).
 * Screen-reader output via OSC 52 / IDE bridges (not implemented).
 * Motion-reduction: gates the library's two animations
-  (focus-flash, hover-fade) — neither is shipped yet, so this is
-  ready to add when they are.
+  (focus-flash, hover-fade) — neither is shipped yet.
+* Full ARIA-tree model (parent/child/level-of) is the eventual
+  end-state; the cheaper interim is flat live-region announcements
+  per focus change with one-per-100ms throttling.
 
-Nice-to-have (deferred):
-* Full ARIA-tree model (parent/child/level-of). v1 ships flat
-  live-region announcements per focus change.
-* Live-region throttling (one announcement per 100 ms).
+Pick this up when an a11y review or a user request surfaces. The
+keybinding piece already works through the existing resolver;
+the rest is genuinely new code.
 
 ---
 
@@ -865,24 +886,29 @@ small set of one-liner `dispatch(widgetKey("..."))` forwarders.
 | Per-keystroke event IPC dominates if plugins re-emit Spec on every keystroke | Document the rule: in `widget_event "change"`, never call `updateWidgetPanel` unless the rest of the spec actually changed. Use mutators (`SetValue`/`SetChecked`/`SetItems`/`SetExpandedKeys`) for hot-path. The lint is "panel.update calls per second"; expose it on the dev HUD |
 | Capability creep through widget callbacks | Widgets only emit *events* the plugin can already subscribe to. Code review checklist: a new widget MUST NOT introduce a new `PluginCommand`-equivalent capability |
 | Theme role explosion (`Button.danger.hover.fg`...) | Cap the role tree at three levels; review additions in PRs that touch `theme/types.rs` |
-| Reach: Settings doesn't actually adopt the widget tree | Keep the *renderers* shared (§4.6) and the *Spec* shape compatible. Settings can stay on its current direct calls indefinitely |
+| Reach: Settings doesn't actually adopt the widget tree | Keep the *renderers* shared (§4.3) and the *Spec* shape compatible. Settings can stay on its current direct calls indefinitely |
 | Plugin author confusion: Spec vs imperative vs mutators | One way per use-case in the docs. `Raw` exists for *escape hatches*, not for rendering rich UI. Mutators are for hot-path single-field updates |
 | Terminal-constraint violations (Shift+Enter etc.) | Static lint in TS: any `keys` string in a `HintBar` or `Transient` matching `^Shift\+(Enter\|Alt\+Enter)` is a build error |
-| Drift from `event-dispatch-architecture` Phase 2 / `unified-keybinding-resolution` / `unified-hit-test-theme-plan` | This proposal builds on them. The Compositor migration (§4.2) blocks until Phase 2 lands |
+| Drift from `event-dispatch-architecture` Phase 2 / `unified-keybinding-resolution` / `unified-hit-test-theme-plan` | This proposal builds on them. The Compositor migration (§4.1) blocks until Phase 2 lands |
 
 ---
 
 ## 17. Order of landing
 
 Foundation (widget runtime, core types, TS surface, search_replace
-migration through Pass 3) is shipped. Remaining work, in order:
+migration through Pass 3) is shipped. Blocking remaining work, in
+order:
 
-1. → §4.1 Role-based theming.
-2. → §4.2 Compositor / Layer.
-3. → §4.3 Spec-as-state persistence.
-4. → §4.4 Accessibility.
-5. → §4.5 Plugin migrations beyond `search_replace.ts`.
-6. → §4.6 Settings adoption (last; depends on §4.1).
+1. → §4.1 Compositor / Layer.
+2. → §4.2 Plugin migrations beyond `search_replace.ts` (with
+   `Toolbar` and `Table` widgets landing alongside).
+3. → §4.3 Settings adoption.
+4. → §4.4 Smaller follow-ups (fault isolation, IME, chord support,
+   keymap-claim inversion). Independent of the above; can land
+   in parallel.
+
+Deferred without a current driver: role-based theming,
+accessibility, spec-as-state persistence (§4.5).
 
 The hit-test dispatcher / `region_at` extension / unified-keybinding
 collapse from related design docs were bypassed for v1: the widget
@@ -899,12 +925,14 @@ migrated end-to-end through the bulk of its UI; cargo check
 workspace clean, widget unit tests green, tsc clean, interactively
 verified in tmux.
 
-The big architectural lift is §4.2 (Compositor / Layer). It's not
+The big architectural lift is §4.1 (Compositor / Layer). It's not
 blocked on anything in tree; it's blocked on planning capacity.
 Until it lands, plugins that want tooltips / modals / context menus
 keep using `editor.startPrompt` / `editor.showActionPopup` / etc.,
 which work fine but don't share dismiss/focus rules with widget
-panels.
+panels — and goal #1 (host-claimed widget keymaps) only reaches
+end-state across panels *and* overlays once one Compositor owns
+the focus stack.
 
 ---
 
@@ -942,25 +970,26 @@ structurally cannot reach:
    Theme packs and accessibility variants only stay consistent when
    the role→key mapping is centralized in the renderer. (Partially
    shipped — `intent: "primary"|"danger"` is the only role today;
-   see roadmap §4.1 for the rest.)
+   the full design is deferred without a current driver, see
+   roadmap §4.5.)
 5. **Reach across built-in surfaces.** The Rust `view/controls/*`
    renderers paint plugin widgets too — Settings, file explorer,
    prompts, plugin panels share one render path. The TS-only proposal
-   freezes the split forever. (Not shipped — see roadmap §4.6.)
+   freezes the split forever. (Not shipped — see roadmap §4.3.)
 
 Three further capabilities the TS-only design forecloses:
 
 * **Layered compositor** (`Popup`/`Prompt`/`showActionPopup`/hover/
   modals/context-menus/completion under one dismiss-and-focus model)
-  — see §7 / roadmap §4.2.
+  — see §7 / roadmap §4.1.
 * **Spec as first-class state** (session restore, theme switch,
   deterministic replay, headless rendering, cross-plugin composition)
-  — see §10 / roadmap §4.3. Spec is already data; the missing piece
-  is persistence.
+  — see §10. Spec is already data; the persistence layer is
+  deferred without a current driver (roadmap §4.5).
 * **Fault isolation.** A panicking widget renderer in the TS-only
   design takes down the panel render. With Rust-side widget kinds,
   the reconciler can paint a placeholder for the offending subtree
-  and keep going. (Not shipped here either — see §10.)
+  and keep going. (Not shipped here either — see §4.4.)
 
 Where the TS-only proposal is right and we keep its discipline:
 
