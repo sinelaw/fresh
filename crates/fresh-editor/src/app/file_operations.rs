@@ -124,7 +124,7 @@ impl Editor {
         }
 
         // Mark the event log position as saved (for undo modified tracking)
-        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             event_log.mark_saved();
         }
 
@@ -498,7 +498,7 @@ impl Editor {
         }
 
         // Clear the undo/redo history for this buffer
-        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             *event_log = EventLog::new();
         }
 
@@ -1350,7 +1350,7 @@ impl Editor {
         }
 
         // Clear the undo/redo history for this buffer
-        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             *event_log = EventLog::new();
         }
 

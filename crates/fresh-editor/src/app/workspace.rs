@@ -690,7 +690,9 @@ impl Editor {
                                 state.buffer.set_recovery_pending(false);
                                 // Invalidate saved position so undo can't
                                 // incorrectly clear the modified flag
-                                if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                                if let Some(log) =
+                                    self.active_window_mut().event_logs.get_mut(&buffer_id)
+                                {
                                     log.clear_saved_position();
                                 }
                                 mutated = true;
@@ -730,7 +732,9 @@ impl Editor {
                             state.buffer.set_recovery_pending(false);
                             // Invalidate saved position so undo can't
                             // incorrectly clear the modified flag
-                            if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                            if let Some(log) =
+                                self.active_window_mut().event_logs.get_mut(&buffer_id)
+                            {
                                 log.clear_saved_position();
                             }
                             mutated = true;
@@ -1051,7 +1055,7 @@ impl Editor {
                             );
                         }
                     }
-                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                    if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                         log.clear_saved_position();
                     }
                     if mutated {
@@ -1086,7 +1090,7 @@ impl Editor {
                             file_path
                         );
                     }
-                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                    if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                         log.clear_saved_position();
                     }
                     if mutated {
@@ -1279,7 +1283,7 @@ impl Editor {
                 .expect("active window present")
                 .remove(&id);
             self.detach_buffer_from_all_windows(id);
-            self.event_logs.remove(&id);
+            self.active_window_mut().event_logs.remove(&id);
             self.buffer_metadata.remove(&id);
         }
     }

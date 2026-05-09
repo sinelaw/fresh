@@ -251,7 +251,8 @@ impl Editor {
         self.attach_buffer_to_active_window(buffer_id);
 
         // Create an event log entry (required for many editor operations)
-        self.event_logs
+        self.active_window_mut()
+            .event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Register with the active split so it appears in tabs

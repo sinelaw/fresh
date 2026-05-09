@@ -640,6 +640,7 @@ impl Editor {
             .get_mut(&active_window_id)
             .expect("active window must exist");
         let __buffers_mut = &mut __win.buffers;
+        let __event_logs_mut = &mut __win.event_logs;
         let (mgr_for_split, split_view_states): (
             &crate::view::split::SplitManager,
             &mut HashMap<crate::model::event::LeafId, crate::view::split::SplitViewState>,
@@ -665,7 +666,7 @@ impl Editor {
             split_mgr,
             __buffers_mut,
             &self.buffer_metadata,
-            &mut self.event_logs,
+            __event_logs_mut,
             &mut self.composite_buffers,
             &mut self.composite_view_states,
             &self.theme,
@@ -1869,9 +1870,9 @@ impl Editor {
             ) {
                 if let Some(state) = self
                     .windows
-                    .get_mut(&self.active_window)
+                    .get_mut(&sid)
                     .map(|w| &mut w.buffers)
-                    .expect("active window present")
+                    .expect("preview window present")
                     .get_mut(&bid)
                 {
                     *state = new_state;
@@ -1881,13 +1882,19 @@ impl Editor {
             }
         }
 
-        // Move the stash out so the rest of the function holds
-        // `self.active_window_mut().buffers` etc. without conflicting with
-        // `&mut self.windows`. Bail if the session has no stash
-        // yet (never been activated and never had a terminal /
-        // file routed in via createTerminal({windowId})).
-        let Some((mgr, mut view_states)) = self.windows.get_mut(&sid).and_then(|s| s.splits.take())
-        else {
+        // Pull the previewed window's split stash and sub-fields
+        // out under one `&mut Window` borrow. Multiple disjoint
+        // sub-borrows (`buffers`, `event_logs`, `splits`) coexist
+        // on the same `Window`, so the renderer call can take all
+        // three by `&mut` while the rest of `&mut self` stays
+        // available for `composite_buffers` / `config` / etc. Bail
+        // if the session has no stash yet (never been activated and
+        // never had a terminal / file routed in via
+        // createTerminal({windowId})).
+        let __win_for_preview = self.windows.get_mut(&sid).expect("preview window present");
+        let __preview_buffers = &mut __win_for_preview.buffers;
+        let __preview_event_logs = &mut __win_for_preview.event_logs;
+        let Some((mgr, mut view_states)) = __win_for_preview.splits.take() else {
             return;
         };
 
@@ -1906,12 +1913,9 @@ impl Editor {
             frame,
             inner,
             &mgr,
-            self.windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present"),
+            __preview_buffers,
             &self.buffer_metadata,
-            &mut self.event_logs,
+            __preview_event_logs,
             &mut self.composite_buffers,
             &mut self.composite_view_states,
             theme,
@@ -2654,12 +2658,12 @@ impl Editor {
                 let screen_width = frame.area().width;
 
                 let ansi_ref = self.ansi_background.as_ref();
-                let buffers = self
+                let __win = self
                     .windows
                     .get_mut(&self.active_window)
-                    .map(|w| &mut w.buffers)
                     .expect("active window present");
-                let event_logs = &mut self.event_logs;
+                let buffers = &mut __win.buffers;
+                let event_logs = &mut __win.event_logs;
                 let cell_theme_map = &mut self.chrome_layout.cell_theme_map;
                 let Some(preview_state) = self.overlay_preview_state.as_mut() else {
                     return;

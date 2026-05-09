@@ -335,9 +335,8 @@ pub struct Editor {
     // NOTE: There is no `active_buffer` field. The active buffer is derived from
     // `split_manager.active_buffer_id()` to maintain a single source of truth.
     // Use `self.active_buffer()` to get the active buffer ID.
-    /// Event log per buffer (for undo/redo)
-    event_logs: HashMap<BufferId, EventLog>,
-
+    // event_logs moved onto `Window` (Step 0e). Undo logs follow the
+    // buffer storage, so they live alongside the buffer they describe.
     /// Next buffer ID to assign
     next_buffer_id: usize,
 
@@ -1481,12 +1480,19 @@ impl Editor {
 
     /// Get the event log for the active buffer
     pub fn active_event_log(&self) -> &EventLog {
-        self.event_logs.get(&self.active_buffer()).unwrap()
+        self.active_window()
+            .event_logs
+            .get(&self.active_buffer())
+            .unwrap()
     }
 
     /// Get the event log for the active buffer (mutable)
     pub fn active_event_log_mut(&mut self) -> &mut EventLog {
-        self.event_logs.get_mut(&self.active_buffer()).unwrap()
+        let buffer_id = self.active_buffer();
+        self.active_window_mut()
+            .event_logs
+            .get_mut(&buffer_id)
+            .unwrap()
     }
 
     /// Update the buffer's modified flag based on event log position
@@ -1494,6 +1500,7 @@ impl Editor {
     /// has returned to its saved state
     pub(super) fn update_modified_from_event_log(&mut self) {
         let is_at_saved = self
+            .active_window()
             .event_logs
             .get(&self.active_buffer())
             .map(|log| log.is_at_saved_position())

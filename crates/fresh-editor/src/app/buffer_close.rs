@@ -306,7 +306,7 @@ impl Editor {
             .expect("active window present")
             .remove(&id);
         self.detach_buffer_from_all_windows(id);
-        self.event_logs.remove(&id);
+        self.active_window_mut().event_logs.remove(&id);
         self.seen_byte_ranges.remove(&id);
         self.buffer_metadata.remove(&id);
         if let Some((request_id, _, _)) = self.semantic_tokens_in_flight.remove(&id) {

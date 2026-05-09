@@ -1662,8 +1662,11 @@ Terminal action handlers move to `impl Window` as part of 0d
 — same recipe as 0c.
 
 **0e — Move `event_logs` (undo per buffer) onto `Session`.**
-Falls out of 0c — undo logs follow the buffer. Undo/redo
-handlers move to `impl Window`.
+*Shipped.* Undo logs followed the buffer storage onto `Window`
+— each window owns its event-log map alongside its buffers, and
+the existing undo/redo handlers route through
+`active_window_mut().event_logs` (or split-borrow `__win.event_logs`
+when paired with split-tree access in the same handler).
 
 **0f — Move `position_history`, `bookmarks`, and similar
 session-scoped per-buffer metadata onto `Session`.** Their

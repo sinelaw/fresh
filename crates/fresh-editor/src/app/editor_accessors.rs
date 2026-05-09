@@ -447,7 +447,7 @@ impl Editor {
     /// Enable event log streaming to a file
     pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> AnyhowResult<()> {
         // Enable streaming for all existing event logs
-        for event_log in self.event_logs.values_mut() {
+        for event_log in self.active_window_mut().event_logs.values_mut() {
             event_log.enable_streaming(&path)?;
         }
         Ok(())
@@ -455,7 +455,8 @@ impl Editor {
 
     /// Log keystroke for debugging
     pub fn log_keystroke(&mut self, key_code: &str, modifiers: &str) {
-        if let Some(event_log) = self.event_logs.get_mut(&self.active_buffer()) {
+        let buffer_id = self.active_buffer();
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             event_log.log_keystroke(key_code, modifiers);
         }
     }

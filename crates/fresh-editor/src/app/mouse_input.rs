@@ -1127,11 +1127,12 @@ impl Editor {
             .and_then(|vs| vs.compose_width);
 
         // Calculate clicked position in buffer.
-        // Single &mut on active window, split-borrow buffers + view states.
+        // Single &mut on active window, split-borrow buffers + view states + event_logs.
         let __win = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window must exist");
+        let __event_logs = &mut __win.event_logs;
         let (__mgr, __vs_map) = __win
             .splits
             .as_mut()
@@ -1169,7 +1170,7 @@ impl Editor {
                 new_sticky_column: 0,
             };
 
-            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            if let Some(event_log) = __event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
             if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
@@ -1284,11 +1285,12 @@ impl Editor {
             .and_then(|vs| vs.compose_width);
 
         // Calculate clicked position in buffer.
-        // Single &mut on active window, split-borrow buffers + view states.
+        // Single &mut on active window, split-borrow buffers + view states + event_logs.
         let __win = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window must exist");
+        let __event_logs = &mut __win.event_logs;
         let (__mgr, __vs_map) = __win
             .splits
             .as_mut()
@@ -1326,7 +1328,7 @@ impl Editor {
                 new_sticky_column: 0,
             };
 
-            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            if let Some(event_log) = __event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
             if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
@@ -2448,6 +2450,7 @@ impl Editor {
             .windows
             .get_mut(&self.active_window)
             .expect("active window must exist");
+        let __event_logs = &mut __win.event_logs;
         let __vs_map = &mut __win
             .splits
             .as_mut()
@@ -2514,7 +2517,7 @@ impl Editor {
                 new_sticky_column,
             };
 
-            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            if let Some(event_log) = __event_logs.get_mut(&buffer_id) {
                 event_log.append(event.clone());
             }
             if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {

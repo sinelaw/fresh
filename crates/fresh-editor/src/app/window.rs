@@ -21,19 +21,19 @@
 //!
 //! ## Migration status
 //!
-//! Step 0a (cached_layout split) and Step 0b (warm-swap stashes →
-//! live `Window` fields) are shipped: every per-subsystem state
-//! field that used to warm-swap on `setActiveWindow`
-//! — `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`, and
-//! the `splits` pair — now lives directly on `Window`.
-//! `set_active_window` is a pointer write (plus first-dive seed
-//! allocation for windows that have never been activated).
+//! Steps 0a–0e shipped. Per-subsystem state that used to warm-swap
+//! on `setActiveWindow` — `panel_ids`, `file_mod_times`,
+//! `file_explorer`, `lsp`, the `splits` pair, `buffers`, the
+//! terminal subsystem (`terminal_manager` +
+//! `terminal_buffers` + `terminal_backing_files` +
+//! `terminal_log_files`), and now `event_logs` — all live directly
+//! on `Window`. `set_active_window` is a pointer write (plus
+//! first-dive seed allocation for windows that have never been
+//! activated).
 //!
-//! Still on `Editor` (move in Step 0c–0f): `buffers`,
-//! `terminal_manager` + `terminal_buffers` + `terminal_backing_files`,
-//! `event_logs`, `position_history`, `bookmarks`. Once those land,
-//! `closeWindow` becomes a single `Window::drop` and the
-//! `attach_buffer_to_active_window` /
+//! Still on `Editor` (move in Step 0f): `position_history`,
+//! `bookmarks`. Once those land, `closeWindow` becomes a single
+//! `Window::drop` and the `attach_buffer_to_active_window` /
 //! `detach_buffer_from_all_windows` shims go away.
 
 use crate::app::types::WindowLayoutCache;
@@ -111,6 +111,11 @@ pub struct Window {
     /// drops them. Opening the same file in two windows produces
     /// two independent buffers.
     pub buffers: HashMap<BufferId, crate::state::EditorState>,
+
+    /// Per-buffer undo/redo event log. Lives next to `buffers`
+    /// because undo history is buffer-scoped — closing a window
+    /// drops the buffer and its log together.
+    pub event_logs: HashMap<BufferId, crate::model::event::EventLog>,
 
     /// Terminal subsystem (PTY processes + render-state grids) for
     /// this window. Owned per-window so closing a window joins its
@@ -292,6 +297,7 @@ impl Window {
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
+            event_logs: HashMap::new(),
             layout_cache: WindowLayoutCache::default(),
         }
     }

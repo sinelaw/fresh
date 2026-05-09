@@ -258,7 +258,8 @@ impl Editor {
             .insert(buffer_id, terminal_id);
 
         // Initialize event log for undo/redo
-        self.event_logs
+        self.active_window_mut()
+            .event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         // Set up split view state
@@ -328,7 +329,8 @@ impl Editor {
         self.active_window_mut()
             .terminal_buffers
             .insert(buffer_id, terminal_id);
-        self.event_logs
+        self.active_window_mut()
+            .event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
         buffer_id

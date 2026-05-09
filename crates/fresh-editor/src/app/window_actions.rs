@@ -92,10 +92,9 @@ impl crate::app::Editor {
             state
                 .buffer
                 .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
-            self.event_logs
-                .insert(buf, crate::model::event::EventLog::new());
             self.buffer_metadata
                 .insert(buf, crate::app::types::BufferMetadata::new());
+            let event_log = crate::model::event::EventLog::new();
             let manager = SplitManager::new(buf);
             let active_leaf = manager.active_split();
             let mut view_states = HashMap::new();
@@ -103,7 +102,7 @@ impl crate::app::Editor {
                 active_leaf,
                 SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf),
             );
-            Some((buf, state, manager, view_states))
+            Some((buf, state, event_log, manager, view_states))
         } else {
             None
         };
@@ -115,10 +114,11 @@ impl crate::app::Editor {
         // For a never-activated incoming window, install the freshly
         // built layout into the window's `splits` field and attach
         // the seed buffer.
-        if let Some((buf, state, mgr, vs)) = fresh_layout {
+        if let Some((buf, state, event_log, mgr, vs)) = fresh_layout {
             if let Some(s) = self.windows.get_mut(&id) {
                 s.splits = Some((mgr, vs));
                 s.buffers.insert(buf, state);
+                s.event_logs.insert(buf, event_log);
             }
         }
 

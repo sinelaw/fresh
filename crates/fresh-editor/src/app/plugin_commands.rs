@@ -1141,7 +1141,7 @@ impl Editor {
             };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
-            if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+            if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
         }
@@ -1189,7 +1189,7 @@ impl Editor {
             };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
-            if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+            if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
         }
@@ -3201,7 +3201,7 @@ impl Editor {
 
         // Record the BulkEdit on the buffer's event log so Undo can revert it.
         if let Some(event) = bulk_edit_event {
-            if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 event_log.append(event);
                 // The file on disk is now in the post-replace state, so mark
                 // this position as "saved".  Otherwise `saved_at_index` would

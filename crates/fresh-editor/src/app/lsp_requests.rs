@@ -2834,7 +2834,7 @@ impl Editor {
         };
 
         // Add to event log
-        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
             event_log.append(bulk_edit);
         }
 
