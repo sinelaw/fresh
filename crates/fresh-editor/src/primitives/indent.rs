@@ -320,6 +320,62 @@ impl IndentCalculator {
         None
     }
 
+    /// Indent (in columns) of the first non-empty line at or after
+    /// `position`, but only if its first non-whitespace character is *not*
+    /// a closing delimiter (`}`, `]`, `)`).
+    ///
+    /// Used by [`calculate_indent_pattern`] to decide whether the empty
+    /// line under the cursor sits inside a still-open block (ignore the
+    /// next line — it's the block's closer) or between two siblings (use
+    /// the next line's indent if it's smaller). Returns `None` when the
+    /// cursor is at end-of-buffer with no following content, so callers
+    /// fall back to the previous-line indent.
+    fn next_non_empty_line_indent_unless_closer(
+        buffer: &Buffer,
+        position: usize,
+        tab_size: usize,
+    ) -> Option<usize> {
+        let mut pos = position;
+        let buf_len = buffer.len();
+        while pos < buf_len {
+            // Skip over the current empty/whitespace-only line. Stop at
+            // the byte after the next `\n`.
+            let mut line_indent = 0usize;
+            let mut line_pos = pos;
+            let mut first_content: Option<u8> = None;
+            while line_pos < buf_len {
+                match Self::byte_at(buffer, line_pos) {
+                    Some(b'\n') => break,
+                    Some(b' ') if first_content.is_none() => line_indent += 1,
+                    Some(b'\t') if first_content.is_none() => line_indent += tab_size,
+                    Some(b'\r') => {}
+                    Some(b) => {
+                        if first_content.is_none() {
+                            first_content = Some(b);
+                        }
+                    }
+                    None => break,
+                }
+                line_pos += 1;
+            }
+
+            if let Some(first) = first_content {
+                if matches!(first, b'}' | b']' | b')') {
+                    return None;
+                }
+                return Some(line_indent);
+            }
+
+            // Whitespace-only line — advance past the trailing `\n` and
+            // keep scanning.
+            if line_pos >= buf_len {
+                return None;
+            }
+            pos = line_pos + 1;
+        }
+        None
+    }
+
     /// Calculate the correct indent for a closing delimiter being typed.
     ///
     /// # C-family limitation
@@ -795,6 +851,29 @@ impl IndentCalculator {
                     break;
                 }
                 search_pos = ref_line_start.saturating_sub(1);
+            }
+
+            // Forward look-ahead: if the next non-empty line is at a
+            // strictly smaller indent and does not begin with a closing
+            // delimiter (`}`, `]`, `)`), the surrounding block has already
+            // been exited — honour that smaller indent rather than pulling
+            // the deeper previous indent onto the new line. Closing
+            // delimiters are excluded so that the common
+            //
+            //     fn main() {
+            //         let x = 1;
+            //         <cursor on empty line>
+            //     }
+            //
+            // case still indents to 4: `}` is the block's closer, not a
+            // sibling at column 0. See issue #1425 (corner case reported
+            // after the original fix shipped).
+            if let Some(next_indent) =
+                Self::next_non_empty_line_indent_unless_closer(buffer, position, tab_size)
+            {
+                if next_indent < found_reference_indent {
+                    found_reference_indent = next_indent;
+                }
             }
 
             // Return the reference indent we found (or 0 if no non-empty line was found)
@@ -1732,6 +1811,40 @@ mod tests {
         assert_eq!(
             indent, 0,
             "Enter at column 0 of an existing non-empty line must not insert indentation"
+        );
+    }
+
+    #[test]
+    fn test_enter_on_blank_line_above_unindented_uses_following_indent() {
+        // Regression test for #1425 (corner case reported after the original
+        // fix shipped): pressing Enter on an *empty* line that sits between
+        // a deeply-indented block above and an unindented line below must
+        // not pull the previous block's indent onto the new line.
+        //
+        //     ····line1
+        //     ····line2
+        //     ········line3
+        //     ········line4
+        //     <empty>           <- cursor at column 0, press Enter
+        //     unindented line
+        //
+        // Before the fix the empty-line heuristic in
+        // `calculate_indent_pattern` looked only *backwards* and returned 8
+        // (matching `line4`), so the new line was indented to column 8 even
+        // though the very next non-empty line is at column 0. Expected: 0,
+        // because the surrounding block has clearly been exited.
+        let buffer = Buffer::from_str_test(
+            "    line1\n    line2\n        line3\n        line4\n\nunindented line",
+        );
+        // Cursor at column 0 of the blank line (the byte immediately after
+        // the `line4\n`, i.e. the position of the second `\n`).
+        let text = buffer.to_string().unwrap();
+        let position = text.find("\n\nunindented line").unwrap() + 1;
+
+        let indent = IndentCalculator::calculate_indent_no_language(&buffer, position, 4);
+        assert_eq!(
+            indent, 0,
+            "Enter on a blank line whose following non-empty line is unindented must not inherit the previous block's indent"
         );
     }
 
