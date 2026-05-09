@@ -54,6 +54,148 @@ this design is settled.
 > on the branch (`§ Implementation status snapshot`) is a
 > transitional bridge, not the destination.
 
+### Outstanding state-on-Editor that should move onto `Window` (next-up work plan)
+
+Steps 0a–0k shipped per-window state for the major subsystems
+(buffers, splits, file_explorer, lsp, terminals, event_logs,
+position_history, bookmarks, grouped_subtrees, composite buffers,
+LSP request-tracking maps, async bridges, status_message + prompt).
+Audit of the remaining `impl Editor` fields finds the following
+state that is *not truly cross-window* and should follow the same
+recipe — state moves to `Window`, methods that mutate it follow.
+Listed in priority order; each tier is roughly the size of one
+shipped step above.
+
+**Tier 1 — biggest leverage, do first.**
+
+* `buffer_metadata: HashMap<BufferId, BufferMetadata>` →
+  `Window`. Tracks `Window.buffers` (already per-window). Pervasive
+  (~hundreds of references). Single biggest cleanup; every
+  "what's the language / file_uri / lsp_opened_with set of this
+  buffer" lookup currently routes through Editor and would
+  collapse to direct field access on the owning window.
+  *Mechanical, large diff. Treat as Step 0l.*
+
+**Tier 2 — small per-window state that's clearly miscategorised.**
+
+* `scroll_sync_manager: ScrollSyncManager` → `Window`. Manages
+  cross-split scroll groups within one window's split tree.
+* `same_buffer_scroll_sync: bool` → `Window`. Per-window UX
+  toggle.
+* `previous_viewports: HashMap<LeafId, ...>` → `Window`. Per-
+  window split view state.
+* `preview: Option<(LeafId, BufferId)>` → `Window`. Preview-tab
+  state for one window.
+* `seen_byte_ranges: HashMap<BufferId, ...>` → `Window`. Keyed
+  by BufferId.
+* `terminal_mode: bool`, `terminal_mode_resume` → `Window`.
+  Terminal-mode toggle for the active terminal in the active
+  window. (Terminals are already per-window.)
+* `auto_revert_enabled: bool`, `file_rapid_change_counts` →
+  `Window`. Auto-revert state — `file_mod_times` is already
+  per-window.
+* `goto_line_preview`, `pending_async_prompt_callback`,
+  `pending_quit_unnamed_save` → `Window`. Per-window prompt /
+  UX state.
+* `interactive_replace_state` → `Window`. Per-window search
+  state.
+
+**Tier 3 — per-window LSP state still on Editor.**
+
+* `stored_diagnostics`, `stored_push_diagnostics`,
+  `stored_pull_diagnostics`, `stored_folding_ranges` → `Window`.
+  URI-keyed, but each URI maps to a buffer in a specific
+  window. The trade-off: two windows opening the same path
+  duplicate diagnostic-pull work — acceptable because Conductor
+  windows are over different project roots in practice.
+* `lsp_window_messages`, `lsp_log_messages`,
+  `lsp_server_statuses`, `lsp_progress` → `Window`. Each window
+  has its own `LspManager`; the message log / status / progress
+  describe that manager's servers, not the editor's.
+* `lsp_diagnostic_namespace` → `Window`. Buffer overlay
+  namespace, follows the buffer.
+
+**Tier 4 — per-window UX / search.**
+
+* `hover: HoverState` → `Window`. Hover-popup correlation, per-
+  window context.
+* `search_state`, `search_namespace`, `pending_search_range`
+  → `Window`. Per-window active search.
+* `live_grep_last_state`, `overlay_preview_state` → `Window`.
+  Per-window panel state.
+
+**Tier 5 — file-explorer chrome flags.**
+
+* `file_explorer_visible`, `file_explorer_sync_in_progress`,
+  `file_explorer_decorations`, `file_explorer_decoration_cache`,
+  `pending_file_explorer_show_*`, `file_explorer_width`,
+  `file_explorer_side` → `Window`. The explorer's `FileTreeView`
+  is already per-window; the visibility / decoration-cache /
+  layout state should follow it.
+
+**Tier 6 — completion service.**
+
+* `completion_service: CompletionService` → either `Arc<>`
+  shared OR per-window. State-machine for buffer-word /
+  dabbrev / LSP / plugin completion providers. Per-window is
+  the natural model since the providers it orchestrates are
+  per-window already.
+
+**Borderline (decide per-case, not necessarily move):**
+
+* `search_case_sensitive`, `search_whole_word`,
+  `search_use_regex`, `search_confirm_each` — search prefs.
+  Today they persist editor-wide. Per-window means each window
+  remembers its own "case-sensitive" toggle. Argued either way.
+* `macros: MacroState` — one macro at a time today. Per-window
+  would allow parallel recording. Probably stay editor-global
+  unless a use-case surfaces.
+* `watch_path_handles` — registration source dependent
+  (plugin? window?). Stay editor-global.
+* `tab_bar_visible`, `prompt_line_visible`, `menu_bar_visible`,
+  `status_bar_visible` — chrome flags. Editor-wide today and
+  most editors keep them so. Stay.
+
+**What truly stays on Editor (no movement planned):**
+
+* Process resources: `tokio_runtime`, `authority`,
+  `local_filesystem`, `fs_manager`, `working_dir`,
+  `dir_context`, `time_source`, `clipboard`,
+  `event_broadcaster`.
+* Editor-global runtimes: `plugin_manager` (one QuickJS),
+  `keybindings` (`Arc<RwLock>`), `mode_registry`,
+  `command_registry`, `quick_open_registry`,
+  `grammar_registry`, `theme_registry`, `theme`, `config`
+  (`Arc`).
+* Terminal-level: `terminal_width/height`, `key_translator`,
+  `key_context`, `mouse_state`, `mouse_enabled`,
+  `pending_escape_sequences`, `last_window_title`.
+* App-level chrome: `chrome_layout`, `menu_state`, `menus`,
+  `menu_*_visible`, `expanded_menus_cache`, `theme_cache`,
+  `software_cursor_only`, `session_mode`, `ansi_background*`,
+  `background_fade`.
+* Modal singletons: `settings_state`, `calibration_wizard`,
+  `keybinding_editor`, `global_popups`, `tab_context_menu`,
+  `file_explorer_context_menu`, `theme_info_popup`,
+  `file_open_state`, `file_browser_layout`,
+  `file_explorer_clipboard`.
+* Plugin-spawned process tracking: `background_process_handles`,
+  `host_process_handles`, `host_process_kill_senders`,
+  `wait_tracking`, `completed_waits`.
+* Editor-global async bridge (plugin runtime callbacks, file-
+  open dialog).
+* Lifecycle: `should_quit`, `should_detach`, `restart_with_dir`,
+  `pending_authority`, `session_name`, `plugin_errors`.
+* Test-only: `last_path_change_for_test`,
+  `last_watch_response_for_test`.
+
+**Architectural test (re-stated for this audit):** if a Window
+handler body needs to know its own `WindowId` to call into
+editor-level logic, that's a sign the editor-level logic is in
+the wrong place. Every field above in Tiers 1–6 fails this test
+today (handlers route through `active_window_mut().X` accessors
+where `X` should just be a direct `Window` field).
+
 ### The model
 
 Each `Session` is the editor-state equivalent of a **VS Code
