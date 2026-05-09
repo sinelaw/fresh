@@ -144,12 +144,24 @@ const C = {
 // Helpers
 // =============================================================================
 
+// Codepoint outside the 7-bit ASCII range — used to fast-path
+// `byteLen` and `charLen` for the common case (file paths, source
+// code) where the JS string's `.length` already equals both the
+// UTF-8 byte count and the codepoint count.
+const NON_ASCII = /[^\x00-\x7f]/;
+
+function isAscii(s: string): boolean {
+  return !NON_ASCII.test(s);
+}
+
 function byteLen(s: string): number {
+  if (isAscii(s)) return s.length;
   return editor.utf8ByteLength(s);
 }
 
 /** Count display columns (codepoints; approximation for monospace terminal). */
 function charLen(s: string): number {
+  if (isAscii(s)) return s.length;
   let len = 0;
   for (const _c of s) { len++; }
   return len;
@@ -163,10 +175,16 @@ function padStr(s: string, width: number): string {
 
 /** Truncate to at most maxLen display columns (codepoint-aware). */
 function truncate(s: string, maxLen: number): string {
+  // ASCII fast path: JS substring is equivalent to codepoint slice
+  // and skipping the for-of avoids the QuickJS iterator overhead.
+  if (isAscii(s)) {
+    if (s.length <= maxLen) return s;
+    if (maxLen <= 3) return s.slice(0, maxLen);
+    return s.slice(0, maxLen - 3) + "...";
+  }
   const sLen = charLen(s);
   if (sLen <= maxLen) return s;
   if (maxLen <= 3) {
-    // Take first maxLen codepoints
     let result = "";
     let count = 0;
     for (const c of s) {
@@ -176,7 +194,6 @@ function truncate(s: string, maxLen: number): string {
     }
     return result;
   }
-  // Take first (maxLen-3) codepoints + "..."
   let result = "";
   let count = 0;
   for (const c of s) {
@@ -449,9 +466,15 @@ function flatItemKey(item: FlatItem): string {
 // Render one flat tree item as a single TextPropertyEntry. The
 // Tree widget owns the indent (depth * 2 spaces) + disclosure glyph
 // (▶ / ▼) prefix and the selection bg — this function emits *just*
-// the row's content starting from byte 0 of the row's body. Files
+// the row's content starting from offset 0 of the row's body. Files
 // pass `depth: 0, hasChildren: true`; matches pass `depth: 1,
 // hasChildren: false` (see `buildMatchListSpec`).
+//
+// Overlay offsets are emitted in character (codepoint) units; the
+// host converts to byte offsets after applying `padToChars`. This
+// keeps the per-row work proportional to the visible content,
+// without the per-overlay `editor.utf8ByteLength` bridge calls
+// that otherwise dominate hot-path renders.
 function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   if (!panel) return { text: "" };
   if (item.type === "file") {
@@ -463,16 +486,18 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
     // pad budget = W - 4 (the widget's prefix consumes 4 cols at
     // depth 0).
     const fileLineText = `${badge} ${group.relPath} (${selectedInFile}/${matchCount})`;
+    const badgeChars = charLen(badge);
+    const pathStart = badgeChars + 1; // " " separator (always 1 codepoint)
+    const pathEnd = pathStart + charLen(group.relPath);
 
-    const overlays: InlineOverlay[] = [];
-    const bgEnd = byteLen(badge);
-    overlays.push({ start: 0, end: bgEnd, style: { fg: C.fileIcon, bold: true } });
-    const fpStart = bgEnd + byteLen(" ");
-    const fpEnd = fpStart + byteLen(group.relPath);
-    overlays.push({ start: fpStart, end: fpEnd, style: { fg: C.filePath } });
+    const overlays: InlineOverlay[] = [
+      { start: 0, end: badgeChars, style: { fg: C.fileIcon, bold: true }, unit: "char" },
+      { start: pathStart, end: pathEnd, style: { fg: C.filePath }, unit: "char" },
+    ];
 
     return {
-      text: padStr(fileLineText, Math.max(0, W - 4)),
+      text: fileLineText,
+      padToChars: Math.max(0, W - 4),
       properties: { type: "file-row", fileIndex: item.fileIndex },
       inlineOverlays: overlays,
     };
@@ -484,29 +509,30 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   const checkbox = result.selected ? "[v]" : "[ ]";
   const location = `${group.relPath}:${result.match.line}`;
   const context = result.match.context.trim();
-  // Body starts at column 0 of the row (host indents); leading
-  // spaces here pad the checkbox a touch off the prefix.
   const prefixText = `${checkbox} `;
   const innerWidth = Math.max(0, W - 6); // host prefix consumes 6 cols
-  const maxCtx = innerWidth - charLen(prefixText) - charLen(location) - 3;
+  const prefixChars = charLen(prefixText);
+  const locationChars = charLen(location);
+  const maxCtx = innerWidth - prefixChars - locationChars - 3;
   const displayCtx = truncate(context, Math.max(10, maxCtx));
   const matchLineText = `${prefixText}${location} - ${displayCtx}`;
 
   const inlines: InlineOverlay[] = [];
-  const cbStart = 0;
-  const cbEnd = cbStart + byteLen(checkbox);
-  inlines.push({ start: cbStart, end: cbEnd, style: { fg: result.selected ? C.checkOn : C.checkOff } });
-  const locStart = cbEnd + byteLen(" ");
-  const locEnd = locStart + byteLen(location);
-  inlines.push({ start: locStart, end: locEnd, style: { fg: C.lineNum } });
+  // checkbox is "[v]" or "[ ]" — always 3 ASCII chars.
+  const cbEnd = checkbox.length;
+  inlines.push({ start: 0, end: cbEnd, style: { fg: result.selected ? C.checkOn : C.checkOff }, unit: "char" });
+  const locStart = cbEnd + 1; // " "
+  const locEnd = locStart + locationChars;
+  inlines.push({ start: locStart, end: locEnd, style: { fg: C.lineNum }, unit: "char" });
 
   if (panel.searchPattern) {
-    const ctxStart = locEnd + byteLen(" - ");
+    const ctxStart = locEnd + 3; // " - " is always 3 ASCII chars
     highlightMatches(displayCtx, panel.searchPattern, ctxStart, panel.useRegex, panel.caseSensitive, inlines);
   }
 
   return {
-    text: padStr(matchLineText, innerWidth),
+    text: matchLineText,
+    padToChars: innerWidth,
     properties: { type: "match-row", fileIndex: item.fileIndex, matchIndex: item.matchIndex },
     inlineOverlays: inlines.length > 0 ? inlines : undefined,
   };
@@ -701,9 +727,21 @@ function addCursorOverlay(value: string, cursorPos: number, fieldByteStart: numb
   overlays.push({ start: cursorBytePos, end: cursorByteEnd, style: { fg: [0, 0, 0], bg: C.cursorBg } });
 }
 
-// Highlight search pattern occurrences in a display string
-function highlightMatches(text: string, pattern: string, baseByteOffset: number, isRegex: boolean, caseSensitive: boolean, overlays: InlineOverlay[]): void {
+// Highlight search pattern occurrences in a display string.
+//
+// `baseCharOffset` is in character (codepoint) units within the
+// containing row. Overlays are emitted in the same unit so the
+// host can convert them to byte offsets in one pass. For ASCII
+// `text` (the common case for source-code matches) overlay math
+// uses JS string indices directly without the bridge calls a
+// byte-offset path would require.
+function highlightMatches(text: string, pattern: string, baseCharOffset: number, isRegex: boolean, caseSensitive: boolean, overlays: InlineOverlay[]): void {
   if (!pattern) return;
+  // ASCII-only fast path: JS `indexOf` returns codepoint-equivalent
+  // offsets (no surrogate pairs), so `idx` is the char offset
+  // directly. The non-ASCII path uses `charLen(prefix)` to convert.
+  const textAscii = isAscii(text);
+  const patternChars = isAscii(pattern) ? pattern.length : charLen(pattern);
   try {
     if (!isRegex) {
       let searchText = text;
@@ -716,9 +754,9 @@ function highlightMatches(text: string, pattern: string, baseByteOffset: number,
       while (pos < searchText.length) {
         const idx = searchText.indexOf(searchPat, pos);
         if (idx < 0) break;
-        const startByte = baseByteOffset + byteLen(text.substring(0, idx));
-        const endByte = startByte + byteLen(text.substring(idx, idx + pattern.length));
-        overlays.push({ start: startByte, end: endByte, style: { bg: C.matchBg, fg: C.matchFg } });
+        const startChar = baseCharOffset + (textAscii ? idx : charLen(text.substring(0, idx)));
+        const endChar = startChar + patternChars;
+        overlays.push({ start: startChar, end: endChar, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
         pos = idx + pattern.length;
       }
     } else {
@@ -727,9 +765,10 @@ function highlightMatches(text: string, pattern: string, baseByteOffset: number,
       let m;
       while ((m = re.exec(text)) !== null) {
         if (m[0].length === 0) { re.lastIndex++; continue; }
-        const startByte = baseByteOffset + byteLen(text.substring(0, m.index));
-        const endByte = startByte + byteLen(m[0]);
-        overlays.push({ start: startByte, end: endByte, style: { bg: C.matchBg, fg: C.matchFg } });
+        const startChar = baseCharOffset + (textAscii ? m.index : charLen(text.substring(0, m.index)));
+        const matchChars = isAscii(m[0]) ? m[0].length : charLen(m[0]);
+        const endChar = startChar + matchChars;
+        overlays.push({ start: startChar, end: endChar, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
       }
     }
   } catch (_e) { /* invalid regex */ }
