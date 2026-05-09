@@ -9,6 +9,8 @@ import {
   raw,
   row,
   spacer,
+  type StyledSegment,
+  styledRow,
   textInput,
   textInputChar,
   toggle,
@@ -144,24 +146,12 @@ const C = {
 // Helpers
 // =============================================================================
 
-// Codepoint outside the 7-bit ASCII range — used to fast-path
-// `byteLen` and `charLen` for the common case (file paths, source
-// code) where the JS string's `.length` already equals both the
-// UTF-8 byte count and the codepoint count.
-const NON_ASCII = /[^\x00-\x7f]/;
-
-function isAscii(s: string): boolean {
-  return !NON_ASCII.test(s);
-}
-
 function byteLen(s: string): number {
-  if (isAscii(s)) return s.length;
   return editor.utf8ByteLength(s);
 }
 
 /** Count display columns (codepoints; approximation for monospace terminal). */
 function charLen(s: string): number {
-  if (isAscii(s)) return s.length;
   let len = 0;
   for (const _c of s) { len++; }
   return len;
@@ -175,13 +165,6 @@ function padStr(s: string, width: number): string {
 
 /** Truncate to at most maxLen display columns (codepoint-aware). */
 function truncate(s: string, maxLen: number): string {
-  // ASCII fast path: JS substring is equivalent to codepoint slice
-  // and skipping the for-of avoids the QuickJS iterator overhead.
-  if (isAscii(s)) {
-    if (s.length <= maxLen) return s;
-    if (maxLen <= 3) return s.slice(0, maxLen);
-    return s.slice(0, maxLen - 3) + "...";
-  }
   const sLen = charLen(s);
   if (sLen <= maxLen) return s;
   if (maxLen <= 3) {
@@ -470,11 +453,14 @@ function flatItemKey(item: FlatItem): string {
 // pass `depth: 0, hasChildren: true`; matches pass `depth: 1,
 // hasChildren: false` (see `buildMatchListSpec`).
 //
-// Overlay offsets are emitted in character (codepoint) units; the
-// host converts to byte offsets after applying `padToChars`. This
-// keeps the per-row work proportional to the visible content,
-// without the per-overlay `editor.utf8ByteLength` bridge calls
-// that otherwise dominate hot-path renders.
+// Row content is described as a sequence of styled segments rather
+// than a pre-rendered string + offset overlays. The host concats
+// segments and computes the byte offsets natively in Rust, so the
+// plugin doesn't count codepoints or bytes for layout-piece widths
+// at all. Per-row freeform overlays (e.g. pattern-match highlights
+// inside the context substring) ride on the relevant segment via
+// its `overlays` field, addressed in char units relative to that
+// segment alone.
 function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   if (!panel) return { text: "" };
   if (item.type === "file") {
@@ -482,25 +468,21 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
     const badge = getFileExtBadge(group.relPath);
     const matchCount = group.matches.length;
     const selectedInFile = group.matches.filter(m => m.selected).length;
-    // The widget prefixes ` ▶ ` / ` ▼ ` (4 cols) before this body;
-    // pad budget = W - 4 (the widget's prefix consumes 4 cols at
-    // depth 0).
-    const fileLineText = `${badge} ${group.relPath} (${selectedInFile}/${matchCount})`;
-    const badgeChars = charLen(badge);
-    const pathStart = badgeChars + 1; // " " separator (always 1 codepoint)
-    const pathEnd = pathStart + charLen(group.relPath);
-
-    const overlays: InlineOverlay[] = [
-      { start: 0, end: badgeChars, style: { fg: C.fileIcon, bold: true }, unit: "char" },
-      { start: pathStart, end: pathEnd, style: { fg: C.filePath }, unit: "char" },
-    ];
-
-    return {
-      text: fileLineText,
-      padToChars: Math.max(0, W - 4),
-      properties: { type: "file-row", fileIndex: item.fileIndex },
-      inlineOverlays: overlays,
-    };
+    return styledRow(
+      [
+        { text: badge, style: { fg: C.fileIcon, bold: true } },
+        { text: " " },
+        { text: group.relPath, style: { fg: C.filePath } },
+        { text: ` (${selectedInFile}/${matchCount})` },
+      ],
+      {
+        // The widget prefixes ` ▶ ` / ` ▼ ` (4 cols) before this body;
+        // pad budget = W - 4 (the widget's prefix consumes 4 cols at
+        // depth 0).
+        padToChars: Math.max(0, W - 4),
+        properties: { type: "file-row", fileIndex: item.fileIndex },
+      },
+    );
   }
   // Match row. The Tree widget's prefix at depth=1 is 6 cols
   // (4 indent + 2 alignment). Use the remaining width for content.
@@ -509,33 +491,37 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   const checkbox = result.selected ? "[v]" : "[ ]";
   const location = `${group.relPath}:${result.match.line}`;
   const context = result.match.context.trim();
-  const prefixText = `${checkbox} `;
   const innerWidth = Math.max(0, W - 6); // host prefix consumes 6 cols
-  const prefixChars = charLen(prefixText);
-  const locationChars = charLen(location);
-  const maxCtx = innerWidth - prefixChars - locationChars - 3;
+
+  // Best-effort context budget: enough room for the fixed leading
+  // pieces plus " - " plus the context itself. JS `.length` gives
+  // UTF-16 code-unit counts which match codepoint counts for the
+  // overwhelmingly-ASCII case (paths + line numbers); slight
+  // over-counting on rare non-BMP filenames just trims a little
+  // more of the context, which is fine.
+  const maxCtx = innerWidth - checkbox.length - 1 - location.length - 3;
   const displayCtx = truncate(context, Math.max(10, maxCtx));
-  const matchLineText = `${prefixText}${location} - ${displayCtx}`;
 
-  const inlines: InlineOverlay[] = [];
-  // checkbox is "[v]" or "[ ]" — always 3 ASCII chars.
-  const cbEnd = checkbox.length;
-  inlines.push({ start: 0, end: cbEnd, style: { fg: result.selected ? C.checkOn : C.checkOff }, unit: "char" });
-  const locStart = cbEnd + 1; // " "
-  const locEnd = locStart + locationChars;
-  inlines.push({ start: locStart, end: locEnd, style: { fg: C.lineNum }, unit: "char" });
-
+  // Pattern-match highlights inside the context substring. Emitted
+  // in segment-local char units; the host shifts them by the
+  // context segment's char start during entry concatenation.
+  const ctxOverlays: InlineOverlay[] = [];
   if (panel.searchPattern) {
-    const ctxStart = locEnd + 3; // " - " is always 3 ASCII chars
-    highlightMatches(displayCtx, panel.searchPattern, ctxStart, panel.useRegex, panel.caseSensitive, inlines);
+    highlightMatches(displayCtx, panel.searchPattern, panel.useRegex, panel.caseSensitive, ctxOverlays);
   }
 
-  return {
-    text: matchLineText,
+  const segments: StyledSegment[] = [
+    { text: checkbox, style: { fg: result.selected ? C.checkOn : C.checkOff } },
+    { text: " " },
+    { text: location, style: { fg: C.lineNum } },
+    { text: " - " },
+    { text: displayCtx, overlays: ctxOverlays },
+  ];
+
+  return styledRow(segments, {
     padToChars: innerWidth,
     properties: { type: "match-row", fileIndex: item.fileIndex, matchIndex: item.matchIndex },
-    inlineOverlays: inlines.length > 0 ? inlines : undefined,
-  };
+  });
 }
 
 // Build the typed spec for the matches body — either a Tree widget
@@ -727,21 +713,19 @@ function addCursorOverlay(value: string, cursorPos: number, fieldByteStart: numb
   overlays.push({ start: cursorBytePos, end: cursorByteEnd, style: { fg: [0, 0, 0], bg: C.cursorBg } });
 }
 
-// Highlight search pattern occurrences in a display string.
+// Append pattern-match highlight overlays (one per occurrence) to
+// `overlays`. Offsets are in char (codepoint) units within `text`
+// itself — the caller is expected to attach `overlays` to a
+// segment whose body equals `text`, so the host shifts them into
+// entry-coordinate space during segment resolution.
 //
-// `baseCharOffset` is in character (codepoint) units within the
-// containing row. Overlays are emitted in the same unit so the
-// host can convert them to byte offsets in one pass. For ASCII
-// `text` (the common case for source-code matches) overlay math
-// uses JS string indices directly without the bridge calls a
-// byte-offset path would require.
-function highlightMatches(text: string, pattern: string, baseCharOffset: number, isRegex: boolean, caseSensitive: boolean, overlays: InlineOverlay[]): void {
+// `text` and `pattern` are treated as JS UTF-16 strings. For BMP
+// content (which includes nearly all source code) UTF-16 code unit
+// indices and Unicode codepoint indices coincide, so `indexOf` /
+// `RegExp.exec` indices map directly to char offsets without a
+// per-overlay codepoint walk.
+function highlightMatches(text: string, pattern: string, isRegex: boolean, caseSensitive: boolean, overlays: InlineOverlay[]): void {
   if (!pattern) return;
-  // ASCII-only fast path: JS `indexOf` returns codepoint-equivalent
-  // offsets (no surrogate pairs), so `idx` is the char offset
-  // directly. The non-ASCII path uses `charLen(prefix)` to convert.
-  const textAscii = isAscii(text);
-  const patternChars = isAscii(pattern) ? pattern.length : charLen(pattern);
   try {
     if (!isRegex) {
       let searchText = text;
@@ -754,9 +738,7 @@ function highlightMatches(text: string, pattern: string, baseCharOffset: number,
       while (pos < searchText.length) {
         const idx = searchText.indexOf(searchPat, pos);
         if (idx < 0) break;
-        const startChar = baseCharOffset + (textAscii ? idx : charLen(text.substring(0, idx)));
-        const endChar = startChar + patternChars;
-        overlays.push({ start: startChar, end: endChar, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
+        overlays.push({ start: idx, end: idx + pattern.length, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
         pos = idx + pattern.length;
       }
     } else {
@@ -765,10 +747,7 @@ function highlightMatches(text: string, pattern: string, baseCharOffset: number,
       let m;
       while ((m = re.exec(text)) !== null) {
         if (m[0].length === 0) { re.lastIndex++; continue; }
-        const startChar = baseCharOffset + (textAscii ? m.index : charLen(text.substring(0, m.index)));
-        const matchChars = isAscii(m[0]) ? m[0].length : charLen(m[0]);
-        const endChar = startChar + matchChars;
-        overlays.push({ start: startChar, end: endChar, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
+        overlays.push({ start: m.index, end: m.index + m[0].length, style: { bg: C.matchBg, fg: C.matchFg }, unit: "char" });
       }
     }
   } catch (_e) { /* invalid regex */ }
