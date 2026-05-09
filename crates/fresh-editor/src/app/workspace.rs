@@ -156,7 +156,7 @@ impl Editor {
         let mut terminals = Vec::new();
         let mut terminal_indices: HashMap<TerminalId, usize> = HashMap::new();
         let mut seen = HashSet::new();
-        for terminal_id in self.terminal_buffers.values().copied() {
+        for terminal_id in self.active_window().terminal_buffers.values().copied() {
             if seen.insert(terminal_id) {
                 // Ephemeral terminals (plugin-created tool UIs — rebuilds,
                 // exec shells, build output) do not belong in the persisted
@@ -169,7 +169,7 @@ impl Editor {
                 }
                 let idx = terminals.len();
                 terminal_indices.insert(terminal_id, idx);
-                let handle = self.terminal_manager.get(terminal_id);
+                let handle = self.active_window().terminal_manager.get(terminal_id);
                 let (cols, rows) = handle
                     .map(|h| h.size())
                     .unwrap_or((self.terminal_width, self.terminal_height));
@@ -178,6 +178,7 @@ impl Editor {
                     .map(|h| h.shell().to_string())
                     .unwrap_or_else(crate::services::terminal::detect_shell);
                 let log_path = self
+                    .active_window()
                     .terminal_log_files
                     .get(&terminal_id)
                     .cloned()
@@ -186,6 +187,7 @@ impl Editor {
                         root.join(format!("fresh-terminal-{}.log", terminal_id.0))
                     });
                 let backing_path = self
+                    .active_window()
                     .terminal_backing_files
                     .get(&terminal_id)
                     .cloned()
@@ -215,7 +217,10 @@ impl Editor {
                 .root(),
             &self.buffer_metadata,
             &self.working_dir,
-            &self.terminal_buffers,
+            self.windows
+                .get(&self.active_window)
+                .map(|w| &w.terminal_buffers)
+                .expect("active window present"),
             &terminal_indices,
             self.windows
                 .get(&self.active_window)
@@ -257,7 +262,10 @@ impl Editor {
                 &self.buffer_metadata,
                 &self.working_dir,
                 active_buffer,
-                &self.terminal_buffers,
+                self.windows
+                    .get(&self.active_window)
+                    .map(|w| &w.terminal_buffers)
+                    .expect("active window present"),
                 &terminal_indices,
             );
             tracing::trace!(
@@ -563,18 +571,20 @@ impl Editor {
 
         // Collect terminal IDs and their backing paths
         let terminals_to_sync: Vec<_> = self
+            .active_window()
             .terminal_buffers
             .values()
             .copied()
             .filter_map(|terminal_id| {
-                self.terminal_backing_files
+                self.active_window()
+                    .terminal_backing_files
                     .get(&terminal_id)
                     .map(|path| (terminal_id, path.clone()))
             })
             .collect();
 
         for (terminal_id, backing_path) in terminals_to_sync {
-            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                 if let Ok(state) = handle.state.lock() {
                     // Append visible screen to backing file
                     if let Ok(mut file) = self
@@ -1188,8 +1198,11 @@ impl Editor {
         if terminals.is_empty() {
             return terminal_buffer_map;
         }
-        if let Some(ref bridge) = self.async_bridge {
-            self.terminal_manager.set_async_bridge(bridge.clone());
+        let __bridge_clone = self.async_bridge.clone();
+        if let Some(bridge) = __bridge_clone {
+            self.active_window_mut()
+                .terminal_manager
+                .set_async_bridge(bridge);
         }
         for terminal in terminals {
             if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
@@ -1349,21 +1362,29 @@ impl Editor {
         );
 
         // Record paths using the predicted ID so buffer creation can reuse them
-        let predicted_id = self.terminal_manager.next_terminal_id();
-        self.terminal_log_files
+        let predicted_id = self.active_window().terminal_manager.next_terminal_id();
+        self.active_window_mut()
+            .terminal_log_files
             .insert(predicted_id, log_path.clone());
-        self.terminal_backing_files
+        self.active_window_mut()
+            .terminal_backing_files
             .insert(predicted_id, backing_path.clone());
 
         // Spawn the terminal with backing file for incremental scrollback
-        let terminal_id = match self.terminal_manager.spawn(
-            terminal.cols,
-            terminal.rows,
-            terminal.cwd.clone(),
-            Some(log_path.clone()),
-            Some(backing_path.clone()),
-            self.resolved_terminal_wrapper(),
-        ) {
+        let wrapper_for_spawn = self.resolved_terminal_wrapper();
+        let terminal_id = match self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.terminal_manager)
+            .expect("active window present")
+            .spawn(
+                terminal.cols,
+                terminal.rows,
+                terminal.cwd.clone(),
+                Some(log_path.clone()),
+                Some(backing_path.clone()),
+                wrapper_for_spawn,
+            ) {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!(
@@ -1377,12 +1398,18 @@ impl Editor {
 
         // Ensure maps keyed by actual ID
         if terminal_id != predicted_id {
-            self.terminal_log_files
+            self.active_window_mut()
+                .terminal_log_files
                 .insert(terminal_id, log_path.clone());
-            self.terminal_backing_files
+            self.active_window_mut()
+                .terminal_backing_files
                 .insert(terminal_id, backing_path.clone());
-            self.terminal_log_files.remove(&predicted_id);
-            self.terminal_backing_files.remove(&predicted_id);
+            self.active_window_mut()
+                .terminal_log_files
+                .remove(&predicted_id);
+            self.active_window_mut()
+                .terminal_backing_files
+                .remove(&predicted_id);
         }
 
         // Create buffer for this terminal

@@ -180,7 +180,7 @@ impl Editor {
 
                 // Get active split's buffer to convert bytes → line
                 let active_buffer_id = self.windows.get(&self.active_window).and_then(|w| w.splits.as_ref()).map(|(mgr, _)| mgr).expect("active window must have a populated split layout").buffer_for_split(active_split)?;
-                let buffer_state = self.windows.get(&self.active_window).map(|w| &w.buffers).expect("active window present").get(&active_buffer_id)?;
+                let buffer_state = self.active_window().buffers.get(&active_buffer_id)?;
                 let buffer_len = buffer_state.buffer.len();
                 let active_line = buffer_state.buffer.get_line_number(active_top_byte);
 

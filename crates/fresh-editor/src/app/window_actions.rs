@@ -180,7 +180,7 @@ impl crate::app::Editor {
         None
     }
 
-    /// Backwards-compat shim: pre-0c, every `self.windows.get_mut(&self.active_window).map(|w| &mut w.buffers).expect("active window present").insert(id,
+    /// Backwards-compat shim: pre-0c, every `self.active_window_mut().buffers.insert(id,
     /// state)` site also called `attach_buffer_to_active_window(id)`
     /// to track membership. After 0c the insert goes directly into
     /// the active window's `buffers` HashMap, so this is a no-op.

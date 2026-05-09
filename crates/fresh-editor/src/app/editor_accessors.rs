@@ -636,7 +636,7 @@ impl Editor {
     /// LSP server spawn.
     #[doc(hidden)]
     pub fn install_dummy_lsp_for_test(&mut self) {
-        self.active_session_mut().lsp = Some(crate::services::lsp::manager::LspManager::new(None));
+        self.active_window_mut().lsp = Some(crate::services::lsp::manager::LspManager::new(None));
     }
 
     /// Most-recent `path_changed` event the editor received.
@@ -671,7 +671,7 @@ impl Editor {
     /// Mutable access to the active session. Used by lifecycle code
     /// that re-targets per-session state (renaming, etc.). Same
     /// panic invariant as `active_window()`.
-    pub fn active_session_mut(&mut self) -> &mut crate::app::window::Window {
+    pub fn active_window_mut(&mut self) -> &mut crate::app::window::Window {
         let id = self.active_window;
         self.windows
             .get_mut(&id)
@@ -689,7 +689,7 @@ impl Editor {
     /// writes split / tab / file-explorer hit-test rects here at the
     /// end of each frame.
     pub(crate) fn active_layout_mut(&mut self) -> &mut crate::app::types::WindowLayoutCache {
-        &mut self.active_session_mut().layout_cache
+        &mut self.active_window_mut().layout_cache
     }
 
     /// Active window's utility-dock panel-id → buffer-id map.
@@ -701,7 +701,7 @@ impl Editor {
 
     /// Mutable handle to the active window's panel-id map.
     pub(crate) fn panel_ids_mut(&mut self) -> &mut std::collections::HashMap<String, BufferId> {
-        &mut self.active_session_mut().panel_ids
+        &mut self.active_window_mut().panel_ids
     }
 
     /// Active window's open-file mtime cache. Auto-revert only
@@ -717,7 +717,7 @@ impl Editor {
     pub(crate) fn file_mod_times_mut(
         &mut self,
     ) -> &mut std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
-        &mut self.active_session_mut().file_mod_times
+        &mut self.active_window_mut().file_mod_times
     }
 
     /// Active window's file-explorer view (`None` if it's never been
@@ -733,7 +733,7 @@ impl Editor {
     /// `self.windows.get_mut(&self.active_window).and_then(|w| w.file_explorer.as_mut())`
     /// instead so the borrow on `self.windows` stays disjoint.
     pub fn file_explorer_mut(&mut self) -> Option<&mut FileTreeView> {
-        self.active_session_mut().file_explorer.as_mut()
+        self.active_window_mut().file_explorer.as_mut()
     }
 
     /// Active window's buffer storage. Each window owns its
@@ -751,7 +751,7 @@ impl Editor {
     /// `let window = self.windows.get_mut(&self.active_window).unwrap()`
     /// and split-access the disjoint sub-fields directly.
     pub(crate) fn buffers_mut(&mut self) -> &mut HashMap<BufferId, EditorState> {
-        &mut self.active_session_mut().buffers
+        &mut self.active_window_mut().buffers
     }
 
     /// Active window's LSP manager (`None` if no LSP has been spawned
@@ -766,7 +766,7 @@ impl Editor {
     /// need to read other Editor fields, prefer direct
     /// `self.windows.get_mut(&self.active_window).and_then(|w| w.lsp.as_mut())`.
     pub(crate) fn lsp_mut(&mut self) -> Option<&mut crate::services::lsp::manager::LspManager> {
-        self.active_session_mut().lsp.as_mut()
+        self.active_window_mut().lsp.as_mut()
     }
 
     /// Active window's split tree. Panics if the window has no
@@ -786,7 +786,7 @@ impl Editor {
     /// Mutable handle to the active window's split tree.
     pub(crate) fn split_manager_mut(&mut self) -> &mut crate::view::split::SplitManager {
         &mut self
-            .active_session_mut()
+            .active_window_mut()
             .splits
             .as_mut()
             .expect("active window must have a populated split layout")
@@ -814,7 +814,7 @@ impl Editor {
         crate::view::split::SplitViewState,
     > {
         &mut self
-            .active_session_mut()
+            .active_window_mut()
             .splits
             .as_mut()
             .expect("active window must have a populated split layout")

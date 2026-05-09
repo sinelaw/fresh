@@ -1826,13 +1826,18 @@ impl Editor {
             .map(|s| s.buffers.keys().copied().collect())
             .unwrap_or_default();
         for bid in preview_buffers {
-            let Some(&terminal_id) = self.terminal_buffers.get(&bid) else {
+            let Some(&terminal_id) = self.active_window().terminal_buffers.get(&bid) else {
                 continue;
             };
-            let Some(backing_file) = self.terminal_backing_files.get(&terminal_id).cloned() else {
+            let Some(backing_file) = self
+                .active_window()
+                .terminal_backing_files
+                .get(&terminal_id)
+                .cloned()
+            else {
                 continue;
             };
-            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
                     if let Ok(metadata) = self.authority.filesystem.metadata(&backing_file) {
                         state.set_backing_file_history_end(metadata.size);
@@ -1877,7 +1882,7 @@ impl Editor {
         }
 
         // Move the stash out so the rest of the function holds
-        // `self.windows.get_mut(&self.active_window).map(|w| &mut w.buffers).expect("active window present")` etc. without conflicting with
+        // `self.active_window_mut().buffers` etc. without conflicting with
         // `&mut self.windows`. Bail if the session has no stash
         // yet (never been activated and never had a terminal /
         // file routed in via createTerminal({windowId})).

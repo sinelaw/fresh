@@ -32,7 +32,7 @@ struct Active {
     #[allow(dead_code)] // retained for future "refresh saved root" hook points
     leaves: Vec<LeafData>,
     /// Inner chunked-search state. Extracted via `take_chunked` while a
-    /// batch is running so the caller can pass `self.windows.get_mut(&self.active_window).map(|w| &mut w.buffers).expect("active window present")` into
+    /// batch is running so the caller can pass `self.active_window_mut().buffers` into
     /// `search_scan_next_chunk` without violating the borrow checker, and
     /// put back via `restore_chunked`.
     chunked: Option<ChunkedSearchState>,
@@ -114,7 +114,7 @@ impl SearchScan {
 
     /// Extract the inner `ChunkedSearchState` so the caller can pass it
     /// by mutable reference into `TextBuffer::search_scan_next_chunk`
-    /// alongside `self.windows.get_mut(&self.active_window).map(|w| &mut w.buffers).expect("active window present")`. The caller **must** call
+    /// alongside `self.active_window_mut().buffers`. The caller **must** call
     /// [`restore_chunked`] afterwards or subsequent calls will see no
     /// active chunked state.
     pub(crate) fn take_chunked(&mut self) -> Option<ChunkedSearchState> {

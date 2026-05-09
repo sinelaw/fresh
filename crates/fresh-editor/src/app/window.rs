@@ -112,6 +112,22 @@ pub struct Window {
     /// two independent buffers.
     pub buffers: HashMap<BufferId, crate::state::EditorState>,
 
+    /// Terminal subsystem (PTY processes + render-state grids) for
+    /// this window. Owned per-window so closing a window joins its
+    /// PTY threads — no orphan agents survive a `closeWindow`.
+    pub terminal_manager: crate::services::terminal::TerminalManager,
+
+    /// Maps a terminal-buffer id to its PTY id, scoped to this window.
+    pub terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
+
+    /// Backing files for terminal buffers (the rendered visible-screen
+    /// + scrollback content the buffer actually displays).
+    pub terminal_backing_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
+
+    /// Raw log files for terminal buffers (the unfiltered byte stream
+    /// from the PTY, used for replay / save-history).
+    pub terminal_log_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
+
     /// Plugin-managed per-window state. Outer key is plugin name,
     /// inner is the plugin-defined key. Read via
     /// `editor.getWindowState(key)` and written via
@@ -178,6 +194,10 @@ impl Window {
             panel_ids: HashMap::new(),
             splits: None,
             buffers: HashMap::new(),
+            terminal_manager: crate::services::terminal::TerminalManager::new(),
+            terminal_buffers: HashMap::new(),
+            terminal_backing_files: HashMap::new(),
+            terminal_log_files: HashMap::new(),
             layout_cache: WindowLayoutCache::default(),
         }
     }

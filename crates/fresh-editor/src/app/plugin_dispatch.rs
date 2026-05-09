@@ -2898,8 +2898,11 @@ impl Editor {
         let (cols, rows) = self.get_terminal_dimensions();
 
         // Set up async bridge for terminal manager if not already done
-        if let Some(ref bridge) = self.async_bridge {
-            self.terminal_manager.set_async_bridge(bridge.clone());
+        let __bridge_clone = self.async_bridge.clone();
+        if let Some(bridge) = __bridge_clone {
+            self.active_window_mut()
+                .terminal_manager
+                .set_async_bridge(bridge);
         }
 
         // Determine working directory
@@ -2912,7 +2915,7 @@ impl Editor {
         if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
             tracing::warn!("Failed to create terminal directory: {}", e);
         }
-        let predicted_terminal_id = self.terminal_manager.next_terminal_id();
+        let predicted_terminal_id = self.active_window().terminal_manager.next_terminal_id();
         // Ephemeral terminals get a per-spawn suffix on their backing
         // files so there is no possibility of picking up the scrollback
         // that a previous run (with the same numeric terminal ID) wrote
@@ -2930,24 +2933,35 @@ impl Editor {
         };
         let log_path = terminal_root.join(format!("{}.log", name_stem));
         let backing_path = terminal_root.join(format!("{}.txt", name_stem));
-        self.terminal_backing_files
+        self.active_window_mut()
+            .terminal_backing_files
             .insert(predicted_terminal_id, backing_path);
         let backing_path_for_spawn = self
-            .terminal_backing_files
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.terminal_backing_files)
+            .expect("active window present")
             .get(&predicted_terminal_id)
             .cloned();
+        let wrapper_for_spawn = self.resolved_terminal_wrapper();
 
-        match self.terminal_manager.spawn(
-            cols,
-            rows,
-            Some(working_dir),
-            Some(log_path.clone()),
-            backing_path_for_spawn,
-            self.resolved_terminal_wrapper(),
-        ) {
+        match self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.terminal_manager)
+            .expect("active window present")
+            .spawn(
+                cols,
+                rows,
+                Some(working_dir),
+                Some(log_path.clone()),
+                backing_path_for_spawn,
+                wrapper_for_spawn,
+            ) {
             Ok(terminal_id) => {
                 // Track log file path
-                self.terminal_log_files
+                self.active_window_mut()
+                    .terminal_log_files
                     .insert(terminal_id, log_path.clone());
                 // Fix up backing path if the predicted ID didn't match
                 // the one the terminal manager handed out. Persistent
@@ -2957,13 +2971,17 @@ impl Editor {
                 // file (it has a nanos-unique name either way) and
                 // rebind the HashMap key to the real ID.
                 if terminal_id != predicted_terminal_id {
-                    let existing = self.terminal_backing_files.remove(&predicted_terminal_id);
+                    let existing = self
+                        .active_window_mut()
+                        .terminal_backing_files
+                        .remove(&predicted_terminal_id);
                     let fixed_backing = if persistent {
                         terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
                     } else {
                         existing.unwrap_or_else(|| terminal_root.join(format!("{}.txt", name_stem)))
                     };
-                    self.terminal_backing_files
+                    self.active_window_mut()
+                        .terminal_backing_files
                         .insert(terminal_id, fixed_backing);
                 }
                 if !persistent {
@@ -3125,8 +3143,11 @@ impl Editor {
         request_id: u64,
     ) {
         let (cols, rows) = self.get_terminal_dimensions();
-        if let Some(ref bridge) = self.async_bridge {
-            self.terminal_manager.set_async_bridge(bridge.clone());
+        let __bridge_clone = self.async_bridge.clone();
+        if let Some(bridge) = __bridge_clone {
+            self.active_window_mut()
+                .terminal_manager
+                .set_async_bridge(bridge);
         }
 
         // Default cwd to the *target session's* root, not the
@@ -3143,7 +3164,7 @@ impl Editor {
         if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
             tracing::warn!("Failed to create terminal directory: {}", e);
         }
-        let predicted_terminal_id = self.terminal_manager.next_terminal_id();
+        let predicted_terminal_id = self.active_window().terminal_manager.next_terminal_id();
         let name_stem = if persistent {
             format!("fresh-terminal-{}", predicted_terminal_id.0)
         } else {
@@ -3155,21 +3176,29 @@ impl Editor {
         };
         let log_path = terminal_root.join(format!("{}.log", name_stem));
         let backing_path = terminal_root.join(format!("{}.txt", name_stem));
-        self.terminal_backing_files
+        self.active_window_mut()
+            .terminal_backing_files
             .insert(predicted_terminal_id, backing_path);
         let backing_path_for_spawn = self
+            .active_window()
             .terminal_backing_files
             .get(&predicted_terminal_id)
             .cloned();
 
-        let terminal_id = match self.terminal_manager.spawn(
-            cols,
-            rows,
-            Some(working_dir),
-            Some(log_path.clone()),
-            backing_path_for_spawn,
-            self.resolved_terminal_wrapper(),
-        ) {
+        let wrapper_for_spawn = self.resolved_terminal_wrapper();
+        let terminal_id = match self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.terminal_manager)
+            .expect("active window present")
+            .spawn(
+                cols,
+                rows,
+                Some(working_dir),
+                Some(log_path.clone()),
+                backing_path_for_spawn,
+                wrapper_for_spawn,
+            ) {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("Failed to create terminal for inactive session: {}", e);
@@ -3180,12 +3209,16 @@ impl Editor {
                 return;
             }
         };
-        self.terminal_log_files
+        self.active_window_mut()
+            .terminal_log_files
             .insert(terminal_id, log_path.clone());
         if terminal_id != predicted_terminal_id {
-            self.terminal_backing_files.remove(&predicted_terminal_id);
+            self.active_window_mut()
+                .terminal_backing_files
+                .remove(&predicted_terminal_id);
             let backing_path = terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
-            self.terminal_backing_files
+            self.active_window_mut()
+                .terminal_backing_files
                 .insert(terminal_id, backing_path);
         }
         if !persistent {
@@ -4709,7 +4742,7 @@ impl Editor {
         terminal_id: crate::services::terminal::TerminalId,
         data: String,
     ) {
-        if let Some(handle) = self.terminal_manager.get(terminal_id) {
+        if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
             handle.write(data.as_bytes());
             tracing::trace!(
                 "Plugin sent {} bytes to terminal {:?}",
@@ -4726,6 +4759,7 @@ impl Editor {
 
     fn handle_close_terminal(&mut self, terminal_id: crate::services::terminal::TerminalId) {
         let buffer_to_close = self
+            .active_window()
             .terminal_buffers
             .iter()
             .find(|(_, &tid)| tid == terminal_id)
@@ -4736,7 +4770,7 @@ impl Editor {
             }
             tracing::info!("Plugin closed terminal {:?}", terminal_id);
         } else {
-            self.terminal_manager.close(terminal_id);
+            self.active_window_mut().terminal_manager.close(terminal_id);
             tracing::info!("Plugin closed terminal {:?} (no buffer found)", terminal_id);
         }
     }

@@ -1090,9 +1090,11 @@ pub struct Editor {
     /// Periodic update checker (checks for new releases every hour)
     update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
 
-    /// Terminal manager for built-in terminal support
-    terminal_manager: crate::services::terminal::TerminalManager,
-
+    // Terminal subsystem moved onto `Window` (Step 0d). PTYs and
+    // their backing files belong to the window that spawned them, so
+    // closeWindow joins the threads. Access through methods on Window
+    // (called via `self.windows.get_mut(&id).unwrap().method(...)`),
+    // not via accessors on Editor.
     /// Plugin-driven filesystem watchers (lazily constructed —
     /// the underlying notify backend spawns a thread, so it's
     /// nicer to defer until the first `watchPath` call). See
@@ -1119,15 +1121,8 @@ pub struct Editor {
     /// "Rich Control Room rendering".
     pub(crate) preview_window_id: Option<fresh_core::WindowId>,
 
-    /// Maps buffer ID to terminal ID (for terminal buffers)
-    terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
-
-    /// Maps terminal ID to backing file path (for terminal content storage)
-    terminal_backing_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
-
-    /// Maps terminal ID to raw log file path (full PTY capture)
-    terminal_log_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
-
+    // terminal_buffers / terminal_backing_files / terminal_log_files
+    // moved onto `Window` (Step 0d).
     /// Terminals that should not be persisted to the workspace session file.
     /// A terminal is in this set iff it was created with `persistent = false`
     /// (the default for plugin-created terminals). On workspace save these

@@ -66,8 +66,11 @@ impl Editor {
         let (cols, rows) = self.get_terminal_dimensions();
 
         // Set up async bridge for terminal manager if not already done
-        if let Some(ref bridge) = self.async_bridge {
-            self.terminal_manager.set_async_bridge(bridge.clone());
+        let __bridge_clone = self.async_bridge.clone();
+        if let Some(bridge) = __bridge_clone {
+            self.active_window_mut()
+                .terminal_manager
+                .set_async_bridge(bridge);
         }
 
         // Prepare persistent storage paths under the user's data directory
@@ -76,38 +79,55 @@ impl Editor {
             tracing::warn!("Failed to create terminal directory: {}", e);
         }
         // Precompute paths using the next terminal ID so we capture from the first byte
-        let predicted_terminal_id = self.terminal_manager.next_terminal_id();
+        let predicted_terminal_id = self.active_window().terminal_manager.next_terminal_id();
         let log_path =
             terminal_root.join(format!("fresh-terminal-{}.log", predicted_terminal_id.0));
         let backing_path =
             terminal_root.join(format!("fresh-terminal-{}.txt", predicted_terminal_id.0));
         // Stash backing path now so buffer creation can reuse it
-        self.terminal_backing_files
+        self.active_window_mut()
+            .terminal_backing_files
             .insert(predicted_terminal_id, backing_path);
 
-        // Spawn terminal with incremental scrollback streaming
+        // Spawn terminal with incremental scrollback streaming.
+        // Pre-extract everything self-borrowing before grabbing the
+        // mutable terminal_manager so the args don't conflict.
         let backing_path_for_spawn = self
-            .terminal_backing_files
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.terminal_backing_files)
+            .expect("active window present")
             .get(&predicted_terminal_id)
             .cloned();
-        match self.terminal_manager.spawn(
-            cols,
-            rows,
-            Some(self.working_dir.clone()),
-            Some(log_path.clone()),
-            backing_path_for_spawn,
-            self.resolved_terminal_wrapper(),
-        ) {
+        let working_dir_for_spawn = self.working_dir.clone();
+        let wrapper_for_spawn = self.resolved_terminal_wrapper();
+        match self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.terminal_manager)
+            .expect("active window present")
+            .spawn(
+                cols,
+                rows,
+                Some(working_dir_for_spawn),
+                Some(log_path.clone()),
+                backing_path_for_spawn,
+                wrapper_for_spawn,
+            ) {
             Ok(terminal_id) => {
                 // Track log file path (use actual ID in case it differs)
-                self.terminal_log_files
+                self.active_window_mut()
+                    .terminal_log_files
                     .insert(terminal_id, log_path.clone());
                 // If predicted differs, move backing path entry
                 if terminal_id != predicted_terminal_id {
-                    self.terminal_backing_files.remove(&predicted_terminal_id);
+                    self.active_window_mut()
+                        .terminal_backing_files
+                        .remove(&predicted_terminal_id);
                     let backing_path =
                         terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
-                    self.terminal_backing_files
+                    self.active_window_mut()
+                        .terminal_backing_files
                         .insert(terminal_id, backing_path);
                 }
                 Some(terminal_id)
@@ -183,6 +203,7 @@ impl Editor {
 
         // Rendered backing file for scrollback view (reuse if already recorded)
         let backing_file = self
+            .active_window()
             .terminal_backing_files
             .get(&terminal_id)
             .cloned()
@@ -203,7 +224,8 @@ impl Editor {
         }
 
         // Store the backing file path
-        self.terminal_backing_files
+        self.active_window_mut()
+            .terminal_backing_files
             .insert(terminal_id, backing_file.clone());
 
         // Create editor state with the backing file
@@ -231,7 +253,9 @@ impl Editor {
         self.buffer_metadata.insert(buffer_id, metadata);
 
         // Map buffer to terminal
-        self.terminal_buffers.insert(buffer_id, terminal_id);
+        self.active_window_mut()
+            .terminal_buffers
+            .insert(buffer_id, terminal_id);
 
         // Initialize event log for undo/redo
         self.event_logs
@@ -262,6 +286,7 @@ impl Editor {
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 
         let backing_file = self
+            .active_window()
             .terminal_backing_files
             .get(&terminal_id)
             .cloned()
@@ -300,7 +325,9 @@ impl Editor {
             false,
         );
         self.buffer_metadata.insert(buffer_id, metadata);
-        self.terminal_buffers.insert(buffer_id, terminal_id);
+        self.active_window_mut()
+            .terminal_buffers
+            .insert(buffer_id, terminal_id);
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -311,21 +338,28 @@ impl Editor {
     pub fn close_terminal(&mut self) {
         let buffer_id = self.active_buffer();
 
-        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+        if let Some(&terminal_id) = self.active_window().terminal_buffers.get(&buffer_id) {
             // Close the terminal
-            self.terminal_manager.close(terminal_id);
-            self.terminal_buffers.remove(&buffer_id);
+            self.active_window_mut().terminal_manager.close(terminal_id);
+            self.active_window_mut().terminal_buffers.remove(&buffer_id);
             self.ephemeral_terminals.remove(&terminal_id);
 
             // Clean up backing/rendering file
-            let backing_file = self.terminal_backing_files.remove(&terminal_id);
+            let backing_file = self
+                .active_window_mut()
+                .terminal_backing_files
+                .remove(&terminal_id);
             if let Some(ref path) = backing_file {
                 // Best-effort cleanup of temporary terminal files.
                 #[allow(clippy::let_underscore_must_use)]
                 let _ = self.authority.filesystem.remove_file(path);
             }
             // Clean up raw log file
-            if let Some(log_file) = self.terminal_log_files.remove(&terminal_id) {
+            if let Some(log_file) = self
+                .active_window_mut()
+                .terminal_log_files
+                .remove(&terminal_id)
+            {
                 if backing_file.as_ref() != Some(&log_file) {
                     // Best-effort cleanup of temporary terminal files.
                     #[allow(clippy::let_underscore_must_use)]
@@ -350,27 +384,39 @@ impl Editor {
 
     /// Check if a buffer is a terminal buffer
     pub fn is_terminal_buffer(&self, buffer_id: BufferId) -> bool {
-        self.terminal_buffers.contains_key(&buffer_id)
+        self.active_window()
+            .terminal_buffers
+            .contains_key(&buffer_id)
     }
 
     /// Get the terminal ID for a buffer (if it's a terminal buffer)
     pub fn get_terminal_id(&self, buffer_id: BufferId) -> Option<TerminalId> {
-        self.terminal_buffers.get(&buffer_id).copied()
+        self.active_window()
+            .terminal_buffers
+            .get(&buffer_id)
+            .copied()
     }
 
     /// Get the terminal state for the active buffer (if it's a terminal buffer)
     pub fn get_active_terminal_state(
         &self,
     ) -> Option<std::sync::MutexGuard<'_, crate::services::terminal::TerminalState>> {
-        let terminal_id = self.terminal_buffers.get(&self.active_buffer())?;
-        let handle = self.terminal_manager.get(*terminal_id)?;
+        let terminal_id = self
+            .active_window()
+            .terminal_buffers
+            .get(&self.active_buffer())?;
+        let handle = self.active_window().terminal_manager.get(*terminal_id)?;
         handle.state.lock().ok()
     }
 
     /// Send input to the active terminal
     pub fn send_terminal_input(&mut self, data: &[u8]) {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer()) {
-            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+        if let Some(&terminal_id) = self
+            .active_window()
+            .terminal_buffers
+            .get(&self.active_buffer())
+        {
+            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                 handle.write(data);
             }
         }
@@ -450,8 +496,8 @@ impl Editor {
     /// Check if the active terminal buffer is in alternate screen mode.
     /// Programs like vim, less, htop use alternate screen mode.
     pub fn is_terminal_in_alternate_screen(&self, buffer_id: BufferId) -> bool {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
-            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+        if let Some(&terminal_id) = self.active_window().terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                 if let Ok(state) = handle.state.lock() {
                     return state.is_alternate_screen();
                 }
@@ -471,8 +517,12 @@ impl Editor {
 
     /// Resize terminal to match split dimensions
     pub fn resize_terminal(&mut self, buffer_id: BufferId, cols: u16, rows: u16) {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
-            if let Some(handle) = self.terminal_manager.get_mut(terminal_id) {
+        if let Some(&terminal_id) = self.active_window().terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self
+                .active_window_mut()
+                .terminal_manager
+                .get_mut(terminal_id)
+            {
                 handle.resize(cols, rows);
             }
         }
@@ -506,7 +556,11 @@ impl Editor {
 
         // Resize each terminal buffer to match its split content area
         for (_split_id, buffer_id, split_area) in visible_buffers {
-            if self.terminal_buffers.contains_key(&buffer_id) {
+            if self
+                .active_window()
+                .terminal_buffers
+                .contains_key(&buffer_id)
+            {
                 // Calculate content dimensions (accounting for tab bar and borders)
                 // Tab bar takes 1 row, and we leave 1 for scrollbar width on right
                 let content_height = split_area.height.saturating_sub(2);
@@ -559,16 +613,20 @@ impl Editor {
     ///
     /// Performance: O(screen_size) instead of O(total_history)
     pub fn sync_terminal_to_buffer(&mut self, buffer_id: BufferId) {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+        if let Some(&terminal_id) = self.active_window().terminal_buffers.get(&buffer_id) {
             // Get the backing file path
-            let backing_file = match self.terminal_backing_files.get(&terminal_id) {
+            let backing_file = match self
+                .active_window()
+                .terminal_backing_files
+                .get(&terminal_id)
+            {
                 Some(path) => path.clone(),
                 None => return,
             };
 
             // Append visible screen to backing file
             // The scrollback has already been incrementally streamed by the PTY read loop
-            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
                     // Record the current file size as the history end point
                     // (before appending visible screen) so we can truncate back to it
@@ -691,10 +749,18 @@ impl Editor {
             }
 
             // Truncate backing file to remove visible screen tail and scroll to bottom
-            if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer()) {
+            if let Some(&terminal_id) = self
+                .active_window()
+                .terminal_buffers
+                .get(&self.active_buffer())
+            {
                 // Truncate backing file to remove visible screen that was appended
-                if let Some(backing_path) = self.terminal_backing_files.get(&terminal_id) {
-                    if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Some(backing_path) = self
+                    .active_window()
+                    .terminal_backing_files
+                    .get(&terminal_id)
+                {
+                    if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                         if let Ok(state) = handle.state.lock() {
                             let truncate_pos = state.backing_file_history_end();
                             // Always truncate to remove appended visible screen
@@ -711,7 +777,7 @@ impl Editor {
                 }
 
                 // Scroll terminal to bottom when re-entering
-                if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                     if let Ok(mut state) = handle.state.lock() {
                         state.scroll_to_bottom();
                     }
@@ -730,8 +796,8 @@ impl Editor {
         &self,
         buffer_id: BufferId,
     ) -> Option<Vec<Vec<crate::services::terminal::TerminalCell>>> {
-        let terminal_id = self.terminal_buffers.get(&buffer_id)?;
-        let handle = self.terminal_manager.get(*terminal_id)?;
+        let terminal_id = self.active_window().terminal_buffers.get(&buffer_id)?;
+        let handle = self.active_window().terminal_manager.get(*terminal_id)?;
         let state = handle.state.lock().ok()?;
 
         let (_, rows) = state.size();
@@ -766,16 +832,27 @@ impl Editor {
         self.config_mut().terminal.jump_to_end_on_output = value;
     }
 
-    /// Get read-only access to the terminal manager (for testing)
+    /// Get read-only access to the active window's terminal manager
+    /// (for testing). After Step 0d, terminal state lives on each
+    /// window — this routes to the active one.
     pub fn terminal_manager(&self) -> &crate::services::terminal::TerminalManager {
-        &self.terminal_manager
+        &self
+            .windows
+            .get(&self.active_window)
+            .expect("active window must exist")
+            .terminal_manager
     }
 
-    /// Get read-only access to terminal backing files map (for testing)
+    /// Get read-only access to the active window's terminal backing
+    /// files map (for testing).
     pub fn terminal_backing_files(
         &self,
     ) -> &std::collections::HashMap<crate::services::terminal::TerminalId, std::path::PathBuf> {
-        &self.terminal_backing_files
+        &self
+            .windows
+            .get(&self.active_window)
+            .expect("active window must exist")
+            .terminal_backing_files
     }
 
     /// Get the currently active buffer ID
@@ -843,7 +920,7 @@ impl Editor {
             split_areas
         {
             // Only render terminal buffers - skip regular file buffers
-            if let Some(&terminal_id) = self.terminal_buffers.get(buffer_id) {
+            if let Some(&terminal_id) = self.active_window().terminal_buffers.get(buffer_id) {
                 // Only render from live terminal state if in terminal mode OR if not the active buffer
                 // (when it's the active buffer but not in terminal mode, we're in read-only scrollback mode
                 // and should show the synced buffer content instead)
@@ -853,7 +930,7 @@ impl Editor {
                     continue;
                 }
                 // Get terminal content and cursor info
-                if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                     if let Ok(state) = handle.state.lock() {
                         let cursor_pos = state.cursor_position();
                         // Only show cursor for the active terminal in terminal mode

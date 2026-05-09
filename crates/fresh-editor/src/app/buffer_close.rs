@@ -64,19 +64,26 @@ impl Editor {
         }
 
         // If closing a terminal buffer, clean up terminal-related data structures
-        if let Some(terminal_id) = self.terminal_buffers.remove(&id) {
+        if let Some(terminal_id) = self.active_window_mut().terminal_buffers.remove(&id) {
             // Close the terminal process
-            self.terminal_manager.close(terminal_id);
+            self.active_window_mut().terminal_manager.close(terminal_id);
 
             // Clean up backing/rendering file
-            let backing_file = self.terminal_backing_files.remove(&terminal_id);
+            let backing_file = self
+                .active_window_mut()
+                .terminal_backing_files
+                .remove(&terminal_id);
             if let Some(ref path) = backing_file {
                 // Best-effort cleanup of temporary terminal files.
                 #[allow(clippy::let_underscore_must_use)]
                 let _ = self.authority.filesystem.remove_file(path);
             }
             // Clean up raw log file
-            if let Some(log_file) = self.terminal_log_files.remove(&terminal_id) {
+            if let Some(log_file) = self
+                .active_window_mut()
+                .terminal_log_files
+                .remove(&terminal_id)
+            {
                 if backing_file.as_ref() != Some(&log_file) {
                     // Best-effort cleanup of temporary terminal files.
                     #[allow(clippy::let_underscore_must_use)]

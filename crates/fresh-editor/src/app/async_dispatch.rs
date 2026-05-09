@@ -437,8 +437,10 @@ impl Editor {
                     // automatically re-enter terminal mode
                     if self.config.terminal.jump_to_end_on_output && !self.terminal_mode {
                         // Check if active buffer is this terminal
-                        if let Some(&active_terminal_id) =
-                            self.terminal_buffers.get(&self.active_buffer())
+                        if let Some(&active_terminal_id) = self
+                            .active_window()
+                            .terminal_buffers
+                            .get(&self.active_buffer())
                         {
                             if active_terminal_id == terminal_id {
                                 self.enter_terminal_mode();
@@ -448,7 +450,8 @@ impl Editor {
 
                     // When in terminal mode, ensure display stays at bottom (follows new output)
                     if self.terminal_mode {
-                        if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                        if let Some(handle) = self.active_window().terminal_manager.get(terminal_id)
+                        {
                             if let Ok(mut state) = handle.state.lock() {
                                 state.scroll_to_bottom();
                             }
@@ -460,6 +463,7 @@ impl Editor {
                     // readback API. The grid lock is released before
                     // `run_hook` runs to avoid holding it across plugin code.
                     let last_line = self
+                        .active_window()
                         .terminal_manager
                         .get(terminal_id)
                         .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
@@ -490,6 +494,7 @@ impl Editor {
                     tracing::info!("Terminal {:?} exited", terminal_id);
                     // Find the buffer associated with this terminal
                     if let Some((&buffer_id, _)) = self
+                        .active_window()
                         .terminal_buffers
                         .iter()
                         .find(|(_, &tid)| tid == terminal_id)
@@ -506,8 +511,11 @@ impl Editor {
                         // Append exit message to the backing file and reload
                         let exit_msg = "\n[Terminal process exited]\n";
 
-                        if let Some(backing_path) =
-                            self.terminal_backing_files.get(&terminal_id).cloned()
+                        if let Some(backing_path) = self
+                            .active_window()
+                            .terminal_backing_files
+                            .get(&terminal_id)
+                            .cloned()
                         {
                             if let Ok(mut file) = self
                                 .authority
@@ -540,13 +548,13 @@ impl Editor {
                         }
 
                         // Remove from terminal_buffers so it's no longer treated as a terminal
-                        self.terminal_buffers.remove(&buffer_id);
+                        self.active_window_mut().terminal_buffers.remove(&buffer_id);
 
                         self.set_status_message(
                             t!("terminal.exited", id = terminal_id.0).to_string(),
                         );
                     }
-                    self.terminal_manager.close(terminal_id);
+                    self.active_window_mut().terminal_manager.close(terminal_id);
 
                     // Notify plugins after the editor's own exit handling
                     // is complete. Conductor's state machine reads this

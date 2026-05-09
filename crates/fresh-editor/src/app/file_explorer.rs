@@ -142,7 +142,7 @@ impl Editor {
                                 let _ = sender.send(AsyncMessage::FileExplorerExpandedToPath(view));
                             });
                         } else {
-                            self.active_session_mut().file_explorer = Some(view);
+                            self.active_window_mut().file_explorer = Some(view);
                         }
                     }
                 }
