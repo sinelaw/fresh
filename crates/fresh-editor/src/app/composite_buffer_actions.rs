@@ -248,8 +248,6 @@ impl Editor {
             .map(|w| &mut w.buffers)
             .expect("active window present")
             .insert(buffer_id, state);
-        self.attach_buffer_to_active_window(buffer_id);
-
         // Create an event log entry (required for many editor operations)
         self.active_window_mut()
             .event_logs

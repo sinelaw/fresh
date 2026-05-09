@@ -180,14 +180,6 @@ impl crate::app::Editor {
         None
     }
 
-    /// Backwards-compat shim: pre-0c, every `self.active_window_mut().buffers.insert(id,
-    /// state)` site also called `attach_buffer_to_active_window(id)`
-    /// to track membership. After 0c the insert goes directly into
-    /// the active window's `buffers` HashMap, so this is a no-op.
-    /// Kept around so the call sites compile during the migration;
-    /// removed in 0i.
-    pub(crate) fn attach_buffer_to_active_window(&mut self, _buffer_id: fresh_core::BufferId) {}
-
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch
     /// to a different session first. Refuses to close the base

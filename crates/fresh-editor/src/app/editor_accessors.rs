@@ -609,8 +609,11 @@ impl Editor {
     }
 
     /// Active session's utility-dock panel-id → buffer-id map.
-    /// Used by tests to assert that warm-swap restored a
-    /// session's stashed dock occupancy.
+    /// Used by tests to assert that the active window's dock
+    /// occupancy is what was set on it. (Pre-0b this asserted
+    /// "warm-swap restored the stash"; post-0b every window owns
+    /// its own dock, so the assertion is just "this window's
+    /// `panel_ids` map matches expectations.")
     #[doc(hidden)]
     pub fn panel_ids_for_test(&self) -> &std::collections::HashMap<String, fresh_core::BufferId> {
         self.panel_ids()
@@ -625,8 +628,10 @@ impl Editor {
     }
 
     /// True iff the active session has an LSP manager attached.
-    /// Used by tests to assert that warm-swap moves the manager
-    /// out of the active slot when the outgoing session had one.
+    /// Used by tests to assert that the active window's `lsp`
+    /// slot is populated. (Pre-0b this exercised the warm-swap
+    /// code; post-0b the LSP manager lives directly on `Window`,
+    /// so the assertion is just "this window's `lsp` is `Some`.")
     #[doc(hidden)]
     pub fn has_lsp_for_test(&self) -> bool {
         self.lsp().is_some()
@@ -656,8 +661,10 @@ impl Editor {
     }
 
     /// Inject an mtime entry into the active session's mod-time
-    /// cache. Used by tests to verify warm-swap of the cache
-    /// without going through real file I/O.
+    /// cache. Used by tests to populate `Window.file_mod_times`
+    /// without going through real file I/O. (Pre-0b this was
+    /// reaching the warm-swap stash; post-0b it's a direct
+    /// insert into the active window's cache.)
     #[doc(hidden)]
     pub fn insert_mtime_for_test(&mut self, path: std::path::PathBuf, t: std::time::SystemTime) {
         self.file_mod_times_mut().insert(path, t);

@@ -1746,17 +1746,32 @@ design's Primitive #1.
   to render two windows side-by-side in one frame.
 
 **0i — Remove the warm-swap helpers and Conductor's reliance
-on them.** **Mostly already done as part of 0b.** The swap
-body in `set_active_window` is gone (it's a pointer write
-plus first-dive seed). What remains for 0i: drop the
-`splits` field's `Option` wrapper once 0c lands and every
-window has buffers from the start, simplify the e2e
-session tests that pinned each warm-swap individually
-(currently they assert `window.splits.is_some()` after dive,
-which still exercises the right behaviour but the framing
-is now "layout allocation status," not "stash status"), and
-delete the `attach_buffer_to_active_window` /
-`detach_buffer_from_all_windows` shims after 0c.
+on them.** *Shipped.* The swap body in `set_active_window`
+went away in 0b (it's a pointer write plus first-dive seed
+allocation). What remained for 0i, now done:
+* Deleted the `attach_buffer_to_active_window` no-op shim and
+  removed every call site (~14 locations across virtual
+  buffers, terminal, file open, macros, composite buffers,
+  buffer management). Buffer inserts go directly into
+  `Window.buffers` via the canonical
+  `insert_buffer_into_active_window` path.
+* Updated test-helper comments in `editor_accessors.rs` that
+  still framed the assertions as "warm-swap restored the
+  stash" — the assertions remain correct, but they're now
+  just "the active window owns this state directly."
+* `detach_buffer_from_all_windows` is kept because it serves
+  a real purpose (find-and-remove-by-id across windows when
+  the caller doesn't know which window owns the buffer); its
+  doc-comment is updated to note that with each buffer in at
+  most one window, it succeeds at most once.
+
+The `splits` field's `Option` wrapper remains: a
+never-activated window still has no layout until first
+dive, and seeding a layout at `Window::new` time would
+require allocating a fresh `BufferId` from the editor-scoped
+allocator before the window is wired into `Editor.windows`.
+The `Option` accurately models "no layout allocated yet,"
+not "stash currently swapped out," so it stays.
 
 After Step 0 lands:
 
