@@ -65,7 +65,7 @@ impl Editor {
                 }
             }
             Some(TabTarget::Group(leaf_id)) => {
-                if self.grouped_subtrees.contains_key(&leaf_id) {
+                if self.active_window().grouped_subtrees.contains_key(&leaf_id) {
                     self.activate_group_tab(active_split, leaf_id);
                 } else {
                     self.set_status_message(t!("status.previous_tab_closed").to_string());
@@ -378,8 +378,11 @@ impl Editor {
             CompositeInputRouter, Direction, RoutedEvent, ScrollAction,
         };
 
-        let composite = self.composite_buffers.get(&buffer_id)?;
-        let view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
+        let composite = self.active_window().composite_buffers.get(&buffer_id)?;
+        let view_state = self
+            .active_window()
+            .composite_view_states
+            .get(&(split_id, buffer_id))?;
 
         match CompositeInputRouter::route_key_event(composite, view_state, key_event) {
             RoutedEvent::Unhandled => None,

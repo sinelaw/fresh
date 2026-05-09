@@ -904,7 +904,7 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .splits_for_buffer(buffer_id);
-        for node in self.grouped_subtrees.values() {
+        for node in self.active_window().grouped_subtrees.values() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
                     if let Some(vs) = self

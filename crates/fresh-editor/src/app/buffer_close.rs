@@ -145,7 +145,7 @@ impl Editor {
                     }
                     TabTarget::Group(leaf) => {
                         // Only if the group still exists
-                        if self.grouped_subtrees.contains_key(leaf) {
+                        if self.active_window().grouped_subtrees.contains_key(leaf) {
                             Some(*t)
                         } else {
                             None

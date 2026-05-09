@@ -94,7 +94,9 @@ impl super::Editor {
             layout: Box::new(inner_tree),
             active_inner_leaf,
         };
-        self.grouped_subtrees.insert(group_leaf_id, grouped_node);
+        self.active_window_mut()
+            .grouped_subtrees
+            .insert(group_leaf_id, grouped_node);
 
         // Create SplitViewState for each inner panel leaf
         let (tw, th) = (self.terminal_width, self.terminal_height);
@@ -393,7 +395,9 @@ impl super::Editor {
             // Find the group_leaf_id (it's the `representative_split` now).
             if let Some(group_leaf_id) = group.representative_split {
                 // Remove the Grouped subtree from the side map
-                self.grouped_subtrees.remove(&group_leaf_id);
+                self.active_window_mut()
+                    .grouped_subtrees
+                    .remove(&group_leaf_id);
                 // Remove the group tab from all splits' tab bars and clear
                 // any active/focused group markers that point at this group.
                 for vs in self
@@ -510,7 +514,10 @@ impl super::Editor {
             // this field when re-focusing the group.
             if let Some(crate::view::split::SplitNode::Grouped {
                 active_inner_leaf, ..
-            }) = self.grouped_subtrees.get_mut(&group_leaf_id)
+            }) = self
+                .active_window_mut()
+                .grouped_subtrees
+                .get_mut(&group_leaf_id)
             {
                 *active_inner_leaf = inner_leaf;
             }
@@ -531,7 +538,7 @@ impl super::Editor {
         // Find the inner active leaf and its buffer from the stored Grouped node.
         let Some(crate::view::split::SplitNode::Grouped {
             active_inner_leaf, ..
-        }) = self.grouped_subtrees.get(&group_leaf)
+        }) = self.active_window().grouped_subtrees.get(&group_leaf)
         else {
             return;
         };
@@ -585,7 +592,7 @@ impl super::Editor {
         container: crate::model::event::ContainerId,
     ) -> Option<f32> {
         use crate::view::split::SplitNode;
-        for node in self.grouped_subtrees.values() {
+        for node in self.active_window().grouped_subtrees.values() {
             if let Some(SplitNode::Split { ratio, .. }) = node.find(container.into()) {
                 return Some(*ratio);
             }
@@ -602,7 +609,7 @@ impl super::Editor {
         new_ratio: f32,
     ) -> bool {
         use crate::view::split::SplitNode;
-        for node in self.grouped_subtrees.values_mut() {
+        for node in self.active_window_mut().grouped_subtrees.values_mut() {
             if let Some(SplitNode::Split { ratio, .. }) = node.find_mut(container.into()) {
                 *ratio = new_ratio.clamp(0.1, 0.9);
                 return true;

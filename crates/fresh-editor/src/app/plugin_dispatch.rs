@@ -245,7 +245,8 @@ impl Editor {
                     .iter()
                     .find(|(split_id, vs)| {
                         vs.keyed_states.contains_key(buffer_id)
-                            && !(is_hidden && self.grouped_subtrees.contains_key(split_id))
+                            && !(is_hidden
+                                && self.active_window().grouped_subtrees.contains_key(split_id))
                     });
                 let cursor_pos = source_split
                     .and_then(|(_, vs)| vs.buffer_state(*buffer_id))
@@ -1957,7 +1958,7 @@ impl Editor {
         }
 
         // Grouped subtrees: walk each group's inner leaves.
-        for (_group_leaf_id, node) in self.grouped_subtrees.iter() {
+        for (_group_leaf_id, node) in self.active_window().grouped_subtrees.iter() {
             if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
                 for inner_leaf in layout.leaf_split_ids() {
                     if let Some(vs) = self

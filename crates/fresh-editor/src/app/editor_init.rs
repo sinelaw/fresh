@@ -910,7 +910,6 @@ impl Editor {
             buffer_groups: HashMap::new(),
             buffer_to_group: HashMap::new(),
             next_buffer_group_id: 0,
-            grouped_subtrees: HashMap::new(),
             background_process_handles: HashMap::new(),
             host_process_handles: HashMap::new(),
             prompt_histories: {
@@ -1026,8 +1025,6 @@ impl Editor {
             search_overlay_top_byte: None,
             review_hunks: Vec::new(),
             global_popups: crate::view::popup::PopupManager::new(),
-            composite_buffers: HashMap::new(),
-            composite_view_states: HashMap::new(),
             animations: crate::view::animation::AnimationRunner::new(),
             previous_cursor_screen_pos: None,
             cursor_jump_animation: None,

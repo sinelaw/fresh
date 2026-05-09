@@ -30,18 +30,21 @@ impl Editor {
             active_buffer,
             available_width
         );
-        // TODO: move to impl Window once `grouped_subtrees`,
-        // `buffer_metadata`, and `composite_buffers` (all Editor-
-        // level tab-rendering inputs) can be threaded through —
-        // until then the disjoint sub-borrow on the active window
-        // is the right tool, since the calculation reads the
-        // window's `buffers` map while mutating one split's
-        // `view_state.tab_scroll_offset`.
+        // TODO: move to impl Window once `buffer_metadata` and
+        // `composite_buffers` (Editor-level tab-rendering inputs)
+        // are reachable from Window — `grouped_subtrees` is now
+        // window-scoped, but the other two still block a clean
+        // method move. Until then we split-borrow the active
+        // window into three disjoint sub-fields (`buffers` for the
+        // tab-width calculation, `splits` for the view_state mut,
+        // `grouped_subtrees` for group names).
         let __win = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window must exist");
         let __window_buffers: &HashMap<BufferId, EditorState> = &__win.buffers;
+        let __window_grouped = &__win.grouped_subtrees;
+        let __window_composites = &__win.composite_buffers;
         let Some(view_state) = __win
             .splits
             .as_mut()
@@ -55,8 +58,7 @@ impl Editor {
 
         let split_buffers = view_state.open_buffers.clone();
         // Collect group names from the stashed Grouped subtrees.
-        let group_names: std::collections::HashMap<LeafId, String> = self
-            .grouped_subtrees
+        let group_names: std::collections::HashMap<LeafId, String> = __window_grouped
             .iter()
             .filter_map(|(leaf_id, node)| {
                 if let crate::view::split::SplitNode::Grouped { name, .. } = node {
@@ -72,7 +74,7 @@ impl Editor {
             &split_buffers,
             __window_buffers,
             &self.buffer_metadata,
-            &self.composite_buffers,
+            __window_composites,
             &group_names,
         );
 

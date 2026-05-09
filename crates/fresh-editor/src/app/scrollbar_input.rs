@@ -92,11 +92,13 @@ impl Editor {
         // Check if this is a composite buffer - if so, use composite scroll
         if self.is_composite_buffer(buffer_id) {
             let max_row = self
+                .active_window_mut()
                 .composite_buffers
                 .get(&buffer_id)
                 .map(|c| c.row_count().saturating_sub(1))
                 .unwrap_or(0);
             if let Some(view_state) = self
+                .active_window_mut()
                 .composite_view_states
                 .get_mut(&(target_split, buffer_id))
             {
@@ -596,6 +598,7 @@ impl Editor {
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
         let total_rows = self
+            .active_window_mut()
             .composite_buffers
             .get(&buffer_id)
             .map(|c| c.row_count())
@@ -605,7 +608,11 @@ impl Editor {
         let target_row = (ratio * max_scroll_row as f64).round() as usize;
         let target_row = target_row.min(max_scroll_row);
 
-        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+        if let Some(view_state) = self
+            .active_window_mut()
+            .composite_view_states
+            .get_mut(&(split_id, buffer_id))
+        {
             view_state.set_scroll_row(target_row, max_scroll_row);
         }
         Ok(())
@@ -627,6 +634,7 @@ impl Editor {
         };
 
         let total_rows = self
+            .active_window_mut()
             .composite_buffers
             .get(&buffer_id)
             .map(|c| c.row_count())
@@ -677,7 +685,11 @@ impl Editor {
         let target_row = (target_scroll_ratio * max_scroll_row as f64).round() as usize;
         let target_row = target_row.min(max_scroll_row);
 
-        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+        if let Some(view_state) = self
+            .active_window_mut()
+            .composite_view_states
+            .get_mut(&(split_id, buffer_id))
+        {
             view_state.set_scroll_row(target_row, max_scroll_row);
         }
         Ok(())

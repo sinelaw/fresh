@@ -641,6 +641,9 @@ impl Editor {
             .expect("active window must exist");
         let __buffers_mut = &mut __win.buffers;
         let __event_logs_mut = &mut __win.event_logs;
+        let __grouped_ref = &__win.grouped_subtrees;
+        let __composite_buffers_mut = &mut __win.composite_buffers;
+        let __composite_view_states_mut = &mut __win.composite_view_states;
         let (mgr_for_split, split_view_states): (
             &crate::view::split::SplitManager,
             &mut HashMap<crate::model::event::LeafId, crate::view::split::SplitViewState>,
@@ -667,8 +670,8 @@ impl Editor {
             __buffers_mut,
             &self.buffer_metadata,
             __event_logs_mut,
-            &mut self.composite_buffers,
-            &mut self.composite_view_states,
+            __composite_buffers_mut,
+            __composite_view_states_mut,
             &self.theme,
             self.ansi_background.as_ref(),
             self.background_fade,
@@ -678,7 +681,7 @@ impl Editor {
             self.config.editor.estimated_line_length,
             self.config.editor.highlight_context_bytes,
             Some(split_view_states),
-            &self.grouped_subtrees,
+            __grouped_ref,
             hide_cursor,
             hovered_tab,
             hovered_close_split,
@@ -1901,6 +1904,8 @@ impl Editor {
         let __win_for_preview = self.windows.get_mut(&sid).expect("preview window present");
         let __preview_buffers = &mut __win_for_preview.buffers;
         let __preview_event_logs = &mut __win_for_preview.event_logs;
+        let __preview_composite_buffers = &mut __win_for_preview.composite_buffers;
+        let __preview_composite_view_states = &mut __win_for_preview.composite_view_states;
         let Some((mgr, view_states)) = __win_for_preview.splits.as_mut().map(|(m, vs)| (m, vs))
         else {
             return;
@@ -1924,8 +1929,8 @@ impl Editor {
             __preview_buffers,
             &self.buffer_metadata,
             __preview_event_logs,
-            &mut self.composite_buffers,
-            &mut self.composite_view_states,
+            __preview_composite_buffers,
+            __preview_composite_view_states,
             theme,
             self.ansi_background.as_ref(),
             self.background_fade,

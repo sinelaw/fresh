@@ -827,16 +827,9 @@ pub struct Editor {
     /// Next buffer group ID
     next_buffer_group_id: usize,
 
-    /// Grouped SplitNode subtrees, keyed by their LeafId (which is what
-    /// `TabTarget::Group(leaf_id)` references). Each entry is a
-    /// `SplitNode::Grouped` node holding the layout for one buffer group.
-    ///
-    /// These subtrees are NOT part of the main split tree — they live
-    /// here and are dispatched to at render time when the current split's
-    /// active target is a `TabTarget::Group`.
-    pub(crate) grouped_subtrees:
-        HashMap<crate::model::event::LeafId, crate::view::split::SplitNode>,
-
+    // grouped_subtrees moved onto `Window` — each window owns its
+    // own buffer-group subtrees (a window with a Live Grep panel
+    // open doesn't share the panel state with sibling windows).
     /// Background process abort handles for cancellation
     /// Maps process_id to abort handle
     background_process_handles: HashMap<u64, tokio::task::AbortHandle>,
@@ -1169,15 +1162,9 @@ pub struct Editor {
     /// `PopupResolver::PluginAction` — no parallel side-channel stack.
     pub(crate) global_popups: crate::view::popup::PopupManager,
 
-    /// Composite buffers (separate from regular buffers)
-    /// These display multiple source buffers in a single tab
-    composite_buffers: HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
-
-    /// View state for composite buffers (per split)
-    /// Maps (split_id, buffer_id) to composite view state
-    composite_view_states:
-        HashMap<(LeafId, BufferId), crate::view::composite_view::CompositeViewState>,
-
+    // composite_buffers + composite_view_states moved onto `Window` —
+    // composite-buffer panels (Live Grep results, Diagnostics list,
+    // References, etc.) belong to the window that opened the panel.
     /// Pending file opens from CLI arguments (processed after TUI starts)
     /// This allows CLI files to go through the same code path as interactive file opens,
     /// ensuring consistent error handling (e.g., encoding confirmation prompts).
@@ -1432,7 +1419,7 @@ impl Editor {
     /// Get the display name for a buffer (filename or virtual buffer name)
     pub fn get_buffer_display_name(&self, buffer_id: BufferId) -> String {
         // Check composite buffers first
-        if let Some(composite) = self.composite_buffers.get(&buffer_id) {
+        if let Some(composite) = self.active_window().composite_buffers.get(&buffer_id) {
             return composite.name.clone();
         }
 

@@ -21,17 +21,20 @@
 //!
 //! ## Migration status
 //!
-//! Steps 0a–0f shipped. Per-subsystem state that used to warm-swap
-//! on `setActiveWindow` — `panel_ids`, `file_mod_times`,
-//! `file_explorer`, `lsp`, the `splits` pair, `buffers`, the
-//! terminal subsystem (`terminal_manager` +
-//! `terminal_buffers` + `terminal_backing_files` +
-//! `terminal_log_files`), `event_logs`, `position_history`
+//! Steps 0a–0f shipped, plus the Step-0j candidate moves
+//! (`grouped_subtrees`, `composite_buffers`, `composite_view_states`).
+//! Per-subsystem state that used to warm-swap on `setActiveWindow`
+//! — `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`, the
+//! `splits` pair, `buffers`, the terminal subsystem
+//! (`terminal_manager` + `terminal_buffers` + `terminal_backing_files`
+//! + `terminal_log_files`), `event_logs`, `position_history`
 //! (with its `in_navigation` / `suppress_position_history_once`
-//! companion flags), and `bookmarks` — all live directly on
-//! `Window`. `set_active_window` is a pointer write (plus
-//! first-dive seed allocation for windows that have never been
-//! activated).
+//! companion flags), `bookmarks`, the buffer-group panel
+//! subtrees (`grouped_subtrees`), and the composite-buffer
+//! panels (`composite_buffers`, `composite_view_states`) — all
+//! live directly on `Window`. `set_active_window` is a pointer
+//! write (plus first-dive seed allocation for windows that have
+//! never been activated).
 
 use crate::app::types::WindowLayoutCache;
 use crate::model::event::LeafId;
@@ -137,6 +140,30 @@ pub struct Window {
     /// follow the window across `setActiveWindow` switches — every
     /// window has its own register set.
     pub(crate) bookmarks: crate::app::bookmarks::BookmarkState,
+
+    /// Composite buffers in this window (separate from regular
+    /// buffers). These display multiple source buffers in a single
+    /// tab — Live Grep results, References, Diagnostics list,
+    /// etc. Owned per-window so the panel state follows the window
+    /// that opened it.
+    pub composite_buffers: HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+
+    /// Per-split view state for composite buffers in this window.
+    /// Keyed by (split_id, buffer_id) — each split that hosts a
+    /// composite buffer gets its own scroll-row tracking.
+    pub composite_view_states:
+        HashMap<(LeafId, BufferId), crate::view::composite_view::CompositeViewState>,
+
+    /// Grouped `SplitNode` subtrees for this window, keyed by their
+    /// `LeafId` (which is what `TabTarget::Group(leaf_id)`
+    /// references). Each entry is a `SplitNode::Grouped` node
+    /// holding the layout for one buffer group (Live Grep, References,
+    /// Diagnostics, etc.). These subtrees are NOT part of the main
+    /// split tree — they live here and are dispatched to at render
+    /// time when the current split's active target is a `Group`.
+    /// Per-window because a buffer-group panel belongs to the window
+    /// that opened it.
+    pub grouped_subtrees: HashMap<LeafId, crate::view::split::SplitNode>,
 
     /// Terminal subsystem (PTY processes + render-state grids) for
     /// this window. Owned per-window so closing a window joins its
@@ -647,6 +674,9 @@ impl Window {
             in_navigation: false,
             suppress_position_history_once: false,
             bookmarks: crate::app::bookmarks::BookmarkState::default(),
+            grouped_subtrees: HashMap::new(),
+            composite_buffers: HashMap::new(),
+            composite_view_states: HashMap::new(),
             layout_cache: WindowLayoutCache::default(),
         }
     }

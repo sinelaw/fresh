@@ -154,9 +154,10 @@ impl Editor {
 
         for (split_id, buffer_id, _area) in &visible {
             // Only process composite buffers
-            if let Some(composite) = self.composite_buffers.get(buffer_id) {
+            if let Some(composite) = self.active_window().composite_buffers.get(buffer_id) {
                 let pane_count = composite.pane_count();
-                self.composite_view_states
+                self.active_window_mut()
+                    .composite_view_states
                     .entry((*split_id, *buffer_id))
                     .or_insert_with(|| CompositeViewState::new(*buffer_id, pane_count));
             }
@@ -169,17 +170,21 @@ impl Editor {
 
     /// Check if a buffer is a composite buffer
     pub fn is_composite_buffer(&self, buffer_id: BufferId) -> bool {
-        self.composite_buffers.contains_key(&buffer_id)
+        self.active_window()
+            .composite_buffers
+            .contains_key(&buffer_id)
     }
 
     /// Get a composite buffer by ID
     pub fn get_composite(&self, buffer_id: BufferId) -> Option<&CompositeBuffer> {
-        self.composite_buffers.get(&buffer_id)
+        self.active_window().composite_buffers.get(&buffer_id)
     }
 
     /// Get a mutable composite buffer by ID
     pub fn get_composite_mut(&mut self, buffer_id: BufferId) -> Option<&mut CompositeBuffer> {
-        self.composite_buffers.get_mut(&buffer_id)
+        self.active_window_mut()
+            .composite_buffers
+            .get_mut(&buffer_id)
     }
 
     /// Get or create composite view state for a split
@@ -188,14 +193,23 @@ impl Editor {
         split_id: LeafId,
         buffer_id: BufferId,
     ) -> Option<&mut CompositeViewState> {
-        if !self.composite_buffers.contains_key(&buffer_id) {
+        if !self
+            .active_window()
+            .composite_buffers
+            .contains_key(&buffer_id)
+        {
             return None;
         }
 
-        let pane_count = self.composite_buffers.get(&buffer_id)?.pane_count();
+        let pane_count = self
+            .active_window()
+            .composite_buffers
+            .get(&buffer_id)?
+            .pane_count();
 
         Some(
-            self.composite_view_states
+            self.active_window_mut()
+                .composite_view_states
                 .entry((split_id, buffer_id))
                 .or_insert_with(|| CompositeViewState::new(buffer_id, pane_count)),
         )
@@ -223,7 +237,9 @@ impl Editor {
 
         let composite =
             CompositeBuffer::new(buffer_id, name.clone(), mode.clone(), layout, sources);
-        self.composite_buffers.insert(buffer_id, composite);
+        self.active_window_mut()
+            .composite_buffers
+            .insert(buffer_id, composite);
 
         // Add metadata for display
         // Note: We use virtual_buffer() but override hidden_from_tabs since composite buffers
@@ -279,39 +295,62 @@ impl Editor {
     /// The alignment determines how lines from different source buffers
     /// are paired up for display (important for diff views).
     pub fn set_composite_alignment(&mut self, buffer_id: BufferId, alignment: LineAlignment) {
-        if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+        if let Some(composite) = self
+            .active_window_mut()
+            .composite_buffers
+            .get_mut(&buffer_id)
+        {
             composite.set_alignment(alignment);
         }
     }
 
     /// Close a composite buffer and clean up associated state
     pub fn close_composite_buffer(&mut self, buffer_id: BufferId) {
-        self.composite_buffers.remove(&buffer_id);
+        self.active_window_mut()
+            .composite_buffers
+            .remove(&buffer_id);
         self.buffer_metadata.remove(&buffer_id);
 
         // Remove all view states for this buffer
-        self.composite_view_states
+        self.active_window_mut()
+            .composite_view_states
             .retain(|(_, bid), _| *bid != buffer_id);
     }
 
     /// Switch focus to the next pane in a composite buffer
     pub fn composite_focus_next(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+        if let Some(composite) = self
+            .active_window_mut()
+            .composite_buffers
+            .get_mut(&buffer_id)
+        {
             composite.focus_next();
         }
         // Also update the view state's focused_pane (used by renderer)
-        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+        if let Some(view_state) = self
+            .active_window_mut()
+            .composite_view_states
+            .get_mut(&(split_id, buffer_id))
+        {
             view_state.focus_next_pane();
         }
     }
 
     /// Switch focus to the previous pane in a composite buffer
     pub fn composite_focus_prev(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+        if let Some(composite) = self
+            .active_window_mut()
+            .composite_buffers
+            .get_mut(&buffer_id)
+        {
             composite.focus_prev();
         }
         // Also update the view state's focused_pane (used by renderer)
-        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+        if let Some(view_state) = self
+            .active_window_mut()
+            .composite_view_states
+            .get_mut(&(split_id, buffer_id))
+        {
             view_state.focus_prev_pane();
         }
     }
@@ -344,9 +383,10 @@ impl Editor {
     /// Centers the hunk header in the viewport and moves the cursor to it.
     pub fn composite_next_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
         let viewport_height = self.get_composite_viewport_height(split_id);
+        let win = self.active_window_mut();
         let moved = if let (Some(composite), Some(view_state)) = (
-            self.composite_buffers.get(&buffer_id),
-            self.composite_view_states.get_mut(&(split_id, buffer_id)),
+            win.composite_buffers.get(&buffer_id),
+            win.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
             // Search from cursor position (not scroll position) to avoid
             // finding the same hunk when scroll is offset for centering
@@ -376,9 +416,10 @@ impl Editor {
     /// Centers the hunk header in the viewport and moves the cursor to it.
     pub fn composite_prev_hunk(&mut self, split_id: LeafId, buffer_id: BufferId) -> bool {
         let viewport_height = self.get_composite_viewport_height(split_id);
+        let win = self.active_window_mut();
         let moved = if let (Some(composite), Some(view_state)) = (
-            self.composite_buffers.get(&buffer_id),
-            self.composite_view_states.get_mut(&(split_id, buffer_id)),
+            win.composite_buffers.get(&buffer_id),
+            win.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
             if let Some(prev_row) = composite.alignment.prev_hunk_row(view_state.cursor_row) {
                 view_state.cursor_row = prev_row;
@@ -399,9 +440,10 @@ impl Editor {
 
     /// Scroll a composite buffer view
     pub fn composite_scroll(&mut self, split_id: LeafId, buffer_id: BufferId, delta: isize) {
+        let win = self.active_window_mut();
         if let (Some(composite), Some(view_state)) = (
-            self.composite_buffers.get(&buffer_id),
-            self.composite_view_states.get_mut(&(split_id, buffer_id)),
+            win.composite_buffers.get(&buffer_id),
+            win.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
             let max_row = composite.row_count().saturating_sub(1);
             view_state.scroll(delta, max_row);
@@ -410,9 +452,10 @@ impl Editor {
 
     /// Scroll composite buffer to a specific row
     pub fn composite_scroll_to(&mut self, split_id: LeafId, buffer_id: BufferId, row: usize) {
+        let win = self.active_window_mut();
         if let (Some(composite), Some(view_state)) = (
-            self.composite_buffers.get(&buffer_id),
-            self.composite_view_states.get_mut(&(split_id, buffer_id)),
+            win.composite_buffers.get(&buffer_id),
+            win.composite_view_states.get_mut(&(split_id, buffer_id)),
         ) {
             let max_row = composite.row_count().saturating_sub(1);
             view_state.set_scroll_row(row, max_row);
@@ -441,8 +484,11 @@ impl Editor {
 
     /// Get information about the line at the cursor position
     fn get_cursor_line_info(&self, split_id: LeafId, buffer_id: BufferId) -> CursorLineInfo {
-        let composite = self.composite_buffers.get(&buffer_id);
-        let view_state = self.composite_view_states.get(&(split_id, buffer_id));
+        let composite = self.active_window().composite_buffers.get(&buffer_id);
+        let view_state = self
+            .active_window()
+            .composite_view_states
+            .get(&(split_id, buffer_id));
 
         if let (Some(composite), Some(view_state)) = (composite, view_state) {
             let pane_line = composite
@@ -507,6 +553,7 @@ impl Editor {
         viewport_height: usize,
     ) {
         let max_row = self
+            .active_window_mut()
             .composite_buffers
             .get(&buffer_id)
             .map(|c| c.row_count().saturating_sub(1))
@@ -516,9 +563,10 @@ impl Editor {
         let mut wrapped_to_new_line = false;
 
         // Get alignment reference for wrap checks
-        let composite = self.composite_buffers.get(&buffer_id);
+        let win = self.active_window_mut();
+        let composite = win.composite_buffers.get(&buffer_id);
 
-        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+        if let Some(view_state) = win.composite_view_states.get_mut(&(split_id, buffer_id)) {
             match movement {
                 CursorMovement::Down => {
                     view_state.move_cursor_down(max_row, viewport_height);
@@ -770,7 +818,11 @@ impl Editor {
         // For vertical movement or line wrap, get line info for the NEW row and clamp/set cursor column
         if is_vertical || wrapped_to_new_line {
             let new_line_info = self.get_cursor_line_info(split_id, buffer_id);
-            if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            if let Some(view_state) = self
+                .active_window_mut()
+                .composite_view_states
+                .get_mut(&(split_id, buffer_id))
+            {
                 if wrapped_to_new_line
                     && matches!(movement, CursorMovement::Left | CursorMovement::WordLeft)
                 {
@@ -802,6 +854,7 @@ impl Editor {
     /// Sync the EditorState cursor with CompositeViewState (for status bar display)
     fn sync_editor_cursor_from_composite(&mut self, split_id: LeafId, buffer_id: BufferId) {
         let (cursor_row, cursor_column, focused_pane) = self
+            .active_window_mut()
             .composite_view_states
             .get(&(split_id, buffer_id))
             .map(|vs| (vs.cursor_row, vs.cursor_column, vs.focused_pane))
@@ -811,6 +864,7 @@ impl Editor {
         // The cursor_row is an alignment row index, which may include hunk headers
         // We want to display the actual source file line number
         let display_line = self
+            .active_window_mut()
             .composite_buffers
             .get(&buffer_id)
             .and_then(|composite| composite.alignment.get_row(cursor_row))
@@ -861,14 +915,22 @@ impl Editor {
 
         if extend_selection {
             // Start visual selection if extending and not already in visual mode
-            if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            if let Some(view_state) = self
+                .active_window_mut()
+                .composite_view_states
+                .get_mut(&(split_id, buffer_id))
+            {
                 if !view_state.visual_mode {
                     view_state.start_visual_selection();
                 }
             }
         } else {
             // Clear selection when moving without shift
-            if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            if let Some(view_state) = self
+                .active_window_mut()
+                .composite_view_states
+                .get_mut(&(split_id, buffer_id))
+            {
                 if view_state.visual_mode {
                     view_state.clear_selection();
                 }
@@ -902,8 +964,11 @@ impl Editor {
             .active_split();
 
         // Verify this is a valid composite buffer
-        let _composite = self.composite_buffers.get(&buffer_id)?;
-        let _view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
+        let _composite = self.active_window().composite_buffers.get(&buffer_id)?;
+        let _view_state = self
+            .active_window()
+            .composite_view_states
+            .get(&(split_id, buffer_id))?;
 
         match action {
             // Tab switches between panes
@@ -1021,11 +1086,11 @@ impl Editor {
             // Page navigation
             Action::MovePageDown | Action::MovePageUp => {
                 let viewport_height = self.get_composite_viewport_height(split_id);
-
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
+                let win = self.active_window_mut();
+                if let Some(view_state) = win.composite_view_states.get_mut(&(split_id, buffer_id))
                 {
                     if matches!(action, Action::MovePageDown) {
-                        if let Some(composite) = self.composite_buffers.get(&buffer_id) {
+                        if let Some(composite) = win.composite_buffers.get(&buffer_id) {
                             let max_row = composite.row_count().saturating_sub(1);
                             view_state.page_down(viewport_height, max_row);
                             view_state.cursor_row = view_state.scroll_row;
@@ -1042,12 +1107,12 @@ impl Editor {
             // Document start/end
             Action::MoveDocumentStart | Action::MoveDocumentEnd => {
                 let viewport_height = self.get_composite_viewport_height(split_id);
-
-                if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id))
+                let win = self.active_window_mut();
+                if let Some(view_state) = win.composite_view_states.get_mut(&(split_id, buffer_id))
                 {
                     if matches!(action, Action::MoveDocumentStart) {
                         view_state.move_cursor_to_top();
-                    } else if let Some(composite) = self.composite_buffers.get(&buffer_id) {
+                    } else if let Some(composite) = win.composite_buffers.get(&buffer_id) {
                         let max_row = composite.row_count().saturating_sub(1);
                         view_state.move_cursor_to_bottom(max_row, viewport_height);
                     }
@@ -1075,11 +1140,15 @@ impl Editor {
     /// Handle copy action for composite buffer
     fn handle_composite_copy(&mut self, split_id: LeafId, buffer_id: BufferId) {
         let text = {
-            let composite = match self.composite_buffers.get(&buffer_id) {
+            let composite = match self.active_window().composite_buffers.get(&buffer_id) {
                 Some(c) => c,
                 None => return,
             };
-            let view_state = match self.composite_view_states.get(&(split_id, buffer_id)) {
+            let view_state = match self
+                .active_window()
+                .composite_view_states
+                .get(&(split_id, buffer_id))
+            {
                 Some(vs) => vs,
                 None => return,
             };
@@ -1201,12 +1270,28 @@ impl Editor {
             // Get line counts from source buffers
             let old_line_count = self
                 .buffers()
-                .get(&self.composite_buffers.get(&buffer_id).unwrap().sources[0].buffer_id)
+                .get(
+                    &self
+                        .active_window()
+                        .composite_buffers
+                        .get(&buffer_id)
+                        .unwrap()
+                        .sources[0]
+                        .buffer_id,
+                )
                 .and_then(|s| s.buffer.line_count())
                 .unwrap_or(0);
             let new_line_count = self
                 .buffers()
-                .get(&self.composite_buffers.get(&buffer_id).unwrap().sources[1].buffer_id)
+                .get(
+                    &self
+                        .active_window()
+                        .composite_buffers
+                        .get(&buffer_id)
+                        .unwrap()
+                        .sources[1]
+                        .buffer_id,
+                )
                 .and_then(|s| s.buffer.line_count())
                 .unwrap_or(0);
 
@@ -1216,7 +1301,11 @@ impl Editor {
 
         // Store initial focus hunk for the first render to apply
         if initial_focus_hunk.is_some() {
-            if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+            if let Some(composite) = self
+                .active_window_mut()
+                .composite_buffers
+                .get_mut(&buffer_id)
+            {
                 composite.initial_focus_hunk = initial_focus_hunk;
             }
         }
@@ -1249,7 +1338,7 @@ impl Editor {
     ) {
         use crate::model::composite_buffer::{DiffHunk, LineAlignment};
 
-        if let Some(composite) = self.composite_buffers.get(&buffer_id) {
+        if let Some(composite) = self.active_window().composite_buffers.get(&buffer_id) {
             let diff_hunks: Vec<DiffHunk> = hunk_configs
                 .into_iter()
                 .map(|h| DiffHunk::new(h.old_start, h.old_count, h.new_start, h.new_count))
@@ -1282,45 +1371,51 @@ impl Editor {
         content_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
         // Calculate which pane was clicked based on x coordinate
-        let pane_idx =
-            if let Some(view_state) = self.composite_view_states.get(&(split_id, buffer_id)) {
-                let mut x = content_rect.x;
-                let mut found_pane = 0;
-                for (i, &width) in view_state.pane_widths.iter().enumerate() {
-                    if col >= x && col < x + width {
-                        found_pane = i;
-                        break;
-                    }
-                    x += width + 1; // +1 for separator
+        let pane_idx = if let Some(view_state) = self
+            .active_window()
+            .composite_view_states
+            .get(&(split_id, buffer_id))
+        {
+            let mut x = content_rect.x;
+            let mut found_pane = 0;
+            for (i, &width) in view_state.pane_widths.iter().enumerate() {
+                if col >= x && col < x + width {
+                    found_pane = i;
+                    break;
                 }
-                found_pane
-            } else {
-                0
-            };
+                x += width + 1; // +1 for separator
+            }
+            found_pane
+        } else {
+            0
+        };
 
         // Calculate the clicked row (relative to scroll position)
         // Subtract 1 for the header row ("OLD (HEAD)" / "NEW (Working)")
         let content_row = row.saturating_sub(content_rect.y).saturating_sub(1) as usize;
 
         // Calculate column within the pane (accounting for gutter and horizontal scroll)
-        let (pane_start_x, left_column) =
-            if let Some(view_state) = self.composite_view_states.get(&(split_id, buffer_id)) {
-                let mut x = content_rect.x;
-                for (i, &width) in view_state.pane_widths.iter().enumerate() {
-                    if i == pane_idx {
-                        break;
-                    }
-                    x += width + 1;
+        let (pane_start_x, left_column) = if let Some(view_state) = self
+            .active_window()
+            .composite_view_states
+            .get(&(split_id, buffer_id))
+        {
+            let mut x = content_rect.x;
+            for (i, &width) in view_state.pane_widths.iter().enumerate() {
+                if i == pane_idx {
+                    break;
                 }
-                let left_col = view_state
-                    .pane_viewports
-                    .get(pane_idx)
-                    .map(|vp| vp.left_column)
-                    .unwrap_or(0);
-                (x, left_col)
-            } else {
-                (content_rect.x, 0)
-            };
+                x += width + 1;
+            }
+            let left_col = view_state
+                .pane_viewports
+                .get(pane_idx)
+                .map(|vp| vp.left_column)
+                .unwrap_or(0);
+            (x, left_col)
+        } else {
+            (content_rect.x, 0)
+        };
         let gutter_width = 4; // Line number width
         let visual_col = col
             .saturating_sub(pane_start_x)
@@ -1329,49 +1424,61 @@ impl Editor {
         let click_col = left_column + visual_col;
 
         // Get line length to clamp cursor position
-        let display_row =
-            if let Some(view_state) = self.composite_view_states.get(&(split_id, buffer_id)) {
-                view_state.scroll_row + content_row
-            } else {
-                content_row
-            };
-
-        let line_length = if let Some(composite) = self.composite_buffers.get(&buffer_id) {
-            composite
-                .alignment
-                .get_row(display_row)
-                .and_then(|row| row.get_pane_line(pane_idx))
-                .and_then(|line_ref| {
-                    let source = composite.sources.get(pane_idx)?;
-                    self.windows
-                        .get(&self.active_window)
-                        .map(|w| &w.buffers)
-                        .expect("active window present")
-                        .get(&source.buffer_id)?
-                        .buffer
-                        .get_line(line_ref.line)
-                })
-                .map(|bytes| {
-                    let s = String::from_utf8_lossy(&bytes);
-                    // Strip trailing newline - cursor shouldn't go past end of visible content
-                    let trimmed = s.trim_end_matches('\n').trim_end_matches('\r');
-                    trimmed.graphemes(true).count()
-                })
-                .unwrap_or(0)
+        let display_row = if let Some(view_state) = self
+            .active_window()
+            .composite_view_states
+            .get(&(split_id, buffer_id))
+        {
+            view_state.scroll_row + content_row
         } else {
-            0
+            content_row
         };
+
+        let line_length =
+            if let Some(composite) = self.active_window().composite_buffers.get(&buffer_id) {
+                composite
+                    .alignment
+                    .get_row(display_row)
+                    .and_then(|row| row.get_pane_line(pane_idx))
+                    .and_then(|line_ref| {
+                        let source = composite.sources.get(pane_idx)?;
+                        self.windows
+                            .get(&self.active_window)
+                            .map(|w| &w.buffers)
+                            .expect("active window present")
+                            .get(&source.buffer_id)?
+                            .buffer
+                            .get_line(line_ref.line)
+                    })
+                    .map(|bytes| {
+                        let s = String::from_utf8_lossy(&bytes);
+                        // Strip trailing newline - cursor shouldn't go past end of visible content
+                        let trimmed = s.trim_end_matches('\n').trim_end_matches('\r');
+                        trimmed.graphemes(true).count()
+                    })
+                    .unwrap_or(0)
+            } else {
+                0
+            };
 
         // Clamp click column to line length
         let clamped_col = click_col.min(line_length);
 
         // Update composite buffer's active pane
-        if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+        if let Some(composite) = self
+            .active_window_mut()
+            .composite_buffers
+            .get_mut(&buffer_id)
+        {
             composite.active_pane = pane_idx;
         }
 
         // Update composite view state with click position
-        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+        if let Some(view_state) = self
+            .active_window_mut()
+            .composite_view_states
+            .get_mut(&(split_id, buffer_id))
+        {
             view_state.focused_pane = pane_idx;
             view_state.cursor_row = display_row;
             view_state.cursor_column = clamped_col;

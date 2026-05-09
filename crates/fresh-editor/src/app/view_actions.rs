@@ -162,7 +162,7 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .get(&split_id)
             .and_then(|vs| vs.active_group_tab)?;
-        let subtree = self.grouped_subtrees.get(&group_leaf)?;
+        let subtree = self.active_window().grouped_subtrees.get(&group_leaf)?;
 
         let mut inner_leaves: Vec<LeafId> = Vec::new();
         collect_leaf_ids(subtree, &mut inner_leaves);

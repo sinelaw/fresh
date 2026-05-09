@@ -229,6 +229,7 @@ impl Editor {
         {
             // Find which group contains this inner leaf.
             let host_split = self
+                .active_window()
                 .grouped_subtrees
                 .iter()
                 .find(|(_, node)| {

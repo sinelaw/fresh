@@ -1784,7 +1784,11 @@ impl Editor {
             self.mouse_state.dragging_scrollbar = Some(split_id);
             self.mouse_state.drag_start_row = Some(row);
             if self.is_composite_buffer(buffer_id) {
-                if let Some(vs) = self.composite_view_states.get(&(split_id, buffer_id)) {
+                if let Some(vs) = self
+                    .active_window()
+                    .composite_view_states
+                    .get(&(split_id, buffer_id))
+                {
                     self.mouse_state.drag_start_composite_scroll_row = Some(vs.scroll_row);
                 }
             } else if let Some(vs) = self
