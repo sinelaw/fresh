@@ -60,6 +60,9 @@ tsc clean, interactively verified in tmux.
 | Type | Notes |
 |---|---|
 | `WidgetSpec` (enum, tagged) | Variants: `Row`, `Col`, `HintBar`, `Toggle`, `Button`, `TextInput`, `TextArea`, `List`, `Tree`, `Spacer`, `Raw`. |
+| `TextPropertyEntry` (`fresh-core::text_property`) | Row-content payload for `List`, `Tree`, and `Raw`. Carries `text`, `inline_overlays: Vec<InlineOverlay>`, `segments: Vec<StyledSegment>`, `pad_to_chars: Option<u32>`, `truncate_to_chars: Option<u32>`. The host calls `normalize_widths` on each visible entry — segments concatenate into `text` with one Char-unit overlay per styled segment, then truncate, then pad, then char→byte conversion for any remaining char-unit overlays. Plugins describe row content structurally and never name byte/codepoint offsets between segments. |
+| `InlineOverlay` | `start`, `end`, `style`, `properties`, `unit: OffsetUnit { Byte, Char }` (default `Byte`). Char offsets resolve to bytes during `normalize_widths`. |
+| `StyledSegment` | `text` + optional `style` + optional nested `overlays`. Building block for `TextPropertyEntry::segments`. |
 | `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` | Shapes referenced by the spec / IPC. |
 | `PluginCommand::MountWidgetPanel`, `UpdateWidgetPanel`, `UnmountWidgetPanel` | Spec lifecycle. |
 | `PluginCommand::WidgetCommand { panel_id, action }` | Routes a `WidgetAction` (key dispatch / focus / activate / select-move / text-input). |
@@ -79,9 +82,9 @@ tsc clean, interactively verified in tmux.
 
 | File | Exports |
 |---|---|
-| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `textInput`, `textArea`, `list`, `tree`, `treeNode`, `spacer`, `flexSpacer`, `raw`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar`. `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `unmount`. |
+| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `textInput`, `textArea`, `list`, `tree`, `treeNode`, `spacer`, `flexSpacer`, `raw`, `styledRow`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar`. `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `unmount`. |
 | `index.ts` | Re-exports the above. |
-| `fresh.d.ts` | Generated. `editor.mountWidgetPanel`, `updateWidgetPanel`, `unmountWidgetPanel`, `widgetCommand`, `widgetMutate`. `WidgetSpec`, `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` types. `widget_event` hook. |
+| `fresh.d.ts` | Generated. `editor.mountWidgetPanel`, `updateWidgetPanel`, `unmountWidgetPanel`, `widgetCommand`, `widgetMutate`. `WidgetSpec`, `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation`, `StyledSegment`, `OffsetUnit` types. `widget_event` hook. |
 
 **Plugin migration: `search_replace.ts`**
 
@@ -547,6 +550,64 @@ sum(non-flex widths)` split evenly across flex spacers.
 Not yet shipped: `fill`, `fixed`, `wrap: "never" | "soft"`, and the
 `embed` composition primitive. Add them when a plugin needs them.
 
+### 6.1 Entry construction shape
+
+Row content for `List`, `Tree`, and `Raw` flows through a single
+`TextPropertyEntry` shape. Plugins have two ways to build one:
+
+```ts
+// (a) Pre-rendered text + offset overlays. Overlay offsets default
+// to bytes (UTF-8); set `unit: "char"` to address codepoints
+// instead — the host converts to bytes natively in Rust during
+// `normalize_widths`.
+{
+  text: "TX file.rs (3/5)",
+  inlineOverlays: [
+    { start: 0, end: 2, style: { fg: ICON, bold: true }, unit: "char" },
+    { start: 3, end: 10, style: { fg: PATH }, unit: "char" },
+  ],
+  padToChars: 80,    // host pads with spaces after overlays resolve
+  truncateToChars: 80, // host truncates at codepoint boundary, "..." suffix
+}
+
+// (b) Structural segments. The plugin describes the row as a
+// sequence of (text, optional style, optional nested overlays);
+// the host concatenates and emits one Char-unit overlay per
+// styled segment plus each segment's nested overlays shifted by
+// the segment's start. The plugin never names a byte or codepoint
+// offset between segments.
+styledRow([
+  { text: "TX",    style: { fg: ICON, bold: true } },
+  { text: " " },
+  { text: "file.rs", style: { fg: PATH } },
+  { text: " (3/5)" },
+], { padToChars: 80 })
+```
+
+Use (b) when row structure is a flat sequence of styled pieces —
+the typical file-tree row, breadcrumb, or label-with-suffix.
+Use (a) when overlays land *inside* a single string the plugin
+already has (regex hits inside a context substring, syntax
+highlights inside a code line). The two compose: a segment can
+carry nested `overlays` against its own text, and the host
+shifts them into entry coordinates.
+
+Why this matters for hot paths: with structural segments the
+plugin pays no per-row codepoint walks and no per-overlay
+`utf8ByteLength` bridge calls. The host's normalize step is
+O(visible_rows × row_text_bytes), all in Rust. The
+`search_replace` match-tree is the regression test; profiling
+notes in commit history.
+
+`InlineOverlay`, `TextPropertyEntry`, and `StyledSegment` all
+deliberately omit `Default` derives — every Rust construction site
+lists every field explicitly, so future field additions break
+compilation at each site instead of silently picking up a default.
+On the TS side the `styledRow` builder omits keys whose value is
+`undefined` (the JS↔Rust JSON bridge maps JS `undefined` to JSON
+`null`, which fails to deserialize as `Option<…>` / `Vec<…>` host
+fields; absence triggers `#[serde(default)]` instead).
+
 ---
 
 ## 7. Compositor: layered Components
@@ -693,6 +754,13 @@ applies a minimal patch.
   `SetChecked` / `SetSelectedIndex` / `SetItems` /
   `SetExpandedKeys`. Plugin ships a one-field change instead of
   the full spec.
+* Entry-shape primitives (§6.1): `TextPropertyEntry` carries
+  `segments`, `pad_to_chars`, `truncate_to_chars`; `InlineOverlay`
+  carries `unit: Byte | Char`. The host's `normalize_widths`
+  resolves segments → text + overlays, applies truncate/pad, then
+  converts char-unit overlays to bytes — all in Rust against the
+  final text. Plugins describe row structure declaratively and
+  pay no per-row codepoint walks or per-overlay bridge calls.
 
 **Not yet implemented**:
 * Session restore (§4.3).
