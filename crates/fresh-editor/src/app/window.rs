@@ -117,6 +117,16 @@ pub struct Window {
     /// drops the buffer and its log together.
     pub event_logs: HashMap<BufferId, crate::model::event::EventLog>,
 
+    /// Per-window async bridge — the (Sender, Receiver) pair the
+    /// LSP manager (and per-window terminal/file-explorer tasks
+    /// once they migrate) uses to deliver async responses back to
+    /// the main loop. Each window owns its own channel so cleanup
+    /// on `closeWindow` is automatic (the receiver drops, senders
+    /// error and stop). Editor-global async messages (plugin
+    /// runtime callbacks, file-open dialog) flow through
+    /// `Editor.async_bridge` instead.
+    pub bridge: crate::services::async_bridge::AsyncBridge,
+
     /// Back/forward navigation stack (cursor jumps, file switches)
     /// scoped to this window. Each window has its own history so
     /// switching windows doesn't pollute the other window's
@@ -670,6 +680,7 @@ impl Window {
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
             event_logs: HashMap::new(),
+            bridge: crate::services::async_bridge::AsyncBridge::new(),
             position_history: crate::input::position_history::PositionHistory::new(),
             in_navigation: false,
             suppress_position_history_once: false,

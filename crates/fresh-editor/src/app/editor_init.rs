@@ -368,21 +368,34 @@ impl Editor {
             .ok();
         t.phase("tokio_runtime");
 
-        // Create async bridge for communication
+        // Create editor-global async bridge for editor-scoped async
+        // sources (plugin runtime callbacks, file-open dialog, etc.).
+        // Per-window subsystems (LSP, terminal output, file-explorer
+        // async expansion) flow through their owning window's
+        // bridge instead — see `Window.bridge`.
         let async_bridge = AsyncBridge::new();
+
+        // Create the base window's per-window bridge up front so the
+        // LSP manager (configured below) can receive its responses
+        // through the window's channel rather than the editor-global
+        // one. The same `AsyncBridge` is moved into `base.bridge`
+        // when the base Window is constructed at the end of init.
+        let base_window_bridge = AsyncBridge::new();
 
         if tokio_runtime.is_none() {
             tracing::warn!("Failed to create Tokio runtime - async features disabled");
         }
 
         // Create LSP manager with async support. The base window is
-        // always WindowId(1); per-window LSP routing tags every async
-        // response with this id.
+        // always WindowId(1); LSP responses route through the base
+        // window's per-window bridge.
         let mut lsp = LspManager::new(fresh_core::WindowId(1), root_uri);
 
-        // Configure runtime and bridge if available
+        // Configure runtime and bridge if available — the LSP manager
+        // is wired to the base window's bridge, so its async responses
+        // land in `base.bridge` (not the editor-global `async_bridge`).
         if let Some(ref runtime) = tokio_runtime {
-            lsp.set_runtime(runtime.handle().clone(), async_bridge.clone());
+            lsp.set_runtime(runtime.handle().clone(), base_window_bridge.clone());
         }
 
         // Configure LSP servers from config
@@ -858,6 +871,12 @@ impl Editor {
                 base.splits = Some((split_manager, split_view_states));
                 base.buffers = buffers;
                 base.event_logs = event_logs;
+                // Replace the default bridge created by `Window::new`
+                // with the bridge we already configured the LSP
+                // manager against. Both halves now point at the same
+                // channel; LSP responses arriving on the manager's
+                // sender land in `base.bridge`'s receiver.
+                base.bridge = base_window_bridge;
                 m.insert(fresh_core::WindowId(1), base);
                 m
             },

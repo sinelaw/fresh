@@ -65,13 +65,14 @@ impl Editor {
         // has actual rect dimensions.
         let (cols, rows) = self.get_terminal_dimensions();
 
-        // Set up async bridge for terminal manager if not already done
-        let __bridge_clone = self.async_bridge.clone();
-        if let Some(bridge) = __bridge_clone {
-            self.active_window_mut()
-                .terminal_manager
-                .set_async_bridge(bridge);
-        }
+        // Set up async bridge for terminal manager if not already done.
+        // Use the window's per-window bridge (terminals are per-window),
+        // not the editor-global bridge — terminal output then arrives
+        // on the window's channel and is drained per-window.
+        let __window_bridge = self.active_window().bridge.clone();
+        self.active_window_mut()
+            .terminal_manager
+            .set_async_bridge(__window_bridge);
 
         // Prepare persistent storage paths under the user's data directory
         let terminal_root = self.dir_context.terminal_dir_for(&self.working_dir);

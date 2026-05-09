@@ -29,10 +29,19 @@ impl Editor {
             return false;
         };
 
-        let messages = {
+        // Drain editor-global async messages first (plugin runtime
+        // callbacks, file dialog, etc.), then drain each window's
+        // per-window bridge (LSP responses, terminal output, etc.).
+        // Order matters only for cosmetic message ordering on a
+        // very-busy frame; semantically the dispatcher is the same
+        // for every source.
+        let mut messages = {
             let _s = tracing::info_span!("try_recv_all").entered();
             bridge.try_recv_all()
         };
+        for window in self.windows.values() {
+            messages.extend(window.bridge.try_recv_all());
+        }
         let needs_render = !messages.is_empty();
         tracing::trace!(
             async_message_count = messages.len(),

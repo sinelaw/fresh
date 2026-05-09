@@ -1205,12 +1205,10 @@ impl Editor {
         if terminals.is_empty() {
             return terminal_buffer_map;
         }
-        let __bridge_clone = self.async_bridge.clone();
-        if let Some(bridge) = __bridge_clone {
-            self.active_window_mut()
-                .terminal_manager
-                .set_async_bridge(bridge);
-        }
+        let __window_bridge = self.active_window().bridge.clone();
+        self.active_window_mut()
+            .terminal_manager
+            .set_async_bridge(__window_bridge);
         for terminal in terminals {
             if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
                 terminal_buffer_map.insert(terminal.terminal_index, buffer_id);
