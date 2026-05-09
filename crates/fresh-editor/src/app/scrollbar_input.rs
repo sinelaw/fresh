@@ -121,96 +121,14 @@ impl Editor {
             .and_then(|vs| vs.view_transform.as_ref())
             .map(|vt| vt.tokens.clone());
 
-        // Get mutable references to both buffer state and view state
-        // via a single &mut window borrow split into disjoint sub-fields.
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let (__win_buffers, __win_splits) = (
-            &mut __win.buffers,
-            __win
-                .splits
-                .as_mut()
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout"),
+        let tab_size = self.config.editor.tab_size;
+        self.active_window_mut().scroll_split_by_lines(
+            buffer_id,
+            target_split,
+            delta,
+            view_transform_tokens,
+            tab_size,
         );
-        let state = __win_buffers.get_mut(&buffer_id);
-        let view_state = __win_splits.get_mut(&target_split);
-
-        if let (Some(state), Some(view_state)) = (state, view_state) {
-            // Collect plugin soft-break positions BEFORE re-borrowing the buffer
-            // so the viewport's visual-row math stays in lock-step with the
-            // renderer (e.g. markdown_compose adds hanging-indent breaks via
-            // addSoftBreak; without these the mouse wheel was either "absorbed"
-            // at long-wrap item boundaries or got clamped short of EOF,
-            // leaving the bottom half empty).
-            let soft_breaks = state.collect_soft_break_positions();
-            let virtual_lines = state.collect_virtual_line_positions();
-            let buffer = &mut state.buffer;
-            let top_byte_before = view_state.viewport.top_byte;
-            if let Some(tokens) = view_transform_tokens {
-                // Use view-aware scrolling with the transform's tokens
-                use crate::view::ui::view_pipeline::ViewLineIterator;
-                let tab_size = self.config.editor.tab_size;
-                let view_lines: Vec<_> =
-                    ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
-                view_state
-                    .viewport
-                    .scroll_view_lines(&view_lines, delta as isize);
-            } else {
-                // No view transform - use traditional buffer-based scrolling.
-                if delta < 0 {
-                    // Scroll up
-                    let lines_to_scroll = delta.unsigned_abs() as usize;
-                    view_state.viewport.scroll_up(
-                        buffer,
-                        &soft_breaks,
-                        &virtual_lines,
-                        lines_to_scroll,
-                    );
-                } else {
-                    // Scroll down
-                    let lines_to_scroll = delta as usize;
-                    view_state.viewport.scroll_down(
-                        buffer,
-                        &soft_breaks,
-                        &virtual_lines,
-                        lines_to_scroll,
-                    );
-                }
-            }
-            // Skip ensure_visible so the scroll position isn't undone during render
-            view_state.viewport.set_skip_ensure_visible();
-
-            if let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) {
-                if !folds.is_empty() {
-                    let top_line = buffer.get_line_number(view_state.viewport.top_byte);
-                    if let Some(range) = folds
-                        .resolved_ranges(buffer, &state.marker_list)
-                        .iter()
-                        .find(|r| top_line >= r.start_line && top_line <= r.end_line)
-                    {
-                        let target_line = if delta >= 0 {
-                            range.end_line.saturating_add(1)
-                        } else {
-                            range.header_line
-                        };
-                        let target_byte = buffer
-                            .line_start_offset(target_line)
-                            .unwrap_or_else(|| buffer.len());
-                        view_state.viewport.top_byte = target_byte;
-                        view_state.viewport.top_view_line_offset = 0;
-                    }
-                }
-            }
-            tracing::trace!(
-                "handle_mouse_scroll: delta={}, top_byte {} -> {}",
-                delta,
-                top_byte_before,
-                view_state.viewport.top_byte
-            );
-        }
 
         Ok(())
     }

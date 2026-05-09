@@ -89,20 +89,18 @@ impl Editor {
         };
 
         // Compute cursor screen position (needs &mut buffer for line_iterator).
-        // Single &mut window borrow; clone the viewport so we don't hold a
-        // borrow into __win.splits while mutating __win.buffers.
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let viewport = __win
+        // Clone the viewport via the Window accessor so we can later
+        // pass `&mut buffer` to cursor_screen_position without
+        // overlapping with the splits read.
+        let viewport = self
+            .active_window()
             .splits
             .as_ref()
             .expect("active window must have a populated split layout")
             .1[&active_split]
             .viewport
             .clone();
-        let state = match __win.buffers.get_mut(&active_buffer) {
+        let state = match self.active_window_mut().buffers.get_mut(&active_buffer) {
             Some(s) => s,
             None => return,
         };

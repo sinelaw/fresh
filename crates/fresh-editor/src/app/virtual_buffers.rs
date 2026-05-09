@@ -412,18 +412,31 @@ impl Editor {
         buffer_id
     }
 
-    /// Set the content of a virtual buffer with text properties
-    ///
-    /// # Arguments
-    /// * `buffer_id` - The virtual buffer to update
-    /// * `entries` - Text entries with embedded properties
+    /// Set the content of a virtual buffer with text properties.
+    /// Thin shim over [`Window::set_virtual_buffer_content`].
+    pub fn set_virtual_buffer_content(
+        &mut self,
+        buffer_id: BufferId,
+        entries: Vec<crate::primitives::text_property::TextPropertyEntry>,
+    ) -> Result<(), String> {
+        self.active_window_mut()
+            .set_virtual_buffer_content(buffer_id, entries)
+    }
+}
+
+impl crate::app::window::Window {
+    /// Replace a virtual buffer's content + overlays + cursors clamp.
+    /// Pure window-state mutation: rewrites the buffer text, clears
+    /// and re-installs overlays for the new content, and clamps every
+    /// per-split cursor showing this buffer to a char boundary in
+    /// the new length. Returns `Err` when the buffer is missing.
     pub fn set_virtual_buffer_content(
         &mut self,
         buffer_id: BufferId,
         entries: Vec<crate::primitives::text_property::TextPropertyEntry>,
     ) -> Result<(), String> {
         let state = self
-            .buffers_mut()
+            .buffers
             .get_mut(&buffer_id)
             .ok_or_else(|| "Buffer not found".to_string())?;
 
@@ -481,24 +494,15 @@ impl Editor {
         // past the new buffer end and snap to a char boundary. Don't read
         // one split's cursor and write it into the others.
         let new_len = state.buffer.len();
-        // Single &mut window borrow split into buffers (read) +
-        // split_view_states (mut) — disjoint sub-fields of Window.
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let buffer = &__win
+        let buffer = &self
             .buffers
             .get(&buffer_id)
             .expect("buffer still present")
             .buffer;
-        for view_state in __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1
-            .values_mut()
-        {
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return Ok(());
+        };
+        for view_state in vs_map.values_mut() {
             let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) else {
                 continue;
             };

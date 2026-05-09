@@ -2689,6 +2689,12 @@ impl Editor {
             })
             .unwrap_or_default();
 
+        // TODO: move this whole bulk-edit method to impl Window — the
+        // body is window-scoped except for `send_lsp_changes_for_buffer`
+        // at the tail which is LSP coordination on Editor. The block
+        // below uses a single-window split borrow because the bulk edit
+        // needs `&mut state` (buffer) and `&mut __vs_map` (split view
+        // states) live together for the cursor-positioning loop.
         let __win = self
             .windows
             .get_mut(&self.active_window)

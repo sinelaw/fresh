@@ -665,31 +665,34 @@ impl Editor {
         self.toggle_fold_at_byte(buffer_id, byte_pos);
     }
 
-    /// Toggle folding at the given byte position in the specified buffer.
+    /// Toggle folding at the given byte position in the specified
+    /// buffer in the active window. Thin shim over
+    /// `Window::toggle_fold_at_byte` — the body lives there because
+    /// the operation is purely window-scoped (buffer state + view
+    /// state).
     pub fn toggle_fold_at_byte(&mut self, buffer_id: BufferId, byte_pos: usize) {
-        let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let buffers = &mut __win.buffers;
-        let split_view_states = &mut __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1;
+        self.active_window_mut()
+            .toggle_fold_at_byte(buffer_id, byte_pos);
+    }
+}
 
-        let Some(state) = buffers.get_mut(&buffer_id) else {
+impl crate::app::window::Window {
+    /// Toggle folding at the given byte position in the specified buffer.
+    pub fn toggle_fold_at_byte(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        byte_pos: usize,
+    ) {
+        let Some((mgr, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let split_id = mgr.active_split();
+
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
             return;
         };
 
-        let Some(view_state) = split_view_states.get_mut(&split_id) else {
+        let Some(view_state) = vs_map.get_mut(&split_id) else {
             return;
         };
         let buf_state = view_state.ensure_buffer_state(buffer_id);
@@ -717,8 +720,6 @@ impl Editor {
         // Determine the fold byte range: prefer LSP ranges, fall back to indent-based.
         if !state.folding_ranges.is_empty() {
             // --- LSP-provided ranges (line-based) ---
-            // LSP ranges use line numbers, so we need get_line_number here.
-            // Resolve marker-backed ranges to current post-edit line numbers.
             let resolved = state
                 .folding_ranges
                 .resolved(&state.buffer, &state.marker_list);
@@ -769,7 +770,7 @@ impl Editor {
                 .line_start_offset(end_line.saturating_add(1))
                 .unwrap_or_else(|| state.buffer.len());
             let hb = state.buffer.line_start_offset(header_line).unwrap_or(0);
-            Self::create_fold(state, buf_state, sb, eb, hb, placeholder);
+            create_fold(state, buf_state, sb, eb, hb, placeholder);
         } else {
             // --- Indent-based folding on bytes ---
             use crate::view::folding::indent_folding;
@@ -778,15 +779,11 @@ impl Editor {
             let est_ll = state.buffer.estimated_line_length();
             let max_scan_bytes = crate::config::INDENT_FOLD_MAX_SCAN_LINES * est_ll;
 
-            // Ensure the region around the cursor is loaded from disk so the
-            // immutable slice_bytes in find_fold_range_at_byte can read it.
             let upward_bytes = max_upward * est_ll;
             let load_start = byte_pos.saturating_sub(upward_bytes);
             let load_end = byte_pos
                 .saturating_add(max_scan_bytes)
                 .min(state.buffer.len());
-            // Load chunks from disk so immutable slice_bytes in
-            // find_fold_range_at_byte can read the region.
             drop(
                 state
                     .buffer
@@ -800,50 +797,57 @@ impl Editor {
                 max_scan_bytes,
                 max_upward,
             ) {
-                Self::create_fold(state, buf_state, sb, eb, hb, None);
+                create_fold(state, buf_state, sb, eb, hb, None);
             }
         }
     }
+}
 
-    fn create_fold(
-        state: &mut crate::state::EditorState,
-        buf_state: &mut crate::view::split::BufferViewState,
-        start_byte: usize,
-        end_byte: usize,
-        header_byte: usize,
-        placeholder: Option<String>,
-    ) {
-        if end_byte <= start_byte {
-            return;
-        }
-
-        // Move any cursors inside the soon-to-be-hidden range to the header line.
-        buf_state.cursors.map(|cursor| {
-            let in_hidden_range = cursor.position >= start_byte && cursor.position < end_byte;
-            let anchor_in_hidden = cursor
-                .anchor
-                .is_some_and(|anchor| anchor >= start_byte && anchor < end_byte);
-            if in_hidden_range || anchor_in_hidden {
-                cursor.position = header_byte;
-                cursor.anchor = None;
-                cursor.sticky_column = 0;
-                cursor.selection_mode = crate::model::cursor::SelectionMode::Normal;
-                cursor.block_anchor = None;
-                cursor.deselect_on_move = true;
-            }
-        });
-
-        buf_state
-            .folds
-            .add(&mut state.marker_list, start_byte, end_byte, placeholder);
-
-        // If the viewport top is now inside the folded range, move it to the header.
-        if buf_state.viewport.top_byte >= start_byte && buf_state.viewport.top_byte < end_byte {
-            buf_state.viewport.top_byte = header_byte;
-            buf_state.viewport.top_view_line_offset = 0;
-        }
+/// Plant a fold over the byte range, moving cursors out of the
+/// hidden region and re-anchoring the viewport top if it landed
+/// inside the new fold. Free function (not a method) so both
+/// `Window::toggle_fold_at_byte` and any future Editor-side
+/// orchestrator can call it without a `Self::` qualifier.
+fn create_fold(
+    state: &mut crate::state::EditorState,
+    buf_state: &mut crate::view::split::BufferViewState,
+    start_byte: usize,
+    end_byte: usize,
+    header_byte: usize,
+    placeholder: Option<String>,
+) {
+    if end_byte <= start_byte {
+        return;
     }
 
+    // Move any cursors inside the soon-to-be-hidden range to the header line.
+    buf_state.cursors.map(|cursor| {
+        let in_hidden_range = cursor.position >= start_byte && cursor.position < end_byte;
+        let anchor_in_hidden = cursor
+            .anchor
+            .is_some_and(|anchor| anchor >= start_byte && anchor < end_byte);
+        if in_hidden_range || anchor_in_hidden {
+            cursor.position = header_byte;
+            cursor.anchor = None;
+            cursor.sticky_column = 0;
+            cursor.selection_mode = crate::model::cursor::SelectionMode::Normal;
+            cursor.block_anchor = None;
+            cursor.deselect_on_move = true;
+        }
+    });
+
+    buf_state
+        .folds
+        .add(&mut state.marker_list, start_byte, end_byte, placeholder);
+
+    // If the viewport top is now inside the folded range, move it to the header.
+    if buf_state.viewport.top_byte >= start_byte && buf_state.viewport.top_byte < end_byte {
+        buf_state.viewport.top_byte = header_byte;
+        buf_state.viewport.top_view_line_offset = 0;
+    }
+}
+
+impl Editor {
     /// Send didClose to a specific named server for all buffers of a language.
     ///
     /// Used when stopping a single server out of multiple for the same language,
@@ -1080,28 +1084,8 @@ impl Editor {
 
         // Clear all LSP-related overlays for this buffer (diagnostics + inlay hints)
         let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let buffers = &mut __win.buffers;
-        let split_view_states = &mut __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1;
-        if let Some(state) = buffers.get_mut(&buffer_id) {
-            state
-                .overlays
-                .clear_namespace(&diagnostic_ns, &mut state.marker_list);
-            state.virtual_texts.clear(&mut state.marker_list);
-            state.folding_ranges.clear(&mut state.marker_list);
-            for view_state in split_view_states.values_mut() {
-                if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
-                    buf_state.folds.clear(&mut state.marker_list);
-                }
-            }
-        }
+        self.active_window_mut()
+            .clear_lsp_overlays_for_buffer(buffer_id, &diagnostic_ns);
     }
 
     /// Enable LSP for a specific buffer and send didOpen notification

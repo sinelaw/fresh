@@ -1449,32 +1449,8 @@ impl Editor {
             &self.config.languages,
             std::sync::Arc::clone(&self.authority.filesystem),
         ) {
-            let __win = self
-                .windows
-                .get_mut(&self.active_window)
-                .expect("active window must exist");
-            if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-                *state = new_state;
-                // Move cursor to end of buffer
-                let total = state.buffer.total_bytes();
-                // Update cursor position in all splits that show this buffer
-                for vs in __win
-                    .splits
-                    .as_mut()
-                    .expect("active window must have a populated split layout")
-                    .1
-                    .values_mut()
-                {
-                    if vs.has_buffer(buffer_id) {
-                        vs.cursors.primary_mut().position = total;
-                    }
-                }
-                // Terminal buffers should never be considered "modified"
-                state.buffer.set_modified(false);
-                // Start in scrollback mode (editing disabled)
-                state.editing_disabled = true;
-                state.margins.configure_for_line_numbers(false);
-            }
+            self.active_window_mut()
+                .install_terminal_buffer_state(buffer_id, new_state);
         }
     }
 

@@ -534,59 +534,25 @@ impl Editor {
         end: usize,
         placeholder: Option<String>,
     ) {
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let Some(state) = __win.buffers.get_mut(&buffer_id) else {
-            return;
-        };
-        for vs in __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1
-            .values_mut()
-        {
-            if vs.keyed_states.contains_key(&buffer_id) {
-                let buf_state = vs.ensure_buffer_state(buffer_id);
-                buf_state
-                    .folds
-                    .add(&mut state.marker_list, start, end, placeholder.clone());
-            }
-        }
+        let changed = self
+            .active_window_mut()
+            .add_fold(buffer_id, start, end, placeholder);
         #[cfg(feature = "plugins")]
-        {
+        if changed {
             self.plugin_render_requested = true;
         }
+        let _ = changed;
     }
 
     /// Handle ClearFolds command — drop every collapsed fold range on
     /// the buffer (across all view states that host it).
     pub(super) fn handle_clear_folds(&mut self, buffer_id: BufferId) {
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let Some(state) = __win.buffers.get_mut(&buffer_id) else {
-            return;
-        };
-        for vs in __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1
-            .values_mut()
-        {
-            if vs.keyed_states.contains_key(&buffer_id) {
-                let buf_state = vs.ensure_buffer_state(buffer_id);
-                buf_state.folds.clear(&mut state.marker_list);
-            }
-        }
+        let changed = self.active_window_mut().clear_folds(buffer_id);
         #[cfg(feature = "plugins")]
-        {
+        if changed {
             self.plugin_render_requested = true;
         }
+        let _ = changed;
     }
 
     // ==================== Soft Break Commands ====================
@@ -977,99 +943,45 @@ impl Editor {
             tracing::warn!("No splits found for buffer {:?}", buffer_id);
         }
 
-        // Get the buffer for ensure_visible
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __vs_map = &mut __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1;
-        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-            for leaf_id in &splits {
-                let is_active = *leaf_id == active_split;
-
-                if let Some(view_state) = __vs_map.get_mut(leaf_id) {
-                    // Set cursor position in the split's view state
-                    view_state.cursors.primary_mut().move_to(position, false);
-                    // Ensure the cursor is visible by scrolling the split's viewport
-                    view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-                    tracing::debug!(
-                        "SetBufferCursor: updated split {:?} (active={}) viewport top_byte={}",
-                        leaf_id,
-                        is_active,
-                        view_state.viewport.top_byte
-                    );
-
-                    // Note: cursors and viewport are now owned by SplitViewState, no sync needed
-                } else {
-                    tracing::warn!(
-                        "SetBufferCursor: split {:?} not found in split_view_states",
-                        leaf_id
-                    );
-                }
-            }
-        } else {
+        let _ = active_split;
+        if !self.active_window().buffers.contains_key(&buffer_id) {
             tracing::warn!("Buffer {:?} not found for SetBufferCursor", buffer_id);
+            return;
         }
+        self.active_window_mut()
+            .set_buffer_cursor_in_splits(buffer_id, position, &splits);
     }
 
     /// Handle SetSplitScroll command
     pub(super) fn handle_set_split_scroll(&mut self, split_id: SplitId, top_byte: usize) {
         // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
         let leaf_id = LeafId(split_id);
-        // Resolve buffer_id BEFORE taking the mutable borrow on windows
-        // so the read and write borrows don't overlap.
+        // Resolve buffer_id BEFORE delegating so the read happens
+        // outside the active window's mutable borrow.
         let buffer_id = if let Some(id) = self.split_manager().buffer_for_split(leaf_id) {
             id
         } else {
             tracing::warn!("SetSplitScroll: buffer for split {:?} not found", split_id);
             return;
         };
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __buffers_mut = &mut __win.buffers;
-        if let Some(view_state) = __win
+        if !self
+            .active_window()
             .splits
-            .as_mut()
+            .as_ref()
             .expect("active window must have a populated split layout")
             .1
-            .get_mut(&leaf_id)
+            .contains_key(&leaf_id)
         {
-            if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
-                // Manually set top_byte, then perform validity check with scroll_to logic if needed,
-                // or just clamp it. viewport.scroll_to takes a line number, not byte.
-                // But viewport.top_byte is public.
-
-                // Let's use set_top_byte_with_limit internal logic via a public helper or direct assignment
-                // if we trust the plugin. But safer to ensure valid range.
-                let max_byte = state.buffer.len();
-                let clamped_byte = top_byte.min(max_byte);
-
-                // We don't have direct access to set_top_byte_with_limit here easily without exposing it.
-                // However, Viewport struct is in another crate (view::viewport).
-                // Let's trust the Viewport's internal state management or just set it.
-                // Viewport.top_byte is pub.
-
-                view_state.viewport.top_byte = clamped_byte;
-                // Also reset view line offset to 0 as we are setting absolute byte position
-                view_state.viewport.top_view_line_offset = 0;
-                // Skip ensure_visible so the scroll position isn't undone during render
-                view_state.viewport.set_skip_ensure_visible();
-
-                tracing::debug!(
-                    "SetSplitScroll: split {:?} scrolled to byte {}",
-                    split_id,
-                    clamped_byte
-                );
-            }
-        } else {
             tracing::warn!("SetSplitScroll: split {:?} not found", split_id);
+            return;
         }
+        self.active_window_mut()
+            .set_split_scroll_to_byte(buffer_id, leaf_id, top_byte);
+        tracing::debug!(
+            "SetSplitScroll: split {:?} scrolled to byte {}",
+            split_id,
+            top_byte
+        );
     }
 
     /// Handle RequestHighlights command
@@ -1225,33 +1137,10 @@ impl Editor {
             text,
             cursor_id: CursorId(0),
         };
-        // Borrow cursors and state simultaneously from different parts of self
-        {
-            let split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
-            let active_buf = self.active_buffer();
-            let __win = self
-                .windows
-                .get_mut(&self.active_window)
-                .expect("active window must exist");
-
-            let state = __win.buffers.get_mut(&active_buf).unwrap();
-
-            let cursors = &mut __win
-                .splits
-                .as_mut()
-                .expect("active window must have a populated split layout")
-                .1
-                .get_mut(&split_id)
-                .unwrap()
-                .cursors;
-            state.apply(cursors, &event);
-        }
+        let split_id = self.split_manager().active_split();
+        let active_buf = self.active_buffer();
+        self.active_window_mut()
+            .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
     }
 

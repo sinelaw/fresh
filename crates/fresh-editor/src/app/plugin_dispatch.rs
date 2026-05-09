@@ -1901,24 +1901,12 @@ impl Editor {
         let lines_above = viewport_height / 2;
         let target_line = line.saturating_sub(lines_above);
 
-        // Get the buffer and scroll
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        if let Some(state) = __win.buffers.get_mut(&actual_buffer_id) {
-            let buffer = &mut state.buffer;
-            if let Some(view_state) = __win
-                .splits
-                .as_mut()
-                .expect("active window must have a populated split layout")
-                .1
-                .get_mut(&actual_split_id)
-            {
-                view_state.viewport.scroll_to(buffer, target_line);
-                view_state.viewport.set_skip_ensure_visible();
-            }
-        }
+        self.active_window_mut().scroll_split_viewport_to(
+            actual_buffer_id,
+            actual_split_id,
+            target_line,
+            true,
+        );
     }
 
     /// Scroll every split whose active buffer is `buffer_id` so that
@@ -1992,32 +1980,8 @@ impl Editor {
             return;
         }
 
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __vs_map = &mut __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1;
-        let state = match __win.buffers.get_mut(&buffer_id) {
-            Some(s) => s,
-            None => return,
-        };
-
-        for leaf_id in target_leaves {
-            let Some(view_state) = __vs_map.get_mut(&leaf_id) else {
-                continue;
-            };
-            let viewport_height = view_state.viewport.height as usize;
-            // Place `line` roughly a third of the viewport from the top so
-            // the next few navigation steps don't immediately scroll again.
-            let lines_above = viewport_height / 3;
-            let target = line.saturating_sub(lines_above);
-            view_state.viewport.scroll_to(&mut state.buffer, target);
-            view_state.viewport.set_skip_ensure_visible();
-        }
+        self.active_window_mut()
+            .scroll_buffer_to_line_in_splits(buffer_id, &target_leaves, line);
     }
 
     fn handle_spawn_host_process(

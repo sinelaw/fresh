@@ -30,6 +30,13 @@ impl Editor {
             active_buffer,
             available_width
         );
+        // TODO: move to impl Window once `grouped_subtrees`,
+        // `buffer_metadata`, and `composite_buffers` (all Editor-
+        // level tab-rendering inputs) can be threaded through —
+        // until then the disjoint sub-borrow on the active window
+        // is the right tool, since the calculation reads the
+        // window's `buffers` map while mutating one split's
+        // `view_state.tab_scroll_offset`.
         let __win = self
             .windows
             .get_mut(&self.active_window)
@@ -353,36 +360,9 @@ impl Editor {
 
         if let Some((left_split, right_split)) = group_info {
             // Get the active split's buffer and update its viewport
-            if let Some(buffer_id) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .buffer_for_split(active_split)
-            {
-                let __win = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .expect("active window must exist");
-                if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-                    if let Some(view_state) = __win
-                        .splits
-                        .as_mut()
-                        .expect("active window must have a populated split layout")
-                        .1
-                        .get_mut(&active_split)
-                    {
-                        // Update viewport to show cursor
-                        view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-
-                        tracing::debug!(
-                            "pre_sync_ensure_visible: updated active split {:?} viewport, top_byte={}",
-                            active_split,
-                            view_state.viewport.top_byte
-                        );
-                    }
-                }
+            if let Some(buffer_id) = self.split_manager().buffer_for_split(active_split) {
+                self.active_window_mut()
+                    .ensure_cursor_visible_for_split(buffer_id, active_split);
             }
 
             // Mark the OTHER split to skip ensure_visible so the sync position isn't undone

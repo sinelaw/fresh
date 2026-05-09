@@ -1126,57 +1126,51 @@ impl Editor {
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
-        // Calculate clicked position in buffer.
-        // Single &mut on active window, split-borrow buffers + view states + event_logs.
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __event_logs = &mut __win.event_logs;
-        let (__mgr, __vs_map) = __win
+        // Pull the bits we need out of the active window separately;
+        // the per-step helper methods (`apply_event_to_buffer` etc.)
+        // hide the disjoint sub-field borrowing.
+        let gutter_width = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .map(|s| s.margins.left_total_width() as u16)
+            .unwrap_or(0);
+
+        let Some(target_position) = super::click_geometry::screen_to_buffer_position(
+            col,
+            row,
+            content_rect,
+            gutter_width,
+            &cached_mappings,
+            fallback,
+            true, // Allow gutter clicks
+            compose_width,
+        ) else {
+            return Ok(());
+        };
+
+        let primary_cursor_id = self
+            .active_window()
             .splits
-            .as_mut()
-            .map(|(m, vs)| (&*m, vs))
-            .expect("active window must have a populated split layout");
-        let _ = __mgr;
-        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-            let gutter_width = state.margins.left_total_width() as u16;
+            .as_ref()
+            .and_then(|(_, vs)| vs.get(&leaf_id))
+            .map(|vs| vs.cursors.primary_id())
+            .unwrap_or(CursorId(0));
+        let event = Event::MoveCursor {
+            cursor_id: primary_cursor_id,
+            old_position: 0,
+            new_position: target_position,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        };
 
-            let Some(target_position) = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true, // Allow gutter clicks
-                compose_width,
-            ) else {
-                return Ok(());
-            };
-
-            // Move cursor to clicked position first
-            let primary_cursor_id = __vs_map
-                .get(&leaf_id)
-                .map(|vs| vs.cursors.primary_id())
-                .unwrap_or(CursorId(0));
-            let event = Event::MoveCursor {
-                cursor_id: primary_cursor_id,
-                old_position: 0,
-                new_position: target_position,
-                old_anchor: None,
-                new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
-            };
-
-            if let Some(event_log) = __event_logs.get_mut(&buffer_id) {
-                event_log.append(event.clone());
-            }
-            if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
-                state.apply(cursors, &event);
-            }
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
+            event_log.append(event.clone());
         }
+        self.active_window_mut()
+            .apply_event_to_buffer(buffer_id, leaf_id, &event);
 
         // Now select the word under cursor
         self.handle_action(Action::SelectWord)?;
@@ -1284,57 +1278,51 @@ impl Editor {
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
-        // Calculate clicked position in buffer.
-        // Single &mut on active window, split-borrow buffers + view states + event_logs.
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __event_logs = &mut __win.event_logs;
-        let (__mgr, __vs_map) = __win
+        // Pull the bits we need out of the active window separately;
+        // the per-step helper methods (`apply_event_to_buffer` etc.)
+        // hide the disjoint sub-field borrowing.
+        let gutter_width = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .map(|s| s.margins.left_total_width() as u16)
+            .unwrap_or(0);
+
+        let Some(target_position) = super::click_geometry::screen_to_buffer_position(
+            col,
+            row,
+            content_rect,
+            gutter_width,
+            &cached_mappings,
+            fallback,
+            true,
+            compose_width,
+        ) else {
+            return Ok(());
+        };
+
+        let primary_cursor_id = self
+            .active_window()
             .splits
-            .as_mut()
-            .map(|(m, vs)| (&*m, vs))
-            .expect("active window must have a populated split layout");
-        let _ = __mgr;
-        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-            let gutter_width = state.margins.left_total_width() as u16;
+            .as_ref()
+            .and_then(|(_, vs)| vs.get(&leaf_id))
+            .map(|vs| vs.cursors.primary_id())
+            .unwrap_or(CursorId(0));
+        let event = Event::MoveCursor {
+            cursor_id: primary_cursor_id,
+            old_position: 0,
+            new_position: target_position,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: 0,
+            new_sticky_column: 0,
+        };
 
-            let Some(target_position) = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true,
-                compose_width,
-            ) else {
-                return Ok(());
-            };
-
-            // Move cursor to clicked position first
-            let primary_cursor_id = __vs_map
-                .get(&leaf_id)
-                .map(|vs| vs.cursors.primary_id())
-                .unwrap_or(CursorId(0));
-            let event = Event::MoveCursor {
-                cursor_id: primary_cursor_id,
-                old_position: 0,
-                new_position: target_position,
-                old_anchor: None,
-                new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
-            };
-
-            if let Some(event_log) = __event_logs.get_mut(&buffer_id) {
-                event_log.append(event.clone());
-            }
-            if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
-                state.apply(cursors, &event);
-            }
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
+            event_log.append(event.clone());
         }
+        self.active_window_mut()
+            .apply_event_to_buffer(buffer_id, leaf_id, &event);
 
         // Now select the entire line
         self.handle_action(Action::SelectLine)?;
@@ -2445,85 +2433,83 @@ impl Editor {
             .get(&leaf_id)
             .and_then(|vs| vs.compose_width);
 
-        // Calculate the target position from screen coordinates
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __event_logs = &mut __win.event_logs;
-        let __vs_map = &mut __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1;
-        if let Some(state) = __win.buffers.get_mut(&buffer_id) {
-            let gutter_width = state.margins.left_total_width() as u16;
+        // Calculate the target position and selection geometry by
+        // reading buffer state directly, then dispatch the move via
+        // Window helpers.
+        let drag_by_words = self.mouse_state.drag_selection_by_words;
+        let drag_word_end = self.mouse_state.drag_selection_word_end;
 
-            let Some(target_position) = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true, // Allow gutter clicks for drag selection
-                compose_width,
-            ) else {
-                return Ok(());
-            };
-
-            let (new_position, anchor_position) = if self.mouse_state.drag_selection_by_words {
-                if target_position >= anchor_position {
-                    (
-                        find_word_end(&state.buffer, target_position),
-                        anchor_position,
-                    )
+        let Some((target_position, new_position, anchor_position, new_sticky_column)) = self
+            .active_window()
+            .buffers
+            .get(&buffer_id)
+            .and_then(|state| {
+                let gutter_width = state.margins.left_total_width() as u16;
+                let target_position = super::click_geometry::screen_to_buffer_position(
+                    col,
+                    row,
+                    content_rect,
+                    gutter_width,
+                    &cached_mappings,
+                    fallback,
+                    true, // Allow gutter clicks for drag selection
+                    compose_width,
+                )?;
+                let (new_position, anchor_pos) = if drag_by_words {
+                    if target_position >= anchor_position {
+                        (
+                            find_word_end(&state.buffer, target_position),
+                            anchor_position,
+                        )
+                    } else {
+                        let word_end = drag_word_end.unwrap_or(anchor_position);
+                        (find_word_start(&state.buffer, target_position), word_end)
+                    }
                 } else {
-                    let word_end = self
-                        .mouse_state
-                        .drag_selection_word_end
-                        .unwrap_or(anchor_position);
-                    (find_word_start(&state.buffer, target_position), word_end)
-                }
-            } else {
-                (target_position, anchor_position)
-            };
+                    (target_position, anchor_position)
+                };
+                let new_sticky_column = state
+                    .buffer
+                    .offset_to_position(new_position)
+                    .map(|pos| pos.column);
+                Some((target_position, new_position, anchor_pos, new_sticky_column))
+            })
+        else {
+            return Ok(());
+        };
+        let _ = target_position;
 
-            let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = __vs_map
-                .get(&leaf_id)
-                .map(|vs| {
-                    let cursor = vs.cursors.primary();
-                    (
-                        vs.cursors.primary_id(),
-                        cursor.position,
-                        cursor.anchor,
-                        cursor.sticky_column,
-                    )
-                })
-                .unwrap_or((CursorId(0), 0, None, 0));
+        let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = self
+            .active_window()
+            .splits
+            .as_ref()
+            .and_then(|(_, vs)| vs.get(&leaf_id))
+            .map(|vs| {
+                let cursor = vs.cursors.primary();
+                (
+                    vs.cursors.primary_id(),
+                    cursor.position,
+                    cursor.anchor,
+                    cursor.sticky_column,
+                )
+            })
+            .unwrap_or((CursorId(0), 0, None, 0));
 
-            let new_sticky_column = state
-                .buffer
-                .offset_to_position(new_position)
-                .map(|pos| pos.column)
-                .unwrap_or(old_sticky_column);
-            let event = Event::MoveCursor {
-                cursor_id: primary_cursor_id,
-                old_position,
-                new_position,
-                old_anchor,
-                new_anchor: Some(anchor_position),
-                old_sticky_column,
-                new_sticky_column,
-            };
+        let event = Event::MoveCursor {
+            cursor_id: primary_cursor_id,
+            old_position,
+            new_position,
+            old_anchor,
+            new_anchor: Some(anchor_position),
+            old_sticky_column,
+            new_sticky_column: new_sticky_column.unwrap_or(old_sticky_column),
+        };
 
-            if let Some(event_log) = __event_logs.get_mut(&buffer_id) {
-                event_log.append(event.clone());
-            }
-            if let Some(cursors) = __vs_map.get_mut(&leaf_id).map(|vs| &mut vs.cursors) {
-                state.apply(cursors, &event);
-            }
+        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
+            event_log.append(event.clone());
         }
+        self.active_window_mut()
+            .apply_event_to_buffer(buffer_id, leaf_id, &event);
 
         Ok(())
     }

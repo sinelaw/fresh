@@ -872,61 +872,8 @@ impl Editor {
             None => return, // No saved state for this file
         };
 
-        // Get the buffer to validate positions
-        let max_pos = match self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-        {
-            Some(buffer) => buffer.buffer.len(),
-            None => return,
-        };
-
-        // Apply cursor position and viewport (scroll) state to the
-        // *loaded buffer's* keyed view state. This must NOT go through
-        // `view_state.viewport` / `view_state.cursors` — those Deref
-        // through to the split's *active* buffer's view, which for
-        // `open_file_no_focus` is still the previously-active buffer.
-        // Writing through the Deref would scroll the unrelated active
-        // buffer (visible to the user as: switching to a result in a
-        // different file inside the Live Grep overlay scrolls the
-        // background buffer by one line — issue surfaced by the
-        // preview-pane file-load path).
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let buffer_state_opt = __win.buffers.get_mut(&buffer_id);
-        let view_state_opt = __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1
-            .get_mut(&split_id);
-        if let (Some(view_state), Some(buffer_state)) = (view_state_opt, buffer_state_opt) {
-            if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
-                let cursor_pos = file_state.cursor.position.min(max_pos);
-                buf_state.cursors.primary_mut().position = cursor_pos;
-                buf_state.cursors.primary_mut().anchor =
-                    file_state.cursor.anchor.map(|a| a.min(max_pos));
-                buf_state.viewport.top_byte = file_state.scroll.top_byte;
-                buf_state.viewport.left_column = file_state.scroll.left_column;
-                // Saved cursor and saved viewport are written from
-                // independent fields and may be out of sync (e.g.
-                // cursor moved off-screen before save). Reconcile so
-                // the restored view always shows the cursor — without
-                // this, arrow keys in wrap mode can't bring the
-                // viewport back because of the
-                // `top_view_line_offset > 0` early return in
-                // `viewport.rs::ensure_visible` (#1689 follow-up).
-                super::navigation::reconcile_restored_buffer_view(
-                    buf_state,
-                    &mut buffer_state.buffer,
-                );
-            }
-        }
+        self.active_window_mut()
+            .restore_buffer_state_in_split(buffer_id, split_id, &file_state);
     }
 
     /// Save file state when a buffer is closed (for per-file session persistence)

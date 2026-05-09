@@ -696,26 +696,9 @@ impl Editor {
 
             // In read-only view, keep line wrapping disabled for terminal buffers
             // Also scroll viewport to show the end of the buffer where the cursor is.
-            let __active_split = self.split_manager().active_split();
-            let __win = self
-                .windows
-                .get_mut(&self.active_window)
-                .expect("active window must exist");
-            let __buffers_mut = &mut __win.buffers;
-            if let Some(view_state) = __win
-                .splits
-                .as_mut()
-                .expect("active window must have a populated split layout")
-                .1
-                .get_mut(&__active_split)
-            {
-                view_state.viewport.line_wrap_enabled = false;
-                view_state.viewport.clear_skip_ensure_visible();
-
-                if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
-                    view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
-                }
-            }
+            let active_split = self.split_manager().active_split();
+            self.active_window_mut()
+                .enter_terminal_scrollback_view(buffer_id, active_split);
         }
     }
 

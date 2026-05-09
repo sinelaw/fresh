@@ -126,30 +126,31 @@ impl Editor {
     /// stalls" (#1689) impossible to reproduce regardless of what the
     /// lower-level scroll machinery decides to do.
     pub fn ensure_active_cursor_visible_for_navigation(&mut self, recenter_on_scroll: bool) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
         let active_buffer = self.active_buffer();
+        self.active_window_mut()
+            .ensure_cursor_visible_for_navigation(active_buffer, recenter_on_scroll);
+    }
+}
 
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __buffers_mut = &mut __win.buffers;
-        let Some(view_state) = __win
-            .splits
-            .as_mut()
-            .expect("active window must have a populated split layout")
-            .1
-            .get_mut(&active_split)
-        else {
+impl crate::app::window::Window {
+    /// Window-level navigation visibility primitive — see
+    /// [`Editor::ensure_active_cursor_visible_for_navigation`] for
+    /// the full contract. Operates on the active split of this
+    /// window and the supplied buffer (typically the
+    /// caller-resolved `active_buffer()`).
+    pub fn ensure_cursor_visible_for_navigation(
+        &mut self,
+        active_buffer: crate::model::event::BufferId,
+        recenter_on_scroll: bool,
+    ) {
+        let Some((mgr, vs_map)) = self.splits.as_mut() else {
             return;
         };
-        let Some(state) = __buffers_mut.get_mut(&active_buffer) else {
+        let active_split = mgr.active_split();
+        let Some(view_state) = vs_map.get_mut(&active_split) else {
+            return;
+        };
+        let Some(state) = self.buffers.get_mut(&active_buffer) else {
             return;
         };
 
@@ -185,19 +186,7 @@ impl Editor {
             }
             view_state.viewport.top_byte = iter.current_position();
             view_state.viewport.top_view_line_offset = 0;
-            // The byte-oriented `ensure_cursor_visible` above may have set
-            // `scrolled_up_in_wrap` so the next `ensure_visible_in_layout`
-            // would fine-tune `top_view_line_offset` to place the cursor
-            // exactly `effective_offset` rows from the top. That hint
-            // matched the byte-oriented routine's chosen `top_byte`; we've
-            // since overridden `top_byte` to a recentered position, so the
-            // pending fine-tune is stale and would shift the viewport away
-            // from the recenter on the very first non-skipped render after
-            // a keypress.
             view_state.viewport.scrolled_up_in_wrap = false;
-            // The next render-time `ensure_visible_in_layout` would otherwise
-            // immediately undo this recenter to satisfy its own scroll-margin
-            // invariants. Tell it to keep the position we just chose.
             view_state.viewport.set_skip_ensure_visible();
         }
     }

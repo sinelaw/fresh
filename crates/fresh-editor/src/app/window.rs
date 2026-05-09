@@ -267,6 +267,330 @@ impl Window {
         }
     }
 
+    /// Add a collapsed fold range on `buffer_id`'s marker list and on
+    /// every view state hosting the buffer. Returns `true` when the
+    /// buffer was found (so the caller knows to flag a render). No-op
+    /// when the buffer is missing.
+    pub fn add_fold(
+        &mut self,
+        buffer_id: BufferId,
+        start: usize,
+        end: usize,
+        placeholder: Option<String>,
+    ) -> bool {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return false;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return false;
+        };
+        for vs in vs_map.values_mut() {
+            if vs.keyed_states.contains_key(&buffer_id) {
+                let buf_state = vs.ensure_buffer_state(buffer_id);
+                buf_state
+                    .folds
+                    .add(&mut state.marker_list, start, end, placeholder.clone());
+            }
+        }
+        true
+    }
+
+    /// Clear every fold range on `buffer_id` across the window's view
+    /// states. Returns `true` when the buffer was found.
+    pub fn clear_folds(&mut self, buffer_id: BufferId) -> bool {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return false;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return false;
+        };
+        for vs in vs_map.values_mut() {
+            if vs.keyed_states.contains_key(&buffer_id) {
+                let buf_state = vs.ensure_buffer_state(buffer_id);
+                buf_state.folds.clear(&mut state.marker_list);
+            }
+        }
+        true
+    }
+
+    /// Move every supplied split's primary cursor to `position` in
+    /// `buffer_id` and re-anchor the viewport to keep it visible.
+    /// Caller is responsible for computing `splits` (typically by
+    /// walking the split tree plus any grouped subtrees on the
+    /// editor — those live outside the window). No-op for missing
+    /// buffer/splits.
+    pub fn set_buffer_cursor_in_splits(
+        &mut self,
+        buffer_id: BufferId,
+        position: usize,
+        splits: &[LeafId],
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        for leaf_id in splits {
+            let Some(view_state) = vs_map.get_mut(leaf_id) else {
+                continue;
+            };
+            view_state.cursors.primary_mut().move_to(position, false);
+            view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+        }
+    }
+
+    /// Scroll `leaf_id`'s viewport so the byte position `top_byte` is
+    /// the new top line, using `buffer_id` to resolve byte→line. Sets
+    /// `skip_ensure_visible` so the next render's cursor-visibility
+    /// pass doesn't undo the plugin-driven scroll. No-op for missing
+    /// buffer/split.
+    pub fn set_split_scroll_to_byte(
+        &mut self,
+        buffer_id: BufferId,
+        leaf_id: LeafId,
+        top_byte: usize,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let Some(view_state) = vs_map.get_mut(&leaf_id) else {
+            return;
+        };
+        let total_bytes = state.buffer.len();
+        let clamped_byte = top_byte.min(total_bytes);
+        let target_line = state
+            .buffer
+            .offset_to_position(clamped_byte)
+            .map(|p| p.line)
+            .unwrap_or(0);
+        view_state
+            .viewport
+            .scroll_to(&mut state.buffer, target_line);
+        view_state.viewport.top_byte = clamped_byte;
+        view_state.viewport.top_view_line_offset = 0;
+        view_state.viewport.set_skip_ensure_visible();
+    }
+
+    /// Scroll every supplied split so `line` is roughly a third
+    /// from the top of the viewport, using `buffer_id` for line
+    /// resolution. Used for plugin-driven "scroll buffer to line"
+    /// where the caller has already collected target leaves
+    /// (including those from grouped subtrees).
+    pub fn scroll_buffer_to_line_in_splits(
+        &mut self,
+        buffer_id: BufferId,
+        target_leaves: &[LeafId],
+        line: usize,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        for leaf_id in target_leaves {
+            let Some(view_state) = vs_map.get_mut(leaf_id) else {
+                continue;
+            };
+            let viewport_height = view_state.viewport.height as usize;
+            let lines_above = viewport_height / 3;
+            let target = line.saturating_sub(lines_above);
+            view_state.viewport.scroll_to(&mut state.buffer, target);
+            view_state.viewport.set_skip_ensure_visible();
+        }
+    }
+
+    /// Apply a previously-saved cursor + scroll position to a
+    /// specific buffer's keyed view state inside a specific split.
+    /// Restoration must NOT go through `view_state.viewport` /
+    /// `view_state.cursors` — those Deref to the split's *active*
+    /// buffer's view, which for `open_file_no_focus` is still the
+    /// previously-active buffer; writing through the Deref would
+    /// scroll the unrelated active buffer. After restoring the
+    /// fields, reconciles cursor visibility against viewport
+    /// (#1689 follow-up). No-op if buffer/split is missing.
+    pub fn restore_buffer_state_in_split(
+        &mut self,
+        buffer_id: BufferId,
+        split_id: LeafId,
+        file_state: &crate::workspace::SerializedFileState,
+    ) {
+        let buffer_state = self.buffers.get_mut(&buffer_id);
+        let view_state = self
+            .splits
+            .as_mut()
+            .and_then(|(_, vs_map)| vs_map.get_mut(&split_id));
+        let (Some(view_state), Some(buffer_state)) = (view_state, buffer_state) else {
+            return;
+        };
+        let max_pos = buffer_state.buffer.len();
+        let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) else {
+            return;
+        };
+        let cursor_pos = file_state.cursor.position.min(max_pos);
+        buf_state.cursors.primary_mut().position = cursor_pos;
+        buf_state.cursors.primary_mut().anchor = file_state.cursor.anchor.map(|a| a.min(max_pos));
+        buf_state.viewport.top_byte = file_state.scroll.top_byte;
+        buf_state.viewport.left_column = file_state.scroll.left_column;
+        crate::app::navigation::reconcile_restored_buffer_view(buf_state, &mut buffer_state.buffer);
+    }
+
+    /// Configure `leaf_id`'s viewport for a terminal-buffer
+    /// scrollback view: disable line wrap, clear any pending
+    /// skip-ensure-visible flag, then scroll so the buffer's primary
+    /// cursor (positioned at end-of-buffer when entering scrollback)
+    /// is visible. No-op if the buffer or split is missing.
+    pub fn enter_terminal_scrollback_view(&mut self, buffer_id: BufferId, leaf_id: LeafId) {
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let Some(view_state) = vs_map.get_mut(&leaf_id) else {
+            return;
+        };
+        view_state.viewport.line_wrap_enabled = false;
+        view_state.viewport.clear_skip_ensure_visible();
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+        }
+    }
+
+    /// Install a freshly-loaded `EditorState` for a terminal buffer:
+    /// replace the slot's state, push every per-split cursor showing
+    /// the buffer to end-of-buffer (scrollback start), clear the
+    /// modified flag (terminals are never user-modified), disable
+    /// editing (scrollback mode), and turn off line-number margins.
+    /// Used by workspace restore when re-loading the on-disk
+    /// rendering of a previously-running terminal.
+    pub fn install_terminal_buffer_state(
+        &mut self,
+        buffer_id: BufferId,
+        new_state: crate::state::EditorState,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        *state = new_state;
+        let total = state.buffer.total_bytes();
+        if let Some((_, vs_map)) = self.splits.as_mut() {
+            for vs in vs_map.values_mut() {
+                if vs.has_buffer(buffer_id) {
+                    vs.cursors.primary_mut().position = total;
+                }
+            }
+        }
+        state.buffer.set_modified(false);
+        state.editing_disabled = true;
+        state.margins.configure_for_line_numbers(false);
+    }
+
+    /// Scroll `leaf_id`'s viewport by `delta` lines (negative = up,
+    /// positive = down). Honours `view_transform_tokens` when present
+    /// (uses view-aware scrolling) and falls back to buffer-based
+    /// `scroll_up` / `scroll_down`. After scrolling, skips
+    /// ensure_visible and snaps the viewport top to a fold boundary
+    /// if the new top byte landed inside a collapsed fold.
+    /// `tab_size` is needed for view-line tokenization.
+    pub fn scroll_split_by_lines(
+        &mut self,
+        buffer_id: BufferId,
+        leaf_id: LeafId,
+        delta: i32,
+        view_transform_tokens: Option<Vec<fresh_core::api::ViewTokenWire>>,
+        tab_size: usize,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let Some(view_state) = vs_map.get_mut(&leaf_id) else {
+            return;
+        };
+
+        let soft_breaks = state.collect_soft_break_positions();
+        let virtual_lines = state.collect_virtual_line_positions();
+        let buffer = &mut state.buffer;
+        let top_byte_before = view_state.viewport.top_byte;
+        if let Some(tokens) = view_transform_tokens {
+            use crate::view::ui::view_pipeline::ViewLineIterator;
+            let view_lines: Vec<_> =
+                ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
+            view_state
+                .viewport
+                .scroll_view_lines(&view_lines, delta as isize);
+        } else if delta < 0 {
+            let lines_to_scroll = delta.unsigned_abs() as usize;
+            view_state
+                .viewport
+                .scroll_up(buffer, &soft_breaks, &virtual_lines, lines_to_scroll);
+        } else {
+            let lines_to_scroll = delta as usize;
+            view_state
+                .viewport
+                .scroll_down(buffer, &soft_breaks, &virtual_lines, lines_to_scroll);
+        }
+        view_state.viewport.set_skip_ensure_visible();
+
+        if let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) {
+            if !folds.is_empty() {
+                let top_line = buffer.get_line_number(view_state.viewport.top_byte);
+                if let Some(range) = folds
+                    .resolved_ranges(buffer, &state.marker_list)
+                    .iter()
+                    .find(|r| top_line >= r.start_line && top_line <= r.end_line)
+                {
+                    let target_line = if delta >= 0 {
+                        range.end_line.saturating_add(1)
+                    } else {
+                        range.header_line
+                    };
+                    let target_byte = buffer
+                        .line_start_offset(target_line)
+                        .unwrap_or_else(|| buffer.len());
+                    view_state.viewport.top_byte = target_byte;
+                    view_state.viewport.top_view_line_offset = 0;
+                }
+            }
+        }
+        tracing::trace!(
+            "scroll_split_by_lines: delta={}, top_byte {} -> {}",
+            delta,
+            top_byte_before,
+            view_state.viewport.top_byte
+        );
+    }
+
+    /// Clear LSP-related overlays (diagnostics, virtual texts,
+    /// folding ranges, and folds) for `buffer_id`, used when LSP is
+    /// being disabled for the buffer. Pure window-state mutation.
+    pub fn clear_lsp_overlays_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        diagnostic_namespace: &crate::model::event::OverlayNamespace,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        state
+            .overlays
+            .clear_namespace(diagnostic_namespace, &mut state.marker_list);
+        state.virtual_texts.clear(&mut state.marker_list);
+        state.folding_ranges.clear(&mut state.marker_list);
+        let Some((_, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        for view_state in vs_map.values_mut() {
+            if let Some(buf_state) = view_state.keyed_states.get_mut(&buffer_id) {
+                buf_state.folds.clear(&mut state.marker_list);
+            }
+        }
+    }
+
     /// Mutable handle to this window's split tree (or `None` when
     /// the layout hasn't been seeded yet). Useful at sites where
     /// the caller already has a `&mut Window` from a direct
