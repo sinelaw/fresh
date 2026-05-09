@@ -1023,14 +1023,15 @@ impl Editor {
 
         // Now borrow lsp and do all LSP operations
         let __active_id = self.active_window;
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
             tracing::debug!("No LSP manager available");
             return;
         };
+        let Some(lsp) = __win.lsp.as_mut() else {
+            tracing::debug!("No LSP manager available");
+            return;
+        };
+        let __next_id = &mut __win.next_lsp_request_id;
 
         tracing::debug!("LSP manager available for file: {}", path.display());
         tracing::debug!(
@@ -1068,8 +1069,11 @@ impl Editor {
                 if let Some(sh) =
                     lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
                 {
-                    let request_id = self.next_lsp_request_id;
-                    self.next_lsp_request_id += 1;
+                    let request_id = {
+                        let id = *__next_id;
+                        *__next_id += 1;
+                        id
+                    };
                     if let Err(e) = sh.handle.document_diagnostic(
                         request_id,
                         uri.as_uri().clone(),
@@ -1089,8 +1093,11 @@ impl Editor {
                     if let Some(sh) =
                         lsp.handle_for_feature_mut(&language, crate::types::LspFeature::InlayHints)
                     {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
+                        let request_id = {
+                            let id = *__next_id;
+                            *__next_id += 1;
+                            id
+                        };
 
                         if let Err(e) = sh.handle.inlay_hints(
                             request_id,
@@ -1102,13 +1109,15 @@ impl Editor {
                         ) {
                             tracing::debug!("Failed to request inlay hints: {}", e);
                         } else {
-                            self.pending_inlay_hints_requests.insert(
-                                request_id,
-                                super::InlayHintsRequest {
-                                    buffer_id,
-                                    version: buffer_version,
-                                },
-                            );
+                            self.active_window_mut()
+                                .pending_inlay_hints_requests
+                                .insert(
+                                    request_id,
+                                    super::InlayHintsRequest {
+                                        buffer_id,
+                                        version: buffer_version,
+                                    },
+                                );
                             tracing::info!(
                                 "Requested inlay hints for {} (request_id={})",
                                 uri.as_str(),

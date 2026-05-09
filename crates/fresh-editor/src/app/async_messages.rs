@@ -302,7 +302,11 @@ impl Editor {
         uri: String,
         hints: Vec<InlayHint>,
     ) {
-        let Some(request) = self.pending_inlay_hints_requests.remove(&request_id) else {
+        let Some(request) = self
+            .active_window_mut()
+            .pending_inlay_hints_requests
+            .remove(&request_id)
+        else {
             tracing::debug!(
                 "Ignoring stale inlay hints response (request_id={})",
                 request_id
@@ -366,7 +370,11 @@ impl Editor {
         uri: String,
         ranges: Vec<FoldingRange>,
     ) {
-        let Some(request) = self.pending_folding_range_requests.remove(&request_id) else {
+        let Some(request) = self
+            .active_window_mut()
+            .pending_folding_range_requests
+            .remove(&request_id)
+        else {
             tracing::debug!(
                 "Ignoring folding ranges response without pending request (request_id={})",
                 request_id
@@ -374,7 +382,9 @@ impl Editor {
             return;
         };
 
-        self.folding_ranges_in_flight.remove(&request.buffer_id);
+        self.active_window_mut()
+            .folding_ranges_in_flight
+            .remove(&request.buffer_id);
 
         // Ignore stale responses (buffer changed since request)
         if let Some(state) = self
@@ -558,14 +568,16 @@ impl Editor {
                             &self.theme,
                         );
                         if applied {
-                            self.semantic_tokens_range_applied.insert(
-                                buffer_id,
-                                (
-                                    requested_start_line.unwrap_or(0),
-                                    requested_end_line.unwrap_or(0),
-                                    current_version,
-                                ),
-                            );
+                            self.active_window_mut()
+                                .semantic_tokens_range_applied
+                                .insert(
+                                    buffer_id,
+                                    (
+                                        requested_start_line.unwrap_or(0),
+                                        requested_end_line.unwrap_or(0),
+                                        current_version,
+                                    ),
+                                );
                         }
                     }
                 }
@@ -796,11 +808,10 @@ impl Editor {
 
         let __active_id = self.active_window;
 
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
+            return;
+        };
+        let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
 
@@ -811,14 +822,17 @@ impl Editor {
         };
         let client = &mut sh.handle;
 
+        let __next_id = &mut __win.next_lsp_request_id;
+        let __pending = &mut __win.pending_inlay_hints_requests;
+
         // Request inlay hints for each buffer. Each request is keyed in
         // the pending map by its own id (and carries buffer_id + version)
         // so responses across all buffers are matched individually — a
         // single Option used to be overwritten by each iteration, dropping
         // every response except the last.
         for (buffer_id, uri, line_count, version) in buffer_infos {
-            let request_id = self.next_lsp_request_id;
-            self.next_lsp_request_id += 1;
+            let request_id = *__next_id;
+            *__next_id += 1;
 
             let last_line = line_count.saturating_sub(1) as u32;
             if let Err(e) =
@@ -830,8 +844,7 @@ impl Editor {
                     e
                 );
             } else {
-                self.pending_inlay_hints_requests
-                    .insert(request_id, super::InlayHintsRequest { buffer_id, version });
+                __pending.insert(request_id, super::InlayHintsRequest { buffer_id, version });
                 tracing::info!(
                     "Re-requested inlay hints for {} (request_id={})",
                     uri.as_str(),
@@ -869,12 +882,12 @@ impl Editor {
         }
 
         let __active_id = self.active_window;
+        let diagnostic_result_ids = &self.diagnostic_result_ids;
 
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
+            return;
+        };
+        let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
         let Some(sh) = lsp.handle_for_feature_mut(language, crate::types::LspFeature::Diagnostics)
@@ -882,11 +895,12 @@ impl Editor {
             return;
         };
         let client = &mut sh.handle;
+        let __next_id = &mut __win.next_lsp_request_id;
 
         for uri in uris {
-            let request_id = self.next_lsp_request_id;
-            self.next_lsp_request_id += 1;
-            let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
+            let request_id = *__next_id;
+            *__next_id += 1;
+            let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
             if let Err(e) =
                 client.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
             {

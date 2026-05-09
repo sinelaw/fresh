@@ -92,8 +92,14 @@ impl Editor {
         &mut self,
         request_id: u64,
     ) -> Option<SemanticTokenFullRequest> {
-        if let Some(request) = self.pending_semantic_token_requests.remove(&request_id) {
-            self.semantic_tokens_in_flight.remove(&request.buffer_id);
+        if let Some(request) = self
+            .active_window_mut()
+            .pending_semantic_token_requests
+            .remove(&request_id)
+        {
+            self.active_window_mut()
+                .semantic_tokens_in_flight
+                .remove(&request.buffer_id);
             Some(request)
         } else {
             None
@@ -106,10 +112,12 @@ impl Editor {
         request_id: u64,
     ) -> Option<SemanticTokenRangeRequest> {
         if let Some(request) = self
+            .active_window_mut()
             .pending_semantic_token_range_requests
             .remove(&request_id)
         {
-            self.semantic_tokens_range_in_flight
+            self.active_window_mut()
+                .semantic_tokens_range_in_flight
                 .remove(&request.buffer_id);
             Some(request)
         } else {
@@ -408,12 +416,15 @@ impl Editor {
 
     /// Return the number of pending completion requests.
     pub fn pending_completion_requests_count(&self) -> usize {
-        self.pending_completion_requests.len()
+        self.active_window().pending_completion_requests.len()
     }
 
     /// Return the number of stored completion items.
     pub fn completion_items_count(&self) -> usize {
-        self.completion_items.as_ref().map_or(0, |v| v.len())
+        self.active_window()
+            .completion_items
+            .as_ref()
+            .map_or(0, |v| v.len())
     }
 
     /// Return the number of initialized LSP servers for a given language.
@@ -1094,11 +1105,11 @@ impl Editor {
 
         let __active_id = self.active_window;
 
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let diagnostic_result_ids = &self.diagnostic_result_ids;
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
+            return false;
+        };
+        let Some(lsp) = __win.lsp.as_mut() else {
             return false;
         };
         let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
@@ -1107,9 +1118,9 @@ impl Editor {
         };
         let client = &mut sh.handle;
 
-        let request_id = self.next_lsp_request_id;
-        self.next_lsp_request_id += 1;
-        let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
+        let request_id = __win.next_lsp_request_id;
+        __win.next_lsp_request_id += 1;
+        let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
         if let Err(e) =
             client.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
         {
@@ -1136,7 +1147,7 @@ impl Editor {
     /// Returns true if a completion request was triggered.
     pub fn check_completion_trigger_timer(&mut self) -> bool {
         // Check if we have a scheduled completion trigger
-        let Some(trigger_time) = self.scheduled_completion_trigger else {
+        let Some(trigger_time) = self.active_window_mut().scheduled_completion_trigger else {
             return false;
         };
 
@@ -1146,7 +1157,7 @@ impl Editor {
         }
 
         // Clear the scheduled trigger
-        self.scheduled_completion_trigger = None;
+        self.active_window_mut().scheduled_completion_trigger = None;
 
         // Don't trigger if a popup is already visible
         if self.active_state().popups.is_visible() {

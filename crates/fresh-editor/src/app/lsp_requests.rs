@@ -80,7 +80,11 @@ impl Editor {
         items: Vec<lsp_types::CompletionItem>,
     ) -> AnyhowResult<()> {
         // Check if this is one of the pending completion requests
-        if !self.pending_completion_requests.remove(&request_id) {
+        if !self
+            .active_window_mut()
+            .pending_completion_requests
+            .remove(&request_id)
+        {
             tracing::debug!(
                 "Ignoring completion response for outdated request {}",
                 request_id
@@ -90,7 +94,9 @@ impl Editor {
 
         if items.is_empty() {
             tracing::debug!("No completion items received");
-            if self.pending_completion_requests.is_empty() && self.completion_items.is_none() {
+            if self.active_window().pending_completion_requests.is_empty()
+                && self.active_window().completion_items.is_none()
+            {
                 // All servers responded with nothing — fall back to buffer-word completions,
                 // matching the behaviour when no LSP servers are available at all.
                 self.show_buffer_word_completion_popup();
@@ -127,24 +133,24 @@ impl Editor {
         let filtered_items: Vec<&lsp_types::CompletionItem> =
             items.iter().filter(|item| matches_prefix(item)).collect();
 
-        if filtered_items.is_empty() && self.completion_items.is_none() {
+        if filtered_items.is_empty() && self.active_window().completion_items.is_none() {
             tracing::debug!("No completion items match prefix '{}'", prefix);
             return Ok(());
         }
 
         // Store/extend original items for type-to-filter (merge from multiple servers)
-        match &mut self.completion_items {
+        match &mut self.active_window_mut().completion_items {
             Some(existing) => {
                 existing.extend(items);
                 tracing::debug!("Extended completion items, now {} total", existing.len());
             }
             None => {
-                self.completion_items = Some(items);
+                self.active_window_mut().completion_items = Some(items);
             }
         }
 
         // Rebuild popup from ALL merged items (not just the new batch)
-        let all_items = self.completion_items.as_ref().unwrap();
+        let all_items = self.active_window_mut().completion_items.as_ref().unwrap();
         let all_filtered: Vec<&lsp_types::CompletionItem> = all_items
             .iter()
             .filter(|item| matches_prefix(item))
@@ -194,7 +200,10 @@ impl Editor {
 
         tracing::info!(
             "Showing completion popup with {} items",
-            self.completion_items.as_ref().map_or(0, |i| i.len())
+            self.active_window_mut()
+                .completion_items
+                .as_ref()
+                .map_or(0, |i| i.len())
         );
 
         Ok(())
@@ -207,7 +216,7 @@ impl Editor {
         locations: Vec<lsp_types::Location>,
     ) -> AnyhowResult<()> {
         // Check if this is the pending request
-        if self.pending_goto_definition_request != Some(request_id) {
+        if self.active_window_mut().pending_goto_definition_request != Some(request_id) {
             tracing::debug!(
                 "Ignoring go-to-definition response for outdated request {}",
                 request_id
@@ -215,7 +224,7 @@ impl Editor {
             return Ok(());
         }
 
-        self.pending_goto_definition_request = None;
+        self.active_window_mut().pending_goto_definition_request = None;
 
         if locations.is_empty() {
             self.status_message = Some(t!("lsp.no_definition").to_string());
@@ -315,8 +324,11 @@ impl Editor {
 
     /// Check if there are any pending LSP requests
     pub fn has_pending_lsp_requests(&self) -> bool {
-        !self.pending_completion_requests.is_empty()
-            || self.pending_goto_definition_request.is_some()
+        !self.active_window().pending_completion_requests.is_empty()
+            || self
+                .active_window()
+                .pending_goto_definition_request
+                .is_some()
     }
 
     /// Cancel any pending LSP requests
@@ -324,15 +336,23 @@ impl Editor {
     /// the pending request's results stale (e.g., cursor movement, text editing)
     pub(crate) fn cancel_pending_lsp_requests(&mut self) {
         // Cancel scheduled (not yet sent) completion trigger
-        self.scheduled_completion_trigger = None;
-        if !self.pending_completion_requests.is_empty() {
-            let ids: Vec<u64> = self.pending_completion_requests.drain().collect();
+        self.active_window_mut().scheduled_completion_trigger = None;
+        if !self.active_window().pending_completion_requests.is_empty() {
+            let ids: Vec<u64> = self
+                .active_window_mut()
+                .pending_completion_requests
+                .drain()
+                .collect();
             for request_id in ids {
                 tracing::debug!("Canceling pending LSP completion request {}", request_id);
                 self.send_lsp_cancel_request(request_id);
             }
         }
-        if let Some(request_id) = self.pending_goto_definition_request.take() {
+        if let Some(request_id) = self
+            .active_window_mut()
+            .pending_goto_definition_request
+            .take()
+        {
             tracing::debug!(
                 "Canceling pending LSP goto-definition request {}",
                 request_id
@@ -623,8 +643,12 @@ impl Editor {
         // regression test in
         // crates/fresh-editor/tests/e2e/lsp_completion_duplicate_entries_1514.rs
         // and sinelaw/fresh#1514.
-        if !self.pending_completion_requests.is_empty() {
-            let ids: Vec<u64> = self.pending_completion_requests.drain().collect();
+        if !self.active_window().pending_completion_requests.is_empty() {
+            let ids: Vec<u64> = self
+                .active_window_mut()
+                .pending_completion_requests
+                .drain()
+                .collect();
             for request_id in ids {
                 tracing::debug!(
                     "Canceling previous pending LSP completion request {}",
@@ -633,7 +657,7 @@ impl Editor {
                 self.send_lsp_cancel_request(request_id);
             }
         }
-        self.completion_items = None;
+        self.active_window_mut().completion_items = None;
 
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -644,7 +668,7 @@ impl Editor {
         let buffer_id = self.active_buffer();
 
         // Pre-allocate request IDs for all eligible servers
-        let base_request_id = self.next_lsp_request_id;
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
         // Use an atomic counter in the closure
         let counter = std::sync::atomic::AtomicU64::new(0);
 
@@ -680,10 +704,12 @@ impl Editor {
             }
         }
         // Advance the ID counter past all allocated IDs
-        self.next_lsp_request_id = base_request_id + results.len() as u64;
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
 
         if !sent_ids.is_empty() {
-            self.pending_completion_requests.extend(sent_ids);
+            self.active_window_mut()
+                .pending_completion_requests
+                .extend(sent_ids);
         } else {
             // No LSP servers available — show buffer-word completions as popup.
             self.show_buffer_word_completion_popup();
@@ -756,7 +782,7 @@ impl Editor {
                 language
             );
             // Cancel any pending scheduled trigger
-            self.scheduled_completion_trigger = None;
+            self.active_window_mut().scheduled_completion_trigger = None;
             self.request_completion();
             return;
         }
@@ -775,12 +801,12 @@ impl Editor {
 
             // Schedule (or reschedule) the completion trigger
             // This effectively debounces - each keystroke resets the timer
-            self.scheduled_completion_trigger = Some(trigger_time);
+            self.active_window_mut().scheduled_completion_trigger = Some(trigger_time);
         } else {
             // Non-word, non-trigger character (space, punctuation, etc.) —
             // cancel any pending scheduled trigger so a stale timer from the
             // previous word doesn't fire at the wrong cursor position.
-            self.scheduled_completion_trigger = None;
+            self.active_window_mut().scheduled_completion_trigger = None;
         }
     }
 
@@ -793,7 +819,7 @@ impl Editor {
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
@@ -821,8 +847,8 @@ impl Editor {
             .unwrap_or(false);
 
         if sent {
-            self.next_lsp_request_id += 1;
-            self.pending_goto_definition_request = Some(request_id);
+            self.active_window_mut().next_lsp_request_id += 1;
+            self.active_window_mut().pending_goto_definition_request = Some(request_id);
         }
 
         Ok(())
@@ -849,7 +875,7 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
@@ -874,7 +900,7 @@ impl Editor {
             .unwrap_or(false);
 
         if sent {
-            self.next_lsp_request_id += 1;
+            self.active_window_mut().next_lsp_request_id += 1;
             self.hover
                 .record_request(request_id, line as u32, character as u32);
         }
@@ -905,7 +931,7 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
@@ -930,7 +956,7 @@ impl Editor {
             .unwrap_or(false);
 
         if sent {
-            self.next_lsp_request_id += 1;
+            self.active_window_mut().next_lsp_request_id += 1;
             self.hover
                 .record_request(request_id, line as u32, character as u32);
         }
@@ -1366,7 +1392,7 @@ impl Editor {
         };
 
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
@@ -1395,9 +1421,9 @@ impl Editor {
             .unwrap_or(false);
 
         if sent {
-            self.next_lsp_request_id += 1;
-            self.pending_references_request = Some(request_id);
-            self.pending_references_symbol = symbol;
+            self.active_window_mut().next_lsp_request_id += 1;
+            self.active_window_mut().pending_references_request = Some(request_id);
+            self.active_window_mut().pending_references_symbol = symbol;
         }
 
         Ok(())
@@ -1412,7 +1438,7 @@ impl Editor {
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(cursor_pos);
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
@@ -1441,8 +1467,8 @@ impl Editor {
             .unwrap_or(false);
 
         if sent {
-            self.next_lsp_request_id += 1;
-            self.pending_signature_help_request = Some(request_id);
+            self.active_window_mut().next_lsp_request_id += 1;
+            self.active_window_mut().pending_signature_help_request = Some(request_id);
         }
     }
 
@@ -1453,12 +1479,12 @@ impl Editor {
         signature_help: Option<lsp_types::SignatureHelp>,
     ) {
         // Check if this response is for the current pending request
-        if self.pending_signature_help_request != Some(request_id) {
+        if self.active_window_mut().pending_signature_help_request != Some(request_id) {
             tracing::debug!("Ignoring stale signature help response: {}", request_id);
             return;
         }
 
-        self.pending_signature_help_request = None;
+        self.active_window_mut().pending_signature_help_request = None;
         let signature_help = match signature_help {
             Some(help) if !help.signatures.is_empty() => help,
             _ => {
@@ -1578,8 +1604,16 @@ impl Editor {
         // into the new popup — same bug class we already avoid for
         // completion (sinelaw/fresh#1514) and inlay hints (multi-buffer
         // quiescent).
-        if !self.pending_code_actions_requests.is_empty() {
-            let ids: Vec<u64> = self.pending_code_actions_requests.drain().collect();
+        if !self
+            .active_window()
+            .pending_code_actions_requests
+            .is_empty()
+        {
+            let ids: Vec<u64> = self
+                .active_window_mut()
+                .pending_code_actions_requests
+                .drain()
+                .collect();
             for request_id in ids {
                 tracing::debug!(
                     "Canceling previous pending LSP code actions request {}",
@@ -1588,8 +1622,10 @@ impl Editor {
                 self.send_lsp_cancel_request(request_id);
             }
         }
-        self.pending_code_actions_server_names.clear();
-        self.pending_code_actions = None;
+        self.active_window_mut()
+            .pending_code_actions_server_names
+            .clear();
+        self.active_window_mut().pending_code_actions = None;
 
         // Get the current buffer and cursor position
         let cursor_pos = self.active_cursors().primary().position;
@@ -1614,7 +1650,7 @@ impl Editor {
         let buffer_id = self.active_buffer();
 
         // Pre-allocate request IDs for all eligible servers
-        let base_request_id = self.next_lsp_request_id;
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
         let counter = std::sync::atomic::AtomicU64::new(0);
 
         let results = self.with_all_lsp_for_buffer_feature_named(
@@ -1653,17 +1689,20 @@ impl Editor {
         for (request_id, ok, server_name) in &results {
             if *ok {
                 sent_ids.push(*request_id);
-                self.pending_code_actions_server_names
+                self.active_window_mut()
+                    .pending_code_actions_server_names
                     .insert(*request_id, server_name.clone());
             }
         }
         // Advance the ID counter past all allocated IDs
-        self.next_lsp_request_id = base_request_id + results.len() as u64;
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
 
         if !sent_ids.is_empty() {
             // pending_code_actions was already cleared above alongside the
             // cancel-previous-requests logic.
-            self.pending_code_actions_requests.extend(sent_ids);
+            self.active_window_mut()
+                .pending_code_actions_requests
+                .extend(sent_ids);
         }
 
         Ok(())
@@ -1678,21 +1717,30 @@ impl Editor {
         actions: Vec<lsp_types::CodeActionOrCommand>,
     ) {
         // Check if this response is for one of the pending requests
-        if !self.pending_code_actions_requests.remove(&request_id) {
+        if !self
+            .active_window_mut()
+            .pending_code_actions_requests
+            .remove(&request_id)
+        {
             tracing::debug!("Ignoring stale code actions response: {}", request_id);
             return;
         }
 
         // Look up the server name for this request
         let server_name = self
+            .active_window_mut()
             .pending_code_actions_server_names
             .remove(&request_id)
             .unwrap_or_default();
 
         if actions.is_empty() {
             // Only show "no code actions" if all responses are in and we have nothing
-            if self.pending_code_actions_requests.is_empty()
+            if self
+                .active_window()
+                .pending_code_actions_requests
+                .is_empty()
                 && self
+                    .active_window_mut()
                     .pending_code_actions
                     .as_ref()
                     .is_none_or(|a| a.is_empty())
@@ -1708,13 +1756,13 @@ impl Editor {
             .map(|a| (server_name.clone(), a))
             .collect();
 
-        match &mut self.pending_code_actions {
+        match &mut self.active_window_mut().pending_code_actions {
             Some(existing) => {
                 existing.extend(tagged_actions);
                 tracing::debug!("Extended code actions, now {} total", existing.len());
             }
             None => {
-                self.pending_code_actions = Some(tagged_actions);
+                self.active_window_mut().pending_code_actions = Some(tagged_actions);
             }
         }
 
@@ -1722,48 +1770,47 @@ impl Editor {
         use crate::view::popup::{Popup, PopupListItem, PopupPosition};
         use ratatui::style::Style;
 
-        // Check if actions come from multiple servers
-        let all_actions = self.pending_code_actions.as_ref().unwrap();
-        let multiple_servers = {
-            let mut names = std::collections::HashSet::new();
-            for (name, _) in all_actions {
-                names.insert(name.as_str());
-            }
-            names.len() > 1
-        };
-
-        let items: Vec<PopupListItem> = all_actions
-            .iter()
-            .enumerate()
-            .map(|(i, (srv_name, action))| {
-                let title = match action {
-                    lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
-                    lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
-                };
-                let kind = match action {
-                    lsp_types::CodeActionOrCommand::CodeAction(ca) => {
-                        ca.kind.as_ref().map(|k| k.as_str().to_string())
-                    }
-                    _ => None,
-                };
-                // Show server name in detail when multiple servers contribute
-                let detail = if multiple_servers && !srv_name.is_empty() {
-                    match kind {
-                        Some(k) => Some(format!("[{}] {}", srv_name, k)),
-                        None => Some(format!("[{}]", srv_name)),
-                    }
-                } else {
-                    kind
-                };
-                PopupListItem {
-                    text: format!("{}. {}", i + 1, title),
-                    detail,
-                    icon: None,
-                    data: Some(i.to_string()),
-                    disabled: false,
+        let items: Vec<PopupListItem> = {
+            let all_actions = self.active_window().pending_code_actions.as_ref().unwrap();
+            let multiple_servers = {
+                let mut names = std::collections::HashSet::new();
+                for (name, _) in all_actions {
+                    names.insert(name.as_str());
                 }
-            })
-            .collect();
+                names.len() > 1
+            };
+            all_actions
+                .iter()
+                .enumerate()
+                .map(|(i, (srv_name, action))| {
+                    let title = match action {
+                        lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
+                        lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
+                    };
+                    let kind = match action {
+                        lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+                            ca.kind.as_ref().map(|k| k.as_str().to_string())
+                        }
+                        _ => None,
+                    };
+                    let detail = if multiple_servers && !srv_name.is_empty() {
+                        match kind {
+                            Some(k) => Some(format!("[{}] {}", srv_name, k)),
+                            None => Some(format!("[{}]", srv_name)),
+                        }
+                    } else {
+                        kind
+                    };
+                    PopupListItem {
+                        text: format!("{}. {}", i + 1, title),
+                        detail,
+                        icon: None,
+                        data: Some(i.to_string()),
+                        disabled: false,
+                    }
+                })
+                .collect()
+        };
 
         let mut popup = Popup::list(items, &self.theme);
         popup.kind = crate::view::popup::PopupKind::Action;
@@ -1774,7 +1821,7 @@ impl Editor {
         popup.border_style = Style::default().fg(self.theme.popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.popup_bg);
         // Confirm reads the selected row's `data` as an index into
-        // `self.pending_code_actions` — the heavy lsp_types payload
+        // `self.active_window_mut().pending_code_actions` — the heavy lsp_types payload
         // stays on the Editor to keep the view crate LSP-free.
         popup.resolver = crate::view::popup::PopupResolver::CodeAction;
         // Code actions are an explicit user invocation (`lsp_code_actions`
@@ -1786,6 +1833,11 @@ impl Editor {
 
         // Show the popup, replacing any existing action popup to avoid stacking
         let __buffer_id = self.active_buffer();
+        let action_count = self
+            .active_window()
+            .pending_code_actions
+            .as_ref()
+            .map_or(0, |v| v.len());
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -1794,16 +1846,13 @@ impl Editor {
             .get_mut(&__buffer_id)
         {
             state.popups.show_or_replace(popup);
-            tracing::info!(
-                "Showing code actions popup with {} actions",
-                all_actions.len()
-            );
+            tracing::info!("Showing code actions popup with {} actions", action_count);
         }
     }
 
     /// Execute a code action by index from the stored pending_code_actions.
     pub(crate) fn execute_code_action(&mut self, index: usize) {
-        let action = match &self.pending_code_actions {
+        let action = match &self.active_window_mut().pending_code_actions {
             Some(actions) => actions.get(index).map(|(_, a)| a.clone()),
             None => None,
         };
@@ -1913,8 +1962,8 @@ impl Editor {
             None => return,
         };
 
-        self.next_lsp_request_id += 1;
-        let request_id = self.next_lsp_request_id;
+        self.active_window_mut().next_lsp_request_id += 1;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         let __active_id = self.active_window;
 
@@ -1984,8 +2033,8 @@ impl Editor {
             None => return,
         };
 
-        self.next_lsp_request_id += 1;
-        let request_id = self.next_lsp_request_id;
+        self.active_window_mut().next_lsp_request_id += 1;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         let __active_id = self.active_window;
 
@@ -2079,8 +2128,8 @@ impl Editor {
         let tab_size = self.config.editor.tab_size as u32;
         let insert_spaces = !self.config.editor.use_tabs;
 
-        self.next_lsp_request_id += 1;
-        let request_id = self.next_lsp_request_id;
+        self.active_window_mut().next_lsp_request_id += 1;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         let __active_id = self.active_window;
 
@@ -2117,12 +2166,12 @@ impl Editor {
         );
 
         // Check if this response is for the current pending request
-        if self.pending_references_request != Some(request_id) {
+        if self.active_window_mut().pending_references_request != Some(request_id) {
             tracing::debug!("Ignoring stale references response: {}", request_id);
             return Ok(());
         }
 
-        self.pending_references_request = None;
+        self.active_window_mut().pending_references_request = None;
         if locations.is_empty() {
             self.set_status_message(t!("lsp.no_references").to_string());
             return Ok(());
@@ -2160,7 +2209,7 @@ impl Editor {
             .collect();
 
         let count = lsp_locations.len();
-        let symbol = std::mem::take(&mut self.pending_references_symbol);
+        let symbol = std::mem::take(&mut self.active_window_mut().pending_references_symbol);
         self.set_status_message(
             t!("lsp.found_references", count = count, symbol = &symbol).to_string(),
         );
@@ -3148,8 +3197,8 @@ impl Editor {
             None => return,
         };
 
-        self.next_lsp_request_id += 1;
-        let request_id = self.next_lsp_request_id;
+        self.active_window_mut().next_lsp_request_id += 1;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         let __active_id = self.active_window;
 
@@ -3256,7 +3305,7 @@ impl Editor {
         let state = self.active_state();
         let (line, character) = state.buffer.position_to_lsp_position(rename_pos);
         let buffer_id = self.active_buffer();
-        let request_id = self.next_lsp_request_id;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
@@ -3282,7 +3331,7 @@ impl Editor {
             .unwrap_or(false);
 
         if sent {
-            self.next_lsp_request_id += 1;
+            self.active_window_mut().next_lsp_request_id += 1;
         } else if self
             .buffer_metadata
             .get(&buffer_id)
@@ -3323,7 +3372,7 @@ impl Editor {
             return;
         };
         let last_line = line_count.saturating_sub(1) as u32;
-        let request_id = self.next_lsp_request_id;
+        let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
         let sent = self
@@ -3354,8 +3403,9 @@ impl Editor {
             .unwrap_or(false);
 
         if sent {
-            self.next_lsp_request_id += 1;
-            self.pending_inlay_hints_requests
+            self.active_window_mut().next_lsp_request_id += 1;
+            self.active_window_mut()
+                .pending_inlay_hints_requests
                 .insert(request_id, super::InlayHintsRequest { buffer_id, version });
         }
     }
@@ -3363,25 +3413,38 @@ impl Editor {
     /// Schedule a folding range refresh for a buffer (debounced).
     pub(crate) fn schedule_folding_ranges_refresh(&mut self, buffer_id: BufferId) {
         let next_time = Instant::now() + Duration::from_millis(FOLDING_RANGES_DEBOUNCE_MS);
-        self.folding_ranges_debounce.insert(buffer_id, next_time);
+        self.active_window_mut()
+            .folding_ranges_debounce
+            .insert(buffer_id, next_time);
     }
 
     /// Issue a debounced folding range request if the timer has elapsed.
     pub(crate) fn maybe_request_folding_ranges_debounced(&mut self, buffer_id: BufferId) {
-        let Some(ready_at) = self.folding_ranges_debounce.get(&buffer_id).copied() else {
+        let Some(ready_at) = self
+            .active_window()
+            .folding_ranges_debounce
+            .get(&buffer_id)
+            .copied()
+        else {
             return;
         };
         if Instant::now() < ready_at {
             return;
         }
 
-        self.folding_ranges_debounce.remove(&buffer_id);
+        self.active_window_mut()
+            .folding_ranges_debounce
+            .remove(&buffer_id);
         self.request_folding_ranges_for_buffer(buffer_id);
     }
 
     /// Request folding ranges for a buffer if supported and needed.
     pub(crate) fn request_folding_ranges_for_buffer(&mut self, buffer_id: BufferId) {
-        if self.folding_ranges_in_flight.contains_key(&buffer_id) {
+        if self
+            .active_window_mut()
+            .folding_ranges_in_flight
+            .contains_key(&buffer_id)
+        {
             return;
         }
 
@@ -3417,11 +3480,13 @@ impl Editor {
             .map(|s| s.buffer.version())
             .unwrap_or(0);
 
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
+            return;
+        };
+        let __next_id = &mut __win.next_lsp_request_id;
+        let __pending_folding = &mut __win.pending_folding_range_requests;
+        let __folding_in_flight = &mut __win.folding_ranges_in_flight;
+        let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
 
@@ -3440,21 +3505,24 @@ impl Editor {
         };
         let handle = &mut sh.handle;
 
-        let request_id = self.next_lsp_request_id;
-        self.next_lsp_request_id += 1;
+        let request_id = {
+            let id = *__next_id;
+            *__next_id += 1;
+            id
+        };
         let buffer_version = __buffer_version_for_request;
+        let _ = __folding_in_flight;
 
         match handle.folding_ranges(request_id, uri.as_uri().clone()) {
             Ok(()) => {
-                self.pending_folding_range_requests.insert(
+                __pending_folding.insert(
                     request_id,
                     super::FoldingRangeRequest {
                         buffer_id,
                         version: buffer_version,
                     },
                 );
-                self.folding_ranges_in_flight
-                    .insert(buffer_id, (request_id, buffer_version));
+                __folding_in_flight.insert(buffer_id, (request_id, buffer_version));
             }
             Err(e) => {
                 tracing::debug!("Failed to request folding ranges: {}", e);
@@ -3469,7 +3537,11 @@ impl Editor {
         }
 
         // Avoid duplicate in-flight requests per buffer
-        if self.semantic_tokens_in_flight.contains_key(&buffer_id) {
+        if self
+            .active_window_mut()
+            .semantic_tokens_in_flight
+            .contains_key(&buffer_id)
+        {
             return;
         }
 
@@ -3519,11 +3591,13 @@ impl Editor {
             return; // Already up to date
         }
 
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
+            return;
+        };
+        let __next_id = &mut __win.next_lsp_request_id;
+        let __pending_st = &mut __win.pending_semantic_token_requests;
+        let __st_in_flight = &mut __win.semantic_tokens_in_flight;
+        let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
 
@@ -3549,8 +3623,11 @@ impl Editor {
         let use_delta = previous_result_id.is_some() && supports_delta;
         let handle = &mut sh.handle;
 
-        let request_id = self.next_lsp_request_id;
-        self.next_lsp_request_id += 1;
+        let request_id = {
+            let id = *__next_id;
+            *__next_id += 1;
+            id
+        };
 
         let request_kind = if use_delta {
             super::SemanticTokensFullRequestKind::FullDelta
@@ -3570,7 +3647,7 @@ impl Editor {
 
         match request_result {
             Ok(_) => {
-                self.pending_semantic_token_requests.insert(
+                __pending_st.insert(
                     request_id,
                     super::SemanticTokenFullRequest {
                         buffer_id,
@@ -3578,8 +3655,7 @@ impl Editor {
                         kind: request_kind,
                     },
                 );
-                self.semantic_tokens_in_flight
-                    .insert(buffer_id, (request_id, buffer_version, request_kind));
+                __st_in_flight.insert(buffer_id, (request_id, buffer_version, request_kind));
             }
             Err(e) => {
                 tracing::debug!("Failed to request semantic tokens: {}", e);
@@ -3594,25 +3670,35 @@ impl Editor {
         }
 
         let next_time = Instant::now() + Duration::from_millis(SEMANTIC_TOKENS_FULL_DEBOUNCE_MS);
-        self.semantic_tokens_full_debounce
+        self.active_window_mut()
+            .semantic_tokens_full_debounce
             .insert(buffer_id, next_time);
     }
 
     /// Issue a debounced full semantic token request if the timer has elapsed.
     pub(crate) fn maybe_request_semantic_tokens_full_debounced(&mut self, buffer_id: BufferId) {
         if !self.config.editor.enable_semantic_tokens_full {
-            self.semantic_tokens_full_debounce.remove(&buffer_id);
+            self.active_window_mut()
+                .semantic_tokens_full_debounce
+                .remove(&buffer_id);
             return;
         }
 
-        let Some(ready_at) = self.semantic_tokens_full_debounce.get(&buffer_id).copied() else {
+        let Some(ready_at) = self
+            .active_window()
+            .semantic_tokens_full_debounce
+            .get(&buffer_id)
+            .copied()
+        else {
             return;
         };
         if Instant::now() < ready_at {
             return;
         }
 
-        self.semantic_tokens_full_debounce.remove(&buffer_id);
+        self.active_window_mut()
+            .semantic_tokens_full_debounce
+            .remove(&buffer_id);
         self.maybe_request_semantic_tokens(buffer_id);
     }
 
@@ -3652,6 +3738,11 @@ impl Editor {
             .windows
             .get_mut(&__active_id)
             .expect("active window must exist");
+        let __next_id = &mut __win.next_lsp_request_id;
+        let __pending_st_range = &mut __win.pending_semantic_token_range_requests;
+        let __st_range_in_flight = &mut __win.semantic_tokens_range_in_flight;
+        let __st_range_last = &mut __win.semantic_tokens_range_last_request;
+        let __st_range_applied = &__win.semantic_tokens_range_applied;
         let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
@@ -3718,28 +3809,27 @@ impl Editor {
 
         let range = start_byte..end_byte;
         if let Some((in_flight_id, in_flight_start, in_flight_end, in_flight_version)) =
-            self.semantic_tokens_range_in_flight.get(&buffer_id)
+            __st_range_in_flight.get(&buffer_id).copied()
         {
-            if *in_flight_start == padded_start
-                && *in_flight_end == padded_end
-                && *in_flight_version == buffer_version
+            if in_flight_start == padded_start
+                && in_flight_end == padded_end
+                && in_flight_version == buffer_version
             {
                 return;
             }
-            if let Err(e) = handle.cancel_request(*in_flight_id) {
+            if let Err(e) = handle.cancel_request(in_flight_id) {
                 tracing::debug!("Failed to cancel semantic token range request: {}", e);
             }
-            self.pending_semantic_token_range_requests
-                .remove(in_flight_id);
-            self.semantic_tokens_range_in_flight.remove(&buffer_id);
+            __pending_st_range.remove(&in_flight_id);
+            __st_range_in_flight.remove(&buffer_id);
         }
 
         if let Some((applied_start, applied_end, applied_version)) =
-            self.semantic_tokens_range_applied.get(&buffer_id)
+            __st_range_applied.get(&buffer_id).copied()
         {
-            if *applied_start == padded_start
-                && *applied_end == padded_end
-                && *applied_version == buffer_version
+            if applied_start == padded_start
+                && applied_end == padded_end
+                && applied_version == buffer_version
             {
                 return;
             }
@@ -3747,12 +3837,12 @@ impl Editor {
 
         let now = Instant::now();
         if let Some((last_start, last_end, last_version, last_time)) =
-            self.semantic_tokens_range_last_request.get(&buffer_id)
+            __st_range_last.get(&buffer_id).copied()
         {
-            if *last_start == padded_start
-                && *last_end == padded_end
-                && *last_version == buffer_version
-                && now.duration_since(*last_time)
+            if last_start == padded_start
+                && last_end == padded_end
+                && last_version == buffer_version
+                && now.duration_since(last_time)
                     < Duration::from_millis(SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS)
             {
                 return;
@@ -3770,12 +3860,16 @@ impl Editor {
             },
         };
 
-        let request_id = self.next_lsp_request_id;
-        self.next_lsp_request_id += 1;
+        let request_id = {
+            let id = *__next_id;
+            *__next_id += 1;
+            id
+        };
+        let _ = __st_range_applied;
 
         match handle.semantic_tokens_range(request_id, uri.as_uri().clone(), lsp_range) {
             Ok(_) => {
-                self.pending_semantic_token_range_requests.insert(
+                __pending_st_range.insert(
                     request_id,
                     SemanticTokenRangeRequest {
                         buffer_id,
@@ -3785,12 +3879,11 @@ impl Editor {
                         end_line: padded_end,
                     },
                 );
-                self.semantic_tokens_range_in_flight.insert(
+                __st_range_in_flight.insert(
                     buffer_id,
                     (request_id, padded_start, padded_end, buffer_version),
                 );
-                self.semantic_tokens_range_last_request
-                    .insert(buffer_id, (padded_start, padded_end, buffer_version, now));
+                __st_range_last.insert(buffer_id, (padded_start, padded_end, buffer_version, now));
             }
             Err(e) => {
                 tracing::debug!("Failed to request semantic token range: {}", e);

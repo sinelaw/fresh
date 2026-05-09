@@ -21,20 +21,22 @@
 //!
 //! ## Migration status
 //!
-//! Steps 0a–0f shipped, plus the Step-0j candidate moves
-//! (`grouped_subtrees`, `composite_buffers`, `composite_view_states`).
-//! Per-subsystem state that used to warm-swap on `setActiveWindow`
-//! — `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`, the
-//! `splits` pair, `buffers`, the terminal subsystem
-//! (`terminal_manager` + `terminal_buffers` + `terminal_backing_files`
-//! + `terminal_log_files`), `event_logs`, `position_history`
-//! (with its `in_navigation` / `suppress_position_history_once`
-//! companion flags), `bookmarks`, the buffer-group panel
-//! subtrees (`grouped_subtrees`), and the composite-buffer
-//! panels (`composite_buffers`, `composite_view_states`) — all
-//! live directly on `Window`. `set_active_window` is a pointer
-//! write (plus first-dive seed allocation for windows that have
-//! never been activated).
+//! Steps 0a–0f and 0j shipped. Step 0k phase 2 (per-window LSP
+//! request-tracking state) shipped. Per-subsystem state that used
+//! to warm-swap on `setActiveWindow` — `panel_ids`,
+//! `file_mod_times`, `file_explorer`, `lsp`, the `splits` pair,
+//! `buffers`, the terminal subsystem (`terminal_manager` +
+//! `terminal_buffers` + `terminal_backing_files` +
+//! `terminal_log_files`), `event_logs`, `position_history` (with
+//! its `in_navigation` / `suppress_position_history_once`
+//! companion flags), `bookmarks`, `grouped_subtrees`,
+//! `composite_buffers`, `composite_view_states`, plus all 23
+//! LSP-request-tracking maps (pending-/in-flight/applied,
+//! debounce timers, `next_lsp_request_id`, `completion_items`,
+//! `dabbrev_state`, code-action attribution) and the per-window
+//! async `bridge` — all live directly on `Window`.
+//! `set_active_window` is a pointer write (plus first-dive seed
+//! allocation for windows that have never been activated).
 
 use crate::app::types::WindowLayoutCache;
 use crate::model::event::LeafId;
@@ -127,6 +129,68 @@ pub struct Window {
     /// `Editor.async_bridge` instead.
     pub bridge: crate::services::async_bridge::AsyncBridge,
 
+    // ---- LSP request-tracking state (moved from Editor in Step 0k) ----
+    /// Per-window LSP request-id allocator. Each window's LspManager
+    /// talks to its own server connections, and each connection only
+    /// requires per-connection request-id uniqueness — no global
+    /// namespace needed. Starts at 0 per window.
+    pub next_lsp_request_id: u64,
+
+    /// Pending LSP completion request ids (multi-server).
+    pub pending_completion_requests: std::collections::HashSet<u64>,
+
+    /// Original LSP completion items (for type-to-filter).
+    pub completion_items: Option<Vec<lsp_types::CompletionItem>>,
+
+    /// Scheduled completion-trigger time (debounced quick-suggestions).
+    pub scheduled_completion_trigger: Option<std::time::Instant>,
+
+    /// Dabbrev cycling state (Alt+/ session).
+    pub dabbrev_state: Option<crate::app::DabbrevCycleState>,
+
+    /// Pending LSP go-to-definition request id.
+    pub pending_goto_definition_request: Option<u64>,
+
+    /// Pending LSP find-references request id and the symbol name.
+    pub pending_references_request: Option<u64>,
+    pub pending_references_symbol: String,
+
+    /// Pending LSP signature-help request id.
+    pub pending_signature_help_request: Option<u64>,
+
+    /// Pending LSP code-actions request ids and per-request server-name
+    /// attribution + the selected-from list.
+    pub pending_code_actions_requests: std::collections::HashSet<u64>,
+    pub pending_code_actions_server_names: std::collections::HashMap<u64, String>,
+    pub pending_code_actions: Option<Vec<(String, lsp_types::CodeActionOrCommand)>>,
+
+    /// Pending inlay-hints requests keyed by request id.
+    pub pending_inlay_hints_requests: std::collections::HashMap<u64, crate::app::InlayHintsRequest>,
+
+    /// Pending folding-range requests + per-buffer in-flight tracking + debounce.
+    pub pending_folding_range_requests:
+        std::collections::HashMap<u64, crate::app::FoldingRangeRequest>,
+    pub folding_ranges_in_flight: std::collections::HashMap<BufferId, (u64, u64)>,
+    pub folding_ranges_debounce: std::collections::HashMap<BufferId, std::time::Instant>,
+
+    /// Pending semantic-tokens-full requests + per-buffer in-flight tracking +
+    /// the next-allowed-refresh debounce.
+    pub pending_semantic_token_requests:
+        std::collections::HashMap<u64, crate::app::SemanticTokenFullRequest>,
+    pub semantic_tokens_in_flight:
+        std::collections::HashMap<BufferId, (u64, u64, crate::app::SemanticTokensFullRequestKind)>,
+    pub semantic_tokens_full_debounce: std::collections::HashMap<BufferId, std::time::Instant>,
+
+    /// Pending semantic-tokens-range requests + per-buffer in-flight,
+    /// last-request, and last-applied tracking.
+    pub pending_semantic_token_range_requests:
+        std::collections::HashMap<u64, crate::app::SemanticTokenRangeRequest>,
+    pub semantic_tokens_range_in_flight:
+        std::collections::HashMap<BufferId, (u64, usize, usize, u64)>,
+    pub semantic_tokens_range_last_request:
+        std::collections::HashMap<BufferId, (usize, usize, u64, std::time::Instant)>,
+    pub semantic_tokens_range_applied: std::collections::HashMap<BufferId, (usize, usize, u64)>,
+
     /// Back/forward navigation stack (cursor jumps, file switches)
     /// scoped to this window. Each window has its own history so
     /// switching windows doesn't pollute the other window's
@@ -210,6 +274,15 @@ pub struct Window {
 }
 
 impl Window {
+    /// Allocate a fresh per-window LSP request id and return it. The
+    /// counter is per-window because each window's `LspManager` talks
+    /// to its own server connections — no global namespace needed.
+    pub fn alloc_lsp_request_id(&mut self) -> u64 {
+        let id = self.next_lsp_request_id;
+        self.next_lsp_request_id += 1;
+        id
+    }
+
     /// Apply an event to a buffer + the cursors of a split inside this
     /// window. Window-level method (not Editor-level) so the borrow
     /// checker can split-borrow `self.buffers` and `self.splits`
@@ -681,6 +754,29 @@ impl Window {
             terminal_log_files: HashMap::new(),
             event_logs: HashMap::new(),
             bridge: crate::services::async_bridge::AsyncBridge::new(),
+            next_lsp_request_id: 0,
+            pending_completion_requests: std::collections::HashSet::new(),
+            completion_items: None,
+            scheduled_completion_trigger: None,
+            dabbrev_state: None,
+            pending_goto_definition_request: None,
+            pending_references_request: None,
+            pending_references_symbol: String::new(),
+            pending_signature_help_request: None,
+            pending_code_actions_requests: std::collections::HashSet::new(),
+            pending_code_actions_server_names: std::collections::HashMap::new(),
+            pending_code_actions: None,
+            pending_inlay_hints_requests: std::collections::HashMap::new(),
+            pending_folding_range_requests: std::collections::HashMap::new(),
+            folding_ranges_in_flight: std::collections::HashMap::new(),
+            folding_ranges_debounce: std::collections::HashMap::new(),
+            pending_semantic_token_requests: std::collections::HashMap::new(),
+            semantic_tokens_in_flight: std::collections::HashMap::new(),
+            semantic_tokens_full_debounce: std::collections::HashMap::new(),
+            pending_semantic_token_range_requests: std::collections::HashMap::new(),
+            semantic_tokens_range_in_flight: std::collections::HashMap::new(),
+            semantic_tokens_range_last_request: std::collections::HashMap::new(),
+            semantic_tokens_range_applied: std::collections::HashMap::new(),
             position_history: crate::input::position_history::PositionHistory::new(),
             in_navigation: false,
             suppress_position_history_once: false,

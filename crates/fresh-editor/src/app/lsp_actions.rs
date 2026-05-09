@@ -224,34 +224,38 @@ impl Editor {
             // hints request unless the user edits the buffer.
             if enable_inlay_hints {
                 let __active_id = self.active_window;
-                if let Some(lsp) = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .and_then(|w| w.lsp.as_mut())
-                {
-                    if let Some(sh) =
-                        lsp.handle_for_feature_mut(&lang_id, crate::types::LspFeature::InlayHints)
-                    {
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
-                        let last_line = line_count.saturating_sub(1) as u32;
-                        if let Err(e) =
-                            sh.handle
-                                .inlay_hints(request_id, uri.clone(), 0, 0, last_line, 10000)
+                if let Some(__win) = self.windows.get_mut(&__active_id) {
+                    let __next_id = &mut __win.next_lsp_request_id;
+                    let __pending = &mut __win.pending_inlay_hints_requests;
+                    if let Some(lsp) = __win.lsp.as_mut() {
+                        if let Some(sh) = lsp
+                            .handle_for_feature_mut(&lang_id, crate::types::LspFeature::InlayHints)
                         {
-                            tracing::debug!(
-                                "Failed to request inlay hints for {}: {}",
-                                uri.as_str(),
-                                e
-                            );
-                        } else {
-                            self.pending_inlay_hints_requests.insert(
+                            let request_id = *__next_id;
+                            *__next_id += 1;
+                            let last_line = line_count.saturating_sub(1) as u32;
+                            if let Err(e) = sh.handle.inlay_hints(
                                 request_id,
-                                super::InlayHintsRequest {
-                                    buffer_id,
-                                    version: buffer_version,
-                                },
-                            );
+                                uri.clone(),
+                                0,
+                                0,
+                                last_line,
+                                10000,
+                            ) {
+                                tracing::debug!(
+                                    "Failed to request inlay hints for {}: {}",
+                                    uri.as_str(),
+                                    e
+                                );
+                            } else {
+                                __pending.insert(
+                                    request_id,
+                                    super::InlayHintsRequest {
+                                        buffer_id,
+                                        version: buffer_version,
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -1073,13 +1077,19 @@ impl Editor {
             }
         }
 
-        self.folding_ranges_in_flight.remove(&buffer_id);
-        self.folding_ranges_debounce.remove(&buffer_id);
-        self.pending_folding_range_requests
+        self.active_window_mut()
+            .folding_ranges_in_flight
+            .remove(&buffer_id);
+        self.active_window_mut()
+            .folding_ranges_debounce
+            .remove(&buffer_id);
+        self.active_window_mut()
+            .pending_folding_range_requests
             .retain(|_, req| req.buffer_id != buffer_id);
         // Drop any in-flight inlay hint requests for this buffer so
         // their eventual responses don't repopulate the cleared overlay.
-        self.pending_inlay_hints_requests
+        self.active_window_mut()
+            .pending_inlay_hints_requests
             .retain(|_, req| req.buffer_id != buffer_id);
 
         // Clear all LSP-related overlays for this buffer (diagnostics + inlay hints)
@@ -1151,11 +1161,15 @@ impl Editor {
                 )
             });
         let __active_id = self.active_window;
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let buffer_metadata = &mut self.buffer_metadata;
+        let diagnostic_result_ids = &self.diagnostic_result_ids;
+        let enable_inlay_hints = self.config.editor.enable_inlay_hints;
+
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
+            return;
+        };
+        let __next_id = &mut __win.next_lsp_request_id;
+        let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
 
@@ -1174,14 +1188,17 @@ impl Editor {
         }
 
         // Mark buffer as opened with this server
-        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+        if let Some(metadata) = buffer_metadata.get_mut(&buffer_id) {
             metadata.lsp_opened_with.insert(handle_id);
         }
 
         // Request diagnostics
-        let request_id = self.next_lsp_request_id;
-        self.next_lsp_request_id += 1;
-        let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
+        let request_id = {
+            let id = *__next_id;
+            *__next_id += 1;
+            id
+        };
+        let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
         if let Err(e) =
             handle.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
         {
@@ -1189,18 +1206,21 @@ impl Editor {
         }
 
         // Request inlay hints if enabled
-        if self.config.editor.enable_inlay_hints {
+        if enable_inlay_hints {
             let (last_line, last_char, buffer_version) =
                 inlay_buffer_info.unwrap_or((999, 10000, 0));
 
-            let request_id = self.next_lsp_request_id;
-            self.next_lsp_request_id += 1;
+            let request_id = {
+                let id = *__next_id;
+                *__next_id += 1;
+                id
+            };
             if let Err(e) =
                 handle.inlay_hints(request_id, uri.as_uri().clone(), 0, 0, last_line, last_char)
             {
                 tracing::warn!("LSP inlay_hints request failed: {}", e);
             } else {
-                self.pending_inlay_hints_requests.insert(
+                __win.pending_inlay_hints_requests.insert(
                     request_id,
                     super::InlayHintsRequest {
                         buffer_id,
@@ -1211,6 +1231,9 @@ impl Editor {
         }
 
         // Schedule folding range refresh
+        let _ = __next_id;
+        let _ = lsp;
+        let _ = handle;
         self.schedule_folding_ranges_refresh(buffer_id);
     }
 

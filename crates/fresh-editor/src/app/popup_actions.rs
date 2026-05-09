@@ -88,7 +88,7 @@ impl Editor {
                 if let Some(index) = selected_index {
                     self.execute_code_action(index);
                 }
-                self.pending_code_actions = None;
+                self.active_window_mut().pending_code_actions = None;
                 PopupConfirmResult::EarlyReturn
             }
 
@@ -236,6 +236,7 @@ impl Editor {
     fn apply_completion_additional_edits(&mut self, label: &str) {
         // Find the matching CompletionItem from stored items
         let item = self
+            .active_window_mut()
             .completion_items
             .as_ref()
             .and_then(|items| items.iter().find(|item| item.label == label).cloned());
@@ -302,7 +303,7 @@ impl Editor {
             }
 
             Some(PopupResolver::CodeAction) => {
-                self.pending_code_actions = None;
+                self.active_window_mut().pending_code_actions = None;
                 self.hide_popup();
             }
 
@@ -313,7 +314,7 @@ impl Editor {
 
             Some(PopupResolver::Completion) => {
                 self.hide_popup();
-                self.completion_items = None;
+                self.active_window_mut().completion_items = None;
             }
 
             Some(PopupResolver::RemoteIndicator) => {
@@ -322,7 +323,7 @@ impl Editor {
 
             Some(PopupResolver::None) | None => {
                 self.hide_popup();
-                self.completion_items = None;
+                self.active_window_mut().completion_items = None;
             }
         }
     }
@@ -449,7 +450,11 @@ impl Editor {
     /// If no items match, dismiss the popup.
     fn refilter_completion_popup(&mut self) {
         // Get stored LSP completion items (may be empty if no LSP).
-        let lsp_items = self.completion_items.clone().unwrap_or_default();
+        let lsp_items = self
+            .active_window_mut()
+            .completion_items
+            .clone()
+            .unwrap_or_default();
 
         // Get current prefix
         let (word_start, cursor_pos) = {
@@ -500,7 +505,7 @@ impl Editor {
         // If no items match from either source, dismiss popup.
         if all_popup_items.is_empty() {
             self.hide_popup();
-            self.completion_items = None;
+            self.active_window_mut().completion_items = None;
             return;
         }
 

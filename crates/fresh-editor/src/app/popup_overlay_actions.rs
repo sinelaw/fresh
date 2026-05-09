@@ -449,11 +449,14 @@ impl Editor {
 
         // Send didOpen to all LSP handles (use force_spawn to ensure they're started)
         let __active_id = self.active_window;
-        if let Some(lsp) = self
+        let diagnostic_result_ids = &self.diagnostic_result_ids;
+        let enable_inlay_hints = self.config.editor.enable_inlay_hints;
+        let __win = self
             .windows
             .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+            .expect("active window must exist");
+        let __next_id = &mut __win.next_lsp_request_id;
+        if let Some(lsp) = __win.lsp.as_mut() {
             // force_spawn starts all servers for this language
             if lsp.force_spawn(language, file_path.as_deref()).is_some() {
                 tracing::info!("Sending didOpen to LSP servers for: {}", uri.as_str());
@@ -475,10 +478,12 @@ impl Editor {
 
                     // Request pull diagnostics from primary handle
                     if let Some(handle) = lsp.get_handle_mut(language) {
-                        let previous_result_id =
-                            self.diagnostic_result_ids.get(uri.as_str()).cloned();
-                        let request_id = self.next_lsp_request_id;
-                        self.next_lsp_request_id += 1;
+                        let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
+                        let request_id = {
+                            let id = *__next_id;
+                            *__next_id += 1;
+                            id
+                        };
 
                         if let Err(e) = handle.document_diagnostic(
                             request_id,
@@ -492,9 +497,12 @@ impl Editor {
                         }
 
                         // Request inlay hints if enabled
-                        if self.config.editor.enable_inlay_hints {
-                            let request_id = self.next_lsp_request_id;
-                            self.next_lsp_request_id += 1;
+                        if enable_inlay_hints {
+                            let request_id = {
+                                let id = *__next_id;
+                                *__next_id += 1;
+                                id
+                            };
 
                             let last_line = line_count.saturating_sub(1) as u32;
                             let last_char = 10000u32;
@@ -512,13 +520,15 @@ impl Editor {
                                     e
                                 );
                             } else {
-                                self.pending_inlay_hints_requests.insert(
-                                    request_id,
-                                    super::InlayHintsRequest {
-                                        buffer_id: active_buffer,
-                                        version: buffer_version,
-                                    },
-                                );
+                                self.active_window_mut()
+                                    .pending_inlay_hints_requests
+                                    .insert(
+                                        request_id,
+                                        super::InlayHintsRequest {
+                                            buffer_id: active_buffer,
+                                            version: buffer_version,
+                                        },
+                                    );
                             }
                         }
                     }

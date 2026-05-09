@@ -244,37 +244,37 @@ pub struct PendingGrammar {
 
 /// Track an in-flight semantic token range request.
 #[derive(Clone, Debug)]
-struct SemanticTokenRangeRequest {
-    buffer_id: BufferId,
-    version: u64,
-    range: Range<usize>,
-    start_line: usize,
-    end_line: usize,
+pub(crate) struct SemanticTokenRangeRequest {
+    pub(crate) buffer_id: BufferId,
+    pub(crate) version: u64,
+    pub(crate) range: Range<usize>,
+    pub(crate) start_line: usize,
+    pub(crate) end_line: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
-enum SemanticTokensFullRequestKind {
+pub(crate) enum SemanticTokensFullRequestKind {
     Full,
     FullDelta,
 }
 
 #[derive(Clone, Debug)]
-struct SemanticTokenFullRequest {
-    buffer_id: BufferId,
-    version: u64,
-    kind: SemanticTokensFullRequestKind,
+pub(crate) struct SemanticTokenFullRequest {
+    pub(crate) buffer_id: BufferId,
+    pub(crate) version: u64,
+    pub(crate) kind: SemanticTokensFullRequestKind,
 }
 
 #[derive(Clone, Debug)]
-struct FoldingRangeRequest {
-    buffer_id: BufferId,
-    version: u64,
+pub(crate) struct FoldingRangeRequest {
+    pub(crate) buffer_id: BufferId,
+    pub(crate) version: u64,
 }
 
 #[derive(Clone, Debug)]
-struct InlayHintsRequest {
-    buffer_id: BufferId,
-    version: u64,
+pub(crate) struct InlayHintsRequest {
+    pub(crate) buffer_id: BufferId,
+    pub(crate) version: u64,
 }
 
 /// State for the dabbrev cycling session (Alt+/ style).
@@ -651,94 +651,12 @@ pub struct Editor {
     #[allow(dead_code)]
     pub(crate) next_window_id: u64,
 
-    // position_history + in_navigation moved onto `Window` (Step 0f).
-    /// Next LSP request ID
-    next_lsp_request_id: u64,
-
-    /// Pending LSP completion request IDs (supports multiple servers)
-    pending_completion_requests: HashSet<u64>,
-
-    /// Original LSP completion items (for type-to-filter)
-    /// Stored when completion popup is shown, used for re-filtering as user types
-    completion_items: Option<Vec<lsp_types::CompletionItem>>,
-
-    /// Scheduled completion trigger time (for debounced quick suggestions)
-    /// When Some, completion will be triggered when this instant is reached
-    scheduled_completion_trigger: Option<Instant>,
-
+    // LSP request-tracking state (next_lsp_request_id,
+    // pending_*_requests, *_in_flight, completion_items,
+    // dabbrev_state, etc.) all moved onto `Window` in Step 0k.
     /// Pluggable completion service that orchestrates multiple providers
     /// (dabbrev, buffer words, LSP, plugin providers).
     completion_service: crate::services::completion::CompletionService,
-
-    /// Dabbrev cycling state: when the user presses Alt+/ repeatedly, we
-    /// cycle through candidates without a popup. `None` when not in a
-    /// dabbrev session. Reset when any other action is taken.
-    dabbrev_state: Option<DabbrevCycleState>,
-
-    /// Pending LSP go-to-definition request ID (if any)
-    pending_goto_definition_request: Option<u64>,
-
-    /// Pending LSP find references request ID (if any)
-    pending_references_request: Option<u64>,
-
-    /// Symbol name for pending references request
-    pending_references_symbol: String,
-
-    /// Pending LSP signature help request ID (if any)
-    pending_signature_help_request: Option<u64>,
-
-    /// Pending LSP code actions request IDs (supports merging from multiple servers)
-    pending_code_actions_requests: HashSet<u64>,
-
-    /// Maps pending code action request IDs to server names for attribution
-    pending_code_actions_server_names: HashMap<u64, String>,
-
-    /// Stored code actions from the most recent LSP response, used when the
-    /// user selects an action from the code-action popup.
-    /// Each entry is (server_name, action).
-    pending_code_actions: Option<Vec<(String, lsp_types::CodeActionOrCommand)>>,
-
-    /// Pending LSP inlay hints requests keyed by request id. Each entry
-    /// carries the originating buffer and the buffer version at dispatch
-    /// time so:
-    ///   * Responses for multiple concurrent buffer requests (quiescent,
-    ///     manual restart, batched saves) are each accepted individually
-    ///     instead of clobbering a single shared slot.
-    ///   * Responses that race behind a local edit (buffer version moved
-    ///     past what we asked about) are dropped rather than applied at
-    ///     the wrong offsets. Same pattern as `pending_folding_range_requests`
-    ///     and `pending_semantic_token_requests`.
-    pending_inlay_hints_requests: HashMap<u64, InlayHintsRequest>,
-
-    /// Pending LSP folding range requests keyed by request ID
-    pending_folding_range_requests: HashMap<u64, FoldingRangeRequest>,
-
-    /// Track folding range requests per buffer to prevent duplicate inflight requests
-    folding_ranges_in_flight: HashMap<BufferId, (u64, u64)>,
-
-    /// Next time a folding range refresh is allowed for a buffer
-    folding_ranges_debounce: HashMap<BufferId, Instant>,
-
-    /// Pending semantic token requests keyed by LSP request ID
-    pending_semantic_token_requests: HashMap<u64, SemanticTokenFullRequest>,
-
-    /// Track semantic token requests per buffer to prevent duplicate inflight requests
-    semantic_tokens_in_flight: HashMap<BufferId, (u64, u64, SemanticTokensFullRequestKind)>,
-
-    /// Pending semantic token range requests keyed by LSP request ID
-    pending_semantic_token_range_requests: HashMap<u64, SemanticTokenRangeRequest>,
-
-    /// Track semantic token range requests per buffer (request_id, start_line, end_line, version)
-    semantic_tokens_range_in_flight: HashMap<BufferId, (u64, usize, usize, u64)>,
-
-    /// Track last semantic token range request per buffer (start_line, end_line, version, time)
-    semantic_tokens_range_last_request: HashMap<BufferId, (usize, usize, u64, Instant)>,
-
-    /// Track last applied semantic token range per buffer (start_line, end_line, version)
-    semantic_tokens_range_applied: HashMap<BufferId, (usize, usize, u64)>,
-
-    /// Next time a full semantic token refresh is allowed for a buffer
-    semantic_tokens_full_debounce: HashMap<BufferId, Instant>,
 
     /// Hover subsystem (pending LSP request correlation, highlighted-symbol
     /// range + overlay handle, popup screen position).
@@ -1374,7 +1292,7 @@ impl Editor {
 
     /// Set completion items for type-to-filter (for testing)
     pub fn set_completion_items(&mut self, items: Vec<lsp_types::CompletionItem>) {
-        self.completion_items = Some(items);
+        self.active_window_mut().completion_items = Some(items);
     }
 
     /// Get the viewport for the active split

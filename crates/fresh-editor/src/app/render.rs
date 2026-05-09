@@ -575,8 +575,11 @@ impl Editor {
         }
 
         // Render editor content (same for both layouts)
-        let lsp_waiting = !self.pending_completion_requests.is_empty()
-            || self.pending_goto_definition_request.is_some();
+        let lsp_waiting = !self.active_window().pending_completion_requests.is_empty()
+            || self
+                .active_window()
+                .pending_goto_definition_request
+                .is_some();
 
         // Hide the hardware cursor when menu is open, file explorer is focused, terminal mode,
         // or settings UI is open

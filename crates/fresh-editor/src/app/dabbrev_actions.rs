@@ -21,7 +21,7 @@ impl Editor {
     /// other open buffers), insert the top match. Subsequent invocations:
     /// undo the previous insertion and insert the next candidate.
     pub(crate) fn dabbrev_expand(&mut self) {
-        if self.dabbrev_state.is_some() {
+        if self.active_window().dabbrev_state.is_some() {
             self.dabbrev_cycle();
         } else {
             self.dabbrev_expand_first();
@@ -31,7 +31,7 @@ impl Editor {
     /// Cycle to the next dabbrev candidate.
     fn dabbrev_cycle(&mut self) {
         // Take state temporarily to satisfy borrow checker.
-        let mut state = match self.dabbrev_state.take() {
+        let mut state = match self.active_window_mut().dabbrev_state.take() {
             Some(s) => s,
             None => return,
         };
@@ -73,7 +73,7 @@ impl Editor {
                 cursor_id,
             };
             self.log_and_apply_event(&insert_event);
-            self.dabbrev_state = Some(state);
+            self.active_window_mut().dabbrev_state = Some(state);
         }
     }
 
@@ -154,7 +154,7 @@ impl Editor {
         };
         self.log_and_apply_event(&insert_event);
 
-        self.dabbrev_state = Some(DabbrevCycleState {
+        self.active_window_mut().dabbrev_state = Some(DabbrevCycleState {
             original_prefix: prefix,
             word_start,
             candidates,
@@ -207,7 +207,7 @@ impl Editor {
     /// Reset the dabbrev cycling session. Called when any non-dabbrev action
     /// is taken (typing, moving cursor, etc.).
     pub(crate) fn reset_dabbrev_state(&mut self) {
-        self.dabbrev_state = None;
+        self.active_window_mut().dabbrev_state = None;
     }
 
     /// Run the `CompletionService` (buffer-words + dabbrev providers) and
