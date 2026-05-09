@@ -642,7 +642,9 @@ impl Editor {
     /// LSP server spawn.
     #[doc(hidden)]
     pub fn install_dummy_lsp_for_test(&mut self) {
-        self.active_window_mut().lsp = Some(crate::services::lsp::manager::LspManager::new(None));
+        let active = self.active_window;
+        self.active_window_mut().lsp =
+            Some(crate::services::lsp::manager::LspManager::new(active, None));
     }
 
     /// Most-recent `path_changed` event the editor received.

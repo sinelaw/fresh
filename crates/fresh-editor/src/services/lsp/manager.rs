@@ -271,6 +271,13 @@ impl ServerHandle {
 
 /// Manager for multiple language servers (async version)
 pub struct LspManager {
+    /// Window that owns this manager. Set at construction time (one
+    /// `LspManager` per `Window`). Threaded into every async response
+    /// the manager's tasks emit so the editor's dispatcher can route
+    /// LSP responses back to the right window's pending-request maps
+    /// without a global registry.
+    window_id: fresh_core::WindowId,
+
     /// All running LSP server handles. Each handle's `LanguageScope` determines
     /// which languages it serves. Universal servers have `LanguageScope::all()`.
     handles: Vec<ServerHandle>,
@@ -325,9 +332,15 @@ pub struct LspManager {
 }
 
 impl LspManager {
-    /// Create a new LSP manager
-    pub fn new(root_uri: Option<Uri>) -> Self {
+    /// Window that owns this manager.
+    pub fn window_id(&self) -> fresh_core::WindowId {
+        self.window_id
+    }
+
+    /// Create a new LSP manager owned by the given window.
+    pub fn new(window_id: fresh_core::WindowId, root_uri: Option<Uri>) -> Self {
         Self {
+            window_id,
             handles: Vec::new(),
             config: HashMap::new(),
             universal_configs: Vec::new(),
@@ -1869,7 +1882,7 @@ mod tests {
     #[test]
     fn test_lsp_manager_new() {
         let root_uri: Option<Uri> = "file:///test".parse().ok();
-        let manager = LspManager::new(root_uri.clone());
+        let manager = LspManager::new(fresh_core::WindowId(1), root_uri.clone());
 
         // Manager should start with no handles
         assert_eq!(manager.handles.len(), 0);
@@ -1881,7 +1894,7 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_set_language_config() {
-        let mut manager = LspManager::new(None);
+        let mut manager = LspManager::new(fresh_core::WindowId(1), None);
 
         let config = LspServerConfig {
             enabled: true,
@@ -1907,7 +1920,7 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_force_spawn_no_runtime() {
-        let mut manager = LspManager::new(None);
+        let mut manager = LspManager::new(fresh_core::WindowId(1), None);
 
         // Add config for rust
         manager.set_language_config(
@@ -1936,7 +1949,7 @@ mod tests {
     #[test]
     fn test_lsp_manager_force_spawn_no_config() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut manager = LspManager::new(None);
+        let mut manager = LspManager::new(fresh_core::WindowId(1), None);
         let async_bridge = AsyncBridge::new();
 
         manager.set_runtime(rt.handle().clone(), async_bridge);
@@ -1949,7 +1962,7 @@ mod tests {
     #[test]
     fn test_lsp_manager_force_spawn_disabled_language() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut manager = LspManager::new(None);
+        let mut manager = LspManager::new(fresh_core::WindowId(1), None);
         let async_bridge = AsyncBridge::new();
 
         manager.set_runtime(rt.handle().clone(), async_bridge);
@@ -1986,7 +1999,7 @@ mod tests {
     #[test]
     fn test_lsp_manager_try_spawn_returns_disabled_when_all_configs_disabled() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut manager = LspManager::new(None);
+        let mut manager = LspManager::new(fresh_core::WindowId(1), None);
         let async_bridge = AsyncBridge::new();
         manager.set_runtime(rt.handle().clone(), async_bridge);
 
@@ -2013,7 +2026,7 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_shutdown_all() {
-        let mut manager = LspManager::new(None);
+        let mut manager = LspManager::new(fresh_core::WindowId(1), None);
 
         // shutdown_all should not panic even with no handles
         manager.shutdown_all();

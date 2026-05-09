@@ -375,8 +375,10 @@ impl Editor {
             tracing::warn!("Failed to create Tokio runtime - async features disabled");
         }
 
-        // Create LSP manager with async support
-        let mut lsp = LspManager::new(root_uri);
+        // Create LSP manager with async support. The base window is
+        // always WindowId(1); per-window LSP routing tags every async
+        // response with this id.
+        let mut lsp = LspManager::new(fresh_core::WindowId(1), root_uri);
 
         // Configure runtime and bridge if available
         if let Some(ref runtime) = tokio_runtime {
