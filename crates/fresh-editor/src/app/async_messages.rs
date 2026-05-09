@@ -295,18 +295,32 @@ impl Editor {
 // =============================================================================
 
 impl Editor {
-    /// Handle LSP inlay hints response
+    /// Handle LSP inlay hints response — thin shim over
+    /// [`Window::handle_lsp_inlay_hints`]. The body is purely
+    /// window-state mutation.
     pub(super) fn handle_lsp_inlay_hints(
         &mut self,
         request_id: u64,
         uri: String,
         hints: Vec<InlayHint>,
     ) {
-        let Some(request) = self
-            .active_window_mut()
-            .pending_inlay_hints_requests
-            .remove(&request_id)
-        else {
+        self.active_window_mut()
+            .handle_lsp_inlay_hints(request_id, uri, hints);
+    }
+}
+
+impl crate::app::window::Window {
+    /// Handle LSP inlay hints response. Pure window-state
+    /// mutation — pulls the in-flight request from the per-window
+    /// pending map, version-checks against the current buffer
+    /// state, and applies hints as virtual text.
+    pub fn handle_lsp_inlay_hints(
+        &mut self,
+        request_id: u64,
+        uri: String,
+        hints: Vec<lsp_types::InlayHint>,
+    ) {
+        let Some(request) = self.pending_inlay_hints_requests.remove(&request_id) else {
             tracing::debug!(
                 "Ignoring stale inlay hints response (request_id={})",
                 request_id
@@ -318,25 +332,18 @@ impl Editor {
         // positions reference stale byte offsets and would render at
         // the wrong place. A fresh request was (or will be) scheduled
         // by the debounced inlay-hints timer on every didChange.
-        if let Some(state) = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&request.buffer_id)
-        {
-            if state.buffer.version() != request.version {
-                tracing::debug!(
-                    "Ignoring stale inlay hints for {} (request_id={}, version={}, current={})",
-                    uri,
-                    request_id,
-                    request.version,
-                    state.buffer.version()
-                );
-                return;
-            }
-        } else {
-            // Buffer was closed before the response arrived.
+        let state_version = match self.buffers.get(&request.buffer_id) {
+            Some(s) => s.buffer.version(),
+            None => return, // Buffer was closed before the response arrived.
+        };
+        if state_version != request.version {
+            tracing::debug!(
+                "Ignoring stale inlay hints for {} (request_id={}, version={}, current={})",
+                uri,
+                request_id,
+                request.version,
+                state_version
+            );
             return;
         }
 
@@ -347,14 +354,8 @@ impl Editor {
             request_id
         );
 
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&request.buffer_id)
-        {
-            Self::apply_inlay_hints_to_state(state, &hints);
+        if let Some(state) = self.buffers.get_mut(&request.buffer_id) {
+            super::Editor::apply_inlay_hints_to_state(state, &hints);
             tracing::info!(
                 "Applied {} inlay hints as virtual text to buffer {:?}",
                 hints.len(),
@@ -362,52 +363,69 @@ impl Editor {
             );
         }
     }
+}
 
-    /// Handle LSP folding ranges response
+impl Editor {
+    /// Handle LSP folding ranges response. The Editor wrapper
+    /// orchestrates the URI-keyed `stored_folding_ranges` map
+    /// (Editor-global because URIs can map to buffers in any
+    /// window) and delegates the per-window buffer-state mutation
+    /// to [`Window::apply_folding_ranges_response`].
     pub(super) fn handle_lsp_folding_ranges(
         &mut self,
         request_id: u64,
         uri: String,
         ranges: Vec<FoldingRange>,
     ) {
-        let Some(request) = self
-            .active_window_mut()
-            .pending_folding_range_requests
-            .remove(&request_id)
-        else {
-            tracing::debug!(
-                "Ignoring folding ranges response without pending request (request_id={})",
-                request_id
-            );
-            return;
-        };
-
-        self.active_window_mut()
-            .folding_ranges_in_flight
-            .remove(&request.buffer_id);
-
-        // Ignore stale responses (buffer changed since request)
-        if let Some(state) = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&request.buffer_id)
-        {
-            if state.buffer.version() != request.version {
+        // First peek at the active window to check whether the
+        // request is still pending and whether the response is stale
+        // (buffer version moved on). Returns the buffer_id +
+        // up-to-date status so the editor-global stored_folding_ranges
+        // update can happen in this scope.
+        enum FoldingDispatch {
+            Stale { buffer_id: BufferId },
+            Apply { buffer_id: BufferId },
+            Skip,
+        }
+        let dispatch = {
+            let win = self.active_window_mut();
+            let Some(request) = win.pending_folding_range_requests.remove(&request_id) else {
                 tracing::debug!(
-                    "Ignoring stale folding ranges for {} (request_id={}, version={}, current={})",
-                    uri,
-                    request_id,
-                    request.version,
-                    state.buffer.version()
+                    "Ignoring folding ranges response without pending request (request_id={})",
+                    request_id
                 );
-                self.schedule_folding_ranges_refresh(request.buffer_id);
+                return;
+            };
+            win.folding_ranges_in_flight.remove(&request.buffer_id);
+            match win.buffers.get(&request.buffer_id) {
+                Some(state) if state.buffer.version() == request.version => {
+                    FoldingDispatch::Apply {
+                        buffer_id: request.buffer_id,
+                    }
+                }
+                Some(state) => {
+                    tracing::debug!(
+                        "Ignoring stale folding ranges for {} (request_id={}, version={}, current={})",
+                        uri,
+                        request_id,
+                        request.version,
+                        state.buffer.version()
+                    );
+                    FoldingDispatch::Stale {
+                        buffer_id: request.buffer_id,
+                    }
+                }
+                None => FoldingDispatch::Skip,
+            }
+        };
+        let buffer_id = match dispatch {
+            FoldingDispatch::Apply { buffer_id } => buffer_id,
+            FoldingDispatch::Stale { buffer_id } => {
+                self.schedule_folding_ranges_refresh(buffer_id);
                 return;
             }
-        } else {
-            return;
-        }
+            FoldingDispatch::Skip => return,
+        };
 
         if ranges.is_empty() {
             self.stored_folding_ranges_mut().remove(&uri);
@@ -415,22 +433,13 @@ impl Editor {
             self.stored_folding_ranges_mut().insert(uri.clone(), ranges);
         }
 
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&request.buffer_id)
-        {
-            let lsp_ranges = self
-                .stored_folding_ranges
-                .get(&uri)
-                .cloned()
-                .unwrap_or_default();
-            state
-                .folding_ranges
-                .set_from_lsp(&state.buffer, &mut state.marker_list, lsp_ranges);
-        }
+        let lsp_ranges = self
+            .stored_folding_ranges
+            .get(&uri)
+            .cloned()
+            .unwrap_or_default();
+        self.active_window_mut()
+            .apply_folding_ranges_response(buffer_id, lsp_ranges);
     }
 
     /// Handle LSP semantic tokens response

@@ -1846,71 +1846,68 @@ group panel subtrees and the per-split composite view
 state. Each belongs to the window that opened the panel.
 
 **0k — LSP routing onto per-window async channels +
-handlers on `impl Window`.** *In progress.* The LSP
-subsystem still has all its per-window state (request-
-tracking maps, pending response data, chrome surfaces like
-status/prompt) on `impl Editor`. The plan:
+handlers on `impl Window`.** *Phases 1–3 shipped, phase 4
+incremental.* The LSP subsystem and chrome state are now
+correctly placed:
 
-1. **Per-window async channels.** Each `Window` owns its
-   own `(Sender, Receiver)` pair. The window's
-   `LspManager` is constructed with the window's sender.
-   LSP responses flow through that window's channel
-   only — no shared editor-global LSP channel. Cleanup
-   on `closeWindow` is automatic (receiver drops, senders
-   error and stop).
+* **Phase 1 (shipped):** Each `Window` owns its own
+  `AsyncBridge` channel. `LspManager.set_runtime` and the
+  per-window `TerminalManager.set_async_bridge` route
+  responses through the window's bridge. The editor's main
+  loop drains every window's bridge in addition to the
+  editor-global one. Cleanup on `closeWindow` is automatic
+  (the receiver drops, senders error).
 
-2. **Editor's main loop merges window receivers via
-   `StreamMap`.** One top-level `select!` in the editor
-   awaits "any window has a message" / "input" / "render
-   tick" / "editor-global async" (plugin runtime
-   callbacks, file dialog — kept on Editor's bridge
-   because they're genuinely editor-scoped). The
-   dispatcher is simply `windows[id].handle_message(
-   &self.plugin_manager, msg)`.
+* **Phase 2 (shipped):** All 23 LSP request-tracking maps
+  + `next_lsp_request_id` (per-window counter) + response
+  data caches (`completion_items`, `dabbrev_state`, code-
+  action attribution, etc.) live on `Window`. Per-window
+  request-id namespaces work because each window's
+  `LspManager` talks to its own server connections.
 
-3. **`Window::handle_message` on `impl Window`.** Single-
-   message synchronous dispatch — no nested `select!`,
-   no internal loop. Handler bodies live on `impl Window`
-   and mutate window state directly. Plugin hooks fire
-   via the `&PluginManager` parameter (the manager
-   already takes `&self`, no locking needed).
+* **Phase 3 (shipped):** Chrome (`status_message`,
+  `plugin_status_message`, `prompt`) is per-window. Only
+  the active window's chrome renders, so background-window
+  status / prompts are naturally invisible.
 
-4. **All per-window LSP state moves to `Window`.**
-   `next_lsp_request_id`, the 14 pending-/in-flight
-   maps (`pending_completion_requests`,
-   `pending_inlay_hints_requests`,
-   `semantic_tokens_in_flight`,
-   `semantic_tokens_range_*`, the folding/code-action
-   variants), and the response-data caches
-   (`completion_items`, `pending_code_actions`, etc.)
-   all become `Window` fields. Per-window
-   `next_lsp_request_id` works because each window's
-   `LspManager` talks to its own server connections —
-   each connection only cares about per-connection
-   request-id uniqueness, not cross-window.
+* **Phase 4 (incremental):** Handler bodies move to
+  `impl Window` where they're purely window-state
+  mutations. So far: `Window::handle_lsp_inlay_hints` and
+  `Window::apply_folding_ranges_response` (used by the
+  Editor wrapper that orchestrates the URI-keyed
+  `stored_folding_ranges` editor-global map). The
+  remaining ~20 LSP handlers stay on `impl Editor` because
+  they mix window-state mutation with editor-global
+  orchestration that doesn't trivially split (theme reads,
+  plugin hooks, URI-keyed stored maps, server-name
+  attribution, multi-window reopen sweeps). They access
+  per-window state through `active_window()` /
+  `active_window_mut()` accessors, which is correct
+  routing — the move to `impl Window` is purely
+  about *who owns the method body*, and is parked for
+  individual handlers as a follow-up. The architectural
+  goal (per-window state + per-window channels) is met.
 
-5. **Chrome surfaces move to `Window`.** `status_message`,
-   `plugin_status_message`, and `prompt` become per-
-   window. Only the active window's chrome is rendered,
-   so a status message from a background window is
-   naturally invisible (and that's the right semantics —
-   each window has its own context). Inactive windows
-   keep their last status / prompt across switches.
+**What stays on Editor.** Genuinely editor-global
+subsystems: `plugin_manager` (one runtime), the plugin
+async channel (callback delivery), the file-open dialog
+state, terminal-input `key_translator`, render-loop
+chrome glue, `chrome_layout`, theme, grammar registry,
+config, the URI-keyed `stored_diagnostics` /
+`stored_folding_ranges` (URIs can map to buffers in any
+window), and the global LSP-message log
+(`lsp_window_messages`, `lsp_log_messages`,
+`lsp_server_statuses`, `lsp_progress`). The plugin
+manager is `&PluginManager` (its `run_hook` already takes
+`&self`) so window handlers fire hooks via a parameter
+without leaking the editor reference into Window's
+stored state.
 
-6. **What stays on Editor.** Genuinely editor-global
-   subsystems: `plugin_manager` (one runtime), the
-   plugin async channel (callback delivery), the file-
-   open dialog state, terminal-input `key_translator`,
-   render-loop chrome glue, `chrome_layout`. The plugin
-   manager is passed as `&PluginManager` to window
-   handlers so they can fire hooks without leaking the
-   editor reference into Window's stored state.
-
-The architectural test: **if a Window handler body needs
-to know its own `WindowId` to call into editor-level
-logic, that's a sign the editor-level logic is in the
-wrong place** (it should be on `impl Window` or the data
-should be per-window). The user has flagged this — if
+**Architectural test:** if a Window handler body needs to
+know its own `WindowId` to call into editor-level logic,
+that's a sign the editor-level logic is in the wrong
+place (it should be on `impl Window` or the data should
+be per-window). The user has flagged this — if
 implementation surfaces such a case, surface it before
 adding the parameter.
 

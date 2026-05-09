@@ -291,6 +291,23 @@ pub struct Window {
 }
 
 impl Window {
+    /// Apply LSP folding ranges to the named buffer's `folding_ranges`
+    /// store. Pure window mutation — no editor-global state touched.
+    /// Used by the LSP folding-ranges response dispatcher after the
+    /// editor-global URI-keyed map has been updated.
+    pub fn apply_folding_ranges_response(
+        &mut self,
+        buffer_id: BufferId,
+        lsp_ranges: Vec<lsp_types::FoldingRange>,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        state
+            .folding_ranges
+            .set_from_lsp(&state.buffer, &mut state.marker_list, lsp_ranges);
+    }
+
     /// Allocate a fresh per-window LSP request id and return it. The
     /// counter is per-window because each window's `LspManager` talks
     /// to its own server connections — no global namespace needed.
