@@ -369,15 +369,18 @@ impl Editor {
             && id != self.active_buffer()
         {
             // Save current position before switching buffers
-            self.position_history.commit_pending_movement();
+            self.active_window_mut()
+                .position_history
+                .commit_pending_movement();
 
             // Also explicitly record current position (in case there was no pending movement)
             let cursors = self.active_cursors();
             let position = cursors.primary().position;
             let anchor = cursors.primary().anchor;
-            self.position_history
-                .record_movement(self.active_buffer(), position, anchor);
-            self.position_history.commit_pending_movement();
+            let buffer_id = self.active_buffer();
+            let ph = &mut self.active_window_mut().position_history;
+            ph.record_movement(buffer_id, position, anchor);
+            ph.commit_pending_movement();
 
             self.set_active_buffer(id);
         }
@@ -871,13 +874,16 @@ impl Editor {
         }
 
         // Save current position before switching
-        self.position_history.commit_pending_movement();
+        self.active_window_mut()
+            .position_history
+            .commit_pending_movement();
         let cursors = self.active_cursors();
         let position = cursors.primary().position;
         let anchor = cursors.primary().anchor;
-        self.position_history
-            .record_movement(self.active_buffer(), position, anchor);
-        self.position_history.commit_pending_movement();
+        let buffer_id = self.active_buffer();
+        let ph = &mut self.active_window_mut().position_history;
+        ph.record_movement(buffer_id, position, anchor);
+        ph.commit_pending_movement();
 
         // Start the slide before the switch so the runner's cached
         // last-frame captures the OUTGOING tab's content. The new
@@ -901,24 +907,29 @@ impl Editor {
     /// Navigate back in position history
     pub fn navigate_back(&mut self) {
         // Set flag to prevent recording this navigation movement
-        self.in_navigation = true;
+        self.active_window_mut().in_navigation = true;
 
         // Commit any pending movement
-        self.position_history.commit_pending_movement();
+        self.active_window_mut()
+            .position_history
+            .commit_pending_movement();
 
         // If we're at the end of history (haven't used back yet), save current position
         // so we can navigate forward to it later
-        if self.position_history.can_go_back() && !self.position_history.can_go_forward() {
+        if self.active_window_mut().position_history.can_go_back()
+            && !self.active_window_mut().position_history.can_go_forward()
+        {
             let cursors = self.active_cursors();
             let position = cursors.primary().position;
             let anchor = cursors.primary().anchor;
-            self.position_history
-                .record_movement(self.active_buffer(), position, anchor);
-            self.position_history.commit_pending_movement();
+            let buffer_id = self.active_buffer();
+            let ph = &mut self.active_window_mut().position_history;
+            ph.record_movement(buffer_id, position, anchor);
+            ph.commit_pending_movement();
         }
 
         // Navigate to the previous position
-        if let Some(entry) = self.position_history.back() {
+        if let Some(entry) = self.active_window_mut().position_history.back() {
             let target_buffer = entry.buffer_id;
             let target_position = entry.position;
             let target_anchor = entry.anchor;
@@ -965,15 +976,15 @@ impl Editor {
         }
 
         // Clear the flag
-        self.in_navigation = false;
+        self.active_window_mut().in_navigation = false;
     }
 
     /// Navigate forward in position history
     pub fn navigate_forward(&mut self) {
         // Set flag to prevent recording this navigation movement
-        self.in_navigation = true;
+        self.active_window_mut().in_navigation = true;
 
-        if let Some(entry) = self.position_history.forward() {
+        if let Some(entry) = self.active_window_mut().position_history.forward() {
             let target_buffer = entry.buffer_id;
             let target_position = entry.position;
             let target_anchor = entry.anchor;
@@ -1020,6 +1031,6 @@ impl Editor {
         }
 
         // Clear the flag
-        self.in_navigation = false;
+        self.active_window_mut().in_navigation = false;
     }
 }

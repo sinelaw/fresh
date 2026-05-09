@@ -315,7 +315,9 @@ impl Editor {
 
             // Handle buffer change side effects
             if previous_buffer != buffer_id {
-                self.position_history.commit_pending_movement();
+                self.active_window_mut()
+                    .position_history
+                    .commit_pending_movement();
                 if let Some(view_state) = self
                     .windows
                     .get_mut(&self.active_window)

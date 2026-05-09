@@ -49,13 +49,16 @@ impl Editor {
                     .is_some_and(|vs| vs.has_buffer(prev_id));
 
                 if is_valid && prev_id != self.active_buffer() {
-                    self.position_history.commit_pending_movement();
+                    self.active_window_mut()
+                        .position_history
+                        .commit_pending_movement();
                     let cursors = self.active_cursors();
                     let position = cursors.primary().position;
                     let anchor = cursors.primary().anchor;
-                    self.position_history
-                        .record_movement(self.active_buffer(), position, anchor);
-                    self.position_history.commit_pending_movement();
+                    let active_buffer_id = self.active_buffer();
+                    let ph = &mut self.active_window_mut().position_history;
+                    ph.record_movement(active_buffer_id, position, anchor);
+                    ph.commit_pending_movement();
                     self.set_active_buffer(prev_id);
                 } else if !is_valid {
                     self.set_status_message(t!("status.previous_tab_closed").to_string());
@@ -179,14 +182,17 @@ impl Editor {
 
         if buffer_id != self.active_buffer() {
             // Save current position before switching
-            self.position_history.commit_pending_movement();
+            self.active_window_mut()
+                .position_history
+                .commit_pending_movement();
 
             let cursors = self.active_cursors();
             let position = cursors.primary().position;
             let anchor = cursors.primary().anchor;
-            self.position_history
-                .record_movement(self.active_buffer(), position, anchor);
-            self.position_history.commit_pending_movement();
+            let active_buffer_id = self.active_buffer();
+            let ph = &mut self.active_window_mut().position_history;
+            ph.record_movement(active_buffer_id, position, anchor);
+            ph.commit_pending_movement();
 
             self.set_active_buffer(buffer_id);
         }
@@ -340,7 +346,7 @@ impl Editor {
 
     /// Track cursor movement in position history if applicable.
     pub(super) fn track_cursor_movement(&mut self, event: &Event) {
-        if self.in_navigation {
+        if self.active_window().in_navigation {
             return;
         }
 
@@ -350,8 +356,12 @@ impl Editor {
             ..
         } = event
         {
-            self.position_history
-                .record_movement(self.active_buffer(), *new_position, *new_anchor);
+            let buffer_id = self.active_buffer();
+            self.active_window_mut().position_history.record_movement(
+                buffer_id,
+                *new_position,
+                *new_anchor,
+            );
         }
     }
 

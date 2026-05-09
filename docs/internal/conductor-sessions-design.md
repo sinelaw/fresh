@@ -1669,8 +1669,16 @@ the existing undo/redo handlers route through
 when paired with split-tree access in the same handler).
 
 **0f — Move `position_history`, `bookmarks`, and similar
-session-scoped per-buffer metadata onto `Session`.** Their
-handlers move to `impl Window` too.
+session-scoped per-buffer metadata onto `Session`.** *Shipped.*
+`Window` now owns its back/forward navigation stack
+(`position_history` plus the `in_navigation` and
+`suppress_position_history_once` companion flags) and its
+single-char bookmark register set (`bookmarks`). Switching
+windows preserves each window's nav history and bookmarks
+intact — the post-switch user sees their previous back-stack,
+not the other window's. Workspace serialization captures the
+active window's bookmarks; restore re-creates them on the
+active window.
 
 **0g — Audit commands.** After 0c–0f, the only methods left
 on `impl Editor` should be cross-window orchestration, window

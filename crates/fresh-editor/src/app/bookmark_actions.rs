@@ -14,7 +14,7 @@ impl Editor {
     pub(super) fn set_bookmark(&mut self, key: char) {
         let buffer_id = self.active_buffer();
         let position = self.active_cursors().primary().position;
-        self.bookmarks.set(
+        self.active_window_mut().bookmarks.set(
             key,
             super::bookmarks::Bookmark {
                 buffer_id,
@@ -26,7 +26,7 @@ impl Editor {
 
     /// Jump to a bookmark
     pub(super) fn jump_to_bookmark(&mut self, key: char) {
-        let Some(bookmark) = self.bookmarks.get(key) else {
+        let Some(bookmark) = self.active_window_mut().bookmarks.get(key) else {
             self.set_status_message(t!("bookmark.not_set", key = key).to_string());
             return;
         };
@@ -43,7 +43,7 @@ impl Editor {
                 self.set_active_buffer(bookmark.buffer_id);
             } else {
                 self.set_status_message(t!("bookmark.buffer_gone", key = key).to_string());
-                self.bookmarks.remove(key);
+                self.active_window_mut().bookmarks.remove(key);
                 return;
             }
         }
@@ -75,7 +75,7 @@ impl Editor {
 
     /// Clear a bookmark
     pub(super) fn clear_bookmark(&mut self, key: char) {
-        if self.bookmarks.remove(key) {
+        if self.active_window_mut().bookmarks.remove(key) {
             self.set_status_message(t!("bookmark.cleared", key = key).to_string());
         } else {
             self.set_status_message(t!("bookmark.not_set", key = key).to_string());
@@ -84,13 +84,13 @@ impl Editor {
 
     /// List all bookmarks
     pub(super) fn list_bookmarks(&mut self) {
-        if self.bookmarks.is_empty() {
+        if self.active_window_mut().bookmarks.is_empty() {
             self.set_status_message(t!("bookmark.none_set").to_string());
             return;
         }
 
         let mut bookmark_list: Vec<(char, super::bookmarks::Bookmark)> =
-            self.bookmarks.iter().collect();
+            self.active_window_mut().bookmarks.iter().collect();
         bookmark_list.sort_by_key(|(k, _)| *k);
 
         let list_str: String = bookmark_list

@@ -32,15 +32,18 @@ impl Editor {
         thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     ) -> AnyhowResult<BufferId> {
         // Save current position before switching to new buffer
-        self.position_history.commit_pending_movement();
+        self.active_window_mut()
+            .position_history
+            .commit_pending_movement();
 
         // Explicitly record current position before switching
         let cursors = self.active_cursors();
         let position = cursors.primary().position;
         let anchor = cursors.primary().anchor;
-        self.position_history
-            .record_movement(self.active_buffer(), position, anchor);
-        self.position_history.commit_pending_movement();
+        let active_buffer_id = self.active_buffer();
+        let ph = &mut self.active_window_mut().position_history;
+        ph.record_movement(active_buffer_id, position, anchor);
+        ph.commit_pending_movement();
 
         // If the current buffer is empty and unmodified, replace it instead of creating a new one
         // Note: Don't replace composite buffers (they appear empty but are special views)

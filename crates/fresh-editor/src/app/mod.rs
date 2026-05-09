@@ -175,7 +175,6 @@ use crate::config_io::DirectoryContext;
 use crate::input::buffer_mode::ModeRegistry;
 use crate::input::command_registry::CommandRegistry;
 use crate::input::keybindings::{Action, KeyContext, KeybindingResolver};
-use crate::input::position_history::PositionHistory;
 use crate::input::quick_open::{
     BufferProvider, CommandProvider, FileProvider, GotoLineProvider, QuickOpenRegistry,
 };
@@ -522,12 +521,7 @@ pub struct Editor {
     ///   / tab-click / explicit Enter in the explorer).
     preview: Option<(LeafId, BufferId)>,
 
-    /// One-shot flag: when true, the next `open_file` call skips writing to
-    /// the back/forward position history. Set by `open_file_preview` so a
-    /// string of exploratory single-clicks doesn't flood the history stack
-    /// with entries pointing at tabs that are about to be closed.
-    suppress_position_history_once: bool,
-
+    // suppress_position_history_once moved onto `Window` (Step 0f).
     /// Filesystem manager for file explorer
     fs_manager: Arc<FsManager>,
 
@@ -657,12 +651,7 @@ pub struct Editor {
     #[allow(dead_code)]
     pub(crate) next_window_id: u64,
 
-    /// Position history for back/forward navigation
-    pub position_history: PositionHistory,
-
-    /// Flag to prevent recording movements during navigation
-    in_navigation: bool,
-
+    // position_history + in_navigation moved onto `Window` (Step 0f).
     /// Next LSP request ID
     next_lsp_request_id: u64,
 
@@ -939,9 +928,7 @@ pub struct Editor {
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::model::control_event::EventBroadcaster,
 
-    /// Bookmarks (character key -> bookmark)
-    bookmarks: bookmarks::BookmarkState,
-
+    // bookmarks moved onto `Window` (Step 0f).
     /// Global search options (persist across searches)
     search_case_sensitive: bool,
     search_whole_word: bool,
@@ -2726,7 +2713,14 @@ mod tests {
 
         // Set bookmark '1'
         editor.set_bookmark('1');
-        assert_eq!(editor.bookmarks.get('1').map(|b| b.position), Some(7));
+        assert_eq!(
+            editor
+                .active_window()
+                .bookmarks
+                .get('1')
+                .map(|b| b.position),
+            Some(7)
+        );
 
         // Move cursor elsewhere
         editor.apply_event_to_active_buffer(&Event::MoveCursor {
@@ -2745,7 +2739,7 @@ mod tests {
 
         // Clear bookmark
         editor.clear_bookmark('1');
-        assert_eq!(editor.bookmarks.get('1'), None);
+        assert_eq!(editor.active_window().bookmarks.get('1'), None);
     }
 
     #[test]

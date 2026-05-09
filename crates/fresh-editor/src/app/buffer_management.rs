@@ -167,9 +167,9 @@ impl Editor {
         // Using the regular `open_file` path keeps all cross-cutting concerns
         // (LSP, language detection, split targeting, status message, plugin
         // hooks) consistent with a normal open.
-        self.suppress_position_history_once = true;
+        self.active_window_mut().suppress_position_history_once = true;
         let open_result = self.open_file(path);
-        self.suppress_position_history_once = false;
+        self.active_window_mut().suppress_position_history_once = false;
         let buffer_id = open_result?;
         let is_new = !previously_file_backed.contains(&buffer_id);
 
@@ -596,15 +596,18 @@ impl Editor {
     /// Create a new empty buffer
     pub fn new_buffer(&mut self) -> BufferId {
         // Save current position before switching to new buffer
-        self.position_history.commit_pending_movement();
+        self.active_window_mut()
+            .position_history
+            .commit_pending_movement();
 
         // Explicitly record current position before switching
         let cursors = self.active_cursors();
         let position = cursors.primary().position;
         let anchor = cursors.primary().anchor;
-        self.position_history
-            .record_movement(self.active_buffer(), position, anchor);
-        self.position_history.commit_pending_movement();
+        let active_buffer_id = self.active_buffer();
+        let ph = &mut self.active_window_mut().position_history;
+        ph.record_movement(active_buffer_id, position, anchor);
+        ph.commit_pending_movement();
 
         let buffer_id = BufferId(self.next_buffer_id);
         self.next_buffer_id += 1;

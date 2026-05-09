@@ -12,7 +12,7 @@ fn test_debug_truncate() {
         "Buffer 1 content: {:?}",
         harness.get_buffer_content().unwrap()
     );
-    let hist = &harness.editor().position_history;
+    let hist = &harness.editor().active_window().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
         hist.len(),
@@ -30,7 +30,7 @@ fn test_debug_truncate() {
         "Buffer 2 content: {:?}",
         harness.get_buffer_content().unwrap()
     );
-    let hist = &harness.editor().position_history;
+    let hist = &harness.editor().active_window().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
         hist.len(),
@@ -48,7 +48,7 @@ fn test_debug_truncate() {
         "Buffer 3 content: {:?}",
         harness.get_buffer_content().unwrap()
     );
-    let hist = &harness.editor().position_history;
+    let hist = &harness.editor().active_window().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
         hist.len(),
@@ -64,7 +64,7 @@ fn test_debug_truncate() {
         "After first back: content = {:?}",
         harness.get_buffer_content().unwrap()
     );
-    let hist = &harness.editor().position_history;
+    let hist = &harness.editor().active_window().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
         hist.len(),
@@ -79,7 +79,7 @@ fn test_debug_truncate() {
         "After second back: content = {:?}",
         harness.get_buffer_content().unwrap()
     );
-    let hist = &harness.editor().position_history;
+    let hist = &harness.editor().active_window().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
         hist.len(),
@@ -99,7 +99,7 @@ fn test_debug_truncate() {
         "Buffer 4 content: {:?}",
         harness.get_buffer_content().unwrap()
     );
-    let hist = &harness.editor().position_history;
+    let hist = &harness.editor().active_window().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
         hist.len(),
@@ -115,7 +115,7 @@ fn test_debug_truncate() {
         "After forward: content = {:?}",
         harness.get_buffer_content().unwrap()
     );
-    let hist = &harness.editor().position_history;
+    let hist = &harness.editor().active_window().position_history;
     println!(
         "History: len={}, current_idx={:?}, can_back={}, can_fwd={}",
         hist.len(),

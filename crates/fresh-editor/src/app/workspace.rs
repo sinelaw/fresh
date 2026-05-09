@@ -364,9 +364,12 @@ impl Editor {
             confirm_each: self.search_confirm_each,
         };
 
-        // Capture bookmarks
-        let bookmarks =
-            serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.working_dir);
+        // Capture bookmarks (per-window after Step 0f).
+        let bookmarks = serialize_bookmarks(
+            &self.active_window().bookmarks,
+            &self.buffer_metadata,
+            &self.working_dir,
+        );
 
         // Capture external files (files outside working_dir)
         // These are stored as absolute paths since they can't be made relative
@@ -1234,7 +1237,7 @@ impl Editor {
                 .get(&buffer_id)
             {
                 let pos = bookmark.position.min(buffer.buffer.len());
-                self.bookmarks.set(
+                self.active_window_mut().bookmarks.set(
                     *key,
                     Bookmark {
                         buffer_id,

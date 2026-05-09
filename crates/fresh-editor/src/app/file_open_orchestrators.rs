@@ -43,17 +43,20 @@ impl Editor {
         // For new buffers, record position history before switching
         let is_new_buffer = self.active_buffer() != buffer_id;
 
-        if is_new_buffer && !self.suppress_position_history_once {
+        if is_new_buffer && !self.active_window().suppress_position_history_once {
             // Save current position before switching to new buffer
-            self.position_history.commit_pending_movement();
+            self.active_window_mut()
+                .position_history
+                .commit_pending_movement();
 
             // Explicitly record current position before switching
             let cursors = self.active_cursors();
             let position = cursors.primary().position;
             let anchor = cursors.primary().anchor;
-            self.position_history
-                .record_movement(self.active_buffer(), position, anchor);
-            self.position_history.commit_pending_movement();
+            let active_buffer_id = self.active_buffer();
+            let ph = &mut self.active_window_mut().position_history;
+            ph.record_movement(active_buffer_id, position, anchor);
+            ph.commit_pending_movement();
         }
 
         self.set_active_buffer(buffer_id);

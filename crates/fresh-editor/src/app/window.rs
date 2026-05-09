@@ -21,20 +21,17 @@
 //!
 //! ## Migration status
 //!
-//! Steps 0a–0e shipped. Per-subsystem state that used to warm-swap
+//! Steps 0a–0f shipped. Per-subsystem state that used to warm-swap
 //! on `setActiveWindow` — `panel_ids`, `file_mod_times`,
 //! `file_explorer`, `lsp`, the `splits` pair, `buffers`, the
 //! terminal subsystem (`terminal_manager` +
 //! `terminal_buffers` + `terminal_backing_files` +
-//! `terminal_log_files`), and now `event_logs` — all live directly
-//! on `Window`. `set_active_window` is a pointer write (plus
+//! `terminal_log_files`), `event_logs`, `position_history`
+//! (with its `in_navigation` / `suppress_position_history_once`
+//! companion flags), and `bookmarks` — all live directly on
+//! `Window`. `set_active_window` is a pointer write (plus
 //! first-dive seed allocation for windows that have never been
 //! activated).
-//!
-//! Still on `Editor` (move in Step 0f): `position_history`,
-//! `bookmarks`. Once those land, `closeWindow` becomes a single
-//! `Window::drop` and the `attach_buffer_to_active_window` /
-//! `detach_buffer_from_all_windows` shims go away.
 
 use crate::app::types::WindowLayoutCache;
 use crate::model::event::LeafId;
@@ -116,6 +113,30 @@ pub struct Window {
     /// because undo history is buffer-scoped — closing a window
     /// drops the buffer and its log together.
     pub event_logs: HashMap<BufferId, crate::model::event::EventLog>,
+
+    /// Back/forward navigation stack (cursor jumps, file switches)
+    /// scoped to this window. Each window has its own history so
+    /// switching windows doesn't pollute the other window's
+    /// back-stack — diving back into a window resumes navigation
+    /// where you left it.
+    pub position_history: crate::input::position_history::PositionHistory,
+
+    /// `true` while a back/forward jump is in progress. Suppresses
+    /// `track_cursor_movement` from recording the jump itself as a
+    /// new entry. Per-window so windows don't fight over the flag
+    /// during cross-window orchestration.
+    pub in_navigation: bool,
+
+    /// One-shot suppression of position-history recording for the
+    /// next buffer-switch (used by file-open paths that don't want
+    /// to leave a trail entry for the about-to-be-loaded file).
+    pub suppress_position_history_once: bool,
+
+    /// Bookmarks (single-char register → buffer + byte position) for
+    /// this window. Bookmarks point at this window's buffers and
+    /// follow the window across `setActiveWindow` switches — every
+    /// window has its own register set.
+    pub(crate) bookmarks: crate::app::bookmarks::BookmarkState,
 
     /// Terminal subsystem (PTY processes + render-state grids) for
     /// this window. Owned per-window so closing a window joins its
@@ -298,6 +319,10 @@ impl Window {
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
             event_logs: HashMap::new(),
+            position_history: crate::input::position_history::PositionHistory::new(),
+            in_navigation: false,
+            suppress_position_history_once: false,
+            bookmarks: crate::app::bookmarks::BookmarkState::default(),
             layout_cache: WindowLayoutCache::default(),
         }
     }
