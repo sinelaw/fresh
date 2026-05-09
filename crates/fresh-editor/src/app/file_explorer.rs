@@ -570,7 +570,7 @@ impl Editor {
                                         is_new_file: true,
                                     },
                                 );
-                                self.prompt = Some(prompt);
+                                self.active_window_mut().prompt = Some(prompt);
                             }
                             Err(e) => {
                                 self.set_status_message(
@@ -631,7 +631,7 @@ impl Editor {
                                     },
                                     dirname,
                                 );
-                                self.prompt = Some(prompt);
+                                self.active_window_mut().prompt = Some(prompt);
                             }
                             Err(e) => {
                                 self.set_status_message(
@@ -854,7 +854,7 @@ impl Editor {
                         },
                         old_name,
                     );
-                    self.prompt = Some(prompt);
+                    self.active_window_mut().prompt = Some(prompt);
                 }
             }
         }

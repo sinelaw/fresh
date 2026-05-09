@@ -71,7 +71,7 @@ impl Editor {
 
         // Pre-fill with default text if available
         if let Some(text) = default_text {
-            if let Some(ref mut prompt) = self.prompt {
+            if let Some(ref mut prompt) = self.active_window_mut().prompt {
                 prompt.set_input(text.clone());
                 prompt.selection_anchor = Some(0);
                 prompt.cursor_pos = text.len();
@@ -108,7 +108,8 @@ impl Editor {
             PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
         );
 
-        self.prompt = Some(Prompt::with_suggestions(message, prompt_type, suggestions));
+        self.active_window_mut().prompt =
+            Some(Prompt::with_suggestions(message, prompt_type, suggestions));
 
         // For file and command prompts, populate initial suggestions
         if needs_suggestions {
@@ -126,7 +127,7 @@ impl Editor {
         // Dismiss transient popups and clear hover state when opening a prompt
         self.on_editor_focus_lost();
 
-        self.prompt = Some(Prompt::with_initial_text(
+        self.active_window_mut().prompt = Some(Prompt::with_initial_text(
             message,
             prompt_type,
             initial_text,
@@ -141,13 +142,13 @@ impl Editor {
     /// Start Quick Open prompt with specified prefix
     pub fn start_quick_open_with_prefix(&mut self, prefix: &str) {
         self.on_editor_focus_lost();
-        self.status_message = None;
+        self.active_window_mut().status_message = None;
         self.goto_line_preview = None;
 
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
         prompt.input = prefix.to_string();
         prompt.cursor_pos = prefix.len();
-        self.prompt = Some(prompt);
+        self.active_window_mut().prompt = Some(prompt);
 
         self.update_quick_open_suggestions(prefix);
     }
@@ -215,7 +216,7 @@ impl Editor {
             vec![]
         };
 
-        if let Some(prompt) = &mut self.prompt {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
             prompt.suggestions = suggestions;
             prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                 None
@@ -386,7 +387,7 @@ impl Editor {
     /// Cancel search/replace prompts if one is active.
     /// Called when focus leaves the editor (e.g., switching buffers, focusing file explorer).
     pub(super) fn cancel_search_prompt_if_active(&mut self) {
-        if let Some(ref prompt) = self.prompt {
+        if let Some(ref prompt) = self.active_window_mut().prompt {
             if matches!(
                 prompt.prompt_type,
                 PromptType::Search
@@ -396,7 +397,7 @@ impl Editor {
                     | PromptType::QueryReplace { .. }
                     | PromptType::QueryReplaceConfirm
             ) {
-                self.prompt = None;
+                self.active_window_mut().prompt = None;
                 // Also cancel interactive replace if active
                 self.interactive_replace_state = None;
                 // Clear search highlights from current buffer
@@ -412,7 +413,7 @@ impl Editor {
         // With the native file browser, the directory is shown from file_open_state.current_dir
         // in the prompt rendering. The prompt.input is just the filter/filename, so we
         // start with an empty input.
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if prompt.prompt_type == PromptType::OpenFile {
                 prompt.input.clear();
                 prompt.cursor_pos = 0;
@@ -541,6 +542,7 @@ impl Editor {
                 }
                 // Re-apply filter from prompt (entries were just loaded, filter needs to select matching entry)
                 let filter = self
+                    .active_window()
                     .prompt
                     .as_ref()
                     .map(|p| p.input.clone())
@@ -661,7 +663,7 @@ impl Editor {
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
         // Extract theme to restore if this is a SelectTheme prompt
-        let theme_to_restore = if let Some(ref prompt) = self.prompt {
+        let theme_to_restore = if let Some(ref prompt) = self.active_window_mut().prompt {
             if let PromptType::SelectTheme { original_theme } = &prompt.prompt_type {
                 Some(original_theme.clone())
             } else {
@@ -671,8 +673,13 @@ impl Editor {
             None
         };
 
-        // Determine prompt type and reset appropriate history navigation
-        if let Some(ref prompt) = self.prompt {
+        // Determine prompt type and reset appropriate history navigation.
+        // Clone the prompt so subsequent self.X mutations (history,
+        // plugin hooks, file_open_state, live_grep_last_state) don't
+        // conflict with the borrow on self.active_window().prompt.
+        let prompt_clone = self.active_window().prompt.clone();
+        if let Some(prompt) = prompt_clone {
+            let prompt = &prompt;
             // Reset history navigation for this prompt type
             if let Some(key) = Self::prompt_type_to_history_key(&prompt.prompt_type) {
                 if let Some(history) = self.prompt_histories.get_mut(&key) {
@@ -792,14 +799,18 @@ impl Editor {
         // any buffers we loaded purely to feed the preview pane. The
         // user's split tree and originally-open buffers are
         // untouched.
-        let was_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
+        let was_overlay = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.overlay);
         if was_overlay {
             self.cleanup_overlay_preview();
         }
 
-        self.prompt = None;
+        self.active_window_mut().prompt = None;
         self.pending_search_range = None;
-        self.status_message = Some(t!("search.cancelled").to_string());
+        self.active_window_mut().status_message = Some(t!("search.cancelled").to_string());
 
         // Restore original theme if we were in SelectTheme prompt
         if let Some(original_theme) = theme_to_restore {
@@ -810,7 +821,7 @@ impl Editor {
     /// Handle mouse wheel scroll in prompt with suggestions.
     /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
     pub fn handle_prompt_scroll(&mut self, delta: i32) -> bool {
-        if let Some(ref mut prompt) = self.prompt {
+        if let Some(ref mut prompt) = self.active_window_mut().prompt {
             if prompt.suggestions.is_empty() {
                 return false;
             }
@@ -848,7 +859,7 @@ impl Editor {
     /// Returns (input, prompt_type, selected_index)
     /// Returns None if trying to confirm a disabled command
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
-        if let Some(prompt) = self.prompt.take() {
+        if let Some(prompt) = self.active_window_mut().prompt.take() {
             // Capture Live Grep state on confirm too (issue #1796).
             // `cancel_prompt` already does this; without it here,
             // pressing Enter on a result jumps to the file but loses
@@ -939,7 +950,7 @@ impl Editor {
                     .any(|s| s.text == final_input || s.get_value() == final_input);
                 if !is_valid {
                     // Restore the prompt and don't confirm
-                    self.prompt = Some(prompt);
+                    self.active_window_mut().prompt = Some(prompt);
                     self.set_status_message(
                         t!("error.no_lsp_match", input = final_input.clone()).to_string(),
                     );
@@ -958,7 +969,7 @@ impl Editor {
                             final_input = suggestion.get_value().to_string();
                         }
                     } else {
-                        self.prompt = Some(prompt);
+                        self.active_window_mut().prompt = Some(prompt);
                         return None;
                     }
                 } else {
@@ -969,7 +980,7 @@ impl Editor {
                         final_input = suggestion.get_value().to_string();
                     } else {
                         // Typed text doesn't match any ruler — reject
-                        self.prompt = Some(prompt);
+                        self.active_window_mut().prompt = Some(prompt);
                         return None;
                     }
                 }
@@ -990,7 +1001,7 @@ impl Editor {
 
     /// Check if currently in prompt mode
     pub fn is_prompting(&self) -> bool {
-        self.prompt.is_some()
+        self.active_window().prompt.is_some()
     }
 
     /// Get or create a prompt history for the given key
@@ -1055,7 +1066,10 @@ impl Editor {
 
     /// Get current prompt input (for display)
     pub fn prompt_input(&self) -> Option<&str> {
-        self.prompt.as_ref().map(|p| p.input.as_str())
+        self.active_window()
+            .prompt
+            .as_ref()
+            .map(|p| p.input.as_str())
     }
 
     /// Check if the active cursor currently has a selection
@@ -1065,21 +1079,22 @@ impl Editor {
 
     /// Get mutable reference to prompt (for input handling)
     pub fn prompt_mut(&mut self) -> Option<&mut Prompt> {
-        self.prompt.as_mut()
+        self.active_window_mut().prompt.as_mut()
     }
 
     /// Set a status message to display in the status bar
     pub fn set_status_message(&mut self, message: String) {
         tracing::info!(target: "status", "{}", message);
-        self.plugin_status_message = None;
-        self.status_message = Some(message);
+        self.active_window_mut().plugin_status_message = None;
+        self.active_window_mut().status_message = Some(message);
     }
 
     /// Get the current status message
     pub fn get_status_message(&self) -> Option<&String> {
-        self.plugin_status_message
+        self.active_window()
+            .plugin_status_message
             .as_ref()
-            .or(self.status_message.as_ref())
+            .or(self.active_window().status_message.as_ref())
     }
 
     /// Get accumulated plugin errors (for test assertions)
@@ -1096,7 +1111,7 @@ impl Editor {
     /// Update prompt suggestions based on current input
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
-        let (prompt_type, input) = if let Some(prompt) = &self.prompt {
+        let (prompt_type, input) = if let Some(prompt) = &self.active_window_mut().prompt {
             (prompt.prompt_type.clone(), prompt.input.clone())
         } else {
             return;
@@ -1159,7 +1174,7 @@ impl Editor {
                 // Note: filter_suggestions checks suggestions_set_for_input to skip
                 // filtering if the plugin has already provided filtered results for
                 // this input (handles the async race condition with run_hook).
-                if let Some(prompt) = &mut self.prompt {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.filter_suggestions(false);
                 }
             }
@@ -1170,13 +1185,13 @@ impl Editor {
             | PromptType::SetLanguage
             | PromptType::SetEncoding
             | PromptType::SetLineEnding => {
-                if let Some(prompt) = &mut self.prompt {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.filter_suggestions(false);
                 }
             }
             PromptType::SelectLocale => {
                 // Locale selection also matches on description (language names)
-                if let Some(prompt) = &mut self.prompt {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.filter_suggestions(true);
                 }
             }

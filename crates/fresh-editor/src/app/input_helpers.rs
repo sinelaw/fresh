@@ -143,13 +143,13 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Switch to tab: ".to_string(),
             PromptType::SwitchToTab,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
             }
@@ -201,7 +201,7 @@ impl Editor {
     /// Handle character insertion in prompt mode.
     pub(super) fn handle_insert_char_prompt(&mut self, c: char) -> AnyhowResult<()> {
         // Check if this is the query-replace confirmation prompt
-        if let Some(ref prompt) = self.prompt {
+        if let Some(ref prompt) = self.active_window_mut().prompt {
             if prompt.prompt_type == PromptType::QueryReplaceConfirm {
                 return self.handle_interactive_replace_key(c);
             }
@@ -210,7 +210,7 @@ impl Editor {
         // Reset history navigation when user starts typing
         // This allows them to press Up to get back to history items
         // Reset history navigation when typing in a prompt
-        if let Some(ref prompt) = self.prompt {
+        if let Some(ref prompt) = self.active_window_mut().prompt {
             if let Some(key) = Self::prompt_type_to_history_key(&prompt.prompt_type) {
                 if let Some(history) = self.prompt_histories.get_mut(&key) {
                     history.reset_navigation();

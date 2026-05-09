@@ -453,12 +453,9 @@ pub struct Editor {
     /// This is used by Open Folder to do a clean context switch
     restart_with_dir: Option<PathBuf>,
 
-    /// Status message (shown in status bar)
-    status_message: Option<String>,
-
-    /// Plugin-provided status message (displayed alongside the core status)
-    plugin_status_message: Option<String>,
-
+    // status_message, plugin_status_message, prompt moved onto
+    // `Window` (Step 0k phase 3) — each window has its own chrome,
+    // and the active window's chrome is what renders.
     /// Last terminal window title written via OSC 2. Used so we only write
     /// the escape sequence when the title would actually change, rather
     /// than on every frame.
@@ -467,9 +464,6 @@ pub struct Editor {
     /// Accumulated plugin errors (for test assertions)
     /// These are collected when plugin error messages are received
     plugin_errors: Vec<String>,
-
-    /// Active prompt (minibuffer)
-    prompt: Option<Prompt>,
 
     /// Terminal dimensions (for creating new buffers)
     terminal_width: u16,

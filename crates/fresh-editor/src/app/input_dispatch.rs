@@ -110,7 +110,7 @@ impl Editor {
         }
 
         // Prompt is next
-        if self.prompt.is_some() {
+        if self.active_window().prompt.is_some() {
             // Check for Alt+key keybindings in Prompt context first
             // Use resolve_in_context_only to bypass Global bindings (like menu mnemonics)
             // This allows Prompt-specific Alt+key bindings (like encoding toggle) to work
@@ -139,8 +139,13 @@ impl Editor {
 
             // File browser prompts use FileBrowserInputHandler
             if self.is_file_open_active() {
+                let active_window_id = self.active_window;
+                let __win = self
+                    .windows
+                    .get_mut(&active_window_id)
+                    .expect("active window present");
                 if let (Some(ref mut file_state), Some(ref mut prompt)) =
-                    (&mut self.file_open_state, &mut self.prompt)
+                    (&mut self.file_open_state, &mut __win.prompt)
                 {
                     let mut handler = FileBrowserInputHandler::new(file_state, prompt);
                     let result = handler.dispatch_input(event, &mut ctx);
@@ -152,6 +157,7 @@ impl Editor {
             // QueryReplaceConfirm prompts use QueryReplaceConfirmInputHandler
             use crate::view::prompt::PromptType;
             let is_query_replace_confirm = self
+                .active_window()
                 .prompt
                 .as_ref()
                 .is_some_and(|p| p.prompt_type == PromptType::QueryReplaceConfirm);
@@ -162,7 +168,7 @@ impl Editor {
                 return Some(result);
             }
 
-            if let Some(ref mut prompt) = self.prompt {
+            if let Some(ref mut prompt) = self.active_window_mut().prompt {
                 let result = prompt.dispatch_input(event, &mut ctx);
                 // Only return and process deferred actions if the prompt handled the input
                 // If Ignored, fall through to check global keybindings
@@ -295,7 +301,7 @@ impl Editor {
                 self.prompt_history_next();
             }
             DeferredAction::PreviewThemeFromPrompt => {
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if matches!(
                         prompt.prompt_type,
                         crate::view::prompt::PromptType::SelectTheme { .. }
@@ -307,18 +313,24 @@ impl Editor {
             }
             DeferredAction::PromptSelectionChanged { selected_index } => {
                 // Fire hook for plugin prompts so they can update live preview
-                if let Some(prompt) = &self.prompt {
-                    if let crate::view::prompt::PromptType::Plugin { custom_type } =
-                        &prompt.prompt_type
-                    {
-                        self.plugin_manager.run_hook(
-                            "prompt_selection_changed",
-                            crate::services::plugins::hooks::HookArgs::PromptSelectionChanged {
-                                prompt_type: custom_type.clone(),
-                                selected_index,
-                            },
-                        );
-                    }
+                let plugin_custom_type =
+                    self.active_window()
+                        .prompt
+                        .as_ref()
+                        .and_then(|p| match &p.prompt_type {
+                            crate::view::prompt::PromptType::Plugin { custom_type } => {
+                                Some(custom_type.clone())
+                            }
+                            _ => None,
+                        });
+                if let Some(custom_type) = plugin_custom_type {
+                    self.plugin_manager.run_hook(
+                        "prompt_selection_changed",
+                        crate::services::plugins::hooks::HookArgs::PromptSelectionChanged {
+                            prompt_type: custom_type.clone(),
+                            selected_index,
+                        },
+                    );
                 }
             }
 
@@ -352,7 +364,7 @@ impl Editor {
 
             // Character insertion with suggestion update
             DeferredAction::InsertCharAndUpdate(c) => {
-                if let Some(ref mut prompt) = self.prompt {
+                if let Some(ref mut prompt) = self.active_window_mut().prompt {
                     prompt.insert_char(c);
                 }
                 self.update_prompt_suggestions();
@@ -488,6 +500,7 @@ impl Editor {
     fn prompt_history_prev(&mut self) {
         // Get the prompt type and current input
         let prompt_info = self
+            .active_window()
             .prompt
             .as_ref()
             .map(|p| (p.prompt_type.clone(), p.input.clone()));
@@ -497,7 +510,7 @@ impl Editor {
             if let Some(key) = Self::prompt_type_to_history_key(&prompt_type) {
                 if let Some(history) = self.prompt_histories.get_mut(&key) {
                     if let Some(entry) = history.navigate_prev(&current_input) {
-                        if let Some(ref mut prompt) = self.prompt {
+                        if let Some(ref mut prompt) = self.active_window_mut().prompt {
                             prompt.set_input(entry);
                         }
                     }
@@ -508,14 +521,18 @@ impl Editor {
 
     /// Navigate to next history entry in prompt.
     fn prompt_history_next(&mut self) {
-        let prompt_type = self.prompt.as_ref().map(|p| p.prompt_type.clone());
+        let prompt_type = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .map(|p| p.prompt_type.clone());
 
         if let Some(prompt_type) = prompt_type {
             // Get the history key for this prompt type
             if let Some(key) = Self::prompt_type_to_history_key(&prompt_type) {
                 if let Some(history) = self.prompt_histories.get_mut(&key) {
                     if let Some(entry) = history.navigate_next() {
-                        if let Some(ref mut prompt) = self.prompt {
+                        if let Some(ref mut prompt) = self.active_window_mut().prompt {
                             prompt.set_input(entry);
                         }
                     }

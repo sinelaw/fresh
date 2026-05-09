@@ -960,17 +960,17 @@ impl Editor {
                 self.handle_set_prompt_suggestions(suggestions);
             }
             PluginCommand::SetPromptInputSync { sync } => {
-                if let Some(prompt) = &mut self.prompt {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.sync_input_on_navigate = sync;
                 }
             }
             PluginCommand::SetPromptTitle { title } => {
-                if let Some(prompt) = &mut self.prompt {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.title = title;
                 }
             }
             PluginCommand::SetPromptFooter { footer } => {
-                if let Some(prompt) = &mut self.prompt {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.footer = footer;
                 }
             }
@@ -4562,12 +4562,13 @@ impl Editor {
         }
         if let Err(e) = self.save_config() {
             tracing::error!("Failed to save config: {}", e);
-            self.status_message = Some(format!(
+            self.active_window_mut().status_message = Some(format!(
                 "LSP disabled for {} (config save failed)",
                 language
             ));
         } else {
-            self.status_message = Some(format!("LSP disabled for {}", language));
+            self.active_window_mut().status_message =
+                Some(format!("LSP disabled for {}", language));
         }
         self.warning_domains.lsp.clear();
     }
@@ -4585,10 +4586,10 @@ impl Editor {
             .and_then(|w| w.lsp.as_mut())
         {
             let (ok, msg) = lsp.manual_restart(&language, file_path.as_deref());
-            self.status_message = Some(msg);
+            self.active_window_mut().status_message = Some(msg);
             ok
         } else {
-            self.status_message = Some("No LSP manager available".to_string());
+            self.active_window_mut().status_message = Some("No LSP manager available".to_string());
             false
         };
         if success {
@@ -4608,18 +4609,20 @@ impl Editor {
                 {
                     let restarted = lsp.set_language_root_uri(&language, parsed_uri);
                     if restarted {
-                        self.status_message = Some(format!(
+                        self.active_window_mut().status_message = Some(format!(
                             "LSP root updated for {} (restarting server)",
                             language
                         ));
                     } else {
-                        self.status_message = Some(format!("LSP root set for {}", language));
+                        self.active_window_mut().status_message =
+                            Some(format!("LSP root set for {}", language));
                     }
                 }
             }
             Err(e) => {
                 tracing::error!("Invalid LSP root URI '{}': {}", uri, e);
-                self.status_message = Some(format!("Invalid LSP root URI: {}", e));
+                self.active_window_mut().status_message =
+                    Some(format!("Invalid LSP root URI: {}", e));
             }
         }
     }

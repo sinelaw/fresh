@@ -227,7 +227,7 @@ impl Editor {
         self.active_window_mut().pending_goto_definition_request = None;
 
         if locations.is_empty() {
-            self.status_message = Some(t!("lsp.no_definition").to_string());
+            self.active_window_mut().status_message = Some(t!("lsp.no_definition").to_string());
             return Ok(());
         }
 
@@ -310,7 +310,7 @@ impl Editor {
             .get(&buffer_id)
             .and_then(|s| s.buffer.file_path().map(|p| p.display().to_string()))
             .unwrap_or_default();
-        self.status_message = Some(
+        self.active_window_mut().status_message = Some(
             t!(
                 "lsp.jumped_to_definition",
                 path = display_path,
@@ -2642,7 +2642,8 @@ impl Editor {
         match result {
             Ok(workspace_edit) => {
                 let total_changes = self.apply_workspace_edit(workspace_edit)?;
-                self.status_message = Some(t!("lsp.renamed", count = total_changes).to_string());
+                self.active_window_mut().status_message =
+                    Some(t!("lsp.renamed", count = total_changes).to_string());
             }
             Err(error) => {
                 // Per LSP spec: ContentModified errors (-32801) should NOT be shown to user
@@ -2651,9 +2652,11 @@ impl Editor {
                         "LSP rename: ContentModified error (expected, ignoring): {}",
                         error
                     );
-                    self.status_message = Some(t!("lsp.rename_cancelled").to_string());
+                    self.active_window_mut().status_message =
+                        Some(t!("lsp.rename_cancelled").to_string());
                 } else {
-                    self.status_message = Some(t!("lsp.rename_failed", error = &error).to_string());
+                    self.active_window_mut().status_message =
+                        Some(t!("lsp.rename_failed", error = &error).to_string());
                 }
             }
         }
@@ -3235,7 +3238,8 @@ impl Editor {
 
             // Check if we're on a word
             if word_start >= word_end {
-                self.status_message = Some(t!("lsp.no_symbol_at_cursor").to_string());
+                self.active_window_mut().status_message =
+                    Some(t!("lsp.no_symbol_at_cursor").to_string());
                 return Ok(());
             }
 
@@ -3270,7 +3274,7 @@ impl Editor {
         // Pre-fill the input with the current name and position cursor at the end
         prompt.set_input(word_text);
 
-        self.prompt = Some(prompt);
+        self.active_window_mut().prompt = Some(prompt);
         Ok(())
     }
 
@@ -3292,7 +3296,7 @@ impl Editor {
 
         // Check if the name actually changed
         if new_name == original_text {
-            self.status_message = Some(t!("lsp.name_unchanged").to_string());
+            self.active_window_mut().status_message = Some(t!("lsp.name_unchanged").to_string());
             return;
         }
 
@@ -3338,7 +3342,8 @@ impl Editor {
             .and_then(|m| m.file_path())
             .is_none()
         {
-            self.status_message = Some(t!("lsp.cannot_rename_unsaved").to_string());
+            self.active_window_mut().status_message =
+                Some(t!("lsp.cannot_rename_unsaved").to_string());
         }
     }
 

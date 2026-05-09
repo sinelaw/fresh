@@ -29,7 +29,7 @@ impl Editor {
     /// Otherwise, opens the warning log file for the user to view.
     pub fn show_warnings_popup(&mut self) {
         if !self.warning_domains.has_any_warnings() {
-            self.status_message = Some(t!("warnings.none").to_string());
+            self.active_window_mut().status_message = Some(t!("warnings.none").to_string());
             return;
         }
 
@@ -213,7 +213,7 @@ impl Editor {
         let user_dismissed = self.is_lsp_language_user_dismissed(language);
 
         if configured_servers.is_empty() && running_statuses.is_empty() {
-            self.status_message = Some(t!("lsp.no_server_active").to_string());
+            self.active_window_mut().status_message = Some(t!("lsp.no_server_active").to_string());
             return;
         }
 

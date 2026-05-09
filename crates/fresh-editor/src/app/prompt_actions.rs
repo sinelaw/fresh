@@ -213,7 +213,8 @@ impl Editor {
                 // (parse_path_line_col).
                 use crate::input::quick_open::parse_path_line_col;
                 let target = if let Some(idx) = selected_index {
-                    self.prompt
+                    self.active_window()
+                        .prompt
                         .as_ref()
                         .and_then(|p| p.suggestions.get(idx))
                         .map(|s| s.value.clone().unwrap_or_else(|| s.text.clone()))
@@ -1561,7 +1562,7 @@ impl Editor {
             }
         };
 
-        self.status_message = Some(message);
+        self.active_window_mut().status_message = Some(message);
 
         if success {
             self.reopen_buffers_for_language(language);

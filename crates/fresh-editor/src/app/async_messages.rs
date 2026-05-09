@@ -981,7 +981,8 @@ impl Editor {
         // Show important messages in status bar
         match message_type {
             LspMessageType::Error | LspMessageType::Warning => {
-                self.status_message = Some(format!("LSP ({}): {}", language, message));
+                self.active_window_mut().status_message =
+                    Some(format!("LSP ({}): {}", language, message));
             }
             _ => {
                 // Info and Log messages are not shown in status bar
@@ -1088,7 +1089,7 @@ impl Editor {
                     .and_then(|w| w.lsp.as_mut())
                 {
                     let message = lsp.handle_server_crash(&language, &server_name_ref);
-                    self.status_message = Some(message);
+                    self.active_window_mut().status_message = Some(message);
                 }
             }
         }
@@ -1229,24 +1230,19 @@ impl Editor {
         }
 
         // Track rapid file change events - only disable after many reverts in short window
+        let mut should_disable = false;
         if let Some((window_start, count)) = self.file_rapid_change_counts.get_mut(&path_buf) {
             if self.time_source.elapsed_since(*window_start) < DEBOUNCE_WINDOW {
                 *count += 1;
 
                 if *count >= RAPID_REVERT_THRESHOLD {
-                    // Disable auto-revert
-                    self.auto_revert_enabled = false;
-                    self.status_message = Some(format!(
-                        "Auto-revert disabled: {} is updating too frequently (use Ctrl+Shift+R to re-enable)",
-                        path_buf.file_name().unwrap_or_default().to_string_lossy()
-                    ));
+                    should_disable = true;
                     tracing::info!(
                         "Auto-revert disabled for {:?} ({} reverts in {:?})",
                         path_buf,
                         count,
                         DEBOUNCE_WINDOW
                     );
-                    return false;
                 }
             } else {
                 // Reset counter - start a new window
@@ -1257,6 +1253,14 @@ impl Editor {
             // First event for this file
             self.file_rapid_change_counts
                 .insert(path_buf.clone(), (self.time_source.now(), 1));
+        }
+        if should_disable {
+            self.auto_revert_enabled = false;
+            self.active_window_mut().status_message = Some(format!(
+                "Auto-revert disabled: {} is updating too frequently (use Ctrl+Shift+R to re-enable)",
+                path_buf.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            return false;
         }
 
         tracing::info!("File changed externally: {}", path);
@@ -1477,7 +1481,7 @@ impl Editor {
         let restart_results = lsp.process_pending_restarts();
 
         for (language, success, message) in restart_results {
-            self.status_message = Some(message.clone());
+            self.active_window_mut().status_message = Some(message.clone());
 
             if success {
                 self.resend_did_open_for_language(&language);

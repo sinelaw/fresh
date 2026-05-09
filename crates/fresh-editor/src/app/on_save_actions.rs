@@ -76,7 +76,7 @@ impl Editor {
                         ran_any_action = true;
                     }
                     ActionResult::CommandNotFound(cmd) => {
-                        self.status_message = Some(format!(
+                        self.active_window_mut().status_message = Some(format!(
                             "Formatter '{}' not found (install it for auto-formatting)",
                             cmd
                         ));

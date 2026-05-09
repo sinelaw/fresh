@@ -21,22 +21,23 @@
 //!
 //! ## Migration status
 //!
-//! Steps 0a–0f and 0j shipped. Step 0k phase 2 (per-window LSP
-//! request-tracking state) shipped. Per-subsystem state that used
-//! to warm-swap on `setActiveWindow` — `panel_ids`,
-//! `file_mod_times`, `file_explorer`, `lsp`, the `splits` pair,
-//! `buffers`, the terminal subsystem (`terminal_manager` +
-//! `terminal_buffers` + `terminal_backing_files` +
-//! `terminal_log_files`), `event_logs`, `position_history` (with
+//! Steps 0a–0f, 0j, and 0k phases 1–3 shipped. Per-subsystem
+//! state that used to warm-swap on `setActiveWindow` —
+//! `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`, the
+//! `splits` pair, `buffers`, the terminal subsystem
+//! (`terminal_manager` + `terminal_buffers` + `terminal_backing_files`
+//! + `terminal_log_files`), `event_logs`, `position_history` (with
 //! its `in_navigation` / `suppress_position_history_once`
 //! companion flags), `bookmarks`, `grouped_subtrees`,
-//! `composite_buffers`, `composite_view_states`, plus all 23
-//! LSP-request-tracking maps (pending-/in-flight/applied,
-//! debounce timers, `next_lsp_request_id`, `completion_items`,
-//! `dabbrev_state`, code-action attribution) and the per-window
-//! async `bridge` — all live directly on `Window`.
-//! `set_active_window` is a pointer write (plus first-dive seed
-//! allocation for windows that have never been activated).
+//! `composite_buffers`, `composite_view_states`, all 23 LSP-
+//! request-tracking maps (pending-/in-flight/applied, debounce
+//! timers, `next_lsp_request_id`, `completion_items`,
+//! `dabbrev_state`, code-action attribution), the per-window
+//! async `bridge`, and the chrome surfaces (`status_message`,
+//! `plugin_status_message`, `prompt`) — all live directly on
+//! `Window`. `set_active_window` is a pointer write (plus
+//! first-dive seed allocation for windows that have never been
+//! activated).
 
 use crate::app::types::WindowLayoutCache;
 use crate::model::event::LeafId;
@@ -118,6 +119,22 @@ pub struct Window {
     /// because undo history is buffer-scoped — closing a window
     /// drops the buffer and its log together.
     pub event_logs: HashMap<BufferId, crate::model::event::EventLog>,
+
+    /// Status message (shown in this window's status bar). Per-window
+    /// because each window has its own context — a save in window A
+    /// shouldn't flash a status message into window B's UI. Only the
+    /// active window's chrome renders, so background-window status
+    /// messages are naturally invisible.
+    pub status_message: Option<String>,
+
+    /// Plugin-provided status message (displayed alongside the core
+    /// status, also per-window).
+    pub plugin_status_message: Option<String>,
+
+    /// Active prompt (minibuffer) for this window. Each window can
+    /// have its own prompt mid-flight; switching windows preserves
+    /// each window's prompt state independently.
+    pub prompt: Option<crate::view::prompt::Prompt>,
 
     /// Per-window async bridge — the (Sender, Receiver) pair the
     /// LSP manager (and per-window terminal/file-explorer tasks
@@ -753,6 +770,9 @@ impl Window {
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
             event_logs: HashMap::new(),
+            status_message: None,
+            plugin_status_message: None,
+            prompt: None,
             bridge: crate::services::async_bridge::AsyncBridge::new(),
             next_lsp_request_id: 0,
             pending_completion_requests: std::collections::HashSet::new(),

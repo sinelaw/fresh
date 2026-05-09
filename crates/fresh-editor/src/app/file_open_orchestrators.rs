@@ -93,9 +93,11 @@ impl Editor {
 
         // Show appropriate status message for binary vs regular files
         if is_binary {
-            self.status_message = Some(t!("buffer.opened_binary", name = display_name).to_string());
+            self.active_window_mut().status_message =
+                Some(t!("buffer.opened_binary", name = display_name).to_string());
         } else {
-            self.status_message = Some(t!("buffer.opened", name = display_name).to_string());
+            self.active_window_mut().status_message =
+                Some(t!("buffer.opened", name = display_name).to_string());
         }
 
         Ok(buffer_id)
@@ -534,7 +536,8 @@ impl Editor {
         self.set_active_buffer(buffer_id);
 
         let display_name = path.display().to_string();
-        self.status_message = Some(t!("buffer.opened", name = display_name).to_string());
+        self.active_window_mut().status_message =
+            Some(t!("buffer.opened", name = display_name).to_string());
 
         Ok(buffer_id)
     }
@@ -854,7 +857,8 @@ impl Editor {
             .map(|m| m.display_name.clone())
             .unwrap_or_else(|| path.display().to_string());
 
-        self.status_message = Some(t!("buffer.opened", name = display_name).to_string());
+        self.active_window_mut().status_message =
+            Some(t!("buffer.opened", name = display_name).to_string());
 
         Ok(buffer_id)
     }

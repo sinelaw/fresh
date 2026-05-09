@@ -135,7 +135,7 @@ impl Editor {
 
         // Refresh search highlights only during incremental search (when prompt is active)
         // After search is confirmed, overlays exist for ALL matches and shouldn't be overwritten
-        let is_search_prompt_active = self.prompt.as_ref().is_some_and(|p| {
+        let is_search_prompt_active = self.active_window().prompt.as_ref().is_some_and(|p| {
             matches!(
                 p.prompt_type,
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
@@ -152,12 +152,12 @@ impl Editor {
         // (Held in mutable bindings because the in-render
         // `process_commands` block below can dispatch commands —
         // e.g. `StartPromptAsync`, `SetPromptSuggestions` — that
-        // mutate `self.prompt`. When that happens we recompute these
+        // mutate `self.active_window_mut().prompt`. When that happens we recompute these
         // flags and re-split `main_chunks` so the bottom-row
         // rendering uses an up-to-date layout. See the
         // "Recompute layout if mid-render commands changed state"
         // block below.)
-        let mut show_search_options = self.prompt.as_ref().is_some_and(|p| {
+        let mut show_search_options = self.active_window().prompt.as_ref().is_some_and(|p| {
             matches!(
                 p.prompt_type,
                 PromptType::Search
@@ -174,13 +174,18 @@ impl Editor {
         // wrong. Floating-overlay prompts (Live Grep, issue #1796)
         // are exempt because their suggestions live inside the
         // centred frame, not above the bottom row.
-        let mut prompt_is_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
+        let mut prompt_is_overlay = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.overlay);
         let mut has_suggestions = self
+            .active_window()
             .prompt
             .as_ref()
             .is_some_and(|p| !p.suggestions.is_empty())
             && !prompt_is_overlay;
-        let mut has_file_browser = self.prompt.as_ref().is_some_and(|p| {
+        let mut has_file_browser = self.active_window().prompt.as_ref().is_some_and(|p| {
             matches!(
                 p.prompt_type,
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
@@ -209,7 +214,9 @@ impl Editor {
                     // input row inside the centred frame, so the
                     // bottom row stays available for editor content
                     // rather than being reserved as dead space.
-                    if (self.prompt_line_visible || self.prompt.is_some()) && !prompt_is_overlay {
+                    if (self.prompt_line_visible || self.active_window().prompt.is_some())
+                        && !prompt_is_overlay
+                    {
                         1
                     } else {
                         0
@@ -501,7 +508,7 @@ impl Editor {
             // dispatch above mutated state that affects it. Without
             // this, a `StartPromptAsync` (or similar) processed
             // mid-render leaves `main_chunks` reflecting the prior
-            // `self.prompt = None` shape — the prompt slot ends up at
+            // `self.active_window_mut().prompt = None` shape — the prompt slot ends up at
             // (y = size.height, h = 0) and the status bar paints the
             // bottom row in place of the prompt input. Conservative:
             // we recompute on *any* dispatched commands rather than
@@ -525,7 +532,7 @@ impl Editor {
             // the next frame, where the layout is built consistently
             // from the start.
             if dispatched_any {
-                show_search_options = self.prompt.as_ref().is_some_and(|p| {
+                show_search_options = self.active_window().prompt.as_ref().is_some_and(|p| {
                     matches!(
                         p.prompt_type,
                         PromptType::Search
@@ -535,13 +542,18 @@ impl Editor {
                             | PromptType::QueryReplace { .. }
                     )
                 });
-                prompt_is_overlay = self.prompt.as_ref().is_some_and(|p| p.overlay);
+                prompt_is_overlay = self
+                    .active_window()
+                    .prompt
+                    .as_ref()
+                    .is_some_and(|p| p.overlay);
                 has_suggestions = self
+                    .active_window()
                     .prompt
                     .as_ref()
                     .is_some_and(|p| !p.suggestions.is_empty())
                     && !prompt_is_overlay;
-                has_file_browser = self.prompt.as_ref().is_some_and(|p| {
+                has_file_browser = self.active_window().prompt.as_ref().is_some_and(|p| {
                     matches!(
                         p.prompt_type,
                         PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
@@ -561,7 +573,7 @@ impl Editor {
                         ),
                         Constraint::Length(if show_search_options { 1 } else { 0 }),
                         Constraint::Length(
-                            if (self.prompt_line_visible || self.prompt.is_some())
+                            if (self.prompt_line_visible || self.active_window().prompt.is_some())
                                 && !prompt_is_overlay
                             {
                                 1
@@ -856,9 +868,9 @@ impl Editor {
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
 
-        let status_message = self.status_message.clone();
-        let plugin_status_message = self.plugin_status_message.clone();
-        let prompt = self.prompt.clone();
+        let status_message = self.active_window().status_message.clone();
+        let plugin_status_message = self.active_window().plugin_status_message.clone();
+        let prompt = self.active_window().prompt.clone();
         // Compute a simple buffer-aware LSP indicator.
         // Compose the LSP status-bar segment for the active buffer. This
         // runs every render — the editor has no precomputed LSP-status
@@ -1035,7 +1047,7 @@ impl Editor {
         // Render search options bar when in search prompt
         if show_search_options {
             // Show "Confirm" option only in replace modes
-            let confirm_each = self.prompt.as_ref().and_then(|p| {
+            let confirm_each = self.active_window().prompt.as_ref().and_then(|p| {
                 if matches!(
                     p.prompt_type,
                     PromptType::ReplaceSearch
@@ -1118,7 +1130,12 @@ impl Editor {
         // the file changed) and seed the phantom leaf's cursor before
         // the renderer reaches it. Done before render_prompt_popups
         // because that path immediately needs the leaf's view state.
-        if self.prompt.as_ref().is_some_and(|p| p.overlay) {
+        if self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.overlay)
+        {
             self.prepare_overlay_preview();
         }
 
@@ -1509,7 +1526,7 @@ impl Editor {
         // caret on the prompt line via `frame.set_cursor_position`; don't
         // override it with the (now-irrelevant) buffer cursor.
         if let Some((cx, cy)) = pending_hardware_cursor {
-            if self.prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
+            if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
                 frame.set_cursor_position((cx, cy));
             }
         }
@@ -1703,7 +1720,9 @@ impl Editor {
         prompt_area: ratatui::layout::Rect,
         width: u16,
     ) {
-        let Some(prompt) = &self.prompt else { return };
+        let Some(prompt) = &self.active_window_mut().prompt else {
+            return;
+        };
 
         // Overlay prompts (Live Grep, issue #1796) get a dedicated
         // centred floating frame instead of the bottom-anchored popup.
@@ -1759,10 +1778,12 @@ impl Editor {
 
         // Adjust the prompt's scroll position to keep the selected item
         // visible, scrolling the minimum amount required.
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             prompt.ensure_selected_visible();
         }
-        let Some(prompt) = &self.prompt else { return };
+        let Some(prompt) = &self.active_window().prompt else {
+            return;
+        };
 
         self.chrome_layout.suggestions_area = SuggestionsRenderer::render_with_hover(
             frame,
@@ -1971,7 +1992,7 @@ impl Editor {
         use crate::input::quick_open::parse_path_line_col;
 
         let (path_str, line, col) = {
-            let Some(prompt) = self.prompt.as_ref() else {
+            let Some(prompt) = self.active_window().prompt.as_ref() else {
                 return;
             };
             let Some(idx) = prompt.selected_suggestion else {
@@ -2281,16 +2302,17 @@ impl Editor {
         // double-frame). Inner content height = overlay.height -
         // chrome.
         let toolbar_visible = self
+            .active_window()
             .prompt
             .as_ref()
             .map(|p| !p.title.is_empty())
             .unwrap_or(false);
         let chrome_rows: usize = 4 + if toolbar_visible { 1 } else { 0 };
         let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(chrome_rows);
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             prompt.ensure_selected_visible_within(suggestions_visible_rows);
         }
-        let Some(prompt) = self.prompt.as_ref() else {
+        let Some(prompt) = self.active_window().prompt.as_ref() else {
             return;
         };
         let prompt = prompt.clone();

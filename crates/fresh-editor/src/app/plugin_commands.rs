@@ -1789,7 +1789,7 @@ impl Editor {
     /// Handle SetStatus command
     pub(super) fn handle_set_status(&mut self, message: String) {
         if message.trim().is_empty() {
-            self.plugin_status_message = None;
+            self.active_window_mut().plugin_status_message = None;
         } else {
             // Log status message for history
             tracing::info!(target: "status", "{}", message);
@@ -1804,8 +1804,8 @@ impl Editor {
                 self.plugin_errors.push(message.clone());
             }
             // Clear core status message so only plugin message shows
-            self.status_message = None;
-            self.plugin_status_message = Some(message.clone());
+            self.active_window_mut().status_message = None;
+            self.active_window_mut().plugin_status_message = Some(message.clone());
         }
     }
 
@@ -1832,7 +1832,7 @@ impl Editor {
             },
         );
         prompt.overlay = floating_overlay;
-        self.prompt = Some(prompt);
+        self.active_window_mut().prompt = Some(prompt);
 
         // Fire the prompt_changed hook immediately with empty input
         // This allows plugins to initialize the prompt state
@@ -1868,7 +1868,7 @@ impl Editor {
             initial_value.clone(),
         );
         prompt.overlay = floating_overlay;
-        self.prompt = Some(prompt);
+        self.active_window_mut().prompt = Some(prompt);
 
         // Fire the prompt_changed hook immediately with the initial value
         use crate::services::plugins::hooks::HookArgs;
@@ -1893,7 +1893,7 @@ impl Editor {
 
         // Create an async prompt (uses special prompt type)
         use crate::view::prompt::{Prompt, PromptType};
-        self.prompt = Some(Prompt::with_initial_text(
+        self.active_window_mut().prompt = Some(Prompt::with_initial_text(
             label,
             PromptType::AsyncPrompt,
             initial_value.clone(),
@@ -1936,7 +1936,7 @@ impl Editor {
             })
             .collect();
 
-        if let Some(prompt) = &mut self.prompt {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
             // Set original_suggestions for Rust-side filtering (used by prompts that
             // don't handle their own filtering like theme editor dropdowns)
             prompt.original_suggestions = Some(internal_suggestions.clone());

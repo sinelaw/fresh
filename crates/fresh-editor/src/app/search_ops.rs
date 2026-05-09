@@ -1101,7 +1101,7 @@ impl Editor {
         self.move_cursor_to_match(first_match_pos);
 
         // Show the query-replace prompt
-        self.prompt = Some(Prompt::new(
+        self.active_window_mut().prompt = Some(Prompt::new(
             "Replace? (y)es (n)o (a)ll (c)ancel: ".to_string(),
             PromptType::QueryReplaceConfirm,
         ));
@@ -1410,7 +1410,7 @@ impl Editor {
         } else {
             "Replace? (y)es (n)o (a)ll (c)ancel: ".to_string()
         };
-        if let Some(ref mut prompt) = self.prompt {
+        if let Some(ref mut prompt) = self.active_window_mut().prompt {
             if prompt.prompt_type == PromptType::QueryReplaceConfirm {
                 prompt.message = msg;
                 prompt.input.clear();
@@ -1422,7 +1422,7 @@ impl Editor {
     /// Finish interactive replace and show summary
     pub(super) fn finish_interactive_replace(&mut self, replacements_made: usize) {
         self.interactive_replace_state = None;
-        self.prompt = None; // Clear the query-replace prompt
+        self.active_window_mut().prompt = None; // Clear the query-replace prompt
 
         // Clear search highlights
         let ns = self.search_namespace.clone();

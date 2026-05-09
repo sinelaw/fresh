@@ -154,7 +154,7 @@ impl Editor {
             .start(temp_path.to_path_buf(), buffer_id, file_size, thread_handle);
 
         // Status will be updated by poll_stdin_streaming
-        self.status_message = Some(t!("stdin.streaming").to_string());
+        self.active_window_mut().status_message = Some(t!("stdin.streaming").to_string());
 
         Ok(buffer_id)
     }
@@ -197,7 +197,7 @@ impl Editor {
                     .buffer
                     .extend_streaming(&temp_path, current_size);
             }
-            self.status_message =
+            self.active_window_mut().status_message =
                 Some(t!("stdin.streaming_bytes", bytes = current_size).to_string());
             changed = true;
         }
@@ -210,11 +210,13 @@ impl Editor {
                 }
                 ThreadOutcome::Error(msg) => {
                     tracing::warn!("Stdin streaming error: {}", msg);
-                    self.status_message = Some(t!("stdin.read_error", error = msg).to_string());
+                    self.active_window_mut().status_message =
+                        Some(t!("stdin.read_error", error = msg).to_string());
                 }
                 ThreadOutcome::Panic => {
                     tracing::warn!("Stdin streaming thread panicked");
-                    self.status_message = Some(t!("stdin.read_error_panic").to_string());
+                    self.active_window_mut().status_message =
+                        Some(t!("stdin.read_error_panic").to_string());
                 }
             }
             self.complete_stdin_streaming();
@@ -256,7 +258,7 @@ impl Editor {
             }
         }
 
-        self.status_message = Some(
+        self.active_window_mut().status_message = Some(
             t!(
                 "stdin.read_complete",
                 bytes = self.stdin_stream.last_known_size()

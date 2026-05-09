@@ -54,7 +54,7 @@ impl Editor {
 
         // Cancel LSP rename prompt on any mouse interaction
         let mut needs_render = false;
-        if let Some(ref prompt) = self.prompt {
+        if let Some(ref prompt) = self.active_window_mut().prompt {
             if matches!(prompt.prompt_type, PromptType::LspRename { .. }) {
                 self.cancel_prompt();
                 needs_render = true;
@@ -1470,7 +1470,7 @@ impl Editor {
 
     fn handle_click_suggestions(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         let item_idx = self.suggestion_at(col, row)?;
-        let prompt = self.prompt.as_mut()?;
+        let prompt = self.active_window_mut().prompt.as_mut()?;
         prompt.selected_suggestion = Some(item_idx);
         let confirms = prompt.prompt_type.click_confirms();
         if !confirms {
@@ -1493,7 +1493,7 @@ impl Editor {
     /// preview-on-click prompts still have a mouse-only commit path.
     fn handle_click_suggestions_confirm(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         let item_idx = self.suggestion_at(col, row)?;
-        let prompt = self.prompt.as_mut()?;
+        let prompt = self.active_window_mut().prompt.as_mut()?;
         prompt.selected_suggestion = Some(item_idx);
         if let Some(suggestion) = prompt.suggestions.get(item_idx) {
             prompt.input = suggestion.get_value().to_string();
@@ -1517,15 +1517,20 @@ impl Editor {
         {
             return None;
         }
-        let prompt = self.prompt.as_mut()?;
         // Read what the renderer drew so the drag math matches what
         // the user sees. `suggestions_area` carries
         // (inner_rect, scroll_start_idx, visible_count, total_count).
-        let visible = self
-            .chrome_layout
-            .suggestions_area
-            .map(|(_, _, v, _)| v)
-            .unwrap_or(prompt.suggestions.len().min(10));
+        // Snapshot suggestions_area before borrowing the window's
+        // prompt — `active_window_mut()` is a method call so the
+        // compiler can't see that `prompt` and `chrome_layout` are
+        // disjoint sub-fields.
+        let suggestions_area_visible = self.chrome_layout.suggestions_area.map(|(_, _, v, _)| v);
+        let active_window_id = self.active_window;
+        let prompt = self
+            .windows
+            .get_mut(&active_window_id)
+            .and_then(|w| w.prompt.as_mut())?;
+        let visible = suggestions_area_visible.unwrap_or(prompt.suggestions.len().min(10));
         let total = prompt.suggestions.len();
         let track_height = sb_rect.height as usize;
         let click_row = row.saturating_sub(sb_rect.y) as usize;
@@ -2302,15 +2307,19 @@ impl Editor {
         // popup-scrollbar drag uses below.
         if self.mouse_state.dragging_prompt_scrollbar {
             use crate::view::ui::scrollbar::ScrollbarState;
+            // Snapshot chrome rects up front so the prompt borrow on
+            // active_window_mut() doesn't conflict.
+            let sb_rect = self.chrome_layout.suggestions_scrollbar_rect;
+            let suggestions_area_visible =
+                self.chrome_layout.suggestions_area.map(|(_, _, v, _)| v);
+            let active_window_id = self.active_window;
             if let (Some(sb_rect), Some(prompt)) = (
-                self.chrome_layout.suggestions_scrollbar_rect,
-                self.prompt.as_mut(),
+                sb_rect,
+                self.windows
+                    .get_mut(&active_window_id)
+                    .and_then(|w| w.prompt.as_mut()),
             ) {
-                let visible = self
-                    .chrome_layout
-                    .suggestions_area
-                    .map(|(_, _, v, _)| v)
-                    .unwrap_or(prompt.suggestions.len().min(10));
+                let visible = suggestions_area_visible.unwrap_or(prompt.suggestions.len().min(10));
                 let total = prompt.suggestions.len();
                 let track_height = sb_rect.height as usize;
                 // Allow dragging slightly past the top/bottom; clamp

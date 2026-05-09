@@ -67,7 +67,8 @@ impl Editor {
                         server_name,
                         language
                     );
-                    self.status_message = Some(format!("LSP ({}) ready", language));
+                    self.active_window_mut().status_message =
+                        Some(format!("LSP ({}) ready", language));
 
                     // Store capabilities on the specific server handle
                     let __active_id = self.active_window;
@@ -97,7 +98,8 @@ impl Editor {
                     stderr_log_path,
                 } => {
                     tracing::error!("LSP error for {}: {}", language, error);
-                    self.status_message = Some(format!("LSP error ({}): {}", language, error));
+                    self.active_window_mut().status_message =
+                        Some(format!("LSP error ({}): {}", language, error));
 
                     // Get server command from config for the hook
                     let server_command = self
@@ -140,7 +142,7 @@ impl Editor {
                             match self.open_file_no_focus(&log_path) {
                                 Ok(buffer_id) => {
                                     self.mark_buffer_read_only(buffer_id, true);
-                                    self.status_message = Some(format!(
+                                    self.active_window_mut().status_message = Some(format!(
                                         "LSP error ({}): {} - See stderr log",
                                         language, error
                                     ));
@@ -694,7 +696,7 @@ impl Editor {
                         }
                     }
                     // Refresh the Quick Open suggestions if the prompt is open
-                    if let Some(prompt) = &self.prompt {
+                    if let Some(prompt) = &self.active_window_mut().prompt {
                         if prompt.prompt_type == PromptType::QuickOpen {
                             let input = prompt.input.clone();
                             self.update_quick_open_suggestions(&input);

@@ -969,7 +969,7 @@ impl Editor {
     pub fn clear_warnings(&mut self) {
         self.warning_domains.general.clear();
         self.warning_domains.lsp.clear();
-        self.status_message = Some("Warnings cleared".to_string());
+        self.active_window_mut().status_message = Some("Warnings cleared".to_string());
     }
 
     /// Check if any LSP server is in error state

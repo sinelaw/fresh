@@ -46,7 +46,7 @@ impl Editor {
             let text = self.copy_block_selection_text();
             if !text.is_empty() {
                 self.clipboard.copy(text);
-                self.status_message = Some(t!("clipboard.copied").to_string());
+                self.active_window_mut().status_message = Some(t!("clipboard.copied").to_string());
             }
             return;
         }
@@ -77,7 +77,7 @@ impl Editor {
 
             if !text.is_empty() {
                 self.clipboard.copy(text);
-                self.status_message = Some(t!("clipboard.copied").to_string());
+                self.active_window_mut().status_message = Some(t!("clipboard.copied").to_string());
             }
         } else {
             // No selection: copy entire line(s) for each cursor
@@ -104,7 +104,8 @@ impl Editor {
 
             if !text.is_empty() {
                 self.clipboard.copy(text);
-                self.status_message = Some(t!("clipboard.copied_line").to_string());
+                self.active_window_mut().status_message =
+                    Some(t!("clipboard.copied_line").to_string());
             }
         }
     }
@@ -214,7 +215,8 @@ impl Editor {
             .any(|(_, cursor)| cursor.selection_range().is_some());
 
         if !has_selection {
-            self.status_message = Some(t!("clipboard.no_selection").to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.no_selection").to_string());
             return;
         }
 
@@ -229,7 +231,8 @@ impl Editor {
         let theme = match self.theme_registry.get_cloned(theme_name) {
             Some(t) => t,
             None => {
-                self.status_message = Some(format!("Theme '{}' not found", theme_name));
+                self.active_window_mut().status_message =
+                    Some(format!("Theme '{}' not found", theme_name));
                 return;
             }
         };
@@ -242,7 +245,8 @@ impl Editor {
             .collect();
 
         if ranges.is_empty() {
-            self.status_message = Some(t!("clipboard.no_selection").to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.no_selection").to_string());
             return;
         }
 
@@ -280,7 +284,7 @@ impl Editor {
         };
 
         if text.is_empty() {
-            self.status_message = Some(t!("clipboard.no_text").to_string());
+            self.active_window_mut().status_message = Some(t!("clipboard.no_text").to_string());
             return;
         }
 
@@ -315,11 +319,12 @@ impl Editor {
 
         // Copy the HTML to clipboard (with plain text fallback)
         if self.clipboard.copy_html(&html, &text) {
-            self.status_message =
+            self.active_window_mut().status_message =
                 Some(t!("clipboard.copied_with_theme", theme = theme_name).to_string());
         } else {
             self.clipboard.copy(text);
-            self.status_message = Some(t!("clipboard.copied_plain").to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.copied_plain").to_string());
         }
     }
 
@@ -368,13 +373,13 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Copy with theme: ".to_string(),
             PromptType::CopyWithFormattingTheme,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 prompt.input = current_theme_key.to_string();
@@ -433,7 +438,7 @@ impl Editor {
             }
 
             if !deletions.is_empty() {
-                self.status_message = Some(t!("clipboard.cut").to_string());
+                self.active_window_mut().status_message = Some(t!("clipboard.cut").to_string());
             }
         } else {
             // No selection: delete entire line(s) for each cursor
@@ -491,7 +496,8 @@ impl Editor {
             }
 
             if !deletions.is_empty() {
-                self.status_message = Some(t!("clipboard.cut_line").to_string());
+                self.active_window_mut().status_message =
+                    Some(t!("clipboard.cut_line").to_string());
             }
         }
     }
@@ -537,10 +543,10 @@ impl Editor {
         let normalized = paste_text.replace("\r\n", "\n").replace('\r', "\n");
 
         // If a prompt is open, paste into the prompt (prompts use LF internally)
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             prompt.insert_str(&normalized);
             self.update_prompt_suggestions();
-            self.status_message = Some(t!("clipboard.pasted").to_string());
+            self.active_window_mut().status_message = Some(t!("clipboard.pasted").to_string());
             return;
         }
 
@@ -640,7 +646,7 @@ impl Editor {
             self.log_and_apply_event(&event);
         }
 
-        self.status_message = Some(t!("clipboard.pasted").to_string());
+        self.active_window_mut().status_message = Some(t!("clipboard.pasted").to_string());
     }
 
     /// Set clipboard content for testing purposes
@@ -689,7 +695,8 @@ impl Editor {
             .get(&buffer_id)
             .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()));
         let Some(path) = path else {
-            self.status_message = Some(t!("clipboard.no_file_path").to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.no_file_path").to_string());
             return;
         };
 
@@ -703,7 +710,8 @@ impl Editor {
         };
 
         self.clipboard.copy(path_str.clone());
-        self.status_message = Some(t!("clipboard.copied_path", path = &path_str).to_string());
+        self.active_window_mut().status_message =
+            Some(t!("clipboard.copied_path", path = &path_str).to_string());
     }
 
     /// Copy the active buffer's file path. See [`Self::copy_buffer_path`].
@@ -757,7 +765,7 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message =
+                self.active_window_mut().status_message =
                     Some(t!("clipboard.added_cursor_match", count = total_cursors).to_string());
             }
             AddCursorResult::WordSelected {
@@ -782,7 +790,7 @@ impl Editor {
                 self.apply_event_to_active_buffer(&event);
             }
             AddCursorResult::Failed { message } => {
-                self.status_message = Some(message);
+                self.active_window_mut().status_message = Some(message);
             }
         }
     }
@@ -808,11 +816,11 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message =
+                self.active_window_mut().status_message =
                     Some(t!("clipboard.added_cursor_above", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
-                self.status_message = Some(message);
+                self.active_window_mut().status_message = Some(message);
             }
             AddCursorResult::WordSelected { .. } => unreachable!(),
         }
@@ -839,11 +847,11 @@ impl Editor {
                 self.active_event_log_mut().append(event.clone());
                 self.apply_event_to_active_buffer(&event);
 
-                self.status_message =
+                self.active_window_mut().status_message =
                     Some(t!("clipboard.added_cursor_below", count = total_cursors).to_string());
             }
             AddCursorResult::Failed { message } => {
-                self.status_message = Some(message);
+                self.active_window_mut().status_message = Some(message);
             }
             AddCursorResult::WordSelected { .. } => unreachable!(),
         }
@@ -893,7 +901,8 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 
@@ -937,7 +946,8 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 
@@ -980,7 +990,8 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 
@@ -1027,7 +1038,8 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 
@@ -1069,7 +1081,8 @@ impl Editor {
         if !text.is_empty() {
             let len = text.len();
             self.clipboard.copy(text);
-            self.status_message = Some(t!("clipboard.yanked", count = len).to_string());
+            self.active_window_mut().status_message =
+                Some(t!("clipboard.yanked", count = len).to_string());
         }
     }
 }

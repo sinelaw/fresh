@@ -786,7 +786,8 @@ impl Editor {
                     );
                 } else if let Err(e) = self.save() {
                     let msg = format!("{}", e);
-                    self.status_message = Some(t!("file.save_failed", error = &msg).to_string());
+                    self.active_window_mut().status_message =
+                        Some(t!("file.save_failed", error = &msg).to_string());
                 }
             }
             Action::SaveAs => {
@@ -999,7 +1000,7 @@ impl Editor {
             Action::CommandPalette => {
                 // CommandPalette now delegates to QuickOpen (which starts with ">" prefix
                 // for command mode). Toggle if already open.
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if prompt.prompt_type == PromptType::QuickOpen {
                         self.cancel_prompt();
                         return Ok(());
@@ -1009,7 +1010,7 @@ impl Editor {
             }
             Action::QuickOpen => {
                 // Toggle Quick Open: close if already open, otherwise open it
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if prompt.prompt_type == PromptType::QuickOpen {
                         self.cancel_prompt();
                         return Ok(());
@@ -1020,7 +1021,7 @@ impl Editor {
                 self.start_quick_open();
             }
             Action::QuickOpenBuffers => {
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if prompt.prompt_type == PromptType::QuickOpen {
                         self.cancel_prompt();
                         return Ok(());
@@ -1029,7 +1030,7 @@ impl Editor {
                 self.start_quick_open_with_prefix("#");
             }
             Action::QuickOpenFiles => {
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if prompt.prompt_type == PromptType::QuickOpen {
                         self.cancel_prompt();
                         return Ok(());
@@ -1112,7 +1113,7 @@ impl Editor {
                         prompt.suggestions_set_for_input = Some(prompt.input.clone());
                         // Render Resume in the floating overlay too.
                         prompt.overlay = true;
-                        self.prompt = Some(prompt);
+                        self.active_window_mut().prompt = Some(prompt);
                     }
                     _ => {
                         // No cache — kick off a fresh Live Grep.
@@ -1142,6 +1143,7 @@ impl Editor {
                 // Active when the prompt is either PromptType::LiveGrep
                 // or the live_grep plugin's Plugin{custom_type}.
                 let is_grep = self
+                    .active_window()
                     .prompt
                     .as_ref()
                     .map(|p| match &p.prompt_type {
@@ -1157,7 +1159,7 @@ impl Editor {
                     return Ok(());
                 }
                 let (query, matches) = {
-                    let prompt = self.prompt.as_ref().unwrap();
+                    let prompt = self.active_window().prompt.as_ref().unwrap();
                     (
                         prompt.input.clone(),
                         self.snapshot_prompt_results_for_grep(prompt),
@@ -1216,6 +1218,7 @@ impl Editor {
                 // overlay) and `Plugin{custom_type:"live-grep"}`
                 // (the live-running plugin's prompt) qualify.
                 let in_live_grep = self
+                    .active_window()
                     .prompt
                     .as_ref()
                     .map(|p| match &p.prompt_type {
@@ -1574,7 +1577,7 @@ impl Editor {
             }
             Action::Search => {
                 // If already in a search-related prompt, Ctrl+F acts like Enter (confirm search)
-                let is_search_prompt = self.prompt.as_ref().is_some_and(|p| {
+                let is_search_prompt = self.active_window().prompt.as_ref().is_some_and(|p| {
                     matches!(
                         p.prompt_type,
                         PromptType::Search
@@ -1925,7 +1928,7 @@ impl Editor {
                 );
                 // Update incremental highlights if in search prompt, otherwise re-run completed search
                 // Check prompt FIRST since we want to use current prompt input, not stale search_state
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if matches!(
                         prompt.prompt_type,
                         PromptType::Search
@@ -1950,7 +1953,7 @@ impl Editor {
                 self.set_status_message(t!("search.whole_word_state", state = state).to_string());
                 // Update incremental highlights if in search prompt, otherwise re-run completed search
                 // Check prompt FIRST since we want to use current prompt input, not stale search_state
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if matches!(
                         prompt.prompt_type,
                         PromptType::Search
@@ -1975,7 +1978,7 @@ impl Editor {
                 self.set_status_message(t!("search.regex_state", state = state).to_string());
                 // Update incremental highlights if in search prompt, otherwise re-run completed search
                 // Check prompt FIRST since we want to use current prompt input, not stale search_state
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     if matches!(
                         prompt.prompt_type,
                         PromptType::Search
@@ -2360,7 +2363,7 @@ impl Editor {
             }
             Action::PromptConfirmWithText(ref text) => {
                 // For macro playback: set the prompt text before confirming
-                if let Some(ref mut prompt) = self.prompt {
+                if let Some(ref mut prompt) = self.active_window_mut().prompt {
                     prompt.set_input(text.clone());
                     self.update_prompt_suggestions();
                 }
@@ -2409,7 +2412,7 @@ impl Editor {
             }
             // Prompt clipboard actions
             Action::PromptCopy => {
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     let text = prompt.selected_text().unwrap_or_else(|| prompt.get_text());
                     if !text.is_empty() {
                         self.clipboard.copy(text);
@@ -2418,13 +2421,13 @@ impl Editor {
                 }
             }
             Action::PromptCut => {
-                if let Some(prompt) = &self.prompt {
+                if let Some(prompt) = &self.active_window_mut().prompt {
                     let text = prompt.selected_text().unwrap_or_else(|| prompt.get_text());
                     if !text.is_empty() {
                         self.clipboard.copy(text);
                     }
                 }
-                if let Some(prompt) = self.prompt.as_mut() {
+                if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
                     if prompt.has_selection() {
                         prompt.delete_selection();
                     } else {
@@ -2436,7 +2439,7 @@ impl Editor {
             }
             Action::PromptPaste => {
                 if let Some(text) = self.clipboard.paste() {
-                    if let Some(prompt) = self.prompt.as_mut() {
+                    if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
                         prompt.insert_str(&text);
                     }
                     self.update_prompt_suggestions();

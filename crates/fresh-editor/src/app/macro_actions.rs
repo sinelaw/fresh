@@ -144,7 +144,7 @@ impl Editor {
     /// subsystem, which applies its own control-action filter.
     pub(super) fn record_macro_action(&mut self, action: &Action) {
         if let Action::PromptConfirm = action {
-            if let Some(prompt) = &self.prompt {
+            if let Some(prompt) = &self.active_window_mut().prompt {
                 let text = prompt.get_text().to_string();
                 self.macros
                     .record_transformed(Action::PromptConfirmWithText(text));

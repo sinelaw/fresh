@@ -55,13 +55,13 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Line ending: ".to_string(),
             PromptType::SetLineEnding,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let (_, name, desc) = options[current_index];
@@ -102,13 +102,13 @@ impl Editor {
             .position(|enc| *enc == current_encoding)
             .unwrap_or(0);
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Encoding: ".to_string(),
             PromptType::SetEncoding,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let enc = Encoding::all()[current_index];
@@ -179,13 +179,13 @@ impl Editor {
             .position(|enc| *enc == current_encoding)
             .unwrap_or(0);
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Reload with encoding: ".to_string(),
             PromptType::ReloadWithEncoding,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let enc = Encoding::all()[current_index];
@@ -297,13 +297,13 @@ impl Editor {
         // Find current language index
         let current_index = current_index_found.unwrap_or(0);
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Language: ".to_string(),
             PromptType::SetLanguage,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 // Don't set input - keep it empty so typing filters the list
@@ -373,7 +373,7 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Select theme: ".to_string(),
             PromptType::SelectTheme {
                 original_theme: current_theme_key.to_string(),
@@ -381,7 +381,7 @@ impl Editor {
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 // Set input to match selected theme key
@@ -581,12 +581,12 @@ impl Editor {
             }
         }
 
-        let current_map = &self.config.active_keybinding_map;
+        let current_map: String = self.config.active_keybinding_map.to_string();
 
         // Find the index of the current keybinding map
         let current_index = all_maps
             .iter()
-            .position(|name| *name == current_map)
+            .position(|name| name.to_string() == current_map)
             .unwrap_or(0);
 
         let suggestions: Vec<crate::input::commands::Suggestion> = all_maps
@@ -608,16 +608,16 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Select keybinding map: ".to_string(),
             PromptType::SelectKeybindingMap,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                prompt.input = current_map.to_string();
+                prompt.input = current_map.clone();
                 prompt.cursor_pos = prompt.input.len();
                 prompt.selection_anchor = Some(0);
             }
@@ -703,13 +703,13 @@ impl Editor {
             .position(|s| *s == current_style.as_str())
             .unwrap_or(0);
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Select cursor style: ".to_string(),
             PromptType::SelectCursorStyle,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 prompt.input = CursorStyle::DESCRIPTIONS[current_index].to_string();
@@ -792,7 +792,7 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             t!("rulers.remove_prompt").to_string(),
             PromptType::RemoveRuler,
             suggestions,
@@ -874,13 +874,13 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             t!("locale.select_prompt").to_string(),
             PromptType::SelectLocale,
             suggestions,
         ));
 
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 // Start with empty input to show all options initially

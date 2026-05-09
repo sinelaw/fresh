@@ -14,7 +14,8 @@ use rust_i18n::t;
 impl Editor {
     /// Check if the file open dialog is active (for OpenFile, SwitchProject, or SaveFileAs)
     pub fn is_file_open_active(&self) -> bool {
-        self.prompt
+        self.active_window()
+            .prompt
             .as_ref()
             .map(|p| {
                 matches!(
@@ -28,7 +29,8 @@ impl Editor {
 
     /// Check if we're in folder-only selection mode (Switch Project)
     fn is_folder_open_mode(&self) -> bool {
-        self.prompt
+        self.active_window()
+            .prompt
             .as_ref()
             .map(|p| p.prompt_type == PromptType::SwitchProject)
             .unwrap_or(false)
@@ -36,7 +38,8 @@ impl Editor {
 
     /// Check if we're in save mode (Save As)
     fn is_save_mode(&self) -> bool {
-        self.prompt
+        self.active_window()
+            .prompt
             .as_ref()
             .map(|p| p.prompt_type == PromptType::SaveFileAs)
             .unwrap_or(false)
@@ -105,7 +108,7 @@ impl Editor {
                         self.file_open_navigate_to(path);
                     } else {
                         // Just autocomplete the filename
-                        if let Some(prompt) = &mut self.prompt {
+                        if let Some(prompt) = &mut self.active_window_mut().prompt {
                             prompt.input = name;
                             prompt.cursor_pos = prompt.input.len();
                         }
@@ -124,6 +127,7 @@ impl Editor {
                     .map(|s| s.filter.is_empty())
                     .unwrap_or(true);
                 let prompt_empty = self
+                    .active_window()
                     .prompt
                     .as_ref()
                     .map(|p| p.input.is_empty())
@@ -167,6 +171,7 @@ impl Editor {
         let is_folder_mode = self.is_folder_open_mode();
         let is_save_mode = self.is_save_mode();
         let prompt_input = self
+            .active_window()
             .prompt
             .as_ref()
             .map(|p| p.input.clone())
@@ -273,7 +278,7 @@ impl Editor {
     fn file_open_select_folder(&mut self, path: std::path::PathBuf) {
         // Close the file browser
         self.file_open_state = None;
-        self.prompt = None;
+        self.active_window_mut().prompt = None;
 
         // Change the working directory
         self.change_working_dir(path);
@@ -282,7 +287,7 @@ impl Editor {
     /// Navigate to a directory in the file browser
     fn file_open_navigate_to(&mut self, path: std::path::PathBuf) {
         // Clear prompt input
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             prompt.input.clear();
             prompt.cursor_pos = 0;
         }
@@ -312,7 +317,7 @@ impl Editor {
 
         // Close the file browser
         self.file_open_state = None;
-        self.prompt = None;
+        self.active_window_mut().prompt = None;
 
         if !detect_encoding {
             // Start encoding selection prompt, then open with selected encoding
@@ -421,14 +426,14 @@ impl Editor {
             })
             .collect();
 
-        self.prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
             "Select encoding: ".to_string(),
             PromptType::OpenFileWithEncoding { path },
             suggestions,
         ));
 
         // Pre-select UTF-8
-        if let Some(prompt) = self.prompt.as_mut() {
+        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(0); // UTF-8 is first
                 let enc = Encoding::Utf8;
@@ -442,7 +447,7 @@ impl Editor {
     fn file_open_create_new_file(&mut self, path: std::path::PathBuf) {
         // Close the file browser
         self.file_open_state = None;
-        self.prompt = None;
+        self.active_window_mut().prompt = None;
 
         // Reset key context to Normal so editor gets focus
         // This is important when the file explorer was focused before opening the file browser
@@ -462,7 +467,7 @@ impl Editor {
     fn file_open_save_file(&mut self, path: std::path::PathBuf) {
         // Close the file browser
         self.file_open_state = None;
-        self.prompt = None;
+        self.active_window_mut().prompt = None;
 
         self.save_file_as_with_checks(path);
     }
@@ -503,6 +508,7 @@ impl Editor {
         }
 
         let filter = self
+            .active_window()
             .prompt
             .as_ref()
             .map(|p| p.input.clone())
@@ -546,7 +552,7 @@ impl Editor {
             // Navigate to target directory if it exists and is different from current
             if target_dir.is_dir() && target_dir != current_dir {
                 // Update prompt to only show the filename (directory is shown separately)
-                if let Some(prompt) = &mut self.prompt {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.input = filename.clone();
                     prompt.cursor_pos = prompt.input.len();
                 }
@@ -682,7 +688,7 @@ impl Editor {
 
                 // Update prompt text to show the selected entry name
                 if let Some(name) = entry_name {
-                    if let Some(prompt) = &mut self.prompt {
+                    if let Some(prompt) = &mut self.active_window_mut().prompt {
                         prompt.input = name;
                         prompt.cursor_pos = prompt.input.len();
                     }
