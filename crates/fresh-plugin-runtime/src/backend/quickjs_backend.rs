@@ -616,11 +616,26 @@ fn parse_text_property_entry(
         .ok()
         .map(|v| v.max(0.0) as u32);
 
+    let segments: Vec<fresh_core::text_property::StyledSegment> = obj
+        .get::<_, rquickjs::Array>("segments")
+        .ok()
+        .map(|arr| {
+            arr.iter::<Object>()
+                .flatten()
+                .filter_map(|item| {
+                    let json_val = js_to_json(ctx, Value::from_object(item));
+                    serde_json::from_value(json_val).ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     Some(TextPropertyEntry {
         text,
         properties,
         style,
         inline_overlays,
+        segments,
         pad_to_chars,
         truncate_to_chars,
     })
@@ -4088,6 +4103,7 @@ impl JsEditorApi {
                 properties: e.properties.unwrap_or_default(),
                 style: e.style,
                 inline_overlays: e.inline_overlays.unwrap_or_default(),
+                segments: e.segments.unwrap_or_default(),
                 pad_to_chars: e.pad_to_chars,
                 truncate_to_chars: e.truncate_to_chars,
             })
@@ -4141,6 +4157,7 @@ impl JsEditorApi {
                 properties: e.properties.unwrap_or_default(),
                 style: e.style,
                 inline_overlays: e.inline_overlays.unwrap_or_default(),
+                segments: e.segments.unwrap_or_default(),
                 pad_to_chars: e.pad_to_chars,
                 truncate_to_chars: e.truncate_to_chars,
             })
@@ -4195,6 +4212,7 @@ impl JsEditorApi {
                 properties: e.properties.unwrap_or_default(),
                 style: e.style,
                 inline_overlays: e.inline_overlays.unwrap_or_default(),
+                segments: e.segments.unwrap_or_default(),
                 pad_to_chars: e.pad_to_chars,
                 truncate_to_chars: e.truncate_to_chars,
             })

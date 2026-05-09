@@ -45,7 +45,10 @@ export type ButtonKind = globalThis.ButtonKind;
 export type WidgetAction = globalThis.WidgetAction;
 export type WidgetMutation = globalThis.WidgetMutation;
 export type TreeNode = globalThis.TreeNode;
+export type StyledSegment = globalThis.StyledSegment;
 type TextPropertyEntry = globalThis.TextPropertyEntry;
+type InlineOverlay = globalThis.InlineOverlay;
+type OverlayOptions = globalThis.OverlayOptions;
 
 // =============================================================================
 // Builder helpers — preferred over hand-writing `{ kind: "row", ... }`.
@@ -75,7 +78,49 @@ export function hintBar(entries: HintEntry[]): WidgetSpec {
  * already accepts) so a plugin can migrate its panel one widget at a
  * time. */
 export function raw(entries: TextPropertyEntry[]): WidgetSpec {
-  return { kind: "raw", entries };
+ return { kind: "raw", entries };
+}
+
+/** Build a `TextPropertyEntry` from a sequence of styled segments.
+ *
+ * The plugin describes row content structurally — each segment is a
+ * piece of text plus optional `style` and optional nested
+ * `overlays`. The host concatenates the segments and emits one
+ * inline overlay per styled segment plus the segment's nested
+ * overlays shifted by the segment's start position; both happen in
+ * Rust against the final text, so the plugin never names byte or
+ * codepoint offsets between segments.
+ *
+ * Use `padToChars` / `truncateToChars` to constrain the entry's
+ * total width — both are applied AFTER segment concatenation (so
+ * `padToChars: 80` pads the full row to 80 codepoints, regardless
+ * of how the segments split it).
+ *
+ * For freeform overlays inside a single segment (e.g. highlighting
+ * pattern matches inside a context string), pass them via the
+ * segment's `overlays` field with `unit: "char"`. */
+export function styledRow(
+  segments: StyledSegment[],
+  options?: {
+    padToChars?: number;
+    truncateToChars?: number;
+    properties?: Record<string, unknown>;
+    style?: Partial<OverlayOptions>;
+    inlineOverlays?: InlineOverlay[];
+  },
+): TextPropertyEntry {
+  // Build the entry by spreading only set fields. The plugin
+  // bridge converts JS `undefined` to JSON `null` when an object
+  // key is present, which then fails to deserialize as the
+  // matching `Option<…>` / `Vec<…>` field on the host. Omitting
+  // the key entirely lets serde fall back to `#[serde(default)]`.
+  const entry: TextPropertyEntry = { text: "", segments };
+  if (options?.padToChars !== undefined) entry.padToChars = options.padToChars;
+  if (options?.truncateToChars !== undefined) entry.truncateToChars = options.truncateToChars;
+  if (options?.properties !== undefined) entry.properties = options.properties;
+  if (options?.style !== undefined) entry.style = options.style;
+  if (options?.inlineOverlays !== undefined) entry.inlineOverlays = options.inlineOverlays;
+  return entry;
 }
 
 /** Boolean toggle, rendered as `[v] label` / `[ ] label`.

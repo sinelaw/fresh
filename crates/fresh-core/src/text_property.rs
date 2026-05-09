@@ -114,12 +114,40 @@ pub struct InlineOverlay {
     pub unit: OffsetUnit,
 }
 
+/// One styled segment of a `TextPropertyEntry` built via the
+/// `segments` field. Plugins use segments to describe row content
+/// structurally — a sequence of (text, optional style, optional
+/// nested overlays) — instead of pre-rendering the text and
+/// computing byte/char offsets for overlays themselves. The host
+/// concatenates segment text and emits the corresponding overlays
+/// during `normalize_widths`.
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct StyledSegment {
+    /// Verbatim text for this segment.
+    pub text: String,
+    /// When set, the host emits an `InlineOverlay` covering this
+    /// segment's text in the final entry.
+    #[ts(type = "Partial<OverlayOptions>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<OverlayOptions>,
+    /// Additional overlays inside this segment. Offsets are in
+    /// the overlay's own `unit`, relative to the segment's start
+    /// (NOT the final entry text); the host shifts them by the
+    /// segment's position during concatenation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overlays: Vec<InlineOverlay>,
+}
+
 /// An entry with text and its properties
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct TextPropertyEntry {
-    /// The text content
+    /// The text content. When `segments` is non-empty `text` is
+    /// rebuilt from concatenating segment text during
+    /// `normalize_widths` and any value supplied here is replaced.
     pub text: String,
     /// Properties for this text
     #[ts(type = "Record<string, any>")]
@@ -131,6 +159,13 @@ pub struct TextPropertyEntry {
     /// Optional sub-range styling within this entry
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inline_overlays: Vec<InlineOverlay>,
+    /// Optional segment list. When non-empty the host concatenates
+    /// segment text into `text` and pushes one `InlineOverlay`
+    /// (in `Char` units) per styled segment plus the segment's
+    /// nested `overlays` shifted by its position. Resolved before
+    /// truncate/pad/char-byte conversion in `normalize_widths`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<StyledSegment>,
     /// Pad `text` with spaces to this many display columns
     /// (Unicode codepoints). No-op when `text` already has at
     /// least this many codepoints. Applied before overlays are
@@ -154,20 +189,62 @@ impl TextPropertyEntry {
             properties: HashMap::new(),
             style: None,
             inline_overlays: Vec::new(),
+            segments: Vec::new(),
             pad_to_chars: None,
             truncate_to_chars: None,
         }
     }
 
-    /// Apply `truncate_to_chars`, then `pad_to_chars`, then convert
-    /// any `unit: Char` overlays to byte offsets against the
-    /// resulting `text`. Idempotent: an entry with neither
-    /// pad/truncate hints nor char-unit overlays is left untouched.
+    /// Resolve `segments` (if any) into `text` plus inline overlays,
+    /// then apply `truncate_to_chars`, then `pad_to_chars`, then
+    /// convert any `unit: Char` overlays to byte offsets against the
+    /// resulting `text`. Idempotent: an entry with no segments,
+    /// pad/truncate hints, or char-unit overlays is left untouched.
     ///
     /// Truncation rounds the byte cut to a UTF-8 codepoint boundary.
     /// Char-offset overlays beyond the resulting codepoint count are
     /// clamped to that count.
     pub fn normalize_widths(&mut self) {
+        if !self.segments.is_empty() {
+            // Segments are authoritative: replace any pre-existing
+            // `text`. Per-segment style becomes a Char-unit overlay
+            // covering the segment; nested overlays shift by the
+            // segment's start in their declared unit.
+            let segments = std::mem::take(&mut self.segments);
+            self.text.clear();
+            let mut char_cursor: usize = 0;
+            let mut byte_cursor: usize = 0;
+            for seg in segments {
+                let seg_chars = seg.text.chars().count();
+                let seg_bytes = seg.text.len();
+                if let Some(style) = seg.style {
+                    self.inline_overlays.push(InlineOverlay {
+                        start: char_cursor,
+                        end: char_cursor + seg_chars,
+                        style,
+                        properties: HashMap::new(),
+                        unit: OffsetUnit::Char,
+                    });
+                }
+                for mut o in seg.overlays {
+                    match o.unit {
+                        OffsetUnit::Char => {
+                            o.start += char_cursor;
+                            o.end += char_cursor;
+                        }
+                        OffsetUnit::Byte => {
+                            o.start += byte_cursor;
+                            o.end += byte_cursor;
+                        }
+                    }
+                    self.inline_overlays.push(o);
+                }
+                self.text.push_str(&seg.text);
+                char_cursor += seg_chars;
+                byte_cursor += seg_bytes;
+            }
+        }
+
         if let Some(max_chars) = self.truncate_to_chars {
             let max = max_chars as usize;
             let cur = self.text.chars().count();
@@ -254,6 +331,18 @@ impl TextPropertyEntry {
             style,
             properties: HashMap::new(),
             unit: OffsetUnit::Byte,
+        });
+        self
+    }
+
+    /// Push a styled segment. After `normalize_widths` runs, the
+    /// segment becomes part of `text` plus a Char-unit
+    /// `InlineOverlay` covering it (when `style` is set).
+    pub fn with_segment(mut self, text: impl Into<String>, style: Option<OverlayOptions>) -> Self {
+        self.segments.push(StyledSegment {
+            text: text.into(),
+            style,
+            overlays: Vec::new(),
         });
         self
     }
@@ -411,5 +500,144 @@ mod normalize_tests {
         assert_eq!(o.start, 1);
         assert_eq!(o.end, 4);
         assert_eq!(o.unit, OffsetUnit::Byte);
+    }
+
+    fn styled(text: &str, fg_marker_bold: bool) -> StyledSegment {
+        StyledSegment {
+            text: text.to_string(),
+            style: if fg_marker_bold {
+                Some(OverlayOptions {
+                    bold: true,
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
+            overlays: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn segments_concatenate_into_text() {
+        let mut e = entry("ignored");
+        e.segments = vec![
+            styled("hello", false),
+            styled(" ", false),
+            styled("world", false),
+        ];
+        e.normalize_widths();
+        assert_eq!(e.text, "hello world");
+        assert!(e.segments.is_empty(), "segments consumed");
+    }
+
+    #[test]
+    fn styled_segments_emit_char_unit_overlays_for_styled_segments_only() {
+        let mut e = entry("");
+        e.segments = vec![
+            styled("AB", false),
+            styled("CD", true), // bold
+            styled("EF", false),
+            styled("GH", true), // bold
+        ];
+        e.normalize_widths();
+        // After char→byte conversion (all ASCII so identity).
+        assert_eq!(e.text, "ABCDEFGH");
+        let bold: Vec<_> = e.inline_overlays.iter().filter(|o| o.style.bold).collect();
+        assert_eq!(bold.len(), 2);
+        assert_eq!((bold[0].start, bold[0].end), (2, 4));
+        assert_eq!((bold[1].start, bold[1].end), (6, 8));
+    }
+
+    #[test]
+    fn styled_segments_with_multibyte_text_emit_correct_byte_overlays() {
+        // "éé" + "x" + "éé" = chars [0..2, 2..3, 3..5], bytes [0..4, 4..5, 5..9].
+        let mut e = entry("");
+        e.segments = vec![styled("éé", false), styled("x", true), styled("éé", false)];
+        e.normalize_widths();
+        assert_eq!(e.text, "ééxéé");
+        let bold = e
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("styled middle segment");
+        assert_eq!((bold.start, bold.end), (4, 5));
+        assert_eq!(&e.text[bold.start..bold.end], "x");
+    }
+
+    #[test]
+    fn segment_nested_overlays_shift_by_segment_position_in_their_unit() {
+        let mut e = entry("");
+        e.segments = vec![
+            StyledSegment {
+                text: "abc".to_string(),
+                style: None,
+                overlays: vec![],
+            },
+            StyledSegment {
+                text: "éé".to_string(),
+                style: None,
+                overlays: vec![InlineOverlay {
+                    start: 1,
+                    end: 2,
+                    style: OverlayOptions {
+                        bold: true,
+                        ..Default::default()
+                    },
+                    properties: HashMap::new(),
+                    unit: OffsetUnit::Char,
+                }],
+            },
+        ];
+        e.normalize_widths();
+        // "abcéé" — segment2 starts at char 3, byte 3.
+        // Nested overlay [1..2] in segment2 → entry chars [4..5].
+        // Char→byte conversion: char 4 = byte 5, char 5 = byte 7.
+        let bold = e
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("nested overlay");
+        assert_eq!(&e.text[bold.start..bold.end], "é");
+    }
+
+    #[test]
+    fn segments_then_pad_works() {
+        let mut e = entry("");
+        e.segments = vec![styled("ab", true)];
+        e.pad_to_chars = Some(5);
+        e.normalize_widths();
+        assert_eq!(e.text, "ab   ");
+        let bold = e
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("segment overlay");
+        assert_eq!((bold.start, bold.end), (0, 2));
+    }
+
+    #[test]
+    fn segments_then_truncate_clamps_overlapping_overlay() {
+        let mut e = entry("");
+        e.segments = vec![styled("abcdefghij", true)];
+        e.truncate_to_chars = Some(5);
+        e.normalize_widths();
+        // Truncated to "ab..." (budget>3).
+        assert_eq!(e.text, "ab...");
+        let bold = e
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("segment overlay");
+        // Bold overlay covered chars [0..10] originally; clamped to
+        // the new text length (5 codepoints / 5 bytes ASCII).
+        assert_eq!(bold.end, e.text.len());
+    }
+
+    #[test]
+    fn segments_replace_pre_existing_text() {
+        let mut e = entry("should be discarded");
+        e.segments = vec![styled("only this", false)];
+        e.normalize_widths();
+        assert_eq!(e.text, "only this");
     }
 }

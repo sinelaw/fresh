@@ -323,6 +323,7 @@ fn render_collected(
                                 properties: Default::default(),
                                 style: None,
                                 inline_overlays: Vec::new(),
+                                segments: Vec::new(),
                                 pad_to_chars: None,
                                 truncate_to_chars: None,
                             };
@@ -460,6 +461,7 @@ fn render_collected(
                 properties: Default::default(),
                 style: None,
                 inline_overlays: Vec::new(),
+                segments: Vec::new(),
                 pad_to_chars: None,
                 truncate_to_chars: None,
             };
@@ -981,6 +983,7 @@ pub fn render_hint_bar(entries: &[HintEntry]) -> TextPropertyEntry {
         properties: Default::default(),
         style: None,
         inline_overlays: overlays,
+        segments: Vec::new(),
         pad_to_chars: None,
         truncate_to_chars: None,
     }
@@ -1039,6 +1042,7 @@ pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyE
         properties: Default::default(),
         style: None,
         inline_overlays: overlays,
+        segments: Vec::new(),
         pad_to_chars: None,
         truncate_to_chars: None,
     }
@@ -1104,6 +1108,7 @@ pub fn render_button(label: &str, focused: bool, kind: ButtonKind) -> TextProper
         properties: Default::default(),
         style: None,
         inline_overlays: overlays,
+        segments: Vec::new(),
         pad_to_chars: None,
         truncate_to_chars: None,
     }
@@ -1206,10 +1211,11 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
         properties: node.text.properties.clone(),
         style: node.text.style.clone(),
         inline_overlays: overlays,
-        // pad/truncate hints are consumed by the caller before
-        // render_tree_row is invoked (see normalize_widths in the
-        // Tree match arm). The output entry's text is already
-        // final, so these are cleared.
+        // segments / pad / truncate hints are consumed by the
+        // caller before render_tree_row is invoked (see
+        // normalize_widths in the Tree match arm). The output
+        // entry's text is already final, so these are cleared.
+        segments: Vec::new(),
         pad_to_chars: None,
         truncate_to_chars: None,
     };
@@ -1402,6 +1408,7 @@ pub fn render_text_input(
             properties: Default::default(),
             style: None,
             inline_overlays: overlays,
+            segments: Vec::new(),
             pad_to_chars: None,
             truncate_to_chars: None,
         },
@@ -1527,6 +1534,7 @@ pub fn render_text_area(
             properties: Default::default(),
             style: None,
             inline_overlays: Vec::new(),
+            segments: Vec::new(),
             pad_to_chars: None,
             truncate_to_chars: None,
         });
@@ -1591,6 +1599,7 @@ pub fn render_text_area(
             properties: Default::default(),
             style: None,
             inline_overlays: overlays,
+            segments: Vec::new(),
             pad_to_chars: None,
             truncate_to_chars: None,
         });
@@ -2807,6 +2816,110 @@ mod tests {
         assert_eq!(bold.start, 4);
         assert_eq!(bold.end, 5);
         assert_eq!(&trimmed[bold.start..bold.end], "x");
+    }
+
+    #[test]
+    fn tree_node_segments_concatenate_into_row_text_with_per_segment_overlays() {
+        let mut node = tnode("", 0, false);
+        node.text.segments = vec![
+            fresh_core::text_property::StyledSegment {
+                text: "AB".to_string(),
+                style: None,
+                overlays: vec![],
+            },
+            fresh_core::text_property::StyledSegment {
+                text: " ".to_string(),
+                style: None,
+                overlays: vec![],
+            },
+            fresh_core::text_property::StyledSegment {
+                text: "CD".to_string(),
+                style: Some(OverlayOptions {
+                    bold: true,
+                    ..Default::default()
+                }),
+                overlays: vec![],
+            },
+        ];
+        let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
+        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let trimmed = entries[0].text.trim_end_matches('\n');
+        // Leaf row: 2-space prefix + concatenated segments.
+        assert!(
+            trimmed.ends_with("AB CD"),
+            "row should end with concatenated segments, got {trimmed:?}"
+        );
+        let bold = entries[0]
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("styled segment overlay carried through");
+        // Bold covers the third segment only ("CD" at byte 5..7
+        // after 2-byte prefix + "AB " = 3 bytes).
+        assert_eq!(&trimmed[bold.start..bold.end], "CD");
+    }
+
+    #[test]
+    fn tree_node_segment_nested_overlay_shifts_to_segment_position() {
+        // Build a row whose third segment carries a nested overlay
+        // covering chars [0..3] within itself ("CDE"). The host
+        // shifts those by the segment's start in the entry; final
+        // bytes resolve against the assembled text.
+        let mut node = tnode("", 0, false);
+        node.text.segments = vec![
+            fresh_core::text_property::StyledSegment {
+                text: "AB".to_string(),
+                style: None,
+                overlays: vec![],
+            },
+            fresh_core::text_property::StyledSegment {
+                text: " - ".to_string(),
+                style: None,
+                overlays: vec![],
+            },
+            fresh_core::text_property::StyledSegment {
+                text: "CDEFG".to_string(),
+                style: None,
+                overlays: vec![InlineOverlay {
+                    start: 0,
+                    end: 3,
+                    style: OverlayOptions {
+                        bold: true,
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Char,
+                }],
+            },
+        ];
+        let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
+        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let trimmed = entries[0].text.trim_end_matches('\n');
+        let bold = entries[0]
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.bold)
+            .expect("nested overlay carried through");
+        assert_eq!(&trimmed[bold.start..bold.end], "CDE");
+    }
+
+    #[test]
+    fn tree_node_segments_with_pad_pad_after_concatenation() {
+        let mut node = tnode("", 0, false);
+        node.text.segments = vec![fresh_core::text_property::StyledSegment {
+            text: "ab".to_string(),
+            style: None,
+            overlays: vec![],
+        }];
+        node.text.pad_to_chars = Some(5);
+        let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
+        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let trimmed = entries[0].text.trim_end_matches('\n');
+        // Two-space leaf prefix + "ab" + three padding spaces = "  ab   ".
+        assert!(
+            trimmed.ends_with("ab   "),
+            "row should be padded after segment concat, got {trimmed:?}"
+        );
     }
 
     #[test]

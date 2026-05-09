@@ -20,6 +20,7 @@ fn reproduce_cursor_panic() {
             properties: HashMap::new(),
             style: None,
             inline_overlays: Vec::new(),
+            segments: Vec::new(),
             pad_to_chars: None,
             truncate_to_chars: None,
         }],

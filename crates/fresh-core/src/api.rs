@@ -3265,6 +3265,10 @@ pub struct JsTextPropertyEntry {
     #[serde(default)]
     #[ts(optional)]
     pub truncate_to_chars: Option<u32>,
+    /// See `TextPropertyEntry::segments`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub segments: Option<Vec<crate::text_property::StyledSegment>>,
 }
 
 /// Directory entry returned by readDir

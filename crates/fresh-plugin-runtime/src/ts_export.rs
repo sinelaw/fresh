@@ -127,6 +127,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "OverlayColorSpec" => Some(OverlayColorSpec::decl(&cfg)),
         "InlineOverlay" => Some(InlineOverlay::decl(&cfg)),
         "OffsetUnit" => Some(fresh_core::text_property::OffsetUnit::decl(&cfg)),
+        "StyledSegment" => Some(fresh_core::text_property::StyledSegment::decl(&cfg)),
         "StyledText" => Some(fresh_core::api::StyledText::decl(&cfg)),
 
         // Widget library types — declarative plugin UI.
@@ -249,6 +250,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "OverlayColorSpec",               // Used by OverlayOptions.fg/bg
     "InlineOverlay",                  // Used by TextPropertyEntry.inlineOverlays
     "OffsetUnit",                     // Used by InlineOverlay.unit
+    "StyledSegment",                  // Used by TextPropertyEntry.segments
     "GrammarInfoSnapshot",            // Used by listGrammars
     "AnimationRect",                  // Used by animateArea
     "PluginAnimationEdge",            // Used by PluginAnimationKind

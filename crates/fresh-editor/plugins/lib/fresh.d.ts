@@ -124,6 +124,10 @@ type TextPropertyEntry = {
 	* See `TextPropertyEntry::truncate_to_chars`.
 	*/
 	truncateToChars?: number;
+	/**
+	* See `TextPropertyEntry::segments`.
+	*/
+	segments?: Array<StyledSegment>;
 };
 type TsCompositeLayoutConfig = {
 	/**
@@ -688,6 +692,24 @@ type InlineOverlay = {
 	unit?: OffsetUnit;
 };
 type OffsetUnit = "byte" | "char";
+type StyledSegment = {
+	/**
+	* Verbatim text for this segment.
+	*/
+	text: string;
+	/**
+	* When set, the host emits an `InlineOverlay` covering this
+	* segment's text in the final entry.
+	*/
+	style?: Partial<OverlayOptions>;
+	/**
+	* Additional overlays inside this segment. Offsets are in
+	* the overlay's own `unit`, relative to the segment's start
+	* (NOT the final entry text); the host shifts them by the
+	* segment's position during concatenation.
+	*/
+	overlays?: Array<InlineOverlay>;
+};
 type GrammarInfoSnapshot = {
 	/**
 	* The grammar name as used in config files (case-insensitive matching)
