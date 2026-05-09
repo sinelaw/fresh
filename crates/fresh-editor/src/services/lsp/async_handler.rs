@@ -261,8 +261,9 @@ impl LspClientState {
 /// Create common LSP client capabilities with workDoneProgress support
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
-        CodeActionClientCapabilities, CompletionClientCapabilities, DiagnosticClientCapabilities,
-        DiagnosticTag, DynamicRegistrationClientCapabilities, FoldingRangeCapability,
+        CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
+        CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
+        DynamicRegistrationClientCapabilities, FoldingRangeCapability,
         FoldingRangeClientCapabilities, FoldingRangeKind, FoldingRangeKindCapability,
         GeneralClientCapabilities, GotoCapability, HoverClientCapabilities,
         InlayHintClientCapabilities, MarkupKind, PublishDiagnosticsClientCapabilities,
@@ -306,6 +307,26 @@ fn create_client_capabilities() -> ClientCapabilities {
             }),
             references: Some(DynamicRegistrationClientCapabilities::default()),
             code_action: Some(CodeActionClientCapabilities {
+                // Without `codeActionLiteralSupport`, rust-analyzer (and
+                // servers that follow the same spec branch) returns `null`
+                // for `textDocument/codeAction` whenever the action would be
+                // a `WorkspaceEdit`-based assist — e.g. "Fill struct fields"
+                // — because it cannot represent it as the `Command`-only
+                // fallback the spec falls back to.  See sinelaw/fresh#1915.
+                code_action_literal_support: Some(CodeActionLiteralSupport {
+                    code_action_kind: CodeActionKindLiteralSupport {
+                        value_set: vec![
+                            String::new(),
+                            "quickfix".to_string(),
+                            "refactor".to_string(),
+                            "refactor.extract".to_string(),
+                            "refactor.inline".to_string(),
+                            "refactor.rewrite".to_string(),
+                            "source".to_string(),
+                            "source.organizeImports".to_string(),
+                        ],
+                    },
+                }),
                 ..Default::default()
             }),
             rename: Some(RenameClientCapabilities {
@@ -4762,6 +4783,45 @@ mod tests {
         assert!(json.contains("\"id\":1"));
         assert!(json.contains("\"success\":true"));
         assert!(!json.contains("\"error\""));
+    }
+
+    /// rust-analyzer (and other LSP servers that mirror its behaviour) returns
+    /// `null` for `textDocument/codeAction` when the client did not advertise
+    /// `codeActionLiteralSupport` at initialize, because they cannot represent
+    /// `WorkspaceEdit`-based assists like "Fill struct fields" as the
+    /// `Command`-only fallback the spec falls back to.  Without this capability
+    /// users see "No code actions available" for every Rust quickfix
+    /// (sinelaw/fresh#1915).
+    #[test]
+    fn code_action_capability_advertises_literal_support() {
+        let caps = create_client_capabilities();
+        let code_action = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.code_action.as_ref())
+            .expect("code_action capability must be set");
+
+        let literal = code_action
+            .code_action_literal_support
+            .as_ref()
+            .expect("codeActionLiteralSupport must be advertised");
+
+        let kinds = &literal.code_action_kind.value_set;
+        for required in [
+            "",
+            "quickfix",
+            "refactor",
+            "refactor.extract",
+            "refactor.inline",
+            "refactor.rewrite",
+            "source",
+            "source.organizeImports",
+        ] {
+            assert!(
+                kinds.iter().any(|k| k == required),
+                "expected codeActionKind value_set to include {required:?}, got {kinds:?}",
+            );
+        }
     }
 
     #[test]
