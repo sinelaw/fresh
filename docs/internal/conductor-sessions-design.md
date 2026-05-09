@@ -1466,6 +1466,60 @@ return values dispatched by the Editor shim. `impl Editor`
 keeps only window lifecycle, cross-window orchestration,
 editor-global mutations, and the top-level dispatcher.
 
+> **Strong preference: `impl Window` methods over inline
+> borrows.** When you hit a borrow-checker conflict in a handler
+> on `impl Editor`, the *first* thing to try is **moving the
+> handler onto `impl Window`** — not adding a
+> `let __win = self.windows.get_mut(&self.active_window).expect(...);`
+> + sub-field-extraction block. The inline-borrow pattern works
+> for one-off cases where two disjoint sub-fields of the active
+> window need to be `&mut`-aliased in the same expression
+> (the `apply_event_to_buffer` shape: buffers + splits +
+> event_logs together), but it is **not the right tool when an
+> impl method is possible**. Reasons, in order of importance:
+>
+> 1. *The "active" concept leaks into every handler body.*
+>    `self.windows.get_mut(&self.active_window)` only makes
+>    sense when the editor has an active concept — it spreads
+>    that concept into code that should just operate on a
+>    window. Moving the method onto `impl Window` makes
+>    `&mut self` *be* the window; the body has no idea
+>    whether it's active.
+> 2. *It blocks "operate on a non-active window."* Conductor
+>    diffs and cross-window orchestration want to call the
+>    same handler against any window, not just the active
+>    one. An `impl Window` method makes that free
+>    (`alpha.handle_X(...)`, `base.handle_X(...)`); an
+>    inline-borrow handler is permanently active-only.
+> 3. *It's verbose.* Each conflict site bloats by 3–6 lines
+>    of boilerplate. An `impl Window` method has zero
+>    boilerplate at the call site (one method call) and
+>    inside the body uses normal `self.X` field access.
+> 4. *The borrow problem doesn't actually require it.* The
+>    inline-borrow pattern is a workaround for the wrong
+>    layer holding the method. Putting the method on
+>    `impl Window` makes `self.X` and `self.Y` cleanly
+>    splittable by the borrow checker — no workaround needed.
+>
+> The escape hatch — when `impl Window` is genuinely not
+> possible — is when the handler body needs *Editor-global*
+> state that can't be cheaply threaded as a parameter
+> (`buffer_metadata`, `composite_buffers`, `plugin_manager`,
+> mutating UI state like `prompt`/`status_message` deeply
+> intermixed with window mutation, or several of these at
+> once). In that case the inline-borrow pattern is acceptable
+> as a holding measure — but the comment at the site should
+> say "TODO: move to impl Window once <X> is threadable" so
+> the debt is visible.
+>
+> When migrating an existing inline-borrow site to
+> `impl Window`: pull the body into a `Window` method,
+> change `&mut self.active_window_mut().X` to `&mut self.X`,
+> have the method *return* anything Editor-global (events to
+> log, status messages to set, plugin-hook payloads), and
+> rewrite the Editor caller to one line plus the
+> post-mutation dispatch.
+
 This rule was learned the hard way during 0b: the
 accessor-method strategy used there (`Editor::split_manager_mut`
 etc.) returns references bound to `&mut self`, which makes the
@@ -1706,17 +1760,29 @@ codebase after 0a–0f confirms:
   (the established pattern from 0c–0f). No method on
   `impl Editor` reaches around the routing.
 
-Methods that *could* live on `impl Window` but stay on
-`impl Editor` for now: action handlers that mix
-window-scoped state mutation with editor-global concerns
-(status messages, plugin hooks, theme/config reads,
-`buffer_metadata`). Moving them would require either
-threading `&Editor` through or splitting the action into
-a Window-pure inner method plus an Editor outer that
-adds the chrome — pure additional indirection without
-behavior change. Park until a concrete need surfaces (a
-plugin or test that wants the Window-pure operation
-independently of the chrome).
+**Outstanding debt (do not park indefinitely):** ~33 handler
+sites still use the inline
+`let __win = self.windows.get_mut(&self.active_window).expect(...)`
++ sub-field-extraction pattern instead of an `impl Window`
+method. Each one mixes window-scoped state mutation with at
+least one editor-global concern (`status_message`,
+`plugin_manager`, `buffer_metadata`, `composite_buffers`,
+`config` reads, mouse / drag UI state, etc.) which is why they
+weren't moved during 0c–0f's bulk migration. **They should
+still be moved.** The migration recipe — pull the body into a
+`Window` method, return events / status payloads as values,
+have the Editor caller dispatch them after the call — applies
+to all of them; it just takes a per-site judgement on what
+shape the return value should be.
+
+This is genuinely the right cleanup, not a "could be nicer"
+nice-to-have: every inline-borrow site is a permanent
+"active-only" lock on a handler that should work against any
+window for Conductor's cross-window orchestration to compose
+cleanly. Leaving them inline means Conductor's diff /
+find-references-all features will hit the same workarounds we
+just paid down. **Strong preference: drain this list as part
+of the work that introduces the first cross-window consumer.**
 
 **0h — Refactor render to `Window::render`.** *Shipped, in
 the form that turns out to matter.* The concrete pain point
