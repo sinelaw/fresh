@@ -1680,14 +1680,43 @@ not the other window's. Workspace serialization captures the
 active window's bookmarks; restore re-creates them on the
 active window.
 
-**0g — Audit commands.** After 0c–0f, the only methods left
-on `impl Editor` should be cross-window orchestration, window
-lifecycle, editor-global mutations (theme apply, config
-reload, plugin reload, quit), and the dispatcher shim. Any
-leftover `self.buffers` / `self.event_logs` / etc. on
-`impl Editor` is a sign the method should have moved to
-`impl Window`. Goal: zero remaining `editor.buffers` references
-outside lifecycle / cross-window helpers.
+**0g — Audit commands.** *Shipped.* Audit pass over the
+codebase after 0a–0f confirms:
+* Zero direct `self.<moved-field>` references on `impl Editor`
+  for any field that 0a–0f moved (`buffers`, `event_logs`,
+  `terminal_*`, `file_mod_times`, `file_explorer`, `lsp`,
+  `panel_ids`, `splits`, `position_history`,
+  `in_navigation`, `suppress_position_history_once`,
+  `bookmarks`). The few hits in `bookmarks.rs` are inside
+  `BookmarkState::self.bookmarks` (its internal `HashMap`
+  field, not the editor's).
+* Cross-window `self.windows.get(&id)` / `get_mut(&id)` calls
+  exist only where they should: the plugin API surface
+  (`plugin_dispatch.rs`, `plugin_commands.rs` — `createWindow`,
+  `setWindowState`, plugin-driven cross-window dispatch),
+  window lifecycle (`window_actions.rs` —
+  `set_active_window`, `close_window`, first-dive seeding),
+  and a couple of split-borrow inline patterns in handlers
+  that need disjoint `&mut __win.X` and `&mut __win.Y`
+  sub-borrows in the same call.
+* Active-window-routed handlers go through the
+  `active_window()` / `active_window_mut()` accessors or
+  through inline `self.windows.get_mut(&self.active_window)`
+  borrows where the borrow checker needs sub-field splitting
+  (the established pattern from 0c–0f). No method on
+  `impl Editor` reaches around the routing.
+
+Methods that *could* live on `impl Window` but stay on
+`impl Editor` for now: action handlers that mix
+window-scoped state mutation with editor-global concerns
+(status messages, plugin hooks, theme/config reads,
+`buffer_metadata`). Moving them would require either
+threading `&Editor` through or splitting the action into
+a Window-pure inner method plus an Editor outer that
+adds the chrome — pure additional indirection without
+behavior change. Park until a concrete need surfaces (a
+plugin or test that wants the Window-pure operation
+independently of the chrome).
 
 **0h — Refactor render to `Window::render`.** Move the body
 of `Editor::render` onto `impl Window` as
