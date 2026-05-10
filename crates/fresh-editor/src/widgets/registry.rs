@@ -70,27 +70,24 @@ pub enum WidgetInstanceState {
         scroll_offset: u32,
         selected_index: i32,
     },
-    /// `TextInput` instance state: host-owned value + cursor byte
-    /// offset. Becomes authoritative once the widget mounts; the
-    /// spec's `value` / `cursor_byte` are *initial-only* (used at
-    /// first render and ignored thereafter). This guarantees
-    /// correctness under concurrent keystrokes — the plugin's
-    /// spec round-trip can't race against multiple in-flight
-    /// `WidgetCommand` mutations because the host doesn't read
-    /// from the spec for value at all once instance state exists.
-    TextInput { value: String, cursor_byte: u32 },
-    /// `TextArea` instance state: host-owned multi-line value,
-    /// cursor byte offset within `value`, and vertical scroll
-    /// offset (the index of the first visible line). Same
-    /// host-owned semantics as `TextInput` — once instance state
-    /// exists, the spec's `value` / `cursor_byte` are ignored.
-    /// `scroll_row` auto-clamps each render to keep the cursor's
-    /// line within the visible window; plugins never compute
-    /// scroll math.
-    TextArea {
+    /// `Text` instance state: host-owned value + cursor byte
+    /// offset, plus a viewport scroll offset that's only meaningful
+    /// for multi-line (`rows > 1`) variants — the row index of the
+    /// first visible line. Single-line text widgets always render
+    /// from value byte 0 and rely on render-time head-truncate
+    /// scrolling, so they leave `scroll` at `0`.
+    ///
+    /// Becomes authoritative once the widget mounts; the spec's
+    /// `value` / `cursor_byte` are *initial-only* (used at first
+    /// render and ignored thereafter). This guarantees correctness
+    /// under concurrent keystrokes — the plugin's spec round-trip
+    /// can't race against multiple in-flight `WidgetCommand`
+    /// mutations because the host doesn't read from the spec for
+    /// value at all once instance state exists.
+    Text {
         value: String,
         cursor_byte: u32,
-        scroll_row: u32,
+        scroll: u32,
     },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become

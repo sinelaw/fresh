@@ -30,8 +30,7 @@ pub fn find_widget_by_key<'a>(spec: &'a WidgetSpec, target: &str) -> Option<&'a 
         }
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
-        | WidgetSpec::TextInput { key: Some(k), .. }
-        | WidgetSpec::TextArea { key: Some(k), .. }
+        | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::List { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if k == target =>
@@ -39,6 +38,30 @@ pub fn find_widget_by_key<'a>(spec: &'a WidgetSpec, target: &str) -> Option<&'a 
             Some(spec)
         }
         _ => None,
+    }
+}
+
+/// Apply a non-printable editing key to a text widget's `(value,
+/// cursor)` pair, choosing single-line or multi-line semantics from
+/// `multiline`. This is the public entry point used by the host
+/// dispatcher; `apply_text_input_key` and `apply_text_area_key`
+/// remain available as internal helpers (and as the documented test
+/// surface for each kind's behaviour).
+///
+/// `multiline=false` recognises `Backspace` / `Delete` / `Left` /
+/// `Right` / `Home` / `End`. `multiline=true` adds `Up` / `Down` /
+/// `Enter` (newline insertion) and reinterprets `Home` / `End` as
+/// line-relative.
+pub fn apply_text_key(
+    value: &str,
+    cursor: usize,
+    key: &str,
+    multiline: bool,
+) -> (String, usize) {
+    if multiline {
+        apply_text_area_key(value, cursor, key)
+    } else {
+        apply_text_input_key(value, cursor, key)
     }
 }
 
@@ -455,7 +478,7 @@ impl ContainsKey for WidgetSpec {
             }
             WidgetSpec::Toggle { key, .. }
             | WidgetSpec::Button { key, .. }
-            | WidgetSpec::TextInput { key, .. }
+            | WidgetSpec::Text { key, .. }
             | WidgetSpec::List { key, .. }
             | WidgetSpec::Tree { key, .. } => key.as_deref() == Some(widget_key),
             _ => false,

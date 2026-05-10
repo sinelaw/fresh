@@ -60,6 +60,8 @@ export {
   row,
   selectMove,
   spacer,
+  text,
+  textArea,
   textInput,
   textInputChar,
   textInputKey,

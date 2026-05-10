@@ -174,8 +174,7 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
         }
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
-        | WidgetSpec::TextInput { key: Some(k), .. }
-        | WidgetSpec::TextArea { key: Some(k), .. }
+        | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::List { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if !k.is_empty() =>
@@ -796,74 +795,7 @@ fn render_collected(
                 }
             }
         }
-        WidgetSpec::TextInput {
-            value,
-            cursor_byte,
-            focused,
-            label,
-            placeholder,
-            max_visible_chars,
-            field_width,
-            key,
-        } => {
-            let is_focused = match key.as_deref() {
-                Some(k) if !k.is_empty() => k == focus_key,
-                _ => *focused,
-            };
-            // Host-owned value/cursor: read instance state if it
-            // exists; else seed from spec on first render. This is
-            // what makes concurrent keystroke dispatch correct —
-            // see WidgetInstanceState::TextInput doc.
-            let (effective_value, effective_cursor_byte) = match key
-                .as_deref()
-                .filter(|k| !k.is_empty())
-                .and_then(|k| prev.get(k))
-            {
-                Some(WidgetInstanceState::TextInput { value, cursor_byte }) => {
-                    (value.clone(), *cursor_byte as i32)
-                }
-                _ => (value.clone(), *cursor_byte),
-            };
-            if let Some(k) = key.as_deref().filter(|k| !k.is_empty()) {
-                let cb = effective_cursor_byte
-                    .max(0)
-                    .min(effective_value.len() as i32) as u32;
-                next_state.insert(
-                    k.to_string(),
-                    WidgetInstanceState::TextInput {
-                        value: effective_value.clone(),
-                        cursor_byte: cb,
-                    },
-                );
-            }
-            let effective_cursor = if is_focused {
-                effective_cursor_byte
-            } else {
-                -1
-            };
-            let rendered = render_text_input(
-                &effective_value,
-                effective_cursor,
-                is_focused,
-                label,
-                placeholder.as_deref(),
-                *max_visible_chars,
-                *field_width,
-            );
-            // Publish the cursor position so the dispatcher can
-            // drive the hardware cursor. Container shifts
-            // (Row/Col) update buffer_row + byte_in_row.
-            if let Some(byte_in_row) = rendered.cursor_byte_in_entry {
-                focus_cursor = Some(FocusCursor {
-                    buffer_row: 0,
-                    byte_in_row: byte_in_row as u32,
-                });
-            }
-            let mut entry = rendered.entry;
-            ensure_trailing_newline(&mut entry);
-            entries.push(entry);
-        }
-        WidgetSpec::TextArea {
+        WidgetSpec::Text {
             value,
             cursor_byte,
             focused,
@@ -871,75 +803,100 @@ fn render_collected(
             placeholder,
             rows,
             field_width,
+            max_visible_chars,
             key,
         } => {
             let is_focused = match key.as_deref() {
                 Some(k) if !k.is_empty() => k == focus_key,
                 _ => *focused,
             };
-            // Host-owned value/cursor + scroll, mirroring TextInput.
-            // First render seeds from the spec; subsequent renders
-            // read the previous instance state and ignore the spec's
-            // value / cursor_byte.
+            // Host-owned value/cursor (+ scroll, multi-line only):
+            // read instance state if it exists; else seed from spec
+            // on first render. See WidgetInstanceState::Text doc.
             let (effective_value, effective_cursor_byte, prev_scroll) = match key
                 .as_deref()
                 .filter(|k| !k.is_empty())
                 .and_then(|k| prev.get(k))
             {
-                Some(WidgetInstanceState::TextArea {
+                Some(WidgetInstanceState::Text {
                     value,
                     cursor_byte,
-                    scroll_row,
-                }) => (value.clone(), *cursor_byte as i32, *scroll_row),
+                    scroll,
+                }) => (value.clone(), *cursor_byte as i32, *scroll),
                 _ => (value.clone(), *cursor_byte, 0),
             };
-            // Default rows to a small value when the plugin omits
-            // it — keeps the editing region from collapsing.
-            let visible_rows = if *rows == 0 { 3 } else { *rows };
-            let rendered = render_text_area(
-                &effective_value,
-                effective_cursor_byte,
-                is_focused,
-                label,
-                placeholder.as_deref(),
-                visible_rows,
-                *field_width,
-                prev_scroll,
-                panel_width,
-            );
-            // Persist instance state for next render. Cursor is
-            // clamped into [0, value.len()]; scroll_row is the
-            // renderer's auto-clamped value (cursor's line stays in
-            // view).
+            let effective_cursor = if is_focused {
+                effective_cursor_byte
+            } else {
+                -1
+            };
+            // `rows == 0` shouldn't happen because of serde's
+            // default = 1, but if it slips through (raw struct
+            // construction in tests, etc.) treat it as single-line.
+            let multiline = *rows > 1;
+            let new_scroll;
+            if multiline {
+                let rendered = render_text_area(
+                    &effective_value,
+                    effective_cursor,
+                    is_focused,
+                    label,
+                    placeholder.as_deref(),
+                    *rows,
+                    *field_width,
+                    prev_scroll,
+                    panel_width,
+                );
+                new_scroll = rendered.scroll_row;
+                if let (Some(buffer_row), Some(byte_in_row)) =
+                    (rendered.cursor_buffer_row, rendered.cursor_byte_in_row)
+                {
+                    focus_cursor = Some(FocusCursor {
+                        buffer_row,
+                        byte_in_row: byte_in_row as u32,
+                    });
+                }
+                for mut e in rendered.entries {
+                    ensure_trailing_newline(&mut e);
+                    entries.push(e);
+                }
+            } else {
+                let rendered = render_text_input(
+                    &effective_value,
+                    effective_cursor,
+                    is_focused,
+                    label,
+                    placeholder.as_deref(),
+                    *max_visible_chars,
+                    *field_width,
+                );
+                new_scroll = 0;
+                if let Some(byte_in_row) = rendered.cursor_byte_in_entry {
+                    focus_cursor = Some(FocusCursor {
+                        buffer_row: 0,
+                        byte_in_row: byte_in_row as u32,
+                    });
+                }
+                let mut entry = rendered.entry;
+                ensure_trailing_newline(&mut entry);
+                entries.push(entry);
+            }
+            // Persist instance state for next render. Cursor clamps
+            // into `[0, value.len()]`; `scroll` carries the
+            // renderer's auto-clamped first-visible-row for
+            // multi-line, or `0` for single-line.
             if let Some(k) = key.as_deref().filter(|k| !k.is_empty()) {
                 let cb = effective_cursor_byte
                     .max(0)
                     .min(effective_value.len() as i32) as u32;
                 next_state.insert(
                     k.to_string(),
-                    WidgetInstanceState::TextArea {
+                    WidgetInstanceState::Text {
                         value: effective_value.clone(),
                         cursor_byte: cb,
-                        scroll_row: rendered.scroll_row,
+                        scroll: new_scroll,
                     },
                 );
-            }
-            // Publish cursor for the hardware-cursor driver. The
-            // renderer's `cursor_buffer_row` is relative to the
-            // first rendered entry of this widget (label adds a
-            // row), and `cursor_byte_in_entry` is the byte within
-            // that row's text.
-            if let (Some(buffer_row), Some(byte_in_row)) =
-                (rendered.cursor_buffer_row, rendered.cursor_byte_in_row)
-            {
-                focus_cursor = Some(FocusCursor {
-                    buffer_row,
-                    byte_in_row: byte_in_row as u32,
-                });
-            }
-            for mut e in rendered.entries {
-                ensure_trailing_newline(&mut e);
-                entries.push(e);
             }
         }
         WidgetSpec::Raw {
@@ -2178,14 +2135,15 @@ mod tests {
                     ],
                     key: None,
                 },
-                WidgetSpec::TextInput {
+                WidgetSpec::Text {
                     value: "".into(),
                     cursor_byte: -1,
                     focused: false,
                     label: "".into(),
                     placeholder: None,
-                    max_visible_chars: 0,
+                    rows: 1,
                     field_width: 0,
+                    max_visible_chars: 0,
                     key: Some("ti".into()),
                 },
                 WidgetSpec::Toggle {
@@ -3305,14 +3263,19 @@ mod tests {
         field_width: u32,
         key: Option<&str>,
     ) -> WidgetSpec {
-        WidgetSpec::TextArea {
+        WidgetSpec::Text {
             value: value.into(),
             cursor_byte,
             focused,
             label: String::new(),
             placeholder: None,
-            rows,
+            // Force multi-line behaviour even when the test passes
+            // `rows: 1` — the previous TextArea-specific tests
+            // exercise the multi-line code path through this
+            // helper.
+            rows: rows.max(2),
             field_width,
+            max_visible_chars: 0,
             key: key.map(|s| s.into()),
         }
     }
@@ -3383,7 +3346,7 @@ mod tests {
         // With a label, the editing region starts on row 1, so a
         // cursor on line 0 of the value lands on row 1 of the
         // buffer.
-        let spec = WidgetSpec::TextArea {
+        let spec = WidgetSpec::Text {
             value: "hi".into(),
             cursor_byte: 1,
             focused: true,
@@ -3391,6 +3354,7 @@ mod tests {
             placeholder: None,
             rows: 2,
             field_width: 6,
+            max_visible_chars: 0,
             key: Some("ta".into()),
         };
         let prev = HashMap::new();
@@ -3407,13 +3371,13 @@ mod tests {
         let prev = HashMap::new();
         let out = render_spec(&spec, &prev, "ta", 80);
         match out.instance_states.get("ta") {
-            Some(WidgetInstanceState::TextArea {
+            Some(WidgetInstanceState::Text {
                 value, cursor_byte, ..
             }) => {
                 assert_eq!(value, "abc");
                 assert_eq!(*cursor_byte, 2);
             }
-            other => panic!("expected TextArea instance state, got {:?}", other),
+            other => panic!("expected Text instance state, got {:?}", other),
         }
     }
 
@@ -3425,10 +3389,10 @@ mod tests {
         let mut prev = HashMap::new();
         prev.insert(
             "ta".into(),
-            WidgetInstanceState::TextArea {
+            WidgetInstanceState::Text {
                 value: "new".into(),
                 cursor_byte: 3,
-                scroll_row: 0,
+                scroll: 0,
             },
         );
         let out = render_spec(&spec, &prev, "ta", 80);
@@ -3446,10 +3410,10 @@ mod tests {
         let prev = HashMap::new();
         let out = render_spec(&spec, &prev, "ta", 80);
         match out.instance_states.get("ta") {
-            Some(WidgetInstanceState::TextArea { scroll_row, .. }) => {
-                assert_eq!(*scroll_row, 3, "scroll so lines 3..5 are visible");
+            Some(WidgetInstanceState::Text { scroll, .. }) => {
+                assert_eq!(*scroll, 3, "scroll so lines 3..5 are visible");
             }
-            _ => panic!("expected TextArea instance state"),
+            _ => panic!("expected Text instance state"),
         }
     }
 

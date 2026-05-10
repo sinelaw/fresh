@@ -1146,6 +1146,12 @@ fn default_tree_visible_rows() -> u32 {
     20
 }
 
+/// Default `rows` for a `Text` widget — `1` ⇒ single-line. Plugins
+/// opt into multi-line by setting `rows >= 2`.
+fn default_text_rows() -> u32 {
+    1
+}
+
 /// One node in a `Tree` widget's flat-list spec. The plugin walks
 /// its hierarchy depth-first and emits one `TreeNode` per node;
 /// `depth` controls indent, `has_children` controls whether the
@@ -1385,97 +1391,73 @@ pub enum WidgetSpec {
     /// the spec on every change. The keymap-routing layer (host
     /// claims widget keys before the plugin sees them) lands in a
     /// later commit.
-    TextInput {
-        /// Current text in the field.
+    /// Text input — single-line (`rows == 1`, default) or multi-line
+    /// (`rows > 1`). The host owns `value` and `cursor_byte` as
+    /// instance state once the widget renders for the first time;
+    /// the spec's values are initial-only.
+    ///
+    /// Single-line vs multi-line behaviour is selected by `rows`:
+    /// * `rows == 1` — renders as `[value]` with the cursor pinned
+    ///   to a constant `field_width` (head-truncate when the value
+    ///   exceeds it). `Enter` advances focus (form-like UX).
+    ///   `Up`/`Down` are no-ops. `Home`/`End` jump to the start /
+    ///   end of the whole value.
+    /// * `rows > 1` — renders as `rows` lines tall (padded with
+    ///   blanks when `value` is shorter). `Enter` inserts a newline
+    ///   at the cursor. `Up`/`Down` move between lines (clamped to
+    ///   each line's column count). `Home`/`End` jump within the
+    ///   current line. The host auto-scrolls vertically to keep
+    ///   the cursor's line visible.
+    ///
+    /// Smart-key dispatch (`WidgetCommand::Key`) selects the right
+    /// behaviour from `rows`. Plugins that want a different `Enter`
+    /// binding intercept the key in their own mode binding before
+    /// dispatching it through the smart-key router.
+    ///
+    /// `label` (when non-empty) renders inline before `[` for
+    /// single-line, and as a row above the editing region for
+    /// multi-line. `placeholder` shows when `value` is empty and
+    /// the field is unfocused (first row only for multi-line).
+    /// `field_width` controls visible column width: `0` = auto-fit
+    /// (single-line) or panel width (multi-line). `max_visible_chars`
+    /// is a single-line soft cap applied after the field-width pad
+    /// (`0` = no cap; ignored when `rows > 1`).
+    Text {
+        /// Initial text. Spec value is read at first render only;
+        /// instance state takes over thereafter.
+        #[serde(default)]
         value: String,
-        /// Byte offset of the cursor within `value`. Negative
-        /// (encoded as `i32` in JSON; clamped on Rust side) means
-        /// "no cursor" — the input is not the active focus target.
+        /// Initial byte-offset cursor within `value`. Negative
+        /// (encoded as `i32` in JSON) means "no cursor" — clamped
+        /// to `[0, value.len()]` host-side.
         #[serde(default = "default_cursor_byte")]
         cursor_byte: i32,
-        /// Whether this input has visual focus (controls fg/bg
-        /// highlight).
+        /// Whether this widget has visual focus.
         #[serde(default)]
         focused: bool,
-        /// Optional label rendered before the brackets:
-        /// `Label: [value]`. Use the empty string to omit.
+        /// Optional label rendered before / above the editing
+        /// region. Empty = omitted.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         label: String,
-        /// Optional placeholder shown when `value` is empty and the
-        /// input is unfocused.
+        /// Placeholder shown when unfocused and `value` is empty.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         placeholder: Option<String>,
-        /// Maximum visible characters before truncation with an
-        /// ellipsis. `0` means "don't truncate". Distinct from
-        /// `field_width` — this is a soft cap, applied *after*
-        /// the field-width pad. Most callers want `field_width`.
+        /// Number of visible rows of editing region. `0` falls back
+        /// to `1` (single-line). `1` = single-line behaviour;
+        /// `>= 2` = multi-line behaviour. See the type-level doc
+        /// for the per-mode semantics.
+        #[serde(default = "default_text_rows")]
+        rows: u32,
+        /// Visible column width. `0` = auto-fit (single-line) or
+        /// panel width (multi-line). When set, single-line
+        /// head-truncates with `…` and multi-line tail-truncates
+        /// per-line.
+        #[serde(default)]
+        field_width: u32,
+        /// Single-line soft cap on visible chars after the
+        /// `field_width` pad. `0` = no cap. Ignored when `rows > 1`.
         #[serde(default)]
         max_visible_chars: u32,
-        /// Fixed visible width inside the brackets (in display
-        /// columns / chars). `0` (default) = auto-fit, growing with
-        /// the value. `>0` = always render exactly this many chars:
-        /// pad short values with trailing spaces, head-truncate
-        /// long values with `…` so the *tail* (where the cursor
-        /// usually is) stays visible.
-        #[serde(default)]
-        field_width: u32,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        key: Option<String>,
-    },
-    /// Multi-line text input. The host owns value + cursor as
-    /// instance state (mirrors `TextInput`), plus a vertical scroll
-    /// offset that auto-clamps to keep the cursor's line visible
-    /// within `rows` visible rows.
-    ///
-    /// Smart-key dispatch differs from `TextInput`: `Enter` inserts
-    /// a newline at the cursor (rather than advancing focus), so
-    /// the multi-line shape is the natural one. Plugins that want
-    /// `Enter` to submit can intercept the key in their own mode
-    /// binding and call `panel.command(focusAdvance(1))` instead.
-    /// `Up`/`Down` move the cursor between lines (clamped to each
-    /// line's column count); `Home`/`End` jump within the current
-    /// line; `Left`/`Right`/`Backspace`/`Delete` and printable text
-    /// behave exactly as in `TextInput`.
-    ///
-    /// The widget renders `rows` lines tall, padded with blanks
-    /// when `value` is shorter, with `field_width` columns wide
-    /// when set (`0` = use the panel's natural width). When
-    /// unfocused and empty, `placeholder` is rendered in the first
-    /// row only.
-    TextArea {
-        /// Initial text. Spec value is used at first render only;
-        /// instance state takes over thereafter (matching
-        /// `TextInput`'s host-owned value model).
-        #[serde(default)]
-        value: String,
-        /// Initial byte-offset cursor. Negative ⇒ "no cursor"; the
-        /// host clamps to `[0, value.len()]`.
-        #[serde(default = "default_cursor_byte")]
-        cursor_byte: i32,
-        /// Visual focus flag (initial-only — instance state takes
-        /// over once the panel has any tabbable widgets, see
-        /// `focus_key` semantics).
-        #[serde(default)]
-        focused: bool,
-        /// Optional label rendered on its own row above the
-        /// editing region (`Label:` followed by the multi-line
-        /// box). Empty = omitted.
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        label: String,
-        /// Placeholder text shown on the first row when the value
-        /// is empty and the field is unfocused.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        placeholder: Option<String>,
-        /// Number of visible rows of editing region. Plugin
-        /// computes from its viewport; `0` falls back to a small
-        /// default (3) at render time.
-        #[serde(default)]
-        rows: u32,
-        /// Visible column width inside the editing region. `0`
-        /// (default) = grow with the longest visible line up to
-        /// the panel width.
-        #[serde(default)]
-        field_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

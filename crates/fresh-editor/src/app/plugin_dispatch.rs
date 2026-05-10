@@ -23,41 +23,29 @@ use crate::view::split::SplitViewState;
 
 use super::Editor;
 
-/// Snapshot of the focused text-bearing widget's host-owned state,
-/// regardless of kind. Returned by `read_focused_text` and consumed
-/// by `write_focused_text` so the kind-specific instance-state
-/// fields (e.g. TextArea's `scroll_row`) round-trip without forcing
-/// every callsite to fork on kind.
+/// Snapshot of the focused `Text` widget's host-owned state.
+/// Returned by `read_focused_text` and consumed by
+/// `write_focused_text` so the writer round-trips `scroll`
+/// (preserved across mutations — only meaningful when `multiline`)
+/// without re-walking the spec or instance state.
 ///
-/// Adding a new text-bearing widget kind: add a variant here, plus
-/// arms in `read_focused_text` / `write_focused_text` /
-/// `handle_widget_text_key` / `handle_widget_text_char`. Every other
-/// site that touches focused text input goes through this enum.
+/// `multiline` is read from the spec's `rows > 1` at read time and
+/// passed to `apply_text_key` so single-line vs multi-line
+/// semantics select correctly without re-querying the spec.
 #[derive(Debug, Clone)]
-enum FocusedText {
-    TextInput {
-        value: String,
-        cursor: usize,
-    },
-    TextArea {
-        value: String,
-        cursor: usize,
-        scroll_row: u32,
-    },
+struct FocusedText {
+    value: String,
+    cursor: usize,
+    scroll: u32,
+    multiline: bool,
 }
 
 impl FocusedText {
     fn value(&self) -> &str {
-        match self {
-            FocusedText::TextInput { value, .. } | FocusedText::TextArea { value, .. } => value,
-        }
+        &self.value
     }
     fn cursor(&self) -> usize {
-        match self {
-            FocusedText::TextInput { cursor, .. } | FocusedText::TextArea { cursor, .. } => {
-                *cursor
-            }
-        }
+        self.cursor
     }
 }
 
@@ -3776,43 +3764,28 @@ impl Editor {
                 value,
                 cursor_byte,
             } => {
-                // Value+cursor live in instance state for both
-                // TextInput and TextArea; route to the right state
-                // variant based on the spec.
+                // Value+cursor live in instance state for the unified
+                // Text widget. Preserve `scroll` across the mutation
+                // so multi-line viewport offsets don't snap on a
+                // plugin-driven update; the renderer re-clamps next
+                // render anyway.
                 if let Some(panel) = self.widget_registry.get_mut(panel_id) {
                     let cb = match cursor_byte {
                         Some(c) if c >= 0 => (c as u32).min(value.len() as u32),
                         _ => value.len() as u32,
                     };
-                    let widget_kind = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
-                        .map(|w| match w {
-                            fresh_core::api::WidgetSpec::TextArea { .. } => "textArea",
-                            _ => "textInput",
-                        })
-                        .unwrap_or("textInput");
-                    let new_state = match widget_kind {
-                        "textArea" => {
-                            // Preserve scroll across the mutation;
-                            // the renderer re-clamps it on re-render.
-                            let scroll_row = match panel.instance_states.get(&widget_key) {
-                                Some(crate::widgets::WidgetInstanceState::TextArea {
-                                    scroll_row,
-                                    ..
-                                }) => *scroll_row,
-                                _ => 0,
-                            };
-                            crate::widgets::WidgetInstanceState::TextArea {
-                                value,
-                                cursor_byte: cb,
-                                scroll_row,
-                            }
-                        }
-                        _ => crate::widgets::WidgetInstanceState::TextInput {
+                    let scroll = match panel.instance_states.get(&widget_key) {
+                        Some(crate::widgets::WidgetInstanceState::Text { scroll, .. }) => *scroll,
+                        _ => 0,
+                    };
+                    panel.instance_states.insert(
+                        widget_key,
+                        crate::widgets::WidgetInstanceState::Text {
                             value,
                             cursor_byte: cb,
+                            scroll,
                         },
-                    };
-                    panel.instance_states.insert(widget_key, new_state);
+                    );
                 }
             }
             WidgetMutation::SetChecked {
@@ -3964,7 +3937,12 @@ impl Editor {
                     Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
                         self.handle_widget_tree_select_move(panel_id, delta);
                     }
-                    Some(fresh_core::api::WidgetSpec::TextArea { .. }) => {
+                    Some(fresh_core::api::WidgetSpec::Text { rows, .. }) if *rows > 1 => {
+                        // Multi-line Text: line nav. Single-line
+                        // ignores Up/Down (apply_text_input_key
+                        // would no-op anyway, but skipping the
+                        // instance-state churn keeps the focus
+                        // event quiet).
                         self.handle_widget_text_key(panel_id, key);
                     }
                     _ => {}
@@ -3996,8 +3974,7 @@ impl Editor {
                 }
             }
             "Left" | "Right" => match widget {
-                Some(fresh_core::api::WidgetSpec::TextInput { .. })
-                | Some(fresh_core::api::WidgetSpec::TextArea { .. }) => {
+                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
                     self.handle_widget_text_key(panel_id, key);
                 }
                 Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
@@ -4006,8 +3983,7 @@ impl Editor {
                 _ => {}
             },
             "Backspace" | "Delete" | "Home" | "End" => match widget {
-                Some(fresh_core::api::WidgetSpec::TextInput { .. })
-                | Some(fresh_core::api::WidgetSpec::TextArea { .. }) => {
+                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
                     self.handle_widget_text_key(panel_id, key);
                 }
                 _ => {}
@@ -4023,20 +3999,20 @@ impl Editor {
                 Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
                     self.fire_tree_activate(panel_id, &focus_key);
                 }
-                Some(fresh_core::api::WidgetSpec::TextInput { .. }) => {
-                    // Form-like UX: pressing Enter on a single-line text
-                    // input commits the field and moves to the next
-                    // tabbable widget. Plugins that want a different
-                    // Enter binding can intercept the key before
-                    // dispatching it through the smart-key router.
-                    self.handle_widget_focus_advance(panel_id, 1);
-                }
-                Some(fresh_core::api::WidgetSpec::TextArea { .. }) => {
-                    // Multi-line input: Enter inserts a newline at
-                    // the cursor. Plugins that want Enter to submit
-                    // can intercept it before dispatching through
-                    // the smart-key router.
-                    self.handle_widget_text_key(panel_id, "Enter");
+                Some(fresh_core::api::WidgetSpec::Text { rows, .. }) => {
+                    if *rows > 1 {
+                        // Multi-line: Enter inserts a newline at the
+                        // cursor. Plugins that want Enter to submit
+                        // can intercept it in their mode binding
+                        // before dispatching through the smart-key
+                        // router.
+                        self.handle_widget_text_key(panel_id, "Enter");
+                    } else {
+                        // Single-line, form-like UX: Enter commits
+                        // the field and moves to the next tabbable
+                        // widget. Same intercept path applies.
+                        self.handle_widget_focus_advance(panel_id, 1);
+                    }
                 }
                 _ => {}
             },
@@ -4045,8 +4021,7 @@ impl Editor {
                 | Some(fresh_core::api::WidgetSpec::Toggle { .. }) => {
                     self.handle_widget_activate(panel_id);
                 }
-                Some(fresh_core::api::WidgetSpec::TextInput { .. })
-                | Some(fresh_core::api::WidgetSpec::TextArea { .. }) => {
+                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
                     self.handle_widget_text_char(panel_id, " ");
                 }
                 Some(fresh_core::api::WidgetSpec::List { .. }) => {
@@ -4767,79 +4742,62 @@ impl Editor {
         if focus_key.is_empty() {
             return None;
         }
-        match panel.instance_states.get(&focus_key) {
-            Some(crate::widgets::WidgetInstanceState::TextInput { value, cursor_byte }) => {
-                return Some((
-                    focus_key,
-                    FocusedText::TextInput {
-                        value: value.clone(),
-                        cursor: *cursor_byte as usize,
-                    },
-                ));
-            }
-            Some(crate::widgets::WidgetInstanceState::TextArea {
+        // Confirm the focused widget is a Text and read its
+        // multi-line flag from the spec (always — even when the
+        // value is sourced from instance state). The renderer
+        // doesn't carry `rows` into instance state, so the spec
+        // remains the single source of truth for the multi-line
+        // discriminator.
+        let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key)?;
+        let (spec_value, spec_cursor, multiline) = match widget {
+            fresh_core::api::WidgetSpec::Text {
                 value,
                 cursor_byte,
-                scroll_row,
-            }) => {
-                return Some((
-                    focus_key,
-                    FocusedText::TextArea {
-                        value: value.clone(),
-                        cursor: *cursor_byte as usize,
-                        scroll_row: *scroll_row,
-                    },
-                ));
-            }
-            _ => {}
+                rows,
+                ..
+            } => (value, *cursor_byte, *rows > 1),
+            _ => return None,
+        };
+        // Instance state is authoritative once rendered.
+        if let Some(crate::widgets::WidgetInstanceState::Text {
+            value,
+            cursor_byte,
+            scroll,
+        }) = panel.instance_states.get(&focus_key)
+        {
+            return Some((
+                focus_key,
+                FocusedText {
+                    value: value.clone(),
+                    cursor: *cursor_byte as usize,
+                    scroll: *scroll,
+                    multiline,
+                },
+            ));
         }
-        // Spec fallback — only reached before first render, which in
-        // practice should never be true when a WidgetCommand arrives.
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key)?;
-        match widget {
-            fresh_core::api::WidgetSpec::TextInput {
-                value, cursor_byte, ..
-            } => {
-                let cur = if *cursor_byte < 0 {
-                    value.len()
-                } else {
-                    (*cursor_byte as usize).min(value.len())
-                };
-                Some((
-                    focus_key,
-                    FocusedText::TextInput {
-                        value: value.clone(),
-                        cursor: cur,
-                    },
-                ))
-            }
-            fresh_core::api::WidgetSpec::TextArea {
-                value, cursor_byte, ..
-            } => {
-                let cur = if *cursor_byte < 0 {
-                    value.len()
-                } else {
-                    (*cursor_byte as usize).min(value.len())
-                };
-                Some((
-                    focus_key,
-                    FocusedText::TextArea {
-                        value: value.clone(),
-                        cursor: cur,
-                        scroll_row: 0,
-                    },
-                ))
-            }
-            _ => None,
-        }
+        // Spec fallback — only reached before first render, which
+        // in practice should never be true when a WidgetCommand
+        // arrives.
+        let cur = if spec_cursor < 0 {
+            spec_value.len()
+        } else {
+            (spec_cursor as usize).min(spec_value.len())
+        };
+        Some((
+            focus_key,
+            FocusedText {
+                value: spec_value.clone(),
+                cursor: cur,
+                scroll: 0,
+                multiline,
+            },
+        ))
     }
 
     /// Write the focused text widget's new `(value, cursor)` into
-    /// instance state, preserving any kind-specific extras (e.g.
-    /// TextArea's `scroll_row`), re-render the panel, and fire a
-    /// `change` event. `prev` is the snapshot returned by
-    /// `read_focused_text`; its variant determines which
-    /// `WidgetInstanceState` shape to write.
+    /// instance state, preserving `scroll` (only meaningful for
+    /// multi-line, kept across mutations to avoid snap-back), then
+    /// re-render the panel and fire a `change` event.
     fn write_focused_text(
         &mut self,
         panel_id: u64,
@@ -4849,22 +4807,14 @@ impl Editor {
         new_cursor: usize,
     ) {
         if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-            let new_state = match prev {
-                FocusedText::TextInput { .. } => crate::widgets::WidgetInstanceState::TextInput {
+            panel.instance_states.insert(
+                focus_key.to_string(),
+                crate::widgets::WidgetInstanceState::Text {
                     value: new_value.clone(),
                     cursor_byte: new_cursor as u32,
+                    scroll: prev.scroll,
                 },
-                FocusedText::TextArea { scroll_row, .. } => {
-                    crate::widgets::WidgetInstanceState::TextArea {
-                        value: new_value.clone(),
-                        cursor_byte: new_cursor as u32,
-                        scroll_row: *scroll_row,
-                    }
-                }
-            };
-            panel
-                .instance_states
-                .insert(focus_key.to_string(), new_state);
+            );
         }
         self.rerender_widget_panel(panel_id);
         if self.plugin_manager.has_hook_handlers("widget_event") {
@@ -4885,23 +4835,17 @@ impl Editor {
 
     /// Apply a non-printable editing key to the focused text widget
     /// — `Backspace` / `Delete` / `Left` / `Right` / `Home` / `End`
-    /// (TextInput + TextArea), plus `Up` / `Down` / `Enter` for
-    /// TextArea. Routes through `apply_text_input_key` or
-    /// `apply_text_area_key` based on the focused widget's variant.
+    /// always; plus `Up` / `Down` / `Enter` when the widget is
+    /// multi-line. Dispatches through `apply_text_key` which
+    /// branches on `prev.multiline`.
     fn handle_widget_text_key(&mut self, panel_id: u64, key: &str) {
         let (focus_key, prev) = match self.read_focused_text(panel_id) {
             Some(t) => t,
             None => return,
         };
-        let (new_value, new_cursor) = match &prev {
-            FocusedText::TextInput { value, cursor } => {
-                crate::widgets::apply_text_input_key(value, *cursor, key)
-            }
-            FocusedText::TextArea { value, cursor, .. } => {
-                crate::widgets::apply_text_area_key(value, *cursor, key)
-            }
-        };
-        if new_value == prev.value() && new_cursor == prev.cursor() {
+        let (new_value, new_cursor) =
+            crate::widgets::apply_text_key(prev.value(), prev.cursor(), key, prev.multiline);
+        if new_value == *prev.value() && new_cursor == prev.cursor() {
             return; // no-op
         }
         self.write_focused_text(panel_id, &focus_key, &prev, new_value, new_cursor);

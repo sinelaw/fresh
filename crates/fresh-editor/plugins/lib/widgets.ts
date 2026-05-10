@@ -282,28 +282,69 @@ export function tree(options: {
   };
 }
 
-/** Multi-line text input, rendered as a fixed-height block of
- * `rows` rows. The host owns the value, cursor, and vertical scroll
- * as instance state — same pattern as `textInput`, lifted to a
- * 2-D buffer.
+/** Text input — single-line (`rows: 1`, default) or multi-line
+ * (`rows >= 2`). The host owns `value` and `cursorByte` as instance
+ * state once the widget renders for the first time; multi-line
+ * widgets also own a vertical scroll offset.
  *
- * **Smart-key dispatch differs from `textInput`**:
- * `Enter` inserts a newline (instead of advancing focus);
- * `Up`/`Down` move between lines; `Home`/`End` jump within the
- * current line; `Left`/`Right`/`Backspace`/`Delete` and printable
- * chars work as in `textInput`. Plugins that want `Enter` to
- * submit can intercept the key in their own mode binding and call
- * `panel.command(focusAdvance(1))` instead — this default is
- * non-breaking because the smart-key dispatch is opt-in.
+ * Single-line (`rows: 1`) renders as `[value]` (or `Label: [value]`
+ * if `label` is provided), with `fieldWidth` giving a constant
+ * visible width — short values pad with trailing spaces, long
+ * values head-truncate with `…` so the tail (where the cursor
+ * usually is) stays visible. Smart-key dispatch: `Enter` advances
+ * focus; `Up`/`Down` are no-ops; `Home`/`End` jump to the start /
+ * end of the whole value.
  *
- * `rows` controls visible height (default 3 if omitted).
- * `fieldWidth` controls visible column width inside the editing
- * region; `0` (default) uses the panel width. Long lines
- * tail-truncate with `…`; short lines pad with trailing spaces so
- * the focused-bg block keeps a rectangular shape.
+ * Multi-line (`rows >= 2`) renders as a `rows`-tall block, padded
+ * with blanks when `value` is shorter. Smart-key dispatch differs:
+ * `Enter` inserts a newline; `Up`/`Down` move between lines;
+ * `Home`/`End` are line-relative; long lines tail-truncate with `…`
+ * per-line. Plugins that want `Enter` to submit can intercept the
+ * key in their own mode binding and call
+ * `panel.command(focusAdvance(1))` instead.
  *
- * `key` is required for any TextArea that should preserve its
- * value, cursor, and scroll across re-renders. */
+ * `key` is required for any text widget that should preserve its
+ * value, cursor, and scroll across re-renders.
+ *
+ * Prefer the `textInput()` / `textArea()` helpers below when the
+ * intent is unambiguous — they call this with the right `rows`. */
+export function text(
+  options: {
+    value?: string;
+    cursorByte?: number;
+    focused?: boolean;
+    label?: string;
+    placeholder?: string;
+    /** Number of visible rows of editing region. `1` (default) =
+     * single-line behaviour; `>= 2` = multi-line behaviour. */
+    rows?: number;
+    /** Visible column width. `0` (default) = auto-fit (single-line)
+     * or panel width (multi-line). */
+    fieldWidth?: number;
+    /** Single-line soft cap on visible chars after the
+     * `fieldWidth` pad. `0` = no cap. Ignored when `rows >= 2`. */
+    maxVisibleChars?: number;
+    key?: string;
+  } = {},
+): WidgetSpec {
+  return {
+    kind: "text",
+    value: options.value ?? "",
+    cursorByte: options.cursorByte ?? -1,
+    focused: options.focused ?? false,
+    label: options.label ?? "",
+    placeholder: options.placeholder,
+    rows: options.rows ?? 1,
+    fieldWidth: options.fieldWidth ?? 0,
+    maxVisibleChars: options.maxVisibleChars ?? 0,
+    key: options.key,
+  };
+}
+
+/** Multi-line text widget. Thin wrapper over `text({ rows, ... })`
+ * for ergonomic intent — renders as a `rows`-tall block with
+ * Enter-inserts-newline / Up-Down-line-nav semantics. Default `rows`
+ * is 5; pass `rows: N` to override. */
 export function textArea(
   options: {
     value?: string;
@@ -311,37 +352,23 @@ export function textArea(
     focused?: boolean;
     label?: string;
     placeholder?: string;
-    /** Visible rows of editing area; default 3. */
+    /** Visible rows of editing area; default 5. */
     rows?: number;
     /** Visible column width; `0` = use panel width. */
     fieldWidth?: number;
     key?: string;
   } = {},
 ): WidgetSpec {
-  return {
-    kind: "textArea",
-    value: options.value ?? "",
-    cursorByte: options.cursorByte ?? -1,
-    focused: options.focused ?? false,
-    label: options.label ?? "",
-    placeholder: options.placeholder,
-    rows: options.rows ?? 3,
-    fieldWidth: options.fieldWidth ?? 0,
-    key: options.key,
-  };
+  return text({
+    ...options,
+    rows: options.rows ?? 5,
+  });
 }
 
-/** Single-line text input, rendered as `[value]` (or
- * `Label: [value]` if `label` is provided). The host drives the
- * actual hardware cursor at `cursorByte` when focused — no painted
- * overlay, the terminal's blinking caret follows the focused field.
- *
- * `fieldWidth` (recommended for any non-trivial input) gives the
- * input a constant visible width: short values pad with trailing
- * spaces, long values head-truncate with `…` so the cursor stays
- * visible at the right edge. Without `fieldWidth` the input grows
- * with the value, which is fine for one-shot prompts but causes
- * surrounding row content to shift as the user types. */
+/** Single-line text widget. Thin wrapper over `text({ rows: 1,
+ * ... })` matching the historical `textInput(value, opts)`
+ * signature. Renders as `[value]` (or `Label: [value]` if `label`
+ * is provided), with Enter-advances-focus semantics. */
 export function textInput(
   value: string,
   options?: {
@@ -356,17 +383,17 @@ export function textInput(
     key?: string;
   },
 ): WidgetSpec {
-  return {
-    kind: "textInput",
+  return text({
     value,
-    cursorByte: options?.cursorByte ?? -1,
-    focused: options?.focused ?? false,
+    cursorByte: options?.cursorByte,
+    focused: options?.focused,
     label: options?.label,
     placeholder: options?.placeholder,
-    maxVisibleChars: options?.maxVisibleChars ?? 0,
-    fieldWidth: options?.fieldWidth ?? 0,
+    rows: 1,
+    fieldWidth: options?.fieldWidth,
+    maxVisibleChars: options?.maxVisibleChars,
     key: options?.key,
-  };
+  });
 }
 
 // =============================================================================
