@@ -232,39 +232,53 @@ impl crate::app::Editor {
         true
     }
 
-    /// Run a closure with `&mut Window` for the active window, then
-    /// apply any [`WindowControlEvent`]s the closure returned.
+    /// Run a closure with `&mut Window` for the active window plus a
+    /// `&PluginManager` reference, then apply any
+    /// [`WindowControlEvent`]s the closure returned.
     ///
     /// This is the canonical bridge between `impl Editor` (which owns
-    /// the windows map and editor-global state) and `impl Window`
-    /// (which owns per-window state and runs handlers). A handler that
-    /// has been moved to `impl Window` returns events for cross-window
-    /// concerns (close this window, switch to another, quit); the
-    /// dispatcher applies them after the window mutation completes, so
-    /// the `Window` body never needs an `&mut Editor` reference.
+    /// the windows map, the singleton `PluginManager`, and editor-
+    /// global state) and `impl Window` (which owns per-window state
+    /// and runs handlers). A handler moved to `impl Window` fires
+    /// plugin hooks via the `&PluginManager` parameter directly — no
+    /// `Arc<Mutex<…>>` wrapping, no interior mutability, no runtime
+    /// lock-acquisition surprises. Cross-window orchestration goes
+    /// through the returned `Vec<WindowControlEvent>`.
     ///
-    /// The closure receives `&mut Window` and should return its own
-    /// payload `R` plus a `Vec<WindowControlEvent>`. Most handlers
-    /// return an empty event vec. When a handler legitimately can't
-    /// proceed (no active window — invariant says one always exists,
-    /// but defend against bugs anyway), the closure isn't called and
-    /// the function returns `None`.
+    /// The `&PluginManager` and `&mut Window` borrows are disjoint
+    /// sub-fields of `Editor`, so the borrow checker accepts both for
+    /// the closure's lifetime without any interior mutability.
     ///
-    /// # Borrow-checker note
+    /// The closure returns its own payload `R` plus a
+    /// `Vec<WindowControlEvent>`. Most handlers return an empty event
+    /// vec. When a handler legitimately can't proceed (no active
+    /// window — invariant says one always exists, but defend against
+    /// bugs anyway), the closure isn't called and the function
+    /// returns `None`.
     ///
-    /// The closure is invoked with the `Window` borrow held for its
-    /// duration; at sites that need to also touch `Editor`-scoped
-    /// state (read `self.config`, fire a plugin hook synchronously)
-    /// the body should either route through `WindowResources` (the
-    /// preferred path — see `Window::config()` etc.) or return an
-    /// event for the dispatcher to apply.
+    /// # When to use
+    ///
+    /// - Handler bodies that mutate window state and fire plugin
+    ///   hooks: take this dispatcher.
+    /// - Handler bodies that *only* mutate window state (no hooks):
+    ///   call the `Window` method directly via
+    ///   `self.active_window_mut().X(...)` — no need for the
+    ///   dispatcher's machinery.
     pub(crate) fn dispatch_to_active_window<R, F>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut Window) -> (R, Vec<WindowControlEvent>),
+        F: FnOnce(
+            &mut Window,
+            &crate::services::plugins::manager::PluginManager,
+        ) -> (R, Vec<WindowControlEvent>),
     {
         let id = self.active_window;
+        // Disjoint sub-field borrows: `self.plugin_manager` (immut)
+        // and `self.windows` (mut) are different fields, so the
+        // borrow checker is happy with both held for the closure's
+        // duration.
+        let plugins = &self.plugin_manager;
         let window = self.windows.get_mut(&id)?;
-        let (result, events) = f(window);
+        let (result, events) = f(window, plugins);
         for event in events {
             self.apply_window_control_event(event);
         }
