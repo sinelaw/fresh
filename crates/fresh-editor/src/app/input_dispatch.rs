@@ -34,13 +34,13 @@ impl Editor {
         }
 
         // Handle terminal mode input
-        if self.terminal_mode {
+        if self.active_window().terminal_mode {
             // If the user navigated away from the terminal buffer (e.g. opened
             // Review Diff via the command palette), the active buffer is no
             // longer a terminal. Exit terminal mode so the new buffer's
             // keybindings work.
             if !self.is_terminal_buffer(self.active_buffer()) {
-                self.terminal_mode = false;
+                self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
                 return None; // fall through to normal input dispatch
             }
@@ -451,11 +451,12 @@ impl Editor {
                 self.send_terminal_mouse(col, row, kind, modifiers);
             }
             DeferredAction::ExitTerminalMode { explicit } => {
-                self.terminal_mode = false;
+                self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
                 if explicit {
                     // User explicitly exited - don't auto-resume when switching back
-                    self.terminal_mode_resume.remove(&self.active_buffer());
+                    let buf = self.active_buffer();
+                    self.active_window_mut().terminal_mode_resume.remove(&buf);
                     self.sync_terminal_to_buffer(self.active_buffer());
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
@@ -463,7 +464,7 @@ impl Editor {
                 }
             }
             DeferredAction::EnterScrollbackMode => {
-                self.terminal_mode = false;
+                self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
                 self.sync_terminal_to_buffer(self.active_buffer());
                 self.set_status_message(

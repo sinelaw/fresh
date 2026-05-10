@@ -280,11 +280,11 @@ impl Editor {
 
         // Leaving a terminal buffer: stop capturing keyboard for the
         // terminal. Symmetric with the mouse-click path in `focus_split`.
-        if self.terminal_mode
+        if self.active_window().terminal_mode
             && self.is_terminal_buffer(previous_buffer)
             && !self.is_terminal_buffer(buffer_id)
         {
-            self.terminal_mode = false;
+            self.active_window_mut().terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
@@ -296,7 +296,7 @@ impl Editor {
 
         // Enter terminal mode if switching to a terminal split
         if self.is_terminal_buffer(buffer_id) {
-            self.terminal_mode = true;
+            self.active_window_mut().terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
         }
     }

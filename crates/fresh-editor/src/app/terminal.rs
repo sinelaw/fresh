@@ -164,7 +164,7 @@ impl Editor {
         self.set_active_buffer(buffer_id);
 
         // Enable terminal mode
-        self.terminal_mode = true;
+        self.active_window_mut().terminal_mode = true;
         self.key_context = crate::input::keybindings::KeyContext::Terminal;
 
         // Resize terminal to match actual split content area
@@ -369,7 +369,7 @@ impl Editor {
             }
 
             // Exit terminal mode
-            self.terminal_mode = false;
+            self.active_window_mut().terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
 
             // Close the buffer
@@ -588,7 +588,7 @@ impl Editor {
                 | crossterm::event::KeyCode::Char(']')
                 | crossterm::event::KeyCode::Char('`') => {
                     // Exit terminal mode and sync buffer
-                    self.terminal_mode = false;
+                    self.active_window_mut().terminal_mode = false;
                     self.key_context = crate::input::keybindings::KeyContext::Normal;
                     self.sync_terminal_to_buffer(self.active_buffer());
                     self.set_status_message(
@@ -712,7 +712,7 @@ impl Editor {
     /// incrementally-streamed scrollback history.
     pub fn enter_terminal_mode(&mut self) {
         if self.is_terminal_buffer(self.active_buffer()) {
-            self.terminal_mode = true;
+            self.active_window_mut().terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
 
             // Re-enable editing when in terminal mode (input goes to PTY)
@@ -798,12 +798,14 @@ impl Editor {
 impl Editor {
     /// Check if terminal mode is active (for testing)
     pub fn is_terminal_mode(&self) -> bool {
-        self.terminal_mode
+        self.active_window().terminal_mode
     }
 
     /// Check if a buffer is in terminal_mode_resume set (for testing/debugging)
     pub fn is_in_terminal_mode_resume(&self, buffer_id: BufferId) -> bool {
-        self.terminal_mode_resume.contains(&buffer_id)
+        self.active_window()
+            .terminal_mode_resume
+            .contains(&buffer_id)
     }
 
     /// Check if keyboard capture is enabled in terminal mode (for testing)
@@ -909,7 +911,7 @@ impl Editor {
                 // (when it's the active buffer but not in terminal mode, we're in read-only scrollback mode
                 // and should show the synced buffer content instead)
                 let is_active = *buffer_id == self.active_buffer();
-                if is_active && !self.terminal_mode {
+                if is_active && !self.active_window().terminal_mode {
                     // Active buffer in read-only mode - let normal buffer rendering handle it
                     continue;
                 }
@@ -918,8 +920,9 @@ impl Editor {
                     if let Ok(state) = handle.state.lock() {
                         let cursor_pos = state.cursor_position();
                         // Only show cursor for the active terminal in terminal mode
-                        let cursor_visible =
-                            state.cursor_visible() && is_active && self.terminal_mode;
+                        let cursor_visible = state.cursor_visible()
+                            && is_active
+                            && self.active_window().terminal_mode;
                         let (_, rows) = state.size();
 
                         // Collect content

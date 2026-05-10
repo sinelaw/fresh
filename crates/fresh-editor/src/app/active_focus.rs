@@ -81,9 +81,11 @@ impl Editor {
         let previous = self.active_buffer();
 
         // If leaving a terminal buffer while in terminal mode, remember it should resume
-        if self.terminal_mode && self.is_terminal_buffer(previous) {
-            self.terminal_mode_resume.insert(previous);
-            self.terminal_mode = false;
+        if self.active_window().terminal_mode && self.is_terminal_buffer(previous) {
+            self.active_window_mut()
+                .terminal_mode_resume
+                .insert(previous);
+            self.active_window_mut().terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
@@ -124,8 +126,13 @@ impl Editor {
         }
 
         // If switching to a terminal buffer that should resume terminal mode, re-enter it
-        if self.terminal_mode_resume.contains(&buffer_id) && self.is_terminal_buffer(buffer_id) {
-            self.terminal_mode = true;
+        if self
+            .active_window()
+            .terminal_mode_resume
+            .contains(&buffer_id)
+            && self.is_terminal_buffer(buffer_id)
+        {
+            self.active_window_mut().terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
         } else if self.is_terminal_buffer(buffer_id) {
             // Switching to terminal in read-only mode - sync buffer to show current terminal content
@@ -287,8 +294,8 @@ impl Editor {
 
         if split_changed {
             // Switching to a different split - exit terminal mode if active
-            if self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
-                self.terminal_mode = false;
+            if self.active_window().terminal_mode && self.is_terminal_buffer(previous_buffer) {
+                self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
 
@@ -307,7 +314,7 @@ impl Editor {
 
             // Set key context based on target buffer type
             if self.is_terminal_buffer(buffer_id) {
-                self.terminal_mode = true;
+                self.active_window_mut().terminal_mode = true;
                 self.key_context = crate::input::keybindings::KeyContext::Terminal;
             } else {
                 // Ensure key context is Normal when focusing a non-terminal buffer

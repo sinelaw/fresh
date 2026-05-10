@@ -314,6 +314,16 @@ pub struct Window {
     /// - The preview is anchored to the split it was opened in.
     /// - Cleared when the buffer is closed or promoted.
     pub preview: Option<(LeafId, BufferId)>,
+
+    /// Whether terminal mode is active in this window (input goes to
+    /// the active terminal buffer). Per-window because each window
+    /// has its own terminal set + active buffer.
+    pub terminal_mode: bool,
+
+    /// Set of terminal buffer ids that should auto-resume terminal
+    /// mode when switched back to. Per-window because terminal
+    /// buffers are per-window (Step 0d).
+    pub terminal_mode_resume: std::collections::HashSet<BufferId>,
 }
 
 impl Window {
@@ -858,6 +868,8 @@ impl Window {
             layout_cache: WindowLayoutCache::default(),
             resources,
             preview: None,
+            terminal_mode: false,
+            terminal_mode_resume: std::collections::HashSet::new(),
         }
     }
 

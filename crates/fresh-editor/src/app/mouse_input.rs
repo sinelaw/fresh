@@ -334,9 +334,9 @@ impl Editor {
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
         } else {
-            if self.terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
+            if self.active_window().terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
                 self.sync_terminal_to_buffer(self.active_buffer());
-                self.terminal_mode = false;
+                self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
             self.dismiss_transient_popups();

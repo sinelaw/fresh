@@ -92,11 +92,11 @@ impl Editor {
             }
 
             // Remove from terminal_mode_resume to prevent stale entries
-            self.terminal_mode_resume.remove(&id);
+            self.active_window_mut().terminal_mode_resume.remove(&id);
 
             // Exit terminal mode if we were in it
-            if self.terminal_mode {
-                self.terminal_mode = false;
+            if self.active_window().terminal_mode {
+                self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
         }
@@ -458,8 +458,8 @@ impl Editor {
     /// Returns true if the tab was closed without needing a prompt.
     pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
-        if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
-            self.terminal_mode = false;
+        if self.active_window().terminal_mode && self.is_terminal_buffer(buffer_id) {
+            self.active_window_mut().terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
@@ -740,8 +740,8 @@ impl Editor {
     /// Returns true if the tab was closed, false if it was skipped (e.g., modified buffer)
     fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
-        if self.terminal_mode && self.is_terminal_buffer(buffer_id) {
-            self.terminal_mode = false;
+        if self.active_window().terminal_mode && self.is_terminal_buffer(buffer_id) {
+            self.active_window_mut().terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 

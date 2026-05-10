@@ -1339,7 +1339,7 @@ impl Editor {
                             // the leaf already shows the terminal and
                             // its tab list contains only the terminal,
                             // exactly the desired final state.
-                            self.terminal_mode = true;
+                            self.active_window_mut().terminal_mode = true;
                             self.key_context = crate::input::keybindings::KeyContext::Terminal;
                             self.resize_visible_terminals();
                             let exit_key = self
@@ -2239,22 +2239,22 @@ impl Editor {
             Action::FocusTerminal => {
                 // If viewing a terminal buffer, switch to terminal mode
                 if self.is_terminal_buffer(self.active_buffer()) {
-                    self.terminal_mode = true;
+                    self.active_window_mut().terminal_mode = true;
                     self.key_context = KeyContext::Terminal;
                     self.set_status_message(t!("status.terminal_mode_enabled").to_string());
                 }
             }
             Action::TerminalEscape => {
                 // Exit terminal mode back to editor
-                if self.terminal_mode {
-                    self.terminal_mode = false;
+                if self.active_window().terminal_mode {
+                    self.active_window_mut().terminal_mode = false;
                     self.key_context = KeyContext::Normal;
                     self.set_status_message(t!("status.terminal_mode_disabled").to_string());
                 }
             }
             Action::ToggleKeyboardCapture => {
                 // Toggle keyboard capture mode in terminal
-                if self.terminal_mode {
+                if self.active_window().terminal_mode {
                     self.keyboard_capture = !self.keyboard_capture;
                     if self.keyboard_capture {
                         self.set_status_message(
@@ -2270,7 +2270,7 @@ impl Editor {
             }
             Action::TerminalPaste => {
                 // Paste clipboard contents into terminal as a single batch
-                if self.terminal_mode {
+                if self.active_window().terminal_mode {
                     if let Some(text) = self.clipboard.paste() {
                         self.send_terminal_input(text.as_bytes());
                     }

@@ -602,7 +602,7 @@ impl Editor {
         let settings_visible = self.settings_state.as_ref().is_some_and(|s| s.visible);
         let hide_cursor = self.menu_state.active_menu.is_some()
             || self.key_context == KeyContext::FileExplorer
-            || self.terminal_mode
+            || self.active_window().terminal_mode
             || settings_visible
             || self.keybinding_editor.is_some();
 
@@ -1499,7 +1499,7 @@ impl Editor {
 
         // When keyboard capture mode is active, dim all UI elements outside the terminal
         // to visually indicate that focus is exclusively on the terminal
-        if self.keyboard_capture && self.terminal_mode {
+        if self.keyboard_capture && self.active_window().terminal_mode {
             // Find the active split's content area
             let active_split = self
                 .windows

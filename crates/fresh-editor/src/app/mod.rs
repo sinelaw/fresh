@@ -1027,19 +1027,15 @@ pub struct Editor {
     /// User-opened terminals are absent from this set and persist as before.
     ephemeral_terminals: std::collections::HashSet<crate::services::terminal::TerminalId>,
 
-    /// Whether terminal mode is active (input goes to terminal)
-    terminal_mode: bool,
-
+    // `terminal_mode` moved onto `Window`. Per-window because each
+    // window has its own active terminal buffer.
     /// Whether keyboard capture is enabled in terminal mode.
     /// When true, ALL keys go to the terminal (except Ctrl+` to toggle).
     /// When false, UI keybindings (split nav, palette, etc.) are processed first.
     keyboard_capture: bool,
 
-    /// Set of terminal buffer IDs that should auto-resume terminal mode when switched back to.
-    /// When leaving a terminal while in terminal mode, its ID is added here.
-    /// When switching to a terminal in this set, terminal mode is automatically re-entered.
-    terminal_mode_resume: std::collections::HashSet<BufferId>,
-
+    // `terminal_mode_resume` moved onto `Window` — terminal buffers
+    // are per-window (Step 0d), so the auto-resume set follows.
     /// Timestamp of the previous mouse click (for multi-click detection)
     previous_click_time: Option<std::time::Instant>,
 

@@ -446,7 +446,9 @@ impl Editor {
 
                     // If viewing scrollback for this terminal and jump_to_end_on_output is enabled,
                     // automatically re-enter terminal mode
-                    if self.config.terminal.jump_to_end_on_output && !self.terminal_mode {
+                    if self.config.terminal.jump_to_end_on_output
+                        && !self.active_window().terminal_mode
+                    {
                         // Check if active buffer is this terminal
                         if let Some(&active_terminal_id) = self
                             .active_window()
@@ -460,7 +462,7 @@ impl Editor {
                     }
 
                     // When in terminal mode, ensure display stays at bottom (follows new output)
-                    if self.terminal_mode {
+                    if self.active_window().terminal_mode {
                         if let Some(handle) = self.active_window().terminal_manager.get(terminal_id)
                         {
                             if let Ok(mut state) = handle.state.lock() {
@@ -511,8 +513,8 @@ impl Editor {
                         .find(|(_, &tid)| tid == terminal_id)
                     {
                         // Exit terminal mode if this is the active buffer
-                        if self.active_buffer() == buffer_id && self.terminal_mode {
-                            self.terminal_mode = false;
+                        if self.active_buffer() == buffer_id && self.active_window().terminal_mode {
+                            self.active_window_mut().terminal_mode = false;
                             self.key_context = crate::input::keybindings::KeyContext::Normal;
                         }
 

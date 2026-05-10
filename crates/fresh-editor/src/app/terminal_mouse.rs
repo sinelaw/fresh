@@ -23,7 +23,7 @@ impl Editor {
         mouse_event: MouseEvent,
     ) -> Option<AnyhowResult<bool>> {
         // Only forward if in terminal mode
-        if !self.terminal_mode {
+        if !self.active_window().terminal_mode {
             return None;
         }
 
