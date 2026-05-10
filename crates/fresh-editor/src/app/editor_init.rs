@@ -87,7 +87,248 @@ fn set_dot_path(root: &mut serde_json::Value, path: &str, value: serde_json::Val
     cur.as_object_mut().unwrap().insert(last.to_string(), value);
 }
 
+/// Pre-built non-trivial inputs handed to [`Editor::from_parts`].
+///
+/// Everything in here either depends on external resources (filesystem,
+/// config, plugins, themes, terminal dimensions, …) or is one of the
+/// few editor-global fields a caller wants to control directly — most
+/// notably the initial set of `windows`. Trivial fields (counters at
+/// zero, empty collections, `None` options, registries built from
+/// scratch with no dependencies) are filled in by the constructor.
+///
+/// The factory methods (`Editor::new`, `Editor::with_working_dir`,
+/// `Editor::with_working_dir_opts`, `Editor::for_test`,
+/// `Editor::with_options`) build a value of this type and pass it to
+/// `Editor::from_parts`. No production code constructs `Editor`
+/// without going through `from_parts`, so adding a field here forces
+/// every factory to provide it.
+pub(super) struct EditorParts {
+    // Config / paths
+    pub(super) config: Arc<Config>,
+    pub(super) config_snapshot_anchor: Arc<Config>,
+    pub(super) config_cached_json: Arc<serde_json::Value>,
+    pub(super) user_config_raw: Arc<serde_json::Value>,
+    pub(super) dir_context: DirectoryContext,
+    pub(super) working_dir: PathBuf,
+
+    // Themes
+    pub(super) theme: crate::view::theme::Theme,
+    pub(super) theme_registry: Arc<crate::view::theme::ThemeRegistry>,
+    pub(super) theme_cache: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+
+    // Grammar
+    pub(super) grammar_registry: Arc<crate::primitives::grammar::GrammarRegistry>,
+    pub(super) pending_grammars: Vec<PendingGrammar>,
+    pub(super) needs_full_grammar_build: bool,
+
+    // Keybindings + buffer-id allocation
+    pub(super) keybindings: Arc<RwLock<KeybindingResolver>>,
+    pub(super) buffer_id_alloc: crate::app::window_resources::BufferIdAllocator,
+    pub(super) next_buffer_id: usize,
+
+    // Terminal
+    pub(super) terminal_width: u16,
+    pub(super) terminal_height: u16,
+    pub(super) color_capability: crate::view::color_support::ColorCapability,
+
+    // Async / IO
+    pub(super) tokio_runtime: Option<tokio::runtime::Runtime>,
+    pub(super) async_bridge: AsyncBridge,
+    pub(super) fs_manager: Arc<FsManager>,
+    pub(super) authority: crate::services::authority::Authority,
+    pub(super) local_filesystem: Arc<dyn FileSystem + Send + Sync>,
+
+    // Chrome flags resolved from config
+    pub(super) menu_bar_visible: bool,
+    pub(super) tab_bar_visible: bool,
+    pub(super) status_bar_visible: bool,
+    pub(super) prompt_line_visible: bool,
+
+    // Windows — the whole point of the split: the factory builds these
+    // (from disk persistence or a single seed window), the constructor
+    // just installs them.
+    pub(super) windows: HashMap<fresh_core::WindowId, crate::app::window::Window>,
+    pub(super) active_window: fresh_core::WindowId,
+    pub(super) next_window_id: u64,
+
+    // Registries / managers
+    pub(super) command_registry: Arc<RwLock<CommandRegistry>>,
+    pub(super) quick_open_registry: QuickOpenRegistry,
+    pub(super) plugin_manager: PluginManager,
+    pub(super) recovery_service: RecoveryService,
+    pub(super) key_translator: crate::input::key_translator::KeyTranslator,
+    pub(super) update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
+
+    // Time
+    pub(super) time_source: SharedTimeSource,
+}
+
 impl Editor {
+    /// Lightweight constructor. Takes the non-trivial editor-global
+    /// resources via [`EditorParts`] and fills in every other field
+    /// with its empty/default value. No I/O, no plugin loading, no
+    /// disk reads happen here — that's all the factory's job
+    /// ([`Editor::with_options`] and friends), so this method can
+    /// also serve as a building block for narrowly-scoped tests that
+    /// want to assemble an `Editor` from hand-built parts.
+    ///
+    /// Fields that need a `time_source` for their initial value
+    /// (auto-revert timestamps, etc.) read it out of `parts` rather
+    /// than capturing a new clock — so two editors built from the
+    /// same parts agree on "now".
+    pub(super) fn from_parts(parts: EditorParts) -> Self {
+        let now = parts.time_source.now();
+        Editor {
+            // From parts (non-trivial):
+            next_buffer_id: parts.next_buffer_id,
+            buffer_id_alloc: parts.buffer_id_alloc,
+            config: parts.config,
+            config_snapshot_anchor: parts.config_snapshot_anchor,
+            config_cached_json: parts.config_cached_json,
+            user_config_raw: parts.user_config_raw,
+            dir_context: parts.dir_context.clone(),
+            grammar_registry: parts.grammar_registry,
+            pending_grammars: parts.pending_grammars,
+            needs_full_grammar_build: parts.needs_full_grammar_build,
+            theme: parts.theme,
+            theme_registry: parts.theme_registry,
+            theme_cache: parts.theme_cache,
+            keybindings: parts.keybindings,
+            terminal_width: parts.terminal_width,
+            terminal_height: parts.terminal_height,
+            tokio_runtime: parts.tokio_runtime,
+            async_bridge: Some(parts.async_bridge),
+            fs_manager: parts.fs_manager,
+            authority: parts.authority,
+            local_filesystem: parts.local_filesystem,
+            menu_bar_visible: parts.menu_bar_visible,
+            tab_bar_visible: parts.tab_bar_visible,
+            status_bar_visible: parts.status_bar_visible,
+            prompt_line_visible: parts.prompt_line_visible,
+            menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
+            working_dir: parts.working_dir,
+            windows: parts.windows,
+            active_window: parts.active_window,
+            next_window_id: parts.next_window_id,
+            command_registry: parts.command_registry,
+            quick_open_registry: parts.quick_open_registry,
+            plugin_manager: parts.plugin_manager,
+            recovery_service: parts.recovery_service,
+            time_source: parts.time_source,
+            color_capability: parts.color_capability,
+            update_checker: parts.update_checker,
+            key_translator: parts.key_translator,
+
+            // Trivial defaults (no external dependencies):
+            grammar_reload_pending: false,
+            grammar_build_in_progress: false,
+            pending_grammar_callbacks: Vec::new(),
+            expanded_menus_cache: crate::view::ui::ExpandedMenusCache::default(),
+            ansi_background: None,
+            ansi_background_path: None,
+            background_fade: crate::primitives::ansi_background::DEFAULT_BACKGROUND_FADE,
+            clipboard: crate::services::clipboard::Clipboard::new(),
+            should_quit: false,
+            should_detach: false,
+            session_mode: false,
+            software_cursor_only: false,
+            session_name: None,
+            pending_escape_sequences: Vec::new(),
+            restart_with_dir: None,
+            last_window_title: None,
+            plugin_errors: Vec::new(),
+            mode_registry: ModeRegistry::new(),
+            pending_authority: None,
+            remote_indicator_override: None,
+            file_explorer_clipboard: None,
+            menu_bar_auto_shown: false,
+            mouse_enabled: true,
+            mouse_cursor_position: None,
+            gpm_active: false,
+            key_context: KeyContext::Normal,
+            menus: crate::config::MenuConfig::translated(),
+            completion_service: crate::services::completion::CompletionService::new(),
+            lsp_diagnostic_namespace: crate::view::overlay::OverlayNamespace::from_string(
+                "lsp-diagnostic".to_string(),
+            ),
+            mouse_state: MouseState::default(),
+            tab_context_menu: None,
+            file_explorer_context_menu: None,
+            theme_info_popup: None,
+            chrome_layout: ChromeLayout::default(),
+            plugin_dev_workspaces: HashMap::new(),
+            buffer_groups: HashMap::new(),
+            buffer_to_group: HashMap::new(),
+            next_buffer_group_id: 0,
+            background_process_handles: HashMap::new(),
+            host_process_handles: HashMap::new(),
+            pending_next_key_callbacks: std::collections::VecDeque::new(),
+            key_capture_active: false,
+            pending_key_capture_buffer: std::collections::VecDeque::new(),
+            lsp_progress: std::collections::HashMap::new(),
+            lsp_server_statuses: std::collections::HashMap::new(),
+            lsp_window_messages: Vec::new(),
+            lsp_log_messages: Vec::new(),
+            diagnostic_result_ids: HashMap::new(),
+            stored_push_diagnostics: HashMap::new(),
+            stored_pull_diagnostics: HashMap::new(),
+            stored_diagnostics: Arc::new(HashMap::new()),
+            stored_folding_ranges: Arc::new(HashMap::new()),
+            event_broadcaster: crate::model::control_event::EventBroadcaster::default(),
+            macros: macros::MacroState::default(),
+            #[cfg(feature = "plugins")]
+            pending_plugin_actions: Vec::new(),
+            #[cfg(feature = "plugins")]
+            plugin_render_requested: false,
+            chord_state: Vec::new(),
+            last_auto_revert_poll: now,
+            last_file_tree_poll: now,
+            git_index_resolved: false,
+            dir_mod_times: HashMap::new(),
+            pending_file_poll_rx: None,
+            pending_dir_poll_rx: None,
+            file_open_state: None,
+            file_browser_layout: None,
+            full_redraw_requested: false,
+            suspend_requested: false,
+            last_auto_recovery_save: now,
+            last_persistent_auto_save: now,
+            active_custom_contexts: HashSet::new(),
+            plugin_global_state: HashMap::new(),
+            warning_log: None,
+            status_log_path: None,
+            warning_domains: WarningDomainRegistry::new(),
+            file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
+            last_path_change_for_test: None,
+            last_watch_response_for_test: None,
+            preview_window_id: None,
+            ephemeral_terminals: std::collections::HashSet::new(),
+            keyboard_capture: false,
+            previous_click_time: None,
+            previous_click_position: None,
+            click_count: 0,
+            settings_state: None,
+            calibration_wizard: None,
+            event_debug: None,
+            keybinding_editor: None,
+            pending_file_opens: Vec::new(),
+            pending_hot_exit_recovery: false,
+            wait_tracking: HashMap::new(),
+            completed_waits: Vec::new(),
+            stdin_stream: stdin_stream::StdinStream::default(),
+            line_scan: line_scan::LineScan::default(),
+            search_scan: search_scan::SearchScan::default(),
+            search_overlay_top_byte: None,
+            review_hunks: Vec::new(),
+            global_popups: crate::view::popup::PopupManager::new(),
+            animations: crate::view::animation::AnimationRunner::new(),
+            previous_cursor_screen_pos: None,
+            cursor_jump_animation: None,
+            pending_vb_animations: Vec::new(),
+            widget_registry: crate::widgets::WidgetRegistry::new(),
+        }
+    }
+
     /// Create a new editor with the given configuration and terminal dimensions
     /// Uses system directories for state (recovery, sessions, etc.)
     pub fn new(
@@ -807,221 +1048,120 @@ impl Editor {
             dir_context: dir_context.clone(),
         };
 
-        let mut editor = Editor {
-            next_buffer_id: 2,
-            buffer_id_alloc: buffer_id_alloc.clone(),
+        // Boot with a single base session rooted at the process cwd.
+        // The conductor-persistence loader (called from main.rs after
+        // construction) may swap this for a multi-window set; the
+        // workspace restore (also post-construction) then rebuilds the
+        // saved split layout inside whichever window ends up active.
+        let mut windows = HashMap::new();
+        let mut base = crate::app::window::Window::new(
+            fresh_core::WindowId(1),
+            "",
+            working_dir.clone(),
+            base_resources,
+        );
+        // Hand the eagerly-spawned LSP manager + the initial split
+        // layout off to the base window — that's where they live now
+        // (Step 0b).
+        base.lsp = Some(lsp);
+        base.splits = Some((split_manager, split_view_states));
+        base.buffers = buffers;
+        base.buffer_metadata = buffer_metadata;
+        base.event_logs = event_logs;
+        // Replace the default bridge created by `Window::new` with the
+        // bridge we already configured the LSP manager against. Both
+        // halves now point at the same channel; LSP responses arriving
+        // on the manager's sender land in `base.bridge`'s receiver.
+        base.bridge = base_window_bridge;
+        // Load prompt histories from disk for the base window. Each
+        // window has its own prompt-history rings.
+        for history_name in ["search", "replace", "goto_line"] {
+            let path = dir_context.prompt_history_path(history_name);
+            let history = crate::input::input_history::InputHistory::load_from_file(&path)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to load {} history: {}", history_name, e);
+                    crate::input::input_history::InputHistory::new()
+                });
+            base.prompt_histories
+                .insert(history_name.to_string(), history);
+        }
+        windows.insert(fresh_core::WindowId(1), base);
+
+        let recovery_service = {
+            let recovery_config = RecoveryConfig {
+                enabled: recovery_enabled,
+                ..RecoveryConfig::default()
+            };
+            // Default to a CWD-scoped recovery directory so each working
+            // directory keeps its own hot-exit recovery files. If this
+            // editor is later promoted to session mode, `set_session_name`
+            // re-creates the service with `RecoveryScope::Session`.
+            // Issue #1550: without per-CWD scoping, opening Fresh in a
+            // second folder would clobber the first folder's unsaved
+            // unnamed buffers on shutdown.
+            let scope = crate::services::recovery::RecoveryScope::Standalone {
+                working_dir: working_dir.clone(),
+            };
+            RecoveryService::with_scope(recovery_config, &dir_context.recovery_dir(), &scope)
+        };
+
+        let key_translator =
+            crate::input::key_translator::KeyTranslator::load_from_config_dir(
+                &dir_context.config_dir,
+            )
+            .unwrap_or_default();
+
+        let pending_grammars = scan_result
+            .additional_grammars
+            .iter()
+            .map(|g| PendingGrammar {
+                language: g.language.clone(),
+                grammar_path: g.path.to_string_lossy().to_string(),
+                extensions: g.extensions.clone(),
+            })
+            .collect();
+
+        let parts = EditorParts {
             config: config_arc,
             config_snapshot_anchor,
             config_cached_json,
             user_config_raw: Arc::new(user_config_raw),
             dir_context: dir_context.clone(),
-            grammar_registry,
-            pending_grammars: scan_result
-                .additional_grammars
-                .iter()
-                .map(|g| PendingGrammar {
-                    language: g.language.clone(),
-                    grammar_path: g.path.to_string_lossy().to_string(),
-                    extensions: g.extensions.clone(),
-                })
-                .collect(),
-            grammar_reload_pending: false,
-            grammar_build_in_progress: false,
-            needs_full_grammar_build: true,
-            pending_grammar_callbacks: Vec::new(),
+            working_dir: working_dir.clone(),
             theme,
             theme_registry,
-            expanded_menus_cache: crate::view::ui::ExpandedMenusCache::default(),
             theme_cache,
-            ansi_background: None,
-            ansi_background_path: None,
-            background_fade: crate::primitives::ansi_background::DEFAULT_BACKGROUND_FADE,
+            grammar_registry,
+            pending_grammars,
+            needs_full_grammar_build: true,
             keybindings,
-            clipboard: crate::services::clipboard::Clipboard::new(),
-            should_quit: false,
-            should_detach: false,
-            session_mode: false,
-            software_cursor_only: false,
-            session_name: None,
-            pending_escape_sequences: Vec::new(),
-            restart_with_dir: None,
-            last_window_title: None,
-            plugin_errors: Vec::new(),
+            buffer_id_alloc: buffer_id_alloc.clone(),
+            next_buffer_id: 2,
             terminal_width: width,
             terminal_height: height,
-            mode_registry: ModeRegistry::new(),
+            color_capability,
             tokio_runtime,
-            async_bridge: Some(async_bridge),
+            async_bridge,
             fs_manager,
             authority,
-            pending_authority: None,
-            remote_indicator_override: None,
             local_filesystem: Arc::clone(&local_filesystem),
             menu_bar_visible: show_menu_bar,
-            file_explorer_clipboard: None,
-            menu_bar_auto_shown: false,
             tab_bar_visible: show_tab_bar,
             status_bar_visible: show_status_bar,
             prompt_line_visible: show_prompt_line,
-            mouse_enabled: true,
-            mouse_cursor_position: None,
-            gpm_active: false,
-            key_context: KeyContext::Normal,
-            menu_state: crate::view::ui::MenuState::new(dir_context.themes_dir()),
-            menus: crate::config::MenuConfig::translated(),
-            working_dir: working_dir.clone(),
-            // Boot with a single base session rooted at the process
-            // cwd. Multi-session support arrives in a follow-up
-            // commit; for now this exists so call sites can already
-            // read `editor.active_window().root` instead of
-            // `editor.working_dir`, and the eventual switch to a
-            // real active pointer is invisible to them.
-            windows: {
-                let mut m = HashMap::new();
-                let mut base = crate::app::window::Window::new(
-                    fresh_core::WindowId(1),
-                    "",
-                    working_dir.clone(),
-                    base_resources,
-                );
-                // Hand the eagerly-spawned LSP manager + the initial
-                // split layout off to the base window — that's where
-                // they live now (Step 0b).
-                base.lsp = Some(lsp);
-                base.splits = Some((split_manager, split_view_states));
-                base.buffers = buffers;
-                base.buffer_metadata = buffer_metadata;
-                base.event_logs = event_logs;
-                // Replace the default bridge created by `Window::new`
-                // with the bridge we already configured the LSP
-                // manager against. Both halves now point at the same
-                // channel; LSP responses arriving on the manager's
-                // sender land in `base.bridge`'s receiver.
-                base.bridge = base_window_bridge;
-                // Load prompt histories from disk for the base window.
-                // Each window has its own prompt-history rings.
-                for history_name in ["search", "replace", "goto_line"] {
-                    let path = dir_context.prompt_history_path(history_name);
-                    let history = crate::input::input_history::InputHistory::load_from_file(&path)
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Failed to load {} history: {}", history_name, e);
-                            crate::input::input_history::InputHistory::new()
-                        });
-                    base.prompt_histories
-                        .insert(history_name.to_string(), history);
-                }
-                m.insert(fresh_core::WindowId(1), base);
-                m
-            },
+            windows,
             active_window: fresh_core::WindowId(1),
             next_window_id: 2,
-            completion_service: crate::services::completion::CompletionService::new(),
-            lsp_diagnostic_namespace: crate::view::overlay::OverlayNamespace::from_string(
-                "lsp-diagnostic".to_string(),
-            ),
-            mouse_state: MouseState::default(),
-            tab_context_menu: None,
-            file_explorer_context_menu: None,
-            theme_info_popup: None,
-            chrome_layout: ChromeLayout::default(),
             command_registry,
             quick_open_registry,
             plugin_manager,
-            plugin_dev_workspaces: HashMap::new(),
-            buffer_groups: HashMap::new(),
-            buffer_to_group: HashMap::new(),
-            next_buffer_group_id: 0,
-            background_process_handles: HashMap::new(),
-            host_process_handles: HashMap::new(),
-            pending_next_key_callbacks: std::collections::VecDeque::new(),
-            key_capture_active: false,
-            pending_key_capture_buffer: std::collections::VecDeque::new(),
-            lsp_progress: std::collections::HashMap::new(),
-            lsp_server_statuses: std::collections::HashMap::new(),
-            lsp_window_messages: Vec::new(),
-            lsp_log_messages: Vec::new(),
-            diagnostic_result_ids: HashMap::new(),
-            stored_push_diagnostics: HashMap::new(),
-            stored_pull_diagnostics: HashMap::new(),
-            stored_diagnostics: Arc::new(HashMap::new()),
-            stored_folding_ranges: Arc::new(HashMap::new()),
-            event_broadcaster: crate::model::control_event::EventBroadcaster::default(),
-            macros: macros::MacroState::default(),
-            #[cfg(feature = "plugins")]
-            pending_plugin_actions: Vec::new(),
-            #[cfg(feature = "plugins")]
-            plugin_render_requested: false,
-            chord_state: Vec::new(),
-            last_auto_revert_poll: time_source.now(),
-            last_file_tree_poll: time_source.now(),
-            git_index_resolved: false,
-            dir_mod_times: HashMap::new(),
-            pending_file_poll_rx: None,
-            pending_dir_poll_rx: None,
-            file_open_state: None,
-            file_browser_layout: None,
-            recovery_service: {
-                let recovery_config = RecoveryConfig {
-                    enabled: recovery_enabled,
-                    ..RecoveryConfig::default()
-                };
-                // Default to a CWD-scoped recovery directory so each working
-                // directory keeps its own hot-exit recovery files. If this
-                // editor is later promoted to session mode, `set_session_name`
-                // re-creates the service with `RecoveryScope::Session`.
-                // Issue #1550: without per-CWD scoping, opening Fresh in a
-                // second folder would clobber the first folder's unsaved
-                // unnamed buffers on shutdown.
-                let scope = crate::services::recovery::RecoveryScope::Standalone {
-                    working_dir: working_dir.clone(),
-                };
-                RecoveryService::with_scope(recovery_config, &dir_context.recovery_dir(), &scope)
-            },
-            full_redraw_requested: false,
-            suspend_requested: false,
-            time_source: time_source.clone(),
-            last_auto_recovery_save: time_source.now(),
-            last_persistent_auto_save: time_source.now(),
-            active_custom_contexts: HashSet::new(),
-            plugin_global_state: HashMap::new(),
-            warning_log: None,
-            status_log_path: None,
-            warning_domains: WarningDomainRegistry::new(),
+            recovery_service,
+            key_translator,
             update_checker,
-            file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
-            last_path_change_for_test: None,
-            last_watch_response_for_test: None,
-            preview_window_id: None,
-            ephemeral_terminals: std::collections::HashSet::new(),
-            keyboard_capture: false,
-            previous_click_time: None,
-            previous_click_position: None,
-            click_count: 0,
-            settings_state: None,
-            calibration_wizard: None,
-            event_debug: None,
-            keybinding_editor: None,
-            key_translator: crate::input::key_translator::KeyTranslator::load_from_config_dir(
-                &dir_context.config_dir,
-            )
-            .unwrap_or_default(),
-            color_capability,
-            pending_file_opens: Vec::new(),
-            pending_hot_exit_recovery: false,
-            wait_tracking: HashMap::new(),
-            completed_waits: Vec::new(),
-            stdin_stream: stdin_stream::StdinStream::default(),
-            line_scan: line_scan::LineScan::default(),
-            search_scan: search_scan::SearchScan::default(),
-            search_overlay_top_byte: None,
-            review_hunks: Vec::new(),
-            global_popups: crate::view::popup::PopupManager::new(),
-            animations: crate::view::animation::AnimationRunner::new(),
-            previous_cursor_screen_pos: None,
-            cursor_jump_animation: None,
-            pending_vb_animations: Vec::new(),
-            widget_registry: crate::widgets::WidgetRegistry::new(),
+            time_source: time_source.clone(),
         };
+
+        let mut editor = Editor::from_parts(parts);
 
         t.phase("editor_struct_assembly");
         // Apply clipboard configuration
