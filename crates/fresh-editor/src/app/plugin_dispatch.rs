@@ -4025,8 +4025,7 @@ impl Editor {
         let visible = visible_rows.max(1);
         let total_visible = visible_indices.len() as u32;
         let max_scroll = total_visible.saturating_sub(visible);
-        let new_scroll = (cur_scroll as i32 + delta)
-            .clamp(0, max_scroll as i32) as u32;
+        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
         if new_scroll == cur_scroll {
             return;
         }
@@ -4068,7 +4067,9 @@ impl Editor {
         let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
         let (visible_rows, total) = match widget {
             Some(fresh_core::api::WidgetSpec::List {
-                visible_rows, items, ..
+                visible_rows,
+                items,
+                ..
             }) => (*visible_rows, items.len() as u32),
             _ => return,
         };
@@ -4084,8 +4085,7 @@ impl Editor {
         };
         let visible = visible_rows.max(1);
         let max_scroll = total.saturating_sub(visible);
-        let new_scroll = (cur_scroll as i32 + delta)
-            .clamp(0, max_scroll as i32) as u32;
+        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
         if new_scroll == cur_scroll {
             return;
         }
@@ -4313,9 +4313,9 @@ impl Editor {
             return false;
         }
         let sel = match panel.instance_states.get(focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree {
-                selected_index, ..
-            }) => *selected_index,
+            Some(crate::widgets::WidgetInstanceState::Tree { selected_index, .. }) => {
+                *selected_index
+            }
             _ => spec_sel,
         };
         if sel < 0 {

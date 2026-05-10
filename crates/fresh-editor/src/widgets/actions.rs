@@ -382,8 +382,7 @@ pub fn set_tree_checked_keys_in_spec(
             if key.as_deref() != Some(widget_key) {
                 return false;
             }
-            let target: std::collections::HashSet<&str> =
-                keys.iter().map(String::as_str).collect();
+            let target: std::collections::HashSet<&str> = keys.iter().map(String::as_str).collect();
             for (i, node) in nodes.iter_mut().enumerate() {
                 if node.checked.is_none() {
                     continue;
