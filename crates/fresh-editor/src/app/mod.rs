@@ -2715,14 +2715,14 @@ mod tests {
         };
 
         // CORRECT: Calculate LSP positions BEFORE applying batch
-        let lsp_changes_before = editor.collect_lsp_changes(&batch);
+        let lsp_changes_before = editor.active_window().collect_lsp_changes(&batch);
 
         // Now apply the batch (this is what apply_events_to_buffer_as_bulk_edit does)
         editor.apply_event_to_active_buffer(&batch);
 
         // BUG DEMONSTRATION: Calculate LSP positions AFTER applying batch
         // This is what happens when notify_lsp_change is called after state.apply()
-        let lsp_changes_after = editor.collect_lsp_changes(&batch);
+        let lsp_changes_after = editor.active_window().collect_lsp_changes(&batch);
 
         // Verify buffer was correctly modified
         let final_content = editor.active_state().buffer.to_string().unwrap();
@@ -2965,7 +2965,7 @@ mod tests {
         };
 
         // Collect LSP changes BEFORE applying (this is the fix)
-        let lsp_changes1 = editor.collect_lsp_changes(&batch1);
+        let lsp_changes1 = editor.active_window().collect_lsp_changes(&batch1);
 
         // Verify first rename LSP positions are correct
         assert_eq!(
@@ -3037,7 +3037,7 @@ mod tests {
         };
 
         // Collect LSP changes BEFORE applying (this is the fix)
-        let lsp_changes2 = editor.collect_lsp_changes(&batch2);
+        let lsp_changes2 = editor.active_window().collect_lsp_changes(&batch2);
 
         // Verify second rename LSP positions are correct
         // THIS IS WHERE THE BUG WOULD MANIFEST - if positions are wrong,

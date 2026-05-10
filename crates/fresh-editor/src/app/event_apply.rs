@@ -77,10 +77,10 @@ impl Editor {
         // IMPORTANT: Calculate LSP changes and line info BEFORE applying to buffer!
         // The byte positions in the events are relative to the ORIGINAL buffer,
         // so we must convert them to LSP positions before modifying the buffer.
-        let lsp_changes = self.collect_lsp_changes(event);
+        let lsp_changes = self.active_window().collect_lsp_changes(event);
 
         // Calculate line info for plugin hooks (using same pre-modification buffer state)
-        let line_info = self.calculate_event_line_info(event);
+        let line_info = self.active_window().calculate_event_line_info(event);
 
         // 1. Apply the event to the buffer
         // Borrow cursors from SplitViewState (sole source of truth) and state from buffers.
@@ -630,7 +630,7 @@ impl Editor {
                 for e in events {
                     // Use default line info for sub-events - they share the batch's line_info
                     // This is a simplification; proper tracking would need per-event pre-calculation
-                    let sub_line_info = self.calculate_event_line_info(e);
+                    let sub_line_info = self.active_window().calculate_event_line_info(e);
                     self.trigger_plugin_hooks_for_event(e, sub_line_info);
                 }
                 None

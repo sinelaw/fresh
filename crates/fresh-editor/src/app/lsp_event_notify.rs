@@ -1,7 +1,7 @@
-//! LSP change-notification orchestrators on `Editor`.
+//! LSP change-notification orchestrators.
 //!
 //! When buffers mutate, the LSP server needs to be notified so its
-//! analysis stays in sync. These methods translate Editor `Event`s into
+//! analysis stays in sync. These methods translate `Event`s into
 //! `TextDocumentContentChangeEvent`s, compute line-shift metadata for
 //! plugin hooks, and send `did_save` notifications.
 
@@ -9,13 +9,10 @@ use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
 
 use crate::model::event::{BufferId, Event};
 
+use super::window::Window;
 use super::Editor;
 
-impl Editor {
-    // === LSP Diagnostics Display ===
-    // NOTE: Diagnostics are now applied automatically via process_async_messages()
-    // when received from the LSP server asynchronously. No manual polling needed!
-
+impl Window {
     /// Collect all LSP text document changes from an event (recursively for batches)
     pub(super) fn collect_lsp_changes(&self, event: &Event) -> Vec<TextDocumentContentChangeEvent> {
         match event {
@@ -157,6 +154,12 @@ impl Editor {
             _ => super::types::EventLineInfo::default(),
         }
     }
+}
+
+impl Editor {
+    // === LSP Diagnostics Display ===
+    // NOTE: Diagnostics are now applied automatically via process_async_messages()
+    // when received from the LSP server asynchronously. No manual polling needed!
 
     /// Notify LSP of a file save
     pub(super) fn notify_lsp_save(&mut self) {

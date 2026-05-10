@@ -2711,7 +2711,7 @@ impl Editor {
             .and_then(|w| w.split_manager_mut())
             .expect("active window must have a populated split layout")
             .set_active_buffer_id(buffer_id);
-        let lsp_changes = self.collect_lsp_changes(&batch_for_lsp);
+        let lsp_changes = self.active_window().collect_lsp_changes(&batch_for_lsp);
         self.windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_manager_mut())
