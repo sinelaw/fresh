@@ -853,7 +853,6 @@ impl Editor {
             mode_registry: ModeRegistry::new(),
             tokio_runtime,
             async_bridge: Some(async_bridge),
-            scroll_sync_manager: ScrollSyncManager::new(),
             fs_manager,
             authority,
             pending_authority: None,

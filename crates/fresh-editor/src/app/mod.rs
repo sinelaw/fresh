@@ -508,9 +508,8 @@ pub struct Editor {
     // Each window owns its own split tree + per-leaf view state.
     // `previous_viewports` moved onto `Window` (per-leaf state — each
     // window has its own splits, so its own viewport-change tracker).
-    /// Scroll sync manager for anchor-based synchronized scrolling
-    /// Used for side-by-side diff views where two panes need to scroll together
-    scroll_sync_manager: ScrollSyncManager,
+    // `scroll_sync_manager` moved onto `Window` — pairs splits, which
+    // are per-window.
 
     // file_explorer moved onto `Window`. Access via
     // `Editor::file_explorer()` / `file_explorer_mut()` —

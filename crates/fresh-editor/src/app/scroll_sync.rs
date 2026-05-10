@@ -146,7 +146,7 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        let group_count = self.scroll_sync_manager.groups().len();
+        let group_count = self.active_window().scroll_sync_manager.groups().len();
 
         if group_count > 0 {
             tracing::debug!(
@@ -159,6 +159,7 @@ impl Editor {
         // Collect sync info: for each group where active split participates,
         // get the active split's current line position
         let sync_info: Vec<_> = self
+            .active_window()
             .scroll_sync_manager
             .groups()
             .iter()
@@ -295,7 +296,10 @@ impl Editor {
                                 .expect("active window must have a populated split layout")
                                 .buffer_for_split(s)
                                 == Some(active_buf_id)
-                            && !self.scroll_sync_manager.is_split_synced(s.into())
+                            && !self
+                                .active_window()
+                                .scroll_sync_manager
+                                .is_split_synced(s.into())
                     })
                     .copied()
                     .collect();
@@ -353,6 +357,7 @@ impl Editor {
     pub(super) fn pre_sync_ensure_visible(&mut self, active_split: LeafId) {
         // Check if active split is in any scroll sync group
         let group_info = self
+            .active_window()
             .scroll_sync_manager
             .find_group_for_split(active_split.into())
             .map(|g| (g.left_split, g.right_split));
@@ -416,7 +421,10 @@ impl Editor {
                             .expect("active window must have a populated split layout")
                             .buffer_for_split(s)
                             == Some(active_buf_id)
-                        && !self.scroll_sync_manager.is_split_synced(s.into())
+                        && !self
+                            .active_window()
+                            .scroll_sync_manager
+                            .is_split_synced(s.into())
                 })
                 .copied()
                 .collect();

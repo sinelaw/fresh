@@ -345,6 +345,10 @@ pub struct Window {
     /// `replace_all`. Per-window because the search target buffer
     /// and the visible matches are window-scoped.
     pub interactive_replace_state: Option<crate::app::types::InteractiveReplaceState>,
+
+    /// Cross-split scroll-sync manager for side-by-side diff views.
+    /// Per-window because the splits it pairs are per-window.
+    pub scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager,
 }
 
 impl Window {
@@ -895,6 +899,7 @@ impl Window {
             previous_viewports: HashMap::new(),
             same_buffer_scroll_sync: false,
             interactive_replace_state: None,
+            scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager::new(),
         }
     }
 

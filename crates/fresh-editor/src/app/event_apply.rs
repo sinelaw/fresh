@@ -708,6 +708,7 @@ impl Editor {
         // Mark both splits to skip ensure_visible so cursor doesn't override scroll
         // The sync_scroll_groups() at render time will sync the other split
         if let Some(group) = self
+            .active_window()
             .scroll_sync_manager
             .find_group_for_split(active_split.into())
         {
@@ -850,10 +851,12 @@ impl Editor {
         // Check if this split is in a scroll sync group (anchor-based sync for diffs)
         // If so, set the group's scroll_line and let render sync the viewports
         if self
+            .active_window()
             .scroll_sync_manager
             .is_split_synced(active_split.into())
         {
             if let Some(group) = self
+                .active_window_mut()
                 .scroll_sync_manager
                 .find_group_for_split_mut(active_split.into())
             {
@@ -868,6 +871,7 @@ impl Editor {
 
             // Mark both splits to skip ensure_visible
             if let Some(group) = self
+                .active_window()
                 .scroll_sync_manager
                 .find_group_for_split(active_split.into())
             {
