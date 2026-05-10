@@ -1614,6 +1614,29 @@ impl SplitManager {
         }
     }
 
+    /// Toggle maximize state for a specific leaf split.
+    ///
+    /// Used by the mouse handler so that clicking a split's maximize
+    /// button targets that split rather than whichever split happens
+    /// to be active. When already maximized, this unmaximizes regardless
+    /// of which leaf was passed (only the maximized split's chrome is
+    /// visible while maximized, so the click can only land on it).
+    pub fn toggle_maximize_for(&mut self, target: LeafId) -> Result<bool, String> {
+        if self.is_maximized() {
+            self.unmaximize_split()?;
+            Ok(false)
+        } else {
+            if self.root.count_leaves() <= 1 {
+                return Err("Cannot maximize: only one split exists".to_string());
+            }
+            if self.root.find(target.into()).is_none() {
+                return Err("Cannot maximize: split not found".to_string());
+            }
+            self.maximized_split = Some(target.into());
+            Ok(true)
+        }
+    }
+
     /// Get all leaf split IDs that belong to a specific sync group
     pub fn get_splits_in_group(
         &self,

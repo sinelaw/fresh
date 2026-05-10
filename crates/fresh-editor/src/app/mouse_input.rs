@@ -2030,18 +2030,45 @@ impl Editor {
             return Some(Ok(()));
         }
 
-        let maximize_hit = self.active_layout().maximize_split_areas.iter().any(
-            |(_, btn_row, start_col, end_col)| {
+        let maximize_target = self
+            .active_layout()
+            .maximize_split_areas
+            .iter()
+            .find(|(_, btn_row, start_col, end_col)| {
                 row == *btn_row && col >= *start_col && col < *end_col
-            },
-        );
-        if maximize_hit {
+            })
+            .map(|(split_id, _, _, _)| *split_id);
+        if let Some(target) = maximize_target {
+            // Move focus to the clicked split before maximizing. Otherwise
+            // a click on a non-active split's button leaves the active
+            // split (now hidden by the maximize) silently capturing
+            // keystrokes. Skip when already maximized: the unmaximize
+            // click can only land on the maximized split, which is
+            // already the active one.
+            let already_maximized = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(mgr, _)| mgr.is_maximized())
+                .unwrap_or(false);
+            if !already_maximized {
+                if let Some(buffer_id) = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.splits.as_ref())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .buffer_for_split(target)
+                {
+                    self.focus_split(target, buffer_id);
+                }
+            }
             match self
                 .windows
                 .get_mut(&self.active_window)
                 .and_then(|w| w.split_manager_mut())
                 .expect("active window must have a populated split layout")
-                .toggle_maximize()
+                .toggle_maximize_for(target)
             {
                 Ok(maximized) => {
                     let msg = if maximized {
