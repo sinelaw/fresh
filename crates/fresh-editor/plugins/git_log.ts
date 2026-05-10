@@ -123,16 +123,45 @@ editor.defineMode(
 );
 
 function git_log_select_up(): void {
-  state.logPanel?.command(key("Up"));
+  if (isLogPanelActive()) {
+    state.logPanel?.command(key("Up"));
+  } else {
+    editor.executeAction("move_up");
+  }
 }
 function git_log_select_down(): void {
-  state.logPanel?.command(key("Down"));
+  if (isLogPanelActive()) {
+    state.logPanel?.command(key("Down"));
+  } else {
+    editor.executeAction("move_down");
+  }
 }
 function git_log_select_page_up(): void {
-  state.logPanel?.command(key("PageUp"));
+  if (isLogPanelActive()) {
+    state.logPanel?.command(key("PageUp"));
+  } else {
+    editor.executeAction("page_up");
+  }
 }
 function git_log_select_page_down(): void {
-  state.logPanel?.command(key("PageDown"));
+  if (isLogPanelActive()) {
+    state.logPanel?.command(key("PageDown"));
+  } else {
+    editor.executeAction("page_down");
+  }
+}
+
+/** True iff the log panel is the focused buffer in the group. The
+ * group's bindings (j/k/Up/Down/PageUp/PageDown) apply to all panels
+ * uniformly; we only want navigation to drive the List widget when
+ * the user is *on* the log panel. From the detail panel, the same
+ * keys must move the buffer cursor (so users can scroll the diff
+ * before pressing Enter on a diff line to open the file view). */
+function isLogPanelActive(): boolean {
+  return (
+    state.logBufferId !== null &&
+    editor.getActiveBufferId() === state.logBufferId
+  );
 }
 registerHandler("git_log_select_up", git_log_select_up);
 registerHandler("git_log_select_down", git_log_select_down);
