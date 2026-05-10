@@ -26,27 +26,17 @@ enum SearchDirection {
 }
 
 impl Editor {
-    /// Clear all search highlights from the active buffer and reset search state
-    pub(super) fn clear_search_highlights(&mut self) {
-        self.clear_search_overlays();
-        // Also clear search state
-        self.active_window_mut().search_state = None;
-    }
-
-    /// Clear only the visual search overlays, preserving search state for F3/Shift+F3
-    /// This is used when the buffer is modified - highlights become stale but F3 should still work
-    pub(super) fn clear_search_overlays(&mut self) {
-        let ns = self.active_window().search_namespace.clone();
-        let state = self.active_state_mut();
-        state.overlays.clear_namespace(&ns, &mut state.marker_list);
-    }
+    // `clear_search_highlights` and `clear_search_overlays` moved to
+    // `impl Window`. Editor callers reach them via
+    // `self.active_window_mut().clear_search_highlights()` /
+    // `.clear_search_overlays()`.
 
     /// Update search highlights in visible viewport only (for incremental search)
     /// This is called as the user types in the search prompt for real-time feedback
     pub(super) fn update_search_highlights(&mut self, query: &str) {
         // If query is empty, clear highlights and return
         if query.is_empty() {
-            self.clear_search_highlights();
+            self.active_window_mut().clear_search_highlights();
             return;
         }
 
@@ -83,7 +73,7 @@ impl Editor {
             Ok(r) => r,
             Err(_) => {
                 // Invalid regex, clear highlights and return
-                self.clear_search_highlights();
+                self.active_window_mut().clear_search_highlights();
                 return;
             }
         };

@@ -1265,6 +1265,21 @@ impl Window {
         self.terminal_buffers.get(&buffer_id).copied()
     }
 
+    /// Clear the visual search overlays for the active buffer,
+    /// preserving search state so F3/Shift+F3 still work.
+    pub fn clear_search_overlays(&mut self) {
+        let ns = self.search_namespace.clone();
+        let state = self.active_state_mut();
+        state.overlays.clear_namespace(&ns, &mut state.marker_list);
+    }
+
+    /// Clear all search highlights from the active buffer and reset
+    /// search state.
+    pub fn clear_search_highlights(&mut self) {
+        self.clear_search_overlays();
+        self.search_state = None;
+    }
+
     /// Atomically update both sides of the pane-buffer invariant for a
     /// given leaf split: the split tree's stored buffer AND the matching
     /// `SplitViewState.active_buffer` / `keyed_states` map.
