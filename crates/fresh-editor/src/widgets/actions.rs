@@ -52,12 +52,7 @@ pub fn find_widget_by_key<'a>(spec: &'a WidgetSpec, target: &str) -> Option<&'a 
 /// `Right` / `Home` / `End`. `multiline=true` adds `Up` / `Down` /
 /// `Enter` (newline insertion) and reinterprets `Home` / `End` as
 /// line-relative.
-pub fn apply_text_key(
-    value: &str,
-    cursor: usize,
-    key: &str,
-    multiline: bool,
-) -> (String, usize) {
+pub fn apply_text_key(value: &str, cursor: usize, key: &str, multiline: bool) -> (String, usize) {
     if multiline {
         apply_text_area_key(value, cursor, key)
     } else {
