@@ -68,13 +68,14 @@ fn get_parent_node_id(
 
 impl Editor {
     pub fn file_explorer_visible(&self) -> bool {
-        self.file_explorer_visible
+        self.active_window().file_explorer_visible
     }
 
     pub fn toggle_file_explorer(&mut self) {
-        self.file_explorer_visible = !self.file_explorer_visible;
+        self.active_window_mut().file_explorer_visible =
+            !self.active_window().file_explorer_visible;
 
-        if self.file_explorer_visible {
+        if self.active_window().file_explorer_visible {
             if self.file_explorer().is_none() {
                 self.init_file_explorer();
             }
@@ -97,18 +98,18 @@ impl Editor {
     }
 
     pub fn show_file_explorer(&mut self) {
-        if !self.file_explorer_visible {
+        if !self.active_window().file_explorer_visible {
             self.toggle_file_explorer();
         }
     }
 
     pub fn sync_file_explorer_to_active_file(&mut self) {
-        if !self.file_explorer_visible {
+        if !self.active_window().file_explorer_visible {
             return;
         }
 
         // Don't start a new sync if one is already in progress
-        if self.file_explorer_sync_in_progress {
+        if self.active_window().file_explorer_sync_in_progress {
             return;
         }
 
@@ -132,12 +133,12 @@ impl Editor {
                             "sync_file_explorer_to_active_file: taking file_explorer for async expand to {:?}",
                             target_path
                         );
-                        if let (Some(runtime), Some(bridge)) =
-                            (&self.tokio_runtime, &self.async_bridge)
-                        {
-                            let sender = bridge.sender();
+                        let runtime_handle =
+                            self.tokio_runtime.as_ref().map(|r| r.handle().clone());
+                        let sender = self.async_bridge.as_ref().map(|b| b.sender());
+                        if let (Some(runtime), Some(sender)) = (runtime_handle, sender) {
                             // Mark sync as in progress so render knows to keep the layout
-                            self.file_explorer_sync_in_progress = true;
+                            self.active_window_mut().file_explorer_sync_in_progress = true;
 
                             runtime.spawn(async move {
                                 let _success = view.expand_and_select_file(&target_path).await;
@@ -155,7 +156,7 @@ impl Editor {
     }
 
     pub fn focus_file_explorer(&mut self) {
-        if self.file_explorer_visible {
+        if self.active_window().file_explorer_visible {
             // Dismiss transient popups and clear hover state when focusing file explorer
             self.on_editor_focus_lost();
 
@@ -1090,17 +1091,22 @@ impl Editor {
             })
             .collect();
 
-        self.file_explorer_decorations.insert(namespace, normalized);
+        self.active_window_mut()
+            .file_explorer_decorations
+            .insert(namespace, normalized);
         self.rebuild_file_explorer_decoration_cache();
     }
 
     pub fn handle_clear_file_explorer_decorations(&mut self, namespace: &str) {
-        self.file_explorer_decorations.remove(namespace);
+        self.active_window_mut()
+            .file_explorer_decorations
+            .remove(namespace);
         self.rebuild_file_explorer_decoration_cache();
     }
 
     pub(super) fn rebuild_file_explorer_decoration_cache(&mut self) {
         let decorations = self
+            .active_window()
             .file_explorer_decorations
             .values()
             .flat_map(|entries| entries.iter().cloned());
@@ -1112,7 +1118,7 @@ impl Editor {
             .map(|fe| fe.collect_symlink_mappings())
             .unwrap_or_default();
 
-        self.file_explorer_decoration_cache =
+        self.active_window_mut().file_explorer_decoration_cache =
             crate::view::file_tree::FileExplorerDecorationCache::rebuild(
                 decorations,
                 &self.working_dir,

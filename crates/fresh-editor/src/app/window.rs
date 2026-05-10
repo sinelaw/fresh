@@ -349,6 +349,32 @@ pub struct Window {
     /// Cross-split scroll-sync manager for side-by-side diff views.
     /// Per-window because the splits it pairs are per-window.
     pub scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager,
+
+    /// Whether the file-explorer panel is visible in this window.
+    pub file_explorer_visible: bool,
+
+    /// Whether a file-explorer rebuild is in flight (debounce flag).
+    pub file_explorer_sync_in_progress: bool,
+
+    /// Width of the file-explorer panel.
+    pub file_explorer_width: crate::config::ExplorerWidth,
+
+    /// Side (left/right) the file-explorer panel docks on.
+    pub file_explorer_side: crate::config::FileExplorerSide,
+
+    /// Pending toggles for show-hidden/show-gitignored that apply on
+    /// the next file-explorer rebuild.
+    pub pending_file_explorer_show_hidden: Option<bool>,
+    pub pending_file_explorer_show_gitignored: Option<bool>,
+
+    /// Decorations supplied by plugins for the file explorer (badges,
+    /// status icons, etc.) keyed by absolute path.
+    pub file_explorer_decorations:
+        HashMap<String, Vec<crate::view::file_tree::FileExplorerDecoration>>,
+
+    /// Compiled decoration lookup cache invalidated when
+    /// `file_explorer_decorations` changes.
+    pub file_explorer_decoration_cache: crate::view::file_tree::FileExplorerDecorationCache,
 }
 
 impl Window {
@@ -891,7 +917,6 @@ impl Window {
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
             layout_cache: WindowLayoutCache::default(),
-            resources,
             preview: None,
             terminal_mode: false,
             terminal_mode_resume: std::collections::HashSet::new(),
@@ -900,6 +925,16 @@ impl Window {
             same_buffer_scroll_sync: false,
             interactive_replace_state: None,
             scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager::new(),
+            file_explorer_visible: false,
+            file_explorer_sync_in_progress: false,
+            file_explorer_width: resources.config.file_explorer.width,
+            file_explorer_side: resources.config.file_explorer.side,
+            pending_file_explorer_show_hidden: None,
+            pending_file_explorer_show_gitignored: None,
+            file_explorer_decorations: HashMap::new(),
+            file_explorer_decoration_cache:
+                crate::view::file_tree::FileExplorerDecorationCache::default(),
+            resources,
         }
     }
 

@@ -533,8 +533,10 @@ impl Editor {
     /// Call this after operations that change split layout (maximize, resize, etc.)
     pub fn resize_visible_terminals(&mut self) {
         // Get the content area excluding file explorer
-        let file_explorer_width = if self.file_explorer_visible {
-            self.file_explorer_width.to_cols(self.terminal_width)
+        let file_explorer_width = if self.active_window().file_explorer_visible {
+            self.active_window()
+                .file_explorer_width
+                .to_cols(self.terminal_width)
         } else {
             0
         };

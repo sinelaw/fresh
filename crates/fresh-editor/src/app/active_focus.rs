@@ -153,7 +153,7 @@ impl Editor {
         // Ensure the newly active tab is visible
         self.ensure_active_tab_visible(active_split, buffer_id, self.effective_tabs_width());
 
-        if self.file_explorer_visible
+        if self.active_window().file_explorer_visible
             && self.config.file_explorer.follow_active_buffer
             && self.key_context != crate::input::keybindings::KeyContext::FileExplorer
         {

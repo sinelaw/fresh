@@ -552,33 +552,12 @@ pub struct Editor {
     /// regardless of where the user is editing.
     local_filesystem: Arc<dyn FileSystem + Send + Sync>,
 
-    /// Whether file explorer is visible
-    file_explorer_visible: bool,
-
-    /// Whether file explorer is being synced to active file (async operation in progress)
-    /// When true, we still render the file explorer area even if file_explorer is temporarily None
-    file_explorer_sync_in_progress: bool,
-
-    /// File explorer width: either a percent of the terminal width or
-    /// an absolute column count. Runtime value, may be modified by
-    /// dragging the divider (drag preserves the active variant).
-    file_explorer_width: crate::config::ExplorerWidth,
-
-    /// File explorer side placement (left or right)
-    file_explorer_side: crate::config::FileExplorerSide,
-
-    /// Pending show_hidden setting to apply when file explorer is initialized (from session restore)
-    pending_file_explorer_show_hidden: Option<bool>,
-
-    /// Pending show_gitignored setting to apply when file explorer is initialized (from session restore)
-    pending_file_explorer_show_gitignored: Option<bool>,
-
-    /// File explorer decorations by namespace
-    file_explorer_decorations: HashMap<String, Vec<crate::view::file_tree::FileExplorerDecoration>>,
-
-    /// Cached file explorer decorations (resolved + bubbled)
-    file_explorer_decoration_cache: crate::view::file_tree::FileExplorerDecorationCache,
-
+    // `file_explorer_visible`, `file_explorer_sync_in_progress`,
+    // `file_explorer_width`, `file_explorer_side`,
+    // `pending_file_explorer_show_*`, `file_explorer_decorations`,
+    // `file_explorer_decoration_cache` all moved onto `Window`. The
+    // file-explorer view itself was already per-window since Step 0b;
+    // these chrome flags follow.
     /// File explorer clipboard for cut/copy/paste of files and directories
     pub(crate) file_explorer_clipboard: Option<crate::app::file_explorer::FileExplorerClipboard>,
 
@@ -1191,8 +1170,11 @@ impl Editor {
     /// When the file explorer is visible, tabs only get a portion of the
     /// terminal width. Matches the layout calculation in render.rs.
     fn effective_tabs_width(&self) -> u16 {
-        if self.file_explorer_visible && self.file_explorer().is_some() {
-            let explorer = self.file_explorer_width.to_cols(self.terminal_width);
+        if self.active_window().file_explorer_visible && self.file_explorer().is_some() {
+            let explorer = self
+                .active_window()
+                .file_explorer_width
+                .to_cols(self.terminal_width);
             self.terminal_width.saturating_sub(explorer)
         } else {
             self.terminal_width

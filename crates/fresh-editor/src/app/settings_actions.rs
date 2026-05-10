@@ -181,8 +181,8 @@ impl Editor {
 
         // Propagate file-explorer settings to live runtime state (IgnorePatterns
         // and width are shadows of config, not read live on each render).
-        self.file_explorer_width = self.config.file_explorer.width;
-        self.file_explorer_side = self.config.file_explorer.side;
+        self.active_window_mut().file_explorer_width = self.config.file_explorer.width;
+        self.active_window_mut().file_explorer_side = self.config.file_explorer.side;
         let active_id = self.active_window;
         if let Some(explorer) = self
             .windows

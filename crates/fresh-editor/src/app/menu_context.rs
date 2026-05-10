@@ -39,7 +39,7 @@ impl Editor {
         let line_numbers = self.is_line_numbers_visible();
         let line_wrap = self.is_line_wrap_enabled();
         let page_view = self.is_page_view();
-        let file_explorer_visible = self.file_explorer_visible;
+        let file_explorer_visible = self.active_window().file_explorer_visible;
         let file_explorer_focused = self.is_file_explorer_focused();
         let mouse_capture = self.mouse_enabled;
         let mouse_hover = self.config.editor.mouse_hover_enabled;

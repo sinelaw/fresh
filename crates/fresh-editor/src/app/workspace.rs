@@ -296,9 +296,9 @@ impl Editor {
             // Get expanded directories from the tree
             let expanded_dirs = get_expanded_dirs(explorer, &self.working_dir);
             FileExplorerState {
-                visible: self.file_explorer_visible,
-                width: self.file_explorer_width,
-                side: self.file_explorer_side,
+                visible: self.active_window().file_explorer_visible,
+                width: self.active_window().file_explorer_width,
+                side: self.active_window().file_explorer_side,
                 expanded_dirs,
                 scroll_offset: explorer.get_scroll_offset(),
                 show_hidden: explorer.ignore_patterns().show_hidden(),
@@ -306,9 +306,9 @@ impl Editor {
             }
         } else {
             FileExplorerState {
-                visible: self.file_explorer_visible,
-                width: self.file_explorer_width,
-                side: self.file_explorer_side,
+                visible: self.active_window().file_explorer_visible,
+                width: self.active_window().file_explorer_width,
+                side: self.active_window().file_explorer_side,
                 expanded_dirs: Vec::new(),
                 scroll_offset: 0,
                 show_hidden: false,
@@ -906,20 +906,21 @@ impl Editor {
     }
 
     fn restore_file_explorer_settings(&mut self, fe: &FileExplorerState) {
-        self.file_explorer_visible = fe.visible;
-        self.file_explorer_width = fe.width;
-        self.file_explorer_side = fe.side;
+        self.active_window_mut().file_explorer_visible = fe.visible;
+        self.active_window_mut().file_explorer_width = fe.width;
+        self.active_window_mut().file_explorer_side = fe.side;
 
         // Store pending settings (fixes #569); applied when explorer initialises (async).
         if fe.show_hidden {
-            self.pending_file_explorer_show_hidden = Some(true);
+            self.active_window_mut().pending_file_explorer_show_hidden = Some(true);
         }
         if fe.show_gitignored {
-            self.pending_file_explorer_show_gitignored = Some(true);
+            self.active_window_mut()
+                .pending_file_explorer_show_gitignored = Some(true);
         }
 
         // Keep key_context as Normal so the editor (not the explorer) has focus.
-        if self.file_explorer_visible && self.file_explorer().is_none() {
+        if self.active_window().file_explorer_visible && self.file_explorer().is_none() {
             self.init_file_explorer();
         }
     }

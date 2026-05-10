@@ -1761,7 +1761,8 @@ impl Editor {
         {
             self.mouse_state.dragging_file_explorer = true;
             self.mouse_state.drag_start_position = Some((col, row));
-            self.mouse_state.drag_start_explorer_width = Some(self.file_explorer_width);
+            self.mouse_state.drag_start_explorer_width =
+                Some(self.active_window().file_explorer_width);
             return Some(Ok(()));
         }
         if in_rect(col, row, explorer_area) {
@@ -2545,7 +2546,7 @@ impl Editor {
         // just because they grabbed the divider.
         if total_width > 0 {
             use crate::config::ExplorerWidth;
-            self.file_explorer_width = match start_width {
+            self.active_window_mut().file_explorer_width = match start_width {
                 ExplorerWidth::Percent(start_pct) => {
                     let percent_delta = (delta * 100) / total_width;
                     let new_pct = (start_pct as i32 + percent_delta).clamp(0, 100) as u8;
@@ -2918,13 +2919,15 @@ impl Editor {
 
         // Get the decoration for this file to determine the status
         let decoration = self
+            .active_window()
             .file_explorer_decoration_cache
             .direct_for_path(&path)
             .cloned();
 
         // For directories, also check bubbled decoration
         let bubbled_decoration = if is_directory && decoration.is_none() {
-            self.file_explorer_decoration_cache
+            self.active_window()
+                .file_explorer_decoration_cache
                 .bubbled_for_path(&path)
                 .cloned()
         } else {

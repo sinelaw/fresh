@@ -1306,6 +1306,7 @@ impl Editor {
         // Use pending session-restore values if present, otherwise fall back
         // to the persisted config so the setting survives across sessions.
         let show_hidden = self
+            .active_window_mut()
             .pending_file_explorer_show_hidden
             .take()
             .unwrap_or(self.config.file_explorer.show_hidden);
@@ -1313,6 +1314,7 @@ impl Editor {
         tracing::debug!("Applied show_hidden={} on init", show_hidden);
 
         let show_gitignored = self
+            .active_window_mut()
             .pending_file_explorer_show_gitignored
             .take()
             .unwrap_or(self.config.file_explorer.show_gitignored);
@@ -1328,7 +1330,7 @@ impl Editor {
         // ran before this initialization completed (file_explorer was still
         // None) and did nothing. Run it again now so the tree auto-expands
         // to reveal the current file on first open (issue #1569).
-        if self.file_explorer_visible {
+        if self.active_window().file_explorer_visible {
             self.sync_file_explorer_to_active_file();
         }
     }
@@ -1351,7 +1353,7 @@ impl Editor {
         );
         view.update_scroll_for_selection();
         self.active_window_mut().file_explorer = Some(view);
-        self.file_explorer_sync_in_progress = false;
+        self.active_window_mut().file_explorer_sync_in_progress = false;
     }
 }
 

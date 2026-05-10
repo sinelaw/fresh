@@ -234,20 +234,24 @@ impl Editor {
         // Split main content area based on file explorer visibility
         // Also keep the layout split if a sync is in progress (to avoid flicker)
         let editor_content_area;
-        let file_explorer_should_show = self.file_explorer_visible
-            && (self.file_explorer().is_some() || self.file_explorer_sync_in_progress);
+        let file_explorer_should_show = self.active_window().file_explorer_visible
+            && (self.file_explorer().is_some()
+                || self.active_window().file_explorer_sync_in_progress);
 
         if file_explorer_should_show {
             // Split horizontally based on side placement
             tracing::trace!(
                 "render: file explorer layout active (present={}, sync_in_progress={}, side={:?})",
                 self.file_explorer().is_some(),
-                self.file_explorer_sync_in_progress,
-                self.file_explorer_side
+                self.active_window().file_explorer_sync_in_progress,
+                self.active_window().file_explorer_side
             );
-            let explorer_cols = self.file_explorer_width.to_cols(main_content_area.width);
+            let explorer_cols = self
+                .active_window()
+                .file_explorer_width
+                .to_cols(main_content_area.width);
 
-            let (explorer_area, editor_area) = match self.file_explorer_side {
+            let (explorer_area, editor_area) = match self.active_window().file_explorer_side {
                 FileExplorerSide::Left => {
                     let chunks = Layout::default()
                         .direction(Direction::Horizontal)
@@ -315,7 +319,7 @@ impl Editor {
                     explorer_area,
                     is_focused,
                     &files_with_unsaved_changes,
-                    &self.file_explorer_decoration_cache,
+                    &__win.file_explorer_decoration_cache,
                     &keybindings,
                     self.key_context.clone(),
                     &self.theme,
@@ -3170,10 +3174,14 @@ impl Editor {
         let main_content_area = main_chunks[1];
 
         // Compute editor_content_area (with file explorer split if visible)
-        let file_explorer_should_show = self.file_explorer_visible
-            && (self.file_explorer().is_some() || self.file_explorer_sync_in_progress);
+        let file_explorer_should_show = self.active_window().file_explorer_visible
+            && (self.file_explorer().is_some()
+                || self.active_window().file_explorer_sync_in_progress);
         let editor_content_area = if file_explorer_should_show {
-            let explorer_cols = self.file_explorer_width.to_cols(main_content_area.width);
+            let explorer_cols = self
+                .active_window()
+                .file_explorer_width
+                .to_cols(main_content_area.width);
             let horizontal_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(explorer_cols), Constraint::Min(0)])
