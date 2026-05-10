@@ -3669,7 +3669,7 @@ impl Editor {
         // This ensures old highlights from previous searches don't persist
         match prompt_type {
             PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
-                self.clear_search_highlights();
+                self.active_window_mut().clear_search_highlights();
             }
             _ => {}
         }
@@ -4130,7 +4130,7 @@ impl Editor {
             }
             match &prompt.prompt_type {
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch => {
-                    self.clear_search_highlights();
+                    self.active_window_mut().clear_search_highlights();
                 }
                 PromptType::Plugin { custom_type } => {
                     // Fire plugin hook for prompt cancellation
