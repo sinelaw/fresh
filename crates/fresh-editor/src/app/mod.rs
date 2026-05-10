@@ -1511,6 +1511,14 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
         _ => return None,
     };
 
+    // Plugins commonly spell Shift+Tab as "S-Tab"; terminals deliver
+    // BackTab and the lookup-side `normalize_key` strips the redundant
+    // SHIFT. Normalize on the binding side too so "S-Tab" and "BackTab"
+    // both register as `(BackTab, NONE)` and match.
+    if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
+        return Some((KeyCode::BackTab, modifiers.difference(KeyModifiers::SHIFT)));
+    }
+
     Some((code, modifiers))
 }
 
@@ -1530,6 +1538,28 @@ mod tests {
     /// Create a test filesystem
     fn test_filesystem() -> Arc<dyn FileSystem + Send + Sync> {
         Arc::new(crate::model::filesystem::StdFileSystem)
+    }
+
+    #[test]
+    fn parse_key_string_shift_tab_normalizes_to_backtab() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        // Plugins write "S-Tab" in their defineMode binding tables; the
+        // terminal delivers BackTab (with SHIFT stripped by normalize_key
+        // on lookup). Without this normalization, the binding never
+        // matches.
+        assert_eq!(
+            parse_key_string("S-Tab"),
+            Some((KeyCode::BackTab, KeyModifiers::NONE)),
+        );
+        assert_eq!(
+            parse_key_string("BackTab"),
+            Some((KeyCode::BackTab, KeyModifiers::NONE)),
+        );
+        // Plain Tab is unaffected.
+        assert_eq!(
+            parse_key_string("Tab"),
+            Some((KeyCode::Tab, KeyModifiers::NONE)),
+        );
     }
 
     #[test]
