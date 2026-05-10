@@ -50,16 +50,16 @@ tsc clean, interactively verified in tmux.
 
 | File | Purpose |
 |---|---|
-| `mod.rs` | Public surface: re-exports `render_spec`, `RenderOutput`, `FocusCursor`, `WidgetRegistry`, `HitArea`, `PanelId`, `WidgetPanelState`, `WidgetInstanceState`, `find_widget_by_key`, `apply_text_input_key`, `apply_text_area_key`, `set_toggle_checked_in_spec`, `set_list_items_in_spec`, `set_tree_nodes_in_spec`, `set_tree_checked_keys_in_spec`, `tree_parent_index`. |
+| `mod.rs` | Public surface: re-exports `render_spec`, `RenderOutput`, `FocusCursor`, `WidgetRegistry`, `HitArea`, `PanelId`, `WidgetPanelState`, `WidgetInstanceState`, `find_widget_by_key`, `apply_text_char`, `apply_text_input_key`, `apply_text_area_key`, `apply_text_key`, `set_toggle_checked_in_spec`, `set_list_items_in_spec`, `set_tree_nodes_in_spec`, `set_tree_checked_keys_in_spec`, `tree_parent_index`. |
 | `registry.rs` | `WidgetRegistry`: `panel_id → WidgetPanelState { buffer_id, spec, hits, instance_states, focus_key, tabbable }`. Hit-test, get/get_mut, focus_key getter/setter, mount/update/unmount, `panels_for_buffer` (used by the wheel-scroll path). |
-| `render.rs` | The reconciler. `render_spec(spec, prev_state, prev_focus, panel_width) → RenderOutput { entries, hits, instance_states, focus_key, tabbable, focus_cursor }`. Two-pass Row layout for flex spacers. Per-widget renderers (`render_hint_bar`, `render_toggle`, `render_button`, `render_text_input`, `render_text_area`, `render_tree_row`, plus inline list rendering). |
-| `actions.rs` | Pure helpers used by dispatch: `apply_text_input_key` (Backspace/Delete/arrows/Home/End with UTF-8 boundary handling); `apply_text_area_key` (adds Up/Down/Enter and line-relative Home/End on top of the TextInput keys); `find_widget_by_key`; `set_toggle_checked_in_spec`; `set_list_items_in_spec`; `set_tree_nodes_in_spec` (replaces `nodes` + `item_keys` for `WidgetMutation::SetItems` on a Tree); `set_tree_checked_keys_in_spec` (stamps `Some(checked)` onto every node whose item-key is in the supplied list, for `WidgetMutation::SetCheckedKeys`); `tree_parent_index` (parent lookup for cascading checkbox updates). Note: there is no `set_tree_expanded_keys_in_spec` — expanded keys live in instance state, not the spec, so the `SetExpandedKeys` mutator writes directly to `WidgetInstanceState::Tree::expanded_keys` without a spec helper. |
+| `render.rs` | The reconciler. `render_spec(spec, prev_state, prev_focus, panel_width) → RenderOutput { entries, hits, instance_states, focus_key, tabbable, focus_cursor }`. Two-pass Row layout for flex spacers. Per-widget renderers (`render_hint_bar`, `render_toggle`, `render_button`, `render_tree_row`, plus inline list rendering). The `Text` arm dispatches on `rows > 1` to internal `render_text_input` (single-line, bracket form) or `render_text_area` (multi-line block) — both kept as testable units, but one match arm at the spec layer. |
+| `actions.rs` | Pure helpers used by dispatch: `apply_text_char` (UTF-8-correct insertion at cursor for printable / IME-committed text — single helper used by both single-line and multi-line); `apply_text_input_key` (Backspace/Delete/arrows/Home/End with UTF-8 boundary handling); `apply_text_area_key` (adds Up/Down/Enter and line-relative Home/End on top of the single-line keys); `apply_text_key(value, cursor, key, multiline)` (the public dispatcher — picks between the two based on `multiline`); `find_widget_by_key`; `set_toggle_checked_in_spec`; `set_list_items_in_spec`; `set_tree_nodes_in_spec` (replaces `nodes` + `item_keys` for `WidgetMutation::SetItems` on a Tree); `set_tree_checked_keys_in_spec` (stamps `Some(checked)` onto every node whose item-key is in the supplied list, for `WidgetMutation::SetCheckedKeys`); `tree_parent_index` (parent lookup for cascading checkbox updates). Note: there is no `set_tree_expanded_keys_in_spec` — expanded keys live in instance state, not the spec, so the `SetExpandedKeys` mutator writes directly to `WidgetInstanceState::Tree::expanded_keys` without a spec helper. |
 
 **Core types** (`crates/fresh-core/src/api.rs`)
 
 | Type | Notes |
 |---|---|
-| `WidgetSpec` (enum, tagged) | Variants: `Row`, `Col`, `HintBar`, `Toggle`, `Button`, `TextInput`, `TextArea`, `List`, `Tree`, `Spacer`, `Raw`. `Tree` carries `checkable: bool` (default false) gating per-row `[v]`/`[ ]` glyphs; `TreeNode` carries `checked: Option<bool>` (None = no glyph for that row). |
+| `WidgetSpec` (enum, tagged) | Variants: `Row`, `Col`, `HintBar`, `Toggle`, `Button`, `Text`, `List`, `Tree`, `Spacer`, `Raw`. `Text` is the single text-input variant — `rows: 1` (default) selects single-line behaviour (`[value]` rendering, Enter-advances-focus, head-truncate scroll); `rows >= 2` selects multi-line (block rendering, Enter-inserts-newline, line nav, vertical scroll). The previous `TextInput` and `TextArea` variants collapsed into this one. `Tree` carries `checkable: bool` (default false) gating per-row `[v]`/`[ ]` glyphs; `TreeNode` carries `checked: Option<bool>` (None = no glyph for that row). |
 | `TextPropertyEntry` (`fresh-core::text_property`) | Row-content payload for `List`, `Tree`, and `Raw`. Carries `text`, `inline_overlays: Vec<InlineOverlay>`, `segments: Vec<StyledSegment>`, `pad_to_chars: Option<u32>`, `truncate_to_chars: Option<u32>`. The host calls `normalize_widths` on each visible entry — segments concatenate into `text` with one Char-unit overlay per styled segment, then truncate, then pad, then char→byte conversion for any remaining char-unit overlays. Plugins describe row content structurally and never name byte/codepoint offsets between segments. |
 | `InlineOverlay` | `start`, `end`, `style`, `properties`, `unit: OffsetUnit { Byte, Char }` (default `Byte`). Char offsets resolve to bytes during `normalize_widths`. |
 | `StyledSegment` | `text` + optional `style` + optional nested `overlays`. Building block for `TextPropertyEntry::segments`. |
@@ -82,9 +82,9 @@ tsc clean, interactively verified in tmux.
 
 | File | Exports |
 |---|---|
-| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `textInput`, `textArea`, `list`, `tree` (`{ checkable }` opt-in), `treeNode` (`{ checked: bool \| undefined }`), `spacer`, `flexSpacer`, `raw`, `styledRow`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar`. `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `setCheckedKeys` / `unmount`. |
-| `index.ts` | Re-exports the above. |
-| `fresh.d.ts` | Generated. `editor.mountWidgetPanel`, `updateWidgetPanel`, `unmountWidgetPanel`, `widgetCommand`, `widgetMutate`. `WidgetSpec`, `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` (incl. `SetCheckedKeys`), `StyledSegment`, `OffsetUnit` types. `widget_event` hook (incl. `toggle` payload from checkable Tree rows). |
+| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `text` (the unified text-input builder; opt into multi-line with `rows: N`), `textInput(value, opts)` and `textArea(opts)` (thin ergonomic wrappers around `text({ rows: 1 })` / `text({ rows: 5 })`), `list`, `tree` (`{ checkable }` opt-in), `treeNode` (`{ checked: bool \| undefined }`), `spacer`, `flexSpacer`, `raw`, `styledRow`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar` (action names kept stable; both single-line and multi-line widgets receive them). `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `setCheckedKeys` / `unmount`. |
+| `index.ts` | Re-exports the above (incl. `text` and `textArea`). |
+| `fresh.d.ts` | Generated. `editor.mountWidgetPanel`, `updateWidgetPanel`, `unmountWidgetPanel`, `widgetCommand`, `widgetMutate`. `WidgetSpec` (`Text` variant replaces the old `TextInput`/`TextArea` pair), `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` (incl. `SetCheckedKeys`), `StyledSegment`, `OffsetUnit` types. `widget_event` hook (incl. `toggle` payload from checkable Tree rows). |
 
 **Plugin migration: `search_replace.ts`**
 
@@ -92,7 +92,7 @@ tsc clean, interactively verified in tmux.
 |---|---|
 | HintBar (footer) | `parseHintString(t("panel.help"))` → `hintBar(...)`. Theme-keyed key styling. |
 | Options row (3 toggles + Replace All button) | `row(toggle("case"), toggle("regex"), toggle("whole"), flexSpacer(), button("replaceAll", { intent: "primary" }))`. Right-aligns the button via flex. |
-| Search / Replace text fields | `textInput(...)`. Constant-width with head-truncate scrolling, host-owned hardware cursor. |
+| Search / Replace text fields | `textInput(...)` (single-line wrapper around `text({ rows: 1 })`). Constant-width with head-truncate scrolling, host-owned hardware cursor. |
 | Match tree | `tree({ nodes, itemKeys, selectedIndex, visibleRows, expandedKeys, checkable: true, key: "matchTree" })`. Widget-owned scroll, expansion, click-to-select, Enter-to-activate, disclosure-glyph hit area. Per-match exclusion: `treeNode({ checked })` on every row; click on the `[v]`/`[ ]` glyph or Space on a focused row fires `widget_event "toggle"`; plugin updates `result.selected` and pushes the new state via `panel.setCheckedKeys`. File-row glyph reflects "every match selected" (mixed renders as `[ ]`). Replace All filters by selected. |
 | Mode bindings (Tab / Shift+Tab / Enter / Space / Backspace / Delete / Home / End / Up / Down / Left / Right / PageUp / PageDown / mode_text_input) | All route through `dispatch(widgetKey("Tab"))` etc. The smart-key dispatcher in core handles based on focused widget kind. PageUp/PageDown move List/Tree selection by `visible_rows - 1` (one row of overlap). Space on a focused checkable-Tree row dispatches `toggle` instead of `activate`. |
 | `widget_event` handlers (`change` / `select` / `activate` / `toggle` / `expand`) | Plugin updates its app model from events; Toggle widgets write back via `panel.setChecked`; checkable-Tree toggle writes back via `panel.setCheckedKeys`; selection / value / expansion changes don't re-emit spec. |
@@ -111,8 +111,8 @@ not blockers for any flow; they're cleanup.
 | Toggle "checked" glyph | `ui.tab_active_fg` |
 | Focused widget bg/fg | `ui.menu_active_bg` / `ui.menu_active_fg` |
 | Button "danger" intent | `ui.status_error_indicator_fg` |
-| TextInput focused bg | `ui.prompt_bg` |
-| TextInput placeholder | `ui.menu_disabled_fg` |
+| Text focused bg | `ui.prompt_bg` |
+| Text placeholder | `ui.menu_disabled_fg` |
 | List selected row | `ui.menu_active_bg` (extend_to_line_end) |
 
 These are all reuses of pre-existing keys. The role-based theme
@@ -162,9 +162,25 @@ Remaining work, in rough decreasing user impact:
 6. **Accessibility (§13).** Screen-reader bridge (OSC 52), ARIA
    strings on focus change, motion-reduce gating. Library-default
    `lib-widgets.i18n.json`.
-7. **IME composition in TextInput.** `mode_text_input` already
-   delivers composed text but the widget cursor model doesn't
-   track composition states.
+7. **IME composition — preedit display.** The committed-text path
+   is shipped and tested: `mode_text_input:<char>` →
+   `WidgetAction::TextInputChar` → `apply_text_char` (one shared
+   helper for single-line and multi-line `Text`). Multi-byte
+   codepoints, multi-codepoint single-event commits, and
+   step-by-step IME commits all round-trip with byte-correct
+   cursor advancement; covered by `apply_text_char_*` unit tests
+   in `widgets/actions.rs`. What's still missing is **preedit
+   display** — the in-flight composition glyph rendered in the
+   widget before commit. That depends on the input layer
+   surfacing preedit events, which `server/input_parser.rs` does
+   not currently parse (crossterm has no native preedit signal,
+   and the editor doesn't yet handle the kitty-keyboard /
+   bracketed-IME extensions). When that lands, the widget side
+   is a small addition: an optional `preedit: Option<{ text,
+   byte_offset }>` field on `WidgetInstanceState::Text`, a
+   `compose` entry point parallel to `apply_text_char`, and an
+   underline overlay in the renderer. Plugins get preedit for
+   free across both single-line and multi-line.
 8. **Built-in chord support inside widgets.** Today
    `apply_text_input_key` only handles single-key edits; chords
    (`g g`) still bubble to the plugin's `defineMode`.
@@ -196,8 +212,9 @@ Remaining work, in rough decreasing user impact:
   is for the host to re-render automatically when `viewport.width`
   changes for any buffer with a mounted widget panel.
 * **The "Spec is initial; instance state is the truth" rule.**
-  Implemented for `TextInput` (value + cursor), `TextArea` (value +
-  cursor + scroll), `List` (selected_index + scroll_offset), and
+  Implemented for `Text` (value + cursor + scroll — `scroll`
+  carries first-visible-row for multi-line, ignored for
+  single-line), `List` (selected_index + scroll_offset), and
   `Tree` (selected_index + scroll_offset + expanded_keys). Per-row
   Tree `checked` is the explicit exception: it lives in the spec
   (because the plugin owns "which rows are selectable" as an
@@ -264,15 +281,15 @@ tmux capture-pane -t sr -p -e           # rendered text + ANSI escapes
 tmux display-message -t sr -p '#{cursor_x},#{cursor_y} flag=#{cursor_flag}'
 ```
 
-`cursor_flag=0` means the hardware cursor is hidden (TextInput not
-focused); `flag=1` means it's visible. `capture-pane -e` is essential
+`cursor_flag=0` means the hardware cursor is hidden (no `Text`
+widget focused); `flag=1` means it's visible. `capture-pane -e` is essential
 for verifying overlay colors / focused-bg styling — plain
 `capture-pane` strips them.
 
 ### 3.3 The "minimum dignity" recipe for adding a new widget kind
 
-For `Tree`, `Tabs`, `TextArea`, `Table` etc. The path through the
-codebase is mechanical at this point.
+For `Tree`, `Tabs`, `Table` etc. The path through the codebase is
+mechanical at this point.
 
 1. **Add a `WidgetSpec::<Kind>` variant** in
    `crates/fresh-core/src/api.rs` next to `Toggle`/`Button`/etc.
@@ -292,7 +309,7 @@ codebase is mechanical at this point.
 4. **Add instance state** in
    `crates/fresh-editor/src/widgets/registry.rs` (`WidgetInstanceState`
    enum). Read from `prev` map by key; write to `next_state`. The
-   `TextInput` and `List` arms in `render_collected` are the
+   `Text` and `List` arms in `render_collected` are the
    templates.
 5. **Add a TS builder** in
    `crates/fresh-editor/plugins/lib/widgets.ts`. Re-export from
@@ -300,15 +317,21 @@ codebase is mechanical at this point.
 6. **Add a `WidgetCommand::Key` arm** in
    `crates/fresh-editor/src/app/plugin_dispatch.rs` (`handle_widget_key`)
    if the widget responds to keystrokes. Existing dispatch table:
-   Tab/BackTab → focus advance; Up/Down → List/Tree select-move ±1;
-   PageUp/PageDown → List/Tree select-move ±(visible_rows-1);
-   Backspace/Delete/Left/Right/Home/End → text input editing
-   (TextArea also handles Up/Down/Enter for line nav + newline);
-   Enter → activate (or insert `\n` on focused TextArea); Space →
-   activate, except on a `checkable: true` Tree row whose `checked
-   == Some(_)`, where Space fires `widget_event "toggle"` with the
-   inverted value (mirrors clicking the `[v]`/`[ ]` glyph). Add
-   per-kind handling.
+   Tab/BackTab → focus advance; Up/Down → List/Tree select-move ±1
+   (or line nav for multi-line `Text`); PageUp/PageDown → List/Tree
+   select-move ±(visible_rows-1);
+   Backspace/Delete/Left/Right/Home/End → `Text` editing (single-
+   line and multi-line both routed through the same
+   `handle_widget_text_key`, which reads `multiline` from the
+   focused widget's `rows > 1` and dispatches to
+   `apply_text_input_key` or `apply_text_area_key`); Enter →
+   activate, except on focused `Text { rows: 1 }` (advances focus —
+   form-like UX) or `Text { rows >= 2 }` (inserts `\n`); Space →
+   activate, except on focused `Text` (inserts " " via
+   `handle_widget_text_char`) or a `checkable: true` Tree row
+   whose `checked == Some(_)` (fires `widget_event "toggle"` with
+   the inverted value — mirrors clicking the `[v]`/`[ ]` glyph).
+   Add per-kind handling.
 7. **Add a mutator** in `WidgetMutation` if the plugin needs a
    targeted fast-path update (e.g. `Tree` would want
    `SetExpandedKeys { widget_key, expanded_keys: Vec<String> }`).
@@ -331,11 +354,12 @@ those are done.
   the same panel id starts fresh. Use `UpdateWidgetPanel` to
   preserve instance state across renders. `WidgetPanel.set()` does
   the right thing automatically (mount on first call, update after).
-* **Spec value vs instance state.** For `TextInput` value + cursor
-  and `List` selected_index + scroll_offset, instance state is the
-  truth after first render. The spec's value is initial-only.
-  Plugin updates via `widget_event` or via `WidgetMutate::SetValue`
-  / `SetSelectedIndex`. Setting them in the spec on every render is
+* **Spec value vs instance state.** For `Text` value + cursor
+  (+ scroll for multi-line) and `List` selected_index +
+  scroll_offset, instance state is the truth after first render.
+  The spec's value is initial-only. Plugin updates via
+  `widget_event` or via `WidgetMutate::SetValue` /
+  `SetSelectedIndex`. Setting them in the spec on every render is
   fine — they're ignored once instance state exists, except via the
   re-mount path. Don't rely on spec value for round-trip.
 * **Newlines in entries.** Every entry pushed at the top level / Col
@@ -348,12 +372,16 @@ those are done.
 * **Focus key clamping.** The renderer clamps the previous focus key
   to a tabbable that exists in the new spec. If the widget you were
   focused on disappears, focus falls back to the first tabbable.
-* **Hardware cursor.** When a `TextInput` is focused, the host sets
-  the buffer's `show_cursors=true` and positions the primary cursor
-  to the byte the renderer emitted in `RenderOutput::focus_cursor`.
-  When focus is on a non-text widget, `show_cursors=false` and the
-  hardware cursor disappears entirely. Don't paint a cursor overlay
-  in the renderer — let the terminal blink the real one.
+* **Hardware cursor.** When a `Text` widget is focused, the host
+  sets the buffer's `show_cursors=true` and positions the primary
+  cursor to the byte the renderer emitted in
+  `RenderOutput::focus_cursor`. Multi-line `Text` publishes the
+  cursor as `(buffer_row, byte_in_row)` (row relative to the
+  widget's first rendered entry, including the optional label
+  row); single-line publishes `(0, byte_in_row)`. When focus is
+  on a non-text widget, `show_cursors=false` and the hardware
+  cursor disappears entirely. Don't paint a cursor overlay in the
+  renderer — let the terminal blink the real one.
 * **Width calculation.** `widget_panel_width()` returns
   `viewport.width - 2` for gutter/scrollbar/border slack. Your
   widget can use the full result via `panel_width` parameter; flex
@@ -376,8 +404,8 @@ those are done.
   you all the call sites.
 * **Printable-letter `defineMode` bindings shadow widget input.**
   A plugin binding `"x"` to a widget command in `defineMode` will
-  swallow the lowercase `x` in every focused TextInput / TextArea
-  on the same panel — the binding fires before the input character
+  swallow the lowercase `x` in every focused `Text` widget on the
+  same panel — the binding fires before the input character
   stream gets the keypress. Use Space (host-dispatched on focused
   widget kind) or a non-letter key for widget commands; reserve
   letter bindings for non-text-input panels.
@@ -468,9 +496,17 @@ do paint everywhere.
   calls so one panicking renderer paints a placeholder + logs a
   `RenderError` instead of taking down the whole panel. Pure host
   work; doesn't depend on §4.5 deferred items.
-* **IME composition in TextInput.** `mode_text_input` already
-  delivers composed text but the widget cursor model doesn't
-  track composition states. Needed for international input.
+* **IME composition — preedit display.** Committed-text path
+  shipped (one shared `apply_text_char` for single-line and
+  multi-line `Text`, regression-tested for multi-byte codepoints
+  and multi-event commits). Preedit display still needs the input
+  layer to surface composition events first — `server/input_parser.rs`
+  doesn't parse the kitty-keyboard / bracketed-IME extensions
+  yet. Once it does, the widget runtime gains a `preedit` field
+  on `WidgetInstanceState::Text` plus a `compose` entry point
+  parallel to `apply_text_char`, and the renderer paints the
+  underline; both single-line and multi-line widgets get it
+  uniformly.
 * **Built-in chord support inside widgets.** Today
   `apply_text_input_key` only handles single-key edits; chords
   (`g g`) still bubble to the plugin's `defineMode`.
@@ -525,10 +561,9 @@ when real demand surfaces.
 | `HintBar` | ✅ migrated | every plugin's footer | `parseHintString` for legacy `Tab:foo  Esc:bar` strings |
 | `Toggle` / `Checkbox` | ✅ migrated | search_replace toggles | `[v]`/`[ ]` glyph + label |
 | `Button` | ✅ migrated | search_replace Replace All | `intent: "normal" \| "primary" \| "danger"` |
-| `TextInput` | ✅ migrated | search_replace fields | host-owned cursor + value, constant-width with scroll, hardware caret |
+| `Text` | ✅ migrated | search_replace fields (single-line); composer-style plugins (multi-line) | unified single-/multi-line widget; `rows: 1` (default) is single-line (`[value]` rendering, Enter-advances-focus, head-truncate scroll); `rows >= 2` is multi-line (block rendering, Enter-inserts-newline, line nav, vertical scroll). Host owns value + cursor + scroll; hardware cursor positioned by host. Builders: `text({ rows })` + ergonomic `textInput(value, opts)` / `textArea(opts)` wrappers |
 | `List` (virtual-scrolled) | ✅ | candidates for finder-style consumers | host owns scroll + selection |
 | `Tree` | ✅ migrated | search_replace match tree, audit, file-explorer | host owns scroll + selection + expansion; disclosure-glyph hit area; opt-in per-row checkboxes (`checkable: true` + `treeNode.checked: Some(_)`) with `toggle` events from glyph clicks or Space, persisted via `WidgetMutation::SetCheckedKeys` |
-| `TextArea` | ✅ | composer-style plugins | multi-line; host-owned value + cursor + vertical scroll; submit policy via panel HintBar |
 | `Tabs` / `Group` | ⏸ | (no current consumer) | skipped; revisit when needed |
 | `Layer` (compositor) | ❌ → §4.1 | tooltips, popovers, modals; subsumes Popup/Prompt | big architectural piece |
 | `Prompt` | ❌ → §4.1 | finder, every confirm | built on Layer |
@@ -570,10 +605,12 @@ type WidgetSpec =
   | { kind: "hintBar"; entries: HintEntry[]; key?: string }
   | { kind: "toggle"; checked: boolean; label: string; focused: boolean; key?: string }
   | { kind: "button"; label: string; focused: boolean; intent: ButtonKind; key?: string }
-  | { kind: "textInput"; value: string; cursorByte: number; focused: boolean; label?: string;
-        placeholder?: string | null; maxVisibleChars: number; fieldWidth: number; key?: string }
-  | { kind: "textArea"; value: string; cursorByte: number; focused: boolean;
-        visibleRows: number; key?: string }
+  | { kind: "text"; value: string; cursorByte: number; focused: boolean;
+        label?: string; placeholder?: string | null;
+        rows: number;            // 1 = single-line, >= 2 = multi-line
+        fieldWidth: number;      // 0 = auto-fit (single) / panel width (multi)
+        maxVisibleChars: number; // single-line soft cap; ignored when rows >= 2
+        key?: string }
   | { kind: "list"; items: TextPropertyEntry[]; itemKeys: string[];
         selectedIndex: number; visibleRows: number; key?: string }
   | { kind: "tree"; nodes: TreeNode[]; itemKeys: string[];
@@ -717,7 +754,10 @@ keystrokes to the right action based on the focused widget's kind.
    keys to `dispatch(widgetKey("Tab"))` etc.)
 2. The smart-key dispatcher in `handle_widget_key`, which routes to
    `handle_widget_focus_advance` / `handle_widget_activate` /
-   `handle_widget_select_move` / `handle_widget_text_input_*`.
+   `handle_widget_select_move` / `handle_widget_text_key` /
+   `handle_widget_text_char`. Single-line vs multi-line `Text`
+   selects automatically inside `handle_widget_text_key` via the
+   focused widget's `rows` field.
 
 **Dispatch order intended**:
 1. Global resolver
@@ -734,9 +774,9 @@ shortcut would let plugins skip the boilerplate.
 ### Terminal constraint
 
 Shift+Enter ≡ Enter at the terminal, Shift+Alt+Enter ≡ Alt+Enter.
-We do not bind Shift+Enter as a distinct key. `TextArea` (when
-shipped) submit defaults to Alt+Enter; the chosen key string shows
-in the panel's HintBar.
+We do not bind Shift+Enter as a distinct key. Multi-line `Text`
+submit defaults to Alt+Enter (Enter inserts a newline); the chosen
+key string shows in the panel's HintBar.
 
 ---
 
@@ -759,8 +799,9 @@ buffer_col)`; it receives semantic events.
   `{}`; List → `{ index, key }`; Tree row select → `{ index, key }`;
   Tree disclosure → `expand` event; Tree checkbox glyph (only when
   `checkable: true` and the row's `checked` is `Some(_)`) →
-  `toggle` event with `{ key, index, checked: <new> }`; TextInput →
-  `{ value, cursorByte }`.
+  `toggle` event with `{ key, index, checked: <new> }`; `Text` →
+  `{ value, cursorByte }` (same payload regardless of single-line
+  vs multi-line).
 * Wheel scroll routed to the panel under the cursor: `mouse_input.rs`
   calls into the widget runtime before falling through to buffer
   scroll. The first scrollable widget in the panel shifts its
@@ -788,9 +829,10 @@ applies a minimal patch.
 
 **Implemented**:
 * Spec/instance separation: `WidgetInstanceState` holds host-owned
-  state per widget key (TextInput value+cursor, List
-  scroll+selection). The spec carries initial values; instance
-  state is the truth after first render.
+  state per widget key (`Text` value+cursor+scroll, `List`
+  scroll+selection, `Tree` scroll+selection+expanded_keys). The
+  spec carries initial values; instance state is the truth after
+  first render.
 * Stable `key` round-trip: re-emitting the spec preserves instance
   state by key.
 * Re-render after host-side state changes: `rerender_widget_panel`
