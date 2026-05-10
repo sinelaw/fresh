@@ -8,7 +8,7 @@ import {
   fetchCommitShow,
   fetchGitLog,
 } from "./lib/git_history.ts";
-import { button, flexSpacer, row, WidgetPanel } from "./lib/index.ts";
+import { button, flexSpacer, key, list, row, WidgetPanel } from "./lib/index.ts";
 
 const editor = getEditor();
 
@@ -42,6 +42,11 @@ interface GitLogState {
    * `show_git_log` once the buffer group exists; cleaned up in
    * `git_log_close`. */
   toolbarPanel: WidgetPanel | null;
+  /** Widget panel rendering the log (List of commit rows). Owns
+   * `selected_index` + `scroll_offset` as instance state — the
+   * plugin's `state.selectedIndex` mirrors what the host reports
+   * via `widget_event "select"`. */
+  logPanel: WidgetPanel | null;
   commits: GitCommit[];
   selectedIndex: number;
   /** Cached `git show` output for the currently-displayed detail commit. */
@@ -52,20 +57,13 @@ interface GitLogState {
    */
   pendingDetailId: number;
   /**
-   * Debounce token for `cursor_moved`. Rapid cursor motion (PageDown, held
-   * j/k) would otherwise trigger a full log re-render + `git show` per
-   * intermediate row; we bump this id on every event and only do the work
-   * after a short delay if no newer event has arrived.
+   * Debounce token for List `select` events. Rapid selection moves
+   * (PageDown, held j/k) would otherwise trigger a full `git show`
+   * spawn per intermediate row; we bump this id on every event
+   * and only do the work after a short delay if no newer event
+   * has arrived.
    */
-  pendingCursorMoveId: number;
-  /**
-   * Byte offset at the start of each row in the rendered log panel, plus
-   * the total buffer length at the end. Populated by `renderLog` so the
-   * cursor_moved handler can map byte positions to commit indices without
-   * relying on `getCursorLine` (which is not implemented for virtual
-   * buffers).
-   */
-  logRowByteOffsets: number[];
+  pendingSelectId: number;
 }
 
 const state: GitLogState = {
@@ -75,53 +73,20 @@ const state: GitLogState = {
   detailBufferId: null,
   toolbarBufferId: null,
   toolbarPanel: null,
+  logPanel: null,
   commits: [],
   selectedIndex: 0,
   detailCache: null,
   pendingDetailId: 0,
-  pendingCursorMoveId: 0,
-  logRowByteOffsets: [],
+  pendingSelectId: 0,
 };
 
 /**
- * Delay before reacting to `cursor_moved`. Long enough to collapse a burst
- * of events from held j/k or PageDown into a single render, short enough
- * that the detail panel still feels live.
+ * Delay before spawning `git show` after a List `select` event. Long
+ * enough to collapse a burst (held j/k or PageDown) into one fetch,
+ * short enough that the detail panel still feels live.
  */
-const CURSOR_DEBOUNCE_MS = 60;
-
-// UTF-8 byte length — the overlay API expects byte offsets; JS strings are
-// UTF-16. Matches the helper used by `lib/git_history.ts`.
-function utf8Len(s: string): number {
-  let b = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c <= 0x7f) b += 1;
-    else if (c <= 0x7ff) b += 2;
-    else if (c >= 0xd800 && c <= 0xdfff) {
-      b += 4;
-      i++;
-    } else b += 3;
-  }
-  return b;
-}
-
-/**
- * Binary search `logRowByteOffsets` for the 0-indexed row whose byte
- * offset is the largest one ≤ `bytePos`. Returns 0 on an empty table.
- */
-function rowFromByte(bytePos: number): number {
-  const offs = state.logRowByteOffsets;
-  if (offs.length === 0) return 0;
-  let lo = 0;
-  let hi = offs.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (offs[mid] <= bytePos) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo;
-}
+const SELECT_DEBOUNCE_MS = 60;
 
 // =============================================================================
 // Modes
@@ -132,15 +97,20 @@ function rowFromByte(bytePos: number): number {
 // the log, and opens the file at the cursor when pressed in the detail).
 // =============================================================================
 
-// j/k as vi-style aliases for Up/Down, plus the plugin-specific action
-// keys. Everything else (arrows, Page{Up,Down}, Home/End, Shift+motion for
-// selection, Ctrl+C copy, …) is inherited from the Normal keymap because
-// the mode is registered with `inheritNormalBindings: true`.
+// j/k/Up/Down/PageUp/PageDown route to the log List widget so the host
+// owns selection + scroll + auto-scroll. The List's `select` event then
+// fires back into the plugin's `widget_event` handler for detail-pane
+// refresh. Other plugin actions (q/r/y/Tab/Return) stay as direct
+// bindings — they don't depend on which row is highlighted.
 editor.defineMode(
   "git-log",
   [
-    ["k", "move_up"],
-    ["j", "move_down"],
+    ["k", "git_log_select_up"],
+    ["j", "git_log_select_down"],
+    ["Up", "git_log_select_up"],
+    ["Down", "git_log_select_down"],
+    ["PageUp", "git_log_select_page_up"],
+    ["PageDown", "git_log_select_page_down"],
     ["Return", "git_log_enter"],
     ["Tab", "git_log_tab"],
     ["q", "git_log_q"],
@@ -151,6 +121,23 @@ editor.defineMode(
   false, // allow_text_input
   true, // inherit Normal-context bindings for unbound keys
 );
+
+function git_log_select_up(): void {
+  state.logPanel?.command(key("Up"));
+}
+function git_log_select_down(): void {
+  state.logPanel?.command(key("Down"));
+}
+function git_log_select_page_up(): void {
+  state.logPanel?.command(key("PageUp"));
+}
+function git_log_select_page_down(): void {
+  state.logPanel?.command(key("PageDown"));
+}
+registerHandler("git_log_select_up", git_log_select_up);
+registerHandler("git_log_select_down", git_log_select_down);
+registerHandler("git_log_select_page_up", git_log_select_page_up);
+registerHandler("git_log_select_page_down", git_log_select_page_down);
 
 // =============================================================================
 // Panel layout
@@ -228,19 +215,37 @@ function renderToolbar(): void {
 }
 
 editor.on("widget_event", (data) => {
+  // Toolbar (Row of Buttons) — `activate` from keypress or click on a
+  // button.
   if (
-    state.toolbarPanel === null ||
-    data.panel_id !== state.toolbarPanel.id()
+    state.toolbarPanel !== null &&
+    data.panel_id === state.toolbarPanel.id()
   ) {
+    if (data.event_type !== "activate") return;
+    const items = toolbarItems();
+    for (const item of items) {
+      if (data.widget_key === TOOLBAR_KEY_PREFIX + item.key) {
+        void item.onClick();
+        return;
+      }
+    }
     return;
   }
-  if (data.event_type !== "activate") return;
-  const items = toolbarItems();
-  for (const item of items) {
-    if (data.widget_key === TOOLBAR_KEY_PREFIX + item.key) {
-      void item.onClick();
+  // Log pane (List of commit rows) — `select` fires on j/k/Up/Down/
+  // PageUp/PageDown navigation and on row clicks; `activate` fires on
+  // Enter or double-click.
+  if (state.logPanel !== null && data.panel_id === state.logPanel.id()) {
+    if (data.event_type === "select") {
+      const idx =
+        typeof data.payload?.index === "number" ? data.payload.index : -1;
+      if (idx >= 0) void on_log_select(idx);
       return;
     }
+    if (data.event_type === "activate") {
+      void git_log_enter();
+      return;
+    }
+    return;
   }
 });
 
@@ -259,27 +264,29 @@ function detailFooter(hash: string): string {
 }
 
 function renderLog(): void {
-  if (state.groupId === null) return;
-  // No header row and no footer: the sticky toolbar above the group
-  // carries the shortcut hints, and the commit count goes to the status
-  // line when the group opens.
-  const entries = buildCommitLogEntries(state.commits, {
-    selectedIndex: state.selectedIndex,
+  if (state.logPanel === null) return;
+  // List takes the per-row entries directly. selectedIndex: -1 on the
+  // entry builder suppresses the plugin's selection styling — the host
+  // renders the focused-row highlight from the List widget's instance
+  // state instead.
+  const items = buildCommitLogEntries(state.commits, {
+    selectedIndex: -1,
     header: null,
   });
-  // Rebuild the byte-offset table used by cursor_moved to map positions
-  // to commit indices. `offsets[i]` is the byte offset of commit i; the
-  // final entry is the total buffer length, so row lookups clamp
-  // correctly on the last row.
-  const offsets: number[] = [];
-  let running = 0;
-  for (const e of entries) {
-    offsets.push(running);
-    running += utf8Len(e.text);
-  }
-  offsets.push(running);
-  state.logRowByteOffsets = offsets;
-  editor.setPanelContent(state.groupId, "log", entries);
+  const itemKeys = state.commits.map((c) => c.hash);
+  state.logPanel.set(
+    list({
+      items,
+      itemKeys,
+      selectedIndex: state.selectedIndex,
+      // Visible-rows only matters for virtualization; setting it to
+      // commits.length renders all rows and lets the buffer's natural
+      // scroll handle viewport. Revisit if commit lists grow into the
+      // tens of thousands.
+      visibleRows: Math.max(1, state.commits.length),
+      key: "git-log-list",
+    }),
+  );
 }
 
 function renderDetailPlaceholder(message: string): void {
@@ -371,14 +378,6 @@ function selectedCommit(): GitCommit | null {
   return state.commits[i] ?? null;
 }
 
-function indexFromCursorByte(bytePos: number): number {
-  // No header row — row 0 is commit 0.
-  const idx = rowFromByte(bytePos);
-  if (idx < 0) return 0;
-  if (idx >= state.commits.length) return state.commits.length - 1;
-  return idx;
-}
-
 // =============================================================================
 // Commands
 // =============================================================================
@@ -415,16 +414,17 @@ async function show_git_log(): Promise<void> {
   if (state.toolbarBufferId !== null) {
     state.toolbarPanel = new WidgetPanel(state.toolbarBufferId);
   }
+  if (state.logBufferId !== null) {
+    state.logPanel = new WidgetPanel(state.logBufferId);
+  }
   state.selectedIndex = 0;
   state.detailCache = null;
   state.isOpen = true;
 
-  // The log panel owns a native cursor so j/k/Up/Down navigate commits,
-  // and the detail panel also gets a cursor so diff lines can be clicked
-  // / traversed before pressing Enter to open a file.
-  if (state.logBufferId !== null) {
-    editor.setBufferShowCursors(state.logBufferId, true);
-  }
+  // The detail panel still owns a native cursor so diff lines can be
+  // clicked / traversed before pressing Enter to open a file. The log
+  // panel's selection is owned by the List widget — no buffer cursor
+  // needed (the focused-row highlight indicates position).
   if (state.detailBufferId !== null) {
     editor.setBufferShowCursors(state.detailBufferId, true);
     // Wrap long lines in the detail panel — git diffs often exceed the
@@ -437,17 +437,14 @@ async function show_git_log(): Promise<void> {
 
   renderToolbar();
   renderLog();
-  // Position the cursor on the first commit (row 0 now that the header
-  // row is gone).
-  if (state.logBufferId !== null && state.commits.length > 0) {
-    editor.setBufferCursor(state.logBufferId, 0);
-  }
+  // List widget's instance state is the source of truth for selection;
+  // no buffer-cursor positioning needed (the renderer auto-scrolls so
+  // the selected row stays visible).
   await refreshDetail();
 
   if (state.groupId !== null) {
     editor.focusBufferGroupPanel(state.groupId, "log");
   }
-  editor.on("cursor_moved", on_git_log_cursor_moved);
   editor.on("resize", on_git_log_resize);
   editor.on("buffer_closed", on_git_log_buffer_closed);
 
@@ -462,14 +459,14 @@ registerHandler("show_git_log", show_git_log);
  * close button, which triggers `buffer_closed`). */
 function git_log_cleanup(): void {
   if (!state.isOpen) return;
-  editor.off("cursor_moved", on_git_log_cursor_moved);
   editor.off("resize", on_git_log_resize);
   editor.off("buffer_closed", on_git_log_buffer_closed);
-  // The buffer-group's `close` will tear down the toolbar buffer too,
-  // which implicitly drops the widget panel rendering into it. We
-  // still null out the handle so any stray `renderToolbar()` call
-  // post-cleanup is a no-op.
+  // The buffer-group's `close` will tear down the panel buffers too,
+  // which implicitly drops the widget panels rendering into them. We
+  // still null out the handles so any stray `renderToolbar()` /
+  // `renderLog()` call post-cleanup is a no-op.
   state.toolbarPanel = null;
+  state.logPanel = null;
   state.isOpen = false;
   state.groupId = null;
   state.logBufferId = null;
@@ -673,32 +670,18 @@ function git_log_file_view_close(): void {
 registerHandler("git_log_file_view_close", git_log_file_view_close);
 
 // =============================================================================
-// Cursor tracking — live-update the detail panel as the user scrolls through
-// the commit list.
+// Selection tracking — live-update the detail panel as the user
+// navigates the List. Driven by `widget_event "select"` from the host.
 // =============================================================================
 
-async function on_git_log_cursor_moved(data: {
-  buffer_id: number;
-  cursor_id: number;
-  old_position: number;
-  new_position: number;
-}): Promise<void> {
+async function on_log_select(idx: number): Promise<void> {
   if (!state.isOpen) return;
-  // Only react to movement inside the log panel.
-  if (data.buffer_id !== state.logBufferId) return;
-
-  // Map the cursor's byte offset to a commit index via the row-offset
-  // table built in `renderLog`. This avoids relying on `getCursorLine`
-  // which is not implemented for virtual buffers.
-  const idx = indexFromCursorByte(data.new_position);
   if (idx === state.selectedIndex) return;
   state.selectedIndex = idx;
 
-  // Immediate feedback: update the log panel's selection highlight and
-  // either show the cached detail or a "loading" placeholder. Only the
-  // actual `git show` spawn is debounced below, so a burst of j/k events
-  // still feels responsive even though we collapse the fetches into one.
-  renderLog();
+  // Immediate feedback: cached detail or "loading" placeholder.
+  // The host already re-rendered the List with the new selection
+  // highlight, so we only need to update the right-hand pane.
   const pending = refreshDetailImmediate();
 
   const commit = state.commits[state.selectedIndex];
@@ -707,22 +690,21 @@ async function on_git_log_cursor_moved(data: {
       editor.t("status.commit_position", {
         current: String(state.selectedIndex + 1),
         total: String(state.commits.length),
-      })
+      }),
     );
   }
 
   if (!pending) return;
 
   // Debounce: bump the token, wait a beat, bail if a newer event has
-  // arrived. `git show` is expensive; a burst of cursor events (held
+  // arrived. `git show` is expensive; a burst of select events (held
   // j/k, PageDown) must collapse to one spawn.
-  const myId = ++state.pendingCursorMoveId;
-  await editor.delay(CURSOR_DEBOUNCE_MS);
-  if (myId !== state.pendingCursorMoveId) return;
+  const myId = ++state.pendingSelectId;
+  await editor.delay(SELECT_DEBOUNCE_MS);
+  if (myId !== state.pendingSelectId) return;
   if (!state.isOpen) return;
   await fetchAndRenderDetail(pending);
 }
-registerHandler("on_git_log_cursor_moved", on_git_log_cursor_moved);
 
 // =============================================================================
 // Command registration
