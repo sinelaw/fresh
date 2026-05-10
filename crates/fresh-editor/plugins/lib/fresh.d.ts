@@ -771,6 +771,15 @@ type TreeNode = {
 	* the row width occupies the full row.
 	*/
 	hasChildren: boolean;
+	/**
+	* Per-node checkbox state. Only rendered when the parent
+	* `Tree` has `checkable: true`. `None` = no checkbox glyph;
+	* `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin
+	* owns the truth — the host fires `widget_event { event_type:
+	* "toggle" }` and the plugin pushes the new state back via
+	* `WidgetMutation::SetCheckedKeys`.
+	*/
+	checked?: boolean | null;
 };
 type WidgetSpec = {
 	"kind": "row";
@@ -827,6 +836,15 @@ type WidgetSpec = {
 	* override host state).
 	*/
 	expandedKeys: Array<string>;
+	/**
+	* When true, every node with `checked: Some(_)` renders a
+	* `[v]` / `[ ]` glyph and emits a `toggle` hit area over
+	* the glyph. Click on the glyph fires `widget_event {
+	* event_type: "toggle", payload: { key, checked: <new> } }`;
+	* the plugin updates its model and pushes the new state
+	* back via `WidgetMutation::SetCheckedKeys`.
+	*/
+	checkable: boolean;
 	key?: string | null;
 } | {
 	"kind": "textInput";
@@ -959,6 +977,11 @@ type WidgetMutation = {
 } | {
 	"kind": "setExpandedKeys";
 	widgetKey: string;
+	keys: Array<string>;
+} | {
+	"kind": "setCheckedKeys";
+	widgetKey: string;
+	checked: boolean;
 	keys: Array<string>;
 };
 type AuthorityFilesystem = {

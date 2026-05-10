@@ -220,6 +220,7 @@ const modeBindings: [string, string][] = [
   ["PageDown", "search_replace_nav_page_down"],
   ["Left", "search_replace_nav_left"],
   ["Right", "search_replace_nav_right"],
+  ["x", "search_replace_toggle_match"],
   ["M-c", "search_replace_toggle_case"],
   ["M-r", "search_replace_toggle_regex"],
   ["M-w", "search_replace_toggle_whole_word"],
@@ -478,10 +479,9 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
         { text: ` (${selectedInFile}/${matchCount})` },
       ],
       {
-        // The widget prefixes ` ▶ ` / ` ▼ ` (4 cols) before this body;
-        // pad budget = W - 4 (the widget's prefix consumes 4 cols at
-        // depth 0).
-        padToChars: Math.max(0, W - 4),
+        // Host prefix at depth 0: disclosure (▶/▼) + space + checkbox
+        // ([v]/[ ]) + space = 6 cols.
+        padToChars: Math.max(0, W - 6),
         properties: { type: "file-row", fileIndex: item.fileIndex },
       },
     );
@@ -490,10 +490,14 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // (4 indent + 2 alignment). Use the remaining width for content.
   const group = panel.fileGroups[item.fileIndex];
   const result = group.matches[item.matchIndex!];
-  const checkbox = result.selected ? "[v]" : "[ ]";
   const location = `${group.relPath}:${result.match.line}`;
   const context = result.match.context.trim();
-  const innerWidth = Math.max(0, W - 6); // host prefix consumes 6 cols
+  // Host prefix consumes:
+  //   indent (depth=1) = 2
+  //   leaf-alignment   = 2 (in lieu of disclosure glyph)
+  //   checkbox + space = 4 ([v] + " ")
+  // Total: 8 cols.
+  const innerWidth = Math.max(0, W - 8);
 
   // Best-effort context budget: enough room for the fixed leading
   // pieces plus " - " plus the context itself. JS `.length` gives
@@ -501,7 +505,7 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // overwhelmingly-ASCII case (paths + line numbers); slight
   // over-counting on rare non-BMP filenames just trims a little
   // more of the context, which is fine.
-  const maxCtx = innerWidth - checkbox.length - 1 - location.length - 3;
+  const maxCtx = innerWidth - location.length - 3;
   const displayCtx = truncate(context, Math.max(10, maxCtx));
 
   // Pattern-match highlights inside the context substring. Emitted
@@ -513,8 +517,6 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   }
 
   const segments: StyledSegment[] = [
-    { text: checkbox, style: { fg: result.selected ? C.checkOn : C.checkOff } },
-    { text: " " },
     { text: location, style: { fg: C.lineNum } },
     { text: " - " },
     { text: displayCtx, overlays: ctxOverlays },
@@ -571,9 +573,17 @@ function buildMatchListSpec(): WidgetSpec {
         panel!.knownFileKeys.add(k);
         panel!.expandedFileKeys.add(k);
       }
-      return treeNode(entry, { depth: 0, hasChildren: true });
+      // File-row checkbox derives from children: checked iff every
+      // match in this file is selected. Mixed (some selected, some
+      // not) renders as `[ ]` for v1 — adding a tristate `[~]`
+      // glyph is a future host-side option but not needed to wire
+      // the toggle path end-to-end.
+      const fileChecked = panel!.fileGroups[item.fileIndex].matches.every(m => m.selected);
+      return treeNode(entry, { depth: 0, hasChildren: true, checked: fileChecked });
     }
-    return treeNode(entry, { depth: 1, hasChildren: false });
+    const matchSelected = panel!.fileGroups[item.fileIndex]
+      .matches[item.matchIndex!].selected;
+    return treeNode(entry, { depth: 1, hasChildren: false, checked: matchSelected });
   });
   const selectedIndex = panel.focusPanel === "matches" ? panel.matchIndex : -1;
   // Tree visible rows = panel viewport height minus the chrome
@@ -588,6 +598,7 @@ function buildMatchListSpec(): WidgetSpec {
     selectedIndex,
     visibleRows,
     expandedKeys: [...panel.expandedFileKeys],
+    checkable: true,
     key: "matchTree",
   });
 }
@@ -1095,6 +1106,20 @@ registerHandler("search_replace_nav_up",    () => dispatch(widgetKey("Up")));
 registerHandler("search_replace_nav_down",  () => dispatch(widgetKey("Down")));
 registerHandler("search_replace_nav_page_up",   () => dispatch(widgetKey("PageUp")));
 registerHandler("search_replace_nav_page_down", () => dispatch(widgetKey("PageDown")));
+registerHandler("search_replace_toggle_match", () => {
+  // `x` on the focused match-tree row toggles the row's checkbox.
+  // The host doesn't expose a "toggle focused row" command; we
+  // read `panel.matchIndex` (kept in sync by `select` events) and
+  // run the same path the click handler uses.
+  if (!panel) return;
+  const flat = buildFlatItems();
+  const item = flat[panel.matchIndex];
+  if (!item) return;
+  const cur = item.type === "match"
+    ? panel.fileGroups[item.fileIndex].matches[item.matchIndex!].selected
+    : panel.fileGroups[item.fileIndex].matches.every(m => m.selected);
+  applyMatchTreeToggle(panel.matchIndex, !cur);
+});
 
 // Tab / Shift+Tab now cycle focus through the host's tabbable
 // widget set (declared in spec via `key`s — searchField,
@@ -1444,9 +1469,59 @@ editor.on("widget_event", (args) => {
         panel.widgetPanel?.setChecked("whole", newChecked);
         rerunSearchDebounced();
         break;
+      case "matchTree": {
+        // The `[v]`/`[ ]` glyph on a tree row was clicked. Plugin
+        // owns the source-of-truth (`result.selected`) — flip it
+        // and push the new spec state via the targeted mutator.
+        // For file rows we cascade to every child match so a
+        // single click on the file checkbox checks/unchecks the
+        // whole file's matches at once.
+        const idx = (args.payload as { index?: number } | undefined)?.index;
+        if (typeof idx !== "number") return;
+        applyMatchTreeToggle(idx, newChecked);
+        break;
+      }
     }
   }
 });
+
+/// Toggle the selected state of a match-tree row at `idx` to
+/// `newChecked`. For a match row, just flips that match. For a
+/// file header, cascades to every child match. Updates the host's
+/// view via `setCheckedKeys` (one call per row that changed
+/// glyph) so the next render reflects the new state without a
+/// full spec re-emit.
+function applyMatchTreeToggle(idx: number, newChecked: boolean): void {
+  if (!panel) return;
+  const flat = buildFlatItems();
+  const item = flat[idx];
+  if (!item) return;
+  if (item.type === "match") {
+    const fileGroup = panel.fileGroups[item.fileIndex];
+    fileGroup.matches[item.matchIndex!].selected = newChecked;
+    const matchKey = flatItemKey(item);
+    panel.widgetPanel?.setCheckedKeys("matchTree", newChecked, [matchKey]);
+    // The file header's checked glyph is derived (all-or-nothing).
+    // After flipping a single match, recompute and push the file
+    // row's new state so it stays in sync with its children.
+    const fileAllSelected = fileGroup.matches.every(m => m.selected);
+    const fileKey = flatItemKey({ type: "file", fileIndex: item.fileIndex });
+    panel.widgetPanel?.setCheckedKeys("matchTree", fileAllSelected, [fileKey]);
+  } else {
+    // File row — cascade to every child.
+    const fileGroup = panel.fileGroups[item.fileIndex];
+    for (const m of fileGroup.matches) m.selected = newChecked;
+    const fileKey = flatItemKey(item);
+    const matchKeys = fileGroup.matches.map((_, mi) =>
+      flatItemKey({ type: "match", fileIndex: item.fileIndex, matchIndex: mi })
+    );
+    panel.widgetPanel?.setCheckedKeys(
+      "matchTree",
+      newChecked,
+      [fileKey, ...matchKeys],
+    );
+  }
+}
 
 // Convert a UTF-8 byte offset into a JS-string character offset,
 // because the host's TextInput cursor model uses bytes (matching the

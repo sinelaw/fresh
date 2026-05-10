@@ -214,13 +214,23 @@ export function list(options: {
  * filters out descendants of collapsed nodes when rendering. */
 export function treeNode(
   text: TextPropertyEntry,
-  options?: { depth?: number; hasChildren?: boolean },
+  options?: { depth?: number; hasChildren?: boolean; checked?: boolean },
 ): TreeNode {
-  return {
+  // `checked` is intentionally Optional<bool>, not a default-false
+  // boolean: omitting it (== undefined here) maps to host-side
+  // `None`, which means "no checkbox glyph". Per-node opt-in keeps
+  // checkable trees mixing checkbox-bearing rows with rows that
+  // shouldn't render one (e.g. a header that doesn't itself have
+  // a meaningful checked state).
+  const node: TreeNode = {
     text,
     depth: options?.depth ?? 0,
     hasChildren: options?.hasChildren ?? false,
   };
+  if (options?.checked !== undefined) {
+    node.checked = options.checked;
+  }
+  return node;
 }
 
 /** Hierarchical tree with host-managed expand/collapse, selection,
@@ -251,6 +261,13 @@ export function tree(options: {
    * `panel.setExpandedKeys(...)` to override host state after
    * mount. */
   expandedKeys?: string[];
+  /** When true, every node with `checked: true | false` renders
+   * a `[v]` / `[ ]` glyph and emits a `toggle` hit area. Click on
+   * the glyph fires `widget_event` `eventType: "toggle"` with
+   * `payload: { key, index, checked: <new> }`; the plugin updates
+   * its model and pushes the new state back via
+   * `panel.setCheckedKeys(...)`. */
+  checkable?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -260,6 +277,7 @@ export function tree(options: {
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
     expandedKeys: options.expandedKeys ?? [],
+    checkable: options.checkable ?? false,
     key: options.key,
   };
 }
@@ -487,6 +505,15 @@ export class WidgetPanel {
    * (e.g. "expand all", reveal-on-search). */
   setExpandedKeys(widgetKey: string, keys: string[]): boolean {
     return this.mutate({ kind: "setExpandedKeys", widgetKey, keys });
+  }
+
+  /** Stamp `checked` onto every node in the named `Tree` whose
+   * `itemKey` appears in `keys`. Used by the `toggle` event
+   * handler to push the post-click state back without a full spec
+   * re-emit. Nodes whose existing `checked` is `undefined` (no
+   * checkbox glyph) are unchanged. */
+  setCheckedKeys(widgetKey: string, checked: boolean, keys: string[]): boolean {
+    return this.mutate({ kind: "setCheckedKeys", widgetKey, checked, keys });
   }
 }
 

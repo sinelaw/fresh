@@ -576,6 +576,7 @@ fn render_collected(
             selected_index,
             visible_rows,
             expanded_keys,
+            checkable,
             key: tree_key,
         } => {
             // Look up host-owned instance state (scroll, selection,
@@ -711,7 +712,7 @@ fn render_collected(
                 let item_key = item_keys.get(abs_idx).cloned().unwrap_or_default();
                 let is_expanded =
                     node.has_children && !item_key.is_empty() && prev_expanded.contains(&item_key);
-                let rendered = render_tree_row(&node, is_expanded);
+                let rendered = render_tree_row(&node, is_expanded, *checkable);
                 let mut entry = rendered.entry;
                 let is_selected = abs_idx as i32 == effective_sel_abs;
                 if is_selected {
@@ -749,11 +750,35 @@ fn render_collected(
                         event_type: "expand",
                     });
                 }
-                // Row body hit — fires `select`. Spans the rest of
-                // the row text (or all of it for a leaf).
-                let body_start = match rendered.disclosure_range {
-                    Some((_, end)) => end,
-                    None => 0,
+                // Checkbox hit (when the parent Tree is checkable
+                // *and* this node has Some(_) checked) — fires
+                // `toggle` with the *new* checked value. The host
+                // does not mutate the spec; the plugin owns the
+                // truth and pushes the new state back via
+                // `WidgetMutation::SetCheckedKeys`.
+                if let Some(cb_range) = rendered.checkbox_range {
+                    let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
+                    hits.push(HitArea {
+                        widget_key: tree_spec_key.clone(),
+                        widget_kind: "tree",
+                        buffer_row: hit_row,
+                        byte_start: cb_range.0,
+                        byte_end: cb_range.1,
+                        payload: json!({
+                            "index": abs_idx as i64,
+                            "key": item_key.clone(),
+                            "checked": new_checked,
+                        }),
+                        event_type: "toggle",
+                    });
+                }
+                // Row body hit — fires `select`. Spans whatever's
+                // left of the row text after the disclosure +
+                // checkbox prefix.
+                let body_start = match (rendered.checkbox_range, rendered.disclosure_range) {
+                    (Some((_, end)), _) => end + 1, // +1 for the trailing space after [v]
+                    (None, Some((_, end))) => end,
+                    (None, None) => 0,
                 };
                 if body_start < row_byte_end {
                     hits.push(HitArea {
@@ -1122,20 +1147,31 @@ pub struct RenderedTreeRow {
     /// Byte range within `entry.text` of the disclosure glyph
     /// (`▶`/`▼`). `None` for leaf nodes (no glyph rendered).
     pub disclosure_range: Option<(usize, usize)>,
+    /// Byte range within `entry.text` of the checkbox glyph
+    /// (`[v]` / `[ ]`). `None` when the parent Tree is not
+    /// `checkable`, or when this node has `checked: None`. The
+    /// caller emits a `toggle` hit area over this range.
+    pub checkbox_range: Option<(usize, usize)>,
 }
 
 /// Render a single `TreeNode` row.
 ///
-/// Layout: `<indent><disclosure><space><node-text>` where:
+/// Layout: `<indent><disclosure><space>[<checkbox><space>]<node-text>`
+/// where:
 /// * `indent` = `depth * 2` spaces.
 /// * `disclosure` = `▶` (collapsed) / `▼` (expanded) for internal
 ///   nodes; two spaces (alignment) for leaves.
+/// * `checkbox` = `[v]` (checked) / `[ ]` (unchecked) when the
+///   parent Tree opted into `checkable: true` *and* this node has
+///   `checked: Some(_)`; otherwise omitted entirely.
 /// * `<node-text>` is the plugin's pre-rendered row content, with
 ///   its inline overlays byte-shifted by the prefix length.
 ///
-/// The disclosure glyph is colored with `ui.help_key_fg` so it
-/// reads as a control surface against the row's text.
-pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
+/// The disclosure glyph is colored with `ui.help_key_fg`; the
+/// checkbox glyph reuses `ui.tab_active_fg` (the same key the
+/// `Toggle` widget uses for its checked-state glyph) so it reads
+/// as a control surface against the row's text.
+pub fn render_tree_row(node: &TreeNode, expanded: bool, checkable: bool) -> RenderedTreeRow {
     let indent_cols = (node.depth as usize) * 2;
     let disclosure_glyph: &str = if node.has_children {
         if expanded {
@@ -1154,8 +1190,23 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
     // leaf branch uses two literal spaces for the same width.
     let separator: &str = if node.has_children { " " } else { "" };
 
+    let checkbox_glyph: Option<&'static str> = if checkable {
+        match node.checked {
+            Some(true) => Some("[v]"),
+            Some(false) => Some("[ ]"),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let checkbox_extra = checkbox_glyph.map(|g| g.len() + 1).unwrap_or(0);
+
     let mut text = String::with_capacity(
-        indent_cols + disclosure_glyph.len() + separator.len() + node.text.text.len(),
+        indent_cols
+            + disclosure_glyph.len()
+            + separator.len()
+            + checkbox_extra
+            + node.text.text.len(),
     );
     for _ in 0..indent_cols {
         text.push(' ');
@@ -1164,6 +1215,15 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
     text.push_str(disclosure_glyph);
     let disc_end = text.len();
     text.push_str(separator);
+    let checkbox_range = if let Some(g) = checkbox_glyph {
+        let cb_start = text.len();
+        text.push_str(g);
+        let cb_end = text.len();
+        text.push(' ');
+        Some((cb_start, cb_end))
+    } else {
+        None
+    };
     let body_start = text.len();
     text.push_str(&node.text.text);
 
@@ -1197,6 +1257,25 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
             unit: OffsetUnit::Byte,
         });
     }
+    // Checkbox glyph color — bright for checked, dim for unchecked,
+    // matching the Toggle widget's convention.
+    if let Some((cb_start, cb_end)) = checkbox_range {
+        let theme_key = match node.checked {
+            Some(true) => KEY_TOGGLE_ON_FG,
+            _ => KEY_PLACEHOLDER_FG,
+        };
+        overlays.push(InlineOverlay {
+            start: cb_start,
+            end: cb_end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(theme_key)),
+                bold: matches!(node.checked, Some(true)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
 
     let disclosure_range = if node.has_children {
         Some((disc_start, disc_end))
@@ -1222,6 +1301,7 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool) -> RenderedTreeRow {
     RenderedTreeRow {
         entry,
         disclosure_range,
+        checkbox_range,
     }
 }
 
@@ -2643,6 +2723,7 @@ mod tests {
             text: TextPropertyEntry::text(text),
             depth,
             has_children,
+            checked: None,
         }
     }
 
@@ -2660,13 +2741,14 @@ mod tests {
             selected_index: selected,
             visible_rows: visible,
             expanded_keys: expanded.iter().map(|s| s.to_string()).collect(),
+            checkable: false,
             key: key.map(|s| s.to_string()),
         }
     }
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_collapsed() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), false);
+        let r = render_tree_row(&tnode("file.txt", 0, true), false, false);
         assert!(r.entry.text.starts_with('\u{25B6}'), "starts with ▶");
         assert!(r.entry.text.contains("file.txt"));
         assert!(r.disclosure_range.is_some());
@@ -2674,13 +2756,13 @@ mod tests {
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_expanded() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), true);
+        let r = render_tree_row(&tnode("file.txt", 0, true), true, false);
         assert!(r.entry.text.starts_with('\u{25BC}'), "starts with ▼");
     }
 
     #[test]
     fn tree_row_leaf_uses_two_spaces_no_disclosure_hit() {
-        let r = render_tree_row(&tnode("match", 0, false), false);
+        let r = render_tree_row(&tnode("match", 0, false), false, false);
         // No glyph, just spaces for alignment.
         assert!(r.entry.text.starts_with("  "));
         assert!(r.entry.text.contains("match"));
@@ -2689,7 +2771,7 @@ mod tests {
 
     #[test]
     fn tree_row_indents_by_depth_times_two() {
-        let r = render_tree_row(&tnode("nested", 2, false), false);
+        let r = render_tree_row(&tnode("nested", 2, false), false, false);
         // depth=2 → 4 leading spaces, then 2 alignment spaces, then "nested".
         assert!(r.entry.text.starts_with("      nested"));
     }
@@ -2707,7 +2789,7 @@ mod tests {
             properties: Default::default(),
             unit: OffsetUnit::Byte,
         });
-        let r = render_tree_row(&node, false);
+        let r = render_tree_row(&node, false, false);
         // depth=1 → 2 indent + 2 alignment = 4 prefix bytes (ASCII).
         // The plugin's [0..5] becomes [4..9].
         let plugin_overlay = r
@@ -2718,6 +2800,67 @@ mod tests {
             .expect("bold overlay carried through");
         assert_eq!(plugin_overlay.start, 4);
         assert_eq!(plugin_overlay.end, 9);
+    }
+
+    #[test]
+    fn tree_row_omits_checkbox_when_not_checkable() {
+        // Even with `checked: Some(_)`, no glyph if `checkable: false`.
+        let mut node = tnode("file.rs", 0, false);
+        node.checked = Some(true);
+        let r = render_tree_row(&node, false, false);
+        assert!(r.checkbox_range.is_none());
+        assert!(!r.entry.text.contains("[v]"));
+        assert!(!r.entry.text.contains("[ ]"));
+    }
+
+    #[test]
+    fn tree_row_omits_checkbox_when_checked_is_none() {
+        // `checkable: true` but `checked: None` → still no glyph.
+        // Lets a checkable tree mix non-checkbox-bearing nodes
+        // (e.g. a separator or header) with checkbox rows.
+        let node = tnode("section", 0, false);
+        let r = render_tree_row(&node, false, true);
+        assert!(r.checkbox_range.is_none());
+        assert!(!r.entry.text.contains("[v]"));
+        assert!(!r.entry.text.contains("[ ]"));
+    }
+
+    #[test]
+    fn tree_row_renders_checked_glyph_after_disclosure() {
+        let mut node = tnode("file.rs", 0, true);
+        node.checked = Some(true);
+        let r = render_tree_row(&node, true, true);
+        assert!(r.checkbox_range.is_some(), "checkbox range emitted");
+        let (cb_start, cb_end) = r.checkbox_range.unwrap();
+        // Layout: ▼(3 bytes UTF-8) + " " + [v] + " " + body
+        assert_eq!(&r.entry.text[cb_start..cb_end], "[v]");
+        assert!(r.entry.text.contains("[v] file.rs"));
+    }
+
+    #[test]
+    fn tree_row_renders_unchecked_glyph_for_leaf() {
+        let mut node = tnode("match-row", 1, false);
+        node.checked = Some(false);
+        let r = render_tree_row(&node, false, true);
+        let (cb_start, cb_end) = r
+            .checkbox_range
+            .expect("checkbox range for leaf with checked: Some");
+        assert_eq!(&r.entry.text[cb_start..cb_end], "[ ]");
+        // depth=1 → 2-space indent; leaf-alignment → 2 spaces; then `[ ]` + " ".
+        assert!(r.entry.text.starts_with("    [ ] match-row"));
+    }
+
+    #[test]
+    fn tree_row_checkbox_glyph_byte_range_addresses_correct_text() {
+        // Sanity: byte_start..byte_end must extract the glyph
+        // verbatim (no UTF-8 boundary issues from the disclosure).
+        let mut node = tnode("path/with/é", 0, true);
+        node.checked = Some(true);
+        let r = render_tree_row(&node, false, true);
+        let (cb_start, cb_end) = r.checkbox_range.unwrap();
+        assert!(r.entry.text.is_char_boundary(cb_start));
+        assert!(r.entry.text.is_char_boundary(cb_end));
+        assert_eq!(&r.entry.text[cb_start..cb_end], "[v]");
     }
 
     #[test]

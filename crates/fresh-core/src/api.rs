@@ -1194,6 +1194,14 @@ pub struct TreeNode {
     /// the row width occupies the full row.
     #[serde(default)]
     pub has_children: bool,
+    /// Per-node checkbox state. Only rendered when the parent
+    /// `Tree` has `checkable: true`. `None` = no checkbox glyph;
+    /// `Some(true)` = `[v]`; `Some(false)` = `[ ]`. The plugin
+    /// owns the truth — the host fires `widget_event { event_type:
+    /// "toggle" }` and the plugin pushes the new state back via
+    /// `WidgetMutation::SetCheckedKeys`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
 }
 
 /// Visual role for a `Button`. Maps to theme keys at render time —
@@ -1373,6 +1381,14 @@ pub enum WidgetSpec {
         /// override host state).
         #[serde(default)]
         expanded_keys: Vec<String>,
+        /// When true, every node with `checked: Some(_)` renders a
+        /// `[v]` / `[ ]` glyph and emits a `toggle` hit area over
+        /// the glyph. Click on the glyph fires `widget_event {
+        /// event_type: "toggle", payload: { key, checked: <new> } }`;
+        /// the plugin updates its model and pushes the new state
+        /// back via `WidgetMutation::SetCheckedKeys`.
+        #[serde(default)]
+        checkable: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -1615,6 +1631,16 @@ pub enum WidgetMutation {
     /// without the plugin's involvement.
     SetExpandedKeys {
         widget_key: String,
+        keys: Vec<String>,
+    },
+    /// Set `checked` to the given value on every node in `keys`.
+    /// Mutates the Tree's nodes in the spec; the renderer sees
+    /// the change on the next paint without a full spec re-emit.
+    /// Used by the `toggle` event handler in plugins to push the
+    /// new checkbox state back after a user click or `x` keypress.
+    SetCheckedKeys {
+        widget_key: String,
+        checked: bool,
         keys: Vec<String>,
     },
 }

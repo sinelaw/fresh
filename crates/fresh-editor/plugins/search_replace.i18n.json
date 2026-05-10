@@ -28,7 +28,7 @@
     "panel.results": "Results: %{count}",
     "panel.limited": "(results capped)",
     "panel.selected": "(%{selected} selected)",
-    "panel.help": "Tab:section  ↑↓:nav  Space:toggle  Enter:confirm  Alt+Ret:replace  Shift+Ret:focused  Esc:close",
+    "panel.help": "Tab:section  ↑↓:nav  Space:toggle  x:check  Enter:confirm  Alt+Ret:replace  Shift+Ret:focused  Esc:close",
     "panel.match_stats": "(%{count} matches / %{files} files)",
     "panel.case_toggle": "Case(Alt+C)",
     "panel.regex_toggle": "Regex(Alt+R)",

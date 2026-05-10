@@ -3508,6 +3508,27 @@ impl Editor {
                     );
                 }
             }
+            WidgetMutation::SetCheckedKeys {
+                widget_key,
+                checked,
+                keys,
+            } => {
+                // Tree node `checked` lives in the spec (not instance
+                // state) — the plugin is the source of truth and can
+                // re-derive the boolean from its model on every spec
+                // emit. The mutator just stamps the new value into the
+                // matching nodes so the next render reflects it
+                // immediately, without round-tripping through the
+                // plugin.
+                if let Some(panel) = self.widget_registry.get_mut(panel_id) {
+                    crate::widgets::set_tree_checked_keys_in_spec(
+                        &mut panel.spec,
+                        &widget_key,
+                        checked,
+                        &keys,
+                    );
+                }
+            }
         }
 
         // Re-render with the mutated state. `rerender_widget_panel`

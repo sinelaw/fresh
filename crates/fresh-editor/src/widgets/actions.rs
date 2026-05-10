@@ -345,6 +345,60 @@ pub fn set_tree_nodes_in_spec(
     }
 }
 
+/// Stamp `Some(checked)` onto every `TreeNode` whose item-key
+/// appears in `keys`. Used by `WidgetMutation::SetCheckedKeys` —
+/// the host writes the new checkbox state into the spec so the
+/// next render reflects it without round-tripping through the
+/// plugin. Nodes not in `keys` are unchanged. Nodes whose
+/// existing `checked` is `None` are left as `None` (a node only
+/// becomes checkable by the plugin emitting `Some(_)` in the
+/// spec).
+///
+/// Returns true if the named tree was found.
+pub fn set_tree_checked_keys_in_spec(
+    spec: &mut WidgetSpec,
+    widget_key: &str,
+    checked: bool,
+    keys: &[String],
+) -> bool {
+    if widget_key.is_empty() {
+        return false;
+    }
+    match spec {
+        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
+            for c in children.iter_mut() {
+                if c.contains_key(widget_key) {
+                    return set_tree_checked_keys_in_spec(c, widget_key, checked, keys);
+                }
+            }
+            false
+        }
+        WidgetSpec::Tree {
+            nodes,
+            item_keys,
+            key,
+            ..
+        } => {
+            if key.as_deref() != Some(widget_key) {
+                return false;
+            }
+            let target: std::collections::HashSet<&str> =
+                keys.iter().map(String::as_str).collect();
+            for (i, node) in nodes.iter_mut().enumerate() {
+                if node.checked.is_none() {
+                    continue;
+                }
+                let item_key = item_keys.get(i).map(String::as_str).unwrap_or("");
+                if !item_key.is_empty() && target.contains(item_key) {
+                    node.checked = Some(checked);
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Resolve the absolute `nodes` index of the parent of `child_idx`
 /// in a `Tree`. The parent of a node at depth `d` is the most recent
 /// earlier node at depth `d - 1`. Returns `None` for top-level nodes
@@ -517,6 +571,7 @@ mod tests {
             text: TextPropertyEntry::text(text),
             depth,
             has_children,
+            checked: None,
         }
     }
 
@@ -569,6 +624,7 @@ mod tests {
             selected_index: -1,
             visible_rows: 5,
             expanded_keys: vec![],
+            checkable: false,
             key: Some("t".into()),
         };
         let new_nodes = vec![node("new1", 0, false), node("new2", 0, false)];
@@ -692,6 +748,75 @@ mod tests {
     }
 
     #[test]
+    fn set_tree_checked_keys_in_spec_flips_only_named_keys() {
+        let mut a = node("a", 0, false);
+        a.checked = Some(true);
+        let mut b = node("b", 0, false);
+        b.checked = Some(true);
+        let mut c = node("c", 0, false);
+        c.checked = Some(true);
+        let mut spec = WidgetSpec::Tree {
+            nodes: vec![a, b, c],
+            item_keys: vec!["k_a".into(), "k_b".into(), "k_c".into()],
+            selected_index: -1,
+            visible_rows: 5,
+            expanded_keys: vec![],
+            checkable: true,
+            key: Some("t".into()),
+        };
+        let ok = set_tree_checked_keys_in_spec(
+            &mut spec,
+            "t",
+            false,
+            &["k_a".to_string(), "k_c".to_string()],
+        );
+        assert!(ok);
+        match &spec {
+            WidgetSpec::Tree { nodes, .. } => {
+                assert_eq!(nodes[0].checked, Some(false));
+                assert_eq!(nodes[1].checked, Some(true), "untouched");
+                assert_eq!(nodes[2].checked, Some(false));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn set_tree_checked_keys_in_spec_skips_nodes_without_checkbox() {
+        // Nodes with `checked: None` must stay None even when their
+        // key is in the target list — the plugin's intent ("this
+        // node has no checkbox") is preserved.
+        let n_with = {
+            let mut n = node("checked", 0, false);
+            n.checked = Some(true);
+            n
+        };
+        let n_without = node("no-checkbox", 0, false); // checked: None
+        let mut spec = WidgetSpec::Tree {
+            nodes: vec![n_with, n_without],
+            item_keys: vec!["k0".into(), "k1".into()],
+            selected_index: -1,
+            visible_rows: 5,
+            expanded_keys: vec![],
+            checkable: true,
+            key: Some("t".into()),
+        };
+        let _ok = set_tree_checked_keys_in_spec(
+            &mut spec,
+            "t",
+            false,
+            &["k0".to_string(), "k1".to_string()],
+        );
+        match &spec {
+            WidgetSpec::Tree { nodes, .. } => {
+                assert_eq!(nodes[0].checked, Some(false));
+                assert_eq!(nodes[1].checked, None);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
     fn set_tree_nodes_in_spec_returns_false_for_unknown_key() {
         let mut spec = WidgetSpec::Tree {
             nodes: vec![node("a", 0, false)],
@@ -699,6 +824,7 @@ mod tests {
             selected_index: -1,
             visible_rows: 5,
             expanded_keys: vec![],
+            checkable: false,
             key: Some("real".into()),
         };
         assert!(!set_tree_nodes_in_spec(&mut spec, "wrong", vec![], vec![]));
