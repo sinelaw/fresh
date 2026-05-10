@@ -455,7 +455,7 @@ impl Editor {
             snapshot.user_config = Arc::clone(&self.user_config_raw);
 
             // Update editor mode (for vi mode and other modal editing)
-            snapshot.editor_mode = self.editor_mode.clone();
+            snapshot.editor_mode = self.active_window().editor_mode.clone();
 
             // Update plugin global states from Rust-side store.
             // Merge using or_insert to preserve JS-side write-through entries.
@@ -1788,7 +1788,7 @@ impl Editor {
 
     /// Set the global editor mode (for vi mode)
     fn handle_set_editor_mode(&mut self, mode: Option<String>) {
-        self.editor_mode = mode.clone();
+        self.active_window_mut().editor_mode = mode.clone();
         tracing::debug!("Set editor mode: {:?}", mode);
     }
 

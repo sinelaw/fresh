@@ -899,6 +899,18 @@ impl Editor {
                 // channel; LSP responses arriving on the manager's
                 // sender land in `base.bridge`'s receiver.
                 base.bridge = base_window_bridge;
+                // Load prompt histories from disk for the base window.
+                // Each window has its own prompt-history rings.
+                for history_name in ["search", "replace", "goto_line"] {
+                    let path = dir_context.prompt_history_path(history_name);
+                    let history = crate::input::input_history::InputHistory::load_from_file(&path)
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("Failed to load {} history: {}", history_name, e);
+                            crate::input::input_history::InputHistory::new()
+                        });
+                    base.prompt_histories
+                        .insert(history_name.to_string(), history);
+                }
                 m.insert(fresh_core::WindowId(1), base);
                 m
             },
@@ -922,20 +934,6 @@ impl Editor {
             next_buffer_group_id: 0,
             background_process_handles: HashMap::new(),
             host_process_handles: HashMap::new(),
-            prompt_histories: {
-                // Load prompt histories from disk if available
-                let mut histories = HashMap::new();
-                for history_name in ["search", "replace", "goto_line"] {
-                    let path = dir_context.prompt_history_path(history_name);
-                    let history = crate::input::input_history::InputHistory::load_from_file(&path)
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Failed to load {} history: {}", history_name, e);
-                            crate::input::input_history::InputHistory::new()
-                        });
-                    histories.insert(history_name.to_string(), history);
-                }
-                histories
-            },
             pending_next_key_callbacks: std::collections::VecDeque::new(),
             key_capture_active: false,
             pending_key_capture_buffer: std::collections::VecDeque::new(),
@@ -955,7 +953,6 @@ impl Editor {
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
             chord_state: Vec::new(),
-            pending_close_buffer: None,
             last_auto_revert_poll: time_source.now(),
             last_file_tree_poll: time_source.now(),
             git_index_resolved: false,
@@ -988,7 +985,6 @@ impl Editor {
             last_persistent_auto_save: time_source.now(),
             active_custom_contexts: HashSet::new(),
             plugin_global_state: HashMap::new(),
-            editor_mode: None,
             warning_log: None,
             status_log_path: None,
             warning_domains: WarningDomainRegistry::new(),

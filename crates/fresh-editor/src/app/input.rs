@@ -664,7 +664,7 @@ impl Editor {
                     return Ok(());
                 }
             }
-            if let Some(ref mode_name) = self.editor_mode {
+            if let Some(ref mode_name) = self.active_window().editor_mode {
                 if self.mode_registry.is_read_only(mode_name) {
                     tracing::debug!("Ignoring unbound key in read-only mode '{}'", mode_name);
                     return Ok(());

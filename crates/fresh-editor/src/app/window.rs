@@ -437,6 +437,20 @@ pub struct Window {
     /// LSP for this language?" popup for. Per-window because LSP is
     /// per-window — different windows can prompt independently.
     pub user_dismissed_lsp_languages: std::collections::HashSet<String>,
+
+    /// Active editor mode (e.g. "search", "replace", "macro-record").
+    /// Per-window because the modes drive UI affordances that belong
+    /// to one window's UX flow.
+    pub editor_mode: Option<String>,
+
+    /// Per-window prompt histories (one ring per `PromptType`). Each
+    /// window has its own minibuffer, so each maintains its own
+    /// history.
+    pub prompt_histories: HashMap<String, crate::input::input_history::InputHistory>,
+
+    /// Buffer id pending close-confirmation prompt resolution.
+    /// Per-window because the prompt that produced this is per-window.
+    pub pending_close_buffer: Option<BufferId>,
 }
 
 impl Window {
@@ -1016,6 +1030,9 @@ impl Window {
             scheduled_diagnostic_pull: None,
             scheduled_inlay_hints_request: None,
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
+            editor_mode: None,
+            prompt_histories: HashMap::new(),
+            pending_close_buffer: None,
             resources,
         }
     }

@@ -831,7 +831,8 @@ impl Editor {
                     },
                 );
 
-                if let Some(buffer_to_close) = self.pending_close_buffer.take() {
+                if let Some(buffer_to_close) = self.active_window_mut().pending_close_buffer.take()
+                {
                     if let Err(e) = self.force_close_buffer(buffer_to_close) {
                         self.set_status_message(
                             t!("file.saved_cannot_close", error = e.to_string()).to_string(),
@@ -863,7 +864,7 @@ impl Editor {
                 }
             }
             Err(e) => {
-                self.pending_close_buffer = None;
+                self.active_window_mut().pending_close_buffer = None;
                 // A failed Save-As during the save-and-quit chain means we
                 // can't honor the user's intent to save everything; abandon
                 // the quit rather than silently dropping the remaining
@@ -1346,7 +1347,7 @@ impl Editor {
                     self.set_status_message(t!("buffer.saved_and_closed").to_string());
                 }
             } else {
-                self.pending_close_buffer = Some(buffer_id);
+                self.active_window_mut().pending_close_buffer = Some(buffer_id);
                 self.start_prompt_with_initial_text(
                     t!("file.save_as_prompt").to_string(),
                     PromptType::SaveFileAs,

@@ -3248,7 +3248,7 @@ impl Editor {
     /// Clear the search history
     /// Used primarily for testing to ensure test isolation
     pub fn clear_search_history(&mut self) {
-        if let Some(history) = self.prompt_histories.get_mut("search") {
+        if let Some(history) = self.active_window_mut().prompt_histories.get_mut("search") {
             history.clear();
         }
     }
@@ -3288,7 +3288,7 @@ impl Editor {
         }
 
         // Save all prompt histories
-        for (key, history) in &self.prompt_histories {
+        for (key, history) in &self.active_window().prompt_histories {
             let path = self.dir_context.prompt_history_path(key);
             if let Err(e) = history.save_to_file(&path) {
                 tracing::warn!("Failed to save {} history: {}", key, e);

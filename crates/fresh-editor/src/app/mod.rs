@@ -696,10 +696,6 @@ pub struct Editor {
     /// just orphaned. Entries are removed when the spawn task sends
     /// its terminal `PluginProcessOutput`.
     host_process_handles: HashMap<u64, tokio::sync::oneshot::Sender<()>>,
-
-    /// Prompt histories keyed by prompt type name (e.g., "search", "replace", "goto_line", "plugin:custom_name")
-    /// This provides a generic history system that works for all prompt types including plugin prompts.
-    prompt_histories: HashMap<String, crate::input::input_history::InputHistory>,
     /// FIFO queue of plugin `editor.getNextKey()` callbacks awaiting a
     /// keypress. While non-empty, the next key arriving in
     /// `handle_key` is consumed by resolving the front-most callback
@@ -783,10 +779,6 @@ pub struct Editor {
     // simultaneously-open popup could steal.)
     /// Languages the user has interactively dismissed from the LSP popup.
     ///
-    /// Pending close buffer - buffer to close after SaveFileAs completes
-    /// Used when closing a modified buffer that needs to be saved first
-    pending_close_buffer: Option<BufferId>,
-
     /// Pending Save-As queue for the "save and quit" flow.
     ///
     /// Last time we polled for file changes (for auto-revert)
@@ -857,11 +849,6 @@ pub struct Editor {
     /// Plugin-managed global state, isolated per plugin name.
     /// Outer key is plugin name, inner key is the state key set by the plugin.
     plugin_global_state: HashMap<String, HashMap<String, serde_json::Value>>,
-
-    /// Global editor mode for modal editing (e.g., "vi-normal", "vi-insert")
-    /// When set, this mode's keybindings take precedence over normal key handling
-    editor_mode: Option<String>,
-
     /// Warning log receiver and path (for tracking warnings)
     warning_log: Option<(std::sync::mpsc::Receiver<()>, PathBuf)>,
 

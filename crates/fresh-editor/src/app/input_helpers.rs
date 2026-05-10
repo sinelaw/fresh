@@ -213,7 +213,7 @@ impl Editor {
         // Reset history navigation when typing in a prompt
         if let Some(ref prompt) = self.active_window_mut().prompt {
             if let Some(key) = Self::prompt_type_to_history_key(&prompt.prompt_type) {
-                if let Some(history) = self.prompt_histories.get_mut(&key) {
+                if let Some(history) = self.active_window_mut().prompt_histories.get_mut(&key) {
                     history.reset_navigation();
                 }
             }

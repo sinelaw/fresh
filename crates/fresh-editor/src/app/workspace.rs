@@ -333,17 +333,20 @@ impl Editor {
         // Capture histories using the items() accessor from the prompt_histories HashMap
         let histories = WorkspaceHistories {
             search: self
+                .active_window()
                 .prompt_histories
                 .get("search")
                 .map(|h| h.items().to_vec())
                 .unwrap_or_default(),
             replace: self
+                .active_window()
                 .prompt_histories
                 .get("replace")
                 .map(|h| h.items().to_vec())
                 .unwrap_or_default(),
             command_palette: Vec::new(), // Future: when command palette has history
             goto_line: self
+                .active_window()
                 .prompt_histories
                 .get("goto_line")
                 .map(|h| h.items().to_vec())

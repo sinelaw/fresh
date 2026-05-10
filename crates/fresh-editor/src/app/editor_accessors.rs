@@ -322,7 +322,8 @@ impl Editor {
     /// editor mode, so that e.g. a search-replace panel isn't hijacked by
     /// a markdown-source or vi-mode global mode.
     pub fn effective_mode(&self) -> Option<&str> {
-        self.active_buffer_mode().or(self.editor_mode.as_deref())
+        self.active_buffer_mode()
+            .or(self.active_window().editor_mode.as_deref())
     }
 
     /// Check if LSP has any active progress tasks (e.g., indexing)

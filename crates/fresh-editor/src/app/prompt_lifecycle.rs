@@ -683,7 +683,7 @@ impl Editor {
             let prompt = &prompt;
             // Reset history navigation for this prompt type
             if let Some(key) = Self::prompt_type_to_history_key(&prompt.prompt_type) {
-                if let Some(history) = self.prompt_histories.get_mut(&key) {
+                if let Some(history) = self.active_window_mut().prompt_histories.get_mut(&key) {
                     history.reset_navigation();
                 }
             }
@@ -1017,7 +1017,10 @@ impl Editor {
         &mut self,
         key: &str,
     ) -> &mut crate::input::input_history::InputHistory {
-        self.prompt_histories.entry(key.to_string()).or_default()
+        self.active_window_mut()
+            .prompt_histories
+            .entry(key.to_string())
+            .or_default()
     }
 
     /// Get a prompt history for the given key (immutable)
@@ -1025,7 +1028,7 @@ impl Editor {
         &self,
         key: &str,
     ) -> Option<&crate::input::input_history::InputHistory> {
-        self.prompt_histories.get(key)
+        self.active_window().prompt_histories.get(key)
     }
 
     /// Get the history key for a prompt type
@@ -1049,7 +1052,7 @@ impl Editor {
     /// Get the current global editor mode (e.g., "vi-normal", "vi-insert")
     /// Returns None if no special mode is active
     pub fn editor_mode(&self) -> Option<String> {
-        self.editor_mode.clone()
+        self.active_window().editor_mode.clone()
     }
 
     /// Get access to the command registry
@@ -1134,19 +1137,24 @@ impl Editor {
                 // Update incremental search highlights as user types
                 self.update_search_highlights(&input);
                 // Reset history navigation when user types - allows Up to navigate history
-                if let Some(history) = self.prompt_histories.get_mut("search") {
+                if let Some(history) = self.active_window_mut().prompt_histories.get_mut("search") {
                     history.reset_navigation();
                 }
             }
             PromptType::Replace { .. } | PromptType::QueryReplace { .. } => {
                 // Reset history navigation when user types - allows Up to navigate history
-                if let Some(history) = self.prompt_histories.get_mut("replace") {
+                if let Some(history) = self.active_window_mut().prompt_histories.get_mut("replace")
+                {
                     history.reset_navigation();
                 }
             }
             PromptType::GotoLine => {
                 // Reset history navigation when user types - allows Up to navigate Up arrow history
-                if let Some(history) = self.prompt_histories.get_mut("goto_line") {
+                if let Some(history) = self
+                    .active_window_mut()
+                    .prompt_histories
+                    .get_mut("goto_line")
+                {
                     history.reset_navigation();
                 }
                 // Live preview for absolute line numbers only. Signed
@@ -1166,7 +1174,7 @@ impl Editor {
             PromptType::Plugin { custom_type } => {
                 // Reset history navigation when user types - allows Up to navigate history
                 let key = format!("plugin:{}", custom_type);
-                if let Some(history) = self.prompt_histories.get_mut(&key) {
+                if let Some(history) = self.active_window_mut().prompt_histories.get_mut(&key) {
                     history.reset_navigation();
                 }
                 // Fire plugin hook for prompt input change

@@ -509,7 +509,7 @@ impl Editor {
         if let Some((prompt_type, current_input)) = prompt_info {
             // Get the history key for this prompt type
             if let Some(key) = Self::prompt_type_to_history_key(&prompt_type) {
-                if let Some(history) = self.prompt_histories.get_mut(&key) {
+                if let Some(history) = self.active_window_mut().prompt_histories.get_mut(&key) {
                     if let Some(entry) = history.navigate_prev(&current_input) {
                         if let Some(ref mut prompt) = self.active_window_mut().prompt {
                             prompt.set_input(entry);
@@ -531,7 +531,7 @@ impl Editor {
         if let Some(prompt_type) = prompt_type {
             // Get the history key for this prompt type
             if let Some(key) = Self::prompt_type_to_history_key(&prompt_type) {
-                if let Some(history) = self.prompt_histories.get_mut(&key) {
+                if let Some(history) = self.active_window_mut().prompt_histories.get_mut(&key) {
                     if let Some(entry) = history.navigate_next() {
                         if let Some(ref mut prompt) = self.active_window_mut().prompt {
                             prompt.set_input(entry);
