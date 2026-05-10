@@ -341,7 +341,8 @@ impl Editor {
         // `buffer_id` as active, so it never reaches `set_pane_buffer`
         // either — and the next keystroke panics in
         // `apply_event_to_state` on `keyed_states.get_mut(...).unwrap()`.
-        self.set_pane_buffer(target_split_id, buffer_id);
+        self.active_window_mut()
+            .set_pane_buffer(target_split_id, buffer_id);
         self.windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_manager_mut())

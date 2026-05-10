@@ -809,7 +809,7 @@ impl Editor {
         // downstream view_state block tweaks open_buffers/view_transform
         // further, but the primitive is what keeps the invariant).
         let leaf_id = LeafId(split_id);
-        self.set_pane_buffer(leaf_id, buffer_id);
+        self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
         tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
 
         // Switch per-buffer view state — the new buffer's own view_transform

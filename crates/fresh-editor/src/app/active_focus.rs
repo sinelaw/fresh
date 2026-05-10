@@ -24,37 +24,8 @@
 use super::*;
 
 impl Editor {
-    /// Atomically update both sides of the pane-buffer invariant for a
-    /// given leaf split: the split tree's stored buffer AND the matching
-    /// `SplitViewState.active_buffer` / `keyed_states` map.
-    ///
-    /// This is the one place that is allowed to change "which buffer is
-    /// shown in pane `leaf`". Every call site that used to poke
-    /// `split_manager.set_split_buffer` or
-    /// `split_manager.set_active_buffer_id` directly should go through
-    /// here instead, so the two stores can never drift (see the
-    /// module-level note and issue #1620).
-    ///
-    /// If the leaf has no `SplitViewState` yet (e.g. mid-session-restore,
-    /// when the SVS is registered later), the tree is still updated and
-    /// the SVS sync is skipped — the caller is responsible for ensuring
-    /// the SVS exists by the time any input is routed.
-    pub(super) fn set_pane_buffer(&mut self, leaf: LeafId, buffer_id: BufferId) {
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_split_buffer(leaf, buffer_id);
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&leaf)
-        {
-            view_state.switch_buffer(buffer_id);
-        }
-    }
+    // `set_pane_buffer` moved to `impl Window`. Editor callers reach
+    // it via `self.active_window_mut().set_pane_buffer(...)`.
 
     /// Set the active buffer and trigger all necessary side effects
     ///
@@ -108,7 +79,8 @@ impl Editor {
             .map(|vs| vs.active_target());
 
         // Atomic pane-buffer update: tree + SVS in lockstep.
-        self.set_pane_buffer(active_split, buffer_id);
+        self.active_window_mut()
+            .set_pane_buffer(active_split, buffer_id);
 
         if let Some(view_state) = self
             .windows
@@ -312,7 +284,8 @@ impl Editor {
             // the previous pair of split_manager.set_active_buffer_id +
             // view_state.switch_buffer that could desync if either leg
             // silently no-op'd (issue #1620).
-            self.set_pane_buffer(split_id, buffer_id);
+            self.active_window_mut()
+                .set_pane_buffer(split_id, buffer_id);
 
             // Set key context based on target buffer type
             if self.active_window().is_terminal_buffer(buffer_id) {

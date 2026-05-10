@@ -1264,6 +1264,29 @@ impl Window {
     ) -> Option<crate::services::terminal::TerminalId> {
         self.terminal_buffers.get(&buffer_id).copied()
     }
+
+    /// Atomically update both sides of the pane-buffer invariant for a
+    /// given leaf split: the split tree's stored buffer AND the matching
+    /// `SplitViewState.active_buffer` / `keyed_states` map.
+    ///
+    /// This is the one place that's allowed to change "which buffer is
+    /// shown in pane `leaf`". The two stores can never drift if every
+    /// caller goes through here (issue #1620).
+    ///
+    /// If the leaf has no `SplitViewState` yet (e.g. mid-session-restore,
+    /// when the SVS is registered later), the tree is still updated and
+    /// the SVS sync is skipped — the caller is responsible for ensuring
+    /// the SVS exists by the time any input is routed.
+    pub fn set_pane_buffer(&mut self, leaf: LeafId, buffer_id: BufferId) {
+        let (mgr, vs_map) = self
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout");
+        mgr.set_split_buffer(leaf, buffer_id);
+        if let Some(view_state) = vs_map.get_mut(&leaf) {
+            view_state.switch_buffer(buffer_id);
+        }
+    }
 }
 
 // Label-defaulting unit tests (`empty_label_defaults_to_root_basename`,

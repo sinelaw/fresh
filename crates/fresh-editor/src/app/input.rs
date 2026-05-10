@@ -126,7 +126,8 @@ impl Editor {
                         .and_then(|w| w.split_manager_mut())
                         .expect("active window must have a populated split layout")
                         .set_active_split(dock_leaf);
-                    self.set_pane_buffer(dock_leaf, existing);
+                    self.active_window_mut()
+                        .set_pane_buffer(dock_leaf, existing);
                 }
                 self.set_status_message(format!("Quickfix updated: {} matches", matches.len()));
                 return;
@@ -178,7 +179,8 @@ impl Editor {
                 .and_then(|w| w.split_manager_mut())
                 .expect("active window must have a populated split layout")
                 .set_active_split(dock_leaf);
-            self.set_pane_buffer(dock_leaf, buffer_id);
+            self.active_window_mut()
+                .set_pane_buffer(dock_leaf, buffer_id);
             // The buffer was created detached, so its per-split view
             // state hasn't been initialized in the dock's view_state
             // yet. set_pane_buffer adds the buffer as a tab and sets

@@ -1516,7 +1516,7 @@ impl Editor {
                         .map(|(mgr, _)| mgr)
                         .expect("active window must have a populated split layout")
                         .active_split();
-                    self.set_pane_buffer(leaf_id, buffer_id);
+                    self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
                     // Non-first leaves use the active split (created by split_active)
@@ -1584,7 +1584,7 @@ impl Editor {
                         .map(|(mgr, _)| mgr)
                         .expect("active window must have a populated split layout")
                         .active_split();
-                    self.set_pane_buffer(leaf_id, buffer_id);
+                    self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
                     leaf_id
                 } else {
                     self.windows

@@ -300,7 +300,8 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .splits_for_buffer(id);
         for split_id in splits_to_update {
-            self.set_pane_buffer(split_id, replacement_buffer);
+            self.active_window_mut()
+                .set_pane_buffer(split_id, replacement_buffer);
         }
 
         self.windows
@@ -820,7 +821,8 @@ impl Editor {
             // Update the split to show the replacement buffer. Route
             // through set_pane_buffer to keep tree and SVS in lockstep.
             if let Some(replacement) = replacement_buffer {
-                self.set_pane_buffer(split_id, replacement);
+                self.active_window_mut()
+                    .set_pane_buffer(split_id, replacement);
             }
             true
         }

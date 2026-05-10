@@ -2413,7 +2413,8 @@ impl Editor {
                     .and_then(|w| w.split_manager_mut())
                     .expect("active window must have a populated split layout")
                     .set_active_split(dock_leaf);
-                self.set_pane_buffer(dock_leaf, buffer_id);
+                self.active_window_mut()
+                    .set_pane_buffer(dock_leaf, buffer_id);
 
                 // Drop the phantom tab from the source split.
                 if dock_leaf != source_split_before_create {
@@ -2483,7 +2484,8 @@ impl Editor {
                             .set_active_split(split_id);
                         // Route through set_pane_buffer so tree + SVS
                         // stay consistent (issue #1620 invariant).
-                        self.set_pane_buffer(split_id, existing_buffer_id);
+                        self.active_window_mut()
+                            .set_pane_buffer(split_id, existing_buffer_id);
                         tracing::debug!("Focused split {:?} containing panel buffer", split_id);
                     }
 
@@ -2740,7 +2742,7 @@ impl Editor {
             .and_then(|w| w.split_manager_mut())
             .expect("active window must have a populated split layout")
             .set_active_split(leaf_id);
-        self.set_pane_buffer(leaf_id, buffer_id);
+        self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
 
         // Fall-through to the cursor/open_buffers housekeeping
         // that used to follow the manual switch_buffer. We keep
