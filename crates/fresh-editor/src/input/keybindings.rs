@@ -256,6 +256,17 @@ impl KeyContext {
         matches!(self, Self::CompositeBuffer)
     }
 
+    /// Whether this context should allow Normal-context bindings to fall
+    /// through when the action is in the curated UI / navigation set
+    /// (`is_terminal_ui_action`): tab/buffer switching, split navigation,
+    /// palette, settings, etc. These actions don't depend on a text cursor
+    /// and naturally apply to whichever buffer is currently active, so
+    /// users expect them to work even when keyboard focus is elsewhere
+    /// (e.g. on the file explorer). Issue #1903.
+    pub fn allows_ui_fallthrough(&self) -> bool {
+        matches!(self, Self::FileExplorer)
+    }
+
     /// Check if a context should allow input
     pub fn allows_text_input(&self) -> bool {
         matches!(self, Self::Normal | Self::Prompt | Self::FileExplorer)
@@ -1668,6 +1679,7 @@ impl KeybindingResolver {
                 | Action::NextBuffer
                 | Action::PrevBuffer
                 | Action::Close
+                | Action::CloseTab
                 | Action::ScrollTabsLeft
                 | Action::ScrollTabsRight
                 // Terminal control
@@ -1827,9 +1839,14 @@ impl KeybindingResolver {
             let full_fallthrough = context.allows_normal_fallthrough()
                 || matches!(&context, KeyContext::Mode(name) if self.inheriting_modes.contains(name));
 
+            let ui_fallthrough = context.allows_ui_fallthrough();
+
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(norm) {
-                    if full_fallthrough || Self::is_application_wide_action(action) {
+                    if full_fallthrough
+                        || Self::is_application_wide_action(action)
+                        || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                    {
                         tracing::trace!(
                             "  -> Found action in custom normal bindings (fallthrough): {:?}",
                             action
@@ -1841,7 +1858,10 @@ impl KeybindingResolver {
 
             if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(norm) {
-                    if full_fallthrough || Self::is_application_wide_action(action) {
+                    if full_fallthrough
+                        || Self::is_application_wide_action(action)
+                        || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                    {
                         tracing::trace!(
                             "  -> Found action in default normal bindings (fallthrough): {:?}",
                             action
@@ -2611,7 +2631,9 @@ impl KeybindingResolver {
 
         // For certain contexts, also check Normal context for fallthrough actions
         if context != KeyContext::Normal
-            && (context.allows_normal_fallthrough() || Self::is_application_wide_action(action))
+            && (context.allows_normal_fallthrough()
+                || Self::is_application_wide_action(action)
+                || (context.allows_ui_fallthrough() && Self::is_terminal_ui_action(action)))
         {
             // Check custom normal bindings
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
@@ -2847,6 +2869,82 @@ mod tests {
             resolver.resolve(&shift_backspace, KeyContext::FileExplorer),
             Action::FileExplorerSearchBackspace,
             "Shift+Backspace should resolve to FileExplorerSearchBackspace (same as Backspace) in FileExplorer context"
+        );
+    }
+
+    #[test]
+    fn test_file_explorer_ui_fallthrough() {
+        // Regression test for https://github.com/sinelaw/fresh/issues/1903
+        // From the FileExplorer context, application-level UI / navigation
+        // bindings (next/prev buffer, scroll tabs, close tab, next/prev
+        // split, ...) bound only in Normal must still fire — the user
+        // expects to act on the "tabbed files" without first transferring
+        // focus out of the explorer.
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        let cases = [
+            (
+                KeyCode::PageUp,
+                KeyModifiers::CONTROL,
+                Action::PrevBuffer,
+                "Ctrl+PageUp -> prev_buffer",
+            ),
+            (
+                KeyCode::PageDown,
+                KeyModifiers::CONTROL,
+                Action::NextBuffer,
+                "Ctrl+PageDown -> next_buffer",
+            ),
+            (
+                KeyCode::PageUp,
+                KeyModifiers::ALT,
+                Action::ScrollTabsLeft,
+                "Alt+PageUp -> scroll_tabs_left",
+            ),
+            (
+                KeyCode::PageDown,
+                KeyModifiers::ALT,
+                Action::ScrollTabsRight,
+                "Alt+PageDown -> scroll_tabs_right",
+            ),
+            (
+                KeyCode::Char('w'),
+                KeyModifiers::ALT,
+                Action::CloseTab,
+                "Alt+W -> close_tab",
+            ),
+        ];
+
+        for (code, mods, expected, label) in cases {
+            let event = KeyEvent::new(code, mods);
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::FileExplorer),
+                expected,
+                "{label} should fall through from FileExplorer to Normal"
+            );
+        }
+
+        // Cursor-level Normal bindings (e.g. arrow keys for cursor movement)
+        // must NOT fall through — the explorer has its own arrow handlers.
+        // Up arrow in FileExplorer is bound to file_explorer_up; verify
+        // the explorer binding wins over a hypothetical Normal MoveUp.
+        let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&up, KeyContext::FileExplorer),
+            Action::FileExplorerUp,
+            "Up must continue to navigate the explorer, not move the cursor"
+        );
+
+        // Plain InsertChar fallthrough must NOT happen for non-UI Normal
+        // bindings: 'd' (without Alt/Ctrl) is part of FileExplorer text
+        // input (search-as-you-type), it must remain InsertChar and not
+        // resolve to AddCursorNextMatch (Ctrl+D) or anything else.
+        let plain_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&plain_d, KeyContext::FileExplorer),
+            Action::InsertChar('d'),
+            "Plain 'd' must remain text input for explorer search-as-you-type"
         );
     }
 

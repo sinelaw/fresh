@@ -447,3 +447,68 @@ fn keyboard_navigation_skips_preview_when_disabled() {
         "with preview_tabs disabled, keyboard nav must not alter the tab bar; got:\n{row}"
     );
 }
+
+/// Regression test for https://github.com/sinelaw/fresh/issues/1903
+///
+/// Buffer/tab navigation shortcuts (e.g. Ctrl+PageUp -> prev_buffer)
+/// must work even while the file explorer holds keyboard focus, so the
+/// user can act on the tabbed files immediately after selecting an
+/// entry instead of clicking out of the explorer first. Driven through
+/// the real input pipeline so the keybinding-resolver fallthrough is
+/// exercised end-to-end. Each file's content is distinctive so the
+/// active buffer can be identified from rendered output alone (the
+/// active-tab marker is style-only and doesn't survive screen
+/// stringification).
+#[test]
+fn buffer_navigation_shortcut_works_from_file_explorer() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project = harness.project_dir().unwrap();
+    fs::write(project.join("alpha.txt"), "ALPHA_FILE_BODY\n").unwrap();
+    fs::write(project.join("beta.txt"), "BETA_FILE_BODY\n").unwrap();
+
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("alpha.txt").unwrap();
+    harness.wait_for_file_explorer_item("beta.txt").unwrap();
+
+    // Open both files as permanent tabs (double-click). After the second
+    // double-click beta.txt is the active tab.
+    double_click_file(&mut harness, "alpha.txt");
+    double_click_file(&mut harness, "beta.txt");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("BETA_FILE_BODY"))
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("ALPHA_FILE_BODY"),
+        "Precondition: only beta.txt's content should be visible in the \
+         editor pane after opening it last;\nscreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Move focus back to the file explorer — the user's reported flow:
+    // focus was on the explorer when they pressed the buffer-navigation
+    // shortcut. Ctrl+E focuses the explorer when the editor has focus.
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // From FileExplorer context, Ctrl+PageUp should switch to the
+    // previous buffer via the UI-action fallthrough into Normal. Without
+    // the fallthrough the keypress is a no-op and beta.txt remains
+    // visible in the editor pane.
+    harness
+        .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ALPHA_FILE_BODY"))
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("BETA_FILE_BODY"),
+        "After Ctrl+PageUp from the explorer, beta.txt's content must \
+         no longer be visible — alpha.txt should be the active buffer;\nscreen:\n{}",
+        harness.screen_to_string()
+    );
+}
