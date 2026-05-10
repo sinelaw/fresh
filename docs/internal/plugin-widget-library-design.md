@@ -50,24 +50,24 @@ tsc clean, interactively verified in tmux.
 
 | File | Purpose |
 |---|---|
-| `mod.rs` | Public surface: re-exports `render_spec`, `RenderOutput`, `FocusCursor`, `WidgetRegistry`, `HitArea`, `WidgetInstanceState`, `find_widget_by_key`, `apply_text_input_key`, `set_toggle_checked_in_spec`, `set_list_items_in_spec` |
-| `registry.rs` | `WidgetRegistry`: `panel_id → WidgetPanelState { buffer_id, spec, hits, instance_states, focus_key, tabbable }`. Hit-test, get/get_mut, focus_key getter/setter, mount/update/unmount. |
+| `mod.rs` | Public surface: re-exports `render_spec`, `RenderOutput`, `FocusCursor`, `WidgetRegistry`, `HitArea`, `PanelId`, `WidgetPanelState`, `WidgetInstanceState`, `find_widget_by_key`, `apply_text_input_key`, `apply_text_area_key`, `set_toggle_checked_in_spec`, `set_list_items_in_spec`, `set_tree_nodes_in_spec`, `set_tree_checked_keys_in_spec`, `tree_parent_index`. |
+| `registry.rs` | `WidgetRegistry`: `panel_id → WidgetPanelState { buffer_id, spec, hits, instance_states, focus_key, tabbable }`. Hit-test, get/get_mut, focus_key getter/setter, mount/update/unmount, `panels_for_buffer` (used by the wheel-scroll path). |
 | `render.rs` | The reconciler. `render_spec(spec, prev_state, prev_focus, panel_width) → RenderOutput { entries, hits, instance_states, focus_key, tabbable, focus_cursor }`. Two-pass Row layout for flex spacers. Per-widget renderers (`render_hint_bar`, `render_toggle`, `render_button`, `render_text_input`, `render_text_area`, `render_tree_row`, plus inline list rendering). |
-| `actions.rs` | Pure helpers used by dispatch: `apply_text_input_key` (Backspace/Delete/arrows/Home/End with UTF-8 boundary handling), `find_widget_by_key`, `set_toggle_checked_in_spec`, `set_list_items_in_spec`, `set_tree_expanded_keys_in_spec`. |
+| `actions.rs` | Pure helpers used by dispatch: `apply_text_input_key` (Backspace/Delete/arrows/Home/End with UTF-8 boundary handling); `apply_text_area_key` (adds Up/Down/Enter and line-relative Home/End on top of the TextInput keys); `find_widget_by_key`; `set_toggle_checked_in_spec`; `set_list_items_in_spec`; `set_tree_nodes_in_spec` (replaces `nodes` + `item_keys` for `WidgetMutation::SetItems` on a Tree); `set_tree_checked_keys_in_spec` (stamps `Some(checked)` onto every node whose item-key is in the supplied list, for `WidgetMutation::SetCheckedKeys`); `tree_parent_index` (parent lookup for cascading checkbox updates). Note: there is no `set_tree_expanded_keys_in_spec` — expanded keys live in instance state, not the spec, so the `SetExpandedKeys` mutator writes directly to `WidgetInstanceState::Tree::expanded_keys` without a spec helper. |
 
 **Core types** (`crates/fresh-core/src/api.rs`)
 
 | Type | Notes |
 |---|---|
-| `WidgetSpec` (enum, tagged) | Variants: `Row`, `Col`, `HintBar`, `Toggle`, `Button`, `TextInput`, `TextArea`, `List`, `Tree`, `Spacer`, `Raw`. |
+| `WidgetSpec` (enum, tagged) | Variants: `Row`, `Col`, `HintBar`, `Toggle`, `Button`, `TextInput`, `TextArea`, `List`, `Tree`, `Spacer`, `Raw`. `Tree` carries `checkable: bool` (default false) gating per-row `[v]`/`[ ]` glyphs; `TreeNode` carries `checked: Option<bool>` (None = no glyph for that row). |
 | `TextPropertyEntry` (`fresh-core::text_property`) | Row-content payload for `List`, `Tree`, and `Raw`. Carries `text`, `inline_overlays: Vec<InlineOverlay>`, `segments: Vec<StyledSegment>`, `pad_to_chars: Option<u32>`, `truncate_to_chars: Option<u32>`. The host calls `normalize_widths` on each visible entry — segments concatenate into `text` with one Char-unit overlay per styled segment, then truncate, then pad, then char→byte conversion for any remaining char-unit overlays. Plugins describe row content structurally and never name byte/codepoint offsets between segments. |
 | `InlineOverlay` | `start`, `end`, `style`, `properties`, `unit: OffsetUnit { Byte, Char }` (default `Byte`). Char offsets resolve to bytes during `normalize_widths`. |
 | `StyledSegment` | `text` + optional `style` + optional nested `overlays`. Building block for `TextPropertyEntry::segments`. |
 | `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` | Shapes referenced by the spec / IPC. |
 | `PluginCommand::MountWidgetPanel`, `UpdateWidgetPanel`, `UnmountWidgetPanel` | Spec lifecycle. |
 | `PluginCommand::WidgetCommand { panel_id, action }` | Routes a `WidgetAction` (key dispatch / focus / activate / select-move / text-input). |
-| `PluginCommand::WidgetMutate { panel_id, mutation }` | Targeted in-place mutation (the "Path A" fast path). `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys`. |
-| `HookArgs::WidgetEvent` | `widget_event` hook payload: `panel_id`, `widget_key`, `event_type`, `payload`. Fired for `select` / `activate` / `toggle` / `change` / `expand`. |
+| `PluginCommand::WidgetMutate { panel_id, mutation }` | Targeted in-place mutation (the "Path A" fast path). `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `setCheckedKeys`. |
+| `HookArgs::WidgetEvent` | `widget_event` hook payload: `panel_id`, `widget_key`, `event_type`, `payload`. Fired for `select` / `activate` / `toggle` / `change` / `expand`. `toggle` is emitted both by Toggle widgets (payload `{ checked }`) and by the per-row checkbox glyph on a `checkable: true` Tree (payload `{ key, index, checked }`); the host fires the same `toggle` event when Space is pressed on a focused checkable-Tree row whose `checked` is `Some(_)`. |
 
 **Dispatch glue** (`crates/fresh-editor/src/app/`)
 
@@ -82,9 +82,9 @@ tsc clean, interactively verified in tmux.
 
 | File | Exports |
 |---|---|
-| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `textInput`, `textArea`, `list`, `tree`, `treeNode`, `spacer`, `flexSpacer`, `raw`, `styledRow`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar`. `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `unmount`. |
+| `widgets.ts` | Builders: `row`, `col`, `hintBar`, `toggle`, `button`, `textInput`, `textArea`, `list`, `tree` (`{ checkable }` opt-in), `treeNode` (`{ checked: bool \| undefined }`), `spacer`, `flexSpacer`, `raw`, `styledRow`, `parseHintString`. Action builders: `key`, `focusAdvance`, `activate`, `selectMove`, `textInputKey`, `textInputChar`. `WidgetPanel` class with `set` / `command` / `mutate` / `setValue` / `setChecked` / `setSelectedIndex` / `setItems` / `setExpandedKeys` / `setCheckedKeys` / `unmount`. |
 | `index.ts` | Re-exports the above. |
-| `fresh.d.ts` | Generated. `editor.mountWidgetPanel`, `updateWidgetPanel`, `unmountWidgetPanel`, `widgetCommand`, `widgetMutate`. `WidgetSpec`, `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation`, `StyledSegment`, `OffsetUnit` types. `widget_event` hook. |
+| `fresh.d.ts` | Generated. `editor.mountWidgetPanel`, `updateWidgetPanel`, `unmountWidgetPanel`, `widgetCommand`, `widgetMutate`. `WidgetSpec`, `HintEntry`, `ButtonKind`, `WidgetAction`, `WidgetMutation` (incl. `SetCheckedKeys`), `StyledSegment`, `OffsetUnit` types. `widget_event` hook (incl. `toggle` payload from checkable Tree rows). |
 
 **Plugin migration: `search_replace.ts`**
 
@@ -93,9 +93,9 @@ tsc clean, interactively verified in tmux.
 | HintBar (footer) | `parseHintString(t("panel.help"))` → `hintBar(...)`. Theme-keyed key styling. |
 | Options row (3 toggles + Replace All button) | `row(toggle("case"), toggle("regex"), toggle("whole"), flexSpacer(), button("replaceAll", { intent: "primary" }))`. Right-aligns the button via flex. |
 | Search / Replace text fields | `textInput(...)`. Constant-width with head-truncate scrolling, host-owned hardware cursor. |
-| Match tree | `tree({ nodes, itemKeys, selectedIndex, visibleRows, expandedKeys, key: "matchTree" })`. Widget-owned scroll, expansion, click-to-select, Enter-to-activate, disclosure-glyph hit area. |
-| Mode bindings (Tab / Shift+Tab / Enter / Space / Backspace / Delete / Home / End / Up / Down / Left / Right / mode_text_input) | All route through `dispatch(widgetKey("Tab"))` etc. The smart-key dispatcher in core handles based on focused widget kind. |
-| `widget_event` handlers (`change` / `select` / `activate` / `toggle` / `expand`) | Plugin updates its app model from events; toggle writes back via `panel.setChecked` (mutator fast path); selection / value / expansion changes don't re-emit spec. |
+| Match tree | `tree({ nodes, itemKeys, selectedIndex, visibleRows, expandedKeys, checkable: true, key: "matchTree" })`. Widget-owned scroll, expansion, click-to-select, Enter-to-activate, disclosure-glyph hit area. Per-match exclusion: `treeNode({ checked })` on every row; click on the `[v]`/`[ ]` glyph or Space on a focused row fires `widget_event "toggle"`; plugin updates `result.selected` and pushes the new state via `panel.setCheckedKeys`. File-row glyph reflects "every match selected" (mixed renders as `[ ]`). Replace All filters by selected. |
+| Mode bindings (Tab / Shift+Tab / Enter / Space / Backspace / Delete / Home / End / Up / Down / Left / Right / PageUp / PageDown / mode_text_input) | All route through `dispatch(widgetKey("Tab"))` etc. The smart-key dispatcher in core handles based on focused widget kind. PageUp/PageDown move List/Tree selection by `visible_rows - 1` (one row of overlap). Space on a focused checkable-Tree row dispatches `toggle` instead of `activate`. |
+| `widget_event` handlers (`change` / `select` / `activate` / `toggle` / `expand`) | Plugin updates its app model from events; Toggle widgets write back via `panel.setChecked`; checkable-Tree toggle writes back via `panel.setCheckedKeys`; selection / value / expansion changes don't re-emit spec. |
 
 What's *not* migrated in `search_replace.ts`: the matches-section
 separator (still in `Raw`), the `truncated` warning in matchStats
@@ -179,8 +179,8 @@ Remaining work, in rough decreasing user impact:
 
 * **`Spec::SetSpec` mutator** vs **per-field mutators**. Currently
   field mutators cover `SetValue` / `SetChecked` / `SetSelectedIndex` /
-  `SetItems` / `SetExpandedKeys`. For richer subtree changes — e.g.
-  a toolbar that grows a button — the choice is: add
+  `SetItems` / `SetExpandedKeys` / `SetCheckedKeys`. For richer subtree
+  changes — e.g. a toolbar that grows a button — the choice is: add
   `SetSpec { widget_key, sub_spec }` (clean) or add more per-field
   mutators (incrementally simpler). Currently deferred (see §2.2);
   re-evaluate if a real consumer needs it or profiling on a
@@ -198,10 +198,13 @@ Remaining work, in rough decreasing user impact:
 * **The "Spec is initial; instance state is the truth" rule.**
   Implemented for `TextInput` (value + cursor), `TextArea` (value +
   cursor + scroll), `List` (selected_index + scroll_offset), and
-  `Tree` (selected_index + scroll_offset + expanded_keys). The rule
-  will need to extend to `Prompt` / `Layer` (open/closed) when
-  those land. Pattern is set; just apply it consistently as new
-  widgets land.
+  `Tree` (selected_index + scroll_offset + expanded_keys). Per-row
+  Tree `checked` is the explicit exception: it lives in the spec
+  (because the plugin owns "which rows are selectable" as an
+  application-data fact, not host state) and is mutated in-spec via
+  `SetCheckedKeys`. The rule will need to extend to `Prompt` /
+  `Layer` (open/closed) when those land. Pattern is set; just
+  apply it consistently as new widgets land.
 * **Widget keymap layer above `defineMode`.** Today the plugin's
   `defineMode` binds keys → `dispatch(widgetKey("Tab"))`. The §8
   design said the widget's keymap should claim keys *before*
@@ -297,8 +300,15 @@ codebase is mechanical at this point.
 6. **Add a `WidgetCommand::Key` arm** in
    `crates/fresh-editor/src/app/plugin_dispatch.rs` (`handle_widget_key`)
    if the widget responds to keystrokes. Existing dispatch table:
-   Tab → focus advance; Up/Down → list select; Backspace/etc. →
-   text input; Enter/Space → activate. Add per-kind handling.
+   Tab/BackTab → focus advance; Up/Down → List/Tree select-move ±1;
+   PageUp/PageDown → List/Tree select-move ±(visible_rows-1);
+   Backspace/Delete/Left/Right/Home/End → text input editing
+   (TextArea also handles Up/Down/Enter for line nav + newline);
+   Enter → activate (or insert `\n` on focused TextArea); Space →
+   activate, except on a `checkable: true` Tree row whose `checked
+   == Some(_)`, where Space fires `widget_event "toggle"` with the
+   inverted value (mirrors clicking the `[v]`/`[ ]` glyph). Add
+   per-kind handling.
 7. **Add a mutator** in `WidgetMutation` if the plugin needs a
    targeted fast-path update (e.g. `Tree` would want
    `SetExpandedKeys { widget_key, expanded_keys: Vec<String> }`).
@@ -364,6 +374,18 @@ those are done.
   test fixtures need updating (`make_list` in `render.rs`, struct
   literals scattered across test functions). The compiler will tell
   you all the call sites.
+* **Printable-letter `defineMode` bindings shadow widget input.**
+  A plugin binding `"x"` to a widget command in `defineMode` will
+  swallow the lowercase `x` in every focused TextInput / TextArea
+  on the same panel — the binding fires before the input character
+  stream gets the keypress. Use Space (host-dispatched on focused
+  widget kind) or a non-letter key for widget commands; reserve
+  letter bindings for non-text-input panels.
+* **`"S-Tab"` plugin bindings.** `defineMode("S-Tab", …)` registers
+  as `(BackTab, NONE)` to match what the resolver actually looks up
+  after `normalize_key` strips the redundant SHIFT modifier from
+  Shift+Tab. Either spelling (`"S-Tab"` or `"BackTab"`) is correct;
+  before commit `b103df2` only `"BackTab"` worked.
 
 ---
 
@@ -505,7 +527,7 @@ when real demand surfaces.
 | `Button` | ✅ migrated | search_replace Replace All | `intent: "normal" \| "primary" \| "danger"` |
 | `TextInput` | ✅ migrated | search_replace fields | host-owned cursor + value, constant-width with scroll, hardware caret |
 | `List` (virtual-scrolled) | ✅ | candidates for finder-style consumers | host owns scroll + selection |
-| `Tree` | ✅ migrated | search_replace match tree, audit, file-explorer | host owns scroll + selection + expansion; disclosure-glyph hit area |
+| `Tree` | ✅ migrated | search_replace match tree, audit, file-explorer | host owns scroll + selection + expansion; disclosure-glyph hit area; opt-in per-row checkboxes (`checkable: true` + `treeNode.checked: Some(_)`) with `toggle` events from glyph clicks or Space, persisted via `WidgetMutation::SetCheckedKeys` |
 | `TextArea` | ✅ | composer-style plugins | multi-line; host-owned value + cursor + vertical scroll; submit policy via panel HintBar |
 | `Tabs` / `Group` | ⏸ | (no current consumer) | skipped; revisit when needed |
 | `Layer` (compositor) | ❌ → §4.1 | tooltips, popovers, modals; subsumes Popup/Prompt | big architectural piece |
@@ -728,12 +750,24 @@ buffer_col)`; it receives semantic events.
   widget_kind, buffer_row, byte_start, byte_end, payload, event_type
   }` during render. Stored in `WidgetPanelState::hits`.
 * `WidgetRegistry::hit_test(buffer_id, row, col_byte)` does the
-  per-panel scan.
+  per-panel scan; `WidgetRegistry::panels_for_buffer` enumerates
+  every panel mounted on a buffer (used by the wheel-scroll path).
 * `click_handlers.rs` calls `hit_test` for every left-click on a
   widget panel's buffer; on hit, fires `widget_event` with the
   payload, and moves focus_key to the clicked widget.
 * `widget_event` payloads: Toggle → `{ checked: <new> }`; Button →
-  `{}`; List → `{ index, key }`; TextInput → `{ value, cursorByte }`.
+  `{}`; List → `{ index, key }`; Tree row select → `{ index, key }`;
+  Tree disclosure → `expand` event; Tree checkbox glyph (only when
+  `checkable: true` and the row's `checked` is `Some(_)`) →
+  `toggle` event with `{ key, index, checked: <new> }`; TextInput →
+  `{ value, cursorByte }`.
+* Wheel scroll routed to the panel under the cursor: `mouse_input.rs`
+  calls into the widget runtime before falling through to buffer
+  scroll. The first scrollable widget in the panel shifts its
+  viewport; the selection is dragged to the edge of the new
+  visible window so the renderer's keep-selection-in-view
+  auto-scroll doesn't snap the offset back. Wheel does not change
+  focus and does not fire `select`.
 
 **Not yet implemented**:
 * Right-click → context menu (`onContext`).
@@ -742,9 +776,6 @@ buffer_col)`; it receives semantic events.
   flow.
 * Double-click → `onActivate(key)`. Today single-click fires
   `select`; double-click would fire `activate` separately.
-* Wheel scroll routed to deepest scrollable widget. Today the
-  editor's scroll handling sees the wheel events; widget scroll
-  doesn't intercept.
 
 ---
 
@@ -768,8 +799,12 @@ applies a minimal patch.
   mutation, and toggle/items mutators.
 * The targeted-mutator fast path: `WidgetMutate::SetValue` /
   `SetChecked` / `SetSelectedIndex` / `SetItems` /
-  `SetExpandedKeys`. Plugin ships a one-field change instead of
-  the full spec.
+  `SetExpandedKeys` / `SetCheckedKeys`. Plugin ships a one-field
+  change instead of the full spec. `SetCheckedKeys` stamps
+  `Some(checked)` onto every Tree node whose item-key appears in
+  the supplied list; nodes with `checked: None` are left as None
+  (a node only becomes checkable by the plugin emitting `Some(_)`
+  in the spec).
 * Entry-shape primitives (§6.1): `TextPropertyEntry` carries
   `segments`, `pad_to_chars`, `truncate_to_chars`; `InlineOverlay`
   carries `unit: Byte | Char`. The host's `normalize_widths`
@@ -856,7 +891,7 @@ Status of the original 5-pass plan:
 |---|---|---|
 | 1 | Mount as `Panel`, body stays `Raw`, HintBar real, toggles real | ✅ |
 | 2 | Replace search/replace fields with `TextInput` (host-owned cursor + constant width) | ✅ |
-| 3 | Replace match list with `Tree` | ✅ host owns expansion + scroll + selection; disclosure glyph hit area |
+| 3 | Replace match list with `Tree` | ✅ host owns expansion + scroll + selection; disclosure glyph hit area; per-row checkboxes (`checkable: true`) for per-match exclusion — Replace All filters by `result.selected` |
 | 4 | Glob filter as `TextInput` with validator | ❌ |
 | 5 | Delete dead code | 🚧 `buildFieldDisplay`, `addCursorOverlay`, the cursor-byte arithmetic, the focus enums, the per-key mode handlers all gone. Remaining dead: `panel.scrollOffset`, `panel.focusPanel`/`queryField`/`optionIndex` (legacy fields kept for the Raw separator path). |
 
