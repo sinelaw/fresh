@@ -34,7 +34,8 @@ impl Editor {
             range_length: None,
             text,
         };
-        self.send_lsp_changes_for_buffer(buffer_id, vec![full_change]);
+        self.active_window_mut()
+            .send_lsp_changes_for_buffer(buffer_id, vec![full_change]);
     }
 
     /// Start the recovery session (call on editor startup after recovery check)

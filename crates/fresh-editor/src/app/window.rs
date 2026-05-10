@@ -1447,6 +1447,190 @@ impl Window {
             .insert(buffer_id, next_time);
     }
 
+    /// Forward incremental LSP `didChange` notifications for `buffer_id`
+    /// to every server registered for the buffer's language. Sends
+    /// `didOpen` first when a server hasn't yet seen this buffer, and
+    /// reschedules diagnostic / inlay-hint pulls.
+    ///
+    /// Pure per-window operation: every piece of state it touches
+    /// (`buffer_metadata`, `buffers`, the LSP manager, debounce maps)
+    /// lives on `Window`. Editor-side wrappers exist only as forwarding
+    /// shims for legacy call sites.
+    pub(crate) fn send_lsp_changes_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+    ) {
+        const INLAY_HINTS_DEBOUNCE_MS: u64 = 500;
+
+        if changes.is_empty() {
+            return;
+        }
+
+        let metadata = match self.buffer_metadata.get(&buffer_id) {
+            Some(m) => m,
+            None => {
+                tracing::debug!(
+                    "send_lsp_changes_for_buffer: no metadata for buffer {:?}",
+                    buffer_id
+                );
+                return;
+            }
+        };
+
+        if !metadata.lsp_enabled {
+            tracing::debug!("send_lsp_changes_for_buffer: LSP disabled for this buffer");
+            return;
+        }
+
+        let uri = match metadata.file_uri() {
+            Some(u) => u.clone(),
+            None => {
+                tracing::debug!(
+                    "send_lsp_changes_for_buffer: no URI for buffer (not a file or URI creation failed)"
+                );
+                return;
+            }
+        };
+        let file_path = metadata.file_path().cloned();
+
+        let language = match self
+            .buffers
+            .get(&buffer_id)
+            .map(|s| s.language.clone())
+        {
+            Some(l) => l,
+            None => {
+                tracing::debug!(
+                    "send_lsp_changes_for_buffer: no buffer state for {:?}",
+                    buffer_id
+                );
+                return;
+            }
+        };
+
+        tracing::trace!(
+            "send_lsp_changes_for_buffer: sending {} changes to {} in single didChange notification",
+            changes.len(),
+            uri.as_str()
+        );
+
+        use crate::services::lsp::manager::LspSpawnResult;
+        let Some(lsp) = self.lsp.as_mut() else {
+            tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
+            return;
+        };
+
+        if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
+            tracing::debug!(
+                "send_lsp_changes_for_buffer: LSP not running for {} (auto_start disabled)",
+                language
+            );
+            return;
+        }
+
+        let handles_needing_open: Vec<_> = {
+            let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+                return;
+            };
+            lsp.get_handles(&language)
+                .into_iter()
+                .filter(|sh| !metadata.lsp_opened_with.contains(&sh.handle.id()))
+                .map(|sh| (sh.name.clone(), sh.handle.id()))
+                .collect()
+        };
+
+        if !handles_needing_open.is_empty() {
+            let text = match self
+                .buffers
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.to_string())
+            {
+                Some(t) => t,
+                None => {
+                    tracing::debug!(
+                        "send_lsp_changes_for_buffer: buffer text not available for didOpen"
+                    );
+                    return;
+                }
+            };
+
+            let Some(lsp) = self.lsp.as_mut() else {
+                return;
+            };
+            for sh in lsp.get_handles_mut(&language) {
+                if handles_needing_open
+                    .iter()
+                    .any(|(_, id)| *id == sh.handle.id())
+                {
+                    if let Err(e) =
+                        sh.handle
+                            .did_open(uri.as_uri().clone(), text.clone(), language.clone())
+                    {
+                        tracing::warn!(
+                            "Failed to send didOpen to '{}' before didChange: {}",
+                            sh.name,
+                            e
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Sent didOpen for {} to LSP handle '{}' before didChange",
+                            uri.as_str(),
+                            sh.name
+                        );
+                    }
+                }
+            }
+
+            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                for (_, handle_id) in &handles_needing_open {
+                    metadata.lsp_opened_with.insert(*handle_id);
+                }
+            }
+
+            // didOpen already contains the full current buffer content, so we must
+            // NOT also send didChange (which carries pre-edit incremental changes).
+            // Sending both would corrupt the server's view of the document.
+            return;
+        }
+
+        let Some(lsp) = self.lsp.as_mut() else {
+            return;
+        };
+        let mut any_sent = false;
+        for sh in lsp.get_handles_mut(&language) {
+            if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), changes.clone()) {
+                tracing::warn!("Failed to send didChange to '{}': {}", sh.name, e);
+            } else {
+                any_sent = true;
+            }
+        }
+        if any_sent {
+            tracing::trace!("Successfully sent batched didChange to LSP");
+
+            if let Some(state) = self.buffers.get(&buffer_id) {
+                if let Some(path) = state.buffer.file_path() {
+                    crate::services::lsp::diagnostics::invalidate_cache_for_file(
+                        &path.to_string_lossy(),
+                    );
+                }
+            }
+
+            self.scheduled_diagnostic_pull = Some((
+                buffer_id,
+                std::time::Instant::now() + std::time::Duration::from_millis(1000),
+            ));
+
+            if self.resources.config.editor.enable_inlay_hints {
+                self.scheduled_inlay_hints_request = Some((
+                    buffer_id,
+                    std::time::Instant::now()
+                        + std::time::Duration::from_millis(INLAY_HINTS_DEBOUNCE_MS),
+                ));
+            }
+        }
+    }
+
     /// Invalidate cached layouts and view transforms for every split
     /// that displays `buffer_id`. Pure window-state mutation: walks
     /// the window's split tree and view-state map.
