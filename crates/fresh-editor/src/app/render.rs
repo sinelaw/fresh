@@ -425,8 +425,11 @@ impl Editor {
                     let visible_count = split_area.height as usize;
                     let top_byte = viewport_top_byte;
 
-                    // Get or create the seen byte ranges set for this buffer
-                    let seen_byte_ranges = self.seen_byte_ranges.entry(buffer_id).or_default();
+                    // Get or create the seen byte ranges set for this buffer.
+                    // Use direct __win field access (not active_window_mut())
+                    // because __win is already held above; re-locking via the
+                    // accessor would re-borrow self.windows.
+                    let seen_byte_ranges = __win.seen_byte_ranges.entry(buffer_id).or_default();
 
                     // Collect only NEW lines (not seen before based on byte range)
                     let mut new_lines: Vec<crate::services::plugins::hooks::LineInfo> = Vec::new();
@@ -728,7 +731,7 @@ impl Editor {
         self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
 
         // Detect viewport changes and fire hooks
-        // Compare against previous frame's viewport state (stored in self.previous_viewports)
+        // Compare against previous frame's viewport state (stored in self.active_window().previous_viewports)
         // This correctly detects changes from scroll events that happen before render()
         if self.plugin_manager.is_active() {
             for (split_id, view_state) in self
@@ -747,10 +750,11 @@ impl Editor {
                 // Skip new splits (None case) - only fire hooks for established splits
                 // This matches the original behavior where hooks only fire for splits
                 // that existed at the start of render
-                let (changed, previous) = match self.previous_viewports.get(split_id) {
-                    Some(previous) => (*previous != current, Some(*previous)),
-                    None => (false, None), // Skip new splits until they're established
-                };
+                let (changed, previous) =
+                    match self.active_window().previous_viewports.get(split_id) {
+                        Some(previous) => (*previous != current, Some(*previous)),
+                        None => (false, None), // Skip new splits until they're established
+                    };
                 tracing::trace!(
                     "viewport_changed check: split={:?} current={:?} previous={:?} changed={}",
                     split_id,
@@ -804,23 +808,34 @@ impl Editor {
             }
         }
 
-        // Update previous_viewports for next frame's comparison
-        self.previous_viewports.clear();
-        for (split_id, view_state) in self
+        // Update previous_viewports for next frame's comparison.
+        // Take both `previous_viewports` and the split view-states from
+        // the same `__win` borrow so the iterator and the inserts share
+        // a single mutable borrow on `self.windows`.
+        let __vp_win = self
             .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-        {
-            self.previous_viewports.insert(
-                *split_id,
+            .get_mut(&self.active_window)
+            .expect("active window present");
+        __vp_win.previous_viewports.clear();
+        let (_, __vp_vs_map) = __vp_win
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout");
+        let snapshot: Vec<(LeafId, (usize, u16, u16))> = __vp_vs_map
+            .iter()
+            .map(|(split_id, view_state)| {
                 (
-                    view_state.viewport.top_byte,
-                    view_state.viewport.width,
-                    view_state.viewport.height,
-                ),
-            );
+                    *split_id,
+                    (
+                        view_state.viewport.top_byte,
+                        view_state.viewport.width,
+                        view_state.viewport.height,
+                    ),
+                )
+            })
+            .collect();
+        for (split_id, vp) in snapshot {
+            __vp_win.previous_viewports.insert(split_id, vp);
         }
 
         // Render terminal content on top of split content for terminal buffers

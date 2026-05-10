@@ -400,7 +400,7 @@ impl Editor {
             ) {
                 self.active_window_mut().prompt = None;
                 // Also cancel interactive replace if active
-                self.interactive_replace_state = None;
+                self.active_window_mut().interactive_replace_state = None;
                 // Clear search highlights from current buffer
                 let ns = self.search_namespace.clone();
                 let state = self.active_state_mut();

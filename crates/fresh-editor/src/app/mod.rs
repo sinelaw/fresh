@@ -506,11 +506,8 @@ pub struct Editor {
     // via `Editor::split_manager()` / `split_manager_mut()` and
     // `Editor::split_view_states()` / `split_view_states_mut()`.
     // Each window owns its own split tree + per-leaf view state.
-    /// Previous viewport states for viewport_changed hook detection
-    /// Stores (top_byte, width, height) from the end of the last render frame
-    /// Used to detect viewport changes that occur between renders (e.g., scroll events)
-    previous_viewports: HashMap<LeafId, (usize, u16, u16)>,
-
+    // `previous_viewports` moved onto `Window` (per-leaf state — each
+    // window has its own splits, so its own viewport-change tracker).
     /// Scroll sync manager for anchor-based synchronized scrolling
     /// Used for side-by-side diff views where two panes need to scroll together
     scroll_sync_manager: ScrollSyncManager,
@@ -605,9 +602,8 @@ pub struct Editor {
     /// Whether mouse capture is enabled
     mouse_enabled: bool,
 
-    /// Whether same-buffer splits sync their scroll positions
-    same_buffer_scroll_sync: bool,
-
+    // `same_buffer_scroll_sync` moved onto `Window` — per-window UX
+    // toggle, since the split tree it controls is per-window.
     /// Mouse cursor position (for GPM software cursor rendering)
     /// When GPM is active, we need to draw our own cursor since GPM can't
     /// draw on the alternate screen buffer used by TUI applications.
@@ -674,9 +670,8 @@ pub struct Editor {
     /// Pending search range that should be reused when the next search is confirmed
     pending_search_range: Option<Range<usize>>,
 
-    /// Interactive replace state (if interactive replace is active)
-    interactive_replace_state: Option<InteractiveReplaceState>,
-
+    // `interactive_replace_state` moved onto `Window` — per-window
+    // search-and-replace session state.
     /// Mouse state for scrollbar dragging
     mouse_state: MouseState,
 
@@ -711,10 +706,8 @@ pub struct Editor {
     plugin_dev_workspaces:
         HashMap<BufferId, crate::services::plugins::plugin_dev_workspace::PluginDevWorkspace>,
 
-    /// Track which byte ranges have been seen per buffer (for lines_changed optimization)
-    /// Maps buffer_id -> set of (byte_start, byte_end) ranges that have been processed
-    /// Using byte ranges instead of line numbers makes this agnostic to line number shifts
-    seen_byte_ranges: HashMap<BufferId, std::collections::HashSet<(usize, usize)>>,
+    // `seen_byte_ranges` moved onto `Window` — keyed by `BufferId`
+    // which lives on `Window`, so the tracker follows the buffers.
 
     // panel_ids moved onto `Window`. Access via
     // `Editor::panel_ids()` / `panel_ids_mut()` — those resolve to

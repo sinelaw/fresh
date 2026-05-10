@@ -324,6 +324,27 @@ pub struct Window {
     /// mode when switched back to. Per-window because terminal
     /// buffers are per-window (Step 0d).
     pub terminal_mode_resume: std::collections::HashSet<BufferId>,
+
+    /// Track which byte ranges have been seen per buffer (for the
+    /// `lines_changed` plugin-hook optimisation). Keyed by `BufferId`,
+    /// follows the buffers onto Window.
+    pub seen_byte_ranges: HashMap<BufferId, std::collections::HashSet<(usize, usize)>>,
+
+    /// Previous viewport states for `viewport_changed` hook detection.
+    /// Stores `(top_byte, width, height)` from the end of the last
+    /// render frame. Keyed by `LeafId`, per-window because the splits
+    /// it tracks are per-window.
+    pub previous_viewports: HashMap<LeafId, (usize, u16, u16)>,
+
+    /// Whether scroll syncing applies to splits showing the same
+    /// buffer. Per-window UX toggle.
+    pub same_buffer_scroll_sync: bool,
+
+    /// Per-window interactive search-and-replace session state.
+    /// Drives the F+y/n/!/q UX during `replace_in_buffer` /
+    /// `replace_all`. Per-window because the search target buffer
+    /// and the visible matches are window-scoped.
+    pub interactive_replace_state: Option<crate::app::types::InteractiveReplaceState>,
 }
 
 impl Window {
@@ -870,6 +891,10 @@ impl Window {
             preview: None,
             terminal_mode: false,
             terminal_mode_resume: std::collections::HashSet::new(),
+            seen_byte_ranges: HashMap::new(),
+            previous_viewports: HashMap::new(),
+            same_buffer_scroll_sync: false,
+            interactive_replace_state: None,
         }
     }
 

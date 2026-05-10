@@ -23,8 +23,9 @@ impl Editor {
     /// (e.g., source mode shows them, compose mode hides them).
     /// Toggle scroll sync for same-buffer splits.
     pub fn toggle_scroll_sync(&mut self) {
-        self.same_buffer_scroll_sync = !self.same_buffer_scroll_sync;
-        if self.same_buffer_scroll_sync {
+        self.active_window_mut().same_buffer_scroll_sync =
+            !self.active_window().same_buffer_scroll_sync;
+        if self.active_window().same_buffer_scroll_sync {
             self.set_status_message(t!("toggle.scroll_sync_enabled").to_string());
         } else {
             self.set_status_message(t!("toggle.scroll_sync_disabled").to_string());

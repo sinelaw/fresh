@@ -85,7 +85,7 @@ impl Editor {
         let session_mode = self.session_mode;
 
         // Scroll sync state
-        let scroll_sync = self.same_buffer_scroll_sync;
+        let scroll_sync = self.active_window().same_buffer_scroll_sync;
         let has_same_buffer_splits = self.has_same_buffer_splits();
 
         // Keybinding map state

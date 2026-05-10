@@ -423,7 +423,7 @@ impl Editor {
             }
             DeferredAction::CancelInteractiveReplace => {
                 self.cancel_prompt();
-                self.interactive_replace_state = None;
+                self.active_window_mut().interactive_replace_state = None;
             }
 
             // Terminal mode actions

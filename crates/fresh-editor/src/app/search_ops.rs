@@ -1086,7 +1086,7 @@ impl Editor {
         };
 
         // Initialize interactive replace state with just the current match
-        self.interactive_replace_state = Some(InteractiveReplaceState {
+        self.active_window_mut().interactive_replace_state = Some(InteractiveReplaceState {
             search: search.to_string(),
             replacement: replacement.to_string(),
             current_match_pos: first_match_pos,
@@ -1109,7 +1109,7 @@ impl Editor {
 
     /// Handle interactive replace key press (y/n/a/c)
     pub(super) fn handle_interactive_replace_key(&mut self, c: char) -> AnyhowResult<()> {
-        let state = self.interactive_replace_state.clone();
+        let state = self.active_window().interactive_replace_state.clone();
         let Some(mut ir_state) = state else {
             return Ok(());
         };
@@ -1130,7 +1130,7 @@ impl Editor {
                     if wrapped {
                         ir_state.has_wrapped = true;
                     }
-                    self.interactive_replace_state = Some(ir_state.clone());
+                    self.active_window_mut().interactive_replace_state = Some(ir_state.clone());
                     self.move_to_current_match(&ir_state);
                 } else {
                     self.finish_interactive_replace(ir_state.replacements_made);
@@ -1147,7 +1147,7 @@ impl Editor {
                     if wrapped {
                         ir_state.has_wrapped = true;
                     }
-                    self.interactive_replace_state = Some(ir_state.clone());
+                    self.active_window_mut().interactive_replace_state = Some(ir_state.clone());
                     self.move_to_current_match(&ir_state);
                 } else {
                     self.finish_interactive_replace(ir_state.replacements_made);
@@ -1421,7 +1421,7 @@ impl Editor {
 
     /// Finish interactive replace and show summary
     pub(super) fn finish_interactive_replace(&mut self, replacements_made: usize) {
-        self.interactive_replace_state = None;
+        self.active_window_mut().interactive_replace_state = None;
         self.active_window_mut().prompt = None; // Clear the query-replace prompt
 
         // Clear search highlights

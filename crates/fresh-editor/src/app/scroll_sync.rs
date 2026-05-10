@@ -247,7 +247,7 @@ impl Editor {
         // Rather than computing the correct position here (where view lines aren't
         // available), we set a flag and let `render_buffer_in_split` fix it up using
         // the same view-line-based logic that `ensure_visible_in_layout` uses.
-        let active_buffer_id = if self.same_buffer_scroll_sync {
+        let active_buffer_id = if self.active_window().same_buffer_scroll_sync {
             self.windows
                 .get(&self.active_window)
                 .and_then(|w| w.splits.as_ref())
@@ -389,7 +389,7 @@ impl Editor {
 
         // Same-buffer scroll sync: also mark other splits showing the same buffer
         // to skip ensure_visible, so our sync_scroll_groups position isn't undone.
-        if !self.same_buffer_scroll_sync {
+        if !self.active_window().same_buffer_scroll_sync {
             // Scroll sync disabled — don't interfere with other splits.
         } else if let Some(active_buf_id) = self
             .windows

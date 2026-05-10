@@ -145,7 +145,7 @@ impl Editor {
         // 3. Clear search highlights on edit (Insert/Delete events)
         // This preserves highlights while navigating but clears them when modifying text
         // EXCEPT during interactive replace where we want to keep highlights visible
-        let in_interactive_replace = self.interactive_replace_state.is_some();
+        let in_interactive_replace = self.active_window().interactive_replace_state.is_some();
 
         // Note: We intentionally do NOT clear search overlays on buffer modification.
         // Overlays have markers that automatically track position changes through edits,
@@ -521,7 +521,11 @@ impl Editor {
                 let insert_len = text.len();
 
                 // Adjust byte ranges for the insertion
-                if let Some(seen) = self.seen_byte_ranges.get_mut(&buffer_id) {
+                if let Some(seen) = self
+                    .active_window_mut()
+                    .seen_byte_ranges
+                    .get_mut(&buffer_id)
+                {
                     // Collect adjusted ranges:
                     // - Ranges ending before insert: keep unchanged
                     // - Ranges containing insert point: remove (content changed)
@@ -570,7 +574,11 @@ impl Editor {
                 // Adjust byte ranges for the deletion
                 let delete_end = range.end;
                 let delete_len = delete_end - delete_start;
-                if let Some(seen) = self.seen_byte_ranges.get_mut(&buffer_id) {
+                if let Some(seen) = self
+                    .active_window_mut()
+                    .seen_byte_ranges
+                    .get_mut(&buffer_id)
+                {
                     // Collect adjusted ranges:
                     // - Ranges ending before delete start: keep unchanged
                     // - Ranges overlapping deletion: remove (content changed)

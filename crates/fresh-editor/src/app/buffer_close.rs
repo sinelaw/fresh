@@ -310,7 +310,7 @@ impl Editor {
             .remove(&id);
         self.detach_buffer_from_all_windows(id);
         self.active_window_mut().event_logs.remove(&id);
-        self.seen_byte_ranges.remove(&id);
+        self.active_window_mut().seen_byte_ranges.remove(&id);
         self.active_window_mut().buffer_metadata.remove(&id);
         if let Some((request_id, _, _)) = self
             .active_window_mut()

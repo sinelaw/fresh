@@ -1688,7 +1688,7 @@ impl Editor {
     /// Called when a plugin registers for the lines_changed hook to handle the
     /// race where render marks lines as "seen" before the plugin has initialized.
     pub(super) fn handle_refresh_all_lines(&mut self) {
-        self.seen_byte_ranges.clear();
+        self.active_window_mut().seen_byte_ranges.clear();
         #[cfg(feature = "plugins")]
         {
             self.plugin_render_requested = true;
@@ -1700,7 +1700,7 @@ impl Editor {
         // Clear seen_byte_ranges for this buffer so all visible lines will be re-processed
         // on the next render. This is useful when a plugin is enabled and needs to
         // process lines that were already marked as seen.
-        self.seen_byte_ranges.remove(&buffer_id);
+        self.active_window_mut().seen_byte_ranges.remove(&buffer_id);
         // Request a render so the lines_changed hook fires
         #[cfg(feature = "plugins")]
         {
