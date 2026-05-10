@@ -116,10 +116,13 @@ impl Editor {
 
     /// If the active split leaf carries `SplitRole::UtilityDock`,
     /// move the active leaf back to the user's last regular editor
-    /// leaf (or the first non-dock leaf as a fallback). Called from
-    /// the file-open path so that opening a file while a utility
-    /// panel holds focus doesn't turn the dock into a tab strip for
-    /// ordinary files.
+    /// leaf. Called from the file-open path so that opening a file
+    /// while a utility panel holds focus doesn't turn the dock into
+    /// a tab strip for ordinary files.
+    ///
+    /// Routing falls back to the first non-dock leaf in tree order
+    /// when the user has only ever interacted with the dock — a
+    /// rare boot-state path.
     fn redirect_active_split_away_from_dock_if_needed(&mut self) {
         use crate::view::split::SplitRole;
         let Some(mgr) = self
@@ -134,7 +137,14 @@ impl Editor {
         if mgr.leaf_role(active) != Some(SplitRole::UtilityDock) {
             return;
         }
-        let Some(target) = mgr.last_non_dock_leaf() else {
+        let is_editor_leaf = |leaf| mgr.leaf_role(leaf) != Some(SplitRole::UtilityDock);
+        let target = mgr.last_focused_where(is_editor_leaf).or_else(|| {
+            mgr.root()
+                .leaf_split_ids()
+                .into_iter()
+                .find(|leaf| is_editor_leaf(*leaf))
+        });
+        let Some(target) = target else {
             return; // Degenerate: every leaf is a dock — leave as is.
         };
         if target == active {

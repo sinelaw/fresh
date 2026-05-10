@@ -1065,15 +1065,19 @@ pub struct SplitManager {
     /// Labels for leaf splits (e.g., "sidebar" to mark managed splits)
     labels: HashMap<SplitId, String>,
 
-    /// Most-recently-active leaf that did NOT carry `SplitRole::UtilityDock`.
-    /// Used by file-open routing so that opening a file while a utility
-    /// panel (Search/Replace, Quickfix, terminal-in-dock) holds focus
-    /// lands the new buffer in the user's last editor pane instead of
-    /// turning the dock into a tab strip for ordinary files. Maintained
-    /// transparently by `set_active_split`; falls back to a tree walk
-    /// when this entry is empty or stale.
-    last_non_dock_leaf: Option<LeafId>,
+    /// LRU of leaves that have been the active split, oldest first.
+    /// `set_active_split` pushes the new active and promotes any
+    /// existing entry; `last_focused_where` lets callers query the
+    /// history with an arbitrary predicate (e.g. "last leaf without
+    /// `SplitRole::UtilityDock`" for file-open routing). Stale
+    /// entries (leaves that have since been closed) are filtered at
+    /// read time, not eagerly pruned.
+    focus_history: Vec<LeafId>,
 }
+
+/// Cap on `SplitManager::focus_history` length. Mirrors the same cap
+/// used by `SplitViewState::focus_history` (per-split tab focus).
+const FOCUS_HISTORY_CAP: usize = 50;
 
 impl SplitManager {
     /// Create a new split manager with a single buffer
@@ -1085,7 +1089,7 @@ impl SplitManager {
             next_split_id: 1,
             maximized_split: None,
             labels: HashMap::new(),
-            last_non_dock_leaf: Some(LeafId(split_id)),
+            focus_history: vec![LeafId(split_id)],
         }
     }
 
@@ -1107,14 +1111,10 @@ impl SplitManager {
     pub fn replace_root(&mut self, new_root: SplitNode, new_active: LeafId) {
         self.root = new_root;
         self.active_split = new_active;
-        // The previously-tracked LRU leaf no longer exists in the new
-        // tree. Re-seed from the new active when it isn't a dock,
-        // otherwise leave empty and rely on the tree-walk fallback.
-        self.last_non_dock_leaf = if self.leaf_role(new_active) != Some(SplitRole::UtilityDock) {
-            Some(new_active)
-        } else {
-            None
-        };
+        // None of the previously-tracked focus-history ids exist in
+        // the new tree. Reseed with just the new active.
+        self.focus_history.clear();
+        self.focus_history.push(new_active);
     }
 
     /// Get the currently active split ID
@@ -1127,11 +1127,13 @@ impl SplitManager {
         // Verify the split exists
         if self.root.find(split_id.into()).is_some() {
             self.active_split = split_id;
-            // Track the LRU non-dock leaf so file-open routing can
-            // recover the last editor pane after a utility panel
-            // (Search/Replace, Quickfix, terminal-in-dock) takes focus.
-            if self.leaf_role(split_id) != Some(SplitRole::UtilityDock) {
-                self.last_non_dock_leaf = Some(split_id);
+            // Promote (or insert) the new active leaf in the focus
+            // LRU. Same dedup-and-push pattern as
+            // `SplitViewState::focus_history` for tab focus.
+            self.focus_history.retain(|leaf| *leaf != split_id);
+            self.focus_history.push(split_id);
+            if self.focus_history.len() > FOCUS_HISTORY_CAP {
+                self.focus_history.remove(0);
             }
             true
         } else {
@@ -1145,25 +1147,24 @@ impl SplitManager {
         self.root.find(split_id.into()).and_then(|node| node.role())
     }
 
-    /// Most recent active leaf that wasn't a utility-dock pane, or
-    /// (if no such record exists or it's been since closed) the first
-    /// non-dock leaf encountered in a tree walk. Returns `None` only
-    /// when every leaf in the tree carries `SplitRole::UtilityDock` —
-    /// a degenerate state the editor never actually reaches.
-    pub fn last_non_dock_leaf(&self) -> Option<LeafId> {
-        self.last_non_dock_leaf
-            .filter(|leaf| self.leaf_role(*leaf) != Some(SplitRole::UtilityDock))
-            .filter(|leaf| self.root.find((*leaf).into()).is_some())
-            .or_else(|| self.find_first_non_dock_leaf())
-    }
-
-    /// First leaf in tree order without `SplitRole::UtilityDock`.
-    /// Used as the deterministic fallback when LRU tracking is empty.
-    pub fn find_first_non_dock_leaf(&self) -> Option<LeafId> {
-        self.root
-            .leaf_split_ids()
-            .into_iter()
-            .find(|leaf| self.leaf_role(*leaf) != Some(SplitRole::UtilityDock))
+    /// Walk the focus history newest-first and return the first leaf
+    /// that satisfies `predicate` and still exists in the tree. Stale
+    /// entries (leaves closed since they were focused) are skipped.
+    ///
+    /// Generic by design: callers compose the dock/role/label/buffer
+    /// rule they care about. File-open routing uses
+    /// `|leaf| mgr.leaf_role(leaf) != Some(SplitRole::UtilityDock)`;
+    /// future panel-aware features can pass their own filters
+    /// without touching this method.
+    pub fn last_focused_where<F>(&self, mut predicate: F) -> Option<LeafId>
+    where
+        F: FnMut(LeafId) -> bool,
+    {
+        self.focus_history
+            .iter()
+            .rev()
+            .copied()
+            .find(|leaf| self.root.find((*leaf).into()).is_some() && predicate(*leaf))
     }
 
     /// Get the buffer ID of the active split (if it's a leaf)
