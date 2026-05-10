@@ -220,7 +220,6 @@ const modeBindings: [string, string][] = [
   ["PageDown", "search_replace_nav_page_down"],
   ["Left", "search_replace_nav_left"],
   ["Right", "search_replace_nav_right"],
-  ["x", "search_replace_toggle_match"],
   ["M-c", "search_replace_toggle_case"],
   ["M-r", "search_replace_toggle_regex"],
   ["M-w", "search_replace_toggle_whole_word"],
@@ -1106,20 +1105,6 @@ registerHandler("search_replace_nav_up",    () => dispatch(widgetKey("Up")));
 registerHandler("search_replace_nav_down",  () => dispatch(widgetKey("Down")));
 registerHandler("search_replace_nav_page_up",   () => dispatch(widgetKey("PageUp")));
 registerHandler("search_replace_nav_page_down", () => dispatch(widgetKey("PageDown")));
-registerHandler("search_replace_toggle_match", () => {
-  // `x` on the focused match-tree row toggles the row's checkbox.
-  // The host doesn't expose a "toggle focused row" command; we
-  // read `panel.matchIndex` (kept in sync by `select` events) and
-  // run the same path the click handler uses.
-  if (!panel) return;
-  const flat = buildFlatItems();
-  const item = flat[panel.matchIndex];
-  if (!item) return;
-  const cur = item.type === "match"
-    ? panel.fileGroups[item.fileIndex].matches[item.matchIndex!].selected
-    : panel.fileGroups[item.fileIndex].matches.every(m => m.selected);
-  applyMatchTreeToggle(panel.matchIndex, !cur);
-});
 
 // Tab / Shift+Tab now cycle focus through the host's tabbable
 // widget set (declared in spec via `key`s — searchField,

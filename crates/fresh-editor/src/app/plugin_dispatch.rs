@@ -3682,7 +3682,15 @@ impl Editor {
                     self.fire_list_activate(panel_id, &focus_key);
                 }
                 Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                    self.fire_tree_activate(panel_id, &focus_key);
+                    // On a checkable Tree, Space is the conventional
+                    // checkbox key — fire `toggle` for the focused row
+                    // (matching what a click on its `[v]`/`[ ]` glyph
+                    // would do). Falls back to `activate` for trees
+                    // that aren't checkable, or rows that don't have
+                    // a checkbox glyph (`checked: None`).
+                    if !self.fire_tree_toggle_if_checkable(panel_id, &focus_key) {
+                        self.fire_tree_activate(panel_id, &focus_key);
+                    }
                 }
                 _ => {}
             },
@@ -4276,6 +4284,67 @@ impl Editor {
     /// Tree's currently-selected node. Mirrors `fire_list_activate`
     /// — the plugin's handler decides what "activate" means
     /// (open the file, run an action, etc.).
+    /// If the focused Tree row is checkable (parent tree has
+    /// `checkable: true` *and* the row's `checked` is `Some(_)`),
+    /// fire `widget_event { event_type: "toggle" }` with the
+    /// inverted value and return `true`. Otherwise return `false`
+    /// so the caller falls back to `activate`.
+    ///
+    /// Mirrors what a click on the row's `[v]`/`[ ]` glyph would
+    /// do — Space is the conventional checkbox key, so on a
+    /// checkable tree Space toggles instead of activating.
+    fn fire_tree_toggle_if_checkable(&mut self, panel_id: u64, focus_key: &str) -> bool {
+        let panel = match self.widget_registry.get(panel_id) {
+            Some(p) => p,
+            None => return false,
+        };
+        let widget = crate::widgets::find_widget_by_key(&panel.spec, focus_key);
+        let (spec_sel, nodes, item_keys, checkable) = match widget {
+            Some(fresh_core::api::WidgetSpec::Tree {
+                selected_index,
+                nodes,
+                item_keys,
+                checkable,
+                ..
+            }) => (*selected_index, nodes, item_keys.clone(), *checkable),
+            _ => return false,
+        };
+        if !checkable {
+            return false;
+        }
+        let sel = match panel.instance_states.get(focus_key) {
+            Some(crate::widgets::WidgetInstanceState::Tree {
+                selected_index, ..
+            }) => *selected_index,
+            _ => spec_sel,
+        };
+        if sel < 0 {
+            return false;
+        }
+        let cur_checked = match nodes.get(sel as usize).and_then(|n| n.checked) {
+            Some(b) => b,
+            None => return false, // No checkbox glyph on this row — let activate fire.
+        };
+        let new_checked = !cur_checked;
+        let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
+        if self.plugin_manager.has_hook_handlers("widget_event") {
+            self.plugin_manager.run_hook(
+                "widget_event",
+                fresh_core::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key: focus_key.to_string(),
+                    event_type: "toggle".into(),
+                    payload: serde_json::json!({
+                        "index": sel,
+                        "key": item_key,
+                        "checked": new_checked,
+                    }),
+                },
+            );
+        }
+        true
+    }
+
     fn fire_tree_activate(&mut self, panel_id: u64, focus_key: &str) {
         let panel = match self.widget_registry.get(panel_id) {
             Some(p) => p,
