@@ -905,15 +905,9 @@ impl Editor {
             active_window: fresh_core::WindowId(1),
             next_window_id: 2,
             completion_service: crate::services::completion::CompletionService::new(),
-            hover: hover::HoverState::default(),
-            search_state: None,
-            search_namespace: crate::view::overlay::OverlayNamespace::from_string(
-                "search".to_string(),
-            ),
             lsp_diagnostic_namespace: crate::view::overlay::OverlayNamespace::from_string(
                 "lsp-diagnostic".to_string(),
             ),
-            pending_search_range: None,
             mouse_state: MouseState::default(),
             tab_context_menu: None,
             file_explorer_context_menu: None,
@@ -923,8 +917,6 @@ impl Editor {
             quick_open_registry,
             plugin_manager,
             plugin_dev_workspaces: HashMap::new(),
-            live_grep_last_state: None,
-            overlay_preview_state: None,
             buffer_groups: HashMap::new(),
             buffer_to_group: HashMap::new(),
             next_buffer_group_id: 0,
@@ -944,11 +936,9 @@ impl Editor {
                 }
                 histories
             },
-            pending_async_prompt_callback: None,
             pending_next_key_callbacks: std::collections::VecDeque::new(),
             key_capture_active: false,
             pending_key_capture_buffer: std::collections::VecDeque::new(),
-            goto_line_preview: None,
             lsp_progress: std::collections::HashMap::new(),
             lsp_server_statuses: std::collections::HashMap::new(),
             lsp_window_messages: Vec::new(),
@@ -973,15 +963,12 @@ impl Editor {
             chord_state: Vec::new(),
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             pending_close_buffer: None,
-            pending_quit_unnamed_save: Vec::new(),
-            auto_revert_enabled: true,
             last_auto_revert_poll: time_source.now(),
             last_file_tree_poll: time_source.now(),
             git_index_resolved: false,
             dir_mod_times: HashMap::new(),
             pending_file_poll_rx: None,
             pending_dir_poll_rx: None,
-            file_rapid_change_counts: HashMap::new(),
             file_open_state: None,
             file_browser_layout: None,
             recovery_service: {
@@ -1446,7 +1433,7 @@ impl Editor {
     pub fn live_grep_last_state_for_tests(
         &self,
     ) -> Option<&crate::services::live_grep_state::LiveGrepLastState> {
-        self.live_grep_last_state.as_ref()
+        self.active_window().live_grep_last_state.as_ref()
     }
 
     /// Test-only setter for the Live Grep Resume cache.
@@ -1455,7 +1442,7 @@ impl Editor {
         &mut self,
         state: Option<crate::services::live_grep_state::LiveGrepLastState>,
     ) {
-        self.live_grep_last_state = state;
+        self.active_window_mut().live_grep_last_state = state;
     }
 
     /// Test-only accessor for the split tree, so layout-shape

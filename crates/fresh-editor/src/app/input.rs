@@ -1076,7 +1076,7 @@ impl Editor {
                 // (issue #1796: "restore / re-show without re-running
                 // the search"). If no cache exists, fall through to a
                 // fresh Live Grep invocation.
-                let cached = self.live_grep_last_state.clone();
+                let cached = self.active_window_mut().live_grep_last_state.clone();
                 match cached {
                     Some(state) if state.cached_results.as_ref().is_some_and(|r| !r.is_empty()) => {
                         let results = state.cached_results.unwrap_or_default();
@@ -1942,7 +1942,7 @@ impl Editor {
                         let query = prompt.input.clone();
                         self.update_search_highlights(&query);
                     }
-                } else if let Some(search_state) = &self.search_state {
+                } else if let Some(search_state) = &self.active_window().search_state {
                     let query = search_state.query.clone();
                     self.perform_search(&query);
                 }
@@ -1967,7 +1967,7 @@ impl Editor {
                         let query = prompt.input.clone();
                         self.update_search_highlights(&query);
                     }
-                } else if let Some(search_state) = &self.search_state {
+                } else if let Some(search_state) = &self.active_window().search_state {
                     let query = search_state.query.clone();
                     self.perform_search(&query);
                 }
@@ -1992,7 +1992,7 @@ impl Editor {
                         let query = prompt.input.clone();
                         self.update_search_highlights(&query);
                     }
-                } else if let Some(search_state) = &self.search_state {
+                } else if let Some(search_state) = &self.active_window().search_state {
                     let query = search_state.query.clone();
                     self.perform_search(&query);
                 }

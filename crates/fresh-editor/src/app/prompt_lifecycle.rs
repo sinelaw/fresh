@@ -39,7 +39,7 @@ impl Editor {
         use_selection_range: bool,
     ) {
         // Reset any previously stored selection range
-        self.pending_search_range = None;
+        self.active_window_mut().pending_search_range = None;
 
         let selection_range = self.active_cursors().primary().selection_range();
 
@@ -56,7 +56,7 @@ impl Editor {
         };
 
         if use_selection_range {
-            self.pending_search_range = selection_range;
+            self.active_window_mut().pending_search_range = selection_range;
         }
 
         // Determine the default text: selection > last history > empty
@@ -143,7 +143,7 @@ impl Editor {
     pub fn start_quick_open_with_prefix(&mut self, prefix: &str) {
         self.on_editor_focus_lost();
         self.active_window_mut().status_message = None;
-        self.goto_line_preview = None;
+        self.active_window_mut().goto_line_preview = None;
 
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
         prompt.input = prefix.to_string();
@@ -261,7 +261,7 @@ impl Editor {
             // Record where the jump landed so restore can detect if the cursor
             // has since moved (e.g., mouse click, external buffer edit).
             let new_position = self.active_cursors().primary().position;
-            if let Some(snap) = self.goto_line_preview.as_mut() {
+            if let Some(snap) = self.active_window_mut().goto_line_preview.as_mut() {
                 snap.last_jump_position = new_position;
             }
         } else {
@@ -273,7 +273,7 @@ impl Editor {
     /// goto-line preview can later restore it. No-op if a snapshot is already
     /// in place (the saved state should always be the pre-preview one).
     pub(super) fn save_goto_line_preview_snapshot(&mut self) {
-        if self.goto_line_preview.is_some() {
+        if self.active_window_mut().goto_line_preview.is_some() {
             return;
         }
 
@@ -300,7 +300,7 @@ impl Editor {
             (vp.top_byte, vp.top_view_line_offset, vp.left_column)
         };
 
-        self.goto_line_preview = Some(super::GotoLinePreviewSnapshot {
+        self.active_window_mut().goto_line_preview = Some(super::GotoLinePreviewSnapshot {
             buffer_id,
             split_id,
             cursor_id,
@@ -326,7 +326,7 @@ impl Editor {
     /// an async edit shifted the cursor, focus moved elsewhere, …) means the
     /// pre-preview state is stale and we simply discard the snapshot.
     pub(super) fn restore_goto_line_preview_snapshot(&mut self) {
-        let Some(snap) = self.goto_line_preview.take() else {
+        let Some(snap) = self.active_window_mut().goto_line_preview.take() else {
             return;
         };
 
@@ -402,7 +402,7 @@ impl Editor {
                 // Also cancel interactive replace if active
                 self.active_window_mut().interactive_replace_state = None;
                 // Clear search highlights from current buffer
-                let ns = self.search_namespace.clone();
+                let ns = self.active_window().search_namespace.clone();
                 let state = self.active_state_mut();
                 state.overlays.clear_namespace(&ns, &mut state.marker_list);
             }
@@ -603,7 +603,7 @@ impl Editor {
     /// the user already had open are left untouched).
     pub(crate) fn cleanup_overlay_preview(&mut self) {
         let to_close: Vec<crate::model::event::BufferId> =
-            if let Some(state) = self.overlay_preview_state.take() {
+            if let Some(state) = self.active_window_mut().overlay_preview_state.take() {
                 state.loaded_buffers.into_iter().collect()
             } else {
                 Vec::new()
@@ -717,7 +717,7 @@ impl Editor {
                         // with zero entries, producing an empty
                         // popup.
                         if !prompt.input.is_empty() && !cached.is_empty() {
-                            self.live_grep_last_state =
+                            self.active_window_mut().live_grep_last_state =
                                 Some(crate::services::live_grep_state::LiveGrepLastState {
                                     query: prompt.input.clone(),
                                     selected_index: prompt.selected_suggestion,
@@ -731,7 +731,7 @@ impl Editor {
                 PromptType::LiveGrep => {
                     let cached = self.snapshot_prompt_results_for_grep(prompt);
                     if !prompt.input.is_empty() && !cached.is_empty() {
-                        self.live_grep_last_state =
+                        self.active_window_mut().live_grep_last_state =
                             Some(crate::services::live_grep_state::LiveGrepLastState {
                                 query: prompt.input.clone(),
                                 selected_index: prompt.selected_suggestion,
@@ -758,15 +758,22 @@ impl Editor {
                     // explicitly chose not to name this buffer, so we'd
                     // rather keep the editor open than drop their content.
                     if matches!(prompt.prompt_type, PromptType::SaveFileAs)
-                        && !self.pending_quit_unnamed_save.is_empty()
+                        && !self
+                            .active_window_mut()
+                            .pending_quit_unnamed_save
+                            .is_empty()
                     {
-                        self.pending_quit_unnamed_save.clear();
+                        self.active_window_mut().pending_quit_unnamed_save.clear();
                         self.set_status_message(t!("buffer.close_cancelled").to_string());
                     }
                 }
                 PromptType::AsyncPrompt => {
                     // Resolve the pending async prompt callback with null (cancelled)
-                    if let Some(callback_id) = self.pending_async_prompt_callback.take() {
+                    if let Some(callback_id) = self
+                        .active_window_mut()
+                        .pending_async_prompt_callback
+                        .take()
+                    {
                         self.plugin_manager
                             .resolve_callback(callback_id, "null".to_string());
                     }
@@ -810,7 +817,7 @@ impl Editor {
         }
 
         self.active_window_mut().prompt = None;
-        self.pending_search_range = None;
+        self.active_window_mut().pending_search_range = None;
         self.active_window_mut().status_message = Some(t!("search.cancelled").to_string());
 
         // Restore original theme if we were in SelectTheme prompt
@@ -876,7 +883,7 @@ impl Editor {
             if is_live_grep {
                 let cached = self.snapshot_prompt_results_for_grep(&prompt);
                 if !prompt.input.is_empty() && !cached.is_empty() {
-                    self.live_grep_last_state =
+                    self.active_window_mut().live_grep_last_state =
                         Some(crate::services::live_grep_state::LiveGrepLastState {
                             query: prompt.input.clone(),
                             selected_index: prompt.selected_suggestion,

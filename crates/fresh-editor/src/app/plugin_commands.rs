@@ -1889,7 +1889,7 @@ impl Editor {
         callback_id: fresh_core::api::JsCallbackId,
     ) {
         // Store the callback for resolution when prompt completes
-        self.pending_async_prompt_callback = Some(callback_id);
+        self.active_window_mut().pending_async_prompt_callback = Some(callback_id);
 
         // Create an async prompt (uses special prompt type)
         use crate::view::prompt::{Prompt, PromptType};

@@ -899,8 +899,11 @@ impl Editor {
 
         if sent {
             self.active_window_mut().next_lsp_request_id += 1;
-            self.hover
-                .record_request(request_id, line as u32, character as u32);
+            self.active_window_mut().hover.record_request(
+                request_id,
+                line as u32,
+                character as u32,
+            );
         }
 
         Ok(())
@@ -955,8 +958,11 @@ impl Editor {
 
         if sent {
             self.active_window_mut().next_lsp_request_id += 1;
-            self.hover
-                .record_request(request_id, line as u32, character as u32);
+            self.active_window_mut().hover.record_request(
+                request_id,
+                line as u32,
+                character as u32,
+            );
         }
 
         Ok(sent)
@@ -973,7 +979,7 @@ impl Editor {
         // Check if this response is for the current pending request.
         // `claim_pending` also drains the stored LSP position, which we keep
         // around for diagnostic correlation below.
-        let Some(position) = self.hover.claim_pending(request_id) else {
+        let Some(position) = self.active_window_mut().hover.claim_pending(request_id) else {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
             return;
         };
@@ -989,7 +995,7 @@ impl Editor {
 
         if contents.is_empty() && diagnostic_lines.is_empty() {
             self.set_status_message(t!("lsp.no_hover").to_string());
-            self.hover.set_symbol_range(None);
+            self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
 
@@ -1009,7 +1015,9 @@ impl Editor {
             let end_byte = state
                 .buffer
                 .lsp_position_to_byte(end_line as usize, end_char as usize);
-            self.hover.set_symbol_range(Some((start_byte, end_byte)));
+            self.active_window_mut()
+                .hover
+                .set_symbol_range(Some((start_byte, end_byte)));
             tracing::debug!(
                 "Hover symbol range: {}..{} (LSP {}:{}..{}:{})",
                 start_byte,
@@ -1021,7 +1029,7 @@ impl Editor {
             );
 
             // Remove previous hover overlay if any
-            if let Some(old_handle) = self.hover.take_symbol_overlay() {
+            if let Some(old_handle) = self.active_window_mut().hover.take_symbol_overlay() {
                 let remove_event = crate::model::event::Event::RemoveOverlay { handle: old_handle };
                 self.apply_event_to_active_buffer(&remove_event);
             }
@@ -1048,7 +1056,7 @@ impl Editor {
                 .get(&self.active_buffer())
             {
                 if let Some(handle) = state.overlays.all().last().map(|o| o.handle.clone()) {
-                    self.hover.set_symbol_overlay(handle);
+                    self.active_window_mut().hover.set_symbol_overlay(handle);
                 }
             }
         } else {
@@ -1072,7 +1080,9 @@ impl Editor {
                 } else {
                     None
                 };
-            self.hover.set_symbol_range(computed_range);
+            self.active_window_mut()
+                .hover
+                .set_symbol_range(computed_range);
         }
 
         // Create a popup with the hover contents.
@@ -1152,7 +1162,8 @@ impl Editor {
         popup.content = PopupContent::Markdown(all_lines);
         popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
-        popup.position = if let Some((x, y)) = self.hover.take_screen_position() {
+        popup.position = if let Some((x, y)) = self.active_window_mut().hover.take_screen_position()
+        {
             PopupPosition::Fixed { x, y: y + 1 }
         } else {
             PopupPosition::BelowCursor

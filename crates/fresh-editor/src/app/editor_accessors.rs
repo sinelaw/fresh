@@ -1059,7 +1059,9 @@ impl Editor {
         };
 
         // Store mouse position for popup positioning
-        self.hover.set_screen_position((screen_x, screen_y));
+        self.active_window_mut()
+            .hover
+            .set_screen_position((screen_x, screen_y));
 
         // Request hover at the byte position — only mark as sent if dispatched
         match self.request_hover_at_position(byte_pos) {

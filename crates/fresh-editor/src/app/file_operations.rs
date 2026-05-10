@@ -309,7 +309,12 @@ impl Editor {
     /// prompt for it. Returns true when a prompt was opened (and the editor
     /// must keep running until the user finishes the chain).
     pub(crate) fn start_next_quit_save_as(&mut self) -> bool {
-        while let Some(buffer_id) = self.pending_quit_unnamed_save.first().copied() {
+        while let Some(buffer_id) = self
+            .active_window_mut()
+            .pending_quit_unnamed_save
+            .first()
+            .copied()
+        {
             // Skip ids that vanished or were already saved out from under us.
             let still_dirty_unnamed = self
                 .buffers()
@@ -323,7 +328,7 @@ impl Editor {
                 })
                 .unwrap_or(false);
             if !still_dirty_unnamed {
-                self.pending_quit_unnamed_save.remove(0);
+                self.active_window_mut().pending_quit_unnamed_save.remove(0);
                 continue;
             }
 
@@ -524,9 +529,9 @@ impl Editor {
 
     /// Toggle auto-revert mode
     pub fn toggle_auto_revert(&mut self) {
-        self.auto_revert_enabled = !self.auto_revert_enabled;
+        self.active_window_mut().auto_revert_enabled = !self.active_window().auto_revert_enabled;
 
-        if self.auto_revert_enabled {
+        if self.active_window().auto_revert_enabled {
             self.active_window_mut().status_message =
                 Some(t!("status.auto_revert_enabled").to_string());
         } else {
@@ -545,7 +550,7 @@ impl Editor {
     /// poll is already in flight, then checks for results from a prior poll.
     pub fn poll_file_changes(&mut self) -> bool {
         // Skip if auto-revert is disabled
-        if !self.auto_revert_enabled {
+        if !self.active_window().auto_revert_enabled {
             return false;
         }
 
@@ -1460,7 +1465,7 @@ impl Editor {
             }
 
             // Auto-revert if enabled and buffer is not modified
-            if self.auto_revert_enabled {
+            if self.active_window().auto_revert_enabled {
                 // Optimistic concurrency: re-check mtime before reverting.
                 // A save may have completed between our first check and now,
                 // updating file_mod_times. If so, skip the revert.

@@ -669,7 +669,7 @@ impl Editor {
         }
 
         // Check if mouse is within the hovered symbol range - if so, keep hover active
-        if let Some((start, end)) = self.hover.symbol_range() {
+        if let Some((start, end)) = self.active_window_mut().hover.symbol_range() {
             if byte_pos >= start && byte_pos < end {
                 // Mouse is still over the hovered symbol - keep hover state
                 return;

@@ -301,7 +301,7 @@ impl Editor {
         }
 
         if finished.match_ranges.is_empty() {
-            self.search_state = None;
+            self.active_window_mut().search_state = None;
             self.set_status_message(format!("No matches found for '{}'", finished.query));
             return;
         }

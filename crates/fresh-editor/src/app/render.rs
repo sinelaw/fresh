@@ -142,7 +142,7 @@ impl Editor {
             )
         });
         if is_search_prompt_active {
-            if let Some(ref search_state) = self.search_state {
+            if let Some(ref search_state) = self.active_window().search_state {
                 let query = search_state.query.clone();
                 self.update_search_highlights(&query);
             }
@@ -2061,18 +2061,26 @@ impl Editor {
 
         // If the standalone state already targets this path, just
         // re-seed the cursor and skip the file-load roundtrip.
-        let already_target = self.overlay_preview_state.as_ref().is_some_and(|st| {
-            self.windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .get(&st.buffer_id)
-                .and_then(|s| s.buffer.file_path())
-                .is_some_and(|p| p == abs_path.as_path())
-        });
+        let already_target = self
+            .active_window()
+            .overlay_preview_state
+            .as_ref()
+            .is_some_and(|st| {
+                self.windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&st.buffer_id)
+                    .and_then(|s| s.buffer.file_path())
+                    .is_some_and(|p| p == abs_path.as_path())
+            });
 
         let buffer_id = if already_target {
-            self.overlay_preview_state.as_ref().unwrap().buffer_id
+            self.active_window_mut()
+                .overlay_preview_state
+                .as_ref()
+                .unwrap()
+                .buffer_id
         } else {
             // Snapshot whether this path was already known so we can
             // tell "I just loaded it for preview" from "the user had
@@ -2132,6 +2140,7 @@ impl Editor {
                 // open_file_no_focus may have switched the active
                 // buffer of the source split. Restore it.
                 let preview_loaded: std::collections::HashSet<BufferId> = self
+                    .active_window_mut()
                     .overlay_preview_state
                     .as_ref()
                     .map(|st| st.loaded_buffers.clone())
@@ -2176,7 +2185,7 @@ impl Editor {
         // Build (or update) the standalone preview state. Held off
         // `split_view_states` so cross-cutting iteration never touches
         // it.
-        let need_init = self.overlay_preview_state.is_none();
+        let need_init = self.active_window_mut().overlay_preview_state.is_none();
         if need_init {
             let mut view_state = crate::view::split::SplitViewState::with_buffer(
                 self.terminal_width,
@@ -2205,22 +2214,26 @@ impl Editor {
                     loaded_buffers.insert(buffer_id);
                 }
             }
-            self.overlay_preview_state = Some(crate::app::types::OverlayPreviewState {
-                buffer_id,
-                view_state,
-                loaded_buffers,
-            });
-        } else if let Some(state) = self.overlay_preview_state.as_mut() {
-            if state.buffer_id != buffer_id {
-                state.view_state.switch_buffer(buffer_id);
-                state.buffer_id = buffer_id;
-                let hidden_from_tabs = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffer_metadata.get(&buffer_id))
-                    .is_some_and(|meta| meta.hidden_from_tabs);
-                if hidden_from_tabs {
-                    state.loaded_buffers.insert(buffer_id);
+            self.active_window_mut().overlay_preview_state =
+                Some(crate::app::types::OverlayPreviewState {
+                    buffer_id,
+                    view_state,
+                    loaded_buffers,
+                });
+        } else {
+            // Pre-compute hidden flag (immutable borrow on self.windows)
+            // before taking the mutable borrow on overlay_preview_state.
+            let hidden_from_tabs = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffer_metadata.get(&buffer_id))
+                .is_some_and(|meta| meta.hidden_from_tabs);
+            if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
+                if state.buffer_id != buffer_id {
+                    state.view_state.switch_buffer(buffer_id);
+                    if hidden_from_tabs {
+                        state.loaded_buffers.insert(buffer_id);
+                    }
                 }
             }
         }
@@ -2242,6 +2255,7 @@ impl Editor {
         // Compute top_byte BEFORE taking the mutable borrow on
         // overlay_preview_state to keep the borrows disjoint.
         let h_for_preview = self
+            .active_window_mut()
             .overlay_preview_state
             .as_ref()
             .map(|s| s.view_state.viewport.height.max(1) as usize)
@@ -2256,7 +2270,7 @@ impl Editor {
             .get(&buffer_id)
             .and_then(|s| s.buffer.line_start_offset(target_top_line))
             .unwrap_or(line_start);
-        if let Some(state) = self.overlay_preview_state.as_mut() {
+        if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
             state.view_state.cursors.primary_mut().position = byte_offset;
             state.view_state.viewport.top_byte = top_byte;
         }
@@ -2724,10 +2738,10 @@ impl Editor {
                     .expect("active window present");
                 let buffers = &mut __win.buffers;
                 let event_logs = &mut __win.event_logs;
-                let cell_theme_map = &mut self.chrome_layout.cell_theme_map;
-                let Some(preview_state) = self.overlay_preview_state.as_mut() else {
+                let Some(preview_state) = __win.overlay_preview_state.as_mut() else {
                     return;
                 };
+                let cell_theme_map = &mut self.chrome_layout.cell_theme_map;
                 preview_state
                     .view_state
                     .viewport

@@ -1223,7 +1223,7 @@ impl Editor {
         const RAPID_REVERT_THRESHOLD: u32 = 10; // Require 10 reverts in 10 seconds to disable
 
         // Skip if auto-revert is disabled
-        if !self.auto_revert_enabled {
+        if !self.active_window().auto_revert_enabled {
             return false;
         }
 
@@ -1242,8 +1242,20 @@ impl Editor {
 
         // Track rapid file change events - only disable after many reverts in short window
         let mut should_disable = false;
-        if let Some((window_start, count)) = self.file_rapid_change_counts.get_mut(&path_buf) {
-            if self.time_source.elapsed_since(*window_start) < DEBOUNCE_WINDOW {
+        let now = self.time_source.now();
+        let elapsed_window_ok = if let Some((window_start, _)) =
+            self.active_window().file_rapid_change_counts.get(&path_buf)
+        {
+            self.time_source.elapsed_since(*window_start) < DEBOUNCE_WINDOW
+        } else {
+            false
+        };
+        if let Some((window_start, count)) = self
+            .active_window_mut()
+            .file_rapid_change_counts
+            .get_mut(&path_buf)
+        {
+            if elapsed_window_ok {
                 *count += 1;
 
                 if *count >= RAPID_REVERT_THRESHOLD {
@@ -1258,15 +1270,17 @@ impl Editor {
             } else {
                 // Reset counter - start a new window
                 *count = 1;
-                *window_start = self.time_source.now();
+                *window_start = now;
             }
         } else {
             // First event for this file
-            self.file_rapid_change_counts
-                .insert(path_buf.clone(), (self.time_source.now(), 1));
+            let now = self.time_source.now();
+            self.active_window_mut()
+                .file_rapid_change_counts
+                .insert(path_buf.clone(), (now, 1));
         }
         if should_disable {
-            self.auto_revert_enabled = false;
+            self.active_window_mut().auto_revert_enabled = false;
             self.active_window_mut().status_message = Some(format!(
                 "Auto-revert disabled: {} is updating too frequently (use Ctrl+Shift+R to re-enable)",
                 path_buf.file_name().unwrap_or_default().to_string_lossy()

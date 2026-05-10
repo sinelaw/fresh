@@ -30,13 +30,13 @@ impl Editor {
     pub(super) fn clear_search_highlights(&mut self) {
         self.clear_search_overlays();
         // Also clear search state
-        self.search_state = None;
+        self.active_window_mut().search_state = None;
     }
 
     /// Clear only the visual search overlays, preserving search state for F3/Shift+F3
     /// This is used when the buffer is modified - highlights become stale but F3 should still work
     pub(super) fn clear_search_overlays(&mut self) {
-        let ns = self.search_namespace.clone();
+        let ns = self.active_window().search_namespace.clone();
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
     }
@@ -56,7 +56,7 @@ impl Editor {
         let case_sensitive = self.search_case_sensitive;
         let whole_word = self.search_whole_word;
         let use_regex = self.search_use_regex;
-        let ns = self.search_namespace.clone();
+        let ns = self.active_window().search_namespace.clone();
 
         // Build regex pattern if regex mode is enabled, or escape for literal search
         let regex_pattern = if use_regex {
@@ -187,18 +187,18 @@ impl Editor {
 
     pub(super) fn perform_search(&mut self, query: &str) {
         if query.is_empty() {
-            self.search_state = None;
+            self.active_window_mut().search_state = None;
             self.set_status_message(t!("search.cancelled").to_string());
             return;
         }
 
-        let search_range = self.pending_search_range.take();
+        let search_range = self.active_window_mut().pending_search_range.take();
 
         // Build the regex early so we can bail on invalid patterns
         let regex = match self.build_search_regex(query) {
             Ok(r) => r,
             Err(e) => {
-                self.search_state = None;
+                self.active_window_mut().search_state = None;
                 self.set_status_message(t!("error.invalid_regex", error = e).to_string());
                 return;
             }
@@ -246,7 +246,7 @@ impl Editor {
         }
 
         if match_ranges.is_empty() {
-            self.search_state = None;
+            self.active_window_mut().search_state = None;
             let msg = if search_range.is_some() {
                 format!("No matches found for '{}' in selection", query)
             } else {
@@ -291,7 +291,7 @@ impl Editor {
 
         let num_matches = matches.len();
 
-        self.search_state = Some(SearchState {
+        self.active_window_mut().search_state = Some(SearchState {
             query: query.to_string(),
             matches,
             match_lengths: match_lengths.clone(),
@@ -308,7 +308,7 @@ impl Editor {
             // Small file: overlays for ALL matches so markers auto-track edits
             let search_bg = self.theme.search_match_bg;
             let search_fg = self.theme.search_match_fg;
-            let ns = self.search_namespace.clone();
+            let ns = self.active_window().search_namespace.clone();
             let state = self.active_state_mut();
             state.overlays.clear_namespace(&ns, &mut state.marker_list);
 
@@ -332,7 +332,14 @@ impl Editor {
         }
 
         let cap_suffix = if capped { "+" } else { "" };
-        let msg = if self.search_state.as_ref().unwrap().search_range.is_some() {
+        let msg = if self
+            .active_window_mut()
+            .search_state
+            .as_ref()
+            .unwrap()
+            .search_range
+            .is_some()
+        {
             format!(
                 "Found {}{} match{} for '{}' in selection",
                 num_matches,
@@ -359,7 +366,7 @@ impl Editor {
         let _span = tracing::info_span!("refresh_search_overlays").entered();
         let search_bg = self.theme.search_match_bg;
         let search_fg = self.theme.search_match_fg;
-        let ns = self.search_namespace.clone();
+        let ns = self.active_window().search_namespace.clone();
 
         // Determine the visible byte range from the active viewport
         let active_split = self
@@ -404,11 +411,11 @@ impl Editor {
         visible_end = visible_end.min(state.buffer.len());
 
         // Collect viewport matches into a local vec to avoid holding an
-        // immutable borrow on self.search_state while we need &mut self for
+        // immutable borrow on self.active_window().search_state while we need &mut self for
         // the buffer state.
         let _ = state;
 
-        let viewport_matches: Vec<(usize, usize)> = match &self.search_state {
+        let viewport_matches: Vec<(usize, usize)> = match &self.active_window().search_state {
             Some(ss) => {
                 let start_idx = ss.matches.partition_point(|&pos| pos < visible_start);
                 ss.matches[start_idx..]
@@ -446,7 +453,7 @@ impl Editor {
     /// `finalize_search`), so replacing them with viewport-only overlays
     /// would lose matches outside the visible area.
     pub(super) fn check_search_overlay_refresh(&mut self) -> bool {
-        if self.search_state.is_none() {
+        if self.active_window_mut().search_state.is_none() {
             return false;
         }
         // Only refresh viewport-scoped overlays for large files
@@ -518,7 +525,7 @@ impl Editor {
     /// that auto-track edits).  Only useful for small files where we create
     /// overlays for ALL matches.
     fn get_search_match_positions(&self) -> Vec<usize> {
-        let ns = &self.search_namespace;
+        let ns = &self.active_window().search_namespace;
         let state = self.active_state();
 
         let mut positions: Vec<usize> = state
@@ -540,7 +547,7 @@ impl Editor {
     /// whole word — when the user presses Ctrl-D right after searching
     /// (issue #1697).
     pub(super) fn search_match_at_primary_cursor(&self) -> Option<std::ops::Range<usize>> {
-        let search_state = self.search_state.as_ref()?;
+        let search_state = self.active_window().search_state.as_ref()?;
         let pos = self.active_cursors().primary().position;
         // matches is sorted; find the rightmost match start <= pos and check
         // whether pos falls within [start, start + len).
@@ -585,7 +592,21 @@ impl Editor {
         let overlay_positions = self.get_search_match_positions();
         let is_large = self.active_state().buffer.is_large_file();
 
-        if let Some(ref mut search_state) = self.search_state {
+        // Snapshot cursor_pos up front so the `&mut search_state` borrow
+        // below doesn't conflict with the read of self.windows.
+        let cursor_pos = {
+            let active_split = self.effective_active_split();
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.splits.as_ref())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&active_split)
+                .map(|vs| vs.cursors.primary().position)
+                .unwrap_or(0)
+        };
+
+        if let Some(ref mut search_state) = self.active_window_mut().search_state {
             // Use overlay positions for small files (they auto-track edits),
             // otherwise reference search_state.matches directly to avoid cloning.
             let use_overlays =
@@ -599,24 +620,6 @@ impl Editor {
             if match_positions.is_empty() {
                 return;
             }
-
-            let cursor_pos = {
-                let active_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.splits.as_ref())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.splits.as_ref())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&active_split)
-                    .map(|vs| vs.cursors.primary().position)
-                    .unwrap_or(0)
-            };
 
             let target_index = match direction {
                 SearchDirection::Forward => {
@@ -701,7 +704,7 @@ impl Editor {
     pub(super) fn find_selection_next(&mut self) {
         // If there's already a search active AND cursor is at a match position,
         // just continue to next match.
-        if let Some(ref search_state) = self.search_state {
+        if let Some(ref search_state) = self.active_window().search_state {
             let cursor_pos = self.active_cursors().primary().position;
             if search_state.matches.binary_search(&cursor_pos).is_ok() {
                 self.find_next();
@@ -715,7 +718,7 @@ impl Editor {
         match search_text {
             Some(text) if !text.is_empty() => {
                 // We have a new search term — discard any previous search.
-                self.search_state = None;
+                self.active_window_mut().search_state = None;
 
                 // Record cursor position before search
                 let cursor_before = self.active_cursors().primary().position;
@@ -724,7 +727,7 @@ impl Editor {
                 self.perform_search(&text);
 
                 // Check if we need to move to next match
-                if let Some(ref search_state) = self.search_state {
+                if let Some(ref search_state) = self.active_window().search_state {
                     let cursor_after = self.active_cursors().primary().position;
 
                     // If we started at a match (selection_start matches a search result),
@@ -753,7 +756,7 @@ impl Editor {
                 // bracket after `goto_matching_bracket`). Don't synthesize
                 // a query — fall back to navigating the existing search if
                 // there is one (issue #1537).
-                if self.search_state.is_some() {
+                if self.active_window_mut().search_state.is_some() {
                     self.find_next();
                 } else {
                     self.set_status_message(t!("search.no_text").to_string());
@@ -770,7 +773,7 @@ impl Editor {
     pub(super) fn find_selection_previous(&mut self) {
         // If there's already a search active AND cursor is at a match position,
         // just continue to previous match.
-        if let Some(ref search_state) = self.search_state {
+        if let Some(ref search_state) = self.active_window().search_state {
             let cursor_pos = self.active_cursors().primary().position;
             if search_state.matches.binary_search(&cursor_pos).is_ok() {
                 self.find_previous();
@@ -784,7 +787,7 @@ impl Editor {
         match search_text {
             Some(text) if !text.is_empty() => {
                 // We have a new search term — discard any previous search.
-                self.search_state = None;
+                self.active_window_mut().search_state = None;
 
                 // Record cursor position before search
                 let cursor_before = self.active_cursors().primary().position;
@@ -793,7 +796,7 @@ impl Editor {
                 self.perform_search(&text);
 
                 // If we found matches, navigate to previous
-                if let Some(ref search_state) = self.search_state {
+                if let Some(ref search_state) = self.active_window().search_state {
                     let cursor_after = self.active_cursors().primary().position;
 
                     // Check if we started at a match
@@ -826,7 +829,7 @@ impl Editor {
                 // No selection or word at the cursor — fall back to
                 // navigating the existing search if there is one
                 // (issue #1537).
-                if self.search_state.is_some() {
+                if self.active_window_mut().search_state.is_some() {
                     self.find_previous();
                 } else {
                     self.set_status_message(t!("search.no_text").to_string());
@@ -1023,10 +1026,10 @@ impl Editor {
         }
 
         // Clear search state since positions are now invalid
-        self.search_state = None;
+        self.active_window_mut().search_state = None;
 
         // Clear any search highlight overlays
-        let ns = self.search_namespace.clone();
+        let ns = self.active_window().search_namespace.clone();
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
 
@@ -1425,7 +1428,7 @@ impl Editor {
         self.active_window_mut().prompt = None; // Clear the query-replace prompt
 
         // Clear search highlights
-        let ns = self.search_namespace.clone();
+        let ns = self.active_window().search_namespace.clone();
         let state = self.active_state_mut();
         state.overlays.clear_namespace(&ns, &mut state.marker_list);
 

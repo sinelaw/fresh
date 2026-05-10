@@ -631,23 +631,8 @@ pub struct Editor {
     /// Pluggable completion service that orchestrates multiple providers
     /// (dabbrev, buffer words, LSP, plugin providers).
     completion_service: crate::services::completion::CompletionService,
-
-    /// Hover subsystem (pending LSP request correlation, highlighted-symbol
-    /// range + overlay handle, popup screen position).
-    hover: hover::HoverState,
-
-    /// Search state (if search is active)
-    search_state: Option<SearchState>,
-
-    /// Search highlight namespace (for efficient bulk removal)
-    search_namespace: crate::view::overlay::OverlayNamespace,
-
     /// LSP diagnostic namespace (for filtering and bulk removal)
     lsp_diagnostic_namespace: crate::view::overlay::OverlayNamespace,
-
-    /// Pending search range that should be reused when the next search is confirmed
-    pending_search_range: Option<Range<usize>>,
-
     // `interactive_replace_state` moved onto `Window` — per-window
     // search-and-replace session state.
     /// Mouse state for scrollbar dragging
@@ -691,24 +676,6 @@ pub struct Editor {
     // `Editor::panel_ids()` / `panel_ids_mut()` — those resolve to
     // the active window's dock occupancy. Each window owns its own
     // utility-dock; switching windows doesn't share dock state.
-    /// Live Grep "Return to Work" cache. Holds the prior query and
-    /// selected index so `Action::ResumeLiveGrep` can re-open the
-    /// floating overlay (issue #1796) with the same state. Cleared
-    /// only when the user starts a fundamentally different search.
-    /// `cached_results` is a *display* cache — Resume reuses it
-    /// without re-running ripgrep. Editing the query invalidates it.
-    pub(crate) live_grep_last_state: Option<crate::services::live_grep_state::LiveGrepLastState>,
-
-    /// Live Grep floating overlay (issue #1796) preview-pane state.
-    /// Held *outside* of `SplitManager`'s tree and *outside* of
-    /// `split_view_states` so none of the existing per-split
-    /// machinery (focus rotation, workspace serialization, viewport
-    /// hooks, settings broadcasts, buffer-close cascades, …) ever
-    /// sees it. The renderer alone reaches into this field via the
-    /// `render_phantom_leaf` façade. `None` when the overlay is
-    /// closed.
-    pub(crate) overlay_preview_state: Option<crate::app::types::OverlayPreviewState>,
-
     /// Buffer groups: multiple splits/buffers appearing as one tab
     buffer_groups: HashMap<types::BufferGroupId, types::BufferGroup>,
     /// Reverse index: buffer ID → group ID (for lookups)
@@ -733,12 +700,6 @@ pub struct Editor {
     /// Prompt histories keyed by prompt type name (e.g., "search", "replace", "goto_line", "plugin:custom_name")
     /// This provides a generic history system that works for all prompt types including plugin prompts.
     prompt_histories: HashMap<String, crate::input::input_history::InputHistory>,
-
-    /// Pending async prompt callback ID (for editor.prompt() API)
-    /// When the prompt is confirmed, the callback is resolved with the input text.
-    /// When cancelled, the callback is resolved with null.
-    pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
-
     /// FIFO queue of plugin `editor.getNextKey()` callbacks awaiting a
     /// keypress. While non-empty, the next key arriving in
     /// `handle_key` is consumed by resolving the front-most callback
@@ -758,13 +719,6 @@ pub struct Editor {
     /// `AwaitNextKey` (resolved immediately, in order). Cleared when
     /// the plugin ends capture.
     pending_key_capture_buffer: std::collections::VecDeque<fresh_core::api::KeyEventPayload>,
-
-    /// Snapshot of cursor/viewport state saved when a goto-line preview jump
-    /// moves the cursor live as the user types a target line. Used by both the
-    /// Quick Open `:N` syntax and the standalone `Goto Line` prompt. Restored
-    /// on cancel or when the user clears the target from the input.
-    goto_line_preview: Option<GotoLinePreviewSnapshot>,
-
     /// LSP progress tracking (token -> progress info)
     lsp_progress: std::collections::HashMap<String, LspProgressInfo>,
 
@@ -858,15 +812,6 @@ pub struct Editor {
 
     /// Pending Save-As queue for the "save and quit" flow.
     ///
-    /// When the user picks "save" from the unsaved-changes quit prompt and one
-    /// or more unnamed buffers are dirty, those buffer ids are pushed here so
-    /// each one can be walked through a SaveFileAs prompt before quitting.
-    /// Empty means we are not in the save-on-quit flow.
-    pending_quit_unnamed_save: Vec<BufferId>,
-
-    /// Whether auto-revert mode is enabled (automatically reload files when changed on disk)
-    auto_revert_enabled: bool,
-
     /// Last time we polled for file changes (for auto-revert)
     last_auto_revert_poll: std::time::Instant,
 
@@ -903,11 +848,6 @@ pub struct Editor {
             Option<(PathBuf, std::time::SystemTime)>,
         )>,
     >,
-
-    /// Tracks rapid file change events for debouncing
-    /// Maps file path to (last event time, event count)
-    file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
-
     /// File open dialog state (when PromptType::OpenFile is active)
     file_open_state: Option<file_open::FileOpenState>,
 
@@ -2378,7 +2318,7 @@ mod tests {
         editor.search_case_sensitive = false;
         editor.perform_search("hello");
 
-        let search_state = editor.search_state.as_ref().unwrap();
+        let search_state = editor.active_window().search_state.as_ref().unwrap();
         assert_eq!(
             search_state.matches.len(),
             3,
@@ -2389,7 +2329,7 @@ mod tests {
         editor.search_case_sensitive = true;
         editor.perform_search("hello");
 
-        let search_state = editor.search_state.as_ref().unwrap();
+        let search_state = editor.active_window().search_state.as_ref().unwrap();
         assert_eq!(
             search_state.matches.len(),
             1,
@@ -2428,7 +2368,7 @@ mod tests {
         editor.search_case_sensitive = true;
         editor.perform_search("test");
 
-        let search_state = editor.search_state.as_ref().unwrap();
+        let search_state = editor.active_window().search_state.as_ref().unwrap();
         assert_eq!(
             search_state.matches.len(),
             5,
@@ -2439,7 +2379,7 @@ mod tests {
         editor.search_whole_word = true;
         editor.perform_search("test");
 
-        let search_state = editor.search_state.as_ref().unwrap();
+        let search_state = editor.active_window().search_state.as_ref().unwrap();
         assert_eq!(
             search_state.matches.len(),
             2,
@@ -2543,6 +2483,7 @@ mod tests {
 
         // Search state should be set with the accumulated matches
         let search_state = editor
+            .active_window()
             .search_state
             .as_ref()
             .expect("search_state should be set after scan finishes");

@@ -664,7 +664,11 @@ impl Editor {
             }
             PromptType::AsyncPrompt => {
                 // Resolve the pending async prompt callback with the input text
-                if let Some(callback_id) = self.pending_async_prompt_callback.take() {
+                if let Some(callback_id) = self
+                    .active_window_mut()
+                    .pending_async_prompt_callback
+                    .take()
+                {
                     // Serialize the input as a JSON string
                     let json = serde_json::to_string(&input).unwrap_or_else(|_| "null".to_string());
                     self.plugin_manager.resolve_callback(callback_id, json);
@@ -835,11 +839,16 @@ impl Editor {
                     } else {
                         self.set_status_message(t!("buffer.saved_and_closed").to_string());
                     }
-                } else if !self.pending_quit_unnamed_save.is_empty() {
+                } else if !self
+                    .active_window_mut()
+                    .pending_quit_unnamed_save
+                    .is_empty()
+                {
                     // Pop the buffer we just saved off the head of the queue,
                     // then either advance to the next unnamed buffer or quit.
                     let just_saved = self.active_buffer();
-                    self.pending_quit_unnamed_save
+                    self.active_window_mut()
+                        .pending_quit_unnamed_save
                         .retain(|id| *id != just_saved);
                     self.set_status_message(
                         t!("file.saved_as", path = full_path.display().to_string()).to_string(),
@@ -859,7 +868,7 @@ impl Editor {
                 // can't honor the user's intent to save everything; abandon
                 // the quit rather than silently dropping the remaining
                 // unnamed buffers.
-                self.pending_quit_unnamed_save.clear();
+                self.active_window_mut().pending_quit_unnamed_save.clear();
                 self.set_status_message(t!("file.error_saving", error = e.to_string()).to_string());
             }
         }
@@ -1387,7 +1396,8 @@ impl Editor {
             // prompt for each one before actually quitting, so the user's
             // intent ("save everything") is honored instead of silently
             // dropping their content.
-            self.pending_quit_unnamed_save = self.collect_unnamed_modified_buffers();
+            self.active_window_mut().pending_quit_unnamed_save =
+                self.collect_unnamed_modified_buffers();
             if !self.start_next_quit_save_as() {
                 self.should_quit = true;
             }
@@ -1614,7 +1624,7 @@ impl Editor {
             QuickOpenResult::GotoLine(_) => {
                 // Commit the preview: discard the saved snapshot without
                 // restoring, since the cursor is already at the target.
-                self.goto_line_preview = None;
+                self.active_window_mut().goto_line_preview = None;
             }
             _ => {
                 self.restore_goto_line_preview_snapshot();

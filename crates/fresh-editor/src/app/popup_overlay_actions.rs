@@ -115,11 +115,11 @@ impl Editor {
             // Clear hover symbol highlight if present (kept for parity with
             // the buffer-popup branch even though global popups don't use it
             // today — cheap no-op when nothing is set).
-            if let Some(handle) = self.hover.take_symbol_overlay() {
+            if let Some(handle) = self.active_window_mut().hover.take_symbol_overlay() {
                 let remove_overlay_event = crate::model::event::Event::RemoveOverlay { handle };
                 self.apply_event_to_active_buffer(&remove_overlay_event);
             }
-            self.hover.set_symbol_range(None);
+            self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
 
@@ -134,11 +134,11 @@ impl Editor {
         }
 
         // Clear hover symbol highlight if present
-        if let Some(handle) = self.hover.take_symbol_overlay() {
+        if let Some(handle) = self.active_window_mut().hover.take_symbol_overlay() {
             let remove_overlay_event = crate::model::event::Event::RemoveOverlay { handle };
             self.apply_event_to_active_buffer(&remove_overlay_event);
         }
-        self.hover.set_symbol_range(None);
+        self.active_window_mut().hover.set_symbol_range(None);
     }
 
     /// Dismiss transient popups if present
@@ -189,19 +189,19 @@ impl Editor {
         // Clear hover state
         self.mouse_state.lsp_hover_state = None;
         self.mouse_state.lsp_hover_request_sent = false;
-        self.hover.clear_pending();
+        self.active_window_mut().hover.clear_pending();
 
         // Clear hover symbol highlight if present
-        if let Some(handle) = self.hover.take_symbol_overlay() {
+        if let Some(handle) = self.active_window_mut().hover.take_symbol_overlay() {
             let remove_overlay_event = crate::model::event::Event::RemoveOverlay { handle };
             self.apply_event_to_active_buffer(&remove_overlay_event);
         }
-        self.hover.set_symbol_range(None);
+        self.active_window_mut().hover.set_symbol_range(None);
 
         // Any focus change (buffer switch, file explorer, menus, …) ends the
         // goto-line preview flow. Drop the snapshot so a later Esc cannot
         // rubber-band the cursor over state the user has moved past.
-        self.goto_line_preview = None;
+        self.active_window_mut().goto_line_preview = None;
     }
 
     /// Clear all popups

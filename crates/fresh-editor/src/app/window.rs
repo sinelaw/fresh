@@ -375,6 +375,50 @@ pub struct Window {
     /// Compiled decoration lookup cache invalidated when
     /// `file_explorer_decorations` changes.
     pub file_explorer_decoration_cache: crate::view::file_tree::FileExplorerDecorationCache,
+
+    /// Hover-popup correlation state (which buffer / cursor a hover
+    /// request was issued from). Per-window because hover requests
+    /// route through the active window's LSP.
+    pub hover: crate::app::hover::HoverState,
+
+    /// Active find-in-buffer search session (if any).
+    pub search_state: Option<crate::app::types::SearchState>,
+
+    /// Overlay namespace used for search-result highlights. Per-window
+    /// because the overlays it scopes are per-buffer (per-window).
+    pub search_namespace: crate::view::overlay::OverlayNamespace,
+
+    /// Range that should be reused when the next search is confirmed
+    /// (e.g. after the user picks a hit in the search overlay).
+    pub pending_search_range: Option<std::ops::Range<usize>>,
+
+    /// Last live-grep panel state (cached so re-opening the panel
+    /// preserves the user's query / scroll / selection).
+    pub live_grep_last_state: Option<crate::services::live_grep_state::LiveGrepLastState>,
+
+    /// Overlay-preview state used by the floating-prompt preview pane
+    /// when it's showing a buffer view.
+    pub overlay_preview_state: Option<crate::app::types::OverlayPreviewState>,
+
+    /// Whether auto-revert (poll-based file-mtime watching) is enabled
+    /// for buffers in this window.
+    pub auto_revert_enabled: bool,
+
+    /// Tracks rapid file-change events for debouncing the auto-revert
+    /// reload trigger.
+    pub file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
+
+    /// Cursor-position snapshot captured when the user opens the
+    /// goto-line prompt, restored on Esc.
+    pub goto_line_preview: Option<crate::app::GotoLinePreviewSnapshot>,
+
+    /// Pending plugin-issued prompt callback id (used by
+    /// `editor.startPrompt` to deliver the prompt result back).
+    pub pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
+
+    /// Buffer ids the user picked "save before quit" for via the
+    /// modified-buffers prompt; consumed in order on quit.
+    pub pending_quit_unnamed_save: Vec<BufferId>,
 }
 
 impl Window {
@@ -934,6 +978,19 @@ impl Window {
             file_explorer_decorations: HashMap::new(),
             file_explorer_decoration_cache:
                 crate::view::file_tree::FileExplorerDecorationCache::default(),
+            hover: crate::app::hover::HoverState::default(),
+            search_state: None,
+            search_namespace: crate::view::overlay::OverlayNamespace::from_string(
+                "search".to_string(),
+            ),
+            pending_search_range: None,
+            live_grep_last_state: None,
+            overlay_preview_state: None,
+            auto_revert_enabled: true,
+            file_rapid_change_counts: HashMap::new(),
+            goto_line_preview: None,
+            pending_async_prompt_callback: None,
+            pending_quit_unnamed_save: Vec::new(),
             resources,
         }
     }
