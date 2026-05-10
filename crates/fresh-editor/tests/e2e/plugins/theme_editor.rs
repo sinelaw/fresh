@@ -84,7 +84,7 @@ fn test_theme_editor_command_registered() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory with a test theme
@@ -138,7 +138,7 @@ fn test_theme_editor_tab_bar_persists() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut harness =
@@ -218,7 +218,7 @@ fn test_close_buffer_while_in_group_closes_whole_group() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut harness =
@@ -295,7 +295,7 @@ fn test_next_buffer_cycles_across_groups_and_buffers() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let test_file = project_root.join("cycle_test.txt");
@@ -413,7 +413,7 @@ fn test_theme_editor_opens_without_error() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory with a test theme
@@ -495,7 +495,7 @@ fn test_theme_editor_open_close_reopen() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut harness =
@@ -565,7 +565,7 @@ fn test_theme_editor_reopen_after_close_buffer() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut harness =
@@ -630,7 +630,7 @@ fn test_theme_editor_shows_color_sections() {
     fs::create_dir(&plugins_dir).unwrap();
 
     // Copy the theme_editor.ts plugin
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory with test themes
@@ -700,7 +700,7 @@ fn test_theme_editor_open_builtin() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create harness with isolated directory context
@@ -771,7 +771,7 @@ fn test_theme_editor_displays_correct_colors() {
     fs::create_dir(&plugins_dir).unwrap();
 
     // Copy the theme_editor.ts plugin
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create themes directory
@@ -919,7 +919,7 @@ fn test_cursor_position_preserved_after_section_toggle() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -988,7 +988,7 @@ fn test_color_prompt_shows_suggestions() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -1094,7 +1094,7 @@ fn test_colors_displayed_in_hex_format() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -1158,7 +1158,7 @@ fn test_comments_appear_before_fields() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -1240,7 +1240,7 @@ fn test_theme_applied_immediately_after_save() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create a test file to see theme changes
@@ -1413,7 +1413,7 @@ fn test_cursor_x_position_preserved_after_section_toggle() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -1550,7 +1550,7 @@ fn test_color_suggestions_show_hex_format() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -1682,7 +1682,7 @@ fn test_color_prompt_prefilled_with_current_value() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -1762,7 +1762,7 @@ fn test_theme_editor_color_values_no_internal_spaces() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -1851,7 +1851,7 @@ fn test_theme_editor_navigation_skips_non_selectable_lines() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -2006,7 +2006,7 @@ fn test_cursor_position_preserved_after_color_edit() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -2137,7 +2137,7 @@ fn test_cursor_on_value_field_when_navigating() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -2204,7 +2204,7 @@ fn test_builtin_theme_requires_save_as() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create a DirectoryContext so we know where config_dir/themes is
@@ -2326,7 +2326,7 @@ fn test_color_swatches_displayed() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -2384,7 +2384,7 @@ fn test_theme_editor_nostalgia_builtin_shows_correct_colors() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Don't create a themes directory - we want to use the built-in themes only
@@ -2470,7 +2470,7 @@ fn test_theme_editor_nostalgia_builtin_via_arrow_selection() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Don't create a themes directory - we want to use the built-in themes only
@@ -2566,7 +2566,7 @@ fn test_theme_editor_select_nostalgia_from_dropdown() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut harness =
@@ -2809,7 +2809,7 @@ fn test_inspect_theme_at_cursor_opens_theme_editor() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create a test file so the cursor is on editor content
@@ -2875,7 +2875,7 @@ fn test_inspect_theme_at_cursor_multiple_rounds() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let test_file = project_root.join("test.txt");
@@ -3005,7 +3005,7 @@ fn test_save_builtin_theme_produces_valid_file() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let test_file = project_root.join("test.txt");
@@ -3196,7 +3196,7 @@ fn test_issue_1180_save_theme_creates_themes_directory() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let test_file = project_root.join("test.txt");
@@ -3363,7 +3363,7 @@ fn test_inspect_after_saving_custom_theme() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let test_file = project_root.join("test.txt");
@@ -3544,7 +3544,7 @@ fn test_palette_swatch_click_targets_correct_column() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -3730,7 +3730,7 @@ fn test_theme_editor_page_up_page_down() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
 
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let themes_dir = project_root.join("themes");
@@ -3870,7 +3870,7 @@ fn test_named_color_swatch_uses_native_ansi_color() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     // Create a theme with a named color "Yellow" for tab_active_fg.
@@ -4042,7 +4042,7 @@ fn test_theme_editor_colors_update_on_theme_change() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut config = fresh::config::Config::default();
@@ -4191,7 +4191,7 @@ fn test_paste_in_theme_editor_does_not_panic() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut harness =
@@ -4244,7 +4244,7 @@ fn test_theme_editor_terminal_builtin_renders_field_rows() {
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
-        copy_plugin_lib(&plugins_dir);
+    copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "theme_editor");
 
     let mut harness =
