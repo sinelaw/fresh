@@ -135,7 +135,7 @@ impl Editor {
             .get(&split_id)?
             .viewport
             .top_byte;
-        self.handle_scroll_event(delta);
+        self.active_window_mut().handle_scroll_event(delta);
         let new_top_byte = self
             .windows
             .get(&self.active_window)

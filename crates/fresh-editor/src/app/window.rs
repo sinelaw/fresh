@@ -1535,6 +1535,221 @@ impl Window {
         }
     }
 
+    /// Handle scroll events using the active split's viewport.
+    ///
+    /// View events (like `Scroll`) target SplitViewState rather than
+    /// EditorState so scroll limits are correct when view transforms
+    /// inject extra rows.
+    pub(crate) fn handle_scroll_event(&mut self, line_offset: isize) {
+        use crate::view::ui::view_pipeline::ViewLineIterator;
+
+        let Some((mgr, _)) = self.splits.as_ref() else {
+            return;
+        };
+        let active_split = mgr.active_split();
+
+        if let Some(group) = self
+            .scroll_sync_manager
+            .find_group_for_split(active_split.into())
+        {
+            let left = group.left_split;
+            let right = group.right_split;
+            if let Some(vs_map) = self.split_view_states_mut() {
+                if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
+                    vs.viewport.set_skip_ensure_visible();
+                }
+                if let Some(vs) = vs_map.get_mut(&LeafId(right)) {
+                    vs.viewport.set_skip_ensure_visible();
+                }
+            }
+        }
+
+        let (mgr, vs_map) = self
+            .splits
+            .as_ref()
+            .expect("splits checked above");
+        let sync_group = vs_map
+            .get(&active_split)
+            .and_then(|vs| vs.sync_group);
+        let splits_to_scroll = if let Some(group_id) = sync_group {
+            mgr.get_splits_in_group(group_id, vs_map)
+        } else {
+            vec![active_split]
+        };
+
+        let tab_size = self.resources.config.editor.tab_size;
+        for split_id in splits_to_scroll {
+            let (mgr, vs_map) = self.splits.as_ref().expect("splits checked above");
+            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
+                continue;
+            };
+
+            let view_transform_tokens = vs_map
+                .get(&split_id)
+                .and_then(|vs| vs.view_transform.as_ref())
+                .map(|vt| vt.tokens.clone());
+
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let soft_breaks = state.collect_soft_break_positions();
+                let virtual_lines = state.collect_virtual_line_positions();
+                let buffer = &mut state.buffer;
+                if let Some(view_state) = self
+                    .splits
+                    .as_mut()
+                    .expect("splits checked above")
+                    .1
+                    .get_mut(&split_id)
+                {
+                    if let Some(tokens) = view_transform_tokens {
+                        let view_lines: Vec<_> =
+                            ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
+                        view_state
+                            .viewport
+                            .scroll_view_lines(&view_lines, line_offset);
+                    } else if line_offset > 0 {
+                        view_state.viewport.scroll_down(
+                            buffer,
+                            &soft_breaks,
+                            &virtual_lines,
+                            line_offset as usize,
+                        );
+                    } else {
+                        view_state.viewport.scroll_up(
+                            buffer,
+                            &soft_breaks,
+                            &virtual_lines,
+                            line_offset.unsigned_abs(),
+                        );
+                    }
+                    view_state.viewport.set_skip_ensure_visible();
+                }
+            }
+        }
+    }
+
+    /// Handle a `SetViewport` event using the active split's viewport.
+    pub(crate) fn handle_set_viewport_event(&mut self, top_line: usize) {
+        let Some((mgr, _)) = self.splits.as_ref() else {
+            return;
+        };
+        let active_split = mgr.active_split();
+
+        if self
+            .scroll_sync_manager
+            .is_split_synced(active_split.into())
+        {
+            if let Some(group) = self
+                .scroll_sync_manager
+                .find_group_for_split_mut(active_split.into())
+            {
+                let scroll_line = if group.is_left_split(active_split.into()) {
+                    top_line
+                } else {
+                    group.right_to_left_line(top_line)
+                };
+                group.set_scroll_line(scroll_line);
+            }
+
+            let (left, right) = match self
+                .scroll_sync_manager
+                .find_group_for_split(active_split.into())
+            {
+                Some(group) => (group.left_split, group.right_split),
+                None => return,
+            };
+            if let Some(vs_map) = self.split_view_states_mut() {
+                if let Some(vs) = vs_map.get_mut(&LeafId(left)) {
+                    vs.viewport.set_skip_ensure_visible();
+                }
+                if let Some(vs) = vs_map.get_mut(&LeafId(right)) {
+                    vs.viewport.set_skip_ensure_visible();
+                }
+            }
+            return;
+        }
+
+        let (mgr, vs_map) = self.splits.as_ref().expect("splits checked above");
+        let sync_group = vs_map
+            .get(&active_split)
+            .and_then(|vs| vs.sync_group);
+        let splits_to_scroll = if let Some(group_id) = sync_group {
+            mgr.get_splits_in_group(group_id, vs_map)
+        } else {
+            vec![active_split]
+        };
+
+        for split_id in splits_to_scroll {
+            let (mgr, _) = self.splits.as_ref().expect("splits checked above");
+            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
+                continue;
+            };
+
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let buffer = &mut state.buffer;
+                if let Some(view_state) = self
+                    .splits
+                    .as_mut()
+                    .expect("splits checked above")
+                    .1
+                    .get_mut(&split_id)
+                {
+                    view_state.viewport.scroll_to(buffer, top_line);
+                    view_state.viewport.set_skip_ensure_visible();
+                }
+            }
+        }
+    }
+
+    /// Handle a `Recenter` event using the active split's viewport.
+    pub(crate) fn handle_recenter_event(&mut self) {
+        let Some((mgr, vs_map)) = self.splits.as_ref() else {
+            return;
+        };
+        let active_split = mgr.active_split();
+
+        let sync_group = vs_map
+            .get(&active_split)
+            .and_then(|vs| vs.sync_group);
+        let splits_to_recenter = if let Some(group_id) = sync_group {
+            mgr.get_splits_in_group(group_id, vs_map)
+        } else {
+            vec![active_split]
+        };
+
+        for split_id in splits_to_recenter {
+            let (mgr, _) = self.splits.as_ref().expect("splits checked above");
+            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
+                continue;
+            };
+
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                let buffer = &mut state.buffer;
+                let view_state = self
+                    .splits
+                    .as_mut()
+                    .expect("splits checked above")
+                    .1
+                    .get_mut(&split_id);
+
+                if let Some(view_state) = view_state {
+                    let cursor = *view_state.cursors.primary();
+                    let viewport_height = view_state.viewport.visible_line_count();
+                    let target_rows_from_top = viewport_height / 2;
+
+                    let mut iter = buffer.line_iterator(cursor.position, 80);
+                    for _ in 0..target_rows_from_top {
+                        if iter.prev().is_none() {
+                            break;
+                        }
+                    }
+                    let new_top_byte = iter.current_position();
+                    view_state.viewport.top_byte = new_top_byte;
+                    view_state.viewport.set_skip_ensure_visible();
+                }
+            }
+        }
+    }
+
     /// Atomically update both sides of the pane-buffer invariant for a
     /// given leaf split: the split tree's stored buffer AND the matching
     /// `SplitViewState.active_buffer` / `keyed_states` map.
