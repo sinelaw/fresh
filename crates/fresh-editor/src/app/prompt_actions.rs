@@ -270,7 +270,11 @@ impl Editor {
                 self.handle_register_input(&input, |editor, c| editor.play_macro(c), "Macro");
             }
             PromptType::SetBookmark => {
-                self.handle_register_input(&input, |editor, c| editor.set_bookmark(c), "Bookmark");
+                self.handle_register_input(
+                    &input,
+                    |editor, c| editor.active_window_mut().set_bookmark(c),
+                    "Bookmark",
+                );
             }
             PromptType::JumpToBookmark => {
                 self.handle_register_input(

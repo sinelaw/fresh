@@ -1,8 +1,14 @@
-//! Bookmark orchestrators on `Editor`.
+//! Bookmark orchestrators.
 //!
-//! Cross-cutting effects — cursor movement, status messages, lazy
-//! cleanup of bookmarks pointing at closed buffers — for the bookmark
-//! subsystem. Plain data state lives in `super::bookmarks::BookmarkState`.
+//! Pure window-state mutations (`set_bookmark`, `clear_bookmark`,
+//! `list_bookmarks`) live on `impl Window`. The cross-cutting
+//! `jump_to_bookmark` stays on `impl Editor` because its body needs
+//! orchestration helpers (`set_active_buffer`,
+//! `apply_event_to_active_buffer`, `ensure_active_cursor_visible_for_navigation`)
+//! that have not yet moved to `impl Window` — those orchestrators
+//! still fire plugin hooks via `Editor.plugin_manager`. Once
+//! plugin-hook firing is available on `Window`, `jump_to_bookmark`
+//! becomes a Window method too.
 
 use rust_i18n::t;
 
@@ -10,13 +16,14 @@ use crate::model::event::Event;
 
 use super::Editor;
 
-impl Editor {
-    pub(super) fn set_bookmark(&mut self, key: char) {
+impl crate::app::window::Window {
+    /// Set bookmark at the active buffer's primary cursor position.
+    pub fn set_bookmark(&mut self, key: char) {
         let buffer_id = self.active_buffer();
         let position = self.active_cursors().primary().position;
-        self.active_window_mut().bookmarks.set(
+        self.bookmarks.set(
             key,
-            super::bookmarks::Bookmark {
+            crate::app::bookmarks::Bookmark {
                 buffer_id,
                 position,
             },
@@ -24,7 +31,52 @@ impl Editor {
         self.set_status_message(t!("bookmark.set", key = key).to_string());
     }
 
-    /// Jump to a bookmark
+    /// Clear a bookmark by key.
+    pub fn clear_bookmark(&mut self, key: char) {
+        if self.bookmarks.remove(key) {
+            self.set_status_message(t!("bookmark.cleared", key = key).to_string());
+        } else {
+            self.set_status_message(t!("bookmark.not_set", key = key).to_string());
+        }
+    }
+
+    /// Show the list of bookmarks in the status bar. Bookmarks pointing
+    /// at buffers that no longer exist render as "unknown".
+    pub fn list_bookmarks(&mut self) {
+        if self.bookmarks.is_empty() {
+            self.set_status_message(t!("bookmark.none_set").to_string());
+            return;
+        }
+
+        let mut bookmark_list: Vec<(char, crate::app::bookmarks::Bookmark)> =
+            self.bookmarks.iter().collect();
+        bookmark_list.sort_by_key(|(k, _)| *k);
+
+        let list_str: String = bookmark_list
+            .iter()
+            .map(|(k, bm)| {
+                let buffer_name = self
+                    .buffer_metadata
+                    .get(&bm.buffer_id)
+                    .map(|m| m.display_name.as_str())
+                    .unwrap_or("unknown");
+                format!("'{}': {} @ {}", k, buffer_name, bm.position)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        self.set_status_message(t!("bookmark.list", list = list_str).to_string());
+    }
+}
+
+impl Editor {
+    /// Jump to a bookmark.
+    ///
+    /// Stays on `impl Editor` because the body fires plugin hooks
+    /// (`apply_event_to_active_buffer`) and orchestrates cross-cutting
+    /// state (active-buffer switch, viewport recentering). Moving it
+    /// to `impl Window` waits for plugin-hook firing to be available
+    /// from `Window`.
     pub(super) fn jump_to_bookmark(&mut self, key: char) {
         let Some(bookmark) = self.active_window_mut().bookmarks.get(key) else {
             self.set_status_message(t!("bookmark.not_set", key = key).to_string());
@@ -71,42 +123,5 @@ impl Editor {
         // buffer that's already visible (#1689).
         self.ensure_active_cursor_visible_for_navigation(true);
         self.set_status_message(t!("bookmark.jumped", key = key).to_string());
-    }
-
-    /// Clear a bookmark
-    pub(super) fn clear_bookmark(&mut self, key: char) {
-        if self.active_window_mut().bookmarks.remove(key) {
-            self.set_status_message(t!("bookmark.cleared", key = key).to_string());
-        } else {
-            self.set_status_message(t!("bookmark.not_set", key = key).to_string());
-        }
-    }
-
-    /// List all bookmarks
-    pub(super) fn list_bookmarks(&mut self) {
-        if self.active_window_mut().bookmarks.is_empty() {
-            self.set_status_message(t!("bookmark.none_set").to_string());
-            return;
-        }
-
-        let mut bookmark_list: Vec<(char, super::bookmarks::Bookmark)> =
-            self.active_window_mut().bookmarks.iter().collect();
-        bookmark_list.sort_by_key(|(k, _)| *k);
-
-        let list_str: String = bookmark_list
-            .iter()
-            .map(|(k, bm)| {
-                let buffer_name = self
-                    .active_window()
-                    .buffer_metadata
-                    .get(&bm.buffer_id)
-                    .map(|m| m.display_name.as_str())
-                    .unwrap_or("unknown");
-                format!("'{}': {} @ {}", k, buffer_name, bm.position)
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        self.set_status_message(t!("bookmark.list", list = list_str).to_string());
     }
 }

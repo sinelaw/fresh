@@ -873,6 +873,133 @@ impl Window {
     pub fn alloc_buffer_id(&self) -> BufferId {
         self.resources.buffer_id_alloc.next()
     }
+
+    /// Set this window's status-bar message. Mirrors
+    /// `Editor::set_status_message` — moved here so handlers on
+    /// `impl Window` can post status without an `Editor` reference.
+    /// Clears any plugin-supplied status (matches Editor behaviour).
+    pub fn set_status_message(&mut self, message: String) {
+        tracing::info!(target: "status", "{}", message);
+        self.plugin_status_message = None;
+        self.status_message = Some(message);
+    }
+
+    /// Clear this window's status-bar message.
+    pub fn clear_status_message(&mut self) {
+        self.status_message = None;
+    }
+
+    /// Resolve the effective (split, buffer) pair for the currently-
+    /// focused target inside this window. Returned invariant: the split
+    /// id is in `splits.1` (view_states), its `active_buffer` equals
+    /// the returned buffer id, `self.buffers` contains the buffer id,
+    /// and the split's `keyed_states` contains an entry for the buffer.
+    ///
+    /// Falls back to the outer split when a buffer-group panel is
+    /// focused but any of those invariants doesn't hold for the inner
+    /// leaf. Mirrors `Editor::effective_active_pair`.
+    pub fn effective_active_pair(&self) -> (LeafId, BufferId) {
+        let (mgr, vs_map) = self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout");
+        let active_split = mgr.active_split();
+        if let Some(vs) = vs_map.get(&active_split) {
+            if vs.active_group_tab.is_some() {
+                if let Some(inner_leaf) = vs.focused_group_leaf {
+                    if let Some(inner_vs) = vs_map.get(&inner_leaf) {
+                        let inner_buf = inner_vs.active_buffer;
+                        if self.buffers.contains_key(&inner_buf)
+                            && inner_vs.keyed_states.contains_key(&inner_buf)
+                        {
+                            return (inner_leaf, inner_buf);
+                        }
+                    }
+                }
+            }
+        }
+        let outer_buf = mgr
+            .active_buffer_id()
+            .expect("Editor always has at least one buffer");
+        (active_split, outer_buf)
+    }
+
+    /// The id of the buffer currently focused in this window.
+    #[inline]
+    pub fn active_buffer(&self) -> BufferId {
+        let (_, buf) = self.effective_active_pair();
+        buf
+    }
+
+    /// The split id whose `SplitViewState` owns the currently-focused
+    /// cursors/viewport for this window.
+    #[inline]
+    pub fn effective_active_split(&self) -> LeafId {
+        let (split, _) = self.effective_active_pair();
+        split
+    }
+
+    /// Read-only handle to this window's active buffer state. Panics
+    /// if the active buffer is missing — the invariants on
+    /// `effective_active_pair` guarantee it's present.
+    pub fn active_state(&self) -> &crate::state::EditorState {
+        let buf = self.active_buffer();
+        self.buffers
+            .get(&buf)
+            .expect("active buffer must be present in window")
+    }
+
+    /// Mutable handle to this window's active buffer state.
+    pub fn active_state_mut(&mut self) -> &mut crate::state::EditorState {
+        let buf = self.active_buffer();
+        self.buffers
+            .get_mut(&buf)
+            .expect("active buffer must be present in window")
+    }
+
+    /// Read-only cursor set for the active buffer in the active split.
+    /// Group panels return their own cursors, not the outer split's
+    /// stale ones.
+    pub fn active_cursors(&self) -> &crate::model::cursor::Cursors {
+        let split_id = self.effective_active_split();
+        &self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout")
+            .1
+            .get(&split_id)
+            .expect("active split must be in view-state map")
+            .cursors
+    }
+
+    /// Mutable cursor set for the active buffer in the active split.
+    pub fn active_cursors_mut(&mut self) -> &mut crate::model::cursor::Cursors {
+        let split_id = self.effective_active_split();
+        &mut self
+            .splits
+            .as_mut()
+            .expect("active window must have a populated split layout")
+            .1
+            .get_mut(&split_id)
+            .expect("active split must be in view-state map")
+            .cursors
+    }
+
+    /// Read-only event log for the active buffer.
+    pub fn active_event_log(&self) -> &crate::model::event::EventLog {
+        let buf = self.active_buffer();
+        self.event_logs
+            .get(&buf)
+            .expect("active buffer must have an event log")
+    }
+
+    /// Mutable event log for the active buffer.
+    pub fn active_event_log_mut(&mut self) -> &mut crate::model::event::EventLog {
+        let buf = self.active_buffer();
+        self.event_logs
+            .get_mut(&buf)
+            .expect("active buffer must have an event log")
+    }
 }
 
 // Label-defaulting unit tests (`empty_label_defaults_to_root_basename`,

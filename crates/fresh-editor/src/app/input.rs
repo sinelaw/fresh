@@ -1909,16 +1909,16 @@ impl Editor {
                 self.jump_to_previous_error();
             }
             Action::SetBookmark(key) => {
-                self.set_bookmark(key);
+                self.active_window_mut().set_bookmark(key);
             }
             Action::JumpToBookmark(key) => {
                 self.jump_to_bookmark(key);
             }
             Action::ClearBookmark(key) => {
-                self.clear_bookmark(key);
+                self.active_window_mut().clear_bookmark(key);
             }
             Action::ListBookmarks => {
-                self.list_bookmarks();
+                self.active_window_mut().list_bookmarks();
             }
             Action::ToggleSearchCaseSensitive => {
                 self.search_case_sensitive = !self.search_case_sensitive;
