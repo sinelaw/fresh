@@ -99,6 +99,7 @@ fn setup_diff(
     let alignment = LineAlignment::from_hunks(hunks, old_line_count, new_line_count);
     harness
         .editor_mut()
+        .active_window_mut()
         .set_composite_alignment(composite_id, alignment);
 
     harness.editor_mut().switch_buffer(composite_id);
@@ -284,11 +285,13 @@ fn setup_diff_with_initial_focus(
     let alignment = LineAlignment::from_hunks(hunks, old_line_count, new_line_count);
     harness
         .editor_mut()
+        .active_window_mut()
         .set_composite_alignment(composite_id, alignment);
 
     // Set initial focus hunk BEFORE showing the buffer
     harness
         .editor_mut()
+        .active_window_mut()
         .get_composite_mut(composite_id)
         .unwrap()
         .initial_focus_hunk = Some(initial_focus_hunk);
@@ -373,6 +376,7 @@ fn test_initial_focus_hunk_is_consumed_after_first_render() {
     assert!(
         harness
             .editor_mut()
+            .active_window_mut()
             .get_composite_mut(composite_id)
             .unwrap()
             .initial_focus_hunk
@@ -438,6 +442,7 @@ fn test_flush_layout_enables_hunk_nav_before_render() {
     let alignment = LineAlignment::from_hunks(&hunks, old_line_count, new_line_count);
     harness
         .editor_mut()
+        .active_window_mut()
         .set_composite_alignment(composite_id2, alignment);
 
     // Switch to the new composite buffer WITHOUT rendering
@@ -522,6 +527,7 @@ fn test_flush_layout_jump_to_third_hunk_before_render() {
     let alignment = LineAlignment::from_hunks(&hunks, old_line_count, new_line_count);
     harness
         .editor_mut()
+        .active_window_mut()
         .set_composite_alignment(composite_id, alignment);
 
     // Switch without rendering

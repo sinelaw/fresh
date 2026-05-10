@@ -425,7 +425,10 @@ impl Editor {
             && (self.global_popups.is_visible() || self.active_state().popups.is_visible())
         {
             KeyContext::Popup
-        } else if self.is_composite_buffer(self.active_buffer()) {
+        } else if self
+            .active_window()
+            .is_composite_buffer(self.active_buffer())
+        {
             KeyContext::CompositeBuffer
         } else {
             // Use the current context (can be FileExplorer or Normal)
@@ -682,7 +685,7 @@ impl Editor {
         {
             let active_buf = self.active_buffer();
             let active_split = self.effective_active_split();
-            if self.is_composite_buffer(active_buf) {
+            if self.active_window().is_composite_buffer(active_buf) {
                 if let Some(handled) =
                     self.try_route_composite_key(active_split, active_buf, &key_event)
                 {
@@ -933,7 +936,7 @@ impl Editor {
                 }
                 // Check if active buffer is a composite buffer
                 let buffer_id = self.active_buffer();
-                if self.is_composite_buffer(buffer_id) {
+                if self.active_window().is_composite_buffer(buffer_id) {
                     if let Some(_handled) = self.handle_composite_action(buffer_id, &Action::Copy) {
                         return Ok(());
                     }
@@ -1881,7 +1884,7 @@ impl Editor {
             Action::SmartHome => {
                 // In composite (diff) views, use LineStart movement
                 let buffer_id = self.active_buffer();
-                if self.is_composite_buffer(buffer_id) {
+                if self.active_window().is_composite_buffer(buffer_id) {
                     if let Some(_handled) =
                         self.handle_composite_action(buffer_id, &Action::SmartHome)
                     {

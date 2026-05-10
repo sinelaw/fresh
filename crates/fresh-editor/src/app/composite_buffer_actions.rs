@@ -123,6 +123,58 @@ fn find_word_end_right(line: &str, from_column: usize, line_length: usize) -> us
     pos.min(line_length)
 }
 
+impl crate::app::window::Window {
+    /// Check if a buffer is a composite buffer
+    pub fn is_composite_buffer(&self, buffer_id: BufferId) -> bool {
+        self.composite_buffers.contains_key(&buffer_id)
+    }
+
+    /// Get a composite buffer by ID
+    pub fn get_composite(&self, buffer_id: BufferId) -> Option<&CompositeBuffer> {
+        self.composite_buffers.get(&buffer_id)
+    }
+
+    /// Get a mutable composite buffer by ID
+    pub fn get_composite_mut(&mut self, buffer_id: BufferId) -> Option<&mut CompositeBuffer> {
+        self.composite_buffers.get_mut(&buffer_id)
+    }
+
+    /// Set the line alignment for a composite buffer
+    pub fn set_composite_alignment(&mut self, buffer_id: BufferId, alignment: LineAlignment) {
+        if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+            composite.set_alignment(alignment);
+        }
+    }
+
+    /// Close a composite buffer and clean up associated state
+    pub fn close_composite_buffer(&mut self, buffer_id: BufferId) {
+        self.composite_buffers.remove(&buffer_id);
+        self.buffer_metadata.remove(&buffer_id);
+        self.composite_view_states
+            .retain(|(_, bid), _| *bid != buffer_id);
+    }
+
+    /// Switch focus to the next pane in a composite buffer
+    pub fn composite_focus_next(&mut self, split_id: LeafId, buffer_id: BufferId) {
+        if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+            composite.focus_next();
+        }
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            view_state.focus_next_pane();
+        }
+    }
+
+    /// Switch focus to the previous pane in a composite buffer
+    pub fn composite_focus_prev(&mut self, split_id: LeafId, buffer_id: BufferId) {
+        if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {
+            composite.focus_prev();
+        }
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
+            view_state.focus_prev_pane();
+        }
+    }
+}
+
 impl Editor {
     // =========================================================================
     // Layout Flush (synchronous state materialization)
@@ -167,25 +219,15 @@ impl Editor {
     // =========================================================================
     // Composite Buffer Methods
     // =========================================================================
-
-    /// Check if a buffer is a composite buffer
-    pub fn is_composite_buffer(&self, buffer_id: BufferId) -> bool {
-        self.active_window()
-            .composite_buffers
-            .contains_key(&buffer_id)
-    }
-
-    /// Get a composite buffer by ID
-    pub fn get_composite(&self, buffer_id: BufferId) -> Option<&CompositeBuffer> {
-        self.active_window().composite_buffers.get(&buffer_id)
-    }
-
-    /// Get a mutable composite buffer by ID
-    pub fn get_composite_mut(&mut self, buffer_id: BufferId) -> Option<&mut CompositeBuffer> {
-        self.active_window_mut()
-            .composite_buffers
-            .get_mut(&buffer_id)
-    }
+    //
+    // The simple read/write helpers (`is_composite_buffer`, `get_composite`,
+    // `get_composite_mut`, `set_composite_alignment`, `close_composite_buffer`,
+    // `composite_focus_next`, `composite_focus_prev`) live on `impl Window`
+    // above — call them via `self.active_window().X` /
+    // `self.active_window_mut().X` from `impl Editor`. The remaining
+    // methods below stay on `impl Editor` because they read editor-global
+    // state (`terminal_width`/`height`, plugin manager, status messages)
+    // alongside their window-scoped work.
 
     /// Get or create composite view state for a split
     pub fn get_composite_view_state(
@@ -291,70 +333,10 @@ impl Editor {
         buffer_id
     }
 
-    /// Set the line alignment for a composite buffer
-    ///
-    /// The alignment determines how lines from different source buffers
-    /// are paired up for display (important for diff views).
-    pub fn set_composite_alignment(&mut self, buffer_id: BufferId, alignment: LineAlignment) {
-        if let Some(composite) = self
-            .active_window_mut()
-            .composite_buffers
-            .get_mut(&buffer_id)
-        {
-            composite.set_alignment(alignment);
-        }
-    }
-
-    /// Close a composite buffer and clean up associated state
-    pub fn close_composite_buffer(&mut self, buffer_id: BufferId) {
-        self.active_window_mut()
-            .composite_buffers
-            .remove(&buffer_id);
-        self.active_window_mut().buffer_metadata.remove(&buffer_id);
-
-        // Remove all view states for this buffer
-        self.active_window_mut()
-            .composite_view_states
-            .retain(|(_, bid), _| *bid != buffer_id);
-    }
-
-    /// Switch focus to the next pane in a composite buffer
-    pub fn composite_focus_next(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        if let Some(composite) = self
-            .active_window_mut()
-            .composite_buffers
-            .get_mut(&buffer_id)
-        {
-            composite.focus_next();
-        }
-        // Also update the view state's focused_pane (used by renderer)
-        if let Some(view_state) = self
-            .active_window_mut()
-            .composite_view_states
-            .get_mut(&(split_id, buffer_id))
-        {
-            view_state.focus_next_pane();
-        }
-    }
-
-    /// Switch focus to the previous pane in a composite buffer
-    pub fn composite_focus_prev(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        if let Some(composite) = self
-            .active_window_mut()
-            .composite_buffers
-            .get_mut(&buffer_id)
-        {
-            composite.focus_prev();
-        }
-        // Also update the view state's focused_pane (used by renderer)
-        if let Some(view_state) = self
-            .active_window_mut()
-            .composite_view_states
-            .get_mut(&(split_id, buffer_id))
-        {
-            view_state.focus_prev_pane();
-        }
-    }
+    // `set_composite_alignment`, `close_composite_buffer`,
+    // `composite_focus_next`, `composite_focus_prev` moved to
+    // `impl Window` above. Editor callers reach them via
+    // `self.active_window_mut().X(...)`.
 
     /// Navigate to the next hunk using the active split.
     pub fn composite_next_hunk_active(&mut self, buffer_id: BufferId) -> bool {
@@ -974,7 +956,8 @@ impl Editor {
         match action {
             // Tab switches between panes
             Action::InsertTab => {
-                self.composite_focus_next(split_id, buffer_id);
+                self.active_window_mut()
+                    .composite_focus_next(split_id, buffer_id);
                 Some(true)
             }
 
@@ -1297,7 +1280,8 @@ impl Editor {
                 .unwrap_or(0);
 
             let alignment = LineAlignment::from_hunks(&diff_hunks, old_line_count, new_line_count);
-            self.set_composite_alignment(buffer_id, alignment);
+            self.active_window_mut()
+                .set_composite_alignment(buffer_id, alignment);
         }
 
         // Store initial focus hunk for the first render to apply
@@ -1358,7 +1342,8 @@ impl Editor {
                 .unwrap_or(0);
 
             let alignment = LineAlignment::from_hunks(&diff_hunks, old_line_count, new_line_count);
-            self.set_composite_alignment(buffer_id, alignment);
+            self.active_window_mut()
+                .set_composite_alignment(buffer_id, alignment);
         }
     }
 

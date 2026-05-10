@@ -181,7 +181,7 @@ impl Editor {
         // cursor. Plugins can still detect clicks via the mouse_click hook,
         // which fires in the click handlers before reaching here. Scrollable
         // panels still receive focus even with a hidden cursor.
-        if self.is_non_scrollable_buffer(buffer_id) {
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
             return;
         }
 

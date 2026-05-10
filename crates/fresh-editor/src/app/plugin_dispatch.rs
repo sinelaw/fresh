@@ -1418,7 +1418,7 @@ impl Editor {
                 self.handle_update_composite_alignment(buffer_id, hunks);
             }
             PluginCommand::CloseCompositeBuffer { buffer_id } => {
-                self.close_composite_buffer(buffer_id);
+                self.active_window_mut().close_composite_buffer(buffer_id);
             }
             PluginCommand::FlushLayout => {
                 self.flush_layout();

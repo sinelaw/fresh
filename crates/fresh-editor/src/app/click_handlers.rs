@@ -149,7 +149,9 @@ impl Editor {
                 continue;
             }
 
-            if self.is_terminal_buffer(*buffer_id) || self.is_composite_buffer(*buffer_id) {
+            if self.is_terminal_buffer(*buffer_id)
+                || self.active_window().is_composite_buffer(*buffer_id)
+            {
                 continue;
             }
 
@@ -399,7 +401,7 @@ impl Editor {
         // after the plugin hook has had a chance to observe it. Scrollable
         // group panels still accept the click (focus routes to them) even
         // when their cursor is hidden.
-        if self.is_non_scrollable_buffer(buffer_id) {
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
@@ -407,7 +409,7 @@ impl Editor {
         self.focus_split(split_id, buffer_id);
 
         // Handle composite buffer clicks specially
-        if self.is_composite_buffer(buffer_id) {
+        if self.active_window().is_composite_buffer(buffer_id) {
             return self.handle_composite_click(col, row, split_id, buffer_id, content_rect);
         }
 

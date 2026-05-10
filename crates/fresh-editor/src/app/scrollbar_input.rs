@@ -85,12 +85,12 @@ impl Editor {
         // Panels marked non-scrollable (buffer-group toolbars/headers/footers
         // default to this) swallow the wheel event — their content is pinned
         // so scrolling would just shift the visible rows by one line.
-        if self.is_non_scrollable_buffer(buffer_id) {
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
         // Check if this is a composite buffer - if so, use composite scroll
-        if self.is_composite_buffer(buffer_id) {
+        if self.active_window().is_composite_buffer(buffer_id) {
             let max_row = self
                 .active_window_mut()
                 .composite_buffers
@@ -154,7 +154,7 @@ impl Editor {
             )
         });
 
-        if self.is_non_scrollable_buffer(buffer_id) {
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
@@ -200,7 +200,7 @@ impl Editor {
         };
 
         // Handle composite buffers - use row-based scrolling
-        if self.is_composite_buffer(buffer_id) {
+        if self.active_window().is_composite_buffer(buffer_id) {
             return self.handle_composite_scrollbar_drag_relative(
                 row,
                 drag_start_row,
@@ -430,7 +430,7 @@ impl Editor {
         };
 
         // Handle composite buffers - use row-based scrolling
-        if self.is_composite_buffer(buffer_id) {
+        if self.active_window().is_composite_buffer(buffer_id) {
             return self.handle_composite_scrollbar_jump(
                 ratio,
                 split_id,

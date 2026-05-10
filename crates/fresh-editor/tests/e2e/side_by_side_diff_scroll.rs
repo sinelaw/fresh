@@ -68,6 +68,7 @@ fn setup_side_by_side_diff(
     let alignment = LineAlignment::from_hunks(hunks, old_line_count, new_line_count);
     harness
         .editor_mut()
+        .active_window_mut()
         .set_composite_alignment(composite_id, alignment);
 
     // Switch to the composite buffer

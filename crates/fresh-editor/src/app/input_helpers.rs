@@ -275,7 +275,7 @@ impl Editor {
     pub(super) fn apply_action_as_events(&mut self, action: Action) -> AnyhowResult<()> {
         // Check if active buffer is a composite buffer - handle scroll/movement specially
         let buffer_id = self.active_buffer();
-        if self.is_composite_buffer(buffer_id) {
+        if self.active_window().is_composite_buffer(buffer_id) {
             if let Some(_handled) = self.handle_composite_action(buffer_id, &action) {
                 return Ok(());
             }
@@ -400,8 +400,12 @@ impl Editor {
 
             RoutedEvent::SwitchPane(dir) => {
                 match dir {
-                    Direction::Next => self.composite_focus_next(split_id, buffer_id),
-                    Direction::Prev => self.composite_focus_prev(split_id, buffer_id),
+                    Direction::Next => self
+                        .active_window_mut()
+                        .composite_focus_next(split_id, buffer_id),
+                    Direction::Prev => self
+                        .active_window_mut()
+                        .composite_focus_prev(split_id, buffer_id),
                 }
                 Some(Ok(()))
             }

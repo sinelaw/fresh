@@ -591,13 +591,7 @@ impl super::Editor {
         &self,
         container: crate::model::event::ContainerId,
     ) -> Option<f32> {
-        use crate::view::split::SplitNode;
-        for node in self.active_window().grouped_subtrees.values() {
-            if let Some(SplitNode::Split { ratio, .. }) = node.find(container.into()) {
-                return Some(*ratio);
-            }
-        }
-        None
+        self.active_window().grouped_split_ratio(container)
     }
 
     /// Set the ratio of a split container that lives inside a stashed
@@ -608,14 +602,8 @@ impl super::Editor {
         container: crate::model::event::ContainerId,
         new_ratio: f32,
     ) -> bool {
-        use crate::view::split::SplitNode;
-        for node in self.active_window_mut().grouped_subtrees.values_mut() {
-            if let Some(SplitNode::Split { ratio, .. }) = node.find_mut(container.into()) {
-                *ratio = new_ratio.clamp(0.1, 0.9);
-                return true;
-            }
-        }
-        false
+        self.active_window_mut()
+            .set_grouped_split_ratio(container, new_ratio)
     }
 
     /// Close a buffer group by its Grouped-node LeafId (used by tab close button).
@@ -634,6 +622,46 @@ impl super::Editor {
     }
 }
 
+impl crate::app::window::Window {
+    /// Look up the ratio of a split container that lives inside one of the
+    /// stashed Grouped subtrees (i.e. not in the main split tree). Returns
+    /// `None` if no grouped subtree contains this container.
+    pub fn grouped_split_ratio(&self, container: crate::model::event::ContainerId) -> Option<f32> {
+        use crate::view::split::SplitNode;
+        for node in self.grouped_subtrees.values() {
+            if let Some(SplitNode::Split { ratio, .. }) = node.find(container.into()) {
+                return Some(*ratio);
+            }
+        }
+        None
+    }
+
+    /// Set the ratio of a split container that lives inside a stashed
+    /// Grouped subtree. Returns `true` if the container was found and
+    /// updated.
+    pub fn set_grouped_split_ratio(
+        &mut self,
+        container: crate::model::event::ContainerId,
+        new_ratio: f32,
+    ) -> bool {
+        use crate::view::split::SplitNode;
+        for node in self.grouped_subtrees.values_mut() {
+            if let Some(SplitNode::Split { ratio, .. }) = node.find_mut(container.into()) {
+                *ratio = new_ratio.clamp(0.1, 0.9);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether the given buffer is marked non-scrollable. Buffer-group
+    /// panels can set `scrollable: false` (and Fixed panels default to
+    /// it) so the mouse wheel is a no-op and no scrollbar is drawn.
+    pub fn is_non_scrollable_buffer(&self, buffer_id: BufferId) -> bool {
+        self.buffers.get(&buffer_id).is_some_and(|s| !s.scrollable)
+    }
+}
+
 /// Get the fixed height of a layout node if it's a Fixed leaf.
 fn fixed_height_of(node: &GroupLayoutNode) -> Option<u16> {
     match node {
@@ -642,19 +670,8 @@ fn fixed_height_of(node: &GroupLayoutNode) -> Option<u16> {
     }
 }
 
-impl super::Editor {
-    /// Whether the given buffer is marked non-scrollable. Buffer-group
-    /// panels can set `scrollable: false` (and Fixed panels default to
-    /// it) so the mouse wheel is a no-op and no scrollbar is drawn.
-    pub(crate) fn is_non_scrollable_buffer(&self, buffer_id: BufferId) -> bool {
-        self.windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-            .is_some_and(|s| !s.scrollable)
-    }
-}
+// `is_non_scrollable_buffer` moved to `impl Window` above. Editor
+// callers reach it via `self.active_window().is_non_scrollable_buffer(...)`.
 
 /// Find the first scrollable leaf in the layout tree.
 fn find_first_scrollable_name(node: &GroupLayoutNode) -> Option<String> {

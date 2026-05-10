@@ -1090,7 +1090,7 @@ impl Editor {
         // Fixed panels (toolbars, headers) are inert — no click focus,
         // no selection. Scrollable group panels still accept clicks even
         // when their cursor is hidden.
-        if self.is_non_scrollable_buffer(buffer_id) {
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
@@ -1243,7 +1243,7 @@ impl Editor {
     ) -> AnyhowResult<()> {
         use crate::model::event::Event;
 
-        if self.is_non_scrollable_buffer(buffer_id) {
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
@@ -1788,7 +1788,7 @@ impl Editor {
         if is_on_thumb {
             self.mouse_state.dragging_scrollbar = Some(split_id);
             self.mouse_state.drag_start_row = Some(row);
-            if self.is_composite_buffer(buffer_id) {
+            if self.active_window().is_composite_buffer(buffer_id) {
                 if let Some(vs) = self
                     .active_window()
                     .composite_view_states
