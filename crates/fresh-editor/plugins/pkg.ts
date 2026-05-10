@@ -1,5 +1,13 @@
 /// <reference path="./lib/fresh.d.ts" />
 
+import {
+  hintBar,
+  key,
+  list,
+  parseHintString,
+  WidgetPanel,
+} from "./lib/index.ts";
+
 /**
  * Fresh Package Manager Plugin
  *
@@ -1658,6 +1666,16 @@ interface PkgManagerState {
   // Buffer group fields
   groupId: number | null;
   panelBuffers: Record<string, number>;
+  /** Widget panels owned by the pkg manager. The list panel hosts a
+   * `List` widget (one row per package) so the host owns selection
+   * highlight, scroll, click-to-select, mouse wheel, and PageUp/Down.
+   * The footer panel hosts a `HintBar` widget (the Navigate / Tab /
+   * Search / Esc cheat-sheet). Header and detail panels still use
+   * `setPanelContent` since their UI shape spans cross-panel focus
+   * (filter / sync / search / action buttons) which is a larger
+   * redesign. */
+  listPanel: WidgetPanel | null;
+  footerPanel: WidgetPanel | null;
 }
 
 const pkgState: PkgManagerState = {
@@ -1674,6 +1692,8 @@ const pkgState: PkgManagerState = {
   viewportHeight: 24,
   groupId: null,
   panelBuffers: {},
+  listPanel: null,
+  footerPanel: null,
 };
 
 // Theme-aware color configuration
@@ -2040,53 +2060,163 @@ function buildPkgHeaderEntries(): TextPropertyEntry[] {
   return entries;
 }
 
-function buildPkgListEntries(): TextPropertyEntry[] {
+/** Build the per-row item entries for the package List widget.
+ * The list iterates "installed first, then available" to match the
+ * existing buffer-render order, so the row's index in this array
+ * matches `pkgState.selectedIndex`. The leading `▸` arrow that the
+ * old hand-rolled renderer used on the focused row is gone — the
+ * List widget paints the selection highlight via `ui.menu_active_bg`
+ * which carries the same "this row is selected" signal. Section
+ * headers (`INSTALLED (n)` / `AVAILABLE (n)`) are kept as
+ * non-selectable rows; selecting them would be a no-op so the list
+ * navigation skips them implicitly via the index math. */
+interface PkgListRow {
+  entry: TextPropertyEntry;
+  /** Stable widget-key for the List item. Empty string for non-
+   * selectable header rows (the List still tracks them in
+   * itemKeys but they don't carry useful identity). */
+  key: string;
+  /** Index within `getFilteredItems()` if this row is a real
+   * package, else -1. The widget's `selectedIndex` is reported
+   * back via `widget_event "select"` and we use it to look up
+   * the matching package via this map. */
+  itemIndex: number;
+}
+
+function buildPkgListRows(): PkgListRow[] {
   const items = getFilteredItems();
-  const installedItems = items.filter(i => i.installed);
-  const availableItems = items.filter(i => !i.installed);
-  const entries: TextPropertyEntry[] = [];
+  const installedItems = items.filter((i) => i.installed);
+  const availableItems = items.filter((i) => !i.installed);
+  const rows: PkgListRow[] = [];
 
   if (installedItems.length > 0) {
-    entries.push({ text: `INSTALLED (${installedItems.length})\n`, properties: { type: "section-title" } });
+    rows.push({
+      entry: {
+        text: `INSTALLED (${installedItems.length})`,
+        properties: { type: "section-title" },
+      },
+      key: "section.installed",
+      itemIndex: -1,
+    });
     let idx = 0;
     for (const item of installedItems) {
-      const isSelected = idx === pkgState.selectedIndex;
-      const listFocused = pkgState.focus.type === "list";
-      const prefix = isSelected && listFocused ? "▸" : " ";
       const status = item.updateAvailable ? "↑" : "✓";
-      const ver = item.version.length > 7 ? item.version.slice(0, 6) + "…" : item.version;
+      const ver =
+        item.version.length > 7 ? item.version.slice(0, 6) + "…" : item.version;
       const nameW = Math.max(8, LIST_WIDTH - 16);
-      const name = item.name.length > nameW ? item.name.slice(0, nameW - 1) + "…" : item.name;
-      entries.push({ text: `${prefix} ${name.padEnd(nameW)} ${ver.padEnd(7)} ${status}\n`, properties: { type: "package-row", selected: isSelected, installed: true } });
+      const name =
+        item.name.length > nameW ? item.name.slice(0, nameW - 1) + "…" : item.name;
+      rows.push({
+        entry: {
+          text: `  ${name.padEnd(nameW)} ${ver.padEnd(7)} ${status}`,
+          properties: { type: "package-row", installed: true },
+        },
+        key: `pkg.${item.name}`,
+        itemIndex: idx,
+      });
       idx++;
     }
   }
 
   if (availableItems.length > 0) {
-    if (entries.length > 0) entries.push({ text: "\n", properties: { type: "blank" } });
-    entries.push({ text: `AVAILABLE (${availableItems.length})\n`, properties: { type: "section-title" } });
+    if (rows.length > 0) {
+      rows.push({
+        entry: { text: "", properties: { type: "blank" } },
+        key: "blank",
+        itemIndex: -1,
+      });
+    }
+    rows.push({
+      entry: {
+        text: `AVAILABLE (${availableItems.length})`,
+        properties: { type: "section-title" },
+      },
+      key: "section.available",
+      itemIndex: -1,
+    });
     let idx = installedItems.length;
     for (const item of availableItems) {
-      const isSelected = idx === pkgState.selectedIndex;
-      const listFocused = pkgState.focus.type === "list";
-      const prefix = isSelected && listFocused ? "▸" : " ";
-      const typeTag = item.packageType === "theme" ? "T" : item.packageType === "language" ? "L" : item.packageType === "bundle" ? "B" : "P";
+      const typeTag =
+        item.packageType === "theme"
+          ? "T"
+          : item.packageType === "language"
+            ? "L"
+            : item.packageType === "bundle"
+              ? "B"
+              : "P";
       const availNameW = Math.max(8, LIST_WIDTH - 10);
-      const name = item.name.length > availNameW ? item.name.slice(0, availNameW - 1) + "…" : item.name;
-      entries.push({ text: `${prefix} ${name.padEnd(availNameW)} [${typeTag}]\n`, properties: { type: "package-row", selected: isSelected, installed: false } });
+      const name =
+        item.name.length > availNameW
+          ? item.name.slice(0, availNameW - 1) + "…"
+          : item.name;
+      rows.push({
+        entry: {
+          text: `  ${name.padEnd(availNameW)} [${typeTag}]`,
+          properties: { type: "package-row", installed: false },
+        },
+        key: `pkg.${item.name}`,
+        itemIndex: idx,
+      });
       idx++;
     }
   }
 
   if (items.length === 0) {
-    if (pkgState.isLoading) {
-      entries.push({ text: "Loading...\n", properties: { type: "empty-state" } });
-    } else {
-      entries.push({ text: "No packages found\n", properties: { type: "empty-state" } });
-    }
+    rows.push({
+      entry: {
+        text: pkgState.isLoading ? "Loading..." : "No packages found",
+        properties: { type: "empty-state" },
+      },
+      key: "empty",
+      itemIndex: -1,
+    });
   }
 
-  return entries;
+  return rows;
+}
+
+/** Cache the row→item-index lookup so `widget_event "select"` can
+ * map the host's reported selection index back to a real package
+ * index in O(1) without rebuilding the row array. Refreshed by
+ * `renderPkgList` every time the list is re-emitted. */
+let pkgListRowCache: PkgListRow[] = [];
+
+function selectedRowToItemIndex(rowIndex: number): number {
+  const row = pkgListRowCache[rowIndex];
+  return row ? row.itemIndex : -1;
+}
+
+function itemIndexToRow(itemIndex: number): number {
+  for (let i = 0; i < pkgListRowCache.length; i++) {
+    if (pkgListRowCache[i].itemIndex === itemIndex) return i;
+  }
+  return -1;
+}
+
+function renderPkgList(): void {
+  if (pkgState.listPanel === null) return;
+  const rows = buildPkgListRows();
+  pkgListRowCache = rows;
+  // Map the plugin's item-index selection to the row-index the List
+  // widget understands. -1 falls back to the first selectable row.
+  let rowSel = itemIndexToRow(pkgState.selectedIndex);
+  if (rowSel < 0) {
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].itemIndex >= 0) {
+        rowSel = i;
+        break;
+      }
+    }
+  }
+  pkgState.listPanel.set(
+    list({
+      items: rows.map((r) => r.entry),
+      itemKeys: rows.map((r) => r.key),
+      selectedIndex: rowSel,
+      visibleRows: Math.max(1, rows.length),
+      key: "pkg-list",
+    }),
+  );
 }
 
 function buildPkgDetailEntries(): TextPropertyEntry[] {
@@ -2133,23 +2263,33 @@ function buildPkgDetailEntries(): TextPropertyEntry[] {
   return entries;
 }
 
-function buildPkgFooterEntries(): TextPropertyEntry[] {
-  let helpText = " ↑↓ Navigate  Tab Next  / Search  Enter ";
-  if (pkgState.focus.type === "action") helpText += "Activate";
-  else if (pkgState.focus.type === "filter") helpText += "Filter";
-  else if (pkgState.focus.type === "sync") helpText += "Sync";
-  else if (pkgState.focus.type === "search") helpText += "Search";
-  else helpText += "Select";
-  helpText += "  Esc Close";
-  return [{ text: helpText + "\n", properties: { type: "help" } }];
+function renderPkgFooter(): void {
+  if (pkgState.footerPanel === null) return;
+  let actionLabel = "Select";
+  if (pkgState.focus.type === "action") actionLabel = "Activate";
+  else if (pkgState.focus.type === "filter") actionLabel = "Filter";
+  else if (pkgState.focus.type === "sync") actionLabel = "Sync";
+  else if (pkgState.focus.type === "search") actionLabel = "Search";
+  // The hint string follows the existing `parseHintString` shape:
+  // tokens separated by two spaces, each token is `<keys>:<label>`
+  // or `<keys> <label>`. The host's HintBar styles the keys portion
+  // with `ui.help_key_fg`.
+  const hintString = `↑↓:Navigate  Tab:Next  /:Search  Enter:${actionLabel}  Esc:Close`;
+  pkgState.footerPanel.set(hintBar(parseHintString(hintString)));
 }
 
 function updatePkgManagerView(): void {
   if (pkgState.groupId === null) return;
+  // Header + detail still flow through the legacy `setPanelContent`
+  // path — their UI shape (filter/sync/search inputs in the header,
+  // action buttons in the detail) spans cross-panel focus, which
+  // is a larger redesign best done together with the §4.1
+  // Compositor work. List and footer migrate independently because
+  // they don't participate in cross-panel focus.
   editor.setPanelContent(pkgState.groupId, "header", buildPkgHeaderEntries());
-  editor.setPanelContent(pkgState.groupId, "list", buildPkgListEntries());
+  renderPkgList();
   editor.setPanelContent(pkgState.groupId, "detail", buildPkgDetailEntries());
-  editor.setPanelContent(pkgState.groupId, "footer", buildPkgFooterEntries());
+  renderPkgFooter();
 }
 
 /**
@@ -2206,6 +2346,17 @@ async function openPackageManager(): Promise<void> {
   pkgState.panelBuffers = groupResult.panels;
   pkgState.isOpen = true;
 
+  // Mount widget panels for the list and footer. Header / detail
+  // still use `setPanelContent` (see `updatePkgManagerView`).
+  const listBufferId = pkgState.panelBuffers["list"];
+  if (typeof listBufferId === "number") {
+    pkgState.listPanel = new WidgetPanel(listBufferId);
+  }
+  const footerBufferId = pkgState.panelBuffers["footer"];
+  if (typeof footerBufferId === "number") {
+    pkgState.footerPanel = new WidgetPanel(footerBufferId);
+  }
+
   // Set initial content for all panels
   updatePkgManagerView();
 
@@ -2239,11 +2390,17 @@ function closePackageManager(): void {
     editor.showBuffer(pkgState.sourceBufferId);
   }
 
-  // Reset state
+  // Reset state. The buffer group's close will tear down the panel
+  // buffers and (implicitly) the widget panels rendering into them;
+  // we just null the handles so any stray render call after close
+  // is a no-op.
   pkgState.isOpen = false;
   pkgState.bufferId = null;
   pkgState.splitId = null;
   pkgState.sourceBufferId = null;
+  pkgState.listPanel = null;
+  pkgState.footerPanel = null;
+  pkgListRowCache = [];
 }
 
 /**
@@ -2290,31 +2447,55 @@ function getCurrentFocusIndex(): number {
 }
 
 // Navigation commands
-function pkg_nav_up() : void {
+function pkg_nav_up(): void {
   if (!pkgState.isOpen) return;
-
-  const items = getFilteredItems();
-  if (items.length === 0) return;
-
-  // Always focus list and navigate (auto-focus behavior)
-  pkgState.selectedIndex = Math.max(0, pkgState.selectedIndex - 1);
+  // Always snap focus back to the list and let the host move the
+  // List widget's selection. The resulting `widget_event "select"`
+  // updates `pkgState.selectedIndex` and refreshes the detail
+  // panel — see the `widget_event` listener installed below.
   pkgState.focus = { type: "list" };
-  updatePkgManagerView();
+  pkgState.listPanel?.command(key("Up"));
 }
 registerHandler("pkg_nav_up", pkg_nav_up);
 
-function pkg_nav_down() : void {
+function pkg_nav_down(): void {
   if (!pkgState.isOpen) return;
-
-  const items = getFilteredItems();
-  if (items.length === 0) return;
-
-  // Always focus list and navigate (auto-focus behavior)
-  pkgState.selectedIndex = Math.min(items.length - 1, pkgState.selectedIndex + 1);
   pkgState.focus = { type: "list" };
-  updatePkgManagerView();
+  pkgState.listPanel?.command(key("Down"));
 }
 registerHandler("pkg_nav_down", pkg_nav_down);
+
+editor.on("widget_event", (data) => {
+  if (
+    pkgState.listPanel === null ||
+    data.panel_id !== pkgState.listPanel.id()
+  ) {
+    return;
+  }
+  if (data.event_type === "select") {
+    const rowIdx =
+      typeof data.payload?.index === "number" ? data.payload.index : -1;
+    if (rowIdx < 0) return;
+    const itemIdx = selectedRowToItemIndex(rowIdx);
+    if (itemIdx < 0) return; // selection landed on a section header
+    if (itemIdx === pkgState.selectedIndex) return;
+    pkgState.selectedIndex = itemIdx;
+    pkgState.focus = { type: "list" };
+    // Re-render header/detail to reflect the new selection;
+    // the list itself is already updated by the host (we don't
+    // need to call renderPkgList again).
+    if (pkgState.groupId !== null) {
+      editor.setPanelContent(pkgState.groupId, "header", buildPkgHeaderEntries());
+      editor.setPanelContent(pkgState.groupId, "detail", buildPkgDetailEntries());
+    }
+    renderPkgFooter();
+    return;
+  }
+  if (data.event_type === "activate") {
+    void pkg_activate();
+    return;
+  }
+});
 
 function pkg_next_button() : void {
   if (!pkgState.isOpen) return;
