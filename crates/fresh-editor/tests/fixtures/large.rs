@@ -2350,7 +2350,7 @@ impl Editor {
         }
 
         // Ensure the newly active tab is visible
-        self.ensure_active_tab_visible(active_split, buffer_id, self.effective_tabs_width());
+        self.active_window_mut().ensure_active_tab_visible(active_split, buffer_id, self.effective_tabs_width());
 
         // Note: We don't sync file explorer here to avoid flicker during tab switches.
         // File explorer syncs when explicitly focused via focus_file_explorer().

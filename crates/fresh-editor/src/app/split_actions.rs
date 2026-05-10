@@ -274,7 +274,10 @@ impl Editor {
         // away is commitment. Matches the rule applied in `focus_split`.
         self.active_window_mut()
             .promote_preview_if_not_in_split(split_id);
-        self.ensure_active_tab_visible(split_id, self.active_buffer(), self.effective_tabs_width());
+        let buffer = self.active_buffer();
+        let tabs_width = self.effective_tabs_width();
+        self.active_window_mut()
+            .ensure_active_tab_visible(split_id, buffer, tabs_width);
 
         let buffer_id = self.active_buffer();
 

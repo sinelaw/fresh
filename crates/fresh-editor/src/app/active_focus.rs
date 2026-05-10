@@ -123,7 +123,9 @@ impl Editor {
         }
 
         // Ensure the newly active tab is visible
-        self.ensure_active_tab_visible(active_split, buffer_id, self.effective_tabs_width());
+        let tabs_width = self.effective_tabs_width();
+        self.active_window_mut()
+            .ensure_active_tab_visible(active_split, buffer_id, tabs_width);
 
         if self.active_window().file_explorer_visible
             && self.config.file_explorer.follow_active_buffer

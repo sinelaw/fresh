@@ -3145,7 +3145,9 @@ mod tests {
         // Force active buffer to first tab and ensure helper brings it into view.
         // Note: available_width must be >= tab width (2 + name_len) for offset to be 0
         // Tab width = 2 + 20 (name length) = 22, so we need at least 22
-        editor.ensure_active_tab_visible(split_id, buf1, 25);
+        editor
+            .active_window_mut()
+            .ensure_active_tab_visible(split_id, buf1, 25);
         assert_eq!(
             editor
                 .split_view_states()
@@ -3156,7 +3158,9 @@ mod tests {
         );
 
         // Now make the last tab active and ensure offset moves forward but stays bounded.
-        editor.ensure_active_tab_visible(split_id, buf3, 25);
+        editor
+            .active_window_mut()
+            .ensure_active_tab_visible(split_id, buf3, 25);
         let view_state = editor.split_view_states().get(&split_id).unwrap();
         assert!(view_state.tab_scroll_offset > 0);
         let buffer_ids: Vec<_> = view_state.buffer_tab_ids_vec();

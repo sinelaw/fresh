@@ -14,11 +14,12 @@ use std::collections::HashMap;
 
 use super::Editor;
 
-impl Editor {
-    /// Ensure the active tab in a split is visible by adjusting its scroll offset.
-    /// This function recalculates the required scroll_offset based on the active tab's position
-    /// and the available width, and updates the SplitViewState.
-    pub(super) fn ensure_active_tab_visible(
+impl crate::app::window::Window {
+    /// Ensure the active tab in a split is visible by adjusting its
+    /// scroll offset. Pure window-state mutation: split tree +
+    /// view_states + buffer_metadata + composite_buffers + grouped_subtrees
+    /// all live on `Window`.
+    pub fn ensure_active_tab_visible(
         &mut self,
         split_id: LeafId,
         active_buffer: BufferId,
@@ -30,19 +31,11 @@ impl Editor {
             active_buffer,
             available_width
         );
-        // TODO: move to impl Window now that every input the body
-        // needs (buffers, buffer_metadata, composite_buffers,
-        // grouped_subtrees, splits) lives on Window. For now we
-        // split-borrow the active window into disjoint sub-fields.
-        let __win = self
-            .windows
-            .get_mut(&self.active_window)
-            .expect("active window must exist");
-        let __window_buffers: &HashMap<BufferId, EditorState> = &__win.buffers;
-        let __window_metadata = &__win.buffer_metadata;
-        let __window_grouped = &__win.grouped_subtrees;
-        let __window_composites = &__win.composite_buffers;
-        let Some(view_state) = __win
+        let __window_metadata = &self.buffer_metadata;
+        let __window_grouped = &self.grouped_subtrees;
+        let __window_composites = &self.composite_buffers;
+        let __window_buffers: &HashMap<BufferId, EditorState> = &self.buffers;
+        let Some(view_state) = self
             .splits
             .as_mut()
             .expect("active window must have a populated split layout")
@@ -54,7 +47,6 @@ impl Editor {
         };
 
         let split_buffers = view_state.open_buffers.clone();
-        // Collect group names from the stashed Grouped subtrees.
         let group_names: std::collections::HashMap<LeafId, String> = __window_grouped
             .iter()
             .filter_map(|(leaf_id, node)| {
@@ -66,7 +58,6 @@ impl Editor {
             })
             .collect();
 
-        // Use the shared function to calculate tab widths (same as render_for_split)
         let (tab_widths, rendered_targets) = crate::view::ui::tabs::calculate_tab_widths(
             &split_buffers,
             __window_buffers,
@@ -78,36 +69,17 @@ impl Editor {
         let total_tabs_width: usize = tab_widths.iter().sum();
         let max_visible_width = available_width as usize;
 
-        // Determine the active target from the SplitViewState marker.
         let active_target = view_state.active_target();
-        // If the caller passed an explicit buffer_id and the split doesn't
-        // have a group marked active, use that buffer as the target.
         let active_target = if matches!(active_target, crate::view::split::TabTarget::Buffer(_)) {
             crate::view::split::TabTarget::Buffer(active_buffer)
         } else {
             active_target
         };
 
-        // Find the active tab index among rendered targets
-        // Note: tab_widths includes separators, so we need to map tab index to width index
         let active_tab_index = rendered_targets.iter().position(|t| *t == active_target);
+        let active_width_index =
+            active_tab_index.map(|buf_idx| if buf_idx == 0 { 0 } else { buf_idx * 2 });
 
-        // Map buffer index to width index (accounting for separators)
-        // Widths are: [sep?, tab0, sep, tab1, sep, tab2, ...]
-        // First tab has no separator before it, subsequent tabs have separator before
-        let active_width_index = active_tab_index.map(|buf_idx| {
-            if buf_idx == 0 {
-                0
-            } else {
-                // Each tab after the first has a separator before it
-                // So tab N is at position 2*N (sep before tab1 is at 1, tab1 at 2, sep before tab2 at 3, tab2 at 4, etc.)
-                // Wait, the structure is: [tab0, sep, tab1, sep, tab2]
-                // So tab N (0-indexed) is at position 2*N
-                buf_idx * 2
-            }
-        });
-
-        // Calculate offset to bring active tab into view
         let old_offset = view_state.tab_scroll_offset;
         let new_scroll_offset = if let Some(idx) = active_width_index {
             crate::view::ui::tabs::scroll_to_show_tab(
@@ -132,7 +104,9 @@ impl Editor {
         );
         view_state.tab_scroll_offset = new_scroll_offset;
     }
+}
 
+impl Editor {
     /// Synchronize viewports for all scroll sync groups
     ///
     /// This syncs the inactive split's viewport to match the active split's position.
