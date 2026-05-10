@@ -333,6 +333,12 @@ impl Editor {
             // file browser consumed the scroll
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
+        } else if self
+            .split_at_position(col, row)
+            .map(|(_, buffer_id)| self.handle_widget_panel_wheel(buffer_id, delta))
+            .unwrap_or(false)
+        {
+            // a mounted widget panel consumed the scroll
         } else {
             if self.terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
                 self.sync_terminal_to_buffer(self.active_buffer());

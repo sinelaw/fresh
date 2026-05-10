@@ -216,6 +216,8 @@ const modeBindings: [string, string][] = [
   ["S-Tab", "search_replace_shift_tab"],
   ["Up", "search_replace_nav_up"],
   ["Down", "search_replace_nav_down"],
+  ["PageUp", "search_replace_nav_page_up"],
+  ["PageDown", "search_replace_nav_page_down"],
   ["Left", "search_replace_nav_left"],
   ["Right", "search_replace_nav_right"],
   ["M-c", "search_replace_toggle_case"],
@@ -1091,6 +1093,8 @@ registerHandler("search_replace_nav_left",  () => dispatch(widgetKey("Left")));
 registerHandler("search_replace_nav_right", () => dispatch(widgetKey("Right")));
 registerHandler("search_replace_nav_up",    () => dispatch(widgetKey("Up")));
 registerHandler("search_replace_nav_down",  () => dispatch(widgetKey("Down")));
+registerHandler("search_replace_nav_page_up",   () => dispatch(widgetKey("PageUp")));
+registerHandler("search_replace_nav_page_down", () => dispatch(widgetKey("PageDown")));
 
 // Tab / Shift+Tab now cycle focus through the host's tabbable
 // widget set (declared in spec via `key`s — searchField,

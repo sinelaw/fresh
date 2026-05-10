@@ -68,6 +68,29 @@ fn buffer_line_byte_offset(
 /// nodes that are currently visible — i.e. every ancestor is in
 /// `expanded`. Mirrors the renderer's filter so dispatcher and
 /// renderer agree on what's selectable.
+/// First `Tree` or `List` widget key in `spec`, scanning in
+/// declaration order. Used by mouse-wheel routing to pick which
+/// widget inside a panel absorbs the scroll.
+fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
+    use fresh_core::api::WidgetSpec;
+    match spec {
+        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
+            for c in children {
+                if let Some(k) = find_scrollable_widget_key(c) {
+                    return Some(k);
+                }
+            }
+            None
+        }
+        WidgetSpec::Tree { key: Some(k), .. } | WidgetSpec::List { key: Some(k), .. }
+            if !k.is_empty() =>
+        {
+            Some(k.clone())
+        }
+        _ => None,
+    }
+}
+
 fn collect_visible_tree_indices(
     nodes: &[fresh_core::api::TreeNode],
     item_keys: &[String],
@@ -3549,6 +3572,31 @@ impl Editor {
                     _ => {}
                 }
             }
+            "PageUp" | "PageDown" => {
+                // Page step = visible_rows - 1 (one row of overlap so
+                // the user keeps a visual anchor across pages). Ignored
+                // for non-scrollable widgets.
+                let page = match widget {
+                    Some(fresh_core::api::WidgetSpec::List { visible_rows, .. })
+                    | Some(fresh_core::api::WidgetSpec::Tree { visible_rows, .. }) => {
+                        visible_rows.saturating_sub(1).max(1) as i32
+                    }
+                    _ => 0,
+                };
+                if page == 0 {
+                    return;
+                }
+                let delta = if key == "PageUp" { -page } else { page };
+                match widget {
+                    Some(fresh_core::api::WidgetSpec::List { .. }) => {
+                        self.handle_widget_select_move(panel_id, delta);
+                    }
+                    Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
+                        self.handle_widget_tree_select_move(panel_id, delta);
+                    }
+                    _ => {}
+                }
+            }
             "Left" | "Right" => match widget {
                 Some(fresh_core::api::WidgetSpec::TextInput { .. }) => {
                     self.handle_widget_text_input_key(panel_id, key);
@@ -3869,6 +3917,168 @@ impl Editor {
                 },
             );
         }
+    }
+
+    /// Mouse-wheel scroll over a widget panel buffer. Finds the
+    /// first `Tree`/`List` in any panel rendering into `buffer_id`
+    /// and shifts its viewport by `delta` rows. Drags the selection
+    /// to stay inside the new visible window so the renderer's
+    /// auto-scroll doesn't snap the offset back. No focus change,
+    /// no `widget_event` fires — wheel is viewport navigation, not
+    /// selection.
+    ///
+    /// Returns `true` if any panel consumed the scroll.
+    pub(super) fn handle_widget_panel_wheel(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        delta: i32,
+    ) -> bool {
+        let panels = self.widget_registry.panels_for_buffer(buffer_id);
+        let mut consumed = false;
+        for panel_id in panels {
+            let spec = match self.widget_registry.get(panel_id) {
+                Some(p) => p.spec.clone(),
+                None => continue,
+            };
+            let Some(widget_key) = find_scrollable_widget_key(&spec) else {
+                continue;
+            };
+            let widget = crate::widgets::find_widget_by_key(&spec, &widget_key);
+            match widget {
+                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
+                    self.handle_widget_tree_wheel(panel_id, &widget_key, delta);
+                    consumed = true;
+                }
+                Some(fresh_core::api::WidgetSpec::List { .. }) => {
+                    self.handle_widget_list_wheel(panel_id, &widget_key, delta);
+                    consumed = true;
+                }
+                _ => {}
+            }
+        }
+        consumed
+    }
+
+    /// Shift a Tree's `scroll_offset` by `delta` rows. If the
+    /// selection would fall outside the new viewport, drag it to
+    /// the edge so the renderer's keep-selection-visible logic
+    /// doesn't snap the offset back.
+    fn handle_widget_tree_wheel(&mut self, panel_id: u64, widget_key: &str, delta: i32) {
+        let panel = match self.widget_registry.get(panel_id) {
+            Some(p) => p,
+            None => return,
+        };
+        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
+        let (visible_rows, nodes, item_keys) = match widget {
+            Some(fresh_core::api::WidgetSpec::Tree {
+                visible_rows,
+                nodes,
+                item_keys,
+                ..
+            }) => (*visible_rows, nodes.clone(), item_keys.clone()),
+            _ => return,
+        };
+        if nodes.is_empty() {
+            return;
+        }
+        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::Tree {
+                selected_index,
+                scroll_offset,
+                expanded_keys,
+            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
+            _ => (-1, 0, std::collections::HashSet::<String>::new()),
+        };
+        let visible_indices = collect_visible_tree_indices(&nodes, &item_keys, &expanded);
+        if visible_indices.is_empty() {
+            return;
+        }
+        let visible = visible_rows.max(1);
+        let total_visible = visible_indices.len() as u32;
+        let max_scroll = total_visible.saturating_sub(visible);
+        let new_scroll = (cur_scroll as i32 + delta)
+            .clamp(0, max_scroll as i32) as u32;
+        if new_scroll == cur_scroll {
+            return;
+        }
+        // Drag selection to stay inside the new viewport.
+        let cur_pos: Option<u32> = if cur_sel >= 0 {
+            visible_indices
+                .iter()
+                .position(|&v| v as i32 == cur_sel)
+                .map(|p| p as u32)
+        } else {
+            None
+        };
+        let new_sel_abs = match cur_pos {
+            Some(pos) if pos < new_scroll => visible_indices[new_scroll as usize] as i32,
+            Some(pos) if pos >= new_scroll + visible => {
+                visible_indices[(new_scroll + visible - 1) as usize] as i32
+            }
+            _ => cur_sel,
+        };
+        if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
+            panel_mut.instance_states.insert(
+                widget_key.to_string(),
+                crate::widgets::WidgetInstanceState::Tree {
+                    scroll_offset: new_scroll,
+                    selected_index: new_sel_abs,
+                    expanded_keys: expanded,
+                },
+            );
+        }
+        self.rerender_widget_panel(panel_id);
+    }
+
+    /// List counterpart of `handle_widget_tree_wheel`.
+    fn handle_widget_list_wheel(&mut self, panel_id: u64, widget_key: &str, delta: i32) {
+        let panel = match self.widget_registry.get(panel_id) {
+            Some(p) => p,
+            None => return,
+        };
+        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
+        let (visible_rows, total) = match widget {
+            Some(fresh_core::api::WidgetSpec::List {
+                visible_rows, items, ..
+            }) => (*visible_rows, items.len() as u32),
+            _ => return,
+        };
+        if total == 0 {
+            return;
+        }
+        let (cur_sel, cur_scroll) = match panel.instance_states.get(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::List {
+                selected_index,
+                scroll_offset,
+            }) => (*selected_index, *scroll_offset),
+            _ => (-1, 0),
+        };
+        let visible = visible_rows.max(1);
+        let max_scroll = total.saturating_sub(visible);
+        let new_scroll = (cur_scroll as i32 + delta)
+            .clamp(0, max_scroll as i32) as u32;
+        if new_scroll == cur_scroll {
+            return;
+        }
+        let new_sel = if cur_sel < 0 {
+            cur_sel
+        } else if (cur_sel as u32) < new_scroll {
+            new_scroll as i32
+        } else if (cur_sel as u32) >= new_scroll + visible {
+            (new_scroll + visible - 1) as i32
+        } else {
+            cur_sel
+        };
+        if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
+            panel_mut.instance_states.insert(
+                widget_key.to_string(),
+                crate::widgets::WidgetInstanceState::List {
+                    scroll_offset: new_scroll,
+                    selected_index: new_sel,
+                },
+            );
+        }
+        self.rerender_widget_panel(panel_id);
     }
 
     /// Right/Left arrow on a focused Tree.

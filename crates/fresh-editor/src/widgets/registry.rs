@@ -269,6 +269,16 @@ impl WidgetRegistry {
         self.panels.keys().copied().collect()
     }
 
+    /// Panels rendering into `buffer_id`. Used by mouse-wheel
+    /// routing to find which widget panel sits under the pointer.
+    pub fn panels_for_buffer(&self, buffer_id: BufferId) -> Vec<PanelId> {
+        self.panels
+            .iter()
+            .filter(|(_, s)| s.buffer_id == buffer_id)
+            .map(|(pid, _)| *pid)
+            .collect()
+    }
+
     /// Hit-test the given buffer-local position against every
     /// currently-mounted panel rendering into `buffer_id`. Returns
     /// the matching panel id and a clone of the hit area on a hit,
