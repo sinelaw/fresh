@@ -42,7 +42,7 @@ impl Editor {
         // wire-side ([`LspUri`]), so a string comparison is the right
         // primitive here — both sides are translated identically and
         // we never accidentally compare a host URI to a wire URI.
-        self.buffer_metadata
+        self.active_window().buffer_metadata
             .iter()
             .find(|(_, m)| m.file_uri().map(|u| u.as_str() == uri).unwrap_or(false))
             .map(|(buffer_id, _)| *buffer_id)
@@ -75,7 +75,7 @@ impl Editor {
                 if state.language != language {
                     return None;
                 }
-                self.buffer_metadata
+                self.active_window().buffer_metadata
                     .get(buffer_id)
                     .and_then(|m| m.file_uri().cloned())
                     .map(|uri| (*buffer_id, uri))
@@ -1506,7 +1506,7 @@ impl Editor {
             .iter()
             .filter_map(|(buf_id, state)| {
                 if state.language == language {
-                    self.buffer_metadata
+                    self.active_window().buffer_metadata
                         .get(buf_id)
                         .and_then(|meta| meta.file_path().map(|p| (*buf_id, p.clone())))
                 } else {
@@ -1537,28 +1537,29 @@ impl Editor {
                 if let Some(uri) = uri {
                     let lang_id = state.language.clone();
                     let __active_id = self.active_window;
-                    if let Some(lsp) = self
-                        .windows
-                        .get_mut(&__active_id)
-                        .and_then(|w| w.lsp.as_mut())
-                    {
-                        // Send didOpen to ALL handles for this language, not just the first.
-                        // Each server needs its own didOpen notification.
-                        for sh in lsp.get_handles_mut(&lang_id) {
-                            let handle_id = sh.handle.id();
-                            if let Err(e) =
-                                sh.handle
-                                    .did_open(uri.clone(), content.clone(), lang_id.clone())
-                            {
-                                tracing::warn!(
-                                    "LSP did_open failed for '{}' after restart: {}",
-                                    sh.name,
-                                    e
-                                );
-                            } else {
-                                // Mark buffer as opened with this handle so that
-                                // send_lsp_changes_for_buffer doesn't re-send didOpen
-                                if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                    if let Some(__win) = self.windows.get_mut(&__active_id) {
+                        if let Some(lsp) = __win.lsp.as_mut() {
+                            // Send didOpen to ALL handles for this language,
+                            // not just the first. Each server needs its own
+                            // didOpen notification.
+                            for sh in lsp.get_handles_mut(&lang_id) {
+                                let handle_id = sh.handle.id();
+                                if let Err(e) = sh.handle.did_open(
+                                    uri.clone(),
+                                    content.clone(),
+                                    lang_id.clone(),
+                                ) {
+                                    tracing::warn!(
+                                        "LSP did_open failed for '{}' after restart: {}",
+                                        sh.name,
+                                        e
+                                    );
+                                } else if let Some(metadata) =
+                                    __win.buffer_metadata.get_mut(&buffer_id)
+                                {
+                                    // Mark buffer as opened with this handle
+                                    // so send_lsp_changes_for_buffer doesn't
+                                    // re-send didOpen.
                                     metadata.lsp_opened_with.insert(handle_id);
                                 }
                             }

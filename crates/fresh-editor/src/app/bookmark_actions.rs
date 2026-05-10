@@ -96,9 +96,7 @@ impl Editor {
         let list_str: String = bookmark_list
             .iter()
             .map(|(k, bm)| {
-                let buffer_name = self
-                    .buffer_metadata
-                    .get(&bm.buffer_id)
+                let buffer_name = self.active_window().buffer_metadata.get(&bm.buffer_id)
                     .map(|m| m.display_name.as_str())
                     .unwrap_or("unknown");
                 format!("'{}': {} @ {}", k, buffer_name, bm.position)

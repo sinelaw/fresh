@@ -114,7 +114,7 @@ impl Editor {
         // Create metadata for this buffer (no file path)
         let metadata =
             super::types::BufferMetadata::new_unnamed(t!("stdin.display_name").to_string());
-        self.buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
 
         // Add buffer to the active split's tabs
         let active_split = self
@@ -322,7 +322,7 @@ impl Editor {
 
         // Set virtual buffer metadata
         let metadata = super::types::BufferMetadata::virtual_buffer(name, mode, read_only);
-        self.buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
 
         buffer_id
     }
@@ -363,7 +363,7 @@ impl Editor {
 
         // Set virtual buffer metadata
         let metadata = super::types::BufferMetadata::virtual_buffer(name, mode, read_only);
-        self.buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
 
         // Add buffer to the active split's open_buffers (tabs)
         let active_split = self

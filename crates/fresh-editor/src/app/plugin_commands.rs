@@ -2935,7 +2935,7 @@ impl Editor {
             match self.open_file_no_focus(&file_path) {
                 Ok(bid) => {
                     // Mark as hidden from tabs so it doesn't clutter the UI
-                    if let Some(meta) = self.buffer_metadata.get_mut(&bid) {
+                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&bid) {
                         meta.hidden_from_tabs = true;
                     }
                     // `open_file_no_focus` unconditionally attaches the new

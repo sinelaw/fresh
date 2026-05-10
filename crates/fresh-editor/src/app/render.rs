@@ -289,7 +289,7 @@ impl Editor {
                 let mut files_with_unsaved_changes = std::collections::HashSet::new();
                 for (buffer_id, state) in __buffers_ref {
                     if state.buffer.is_modified() {
-                        if let Some(metadata) = self.buffer_metadata.get(buffer_id) {
+                        if let Some(metadata) = __win.buffer_metadata.get(buffer_id) {
                             if let Some(file_path) = metadata.file_path() {
                                 files_with_unsaved_changes.insert(file_path.clone());
                             }
@@ -655,6 +655,7 @@ impl Editor {
             .get_mut(&active_window_id)
             .expect("active window must exist");
         let __buffers_mut = &mut __win.buffers;
+        let __metadata_ref = &__win.buffer_metadata;
         let __event_logs_mut = &mut __win.event_logs;
         let __grouped_ref = &__win.grouped_subtrees;
         let __composite_buffers_mut = &mut __win.composite_buffers;
@@ -683,7 +684,7 @@ impl Editor {
             editor_content_area,
             split_mgr,
             __buffers_mut,
-            &self.buffer_metadata,
+            __metadata_ref,
             __event_logs_mut,
             __composite_buffers_mut,
             __composite_view_states_mut,
@@ -857,9 +858,7 @@ impl Editor {
         self.file_browser_layout = None;
 
         // Clone all immutable values before the mutable borrow
-        let display_name = self
-            .buffer_metadata
-            .get(&self.active_buffer())
+        let display_name = self.active_window().buffer_metadata.get(&self.active_buffer())
             .map(|m| m.display_name.clone())
             .unwrap_or_else(|| "[No Name]".to_string());
 
@@ -898,9 +897,7 @@ impl Editor {
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_default();
-        let buffer_lsp_disabled_reason = self
-            .buffer_metadata
-            .get(&self.active_buffer())
+        let buffer_lsp_disabled_reason = self.active_window().buffer_metadata.get(&self.active_buffer())
             .filter(|m| !m.lsp_enabled)
             .and_then(|m| m.lsp_disabled_reason.as_deref());
         let (lsp_status, lsp_indicator_state) = compose_lsp_status(
@@ -972,14 +969,10 @@ impl Editor {
             let active_split = self.effective_active_split();
             let active_buf = self.active_buffer();
             let default_cursors = crate::model::cursor::Cursors::new();
-            let is_read_only = self
-                .buffer_metadata
-                .get(&active_buf)
+            let is_read_only = self.active_window().buffer_metadata.get(&active_buf)
                 .map(|m| m.read_only)
                 .unwrap_or(false);
-            let is_synthetic_placeholder = self
-                .buffer_metadata
-                .get(&active_buf)
+            let is_synthetic_placeholder = self.active_window().buffer_metadata.get(&active_buf)
                 .map(|m| m.synthetic_placeholder)
                 .unwrap_or(false);
             // Single window borrow, split into buffers + cursors so the
@@ -1927,6 +1920,7 @@ impl Editor {
         // createTerminal({windowId})).
         let __win_for_preview = self.windows.get_mut(&sid).expect("preview window present");
         let __preview_buffers = &mut __win_for_preview.buffers;
+        let __preview_metadata = &__win_for_preview.buffer_metadata;
         let __preview_event_logs = &mut __win_for_preview.event_logs;
         let __preview_composite_buffers = &mut __win_for_preview.composite_buffers;
         let __preview_composite_view_states = &mut __win_for_preview.composite_view_states;
@@ -1951,7 +1945,7 @@ impl Editor {
             inner,
             &*mgr,
             __preview_buffers,
-            &self.buffer_metadata,
+            __preview_metadata,
             __preview_event_logs,
             __preview_composite_buffers,
             __preview_composite_view_states,
@@ -2076,7 +2070,7 @@ impl Editor {
                 Err(_e) => return,
             };
             if !was_open {
-                if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
                     meta.hidden_from_tabs = true;
                 }
                 // Drop the buffer from every split's `open_buffers`
@@ -2175,7 +2169,7 @@ impl Editor {
             // if `already_target` was false above, the buffer was
             // either pre-open (we left meta alone) or freshly
             // loaded (we set hidden_from_tabs=true). Re-check.
-            if let Some(meta) = self.buffer_metadata.get(&buffer_id) {
+            if let Some(meta) = self.active_window().buffer_metadata.get(&buffer_id) {
                 if meta.hidden_from_tabs {
                     loaded_buffers.insert(buffer_id);
                 }
@@ -2189,10 +2183,13 @@ impl Editor {
             if state.buffer_id != buffer_id {
                 state.view_state.switch_buffer(buffer_id);
                 state.buffer_id = buffer_id;
-                if let Some(meta) = self.buffer_metadata.get(&buffer_id) {
-                    if meta.hidden_from_tabs {
-                        state.loaded_buffers.insert(buffer_id);
-                    }
+                let hidden_from_tabs = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffer_metadata.get(&buffer_id))
+                    .is_some_and(|meta| meta.hidden_from_tabs);
+                if hidden_from_tabs {
+                    state.loaded_buffers.insert(buffer_id);
                 }
             }
         }

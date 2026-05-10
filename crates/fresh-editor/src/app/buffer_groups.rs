@@ -123,7 +123,7 @@ impl super::Editor {
         // Mark all panel buffers as hidden from tabs so they don't appear
         // in quick-switch or the buffer list.
         for buffer_id in panel_buffers.values() {
-            if let Some(meta) = self.buffer_metadata.get_mut(buffer_id) {
+            if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(buffer_id) {
                 meta.hidden_from_tabs = true;
             }
         }

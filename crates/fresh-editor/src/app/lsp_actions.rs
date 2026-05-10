@@ -27,9 +27,7 @@ impl Editor {
             return;
         };
         let language = state.language.clone();
-        let file_path = self
-            .buffer_metadata
-            .get(&buffer_id)
+        let file_path = self.active_window().buffer_metadata.get(&buffer_id)
             .and_then(|meta| meta.file_path().cloned());
 
         // Get configured servers for this language
@@ -132,7 +130,7 @@ impl Editor {
             .iter()
             .filter_map(|(buf_id, state)| {
                 if state.language == language {
-                    self.buffer_metadata
+                    self.active_window().buffer_metadata
                         .get(buf_id)
                         .and_then(|meta| meta.file_path().map(|p| (*buf_id, p.clone())))
                 } else {
@@ -171,11 +169,10 @@ impl Editor {
 
             let __active_id = self.active_window;
 
-            if let Some(lsp) = self
-                .windows
-                .get_mut(&__active_id)
-                .and_then(|w| w.lsp.as_mut())
-            {
+            if let Some(__win) = self.windows.get_mut(&__active_id) {
+                let Some(lsp) = __win.lsp.as_mut() else {
+                    continue;
+                };
                 // Respect auto_start setting for this user action
                 use crate::services::lsp::manager::LspSpawnResult;
                 if lsp.try_spawn(&lang_id, Some(&buf_path)) != LspSpawnResult::Spawned {
@@ -184,7 +181,7 @@ impl Editor {
 
                 // Collect handles that need didOpen (not yet tracked in
                 // lsp_opened_with for this buffer).
-                let opened_with = self
+                let opened_with = __win
                     .buffer_metadata
                     .get(&buffer_id)
                     .map(|m| m.lsp_opened_with.clone())
@@ -210,7 +207,9 @@ impl Editor {
                                 .did_open(uri.clone(), content.clone(), lang_id.clone())
                         {
                             tracing::warn!("LSP did_open to '{}' failed: {}", name, e);
-                        } else if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+                        } else if let Some(metadata) =
+                            __win.buffer_metadata.get_mut(&buffer_id)
+                        {
                             metadata.lsp_opened_with.insert(handle_id);
                         }
                     }
@@ -379,7 +378,7 @@ impl Editor {
 
         // Check current LSP state
         let (was_enabled, file_path) = {
-            let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
                 return;
             };
             (metadata.lsp_enabled, metadata.file_path().cloned())
@@ -463,9 +462,7 @@ impl Editor {
 
                 // Start the server now so the user doesn't have to
                 // re-open the file to see LSP features come alive.
-                let file_path = self
-                    .buffer_metadata
-                    .get(&self.active_buffer())
+                let file_path = self.active_window().buffer_metadata.get(&self.active_buffer())
                     .and_then(|meta| meta.file_path().cloned());
                 let __active_id = self.active_window;
                 if let Some(lsp) = self
@@ -480,9 +477,7 @@ impl Editor {
             }
         } else if let Some(language) = action_key.strip_prefix("start:") {
             // Start/restart LSP for this language (same as the "Start/Restart LSP" command)
-            let file_path = self
-                .buffer_metadata
-                .get(&self.active_buffer())
+            let file_path = self.active_window().buffer_metadata.get(&self.active_buffer())
                 .and_then(|meta| meta.file_path().cloned());
 
             let __active_id = self.active_window;
@@ -502,9 +497,7 @@ impl Editor {
         } else if let Some(target) = action_key.strip_prefix("restart:") {
             // Parse language/server_name
             if let Some((language, server_name)) = target.split_once('/') {
-                let file_path = self
-                    .buffer_metadata
-                    .get(&self.active_buffer())
+                let file_path = self.active_window().buffer_metadata.get(&self.active_buffer())
                     .and_then(|meta| meta.file_path().cloned());
 
                 let __active_id = self.active_window;
@@ -865,7 +858,7 @@ impl Editor {
             .iter()
             .filter(|(_, s)| s.language == language)
             .filter_map(|(id, _)| {
-                self.buffer_metadata
+                self.active_window().buffer_metadata
                     .get(id)
                     .and_then(|m| m.file_uri())
                     .cloned()
@@ -1000,9 +993,7 @@ impl Editor {
         // document_versions still has the path, and should_skip_did_open will
         // block the didOpen when LSP is re-enabled — causing a desync where
         // the server has stale content. (GitHub issue #952)
-        if let Some(uri) = self
-            .buffer_metadata
-            .get(&buffer_id)
+        if let Some(uri) = self.active_window().buffer_metadata.get(&buffer_id)
             .and_then(|m| m.file_uri())
             .cloned()
         {
@@ -1044,7 +1035,7 @@ impl Editor {
         }
 
         // Disable LSP in metadata
-        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+        if let Some(metadata) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             metadata.disable_lsp(t!("lsp.disabled.user").to_string());
             // Clear LSP opened tracking so it will be sent again if re-enabled
             metadata.lsp_opened_with.clear();
@@ -1052,9 +1043,7 @@ impl Editor {
         self.set_status_message(t!("lsp.disabled_for_buffer").to_string());
 
         // Clear diagnostics for this buffer
-        let uri = self
-            .buffer_metadata
-            .get(&buffer_id)
+        let uri = self.active_window().buffer_metadata.get(&buffer_id)
             .and_then(|m| m.file_uri())
             .map(|u| u.as_str().to_string());
 
@@ -1109,7 +1098,7 @@ impl Editor {
         file_path: Option<std::path::PathBuf>,
     ) {
         // Re-enable LSP in metadata
-        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+        if let Some(metadata) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             metadata.lsp_enabled = true;
             metadata.lsp_disabled_reason = None;
         }
@@ -1129,7 +1118,7 @@ impl Editor {
     ) {
         // Get the URI and buffer text
         let (uri, text) = {
-            let metadata = self.buffer_metadata.get(&buffer_id);
+            let metadata = self.active_window().buffer_metadata.get(&buffer_id);
             let uri = metadata.and_then(|m| m.file_uri()).cloned();
             let text = self
                 .buffers()
@@ -1143,9 +1132,7 @@ impl Editor {
 
         // Try to spawn and send didOpen
         use crate::services::lsp::manager::LspSpawnResult;
-        let file_path = self
-            .buffer_metadata
-            .get(&buffer_id)
+        let file_path = self.active_window().buffer_metadata.get(&buffer_id)
             .and_then(|m| m.file_path())
             .cloned();
         // Pre-collect buffer info needed later (line/char/version) so
@@ -1164,7 +1151,6 @@ impl Editor {
                 )
             });
         let __active_id = self.active_window;
-        let buffer_metadata = &mut self.buffer_metadata;
         let diagnostic_result_ids = &self.diagnostic_result_ids;
         let enable_inlay_hints = self.config.editor.enable_inlay_hints;
 
@@ -1172,6 +1158,7 @@ impl Editor {
             return;
         };
         let __next_id = &mut __win.next_lsp_request_id;
+        let buffer_metadata = &mut __win.buffer_metadata;
         let Some(lsp) = __win.lsp.as_mut() else {
             return;
         };
@@ -1293,11 +1280,14 @@ impl Editor {
                 let plugin_file = workspace.plugin_file.clone();
 
                 // Update buffer metadata to point at the temp file, enabling LSP
-                if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                    if let Some(uri) = super::types::LspUri::from_host_path(
-                        &plugin_file,
-                        self.authority.path_translation.as_ref(),
-                    ) {
+                let plugin_file_uri = super::types::LspUri::from_host_path(
+                    &plugin_file,
+                    self.authority.path_translation.as_ref(),
+                );
+                if let Some(uri) = plugin_file_uri {
+                    if let Some(metadata) =
+                        self.active_window_mut().buffer_metadata.get_mut(&buffer_id)
+                    {
                         metadata.kind = super::types::BufferKind::File {
                             path: plugin_file.clone(),
                             uri: Some(uri),

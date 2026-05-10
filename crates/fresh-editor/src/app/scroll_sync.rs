@@ -30,19 +30,16 @@ impl Editor {
             active_buffer,
             available_width
         );
-        // TODO: move to impl Window once `buffer_metadata` and
-        // `composite_buffers` (Editor-level tab-rendering inputs)
-        // are reachable from Window — `grouped_subtrees` is now
-        // window-scoped, but the other two still block a clean
-        // method move. Until then we split-borrow the active
-        // window into three disjoint sub-fields (`buffers` for the
-        // tab-width calculation, `splits` for the view_state mut,
-        // `grouped_subtrees` for group names).
+        // TODO: move to impl Window now that every input the body
+        // needs (buffers, buffer_metadata, composite_buffers,
+        // grouped_subtrees, splits) lives on Window. For now we
+        // split-borrow the active window into disjoint sub-fields.
         let __win = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window must exist");
         let __window_buffers: &HashMap<BufferId, EditorState> = &__win.buffers;
+        let __window_metadata = &__win.buffer_metadata;
         let __window_grouped = &__win.grouped_subtrees;
         let __window_composites = &__win.composite_buffers;
         let Some(view_state) = __win
@@ -73,7 +70,7 @@ impl Editor {
         let (tab_widths, rendered_targets) = crate::view::ui::tabs::calculate_tab_widths(
             &split_buffers,
             __window_buffers,
-            &self.buffer_metadata,
+            __window_metadata,
             __window_composites,
             &group_names,
         );

@@ -21,23 +21,23 @@
 //!
 //! ## Migration status
 //!
-//! Steps 0a–0f, 0j, and 0k phases 1–3 shipped. Per-subsystem
+//! Steps 0a–0f, 0j, 0k phases 1–3, and 0l shipped. Per-subsystem
 //! state that used to warm-swap on `setActiveWindow` —
 //! `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`, the
-//! `splits` pair, `buffers`, the terminal subsystem
-//! (`terminal_manager` + `terminal_buffers` + `terminal_backing_files`
-//! + `terminal_log_files`), `event_logs`, `position_history` (with
-//! its `in_navigation` / `suppress_position_history_once`
-//! companion flags), `bookmarks`, `grouped_subtrees`,
-//! `composite_buffers`, `composite_view_states`, all 23 LSP-
-//! request-tracking maps (pending-/in-flight/applied, debounce
-//! timers, `next_lsp_request_id`, `completion_items`,
-//! `dabbrev_state`, code-action attribution), the per-window
-//! async `bridge`, and the chrome surfaces (`status_message`,
-//! `plugin_status_message`, `prompt`) — all live directly on
-//! `Window`. `set_active_window` is a pointer write (plus
-//! first-dive seed allocation for windows that have never been
-//! activated).
+//! `splits` pair, `buffers`, `buffer_metadata`, the terminal
+//! subsystem (`terminal_manager` + `terminal_buffers` +
+//! `terminal_backing_files` + `terminal_log_files`),
+//! `event_logs`, `position_history` (with its `in_navigation` /
+//! `suppress_position_history_once` companion flags),
+//! `bookmarks`, `grouped_subtrees`, `composite_buffers`,
+//! `composite_view_states`, all 23 LSP-request-tracking maps
+//! (pending-/in-flight/applied, debounce timers,
+//! `next_lsp_request_id`, `completion_items`, `dabbrev_state`,
+//! code-action attribution), the per-window async `bridge`, and
+//! the chrome surfaces (`status_message`, `plugin_status_message`,
+//! `prompt`) — all live directly on `Window`. `set_active_window`
+//! is a pointer write (plus first-dive seed allocation for
+//! windows that have never been activated).
 
 use crate::app::types::WindowLayoutCache;
 use crate::model::event::LeafId;
@@ -114,6 +114,13 @@ pub struct Window {
     /// drops them. Opening the same file in two windows produces
     /// two independent buffers.
     pub buffers: HashMap<BufferId, crate::state::EditorState>,
+
+    /// Per-buffer metadata (display name, file path / LSP URI,
+    /// virtual-buffer mode, read-only flag, LSP-opened set, preview
+    /// flag, etc.) for the buffers in `Window.buffers`. Lives next
+    /// to the buffer storage it describes; closing a window drops
+    /// every metadata entry along with the buffers themselves.
+    pub buffer_metadata: HashMap<BufferId, crate::app::types::BufferMetadata>,
 
     /// Per-buffer undo/redo event log. Lives next to `buffers`
     /// because undo history is buffer-scoped — closing a window
@@ -782,6 +789,7 @@ impl Window {
             panel_ids: HashMap::new(),
             splits: None,
             buffers: HashMap::new(),
+            buffer_metadata: HashMap::new(),
             terminal_manager: crate::services::terminal::TerminalManager::new(),
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),

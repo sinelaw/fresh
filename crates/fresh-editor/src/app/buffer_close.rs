@@ -125,9 +125,7 @@ impl Editor {
                     TabTarget::Buffer(bid) if *bid == id => None, // skip the closing buffer
                     TabTarget::Buffer(bid) => {
                         // Skip hidden-from-tabs buffers (panel helpers etc.)
-                        let hidden = self
-                            .buffer_metadata
-                            .get(bid)
+                        let hidden = self.active_window().buffer_metadata.get(bid)
                             .map(|m| m.hidden_from_tabs)
                             .unwrap_or(false);
                         if hidden
@@ -161,9 +159,7 @@ impl Editor {
             .keys()
             .find(|&&bid| {
                 bid != id
-                    && !self
-                        .buffer_metadata
-                        .get(&bid)
+                    && !self.active_window().buffer_metadata.get(&bid)
                         .map(|m| m.hidden_from_tabs)
                         .unwrap_or(false)
             })
@@ -240,7 +236,7 @@ impl Editor {
                     .editor
                     .auto_create_empty_buffer_on_last_buffer_close
                 {
-                    if let Some(meta) = self.buffer_metadata.get_mut(&new_id) {
+                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
                         meta.hidden_from_tabs = true;
                         meta.synthetic_placeholder = true;
                     }
@@ -263,9 +259,7 @@ impl Editor {
             // `active_buffer ∈ keyed_states` — but it's harmless as long as
             // the plugin-snapshot lookup skips it; see
             // `snapshot_source_split` in `update_plugin_state_snapshot`.
-            let hidden = self
-                .buffer_metadata
-                .get(&replacement_buffer)
+            let hidden = self.active_window().buffer_metadata.get(&replacement_buffer)
                 .is_some_and(|m| m.hidden_from_tabs);
             if return_to_group.is_some() && hidden {
                 use crate::view::split::TabTarget;
@@ -308,7 +302,7 @@ impl Editor {
         self.detach_buffer_from_all_windows(id);
         self.active_window_mut().event_logs.remove(&id);
         self.seen_byte_ranges.remove(&id);
-        self.buffer_metadata.remove(&id);
+        self.active_window_mut().buffer_metadata.remove(&id);
         if let Some((request_id, _, _)) = self
             .active_window_mut()
             .semantic_tokens_in_flight
@@ -860,9 +854,7 @@ impl Editor {
             .iter()
             .copied()
             .filter(|t| match t {
-                TabTarget::Buffer(id) => !self
-                    .buffer_metadata
-                    .get(id)
+                TabTarget::Buffer(id) => !self.active_window().buffer_metadata.get(id)
                     .map(|m| m.hidden_from_tabs)
                     .unwrap_or(false),
                 TabTarget::Group(_) => true,

@@ -13,9 +13,7 @@ impl Editor {
     /// If a help manual buffer already exists, switch to it instead of creating a new one.
     pub fn open_help_manual(&mut self) {
         // Check if help buffer already exists
-        let existing_buffer = self
-            .buffer_metadata
-            .iter()
+        let existing_buffer = self.active_window().buffer_metadata.iter()
             .find(|(_, m)| m.display_name == help::HELP_MANUAL_BUFFER_NAME)
             .map(|(id, _)| *id);
 
@@ -57,9 +55,7 @@ impl Editor {
     /// The shortcuts are dynamically generated from the current keybindings configuration.
     pub fn open_keyboard_shortcuts(&mut self) {
         // Check if keyboard shortcuts buffer already exists
-        let existing_buffer = self
-            .buffer_metadata
-            .iter()
+        let existing_buffer = self.active_window().buffer_metadata.iter()
             .find(|(_, m)| m.display_name == help::KEYBOARD_SHORTCUTS_BUFFER_NAME)
             .map(|(id, _)| *id);
 

@@ -215,7 +215,7 @@ impl Editor {
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .root(),
-            &self.buffer_metadata,
+            &self.active_window().buffer_metadata,
             &self.working_dir,
             self.windows
                 .get(&self.active_window)
@@ -259,7 +259,7 @@ impl Editor {
                     .get(&self.active_window)
                     .map(|w| &w.buffers)
                     .expect("active window present"),
-                &self.buffer_metadata,
+                &self.active_window().buffer_metadata,
                 &self.working_dir,
                 active_buffer,
                 self.windows
@@ -367,15 +367,13 @@ impl Editor {
         // Capture bookmarks (per-window after Step 0f).
         let bookmarks = serialize_bookmarks(
             &self.active_window().bookmarks,
-            &self.buffer_metadata,
+            &self.active_window().buffer_metadata,
             &self.working_dir,
         );
 
         // Capture external files (files outside working_dir)
         // These are stored as absolute paths since they can't be made relative
-        let external_files: Vec<PathBuf> = self
-            .buffer_metadata
-            .values()
+        let external_files: Vec<PathBuf> = self.active_window().buffer_metadata.values()
             .filter_map(|meta| meta.file_path())
             .filter(|abs_path| abs_path.strip_prefix(&self.working_dir).is_err())
             .cloned()
@@ -387,9 +385,7 @@ impl Editor {
         // Capture read-only file paths. Store relative when inside
         // working_dir (matches how open_tabs paths are stored), otherwise
         // absolute — mirrors external_files.
-        let read_only_files: Vec<PathBuf> = self
-            .buffer_metadata
-            .values()
+        let read_only_files: Vec<PathBuf> = self.active_window().buffer_metadata.values()
             .filter(|meta| meta.read_only)
             .filter_map(|meta| meta.file_path().cloned())
             .filter(|p| !p.as_os_str().is_empty())
@@ -402,7 +398,7 @@ impl Editor {
 
         // Capture unnamed buffer references (for hot_exit)
         let unnamed_buffers: Vec<UnnamedBufferRef> = if self.config.editor.hot_exit {
-            self.buffer_metadata
+            self.active_window().buffer_metadata
                 .iter()
                 .filter_map(|(buffer_id, meta)| {
                     // Only file-backed buffers with empty path (unnamed)
@@ -524,7 +520,7 @@ impl Editor {
     /// Save file state for a specific buffer (used when closing files and saving workspace)
     fn save_buffer_file_state(&self, buffer_id: BufferId, view_state: &SplitViewState) {
         // Get the file path for this buffer
-        let abs_path = match self.buffer_metadata.get(&buffer_id) {
+        let abs_path = match self.active_window().buffer_metadata.get(&buffer_id) {
             Some(metadata) => match metadata.file_path() {
                 Some(path) => path.to_path_buf(),
                 None => return, // Not a file buffer
@@ -1166,7 +1162,7 @@ impl Editor {
                         state.buffer.set_recovery_pending(false);
                     }
                     self.active_event_log_mut().clear_saved_position();
-                    if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
                         meta.recovery_id = Some(unnamed_ref.recovery_id.clone());
                         meta.display_name = unnamed_ref.display_name.clone();
                     }
@@ -1285,7 +1281,7 @@ impl Editor {
                 .remove(&id);
             self.detach_buffer_from_all_windows(id);
             self.active_window_mut().event_logs.remove(&id);
-            self.buffer_metadata.remove(&id);
+            self.active_window_mut().buffer_metadata.remove(&id);
         }
     }
 
@@ -1310,7 +1306,7 @@ impl Editor {
             .buffers()
             .keys()
             .filter(|id| {
-                self.buffer_metadata
+                self.active_window().buffer_metadata
                     .get(id)
                     .is_some_and(|m| !m.hidden_from_tabs && !m.is_virtual())
             })
@@ -1455,7 +1451,7 @@ impl Editor {
     /// Internal helper to open a file and return its buffer ID
     fn open_file_internal(&mut self, path: &Path) -> Result<BufferId, WorkspaceError> {
         // Check if file is already open
-        for (buffer_id, metadata) in &self.buffer_metadata {
+        for (buffer_id, metadata) in &self.active_window().buffer_metadata {
             if let Some(file_path) = metadata.file_path() {
                 if file_path == path {
                     return Ok(*buffer_id);

@@ -351,8 +351,10 @@ impl Editor {
         buffers.insert(buffer_id, state);
         event_logs.insert(buffer_id, EventLog::new());
 
-        // Create metadata for the initial empty buffer
-        let mut buffer_metadata = HashMap::new();
+        // Create metadata for the initial empty buffer. After Step 0l
+        // this lives on the base `Window`; we accumulate it locally and
+        // hand it off when the window is constructed below.
+        let mut buffer_metadata: HashMap<BufferId, BufferMetadata> = HashMap::new();
         buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
         // Initialize LSP manager with current working directory as root
@@ -813,7 +815,6 @@ impl Editor {
             plugin_errors: Vec::new(),
             terminal_width: width,
             terminal_height: height,
-            buffer_metadata,
             mode_registry: ModeRegistry::new(),
             tokio_runtime,
             async_bridge: Some(async_bridge),
@@ -867,6 +868,7 @@ impl Editor {
                 base.lsp = Some(lsp);
                 base.splits = Some((split_manager, split_view_states));
                 base.buffers = buffers;
+                base.buffer_metadata = buffer_metadata;
                 base.event_logs = event_logs;
                 // Replace the default bridge created by `Window::new`
                 // with the bridge we already configured the LSP

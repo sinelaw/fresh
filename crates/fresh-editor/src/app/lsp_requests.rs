@@ -411,7 +411,7 @@ impl Editor {
         use crate::services::lsp::manager::LspSpawnResult;
 
         let (uri, language, file_path) = {
-            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            let metadata = self.active_window().buffer_metadata.get(&buffer_id)?;
             if !metadata.lsp_enabled {
                 return None;
             }
@@ -459,7 +459,7 @@ impl Editor {
         use crate::services::lsp::manager::LspSpawnResult;
 
         let (uri, language, file_path) = match (|| {
-            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            let metadata = self.active_window().buffer_metadata.get(&buffer_id)?;
             if !metadata.lsp_enabled {
                 return None;
             }
@@ -520,7 +520,7 @@ impl Editor {
         use crate::services::lsp::manager::LspSpawnResult;
 
         let (uri, language, file_path) = match (|| {
-            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            let metadata = self.active_window().buffer_metadata.get(&buffer_id)?;
             if !metadata.lsp_enabled {
                 return None;
             }
@@ -581,7 +581,7 @@ impl Editor {
             .collect();
 
         let needs_open: Vec<u64> = {
-            let metadata = self.buffer_metadata.get(&buffer_id)?;
+            let metadata = self.active_window().buffer_metadata.get(&buffer_id)?;
             handle_ids
                 .iter()
                 .filter(|id| !metadata.lsp_opened_with.contains(id))
@@ -599,10 +599,8 @@ impl Editor {
                 .buffer
                 .to_string()?;
             let active_id = self.active_window;
-            let lsp = self
-                .windows
-                .get_mut(&active_id)
-                .and_then(|w| w.lsp.as_mut())?;
+            let __win = self.windows.get_mut(&active_id)?;
+            let lsp = __win.lsp.as_mut()?;
             for sh in lsp.get_handles_mut(language) {
                 if needs_open.contains(&sh.handle.id()) {
                     if let Err(e) =
@@ -612,7 +610,7 @@ impl Editor {
                         tracing::warn!("Failed to send didOpen to '{}': {}", sh.name, e);
                         continue;
                     }
-                    let metadata = self.buffer_metadata.get_mut(&buffer_id)?;
+                    let metadata = __win.buffer_metadata.get_mut(&buffer_id)?;
                     metadata.lsp_opened_with.insert(sh.handle.id());
                     tracing::debug!(
                         "Sent didOpen for {} to LSP handle '{}' (language: {})",
@@ -1207,7 +1205,7 @@ impl Editor {
         use ratatui::style::{Modifier, Style};
 
         let buffer_id = self.active_buffer();
-        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+        let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
             return Vec::new();
         };
         let Some(uri) = metadata.file_uri() else {
@@ -2081,9 +2079,7 @@ impl Editor {
         edits: Vec<lsp_types::TextEdit>,
     ) -> AnyhowResult<usize> {
         // Find the buffer for this URI
-        let buffer_id = self
-            .buffer_metadata
-            .iter()
+        let buffer_id = self.active_window().buffer_metadata.iter()
             .find(|(_, meta)| meta.file_uri().map(|u| u.as_str() == uri).unwrap_or(false))
             .map(|(id, _)| *id);
 
@@ -2100,7 +2096,7 @@ impl Editor {
     /// Request document formatting from LSP.
     pub(crate) fn request_formatting(&mut self) {
         let buffer_id = self.active_buffer();
-        let metadata = match self.buffer_metadata.get(&buffer_id) {
+        let metadata = match self.active_window().buffer_metadata.get(&buffer_id) {
             Some(m) if m.lsp_enabled => m,
             _ => {
                 self.set_status_message("LSP not available for this buffer".to_string());
@@ -2913,7 +2909,7 @@ impl Editor {
         }
 
         // Check if LSP is enabled for this buffer
-        let metadata = match self.buffer_metadata.get(&buffer_id) {
+        let metadata = match self.active_window().buffer_metadata.get(&buffer_id) {
             Some(m) => m,
             None => {
                 tracing::debug!(
@@ -2969,11 +2965,11 @@ impl Editor {
         // Check if we can use LSP (respects auto_start setting)
         use crate::services::lsp::manager::LspSpawnResult;
         let __active_id = self.active_window;
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let Some(__win) = self.windows.get_mut(&__active_id) else {
+            tracing::debug!("send_lsp_changes_for_buffer: no active window");
+            return;
+        };
+        let Some(lsp) = __win.lsp.as_mut() else {
             tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
             return;
         };
@@ -2988,7 +2984,7 @@ impl Editor {
 
         // Check which handles need didOpen first
         let handles_needing_open: Vec<_> = {
-            let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            let Some(metadata) = __win.buffer_metadata.get(&buffer_id) else {
                 return;
             };
             lsp.get_handles(&language)
@@ -3016,11 +3012,10 @@ impl Editor {
 
             // Send didOpen to all handles that haven't been opened yet
             let __active_id = self.active_window;
-            let Some(lsp) = self
-                .windows
-                .get_mut(&__active_id)
-                .and_then(|w| w.lsp.as_mut())
-            else {
+            let Some(__win) = self.windows.get_mut(&__active_id) else {
+                return;
+            };
+            let Some(lsp) = __win.lsp.as_mut() else {
                 return;
             };
             for sh in lsp.get_handles_mut(&language) {
@@ -3048,7 +3043,7 @@ impl Editor {
             }
 
             // Mark all as opened
-            if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+            if let Some(metadata) = __win.buffer_metadata.get_mut(&buffer_id) {
                 for (_, handle_id) in &handles_needing_open {
                     metadata.lsp_opened_with.insert(*handle_id);
                 }
@@ -3180,7 +3175,7 @@ impl Editor {
             .position_to_lsp_position(cursor_pos);
 
         let buffer_id = self.active_buffer();
-        let metadata = match self.buffer_metadata.get(&buffer_id) {
+        let metadata = match self.active_window().buffer_metadata.get(&buffer_id) {
             Some(m) if m.lsp_enabled => m,
             _ => return,
         };
@@ -3336,9 +3331,7 @@ impl Editor {
 
         if sent {
             self.active_window_mut().next_lsp_request_id += 1;
-        } else if self
-            .buffer_metadata
-            .get(&buffer_id)
+        } else if self.active_window().buffer_metadata.get(&buffer_id)
             .and_then(|m| m.file_path())
             .is_none()
         {
@@ -3453,7 +3446,7 @@ impl Editor {
             return;
         }
 
-        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+        let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
             return;
         };
         if !metadata.lsp_enabled {
@@ -3550,7 +3543,7 @@ impl Editor {
             return;
         }
 
-        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+        let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
             return;
         };
         if !metadata.lsp_enabled {
@@ -3714,7 +3707,7 @@ impl Editor {
         start_line: usize,
         end_line: usize,
     ) {
-        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+        let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
             return;
         };
         if !metadata.lsp_enabled {

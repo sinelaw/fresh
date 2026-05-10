@@ -76,7 +76,7 @@ impl Editor {
     fn recovery_ids_to_preserve(&self) -> Vec<String> {
         let hot_exit = self.config.editor.hot_exit;
 
-        self.buffer_metadata
+        self.active_window().buffer_metadata
             .iter()
             .filter_map(|(buffer_id, meta)| {
                 if meta.hidden_from_tabs || meta.is_virtual() {
@@ -336,7 +336,7 @@ impl Editor {
                             state.buffer.set_recovery_pending(false);
                         }
                         self.active_event_log_mut().clear_saved_position();
-                        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                        if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
                             meta.recovery_id = Some(entry.id.clone());
                         }
                         self.sync_lsp_after_recovery_replay(buffer_id);
@@ -439,7 +439,7 @@ impl Editor {
                 if state.is_composite_buffer {
                     return None;
                 }
-                if let Some(meta) = self.buffer_metadata.get(buffer_id) {
+                if let Some(meta) = self.active_window().buffer_metadata.get(buffer_id) {
                     if meta.hidden_from_tabs || meta.is_virtual() {
                         return None;
                     }
@@ -454,9 +454,7 @@ impl Editor {
 
         // Ensure unnamed buffers have stable recovery IDs (mutable pass).
         for buffer_id in &buffers_needing_recovery {
-            let needs_id = self
-                .buffer_metadata
-                .get(buffer_id)
+            let needs_id = self.active_window().buffer_metadata.get(buffer_id)
                 .map(|meta| {
                     let path = meta.file_path();
                     let is_unnamed = path.map(|p| p.as_os_str().is_empty()).unwrap_or(true);
@@ -466,7 +464,7 @@ impl Editor {
 
             if needs_id {
                 let new_id = crate::services::recovery::generate_buffer_id();
-                if let Some(meta) = self.buffer_metadata.get_mut(buffer_id) {
+                if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(buffer_id) {
                     meta.recovery_id = Some(new_id);
                 }
             }
@@ -482,7 +480,7 @@ impl Editor {
                     .map(|w| &w.buffers)
                     .expect("active window present")
                     .get(&buffer_id)?;
-                let meta = self.buffer_metadata.get(&buffer_id)?;
+                let meta = self.active_window().buffer_metadata.get(&buffer_id)?;
                 let path = state.buffer.file_path().map(|p| p.to_path_buf());
                 let recovery_id = if let Some(ref stored_id) = meta.recovery_id {
                     stored_id.clone()
@@ -530,7 +528,7 @@ impl Editor {
     pub fn delete_buffer_recovery(&mut self, buffer_id: BufferId) -> AnyhowResult<()> {
         // Get recovery_id: use stored one for unnamed buffers, compute from path otherwise
         let recovery_id = {
-            let meta = self.buffer_metadata.get(&buffer_id);
+            let meta = self.active_window().buffer_metadata.get(&buffer_id);
             let state = self
                 .windows
                 .get(&self.active_window)

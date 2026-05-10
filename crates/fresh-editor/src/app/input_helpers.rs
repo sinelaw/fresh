@@ -113,9 +113,7 @@ impl Editor {
         let suggestions: Vec<crate::input::commands::Suggestion> = open_buffers
             .iter()
             .map(|&buffer_id| {
-                let display_name = self
-                    .buffer_metadata
-                    .get(&buffer_id)
+                let display_name = self.active_window().buffer_metadata.get(&buffer_id)
                     .map(|m| m.display_name.clone())
                     .unwrap_or_else(|| format!("Buffer {:?}", buffer_id));
 

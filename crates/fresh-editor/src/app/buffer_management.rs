@@ -195,7 +195,7 @@ impl Editor {
                         old_id,
                         e
                     );
-                    if let Some(m) = self.buffer_metadata.get_mut(&old_id) {
+                    if let Some(m) = self.active_window_mut().buffer_metadata.get_mut(&old_id) {
                         m.is_preview = false;
                     }
                 }
@@ -204,7 +204,7 @@ impl Editor {
                 // Different split: user walked away from the old preview
                 // before this click. Promote it to permanent — their focus
                 // moving to another split was the commitment signal.
-                if let Some(m) = self.buffer_metadata.get_mut(&old_id) {
+                if let Some(m) = self.active_window_mut().buffer_metadata.get_mut(&old_id) {
                     m.is_preview = false;
                 }
             }
@@ -212,7 +212,7 @@ impl Editor {
         }
 
         // Mark the new buffer as the preview, anchored to its split.
-        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+        if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             meta.is_preview = true;
         }
         self.preview = Some((target_split, buffer_id));
@@ -223,7 +223,7 @@ impl Editor {
     /// Promote a specific buffer from preview to permanent, if it was in
     /// preview mode. No-op if the buffer is not currently a preview.
     pub(crate) fn promote_buffer_from_preview(&mut self, buffer_id: BufferId) {
-        if let Some(m) = self.buffer_metadata.get_mut(&buffer_id) {
+        if let Some(m) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             m.is_preview = false;
         }
         if let Some((_, id)) = self.preview {
@@ -301,17 +301,18 @@ impl Editor {
             {
                 state.buffer.rename_file_path(new_path.clone());
             }
-            if let Some(metadata) = self.buffer_metadata.get_mut(&id) {
-                let file_uri = super::types::LspUri::from_host_path(
-                    &new_path,
-                    self.authority.path_translation.as_ref(),
-                );
+            let file_uri = super::types::LspUri::from_host_path(
+                &new_path,
+                self.authority.path_translation.as_ref(),
+            );
+            let display_name =
+                super::BufferMetadata::display_name_for_path(&new_path, &self.working_dir);
+            if let Some(metadata) = self.active_window_mut().buffer_metadata.get_mut(&id) {
                 metadata.kind = super::BufferKind::File {
                     path: new_path.clone(),
                     uri: file_uri,
                 };
-                metadata.display_name =
-                    super::BufferMetadata::display_name_for_path(&new_path, &self.working_dir);
+                metadata.display_name = display_name;
             }
         }
         affected
@@ -323,7 +324,7 @@ impl Editor {
     /// be broken by the operation itself.
     pub(crate) fn promote_current_preview(&mut self) {
         if let Some((_, id)) = self.preview.take() {
-            if let Some(m) = self.buffer_metadata.get_mut(&id) {
+            if let Some(m) = self.active_window_mut().buffer_metadata.get_mut(&id) {
                 m.is_preview = false;
             }
         }
@@ -343,7 +344,7 @@ impl Editor {
     /// Whether the given buffer is currently in preview (ephemeral) mode.
     /// Primarily for tests; production code should use `self.preview`.
     pub fn is_buffer_preview(&self, buffer_id: BufferId) -> bool {
-        self.buffer_metadata
+        self.active_window().buffer_metadata
             .get(&buffer_id)
             .map(|m| m.is_preview)
             .unwrap_or(false)
@@ -634,7 +635,7 @@ impl Editor {
         self.active_window_mut()
             .event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
-        self.buffer_metadata
+        self.active_window_mut().buffer_metadata
             .insert(buffer_id, crate::app::types::BufferMetadata::new());
 
         self.set_active_buffer(buffer_id);

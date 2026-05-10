@@ -1210,9 +1210,7 @@ impl Editor {
 
         // Send didOpen to any handles that haven't received it yet
         {
-            let opened_with = self
-                .buffer_metadata
-                .get(&buffer_id)
+            let opened_with = self.active_window().buffer_metadata.get(&buffer_id)
                 .map(|m| m.lsp_opened_with.clone())
                 .unwrap_or_default();
 
@@ -1248,8 +1246,10 @@ impl Editor {
 
             // Mark all handles as opened
             let active_id = self.active_window;
-            if let Some(lsp) = self.windows.get(&active_id).and_then(|w| w.lsp.as_ref()) {
-                if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+            if let Some(__win) = self.windows.get_mut(&active_id) {
+                if let (Some(lsp), Some(metadata)) =
+                    (__win.lsp.as_ref(), __win.buffer_metadata.get_mut(&buffer_id))
+                {
                     for sh in lsp.get_handles(&language) {
                         metadata.lsp_opened_with.insert(sh.handle.id());
                     }

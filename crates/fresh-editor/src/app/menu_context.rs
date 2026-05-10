@@ -47,9 +47,7 @@ impl Editor {
         // True for any real buffer; false when the active buffer is the
         // synthesized placeholder kept alive after a last-buffer close with
         // `auto_create_empty_buffer_on_last_buffer_close` disabled.
-        let has_buffer = !self
-            .buffer_metadata
-            .get(&self.active_buffer())
+        let has_buffer = !self.active_window().buffer_metadata.get(&self.active_buffer())
             .map(|m| m.synthetic_placeholder)
             .unwrap_or(false);
         let has_selection = has_buffer && self.has_active_selection();
@@ -206,7 +204,7 @@ impl Editor {
         let buffer_id = self.active_buffer();
 
         // Check if LSP is enabled for this buffer
-        if let Some(metadata) = self.buffer_metadata.get(&buffer_id) {
+        if let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) {
             if !metadata.lsp_enabled {
                 return false;
             }

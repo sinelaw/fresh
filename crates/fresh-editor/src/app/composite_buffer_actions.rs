@@ -246,7 +246,7 @@ impl Editor {
         // should be visible in tabs (unlike their hidden source panes)
         let mut metadata = BufferMetadata::virtual_buffer(name.clone(), mode.clone(), true);
         metadata.hidden_from_tabs = false;
-        self.buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
 
         // Create an EditorState entry so the buffer can be shown in tabs and via showBuffer()
         // The actual content rendering is handled by the composite renderer
@@ -309,7 +309,7 @@ impl Editor {
         self.active_window_mut()
             .composite_buffers
             .remove(&buffer_id);
-        self.buffer_metadata.remove(&buffer_id);
+        self.active_window_mut().buffer_metadata.remove(&buffer_id);
 
         // Remove all view states for this buffer
         self.active_window_mut()

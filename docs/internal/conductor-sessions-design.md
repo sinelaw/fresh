@@ -69,12 +69,22 @@ shipped step above.
 **Tier 1 — biggest leverage, do first.**
 
 * `buffer_metadata: HashMap<BufferId, BufferMetadata>` →
-  `Window`. Tracks `Window.buffers` (already per-window). Pervasive
-  (~hundreds of references). Single biggest cleanup; every
-  "what's the language / file_uri / lsp_opened_with set of this
-  buffer" lookup currently routes through Editor and would
-  collapse to direct field access on the owning window.
-  *Mechanical, large diff. Treat as Step 0l.*
+  `Window`. *Shipped as Step 0l.* Tracks `Window.buffers`
+  (already per-window). Every "what's the language / file_uri /
+  lsp_opened_with set of this buffer" lookup that used to route
+  through `Editor.buffer_metadata` now goes through
+  `self.active_window().buffer_metadata` (or
+  `_mut()`); cross-window addressing uses
+  `self.windows.get(&id).buffer_metadata`. Field migration was
+  mechanical (~130 call sites bulk-rewritten); ~10 borrow-
+  conflict sites were resolved with inline `__win = self.windows
+  .get_mut(&self.active_window)` extractions that split-borrow
+  `buffer_metadata` alongside whatever other window field the
+  caller needed (`lsp`, `event_logs`, `splits`, etc.).
+  `scroll_sync::ensure_active_tab_visible` is now one TODO
+  closer to moving onto `impl Window` — only `composite_buffers`
+  blocked the move pre-0l, and that field is already per-window,
+  so this is a follow-up cleanup once a consumer needs it.
 
 **Tier 2 — small per-window state that's clearly miscategorised.**
 
@@ -2075,76 +2085,56 @@ active-session path.
 
 ### Implementation status snapshot
 
-The branch `claude/window-state-migration-RjEwX` shipped the
-warm-swap interim (Steps 1a–1h, 2, 3, 5, 6) and then the first
-half of the Step 0 (window-model) migration. Where we are
-right now:
+The branch shipped the warm-swap interim (Steps 1a–1h, 2, 3,
+5, 6) and Steps 0a–0l of the window-model migration. Where we
+are right now:
 
-**Shipped on branch (compiles cleanly):**
+**Shipped (compiles cleanly; 19 sessions e2e tests pass):**
 
 - Steps 1–6 from the original interim (warm-swap rendering of
   every per-session subsystem; Conductor plugin MVP).
 - **Step 0a** — `cached_layout` split into `Editor.chrome_layout`
-  (full-frame chrome rects + cell-theme map) and
-  `Window.layout_cache` (split / tab / file-explorer rects +
-  view-line mappings). One commit.
+  and `Window.layout_cache`.
 - **Step 0b** — every warm-swap stash converted to a live
-  `Window` field. `set_active_window` is a pointer write
-  (plus first-dive seed allocation for windows that have never
-  been activated). Five commits, one per field:
-  `panel_ids`, `file_mod_times`, `file_explorer`, `lsp`,
-  `splits` (the split tree + per-leaf view state pair).
+  `Window` field; `set_active_window` is a pointer write.
+- **Steps 0c–0i** — `Editor.buffers`, the terminal subsystem,
+  `event_logs`, `position_history` + `bookmarks`, the audit
+  pass, render preview path, and warm-swap-shim cleanup all
+  shipped.
+- **Step 0j** — `grouped_subtrees`, composite buffers, and
+  composite view states moved onto `Window`.
+- **Step 0k** — per-window async bridges (phase 1), per-window
+  LSP request-tracking maps (phase 2), per-window chrome
+  (`status_message`, `prompt`) (phase 3), and incremental
+  handler relocations onto `impl Window` (phase 4).
+- **Step 0l** — `buffer_metadata` (the per-buffer language /
+  file_uri / lsp_opened_with / preview / read-only metadata
+  store) moved onto `Window` alongside `Window.buffers`. Two
+  windows that open the same file now have independent
+  metadata, matching the parallel-agents promise. Field
+  migration was mechanical (~130 call sites bulk-rewritten);
+  ~10 borrow-conflict sites resolved with inline `__win =
+  self.windows.get_mut(&self.active_window)` extractions that
+  split-borrow `buffer_metadata` alongside whatever other
+  window field the caller needed.
 
 The "switching windows feels like swapping the entire Fresh
-state" promise from `§ Motivation` is now true by
-*construction*, not by warm-swap: file tree, ignore matcher,
-LSPs, watchers, split layout, dock occupancy, and mtime cache
-all live on `Window` outright; switching is a single
-`active_window = id` write.
+state" promise from `§ Motivation` is true by *construction*:
+every per-session subsystem the user can see (file tree,
+ignore matcher, LSPs, watchers, split layout, dock occupancy,
+mtime cache, buffers, buffer metadata, terminal PTYs, undo
+logs, navigation history, bookmarks, composite panels, async
+LSP bridge, chrome) lives directly on `Window`. Switching is
+a single `active_window = id` pointer write.
 
-The 16 e2e tests in `crates/fresh-editor/tests/e2e/sessions.rs`
-still pass — their assertions about "diving and diving back
-preserves state" are now satisfied by the per-window storage
-rather than by the swap, but the surface behaviour is
-unchanged.
-
-**Not yet shipped (Step 0c–0i):**
-
-`Editor.buffers` is still editor-global. Step 0c was attempted
-on this branch and reverted because it ran into ~50 unique
-borrow-checker conflict sites — the inline windows-field
-access pattern that worked for 0b doesn't compose with sites
-that need *two* concurrent mutable sub-borrows on a window
-(typically `buffers` + `splits`). See `§ Step 0c` above for
-the diagnosis: the accessor-method strategy used in 0b was
-the wrong primitive. Methods that mutate window-scoped state
-should live on `impl Window`, not `impl Editor` — that's what
-makes the borrow problem go away by construction (`&mut self`
-becomes the window, not the editor; sub-fields split the
-normal way).
-
-The recommended next attempt for 0c–0f is the recipe in
-`§ Step 0c`:
-
-1. Move the field (deletes the Editor field, breaks
-   compilation intentionally).
-2. Move the methods that primarily mutate that field onto
-   `impl Window`. Editor-global needs become `Arc<Config>` /
-   `Arc<Theme>` / `Arc<dyn FileSystem>` shared into Window,
-   or `&Config` parameters. Plugin-hook side effects become
-   return values dispatched by the Editor shim.
-3. Editor's top-level dispatcher pulls `&mut self.windows[
-   &self.active_window]` directly (field access, splits the
-   borrow on `self.windows`) and calls the Window method.
-
-The same recipe drives 0d (terminal manager), 0e (event logs),
-0f (position history / bookmarks). 0g is the audit pass that
-makes sure no "operate on the active window" logic is left on
-`impl Editor`. 0h moves render to `impl Window`. 0i cleans up
-the last remnants of the warm-swap shape (drop `splits`
-`Option`, drop the `attach_buffer_to_active_window` /
-`detach_buffer_from_all_windows` shims, simplify the e2e
-tests' "stash" framing).
+**Outstanding work** is now Tier-2-and-onward fields from the
+audit at the top of this doc (small per-window state still on
+Editor: `scroll_sync_manager`, `previous_viewports`, `preview`,
+`hover`, `search_state`, file-explorer chrome flags, etc.) plus
+the Step 0g inline-borrow-debt drain (~33 handler sites that
+should move to `impl Window` once a cross-window consumer
+forces the issue). None of these block Conductor MVP — the
+core architectural promise is delivered.
 
 ### Step 1 — `Session` struct, single forced session  `[interim — superseded by Step 0]`
 

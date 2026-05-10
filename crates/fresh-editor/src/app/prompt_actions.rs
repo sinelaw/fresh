@@ -752,7 +752,10 @@ impl Editor {
                     &self.working_dir,
                     self.authority.path_translation.as_ref(),
                 );
-                self.buffer_metadata.insert(self.active_buffer(), metadata);
+                let active_buffer = self.active_buffer();
+                self.active_window_mut()
+                    .buffer_metadata
+                    .insert(active_buffer, metadata);
 
                 // Auto-detect language if it's currently "text"
                 // This ensures syntax highlighting works immediately after "Save As"
@@ -1531,9 +1534,7 @@ impl Editor {
 
         // Get file_path from active buffer for workspace root detection
         let buffer_id = self.active_buffer();
-        let file_path = self
-            .buffer_metadata
-            .get(&buffer_id)
+        let file_path = self.active_window().buffer_metadata.get(&buffer_id)
             .and_then(|meta| meta.file_path().cloned());
 
         let (success, message) = if let Some(name) = server_name {

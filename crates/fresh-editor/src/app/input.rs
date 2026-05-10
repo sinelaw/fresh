@@ -1453,9 +1453,7 @@ impl Editor {
             }
             Action::ToggleReadOnly => {
                 let buffer_id = self.active_buffer();
-                let is_now_read_only = self
-                    .buffer_metadata
-                    .get(&buffer_id)
+                let is_now_read_only = self.active_window().buffer_metadata.get(&buffer_id)
                     .map(|m| !m.read_only)
                     .unwrap_or(false);
                 self.mark_buffer_read_only(buffer_id, is_now_read_only);

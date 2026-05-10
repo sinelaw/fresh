@@ -472,9 +472,10 @@ pub struct Editor {
     // LSP manager moved onto `Window`. Access via
     // `Editor::lsp()` / `lsp_mut()` — each window has its own
     // LspManager rooted at its project root.
-    /// Metadata for each buffer (file paths, LSP status, etc.)
-    buffer_metadata: HashMap<BufferId, BufferMetadata>,
-
+    // buffer_metadata moved onto `Window` (Step 0l). Access via
+    // `self.active_window().buffer_metadata` (or
+    // `_mut()`) — each window owns the metadata for its own
+    // buffers, alongside the buffer storage itself.
     /// Buffer mode registry (for buffer-local keybindings)
     mode_registry: ModeRegistry,
 
@@ -1335,7 +1336,7 @@ impl Editor {
             return composite.name.clone();
         }
 
-        self.buffer_metadata
+        self.active_window().buffer_metadata
             .get(&buffer_id)
             .map(|m| m.display_name.clone())
             .or_else(|| {

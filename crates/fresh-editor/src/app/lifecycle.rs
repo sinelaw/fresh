@@ -228,7 +228,7 @@ impl Editor {
                 if !state.buffer.is_modified() {
                     return false;
                 }
-                if let Some(meta) = self.buffer_metadata.get(buffer_id) {
+                if let Some(meta) = self.active_window().buffer_metadata.get(buffer_id) {
                     if let Some(path) = meta.file_path() {
                         let is_unnamed = path.as_os_str().is_empty();
                         if is_unnamed && hot_exit {

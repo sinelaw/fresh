@@ -269,14 +269,14 @@ impl Editor {
 
     /// Get the mode name for the active buffer (if it's a virtual buffer)
     pub fn active_buffer_mode(&self) -> Option<&str> {
-        self.buffer_metadata
+        self.active_window().buffer_metadata
             .get(&self.active_buffer())
             .and_then(|meta| meta.virtual_mode())
     }
 
     /// Check if the active buffer is read-only
     pub fn is_active_buffer_read_only(&self) -> bool {
-        if let Some(metadata) = self.buffer_metadata.get(&self.active_buffer()) {
+        if let Some(metadata) = self.active_window().buffer_metadata.get(&self.active_buffer()) {
             if metadata.read_only {
                 return true;
             }
@@ -297,7 +297,7 @@ impl Editor {
     /// Mark a buffer as read-only, setting both metadata and editor state consistently.
     /// This is the single entry point for making a buffer read-only.
     pub fn mark_buffer_read_only(&mut self, buffer_id: BufferId, read_only: bool) {
-        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+        if let Some(metadata) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             metadata.read_only = read_only;
         }
         if let Some(state) = self
@@ -1086,7 +1086,7 @@ impl Editor {
         self.scheduled_diagnostic_pull = None;
 
         // Get URI and language for this buffer
-        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+        let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
             return false;
         };
         let Some(uri) = metadata.file_uri().cloned() else {

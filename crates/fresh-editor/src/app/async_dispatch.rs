@@ -638,9 +638,7 @@ impl Editor {
                     self.grammar_build_in_progress = false;
 
                     // Re-detect syntax for all open buffers with the full registry
-                    let buffers_to_update: Vec<_> = self
-                        .buffer_metadata
-                        .iter()
+                    let buffers_to_update: Vec<_> = self.active_window().buffer_metadata.iter()
                         .filter_map(|(id, meta)| meta.file_path().map(|p| (*id, p.to_path_buf())))
                         .collect();
 

@@ -237,7 +237,7 @@ impl Editor {
         self.apply_event_to_active_buffer(&insert_event);
 
         // Update metadata with a virtual name
-        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+        if let Some(metadata) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             metadata.display_name = buffer_name.clone();
         }
 

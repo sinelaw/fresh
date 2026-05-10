@@ -238,7 +238,7 @@ impl Editor {
             is_preview: false,
             recovery_id: None,
         };
-        self.buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
 
         // Switch to the new buffer
         self.set_active_buffer(buffer_id);
@@ -324,7 +324,7 @@ impl Editor {
             is_preview: false,
             recovery_id: None,
         };
-        self.buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
 
         // Switch to the new buffer
         self.set_active_buffer(buffer_id);

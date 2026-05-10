@@ -295,9 +295,7 @@ impl Editor {
         let language = language.to_string();
 
         // Get file path from active buffer for workspace root detection
-        let file_path = self
-            .buffer_metadata
-            .get(&self.active_buffer())
+        let file_path = self.active_window().buffer_metadata.get(&self.active_buffer())
             .and_then(|meta| meta.file_path().cloned());
 
         match action {
@@ -368,7 +366,7 @@ impl Editor {
     /// the current file so it can provide features like diagnostics.
     fn notify_lsp_current_file_opened(&mut self, language: &str) {
         // Get buffer metadata for the active buffer
-        let metadata = match self.buffer_metadata.get(&self.active_buffer()) {
+        let metadata = match self.active_window().buffer_metadata.get(&self.active_buffer()) {
             Some(m) => m,
             None => {
                 tracing::debug!(

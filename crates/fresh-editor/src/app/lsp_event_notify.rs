@@ -167,7 +167,7 @@ impl Editor {
     /// Notify LSP of a file save for a specific buffer
     pub(super) fn notify_lsp_save_buffer(&mut self, buffer_id: BufferId) {
         // Check if LSP is enabled for this buffer
-        let metadata = match self.buffer_metadata.get(&buffer_id) {
+        let metadata = match self.active_window().buffer_metadata.get(&buffer_id) {
             Some(m) => m,
             None => {
                 tracing::debug!(

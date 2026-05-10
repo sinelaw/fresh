@@ -195,9 +195,7 @@ impl Editor {
             has_selection: self.has_active_selection(),
             key_context: self.key_context.clone(),
             custom_contexts: self.active_custom_contexts.clone(),
-            buffer_mode: self
-                .buffer_metadata
-                .get(&self.active_buffer())
+            buffer_mode: self.active_window().buffer_metadata.get(&self.active_buffer())
                 .and_then(|m| m.virtual_mode())
                 .map(|s| s.to_string()),
             has_lsp_config,
