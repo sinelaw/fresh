@@ -735,15 +735,6 @@ pub struct Editor {
     /// Diagnostic result IDs per URI (for incremental pull diagnostics)
     /// Maps URI string to last result_id received from server
     diagnostic_result_ids: HashMap<String, String>,
-
-    /// Scheduled diagnostic pull time per buffer (debounced after didChange)
-    /// When set, diagnostics will be re-pulled when this instant is reached
-    scheduled_diagnostic_pull: Option<(BufferId, Instant)>,
-
-    /// Scheduled inlay hints refresh time per buffer (debounced after didChange)
-    /// When set, inlay hints will be re-requested when this instant is reached
-    scheduled_inlay_hints_request: Option<(BufferId, Instant)>,
-
     /// Stored LSP diagnostics per URI, per server (push model - publishDiagnostics)
     /// Outer key: URI string, Inner key: server name
     stored_push_diagnostics: HashMap<String, HashMap<String, Vec<lsp_types::Diagnostic>>>,
@@ -765,13 +756,6 @@ pub struct Editor {
     event_broadcaster: crate::model::control_event::EventBroadcaster,
 
     // bookmarks moved onto `Window` (Step 0f).
-    /// Global search options (persist across searches)
-    search_case_sensitive: bool,
-    search_whole_word: bool,
-    search_use_regex: bool,
-    /// Whether to confirm each replacement (interactive/query-replace mode)
-    search_confirm_each: bool,
-
     /// Macro record/playback subsystem (owns `macros`, `recording`,
     /// `last_register`, and the `playing` guard flag).
     macros: macros::MacroState,
@@ -799,13 +783,6 @@ pub struct Editor {
     // simultaneously-open popup could steal.)
     /// Languages the user has interactively dismissed from the LSP popup.
     ///
-    /// Separate from `LspServerConfig::enabled` (which is the persisted
-    /// config flag) so we can keep the status-bar pill visible in a
-    /// muted style — giving the user a re-enable surface without
-    /// mutating their on-disk config. Session-scoped; dismissal does not
-    /// survive editor restarts.
-    user_dismissed_lsp_languages: std::collections::HashSet<String>,
-
     /// Pending close buffer - buffer to close after SaveFileAs completes
     /// Used when closing a modified buffer that needs to be saved first
     pending_close_buffer: Option<BufferId>,
@@ -2315,7 +2292,7 @@ mod tests {
         });
 
         // Test case-insensitive search (default)
-        editor.search_case_sensitive = false;
+        editor.active_window_mut().search_case_sensitive = false;
         editor.perform_search("hello");
 
         let search_state = editor.active_window().search_state.as_ref().unwrap();
@@ -2326,7 +2303,7 @@ mod tests {
         );
 
         // Test case-sensitive search
-        editor.search_case_sensitive = true;
+        editor.active_window_mut().search_case_sensitive = true;
         editor.perform_search("hello");
 
         let search_state = editor.active_window().search_state.as_ref().unwrap();
@@ -2364,8 +2341,8 @@ mod tests {
         });
 
         // Test partial word match (default)
-        editor.search_whole_word = false;
-        editor.search_case_sensitive = true;
+        editor.active_window_mut().search_whole_word = false;
+        editor.active_window_mut().search_case_sensitive = true;
         editor.perform_search("test");
 
         let search_state = editor.active_window().search_state.as_ref().unwrap();
@@ -2376,7 +2353,7 @@ mod tests {
         );
 
         // Test whole word match
-        editor.search_whole_word = true;
+        editor.active_window_mut().search_whole_word = true;
         editor.perform_search("test");
 
         let search_state = editor.active_window().search_state.as_ref().unwrap();

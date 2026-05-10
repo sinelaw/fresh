@@ -3106,7 +3106,7 @@ impl Editor {
             }
 
             // Schedule debounced diagnostic re-pull (1000ms after last edit)
-            self.scheduled_diagnostic_pull = Some((
+            self.active_window_mut().scheduled_diagnostic_pull = Some((
                 buffer_id,
                 std::time::Instant::now() + std::time::Duration::from_millis(1000),
             ));
@@ -3116,7 +3116,7 @@ impl Editor {
             // (including inside ranges the user just deleted), and new hints
             // that the server would now produce never arrive.
             if self.config.editor.enable_inlay_hints {
-                self.scheduled_inlay_hints_request = Some((
+                self.active_window_mut().scheduled_inlay_hints_request = Some((
                     buffer_id,
                     std::time::Instant::now()
                         + std::time::Duration::from_millis(INLAY_HINTS_DEBOUNCE_MS),

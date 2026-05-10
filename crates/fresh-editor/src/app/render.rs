@@ -931,7 +931,7 @@ impl Editor {
             &self.lsp_progress,
             &self.lsp_server_statuses,
             &self.config.lsp,
-            &self.user_dismissed_lsp_languages,
+            &self.active_window().user_dismissed_lsp_languages,
         );
         let theme = self.theme.clone();
         let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings
@@ -1079,7 +1079,7 @@ impl Editor {
                         | PromptType::QueryReplaceSearch
                         | PromptType::QueryReplace { .. }
                 ) {
-                    Some(self.search_confirm_each)
+                    Some(self.active_window().search_confirm_each)
                 } else {
                     None
                 }
@@ -1098,9 +1098,9 @@ impl Editor {
             let search_options_layout = StatusBarRenderer::render_search_options(
                 frame,
                 main_chunks[search_options_idx],
-                self.search_case_sensitive,
-                self.search_whole_word,
-                self.search_use_regex,
+                self.active_window().search_case_sensitive,
+                self.active_window().search_whole_word,
+                self.active_window().search_use_regex,
                 confirm_each,
                 &theme,
                 &keybindings_cloned,

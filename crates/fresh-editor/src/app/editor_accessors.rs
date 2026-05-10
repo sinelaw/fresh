@@ -1104,7 +1104,7 @@ impl Editor {
     /// Debounced diagnostic re-pull after document changes — waits 500ms after
     /// the last edit before requesting fresh diagnostics from the LSP server.
     pub fn check_diagnostic_pull_timer(&mut self) -> bool {
-        let Some((buffer_id, trigger_time)) = self.scheduled_diagnostic_pull else {
+        let Some((buffer_id, trigger_time)) = self.active_window().scheduled_diagnostic_pull else {
             return false;
         };
 
@@ -1112,7 +1112,7 @@ impl Editor {
             return false;
         }
 
-        self.scheduled_diagnostic_pull = None;
+        self.active_window_mut().scheduled_diagnostic_pull = None;
 
         // Get URI and language for this buffer
         let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {

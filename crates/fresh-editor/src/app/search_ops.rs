@@ -53,9 +53,9 @@ impl Editor {
         // Get theme colors and search settings before borrowing state
         let search_bg = self.theme.search_match_bg;
         let search_fg = self.theme.search_match_fg;
-        let case_sensitive = self.search_case_sensitive;
-        let whole_word = self.search_whole_word;
-        let use_regex = self.search_use_regex;
+        let case_sensitive = self.active_window().search_case_sensitive;
+        let whole_word = self.active_window().search_whole_word;
+        let use_regex = self.active_window().search_use_regex;
         let ns = self.active_window().search_namespace.clone();
 
         // Build regex pattern if regex mode is enabled, or escape for literal search
@@ -157,9 +157,9 @@ impl Editor {
     fn build_search_regex(&self, query: &str) -> Result<regex::Regex, String> {
         super::regex_replace::build_search_regex(
             query,
-            self.search_use_regex,
-            self.search_whole_word,
-            self.search_case_sensitive,
+            self.active_window().search_use_regex,
+            self.active_window().search_whole_word,
+            self.active_window().search_case_sensitive,
         )
     }
 
@@ -489,6 +489,9 @@ impl Editor {
     /// consume a few chunks per frame.
     fn start_search_scan(&mut self, query: &str, regex: regex::Regex) {
         let buffer_id = self.active_buffer();
+        // Pre-snapshot per-window search settings before taking the &mut
+        // borrow on self.windows below.
+        let case_sensitive = self.active_window().search_case_sensitive;
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -499,7 +502,7 @@ impl Editor {
             let leaves = state.buffer.piece_tree_leaves();
             // Build a bytes::Regex from the same pattern for the chunked scanner
             let bytes_regex = regex::bytes::RegexBuilder::new(regex.as_str())
-                .case_insensitive(!self.search_case_sensitive)
+                .case_insensitive(!case_sensitive)
                 .build()
                 .expect("regex already validated");
             let scan = state.buffer.search_scan_init(
@@ -513,9 +516,9 @@ impl Editor {
                 scan,
                 query.to_string(),
                 None,
-                self.search_case_sensitive,
-                self.search_whole_word,
-                self.search_use_regex,
+                self.active_window().search_case_sensitive,
+                self.active_window().search_whole_word,
+                self.active_window().search_use_regex,
             );
             self.set_status_message(t!("goto.scanning_progress", percent = 0).to_string());
         }
@@ -899,9 +902,9 @@ impl Editor {
     fn build_replace_regex(&self, search: &str) -> Option<regex::bytes::Regex> {
         super::regex_replace::build_regex(
             search,
-            self.search_use_regex,
-            self.search_whole_word,
-            self.search_case_sensitive,
+            self.active_window().search_use_regex,
+            self.active_window().search_whole_word,
+            self.active_window().search_case_sensitive,
         )
     }
 

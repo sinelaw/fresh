@@ -395,21 +395,26 @@ impl Editor {
 
     /// Is the given language currently user-dismissed via the LSP popup?
     pub fn is_lsp_language_user_dismissed(&self, language: &str) -> bool {
-        self.user_dismissed_lsp_languages.contains(language)
+        self.active_window()
+            .user_dismissed_lsp_languages
+            .contains(language)
     }
 
     /// Dismiss the LSP pill for a language until the next editor session
     /// (or until the user re-enables it from the popup). See docs on
     /// `Editor::user_dismissed_lsp_languages` for the rationale.
     pub fn dismiss_lsp_language(&mut self, language: &str) {
-        self.user_dismissed_lsp_languages
+        self.active_window_mut()
+            .user_dismissed_lsp_languages
             .insert(language.to_string());
     }
 
     /// Undo a previous dismissal — the pill returns to the normal
     /// yellow `LSP (off)` for this language.
     pub fn undismiss_lsp_language(&mut self, language: &str) {
-        self.user_dismissed_lsp_languages.remove(language);
+        self.active_window_mut()
+            .user_dismissed_lsp_languages
+            .remove(language);
     }
 
     /// Handle an action from the LSP status details popup.
@@ -1074,16 +1079,16 @@ impl Editor {
         }
 
         // Cancel scheduled diagnostic pull if it targets this buffer
-        if let Some((scheduled_buf, _)) = &self.scheduled_diagnostic_pull {
+        if let Some((scheduled_buf, _)) = &self.active_window().scheduled_diagnostic_pull {
             if *scheduled_buf == buffer_id {
-                self.scheduled_diagnostic_pull = None;
+                self.active_window_mut().scheduled_diagnostic_pull = None;
             }
         }
 
         // Cancel scheduled inlay hints refresh if it targets this buffer
-        if let Some((scheduled_buf, _)) = &self.scheduled_inlay_hints_request {
+        if let Some((scheduled_buf, _)) = &self.active_window().scheduled_inlay_hints_request {
             if *scheduled_buf == buffer_id {
-                self.scheduled_inlay_hints_request = None;
+                self.active_window_mut().scheduled_inlay_hints_request = None;
             }
         }
 

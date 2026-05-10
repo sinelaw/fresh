@@ -358,10 +358,10 @@ impl Editor {
 
         // Capture search options
         let search_options = SearchOptions {
-            case_sensitive: self.search_case_sensitive,
-            whole_word: self.search_whole_word,
-            use_regex: self.search_use_regex,
-            confirm_each: self.search_confirm_each,
+            case_sensitive: self.active_window().search_case_sensitive,
+            whole_word: self.active_window().search_whole_word,
+            use_regex: self.active_window().search_use_regex,
+            confirm_each: self.active_window().search_confirm_each,
         };
 
         // Capture bookmarks (per-window after Step 0f).
@@ -878,10 +878,10 @@ impl Editor {
     }
 
     fn restore_search_options(&mut self, opts: &SearchOptions) {
-        self.search_case_sensitive = opts.case_sensitive;
-        self.search_whole_word = opts.whole_word;
-        self.search_use_regex = opts.use_regex;
-        self.search_confirm_each = opts.confirm_each;
+        self.active_window_mut().search_case_sensitive = opts.case_sensitive;
+        self.active_window_mut().search_whole_word = opts.whole_word;
+        self.active_window_mut().search_use_regex = opts.use_regex;
+        self.active_window_mut().search_confirm_each = opts.confirm_each;
     }
 
     fn restore_prompt_histories(&mut self, histories: &WorkspaceHistories) {

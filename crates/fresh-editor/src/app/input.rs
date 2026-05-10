@@ -1610,7 +1610,7 @@ impl Editor {
             }
             Action::QueryReplace => {
                 // Enable confirm mode by default for query-replace
-                self.search_confirm_each = true;
+                self.active_window_mut().search_confirm_each = true;
                 self.start_search_prompt(
                     "Query replace: ".to_string(),
                     PromptType::QueryReplaceSearch,
@@ -1921,8 +1921,9 @@ impl Editor {
                 self.active_window_mut().list_bookmarks();
             }
             Action::ToggleSearchCaseSensitive => {
-                self.search_case_sensitive = !self.search_case_sensitive;
-                let state = if self.search_case_sensitive {
+                self.active_window_mut().search_case_sensitive =
+                    !self.active_window().search_case_sensitive;
+                let state = if self.active_window().search_case_sensitive {
                     "enabled"
                 } else {
                     "disabled"
@@ -1948,8 +1949,9 @@ impl Editor {
                 }
             }
             Action::ToggleSearchWholeWord => {
-                self.search_whole_word = !self.search_whole_word;
-                let state = if self.search_whole_word {
+                self.active_window_mut().search_whole_word =
+                    !self.active_window().search_whole_word;
+                let state = if self.active_window().search_whole_word {
                     "enabled"
                 } else {
                     "disabled"
@@ -1973,8 +1975,8 @@ impl Editor {
                 }
             }
             Action::ToggleSearchRegex => {
-                self.search_use_regex = !self.search_use_regex;
-                let state = if self.search_use_regex {
+                self.active_window_mut().search_use_regex = !self.active_window().search_use_regex;
+                let state = if self.active_window().search_use_regex {
                     "enabled"
                 } else {
                     "disabled"
@@ -1998,8 +2000,9 @@ impl Editor {
                 }
             }
             Action::ToggleSearchConfirmEach => {
-                self.search_confirm_each = !self.search_confirm_each;
-                let state = if self.search_confirm_each {
+                self.active_window_mut().search_confirm_each =
+                    !self.active_window().search_confirm_each;
+                let state = if self.active_window().search_confirm_each {
                     "enabled"
                 } else {
                     "disabled"

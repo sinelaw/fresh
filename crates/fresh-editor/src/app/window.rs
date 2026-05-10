@@ -419,6 +419,24 @@ pub struct Window {
     /// Buffer ids the user picked "save before quit" for via the
     /// modified-buffers prompt; consumed in order on quit.
     pub pending_quit_unnamed_save: Vec<BufferId>,
+
+    /// Per-window search UX toggles. Each window has its own search
+    /// session, so these flags follow the search state.
+    pub search_case_sensitive: bool,
+    pub search_whole_word: bool,
+    pub search_use_regex: bool,
+    pub search_confirm_each: bool,
+
+    /// Scheduled (debounced) per-buffer LSP feature requests for the
+    /// active window's LSP. Per-window because the LSP they target is
+    /// per-window (Step 0k).
+    pub scheduled_diagnostic_pull: Option<(BufferId, std::time::Instant)>,
+    pub scheduled_inlay_hints_request: Option<(BufferId, std::time::Instant)>,
+
+    /// LSP languages the user dismissed the "do you want to enable
+    /// LSP for this language?" popup for. Per-window because LSP is
+    /// per-window — different windows can prompt independently.
+    pub user_dismissed_lsp_languages: std::collections::HashSet<String>,
 }
 
 impl Window {
@@ -991,6 +1009,13 @@ impl Window {
             goto_line_preview: None,
             pending_async_prompt_callback: None,
             pending_quit_unnamed_save: Vec::new(),
+            search_case_sensitive: true,
+            search_whole_word: false,
+            search_use_regex: false,
+            search_confirm_each: false,
+            scheduled_diagnostic_pull: None,
+            scheduled_inlay_hints_request: None,
+            user_dismissed_lsp_languages: std::collections::HashSet::new(),
             resources,
         }
     }

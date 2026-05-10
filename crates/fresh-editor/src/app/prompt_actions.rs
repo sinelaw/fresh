@@ -116,7 +116,7 @@ impl Editor {
                 );
             }
             PromptType::Replace { search } => {
-                if self.search_confirm_each {
+                if self.active_window().search_confirm_each {
                     self.start_interactive_replace(&search, &input);
                 } else {
                     self.perform_replace(&search, &input);
@@ -132,7 +132,7 @@ impl Editor {
                 );
             }
             PromptType::QueryReplace { search } => {
-                if self.search_confirm_each {
+                if self.active_window().search_confirm_each {
                     self.start_interactive_replace(&search, &input);
                 } else {
                     self.perform_replace(&search, &input);
