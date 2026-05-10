@@ -161,6 +161,12 @@ pub(super) struct EditorParts {
 
     // Time
     pub(super) time_source: SharedTimeSource,
+
+    // Persisted plugin global state (one map per plugin). Pulled from
+    // `.fresh/state/<plugin>.json` by the factory so plugins reading
+    // `getGlobalState(...)` on first tick see the previous run's
+    // values without a separate post-construction load step.
+    pub(super) plugin_global_state: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 impl Editor {
@@ -294,7 +300,7 @@ impl Editor {
             last_auto_recovery_save: now,
             last_persistent_auto_save: now,
             active_custom_contexts: HashSet::new(),
-            plugin_global_state: HashMap::new(),
+            plugin_global_state: parts.plugin_global_state,
             warning_log: None,
             status_log_path: None,
             warning_domains: WarningDomainRegistry::new(),
@@ -598,8 +604,43 @@ impl Editor {
         let mut buffer_metadata: HashMap<BufferId, BufferMetadata> = HashMap::new();
         buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
-        // Initialize LSP manager with current working directory as root
-        let root_uri = types::file_path_to_lsp_uri(&working_dir);
+        // Read conductor persistence (`.fresh/windows.json` and
+        // `.fresh/state/*.json`) before the LSP and base-window
+        // construction below. Pulling persistence in here lets the
+        // factory build the right windows up front: previously this
+        // ran from `main.rs` after construction, so the freshly
+        // built single-base window had to be torn down and replaced
+        // with an inert shell — leaving the active window with
+        // `splits = None` until something re-seeded it. Now the
+        // factory picks the persisted active id/root, attaches the
+        // seed buffer + LSP to it directly, and the constructor
+        // sees a well-formed windows map.
+        let persisted_env = crate::app::conductor_persistence::read_persisted_windows_env(
+            filesystem.as_ref(),
+            &working_dir,
+        );
+        let plugin_global_state = crate::app::conductor_persistence::read_persisted_plugin_state(
+            filesystem.as_ref(),
+            &working_dir,
+        );
+
+        // Determine the active window's id and root. If persistence
+        // names an active window present in its set, use that id +
+        // root so the LSP we spawn below targets the project the
+        // user was actually working in. Otherwise fall back to the
+        // boot-time defaults (id 1, process cwd).
+        let (active_window_id, active_window_root) = persisted_env
+            .as_ref()
+            .and_then(|env| {
+                env.windows
+                    .iter()
+                    .find(|w| w.id == env.active)
+                    .map(|w| (fresh_core::WindowId(env.active), w.root.clone()))
+            })
+            .unwrap_or((fresh_core::WindowId(1), working_dir.clone()));
+
+        // Initialize LSP manager with active window's root.
+        let root_uri = types::file_path_to_lsp_uri(&active_window_root);
 
         t.phase("buffer_state");
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
@@ -629,10 +670,11 @@ impl Editor {
             tracing::warn!("Failed to create Tokio runtime - async features disabled");
         }
 
-        // Create LSP manager with async support. The base window is
-        // always WindowId(1); LSP responses route through the base
+        // Create LSP manager with async support, scoped to the
+        // active window (matches `active_window_id` + the LSP
+        // root_uri above). LSP responses route through the active
         // window's per-window bridge.
-        let mut lsp = LspManager::new(fresh_core::WindowId(1), root_uri);
+        let mut lsp = LspManager::new(active_window_id, root_uri);
 
         // Configure runtime and bridge if available — the LSP manager
         // is wired to the base window's bridge, so its async responses
@@ -656,8 +698,13 @@ impl Editor {
         lsp.set_universal_configs(universal_servers);
 
         // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
-        // workspace root, override JS/TS LSP to use `deno lsp` (#1191)
-        if working_dir.join("deno.json").exists() || working_dir.join("deno.jsonc").exists() {
+        // workspace root, override JS/TS LSP to use `deno lsp` (#1191).
+        // Checked against `active_window_root` so persisted sessions get the
+        // detection their actual project — process cwd would be wrong for a
+        // restored session rooted elsewhere.
+        if active_window_root.join("deno.json").exists()
+            || active_window_root.join("deno.jsonc").exists()
+        {
             tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
             let deno_config = LspServerConfig {
                 command: "deno".to_string(),
@@ -1048,33 +1095,41 @@ impl Editor {
             dir_context: dir_context.clone(),
         };
 
-        // Boot with a single base session rooted at the process cwd.
-        // The conductor-persistence loader (called from main.rs after
-        // construction) may swap this for a multi-window set; the
-        // workspace restore (also post-construction) then rebuilds the
-        // saved split layout inside whichever window ends up active.
-        let mut windows = HashMap::new();
-        let mut base = crate::app::window::Window::new(
-            fresh_core::WindowId(1),
-            "",
-            working_dir.clone(),
+        // Build the active window — the one that holds the seed
+        // buffer, the SplitManager, the LSP, and the
+        // already-configured per-window bridge. Its label/root
+        // come from persistence when present so a restored session
+        // looks correct from frame zero; otherwise it falls back to
+        // the boot defaults.
+        let (active_label, active_root, active_plugin_state) = persisted_env
+            .as_ref()
+            .and_then(|env| env.windows.iter().find(|w| w.id == active_window_id.0))
+            .map(|w| (w.label.clone(), w.root.clone(), w.plugin_state.clone()))
+            .unwrap_or_else(|| (String::new(), working_dir.clone(), HashMap::new()));
+
+        let mut active_win = crate::app::window::Window::new(
+            active_window_id,
+            active_label,
+            active_root,
             base_resources,
         );
         // Hand the eagerly-spawned LSP manager + the initial split
-        // layout off to the base window — that's where they live now
-        // (Step 0b).
-        base.lsp = Some(lsp);
-        base.splits = Some((split_manager, split_view_states));
-        base.buffers = buffers;
-        base.buffer_metadata = buffer_metadata;
-        base.event_logs = event_logs;
-        // Replace the default bridge created by `Window::new` with the
-        // bridge we already configured the LSP manager against. Both
-        // halves now point at the same channel; LSP responses arriving
-        // on the manager's sender land in `base.bridge`'s receiver.
-        base.bridge = base_window_bridge;
-        // Load prompt histories from disk for the base window. Each
-        // window has its own prompt-history rings.
+        // layout off to the active window — that's where they live
+        // now (Step 0b).
+        active_win.lsp = Some(lsp);
+        active_win.splits = Some((split_manager, split_view_states));
+        active_win.buffers = buffers;
+        active_win.buffer_metadata = buffer_metadata;
+        active_win.event_logs = event_logs;
+        active_win.plugin_state = active_plugin_state;
+        // Replace the default bridge created by `Window::new` with
+        // the bridge we already configured the LSP manager against.
+        // Both halves now point at the same channel; LSP responses
+        // arriving on the manager's sender land in
+        // `active_win.bridge`'s receiver.
+        active_win.bridge = base_window_bridge;
+        // Load prompt histories from disk for the active window.
+        // Each window has its own prompt-history rings.
         for history_name in ["search", "replace", "goto_line"] {
             let path = dir_context.prompt_history_path(history_name);
             let history = crate::input::input_history::InputHistory::load_from_file(&path)
@@ -1082,10 +1137,57 @@ impl Editor {
                     tracing::warn!("Failed to load {} history: {}", history_name, e);
                     crate::input::input_history::InputHistory::new()
                 });
-            base.prompt_histories
+            active_win
+                .prompt_histories
                 .insert(history_name.to_string(), history);
         }
-        windows.insert(fresh_core::WindowId(1), base);
+
+        // Build the inert shells for every other persisted window.
+        // Their `splits` stays `None`; first dive into them re-warms
+        // exactly like a freshly created window.
+        let mut windows = HashMap::new();
+        if let Some(ref env) = persisted_env {
+            for ps in &env.windows {
+                let id = fresh_core::WindowId(ps.id);
+                if id == active_window_id {
+                    continue;
+                }
+                let resources = crate::app::window_resources::WindowResources {
+                    config: Arc::clone(&config_arc),
+                    grammar_registry: Arc::clone(&grammar_registry),
+                    theme_registry: Arc::clone(&theme_registry),
+                    theme_cache: Arc::clone(&theme_cache),
+                    keybindings: Arc::clone(&keybindings),
+                    command_registry: Arc::clone(&command_registry),
+                    fs_manager: Arc::clone(&fs_manager),
+                    local_filesystem: Arc::clone(&local_filesystem),
+                    buffer_id_alloc: buffer_id_alloc.clone(),
+                    authority: authority.clone(),
+                    time_source: Arc::clone(&time_source),
+                    dir_context: dir_context.clone(),
+                };
+                let mut shell = crate::app::window::Window::new(
+                    id,
+                    ps.label.clone(),
+                    ps.root.clone(),
+                    resources,
+                );
+                shell.plugin_state = ps.plugin_state.clone();
+                windows.insert(id, shell);
+            }
+        }
+        windows.insert(active_window_id, active_win);
+
+        // Allocate next window ids past every persisted entry and
+        // past our active id, so `createWindow` after restart never
+        // collides with an id the user might still see in plugin
+        // state. Falls back to 2 (the post-base-window default)
+        // when there's no persistence.
+        let max_existing = windows.keys().map(|k| k.0).max().unwrap_or(0);
+        let next_window_id = persisted_env
+            .as_ref()
+            .map(|env| env.next_id.max(max_existing + 1))
+            .unwrap_or(2);
 
         let recovery_service = {
             let recovery_config = RecoveryConfig {
@@ -1105,11 +1207,10 @@ impl Editor {
             RecoveryService::with_scope(recovery_config, &dir_context.recovery_dir(), &scope)
         };
 
-        let key_translator =
-            crate::input::key_translator::KeyTranslator::load_from_config_dir(
-                &dir_context.config_dir,
-            )
-            .unwrap_or_default();
+        let key_translator = crate::input::key_translator::KeyTranslator::load_from_config_dir(
+            &dir_context.config_dir,
+        )
+        .unwrap_or_default();
 
         let pending_grammars = scan_result
             .additional_grammars
@@ -1150,8 +1251,8 @@ impl Editor {
             status_bar_visible: show_status_bar,
             prompt_line_visible: show_prompt_line,
             windows,
-            active_window: fresh_core::WindowId(1),
-            next_window_id: 2,
+            active_window: active_window_id,
+            next_window_id,
             command_registry,
             quick_open_registry,
             plugin_manager,
@@ -1159,6 +1260,7 @@ impl Editor {
             key_translator,
             update_checker,
             time_source: time_source.clone(),
+            plugin_global_state,
         };
 
         let mut editor = Editor::from_parts(parts);

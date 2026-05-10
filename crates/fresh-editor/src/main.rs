@@ -3579,11 +3579,15 @@ fn real_main() -> AnyhowResult<()> {
         // backend from the first tick.
         editor.set_boot_authority(current_authority.clone());
 
-        // Conductor cross-restart persistence: replay
-        // `.fresh/sessions.json` and `.fresh/state/*.json` *before*
-        // plugins load so plugin `getGlobalState(...)` calls during
-        // their on-load handlers see the previous run's values.
-        editor.load_conductor_state();
+        // Conductor cross-restart persistence is now loaded by
+        // `Editor::with_options` before construction — it reads
+        // `.fresh/windows.json` + `.fresh/state/*.json` and builds
+        // the initial windows map / `plugin_global_state` directly
+        // into the constructor's inputs. This used to happen here
+        // as a post-construction swap, which left the active window
+        // in an inert-shell state until something re-seeded it (see
+        // the panic at `effective_active_pair` when workspace
+        // restore tried to open files immediately afterwards).
 
         // User init.ts: auto-load from ~/.config/fresh/init.ts through the
         // same pipeline as "Load Plugin from Buffer". Respects `--no-init`

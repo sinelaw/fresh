@@ -9,11 +9,18 @@
 //!   - `<working_dir>/.fresh/state/<plugin>.json` — one file per
 //!     plugin holding its `editor.setGlobalState(...)` map.
 //!
-//! On startup, `load_conductor_state` (called from `editor_init`)
-//! reads them back. Sessions are reconstituted as inert
-//! shells — no warm split tree, no warm LSP — exactly like a
-//! freshly-`createWindow`-ed session, so the user sees the same
-//! list in `Conductor: Open` and can dive into any of them.
+//! On startup, [`read_persisted_windows_env`] +
+//! [`read_persisted_plugin_state`] are called from
+//! `Editor::with_options` (see `editor_init.rs`) *before* the
+//! editor struct is built. The factory uses the parsed envelope
+//! to pick the active window's id and root (so the spawned LSP
+//! targets the right project), to attach the seed buffer +
+//! split layout to the active window directly, and to populate
+//! `plugin_global_state` so plugins reading `getGlobalState`
+//! during their on-load handler see the previous run's values.
+//! All non-active persisted windows come back as inert shells
+//! (no splits, no LSP); first dive into one re-warms it on
+//! demand exactly like a freshly-`createWindow`-ed session.
 //!
 //! The "warm" half of warm-swap (split layout, LSP, file
 //! explorer state) is intentionally *not* persisted: the only
@@ -26,36 +33,116 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use fresh_core::WindowId;
-
-use super::window::Window;
 use super::Editor;
 
 /// One session as it appears on disk.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct PersistedWindow {
-    id: u64,
-    label: String,
-    root: PathBuf,
+pub(crate) struct PersistedWindow {
+    pub(crate) id: u64,
+    pub(crate) label: String,
+    pub(crate) root: PathBuf,
     /// Per-session plugin state (the same map kept in
     /// `Session.plugin_state`). Empty plugins / empty keys are
     /// stripped on save.
     #[serde(default)]
-    plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
+    pub(crate) plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 /// Top-level shape of `.fresh/windows.json`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct PersistedWindows {
+pub(crate) struct PersistedWindows {
     /// Last active session id at quit time. The loader makes
     /// this session the active one again. If missing or
     /// dangling, falls back to the base session.
-    active: u64,
+    pub(crate) active: u64,
     /// `next_window_id` at quit time — preserved so newly
     /// created sessions after restart don't collide with ids
     /// the user might still see in plugin state.
-    next_id: u64,
-    windows: Vec<PersistedWindow>,
+    pub(crate) next_id: u64,
+    pub(crate) windows: Vec<PersistedWindow>,
+}
+
+/// Read `.fresh/windows.json` from `working_dir` and return the
+/// parsed envelope. Returns `None` when the file doesn't exist or
+/// fails to parse — those are not error cases at the editor level
+/// (a missing or corrupted file just means "no persisted state").
+///
+/// Pure file IO + JSON parse. Used by the editor factory to
+/// decide how to build the initial windows map before any `Editor`
+/// instance exists.
+pub(crate) fn read_persisted_windows_env(
+    filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    working_dir: &Path,
+) -> Option<PersistedWindows> {
+    let windows_p = windows_path(working_dir);
+    if !filesystem.exists(&windows_p) {
+        return None;
+    }
+    match filesystem.read_file(&windows_p) {
+        Ok(bytes) => match serde_json::from_slice::<PersistedWindows>(&bytes) {
+            Ok(env) => Some(env),
+            Err(e) => {
+                tracing::warn!("conductor persistence: failed to parse {windows_p:?}: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!("conductor persistence: failed to read {windows_p:?}: {e}");
+            None
+        }
+    }
+}
+
+/// Read every `.fresh/state/<plugin>.json` from `working_dir` into
+/// a flat `plugin → key → value` map. Skips files with unsafe
+/// names, non-JSON extensions, parse errors, and empty maps. Same
+/// motivations as [`read_persisted_windows_env`] — used by the
+/// editor factory pre-construction.
+pub(crate) fn read_persisted_plugin_state(
+    filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    working_dir: &Path,
+) -> HashMap<String, HashMap<String, serde_json::Value>> {
+    let mut out: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
+    let state_dir = state_dir(working_dir);
+    if !filesystem.exists(&state_dir) {
+        return out;
+    }
+    let entries = match filesystem.read_dir(&state_dir) {
+        Ok(es) => es,
+        Err(e) => {
+            tracing::warn!("conductor persistence: failed to read {state_dir:?}: {e}");
+            return out;
+        }
+    };
+    for entry in entries {
+        let path = entry.path;
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !plugin_name_is_safe(stem) {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        match filesystem.read_file(&path) {
+            Ok(bytes) => {
+                match serde_json::from_slice::<HashMap<String, serde_json::Value>>(&bytes) {
+                    Ok(map) if !map.is_empty() => {
+                        out.insert(stem.to_owned(), map);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("conductor persistence: failed to parse {path:?}: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("conductor persistence: failed to read {path:?}: {e}");
+            }
+        }
+    }
+    out
 }
 
 fn windows_path(working_dir: &Path) -> PathBuf {
@@ -162,126 +249,5 @@ impl Editor {
                 }
             }
         }
-    }
-
-    /// Read `.fresh/windows.json` + `.fresh/state/*.json` and
-    /// reconstitute `self.windows` + `self.plugin_global_state`.
-    /// Idempotent: if no files exist, leaves the editor at the
-    /// default single-base-session shape.
-    ///
-    /// Sessions are loaded as inert shells (empty buffer set,
-    /// empty stashes); the first dive into a previously
-    /// persisted session re-warms it on demand exactly like a
-    /// freshly created session.
-    pub fn load_conductor_state(&mut self) {
-        let working_dir = self.working_dir().to_path_buf();
-
-        // Sessions.
-        let windows_p = windows_path(&working_dir);
-        if self.authority.filesystem.exists(&windows_p) {
-            match self.authority.filesystem.read_file(&windows_p) {
-                Ok(bytes) => match serde_json::from_slice::<PersistedWindows>(&bytes) {
-                    Ok(env) => self.apply_persisted_windows(env),
-                    Err(e) => {
-                        tracing::warn!("conductor persistence: failed to parse {windows_p:?}: {e}");
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("conductor persistence: failed to read {windows_p:?}: {e}");
-                }
-            }
-        }
-
-        // Plugin global state. Walks the state dir if present and
-        // loads every `*.json` whose stem is a safe plugin name.
-        let state_dir = state_dir(&working_dir);
-        if !self.authority.filesystem.exists(&state_dir) {
-            return;
-        }
-        let entries = match self.authority.filesystem.read_dir(&state_dir) {
-            Ok(es) => es,
-            Err(e) => {
-                tracing::warn!("conductor persistence: failed to read {state_dir:?}: {e}");
-                return;
-            }
-        };
-        for entry in entries {
-            let path = entry.path;
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if !plugin_name_is_safe(stem) {
-                continue;
-            }
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            match self.authority.filesystem.read_file(&path) {
-                Ok(bytes) => {
-                    match serde_json::from_slice::<HashMap<String, serde_json::Value>>(&bytes) {
-                        Ok(map) if !map.is_empty() => {
-                            self.plugin_global_state.insert(stem.to_owned(), map);
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::warn!("conductor persistence: failed to parse {path:?}: {e}");
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("conductor persistence: failed to read {path:?}: {e}");
-                }
-            }
-        }
-    }
-
-    fn apply_persisted_windows(&mut self, env: PersistedWindows) {
-        // Drop the synthetic default base session — we'll recreate
-        // it from disk so its id matches what plugin state may
-        // reference. If the persisted set didn't include the
-        // current active session's id we still keep the active
-        // one (so the user has somewhere to be).
-        let current_active = self.active_window;
-        let preserve_active = !env.windows.iter().any(|s| s.id == current_active.0);
-
-        if !preserve_active {
-            // Wipe the seeded default session so we can replace it
-            // with the persisted version that has the same id.
-            self.windows.remove(&current_active);
-        }
-
-        for ps in env.windows {
-            let id = WindowId(ps.id);
-            let resources = self.window_resources();
-            let mut s = Window::new(id, ps.label, ps.root, resources);
-            s.plugin_state = ps.plugin_state;
-            self.windows.insert(id, s);
-        }
-
-        // Allocate next from max(persisted next_id, max
-        // existing+1) to avoid collisions with the synthetic
-        // session above.
-        let max_existing = self.windows.keys().map(|k| k.0).max().unwrap_or(0);
-        self.next_window_id = env.next_id.max(max_existing + 1);
-
-        // Restore the active id if it's still resolvable.
-        if self.windows.contains_key(&WindowId(env.active)) {
-            self.active_window = WindowId(env.active);
-        }
-
-        // Persisted windows are inert shells — `Window::new` leaves
-        // `splits = None`, and the original seeded base window was
-        // wiped above. Anything that touches `effective_active_pair`
-        // before the workspace restore re-builds the split tree
-        // (e.g. `apply_workspace` → `open_workspace_files` →
-        // `open_file` → `active_buffer`) would otherwise panic on
-        // the "active window must have a populated split layout"
-        // expect. Re-seed an empty layout for the active window so
-        // those accessors see a well-formed shape; the workspace
-        // restore replaces it with the real saved layout, and if
-        // there's no workspace this becomes the user's starting
-        // buffer just like a fresh boot.
-        let active = self.active_window;
-        self.seed_fresh_layout_if_needed(active);
     }
 }

@@ -132,9 +132,9 @@ impl crate::app::Editor {
     /// responsible for installing the returned tuple into the
     /// window's fields.
     ///
-    /// Factored out of `set_active_window` so the conductor-state
-    /// restore path can re-seed an inert active-window shell after
-    /// `apply_persisted_windows` discards the seeded base window.
+    /// Factored out of `set_active_window` so other call sites that
+    /// need to populate an inert window shell can share the same
+    /// seed-construction logic.
     pub(crate) fn build_fresh_layout_if_needed(
         &mut self,
         id: WindowId,
@@ -172,22 +172,6 @@ impl crate::app::Editor {
             SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf),
         );
         Some((buf, state, metadata, event_log, manager, view_states))
-    }
-
-    /// Install a freshly-built seed layout into `id`'s window. No-op
-    /// when the window is unknown or already has `splits = Some(_)`.
-    pub(crate) fn seed_fresh_layout_if_needed(&mut self, id: WindowId) {
-        let Some((buf, state, metadata, event_log, mgr, vs)) =
-            self.build_fresh_layout_if_needed(id)
-        else {
-            return;
-        };
-        if let Some(s) = self.windows.get_mut(&id) {
-            s.splits = Some((mgr, vs));
-            s.buffers.insert(buf, state);
-            s.buffer_metadata.insert(buf, metadata);
-            s.event_logs.insert(buf, event_log);
-        }
     }
 
     /// Eagerly initialise an inactive session's per-session
