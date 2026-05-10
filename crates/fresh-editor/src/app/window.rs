@@ -1280,6 +1280,96 @@ impl Window {
         self.search_state = None;
     }
 
+    /// Update search highlights in the visible viewport for the active
+    /// buffer. Caller passes theme colors as parameters because `theme`
+    /// is editor-global (not yet on `Window.resources`).
+    pub fn update_search_highlights(
+        &mut self,
+        query: &str,
+        search_fg: ratatui::style::Color,
+        search_bg: ratatui::style::Color,
+    ) {
+        if query.is_empty() {
+            self.clear_search_highlights();
+            return;
+        }
+
+        let case_sensitive = self.search_case_sensitive;
+        let whole_word = self.search_whole_word;
+        let use_regex = self.search_use_regex;
+        let ns = self.search_namespace.clone();
+
+        let regex_pattern = if use_regex {
+            if whole_word {
+                format!(r"\b{}\b", query)
+            } else {
+                query.to_string()
+            }
+        } else {
+            let escaped = regex::escape(query);
+            if whole_word {
+                format!(r"\b{}\b", escaped)
+            } else {
+                escaped
+            }
+        };
+
+        let regex = regex::RegexBuilder::new(&regex_pattern)
+            .case_insensitive(!case_sensitive)
+            .build();
+        let regex = match regex {
+            Ok(r) => r,
+            Err(_) => {
+                self.clear_search_highlights();
+                return;
+            }
+        };
+
+        let active_split = self.effective_active_split();
+        let (top_byte, visible_height) = self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout")
+            .1
+            .get(&active_split)
+            .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
+            .unwrap_or((0, 20));
+
+        let state = self.active_state_mut();
+        state.overlays.clear_namespace(&ns, &mut state.marker_list);
+
+        let visible_start = top_byte;
+        let mut visible_end = top_byte;
+        {
+            let mut line_iter = state.buffer.line_iterator(top_byte, 80);
+            for _ in 0..visible_height {
+                if let Some((line_start, line_content)) = line_iter.next_line() {
+                    visible_end = line_start + line_content.len();
+                } else {
+                    break;
+                }
+            }
+        }
+        visible_end = visible_end.min(state.buffer.len());
+        let visible_text = state.get_text_range(visible_start, visible_end);
+
+        for mat in regex.find_iter(&visible_text) {
+            let absolute_pos = visible_start + mat.start();
+            let match_len = mat.end() - mat.start();
+            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
+            let overlay = crate::view::overlay::Overlay::with_namespace(
+                &mut state.marker_list,
+                absolute_pos..(absolute_pos + match_len),
+                crate::view::overlay::OverlayFace::Style {
+                    style: search_style,
+                },
+                ns.clone(),
+            )
+            .with_priority_value(10);
+            state.overlays.add(overlay);
+        }
+    }
+
     /// Atomically update both sides of the pane-buffer invariant for a
     /// given leaf split: the split tree's stored buffer AND the matching
     /// `SplitViewState.active_buffer` / `keyed_states` map.
