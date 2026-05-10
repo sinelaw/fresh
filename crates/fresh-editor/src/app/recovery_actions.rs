@@ -76,7 +76,8 @@ impl Editor {
     fn recovery_ids_to_preserve(&self) -> Vec<String> {
         let hot_exit = self.config.editor.hot_exit;
 
-        self.active_window().buffer_metadata
+        self.active_window()
+            .buffer_metadata
             .iter()
             .filter_map(|(buffer_id, meta)| {
                 if meta.hidden_from_tabs || meta.is_virtual() {
@@ -336,7 +337,9 @@ impl Editor {
                             state.buffer.set_recovery_pending(false);
                         }
                         self.active_event_log_mut().clear_saved_position();
-                        if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
+                        if let Some(meta) =
+                            self.active_window_mut().buffer_metadata.get_mut(&buffer_id)
+                        {
                             meta.recovery_id = Some(entry.id.clone());
                         }
                         self.sync_lsp_after_recovery_replay(buffer_id);
@@ -454,7 +457,10 @@ impl Editor {
 
         // Ensure unnamed buffers have stable recovery IDs (mutable pass).
         for buffer_id in &buffers_needing_recovery {
-            let needs_id = self.active_window().buffer_metadata.get(buffer_id)
+            let needs_id = self
+                .active_window()
+                .buffer_metadata
+                .get(buffer_id)
                 .map(|meta| {
                     let path = meta.file_path();
                     let is_unnamed = path.map(|p| p.as_os_str().is_empty()).unwrap_or(true);

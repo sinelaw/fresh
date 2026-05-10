@@ -380,10 +380,6 @@ fn accept_attach(harness: &mut EditorTestHarness) {
 #[test]
 fn attach_failure_surfaces_failed_attach_popup() {
     let (_workspace_temp, workspace) = set_up_workspace();
-    // Per-test env knob — the harness lock from with_fake_devcontainer
-    // serializes us with other tests, so this set_var is safe.
-    std::env::set_var("FAKE_DC_UP_FAIL", "1");
-    std::env::set_var("FAKE_DC_UP_FAIL_REASON", "image not found: bogus:latest");
 
     let mut harness = EditorTestHarness::create(
         160,
@@ -393,6 +389,12 @@ fn attach_failure_surfaces_failed_attach_popup() {
             .with_fake_devcontainer(),
     )
     .unwrap();
+    // Per-test env knob — set AFTER the harness exists so the
+    // fake-devcontainer mutex (held in `FakeDevcontainerHandle`)
+    // already serializes us with other tests. Setting before the
+    // mutex is acquired races against sibling tests' subprocesses.
+    std::env::set_var("FAKE_DC_UP_FAIL", "1");
+    std::env::set_var("FAKE_DC_UP_FAIL_REASON", "image not found: bogus:latest");
     harness.tick_and_render().unwrap();
 
     accept_attach(&mut harness);
@@ -410,11 +412,12 @@ fn attach_failure_surfaces_failed_attach_popup() {
         harness.editor().authority().display_label,
     );
 
-    // Clean up env vars so we don't leak into the next test (the
-    // mutex serializes us, but the FAKE_DC_UP_FAIL flag would still
-    // be set on next runs in this process if we didn't unset).
+    // Clean up env vars before the harness drops (releases the
+    // mutex). The harness's mutex guard is the only thing keeping
+    // a sibling test's subprocess from inheriting these vars.
     std::env::remove_var("FAKE_DC_UP_FAIL");
     std::env::remove_var("FAKE_DC_UP_FAIL_REASON");
+    drop(harness);
     drop_workspace_temp(&workspace);
 }
 
@@ -424,7 +427,6 @@ fn attach_failure_surfaces_failed_attach_popup() {
 #[test]
 fn attach_bad_json_surfaces_failed_attach_popup() {
     let (_workspace_temp, workspace) = set_up_workspace();
-    std::env::set_var("FAKE_DC_UP_BAD_JSON", "1");
 
     let mut harness = EditorTestHarness::create(
         160,
@@ -434,6 +436,12 @@ fn attach_bad_json_surfaces_failed_attach_popup() {
             .with_fake_devcontainer(),
     )
     .unwrap();
+    // Set after the harness exists — see comment in
+    // `attach_failure_surfaces_failed_attach_popup`. The fake-
+    // devcontainer mutex held by the harness serializes us with
+    // sibling tests; setting before that mutex is acquired races
+    // against their subprocesses.
+    std::env::set_var("FAKE_DC_UP_BAD_JSON", "1");
     harness.tick_and_render().unwrap();
 
     accept_attach(&mut harness);
@@ -449,6 +457,7 @@ fn attach_bad_json_surfaces_failed_attach_popup() {
     );
 
     std::env::remove_var("FAKE_DC_UP_BAD_JSON");
+    drop(harness);
     drop_workspace_temp(&workspace);
 }
 
@@ -725,7 +734,6 @@ fn attach_popup_dismiss_always_persists_decision() {
 #[test]
 fn attach_missing_container_id_surfaces_failed_attach_popup() {
     let (_workspace_temp, workspace) = set_up_workspace();
-    std::env::set_var("FAKE_DC_UP_NO_CONTAINER_ID", "1");
 
     let mut harness = EditorTestHarness::create(
         160,
@@ -735,6 +743,12 @@ fn attach_missing_container_id_surfaces_failed_attach_popup() {
             .with_fake_devcontainer(),
     )
     .unwrap();
+    // Set after the harness exists — see comment in
+    // `attach_failure_surfaces_failed_attach_popup`. The fake-
+    // devcontainer mutex held by the harness serializes us with
+    // sibling tests; setting before that mutex is acquired races
+    // against their subprocesses.
+    std::env::set_var("FAKE_DC_UP_NO_CONTAINER_ID", "1");
     harness.tick_and_render().unwrap();
 
     accept_attach(&mut harness);
@@ -750,5 +764,6 @@ fn attach_missing_container_id_surfaces_failed_attach_popup() {
     );
 
     std::env::remove_var("FAKE_DC_UP_NO_CONTAINER_ID");
+    drop(harness);
     drop_workspace_temp(&workspace);
 }

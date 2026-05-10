@@ -269,14 +269,19 @@ impl Editor {
 
     /// Get the mode name for the active buffer (if it's a virtual buffer)
     pub fn active_buffer_mode(&self) -> Option<&str> {
-        self.active_window().buffer_metadata
+        self.active_window()
+            .buffer_metadata
             .get(&self.active_buffer())
             .and_then(|meta| meta.virtual_mode())
     }
 
     /// Check if the active buffer is read-only
     pub fn is_active_buffer_read_only(&self) -> bool {
-        if let Some(metadata) = self.active_window().buffer_metadata.get(&self.active_buffer()) {
+        if let Some(metadata) = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+        {
             if metadata.read_only {
                 return true;
             }

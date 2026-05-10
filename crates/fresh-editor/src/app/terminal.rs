@@ -249,7 +249,9 @@ impl Editor {
             "terminal".into(),
             false,
         );
-        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut()
+            .buffer_metadata
+            .insert(buffer_id, metadata);
 
         // Map buffer to terminal
         self.active_window_mut()
@@ -322,7 +324,9 @@ impl Editor {
             "terminal".into(),
             false,
         );
-        self.active_window_mut().buffer_metadata.insert(buffer_id, metadata);
+        self.active_window_mut()
+            .buffer_metadata
+            .insert(buffer_id, metadata);
         self.active_window_mut()
             .terminal_buffers
             .insert(buffer_id, terminal_id);

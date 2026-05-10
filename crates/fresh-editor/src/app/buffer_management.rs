@@ -344,7 +344,8 @@ impl Editor {
     /// Whether the given buffer is currently in preview (ephemeral) mode.
     /// Primarily for tests; production code should use `self.preview`.
     pub fn is_buffer_preview(&self, buffer_id: BufferId) -> bool {
-        self.active_window().buffer_metadata
+        self.active_window()
+            .buffer_metadata
             .get(&buffer_id)
             .map(|m| m.is_preview)
             .unwrap_or(false)
@@ -635,7 +636,8 @@ impl Editor {
         self.active_window_mut()
             .event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
-        self.active_window_mut().buffer_metadata
+        self.active_window_mut()
+            .buffer_metadata
             .insert(buffer_id, crate::app::types::BufferMetadata::new());
 
         self.set_active_buffer(buffer_id);

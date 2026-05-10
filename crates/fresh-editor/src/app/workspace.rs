@@ -373,7 +373,10 @@ impl Editor {
 
         // Capture external files (files outside working_dir)
         // These are stored as absolute paths since they can't be made relative
-        let external_files: Vec<PathBuf> = self.active_window().buffer_metadata.values()
+        let external_files: Vec<PathBuf> = self
+            .active_window()
+            .buffer_metadata
+            .values()
             .filter_map(|meta| meta.file_path())
             .filter(|abs_path| abs_path.strip_prefix(&self.working_dir).is_err())
             .cloned()
@@ -385,7 +388,10 @@ impl Editor {
         // Capture read-only file paths. Store relative when inside
         // working_dir (matches how open_tabs paths are stored), otherwise
         // absolute — mirrors external_files.
-        let read_only_files: Vec<PathBuf> = self.active_window().buffer_metadata.values()
+        let read_only_files: Vec<PathBuf> = self
+            .active_window()
+            .buffer_metadata
+            .values()
             .filter(|meta| meta.read_only)
             .filter_map(|meta| meta.file_path().cloned())
             .filter(|p| !p.as_os_str().is_empty())
@@ -398,7 +404,8 @@ impl Editor {
 
         // Capture unnamed buffer references (for hot_exit)
         let unnamed_buffers: Vec<UnnamedBufferRef> = if self.config.editor.hot_exit {
-            self.active_window().buffer_metadata
+            self.active_window()
+                .buffer_metadata
                 .iter()
                 .filter_map(|(buffer_id, meta)| {
                     // Only file-backed buffers with empty path (unnamed)
@@ -1162,7 +1169,8 @@ impl Editor {
                         state.buffer.set_recovery_pending(false);
                     }
                     self.active_event_log_mut().clear_saved_position();
-                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
+                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id)
+                    {
                         meta.recovery_id = Some(unnamed_ref.recovery_id.clone());
                         meta.display_name = unnamed_ref.display_name.clone();
                     }
@@ -1306,7 +1314,8 @@ impl Editor {
             .buffers()
             .keys()
             .filter(|id| {
-                self.active_window().buffer_metadata
+                self.active_window()
+                    .buffer_metadata
                     .get(id)
                     .is_some_and(|m| !m.hidden_from_tabs && !m.is_virtual())
             })

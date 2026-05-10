@@ -858,7 +858,10 @@ impl Editor {
         self.file_browser_layout = None;
 
         // Clone all immutable values before the mutable borrow
-        let display_name = self.active_window().buffer_metadata.get(&self.active_buffer())
+        let display_name = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
             .map(|m| m.display_name.clone())
             .unwrap_or_else(|| "[No Name]".to_string());
 
@@ -897,7 +900,10 @@ impl Editor {
             .get(&self.active_buffer())
             .map(|s| s.language.clone())
             .unwrap_or_default();
-        let buffer_lsp_disabled_reason = self.active_window().buffer_metadata.get(&self.active_buffer())
+        let buffer_lsp_disabled_reason = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
             .filter(|m| !m.lsp_enabled)
             .and_then(|m| m.lsp_disabled_reason.as_deref());
         let (lsp_status, lsp_indicator_state) = compose_lsp_status(
@@ -969,10 +975,16 @@ impl Editor {
             let active_split = self.effective_active_split();
             let active_buf = self.active_buffer();
             let default_cursors = crate::model::cursor::Cursors::new();
-            let is_read_only = self.active_window().buffer_metadata.get(&active_buf)
+            let is_read_only = self
+                .active_window()
+                .buffer_metadata
+                .get(&active_buf)
                 .map(|m| m.read_only)
                 .unwrap_or(false);
-            let is_synthetic_placeholder = self.active_window().buffer_metadata.get(&active_buf)
+            let is_synthetic_placeholder = self
+                .active_window()
+                .buffer_metadata
+                .get(&active_buf)
                 .map(|m| m.synthetic_placeholder)
                 .unwrap_or(false);
             // Single window borrow, split into buffers + cursors so the

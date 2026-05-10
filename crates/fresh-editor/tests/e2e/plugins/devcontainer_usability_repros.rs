@@ -572,10 +572,6 @@ fn auto_forward_notify_fires_for_configured_port() {
     copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "devcontainer");
 
-    // FAKE_DC_PORTS makes the fake `docker port <id>` report
-    // `9000/tcp -> 0.0.0.0:32768`, simulating a published port.
-    std::env::set_var("FAKE_DC_PORTS", "9000");
-
     let mut harness = EditorTestHarness::create(
         160,
         40,
@@ -584,6 +580,12 @@ fn auto_forward_notify_fires_for_configured_port() {
             .with_fake_devcontainer(),
     )
     .unwrap();
+    // Set after harness creation so the fake-devcontainer mutex
+    // (held by the harness) serializes us with sibling tests; setting
+    // before lock acquisition races against their subprocesses.
+    // FAKE_DC_PORTS makes the fake `docker port <id>` report
+    // `9000/tcp -> 0.0.0.0:32768`, simulating a published port.
+    std::env::set_var("FAKE_DC_PORTS", "9000");
     harness.tick_and_render().unwrap();
 
     attach_via_fake(&mut harness);

@@ -2940,7 +2940,8 @@ impl Editor {
                 .iter()
                 .any(|(buffer_id, state)| {
                     if state.buffer.is_modified() {
-                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id) {
+                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
+                        {
                             if let Some(file_path) = metadata.file_path() {
                                 return file_path.starts_with(&path);
                             }
@@ -2956,7 +2957,8 @@ impl Editor {
                 .iter()
                 .any(|(buffer_id, state)| {
                     if state.buffer.is_modified() {
-                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id) {
+                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
+                        {
                             return metadata.file_path() == Some(&path);
                         }
                     }

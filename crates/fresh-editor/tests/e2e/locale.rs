@@ -1,27 +1,17 @@
 // E2E tests for the locale/i18n system
 //
 // These tests mutate global locale state (rust_i18n::set_locale) and MUST run
-// sequentially.  We use a module-level mutex to prevent parallel execution.
+// sequentially. The lock lives in `common::locale_lock` so non-locale tests
+// that pin a non-English locale (`tests/e2e/lsp_completion_french_locale.rs`,
+// devcontainer fixture tests that call `fresh::i18n::set_locale`) can share
+// it — without that, this module's tests race against them and observe a
+// stale non-English locale, producing flaky failures like
+// `Expected screen to contain 'cancelada'` against a French screen.
 
 use crate::common::harness::EditorTestHarness;
+use crate::common::locale_lock::lock_locale;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, LocaleName};
-use std::sync::Mutex;
-
-static LOCALE_LOCK: Mutex<()> = Mutex::new(());
-
-/// Acquire the locale lock and reset to English on drop.
-fn lock_locale() -> impl Drop {
-    struct Guard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            fresh::i18n::set_locale("en");
-        }
-    }
-    let guard = LOCALE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    fresh::i18n::set_locale("en");
-    Guard(guard)
-}
 
 #[test]
 fn test_default_locale_shows_english_search_options() {

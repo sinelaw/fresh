@@ -1534,7 +1534,10 @@ impl Editor {
 
         // Get file_path from active buffer for workspace root detection
         let buffer_id = self.active_buffer();
-        let file_path = self.active_window().buffer_metadata.get(&buffer_id)
+        let file_path = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
             .and_then(|meta| meta.file_path().cloned());
 
         let (success, message) = if let Some(name) = server_name {

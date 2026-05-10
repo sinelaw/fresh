@@ -42,7 +42,8 @@ impl Editor {
         // wire-side ([`LspUri`]), so a string comparison is the right
         // primitive here — both sides are translated identically and
         // we never accidentally compare a host URI to a wire URI.
-        self.active_window().buffer_metadata
+        self.active_window()
+            .buffer_metadata
             .iter()
             .find(|(_, m)| m.file_uri().map(|u| u.as_str() == uri).unwrap_or(false))
             .map(|(buffer_id, _)| *buffer_id)
@@ -75,7 +76,8 @@ impl Editor {
                 if state.language != language {
                     return None;
                 }
-                self.active_window().buffer_metadata
+                self.active_window()
+                    .buffer_metadata
                     .get(buffer_id)
                     .and_then(|m| m.file_uri().cloned())
                     .map(|uri| (*buffer_id, uri))
@@ -1506,7 +1508,8 @@ impl Editor {
             .iter()
             .filter_map(|(buf_id, state)| {
                 if state.language == language {
-                    self.active_window().buffer_metadata
+                    self.active_window()
+                        .buffer_metadata
                         .get(buf_id)
                         .and_then(|meta| meta.file_path().map(|p| (*buf_id, p.clone())))
                 } else {

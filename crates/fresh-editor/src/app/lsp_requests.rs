@@ -2079,7 +2079,10 @@ impl Editor {
         edits: Vec<lsp_types::TextEdit>,
     ) -> AnyhowResult<usize> {
         // Find the buffer for this URI
-        let buffer_id = self.active_window().buffer_metadata.iter()
+        let buffer_id = self
+            .active_window()
+            .buffer_metadata
+            .iter()
             .find(|(_, meta)| meta.file_uri().map(|u| u.as_str() == uri).unwrap_or(false))
             .map(|(id, _)| *id);
 
@@ -3331,7 +3334,10 @@ impl Editor {
 
         if sent {
             self.active_window_mut().next_lsp_request_id += 1;
-        } else if self.active_window().buffer_metadata.get(&buffer_id)
+        } else if self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
             .and_then(|m| m.file_path())
             .is_none()
         {

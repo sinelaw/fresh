@@ -252,9 +252,6 @@ fn run_attach_and_postcreate(
 #[test]
 fn lifecycle_command_cwd_must_be_remote_workspace_folder() {
     let (_w_temp, workspace, probe) = set_up_probe_workspace("s1-cwd", None, None);
-    // Fake will report `remoteWorkspaceFolder` as
-    // `/workspaces/s1-cwd-distinct` — distinct from the host path.
-    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/s1-cwd-distinct");
 
     let mut harness = EditorTestHarness::create(
         160,
@@ -264,6 +261,12 @@ fn lifecycle_command_cwd_must_be_remote_workspace_folder() {
             .with_fake_devcontainer(),
     )
     .unwrap();
+    // Set after harness creation so the fake-devcontainer mutex
+    // (held by the harness) serializes us with sibling tests; setting
+    // before lock acquisition races against their subprocesses.
+    // Fake will report `remoteWorkspaceFolder` as
+    // `/workspaces/s1-cwd-distinct` — distinct from the host path.
+    std::env::set_var("FAKE_DC_REMOTE_WORKSPACE", "/workspaces/s1-cwd-distinct");
     harness.tick_and_render().unwrap();
 
     let probe_text = run_attach_and_postcreate(&mut harness, &probe, |l| {

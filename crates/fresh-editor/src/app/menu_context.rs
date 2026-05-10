@@ -47,7 +47,10 @@ impl Editor {
         // True for any real buffer; false when the active buffer is the
         // synthesized placeholder kept alive after a last-buffer close with
         // `auto_create_empty_buffer_on_last_buffer_close` disabled.
-        let has_buffer = !self.active_window().buffer_metadata.get(&self.active_buffer())
+        let has_buffer = !self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
             .map(|m| m.synthetic_placeholder)
             .unwrap_or(false);
         let has_selection = has_buffer && self.has_active_selection();

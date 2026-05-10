@@ -27,7 +27,10 @@ impl Editor {
             return;
         };
         let language = state.language.clone();
-        let file_path = self.active_window().buffer_metadata.get(&buffer_id)
+        let file_path = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
             .and_then(|meta| meta.file_path().cloned());
 
         // Get configured servers for this language
@@ -130,7 +133,8 @@ impl Editor {
             .iter()
             .filter_map(|(buf_id, state)| {
                 if state.language == language {
-                    self.active_window().buffer_metadata
+                    self.active_window()
+                        .buffer_metadata
                         .get(buf_id)
                         .and_then(|meta| meta.file_path().map(|p| (*buf_id, p.clone())))
                 } else {
@@ -207,9 +211,7 @@ impl Editor {
                                 .did_open(uri.clone(), content.clone(), lang_id.clone())
                         {
                             tracing::warn!("LSP did_open to '{}' failed: {}", name, e);
-                        } else if let Some(metadata) =
-                            __win.buffer_metadata.get_mut(&buffer_id)
-                        {
+                        } else if let Some(metadata) = __win.buffer_metadata.get_mut(&buffer_id) {
                             metadata.lsp_opened_with.insert(handle_id);
                         }
                     }
@@ -462,7 +464,10 @@ impl Editor {
 
                 // Start the server now so the user doesn't have to
                 // re-open the file to see LSP features come alive.
-                let file_path = self.active_window().buffer_metadata.get(&self.active_buffer())
+                let file_path = self
+                    .active_window()
+                    .buffer_metadata
+                    .get(&self.active_buffer())
                     .and_then(|meta| meta.file_path().cloned());
                 let __active_id = self.active_window;
                 if let Some(lsp) = self
@@ -477,7 +482,10 @@ impl Editor {
             }
         } else if let Some(language) = action_key.strip_prefix("start:") {
             // Start/restart LSP for this language (same as the "Start/Restart LSP" command)
-            let file_path = self.active_window().buffer_metadata.get(&self.active_buffer())
+            let file_path = self
+                .active_window()
+                .buffer_metadata
+                .get(&self.active_buffer())
                 .and_then(|meta| meta.file_path().cloned());
 
             let __active_id = self.active_window;
@@ -497,7 +505,10 @@ impl Editor {
         } else if let Some(target) = action_key.strip_prefix("restart:") {
             // Parse language/server_name
             if let Some((language, server_name)) = target.split_once('/') {
-                let file_path = self.active_window().buffer_metadata.get(&self.active_buffer())
+                let file_path = self
+                    .active_window()
+                    .buffer_metadata
+                    .get(&self.active_buffer())
                     .and_then(|meta| meta.file_path().cloned());
 
                 let __active_id = self.active_window;
@@ -858,7 +869,8 @@ impl Editor {
             .iter()
             .filter(|(_, s)| s.language == language)
             .filter_map(|(id, _)| {
-                self.active_window().buffer_metadata
+                self.active_window()
+                    .buffer_metadata
                     .get(id)
                     .and_then(|m| m.file_uri())
                     .cloned()
@@ -993,7 +1005,10 @@ impl Editor {
         // document_versions still has the path, and should_skip_did_open will
         // block the didOpen when LSP is re-enabled — causing a desync where
         // the server has stale content. (GitHub issue #952)
-        if let Some(uri) = self.active_window().buffer_metadata.get(&buffer_id)
+        if let Some(uri) = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
             .and_then(|m| m.file_uri())
             .cloned()
         {
@@ -1043,7 +1058,10 @@ impl Editor {
         self.set_status_message(t!("lsp.disabled_for_buffer").to_string());
 
         // Clear diagnostics for this buffer
-        let uri = self.active_window().buffer_metadata.get(&buffer_id)
+        let uri = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
             .and_then(|m| m.file_uri())
             .map(|u| u.as_str().to_string());
 
@@ -1132,7 +1150,10 @@ impl Editor {
 
         // Try to spawn and send didOpen
         use crate::services::lsp::manager::LspSpawnResult;
-        let file_path = self.active_window().buffer_metadata.get(&buffer_id)
+        let file_path = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
             .and_then(|m| m.file_path())
             .cloned();
         // Pre-collect buffer info needed later (line/char/version) so

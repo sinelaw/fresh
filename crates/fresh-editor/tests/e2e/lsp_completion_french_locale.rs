@@ -12,6 +12,7 @@
 //! when using a non-English locale.
 
 use crate::common::harness::EditorTestHarness;
+use crate::common::locale_lock::lock_locale;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, LocaleName};
 use fresh::model::event::{
@@ -23,7 +24,12 @@ const FRENCH_COMPLETION_TITLE: &str = "Compl\u{00e9}tion";
 
 /// Helper: set up an editor with French locale and a completion popup.
 /// Uses the translated popup title to match what the real LSP code does.
-fn setup_french_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarness> {
+///
+/// Returns the harness paired with the locale-lock guard so the caller
+/// holds the lock for the test's lifetime; drop the guard last so the
+/// global locale resets to English before the next test runs.
+fn setup_french_completion_popup(prefix: &str) -> anyhow::Result<(EditorTestHarness, impl Drop)> {
+    let lock = lock_locale();
     let config = Config {
         locale: LocaleName(Some("fr".to_string())),
         ..Default::default()
@@ -111,7 +117,7 @@ fn setup_french_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarne
         "Completion popup should be visible after setup"
     );
 
-    Ok(harness)
+    Ok((harness, lock))
 }
 
 /// After typing a character to filter the completion list with French locale,
@@ -124,7 +130,7 @@ fn setup_french_completion_popup(prefix: &str) -> anyhow::Result<EditorTestHarne
 /// editor appear stuck.
 #[test]
 fn test_french_locale_completion_typing_not_stuck_after_refilter() -> anyhow::Result<()> {
-    let mut harness = setup_french_completion_popup("test")?;
+    let (mut harness, _lock) = setup_french_completion_popup("test")?;
 
     // Type '_' to filter to "test_*" items - this triggers refilter_completion_popup
     harness.send_key(KeyCode::Char('_'), KeyModifiers::SHIFT)?;
@@ -176,7 +182,7 @@ fn test_french_locale_completion_typing_not_stuck_after_refilter() -> anyhow::Re
 /// "Complétion" so the check fails and the completion is never inserted.
 #[test]
 fn test_french_locale_completion_tab_confirms_fr() -> anyhow::Result<()> {
-    let mut harness = setup_french_completion_popup("test")?;
+    let (mut harness, _lock) = setup_french_completion_popup("test")?;
 
     // Appuyer sur Tab pour confirmer le premier élément de complétion ("test_function")
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
@@ -201,7 +207,7 @@ fn test_french_locale_completion_tab_confirms_fr() -> anyhow::Result<()> {
 /// Tab should also confirm a completion with French locale.
 #[test]
 fn test_french_locale_completion_tab_confirms() -> anyhow::Result<()> {
-    let mut harness = setup_french_completion_popup("test")?;
+    let (mut harness, _lock) = setup_french_completion_popup("test")?;
 
     // Press Tab to confirm the first completion item ("test_function")
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;

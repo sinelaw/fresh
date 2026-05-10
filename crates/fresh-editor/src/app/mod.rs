@@ -1336,7 +1336,8 @@ impl Editor {
             return composite.name.clone();
         }
 
-        self.active_window().buffer_metadata
+        self.active_window()
+            .buffer_metadata
             .get(&buffer_id)
             .map(|m| m.display_name.clone())
             .or_else(|| {
