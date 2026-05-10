@@ -700,5 +700,4 @@ impl Editor {
             self.handle_refresh_lines(buffer_id);
         }
     }
-
 }

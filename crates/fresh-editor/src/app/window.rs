@@ -1494,11 +1494,7 @@ impl Window {
         };
         let file_path = metadata.file_path().cloned();
 
-        let language = match self
-            .buffers
-            .get(&buffer_id)
-            .map(|s| s.language.clone())
-        {
+        let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
             Some(l) => l,
             None => {
                 tracing::debug!(
@@ -1748,13 +1744,8 @@ impl Window {
             }
         }
 
-        let (mgr, vs_map) = self
-            .splits
-            .as_ref()
-            .expect("splits checked above");
-        let sync_group = vs_map
-            .get(&active_split)
-            .and_then(|vs| vs.sync_group);
+        let (mgr, vs_map) = self.splits.as_ref().expect("splits checked above");
+        let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
         let splits_to_scroll = if let Some(group_id) = sync_group {
             mgr.get_splits_in_group(group_id, vs_map)
         } else {
@@ -1853,9 +1844,7 @@ impl Window {
         }
 
         let (mgr, vs_map) = self.splits.as_ref().expect("splits checked above");
-        let sync_group = vs_map
-            .get(&active_split)
-            .and_then(|vs| vs.sync_group);
+        let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
         let splits_to_scroll = if let Some(group_id) = sync_group {
             mgr.get_splits_in_group(group_id, vs_map)
         } else {
@@ -1891,9 +1880,7 @@ impl Window {
         };
         let active_split = mgr.active_split();
 
-        let sync_group = vs_map
-            .get(&active_split)
-            .and_then(|vs| vs.sync_group);
+        let sync_group = vs_map.get(&active_split).and_then(|vs| vs.sync_group);
         let splits_to_recenter = if let Some(group_id) = sync_group {
             mgr.get_splits_in_group(group_id, vs_map)
         } else {
