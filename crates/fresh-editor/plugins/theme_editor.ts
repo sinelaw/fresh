@@ -1,4 +1,5 @@
 /// <reference path="./lib/fresh.d.ts" />
+import { hintBar, parseHintString, WidgetPanel } from "./lib/index.ts";
 const editor = getEditor();
 
 
@@ -414,6 +415,12 @@ interface ThemeEditorState {
   viewportWidth: number;
   /** Buffer group ID (when using buffer groups) */
   groupId: number | null;
+  /** Widget panel rendering the footer hint bar. Created when the
+   * buffer-group view opens. The tree and picker panels still use
+   * `setPanelContent` because they own the focus model (header
+   * row, separator, optional filter line, then selectable section /
+   * field rows) which doesn't map cleanly to a single List today. */
+  footerPanel: WidgetPanel | null;
   /** Panel buffer IDs keyed by panel name */
   panelBuffers: Record<string, number>;
 }
@@ -478,6 +485,7 @@ const state: ThemeEditorState = {
   viewportHeight: 40,
   viewportWidth: 120,
   groupId: null,
+  footerPanel: null,
   panelBuffers: {},
 };
 
@@ -1437,9 +1445,16 @@ function buildPickerPanelEntries(): TextPropertyEntry[] {
   return entries;
 }
 
-function buildFooterPanelEntries(): TextPropertyEntry[] {
-  const hintText = " ↑↓ Navigate  Tab Switch Panel  Enter Edit  /Filter  Ctrl+S Save  Esc Close";
-  return [{ text: hintText + "\n", style: { fg: colors.header } }];
+/** Render the footer hints into the footer widget panel. The hint
+ * string follows `parseHintString`'s convention (tokens separated
+ * by two spaces; each token is `<keys>:<label>` or `<keys> <label>`)
+ * so the host's HintBar styles the keys with `ui.help_key_fg`
+ * consistently with every other plugin's footer. */
+function renderThemeEditorFooter(): void {
+  if (state.footerPanel === null) return;
+  const hintString =
+    "↑↓:Navigate  Tab:Switch Panel  Enter:Edit  /:Filter  Ctrl+S:Save  Esc:Close";
+  state.footerPanel.set(hintBar(parseHintString(hintString)));
 }
 
 function updateDisplay(): void {
@@ -1456,7 +1471,7 @@ function updateDisplay(): void {
   if (state.groupId !== null) {
     editor.setPanelContent(state.groupId, "tree", buildTreePanelEntries());
     editor.setPanelContent(state.groupId, "picker", buildPickerPanelEntries());
-    editor.setPanelContent(state.groupId, "footer", buildFooterPanelEntries());
+    renderThemeEditorFooter();
 
     // Keep the selected tree row in view. The plugin's `selectedIndex`
     // navigation doesn't move the buffer cursor, so without this the
@@ -2678,6 +2693,13 @@ async function doOpenThemeEditor(): Promise<void> {
   state.bufferId = groupResult.panels["tree"]; // representative buffer
   state.splitId = null;
 
+  // Mount the footer as a widget panel (HintBar). Tree + picker
+  // panels still use `setPanelContent` (see updateDisplay).
+  const footerBufferId = groupResult.panels["footer"];
+  if (typeof footerBufferId === "number") {
+    state.footerPanel = new WidgetPanel(footerBufferId);
+  }
+
   if (state.bufferId !== null) {
     // Set initial content for all panels
     updateDisplay();
@@ -2714,7 +2736,10 @@ registerHandler("theme_editor_close", theme_editor_close);
  * Actually close the editor (called after confirmation or when no changes)
  */
 function doCloseEditor(): void {
-  // Close the buffer group (or fall back to single buffer close)
+  // Close the buffer group (or fall back to single buffer close).
+  // Closing the buffer group tears down the footer buffer too,
+  // implicitly dropping the widget panel rendering into it.
+  state.footerPanel = null;
   if (state.groupId !== null) {
     editor.closeBufferGroup(state.groupId);
     state.groupId = null;
