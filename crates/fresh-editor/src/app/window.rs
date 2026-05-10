@@ -1370,6 +1370,57 @@ impl Window {
         }
     }
 
+    // ---- File-explorer leaf delegators ----
+
+    /// Whether this window's file-explorer panel is visible.
+    pub fn file_explorer_is_visible(&self) -> bool {
+        self.file_explorer_visible && self.file_explorer.is_some()
+    }
+
+    /// Extend the file-explorer selection upward.
+    pub fn file_explorer_extend_selection_up(&mut self) {
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            explorer.extend_selection_up();
+        }
+    }
+
+    /// Extend the file-explorer selection downward.
+    pub fn file_explorer_extend_selection_down(&mut self) {
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            explorer.extend_selection_down();
+        }
+    }
+
+    /// Toggle the selection state of the focused file-explorer entry.
+    pub fn file_explorer_toggle_select(&mut self) {
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            explorer.toggle_select();
+        }
+    }
+
+    /// Select every visible entry in the file explorer.
+    pub fn file_explorer_select_all(&mut self) {
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            explorer.select_all();
+        }
+    }
+
+    /// Push a character onto the file-explorer search filter.
+    pub fn file_explorer_search_push_char(&mut self, c: char) {
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            explorer.search_push_char(c);
+            explorer.update_scroll_for_selection();
+        }
+    }
+
+    /// Pop the last character from the file-explorer search filter.
+    pub fn file_explorer_search_pop_char(&mut self) {
+        if let Some(explorer) = self.file_explorer.as_mut() {
+            explorer.search_pop_char();
+            explorer.update_scroll_for_selection();
+        }
+    }
+
     /// Atomically update both sides of the pane-buffer invariant for a
     /// given leaf split: the split tree's stored buffer AND the matching
     /// `SplitViewState.active_buffer` / `keyed_states` map.

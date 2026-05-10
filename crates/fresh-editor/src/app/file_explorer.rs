@@ -1028,45 +1028,11 @@ impl Editor {
         }
     }
 
-    pub fn file_explorer_extend_selection_up(&mut self) {
-        if let Some(explorer) = self.file_explorer_mut() {
-            explorer.extend_selection_up();
-        }
-    }
-
-    pub fn file_explorer_extend_selection_down(&mut self) {
-        if let Some(explorer) = self.file_explorer_mut() {
-            explorer.extend_selection_down();
-        }
-    }
-
-    pub fn file_explorer_toggle_select(&mut self) {
-        if let Some(explorer) = self.file_explorer_mut() {
-            explorer.toggle_select();
-        }
-    }
-
-    pub fn file_explorer_select_all(&mut self) {
-        if let Some(explorer) = self.file_explorer_mut() {
-            explorer.select_all();
-        }
-    }
-
-    /// Add a character to the file explorer search
-    pub fn file_explorer_search_push_char(&mut self, c: char) {
-        if let Some(explorer) = self.file_explorer_mut() {
-            explorer.search_push_char(c);
-            explorer.update_scroll_for_selection();
-        }
-    }
-
-    /// Remove a character from the file explorer search (backspace)
-    pub fn file_explorer_search_pop_char(&mut self) {
-        if let Some(explorer) = self.file_explorer_mut() {
-            explorer.search_pop_char();
-            explorer.update_scroll_for_selection();
-        }
-    }
+    // `file_explorer_extend_selection_up/down`,
+    // `file_explorer_toggle_select`, `file_explorer_select_all`,
+    // `file_explorer_search_push_char`, `file_explorer_search_pop_char`
+    // moved to `impl Window`. Editor callers reach them via
+    // `self.active_window_mut().file_explorer_X(...)`.
 
     pub fn handle_set_file_explorer_decorations(
         &mut self,

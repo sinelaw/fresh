@@ -1793,17 +1793,25 @@ impl Editor {
             Action::FileExplorerToggleHidden => self.file_explorer_toggle_hidden(),
             Action::FileExplorerToggleGitignored => self.file_explorer_toggle_gitignored(),
             Action::FileExplorerSearchClear => self.file_explorer_search_clear(),
-            Action::FileExplorerSearchBackspace => self.file_explorer_search_pop_char(),
+            Action::FileExplorerSearchBackspace => {
+                self.active_window_mut().file_explorer_search_pop_char()
+            }
             Action::FileExplorerCopy => self.file_explorer_copy(),
             Action::FileExplorerCut => self.file_explorer_cut(),
             Action::FileExplorerPaste => self.file_explorer_paste(),
             Action::FileExplorerDuplicate => self.file_explorer_duplicate(),
             Action::FileExplorerCopyFullPath => self.file_explorer_copy_path(false),
             Action::FileExplorerCopyRelativePath => self.file_explorer_copy_path(true),
-            Action::FileExplorerExtendSelectionUp => self.file_explorer_extend_selection_up(),
-            Action::FileExplorerExtendSelectionDown => self.file_explorer_extend_selection_down(),
-            Action::FileExplorerToggleSelect => self.file_explorer_toggle_select(),
-            Action::FileExplorerSelectAll => self.file_explorer_select_all(),
+            Action::FileExplorerExtendSelectionUp => {
+                self.active_window_mut().file_explorer_extend_selection_up()
+            }
+            Action::FileExplorerExtendSelectionDown => self
+                .active_window_mut()
+                .file_explorer_extend_selection_down(),
+            Action::FileExplorerToggleSelect => {
+                self.active_window_mut().file_explorer_toggle_select()
+            }
+            Action::FileExplorerSelectAll => self.active_window_mut().file_explorer_select_all(),
             Action::RemoveSecondaryCursors => {
                 // Convert action to events and apply them
                 if let Some(events) = self.action_to_events(Action::RemoveSecondaryCursors) {
@@ -2417,7 +2425,7 @@ impl Editor {
                 if self.is_prompting() {
                     return self.handle_insert_char_prompt(c);
                 } else if self.key_context == KeyContext::FileExplorer {
-                    self.file_explorer_search_push_char(c);
+                    self.active_window_mut().file_explorer_search_push_char(c);
                 } else {
                     self.handle_insert_char_editor(c)?;
                 }
