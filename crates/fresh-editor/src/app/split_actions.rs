@@ -9,7 +9,7 @@
 
 use rust_i18n::t;
 
-use crate::model::event::{BufferId, ContainerId, Event, LeafId, SplitDirection, SplitId};
+use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
 use crate::view::folding::CollapsedFoldLineRange;
 use crate::view::split::SplitViewState;
 
@@ -301,127 +301,6 @@ impl Editor {
         if self.active_window().is_terminal_buffer(buffer_id) {
             self.active_window_mut().terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
-        }
-    }
-
-    /// Adjust cursors in other splits that share the same buffer after an edit
-    pub(crate) fn adjust_other_split_cursors_for_event(&mut self, event: &Event) {
-        // Handle BulkEdit - cursors are managed by the event
-        if let Event::BulkEdit { new_cursors, .. } = event {
-            // Get the current buffer and split
-            let current_buffer_id = self.active_buffer();
-            let current_split_id = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
-
-            // Find all other splits that share the same buffer
-            let splits_for_buffer = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .splits_for_buffer(current_buffer_id);
-
-            // Get buffer length to clamp cursor positions
-            let buffer_len = self
-                .buffers()
-                .get(&current_buffer_id)
-                .map(|s| s.buffer.len())
-                .unwrap_or(0);
-
-            // Reset cursors in each other split to primary cursor position
-            for split_id in splits_for_buffer {
-                if split_id == current_split_id {
-                    continue;
-                }
-
-                if let Some(view_state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&split_id)
-                {
-                    // Use the primary cursor position from the event
-                    if let Some((_, pos, _)) = new_cursors.first() {
-                        let new_pos = (*pos).min(buffer_len);
-                        view_state.cursors.primary_mut().position = new_pos;
-                        view_state.cursors.primary_mut().anchor = None;
-                    }
-                }
-            }
-            return;
-        }
-
-        // Find the edit parameters from the event
-        let adjustments = match event {
-            Event::Insert { position, text, .. } => {
-                vec![(*position, 0, text.len())]
-            }
-            Event::Delete { range, .. } => {
-                vec![(range.start, range.len(), 0)]
-            }
-            Event::Batch { events, .. } => {
-                // Collect all edits from the batch
-                events
-                    .iter()
-                    .filter_map(|e| match e {
-                        Event::Insert { position, text, .. } => Some((*position, 0, text.len())),
-                        Event::Delete { range, .. } => Some((range.start, range.len(), 0)),
-                        _ => None,
-                    })
-                    .collect()
-            }
-            _ => vec![],
-        };
-
-        if adjustments.is_empty() {
-            return;
-        }
-
-        // Get the current buffer and split
-        let current_buffer_id = self.active_buffer();
-        let current_split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-
-        // Find all other splits that share the same buffer
-        let splits_for_buffer = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .splits_for_buffer(current_buffer_id);
-
-        // Adjust cursors in each other split's view state
-        for split_id in splits_for_buffer {
-            if split_id == current_split_id {
-                continue; // Skip the current split (already adjusted by BufferState::apply)
-            }
-
-            if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&split_id)
-            {
-                for (edit_pos, old_len, new_len) in &adjustments {
-                    view_state
-                        .cursors
-                        .adjust_for_edit(*edit_pos, *old_len, *new_len);
-                }
-            }
         }
     }
 

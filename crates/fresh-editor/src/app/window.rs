@@ -41,7 +41,7 @@
 
 use crate::app::types::WindowLayoutCache;
 use crate::app::window_resources::WindowResources;
-use crate::model::event::LeafId;
+use crate::model::event::{Event, LeafId};
 use crate::services::lsp::manager::LspManager;
 use crate::view::file_tree::FileTreeView;
 use crate::view::split::{SplitManager, SplitViewState};
@@ -1460,6 +1460,77 @@ impl Window {
                 view_state.invalidate_layout();
                 view_state.view_transform = None;
                 view_state.view_transform_stale = true;
+            }
+        }
+    }
+
+    /// Adjust cursors in other splits that share the same buffer after
+    /// an edit. The split that originated the event already had its
+    /// cursors moved by `BufferState::apply`; this method walks every
+    /// other split displaying the same buffer and shifts (or, for a
+    /// `BulkEdit`, resets) their cursors so they don't dangle past
+    /// freshly-deleted text.
+    pub fn adjust_other_split_cursors_for_event(&mut self, event: &Event) {
+        let current_buffer_id = self.active_buffer();
+        let buffer_len = self
+            .buffers
+            .get(&current_buffer_id)
+            .map(|s| s.buffer.len())
+            .unwrap_or(0);
+        let Some((mgr, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let current_split_id = mgr.active_split();
+        let splits_for_buffer = mgr.splits_for_buffer(current_buffer_id);
+
+        if let Event::BulkEdit { new_cursors, .. } = event {
+            for split_id in splits_for_buffer {
+                if split_id == current_split_id {
+                    continue;
+                }
+                if let Some(view_state) = vs_map.get_mut(&split_id) {
+                    if let Some((_, pos, _)) = new_cursors.first() {
+                        let new_pos = (*pos).min(buffer_len);
+                        view_state.cursors.primary_mut().position = new_pos;
+                        view_state.cursors.primary_mut().anchor = None;
+                    }
+                }
+            }
+            return;
+        }
+
+        let adjustments: Vec<(usize, usize, usize)> = match event {
+            Event::Insert { position, text, .. } => {
+                vec![(*position, 0, text.len())]
+            }
+            Event::Delete { range, .. } => {
+                vec![(range.start, range.len(), 0)]
+            }
+            Event::Batch { events, .. } => events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Insert { position, text, .. } => Some((*position, 0, text.len())),
+                    Event::Delete { range, .. } => Some((range.start, range.len(), 0)),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        if adjustments.is_empty() {
+            return;
+        }
+
+        for split_id in splits_for_buffer {
+            if split_id == current_split_id {
+                continue;
+            }
+            if let Some(view_state) = vs_map.get_mut(&split_id) {
+                for (edit_pos, old_len, new_len) in &adjustments {
+                    view_state
+                        .cursors
+                        .adjust_for_edit(*edit_pos, *old_len, *new_len);
+                }
             }
         }
     }

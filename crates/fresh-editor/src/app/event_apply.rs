@@ -144,7 +144,8 @@ impl Editor {
         }
 
         // 2. Adjust cursors in other splits that share the same buffer
-        self.adjust_other_split_cursors_for_event(event);
+        self.active_window_mut()
+            .adjust_other_split_cursors_for_event(event);
 
         // 3. Clear search highlights on edit (Insert/Delete events)
         // This preserves highlights while navigating but clears them when modifying text
@@ -485,8 +486,9 @@ impl Editor {
 
         // Post-processing (layout invalidation, split cursor sync, etc.)
         let buf = self.active_buffer();
-        self.active_window_mut().invalidate_layouts_for_buffer(buf);
-        self.adjust_other_split_cursors_for_event(&bulk_edit);
+        let win = self.active_window_mut();
+        win.invalidate_layouts_for_buffer(buf);
+        win.adjust_other_split_cursors_for_event(&bulk_edit);
         // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
 
         // Notify LSP of the change using full document replacement.
