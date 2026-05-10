@@ -518,20 +518,8 @@ pub struct Editor {
     // file_explorer moved onto `Window`. Access via
     // `Editor::file_explorer()` / `file_explorer_mut()` —
     // each window has its own tree view.
-    /// Buffer currently opened in "preview" (ephemeral) mode, together with
-    /// the split (pane) it lives in. At most one preview exists editor-wide.
-    ///
-    /// Invariants:
-    /// - The `is_preview` flag on the referenced buffer's metadata is true
-    ///   iff this tuple is `Some` and points at that buffer.
-    /// - The preview is **anchored to the split it was opened in**. Moving
-    ///   focus to a different split, splitting the layout, or closing the
-    ///   hosting split promotes the preview to a permanent tab first, so
-    ///   layout manipulations never silently destroy the tab the user was
-    ///   reading.
-    /// - Cleared when the buffer is closed or promoted (edit / double-click
-    ///   / tab-click / explicit Enter in the explorer).
-    preview: Option<(LeafId, BufferId)>,
+    // `preview` (per-window preview-tab tracker) moved onto `Window`.
+    // Each window has its own preview slot.
 
     // suppress_position_history_once moved onto `Window` (Step 0f).
     /// Filesystem manager for file explorer

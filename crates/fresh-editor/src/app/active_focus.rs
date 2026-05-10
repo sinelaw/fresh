@@ -208,7 +208,8 @@ impl Editor {
         // Preview is anchored to the split it was opened in. Moving focus to
         // a different split commits the preview — walking away is commitment.
         if split_changed {
-            self.promote_preview_if_not_in_split(split_id);
+            self.active_window_mut()
+                .promote_preview_if_not_in_split(split_id);
         }
 
         // If `split_id` is not in the main split tree, it must be an inner

@@ -300,11 +300,20 @@ pub struct Window {
     /// Editor-global resources shared by `Arc` clone (config, theme
     /// registry, keybindings, command registry, filesystem authority,
     /// the buffer-id allocator, …). See [`WindowResources`] for the
-    /// full inventory and rationale. A handler that needs any of
-    /// these reads them through `self.resources.X` rather than
-    /// reaching back to `Editor` — that's what lets handlers live on
-    /// `impl Window` without requiring an `&mut Editor` parameter.
+    /// full inventory and rationale.
     pub(crate) resources: WindowResources,
+
+    /// Buffer currently opened in "preview" (ephemeral) mode, together
+    /// with the split (pane) it lives in. At most one preview exists
+    /// per window. Pre Step-0 this lived on `Editor`; moved here so
+    /// preview tracking follows the window's other view-state.
+    ///
+    /// Invariants:
+    /// - The `is_preview` flag on the referenced buffer's metadata is
+    ///   true iff this tuple is `Some` and points at that buffer.
+    /// - The preview is anchored to the split it was opened in.
+    /// - Cleared when the buffer is closed or promoted.
+    pub preview: Option<(LeafId, BufferId)>,
 }
 
 impl Window {
@@ -848,6 +857,7 @@ impl Window {
             composite_view_states: HashMap::new(),
             layout_cache: WindowLayoutCache::default(),
             resources,
+            preview: None,
         }
     }
 
@@ -999,6 +1009,68 @@ impl Window {
         self.event_logs
             .get_mut(&buf)
             .expect("active buffer must have an event log")
+    }
+
+    // ---- Preview-tab methods ----
+
+    /// Promote a specific buffer from preview to permanent, if it was
+    /// in preview mode. No-op if the buffer is not currently a preview.
+    pub fn promote_buffer_from_preview(&mut self, buffer_id: BufferId) {
+        if let Some(m) = self.buffer_metadata.get_mut(&buffer_id) {
+            m.is_preview = false;
+        }
+        if let Some((_, id)) = self.preview {
+            if id == buffer_id {
+                self.preview = None;
+            }
+        }
+    }
+
+    /// Promote the active buffer from preview to permanent. Called on
+    /// any buffer mutation so touching a preview buffer commits it.
+    pub fn promote_active_buffer_from_preview(&mut self) {
+        let id = self.active_buffer();
+        self.promote_buffer_from_preview(id);
+    }
+
+    /// Promote the current preview, regardless of which buffer it
+    /// points at. Used before layout changes (split, close-split,
+    /// move-tab) where the preview invariant ("anchored to a specific
+    /// split") would otherwise be broken by the operation itself.
+    pub fn promote_current_preview(&mut self) {
+        if let Some((_, id)) = self.preview.take() {
+            if let Some(m) = self.buffer_metadata.get_mut(&id) {
+                m.is_preview = false;
+            }
+        }
+    }
+
+    /// Promote the current preview if it belongs to a split other
+    /// than `new_split`. Called from split-focus-change paths so
+    /// that moving focus away from the preview's pane commits it.
+    pub fn promote_preview_if_not_in_split(&mut self, new_split: LeafId) {
+        if let Some((preview_split, _)) = self.preview {
+            if preview_split != new_split {
+                self.promote_current_preview();
+            }
+        }
+    }
+
+    /// Whether the given buffer is currently in preview (ephemeral)
+    /// mode. Primarily for tests; production code reads
+    /// `self.preview` or relies on the `is_preview` flag in the
+    /// buffer's metadata.
+    pub fn is_buffer_preview(&self, buffer_id: BufferId) -> bool {
+        self.buffer_metadata
+            .get(&buffer_id)
+            .map(|m| m.is_preview)
+            .unwrap_or(false)
+    }
+
+    /// The (split, buffer) tuple of the current preview tab, if any.
+    /// Intended for tests that verify preview anchoring semantics.
+    pub fn current_preview(&self) -> Option<(LeafId, BufferId)> {
+        self.preview
     }
 }
 

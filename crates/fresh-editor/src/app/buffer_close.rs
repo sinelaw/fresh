@@ -44,9 +44,9 @@ impl Editor {
     fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
         // Clear preview tracking if we're closing the current preview buffer.
         // This keeps `preview` from pointing at a freed buffer id.
-        if let Some((_, preview_id)) = self.preview {
+        if let Some((_, preview_id)) = self.active_window().preview {
             if preview_id == id {
-                self.preview = None;
+                self.active_window_mut().preview = None;
             }
         }
 

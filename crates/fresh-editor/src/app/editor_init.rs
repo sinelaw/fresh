@@ -855,7 +855,6 @@ impl Editor {
             async_bridge: Some(async_bridge),
             previous_viewports: HashMap::new(),
             scroll_sync_manager: ScrollSyncManager::new(),
-            preview: None,
             fs_manager,
             authority,
             pending_authority: None,

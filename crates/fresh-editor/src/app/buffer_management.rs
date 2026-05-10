@@ -182,7 +182,7 @@ impl Editor {
 
         // New buffer. Resolve the existing preview (if any) relative to the
         // target split.
-        match self.preview.take() {
+        match self.active_window_mut().preview.take() {
             Some((prev_split, old_id)) if prev_split == target_split => {
                 // Same split: close the old preview so the new one takes its
                 // place. If close fails (modified buffer — shouldn't happen
@@ -215,31 +215,16 @@ impl Editor {
         if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
             meta.is_preview = true;
         }
-        self.preview = Some((target_split, buffer_id));
+        self.active_window_mut().preview = Some((target_split, buffer_id));
 
         Ok(buffer_id)
     }
 
-    /// Promote a specific buffer from preview to permanent, if it was in
-    /// preview mode. No-op if the buffer is not currently a preview.
-    pub(crate) fn promote_buffer_from_preview(&mut self, buffer_id: BufferId) {
-        if let Some(m) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
-            m.is_preview = false;
-        }
-        if let Some((_, id)) = self.preview {
-            if id == buffer_id {
-                self.preview = None;
-            }
-        }
-    }
-
-    /// Promote the active buffer from preview to permanent, if applicable.
-    /// Called on any buffer mutation so that touching a preview buffer
-    /// commits it to a permanent tab.
-    pub(crate) fn promote_active_buffer_from_preview(&mut self) {
-        let id = self.active_buffer();
-        self.promote_buffer_from_preview(id);
-    }
+    // `promote_buffer_from_preview`, `promote_active_buffer_from_preview`,
+    // `promote_current_preview`, `promote_preview_if_not_in_split`,
+    // `is_buffer_preview`, `current_preview` moved to `impl Window`
+    // (in `window.rs`). Editor callers reach them via
+    // `self.active_window_mut().X(...)`.
 
     /// Re-point every buffer whose file path sits at or under `old_root`
     /// to the equivalent location under `new_root`. Returns the ids of
@@ -318,53 +303,13 @@ impl Editor {
         affected
     }
 
-    /// Promote the current preview, regardless of which buffer it points at.
-    /// Used before layout changes (split, close-split, move-tab) where the
-    /// preview invariant ("anchored to a specific split") would otherwise
-    /// be broken by the operation itself.
-    pub(crate) fn promote_current_preview(&mut self) {
-        if let Some((_, id)) = self.preview.take() {
-            if let Some(m) = self.active_window_mut().buffer_metadata.get_mut(&id) {
-                m.is_preview = false;
-            }
-        }
-    }
-
-    /// Promote the current preview if it belongs to a split other than
-    /// `new_split`. Called from split-focus-change paths so that moving
-    /// focus away from the preview's pane commits it.
-    pub(crate) fn promote_preview_if_not_in_split(&mut self, new_split: LeafId) {
-        if let Some((preview_split, _)) = self.preview {
-            if preview_split != new_split {
-                self.promote_current_preview();
-            }
-        }
-    }
-
-    /// Whether the given buffer is currently in preview (ephemeral) mode.
-    /// Primarily for tests; production code should use `self.preview`.
-    pub fn is_buffer_preview(&self, buffer_id: BufferId) -> bool {
-        self.active_window()
-            .buffer_metadata
-            .get(&buffer_id)
-            .map(|m| m.is_preview)
-            .unwrap_or(false)
-    }
+    // `promote_current_preview`, `promote_preview_if_not_in_split`,
+    // `is_buffer_preview`, `current_preview` moved to `impl Window`.
 
     /// Number of open buffers (including hidden/virtual buffers).
     /// Intended for tests that verify preview tabs don't accumulate.
     pub fn open_buffer_count(&self) -> usize {
-        self.windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .len()
-    }
-
-    /// The (split, buffer) tuple of the current preview tab, if any.
-    /// Intended for tests that verify preview anchoring semantics.
-    pub fn current_preview(&self) -> Option<(LeafId, BufferId)> {
-        self.preview
+        self.active_window().buffers.len()
     }
 
     /// Navigate to a specific line and column in the active buffer.

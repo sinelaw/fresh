@@ -70,7 +70,8 @@ impl Editor {
         // logging and call `apply_event_to_active_buffer` directly — notably
         // `InsertChar` (single-character typing).
         if event.modifies_buffer() {
-            self.promote_active_buffer_from_preview();
+            self.active_window_mut()
+                .promote_active_buffer_from_preview();
         }
 
         // IMPORTANT: Calculate LSP changes and line info BEFORE applying to buffer!
@@ -209,7 +210,8 @@ impl Editor {
         // (not `apply_event_to_active_buffer`). Promote any preview tab
         // here too so the invariant "edited buffer is never preview"
         // holds regardless of which edit path runs.
-        self.promote_active_buffer_from_preview();
+        self.active_window_mut()
+            .promote_active_buffer_from_preview();
 
         let active_buf = self.active_buffer();
         // Use `effective_active_split` rather than `split_manager.active_split()`

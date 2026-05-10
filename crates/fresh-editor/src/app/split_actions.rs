@@ -32,7 +32,7 @@ impl Editor {
         // the user is setting up their working environment around it. Promote
         // before touching the split tree so the invariant "preview is anchored
         // to a single split" stays consistent across the operation.
-        self.promote_current_preview();
+        self.active_window_mut().promote_current_preview();
 
         let current_buffer_id = self.active_buffer();
         let active_split = self
@@ -154,7 +154,7 @@ impl Editor {
         // to the new active split). Promote any preview first so it doesn't
         // end up orphaned in a split that no longer exists, or silently
         // migrated to an unrelated pane.
-        self.promote_current_preview();
+        self.active_window_mut().promote_current_preview();
 
         let closing_split = self
             .windows
@@ -272,7 +272,8 @@ impl Editor {
             .active_split();
         // Moving focus to a different split commits the preview — walking
         // away is commitment. Matches the rule applied in `focus_split`.
-        self.promote_preview_if_not_in_split(split_id);
+        self.active_window_mut()
+            .promote_preview_if_not_in_split(split_id);
         self.ensure_active_tab_visible(split_id, self.active_buffer(), self.effective_tabs_width());
 
         let buffer_id = self.active_buffer();

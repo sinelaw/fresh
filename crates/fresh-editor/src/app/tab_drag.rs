@@ -157,7 +157,7 @@ impl Editor {
         // split from it) is an unambiguous commitment gesture — promote any
         // preview first so a drag never leaves behind stale preview state
         // anchored to a split that has changed underneath it.
-        self.promote_current_preview();
+        self.active_window_mut().promote_current_preview();
 
         match drop_zone {
             TabDropZone::TabBar(target_split_id, insert_idx) => {

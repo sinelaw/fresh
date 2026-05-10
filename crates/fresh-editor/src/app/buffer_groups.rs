@@ -557,7 +557,8 @@ impl super::Editor {
             .active_split()
             != split_id
         {
-            self.promote_preview_if_not_in_split(split_id);
+            self.active_window_mut()
+                .promote_preview_if_not_in_split(split_id);
             if self.key_context == crate::input::keybindings::KeyContext::FileExplorer {
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
             }

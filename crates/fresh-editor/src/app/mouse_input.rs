@@ -2122,7 +2122,8 @@ impl Editor {
                 match target {
                     crate::view::split::TabTarget::Buffer(buffer_id) => {
                         self.focus_split(split_id, buffer_id);
-                        self.promote_buffer_from_preview(buffer_id);
+                        self.active_window_mut()
+                            .promote_buffer_from_preview(buffer_id);
                         self.mouse_state.dragging_tab = Some(super::types::TabDragState::new(
                             buffer_id,
                             split_id,
