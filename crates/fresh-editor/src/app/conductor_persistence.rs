@@ -268,5 +268,20 @@ impl Editor {
         if self.windows.contains_key(&WindowId(env.active)) {
             self.active_window = WindowId(env.active);
         }
+
+        // Persisted windows are inert shells — `Window::new` leaves
+        // `splits = None`, and the original seeded base window was
+        // wiped above. Anything that touches `effective_active_pair`
+        // before the workspace restore re-builds the split tree
+        // (e.g. `apply_workspace` → `open_workspace_files` →
+        // `open_file` → `active_buffer`) would otherwise panic on
+        // the "active window must have a populated split layout"
+        // expect. Re-seed an empty layout for the active window so
+        // those accessors see a well-formed shape; the workspace
+        // restore replaces it with the real saved layout, and if
+        // there's no workspace this becomes the user's starting
+        // buffer just like a fresh boot.
+        let active = self.active_window;
+        self.seed_fresh_layout_if_needed(active);
     }
 }

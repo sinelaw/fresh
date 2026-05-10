@@ -95,39 +95,11 @@ impl crate::app::Editor {
         // self.windows.
         let new_root = self.windows[&id].root.clone();
 
-        let needs_fresh_layout = self.windows.get(&id).is_some_and(|s| s.splits.is_none());
-
         // For a never-activated incoming window, allocate a fresh
         // seed buffer + SplitManager rooted at it. The state is
         // installed into the incoming window's `buffers` map after
         // the active pointer moves.
-        let fresh_layout = if needs_fresh_layout {
-            let buf = self.alloc_buffer_id();
-            let mut state = crate::state::EditorState::new(
-                self.terminal_width,
-                self.terminal_height,
-                self.config.editor.large_file_threshold_bytes as usize,
-                std::sync::Arc::clone(&self.authority.filesystem),
-            );
-            state
-                .margins
-                .configure_for_line_numbers(self.config.editor.line_numbers);
-            state
-                .buffer
-                .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
-            let metadata = crate::app::types::BufferMetadata::new();
-            let event_log = crate::model::event::EventLog::new();
-            let manager = SplitManager::new(buf);
-            let active_leaf = manager.active_split();
-            let mut view_states = HashMap::new();
-            view_states.insert(
-                active_leaf,
-                SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf),
-            );
-            Some((buf, state, metadata, event_log, manager, view_states))
-        } else {
-            None
-        };
+        let fresh_layout = self.build_fresh_layout_if_needed(id);
 
         // Pointer write — that's the whole switch.
         self.active_window = id;
@@ -152,6 +124,70 @@ impl crate::app::Editor {
                 active_id: id.0,
             },
         );
+    }
+
+    /// Build a fresh seed buffer + split layout for `id` if that
+    /// window currently has `splits = None`. Returns `None` when the
+    /// window is unknown or already populated. The caller is
+    /// responsible for installing the returned tuple into the
+    /// window's fields.
+    ///
+    /// Factored out of `set_active_window` so the conductor-state
+    /// restore path can re-seed an inert active-window shell after
+    /// `apply_persisted_windows` discards the seeded base window.
+    pub(crate) fn build_fresh_layout_if_needed(
+        &mut self,
+        id: WindowId,
+    ) -> Option<(
+        fresh_core::BufferId,
+        crate::state::EditorState,
+        crate::app::types::BufferMetadata,
+        crate::model::event::EventLog,
+        SplitManager,
+        HashMap<crate::model::event::LeafId, SplitViewState>,
+    )> {
+        if !self.windows.get(&id).is_some_and(|s| s.splits.is_none()) {
+            return None;
+        }
+        let buf = self.alloc_buffer_id();
+        let mut state = crate::state::EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            self.config.editor.large_file_threshold_bytes as usize,
+            std::sync::Arc::clone(&self.authority.filesystem),
+        );
+        state
+            .margins
+            .configure_for_line_numbers(self.config.editor.line_numbers);
+        state
+            .buffer
+            .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
+        let metadata = crate::app::types::BufferMetadata::new();
+        let event_log = crate::model::event::EventLog::new();
+        let manager = SplitManager::new(buf);
+        let active_leaf = manager.active_split();
+        let mut view_states = HashMap::new();
+        view_states.insert(
+            active_leaf,
+            SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buf),
+        );
+        Some((buf, state, metadata, event_log, manager, view_states))
+    }
+
+    /// Install a freshly-built seed layout into `id`'s window. No-op
+    /// when the window is unknown or already has `splits = Some(_)`.
+    pub(crate) fn seed_fresh_layout_if_needed(&mut self, id: WindowId) {
+        let Some((buf, state, metadata, event_log, mgr, vs)) =
+            self.build_fresh_layout_if_needed(id)
+        else {
+            return;
+        };
+        if let Some(s) = self.windows.get_mut(&id) {
+            s.splits = Some((mgr, vs));
+            s.buffers.insert(buf, state);
+            s.buffer_metadata.insert(buf, metadata);
+            s.event_logs.insert(buf, event_log);
+        }
     }
 
     /// Eagerly initialise an inactive session's per-session
