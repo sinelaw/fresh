@@ -594,7 +594,7 @@ fn test_close_terminal_in_split_closes_split() {
     // Find the non-terminal buffer (file1)
     let file1_buffer = tabs
         .iter()
-        .find(|&&b| !harness.editor().is_terminal_buffer(b))
+        .find(|&&b| !harness.editor().active_window().is_terminal_buffer(b))
         .copied()
         .expect("Should have file1 buffer in tabs");
     harness

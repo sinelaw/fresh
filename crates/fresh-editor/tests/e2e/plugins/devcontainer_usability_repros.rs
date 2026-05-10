@@ -638,7 +638,10 @@ fn rebuild_does_not_kill_open_terminal_buffer() {
     // own predicate so we don't have to guess at file paths.
     let pre_terminal = harness.editor().active_buffer();
     assert!(
-        harness.editor().is_terminal_buffer(pre_terminal),
+        harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(pre_terminal),
         "open_terminal must produce an active terminal buffer"
     );
 
@@ -651,7 +654,10 @@ fn rebuild_does_not_kill_open_terminal_buffer() {
     // buffer after the attach round-trip. Losing either the
     // buffer entry or its terminal status is the bug.
     assert!(
-        harness.editor().is_terminal_buffer(pre_terminal),
+        harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(pre_terminal),
         "terminal buffer {pre_terminal:?} must survive the attach round-trip \
          (the rebuild flow uses the same setAuthority path)"
     );

@@ -81,7 +81,7 @@ impl Editor {
         let previous = self.active_buffer();
 
         // If leaving a terminal buffer while in terminal mode, remember it should resume
-        if self.active_window().terminal_mode && self.is_terminal_buffer(previous) {
+        if self.active_window().terminal_mode && self.active_window().is_terminal_buffer(previous) {
             self.active_window_mut()
                 .terminal_mode_resume
                 .insert(previous);
@@ -130,11 +130,11 @@ impl Editor {
             .active_window()
             .terminal_mode_resume
             .contains(&buffer_id)
-            && self.is_terminal_buffer(buffer_id)
+            && self.active_window().is_terminal_buffer(buffer_id)
         {
             self.active_window_mut().terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
-        } else if self.is_terminal_buffer(buffer_id) {
+        } else if self.active_window().is_terminal_buffer(buffer_id) {
             // Switching to terminal in read-only mode - sync buffer to show current terminal content
             // This ensures the backing file content and cursor position are up to date
             self.sync_terminal_to_buffer(buffer_id);
@@ -146,7 +146,7 @@ impl Editor {
         // sees the new size, so its PTY child keeps reporting stale
         // dimensions when the user switches back. Re-running the visible
         // resize here picks up the now-revealed terminal. Issue #1795.
-        if self.is_terminal_buffer(buffer_id) {
+        if self.active_window().is_terminal_buffer(buffer_id) {
             self.resize_visible_terminals();
         }
 
@@ -294,7 +294,9 @@ impl Editor {
 
         if split_changed {
             // Switching to a different split - exit terminal mode if active
-            if self.active_window().terminal_mode && self.is_terminal_buffer(previous_buffer) {
+            if self.active_window().terminal_mode
+                && self.active_window().is_terminal_buffer(previous_buffer)
+            {
                 self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
@@ -313,7 +315,7 @@ impl Editor {
             self.set_pane_buffer(split_id, buffer_id);
 
             // Set key context based on target buffer type
-            if self.is_terminal_buffer(buffer_id) {
+            if self.active_window().is_terminal_buffer(buffer_id) {
                 self.active_window_mut().terminal_mode = true;
                 self.key_context = crate::input::keybindings::KeyContext::Terminal;
             } else {

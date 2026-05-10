@@ -334,7 +334,11 @@ impl Editor {
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
         } else {
-            if self.active_window().terminal_mode && self.is_terminal_buffer(self.active_buffer()) {
+            if self.active_window().terminal_mode
+                && self
+                    .active_window()
+                    .is_terminal_buffer(self.active_buffer())
+            {
                 self.sync_terminal_to_buffer(self.active_buffer());
                 self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
@@ -1059,7 +1063,7 @@ impl Editor {
         {
             if in_rect(col, row, *content_rect) {
                 // Double-clicked on an editor split
-                if self.is_terminal_buffer(*buffer_id) {
+                if self.active_window().is_terminal_buffer(*buffer_id) {
                     self.key_context = crate::input::keybindings::KeyContext::Terminal;
                     // Don't select word in terminal buffers
                     return Ok(());
@@ -1216,7 +1220,7 @@ impl Editor {
             &split_areas
         {
             if in_rect(col, row, *content_rect) {
-                if self.is_terminal_buffer(*buffer_id) {
+                if self.active_window().is_terminal_buffer(*buffer_id) {
                     return Ok(());
                 }
 

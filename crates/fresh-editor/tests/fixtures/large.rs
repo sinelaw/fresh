@@ -2321,7 +2321,7 @@ impl Editor {
         let previous = self.active_buffer();
 
         // If leaving a terminal buffer while in terminal mode, remember it should resume
-        if self.terminal_mode && self.is_terminal_buffer(previous) {
+        if self.terminal_mode && self.active_window().is_terminal_buffer(previous) {
             self.terminal_mode_resume.insert(previous);
             self.terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
@@ -2340,10 +2340,10 @@ impl Editor {
         }
 
         // If switching to a terminal buffer that should resume terminal mode, re-enter it
-        if self.terminal_mode_resume.contains(&buffer_id) && self.is_terminal_buffer(buffer_id) {
+        if self.terminal_mode_resume.contains(&buffer_id) && self.active_window().is_terminal_buffer(buffer_id) {
             self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
-        } else if self.is_terminal_buffer(buffer_id) {
+        } else if self.active_window().is_terminal_buffer(buffer_id) {
             // Switching to terminal in read-only mode - sync buffer to show current terminal content
             // This ensures the backing file content and cursor position are up to date
             self.sync_terminal_to_buffer(buffer_id);
@@ -2384,7 +2384,7 @@ impl Editor {
 
         if split_changed {
             // Switching to a different split - exit terminal mode if active
-            if self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
+            if self.terminal_mode && self.active_window().is_terminal_buffer(previous_buffer) {
                 self.terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
             }
@@ -2396,7 +2396,7 @@ impl Editor {
             self.split_manager.set_active_buffer_id(buffer_id);
 
             // Set key context based on target buffer type
-            if self.is_terminal_buffer(buffer_id) {
+            if self.active_window().is_terminal_buffer(buffer_id) {
                 self.terminal_mode = true;
                 self.key_context = crate::input::keybindings::KeyContext::Terminal;
             } else {
@@ -3945,8 +3945,8 @@ impl Editor {
 
         // For terminal buffers, use the terminal's initial CWD or fall back to project root
         // This avoids showing the terminal backing file directory which is confusing for users
-        let initial_dir = if self.is_terminal_buffer(buffer_id) {
-            self.get_terminal_id(buffer_id)
+        let initial_dir = if self.active_window().is_terminal_buffer(buffer_id) {
+            self.active_window().get_terminal_id(buffer_id)
                 .and_then(|tid| self.terminal_manager.get(tid))
                 .and_then(|handle| handle.cwd())
                 .unwrap_or_else(|| self.working_dir.clone())

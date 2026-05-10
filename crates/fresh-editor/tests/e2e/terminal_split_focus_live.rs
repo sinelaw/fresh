@@ -38,6 +38,7 @@ fn write_to_terminal(
 ) {
     let terminal_id = harness
         .editor()
+        .active_window()
         .get_terminal_id(terminal_buffer)
         .expect("terminal id");
     let handle = harness
@@ -66,7 +67,10 @@ fn setup_split_with_terminal(harness: &mut EditorTestHarness) -> fresh::model::e
     harness.render().unwrap();
 
     let terminal_buffer = harness.editor().active_buffer_id();
-    assert!(harness.editor().is_terminal_buffer(terminal_buffer));
+    assert!(harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(terminal_buffer));
     assert!(harness.editor().is_terminal_mode());
 
     // Wait for the shell prompt to settle so later writes go to a live shell.
@@ -99,6 +103,7 @@ fn terminal_keeps_updating_after_next_split() {
     assert!(
         !harness
             .editor()
+            .active_window()
             .is_terminal_buffer(harness.editor().active_buffer_id()),
         "next_split should have moved focus to the non-terminal split"
     );
@@ -140,6 +145,7 @@ fn terminal_keeps_updating_after_mouse_click_away() {
     assert!(
         !harness
             .editor()
+            .active_window()
             .is_terminal_buffer(harness.editor().active_buffer_id()),
         "click should have moved focus to the non-terminal split"
     );

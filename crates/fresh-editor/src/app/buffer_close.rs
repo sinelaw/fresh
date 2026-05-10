@@ -458,7 +458,8 @@ impl Editor {
     /// Returns true if the tab was closed without needing a prompt.
     pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
-        if self.active_window().terminal_mode && self.is_terminal_buffer(buffer_id) {
+        if self.active_window().terminal_mode && self.active_window().is_terminal_buffer(buffer_id)
+        {
             self.active_window_mut().terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
@@ -740,7 +741,8 @@ impl Editor {
     /// Returns true if the tab was closed, false if it was skipped (e.g., modified buffer)
     fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
         // If closing a terminal buffer while in terminal mode, exit terminal mode
-        if self.active_window().terminal_mode && self.is_terminal_buffer(buffer_id) {
+        if self.active_window().terminal_mode && self.active_window().is_terminal_buffer(buffer_id)
+        {
             self.active_window_mut().terminal_mode = false;
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }

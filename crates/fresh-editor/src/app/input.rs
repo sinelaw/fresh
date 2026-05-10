@@ -2241,7 +2241,10 @@ impl Editor {
             }
             Action::FocusTerminal => {
                 // If viewing a terminal buffer, switch to terminal mode
-                if self.is_terminal_buffer(self.active_buffer()) {
+                if self
+                    .active_window()
+                    .is_terminal_buffer(self.active_buffer())
+                {
                     self.active_window_mut().terminal_mode = true;
                     self.key_context = KeyContext::Terminal;
                     self.set_status_message(t!("status.terminal_mode_enabled").to_string());

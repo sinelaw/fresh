@@ -383,20 +383,10 @@ impl Editor {
         }
     }
 
-    /// Check if a buffer is a terminal buffer
-    pub fn is_terminal_buffer(&self, buffer_id: BufferId) -> bool {
-        self.active_window()
-            .terminal_buffers
-            .contains_key(&buffer_id)
-    }
-
-    /// Get the terminal ID for a buffer (if it's a terminal buffer)
-    pub fn get_terminal_id(&self, buffer_id: BufferId) -> Option<TerminalId> {
-        self.active_window()
-            .terminal_buffers
-            .get(&buffer_id)
-            .copied()
-    }
+    // `is_terminal_buffer` and `get_terminal_id` moved to `impl Window`
+    // (in `window.rs`). Editor callers reach them via
+    // `self.active_window().is_terminal_buffer(...)` /
+    // `.get_terminal_id(...)`.
 
     /// Get the terminal state for the active buffer (if it's a terminal buffer)
     pub fn get_active_terminal_state(
@@ -713,7 +703,10 @@ impl Editor {
     /// that was appended when we exited terminal mode, leaving only the
     /// incrementally-streamed scrollback history.
     pub fn enter_terminal_mode(&mut self) {
-        if self.is_terminal_buffer(self.active_buffer()) {
+        if self
+            .active_window()
+            .is_terminal_buffer(self.active_buffer())
+        {
             self.active_window_mut().terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
 

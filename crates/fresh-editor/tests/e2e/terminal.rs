@@ -139,17 +139,27 @@ fn test_terminal_buffer_identification() {
     let initial_buffer = harness.editor().active_buffer_id();
 
     // Initial buffer should not be a terminal
-    assert!(!harness.editor().is_terminal_buffer(initial_buffer));
+    assert!(!harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(initial_buffer));
 
     // Open a terminal
     harness.editor_mut().open_terminal();
 
     // Current buffer should now be a terminal
     let terminal_buffer = harness.editor().active_buffer_id();
-    assert!(harness.editor().is_terminal_buffer(terminal_buffer));
+    assert!(harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(terminal_buffer));
 
     // Should have a valid terminal ID
-    assert!(harness.editor().get_terminal_id(terminal_buffer).is_some());
+    assert!(harness
+        .editor()
+        .active_window()
+        .get_terminal_id(terminal_buffer)
+        .is_some());
 }
 
 /// Test closing terminal when not viewing one shows appropriate message
@@ -198,7 +208,11 @@ fn test_terminal_dimensions() {
 
     // Get the terminal
     let buffer_id = harness.editor().active_buffer_id();
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
 
     // Terminal manager should have this terminal
     let handle = harness
@@ -355,7 +369,11 @@ fn test_terminal_state_initialization() {
 
     // Get terminal state
     let buffer_id = harness.editor().active_buffer_id();
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     let handle = harness
         .editor()
         .terminal_manager()
@@ -412,7 +430,11 @@ fn test_terminal_resize() {
     harness.editor_mut().open_terminal();
 
     let buffer_id = harness.editor().active_buffer_id();
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
 
     // Get initial size
     let handle = harness
@@ -490,7 +512,11 @@ fn test_terminal_buffer_cursor_movement() {
     let buffer_id = harness.editor().active_buffer_id();
 
     // Write some content to the terminal
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
         if let Ok(mut state) = handle.state.lock() {
             state.process_output(b"Line 1\r\n");
@@ -620,7 +646,11 @@ fn test_bug_readonly_mode_rejects_input() {
     let buffer_id = harness.editor().active_buffer_id();
 
     // Write content to terminal
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
         if let Ok(mut state) = handle.state.lock() {
             state.process_output(b"Line 1\r\n");
@@ -676,7 +706,11 @@ fn test_bug_keybindings_work_in_readonly_mode() {
     let buffer_id = harness.editor().active_buffer_id();
 
     // Write content to terminal
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
         if let Ok(mut state) = handle.state.lock() {
             for i in 1..=20 {
@@ -808,7 +842,11 @@ fn test_cursor_at_last_row_no_panic() {
     let buffer_id = harness.editor().active_buffer_id();
 
     // Get the terminal and fill the screen to force cursor to the last row
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
         if let Ok(mut state) = handle.state.lock() {
             // Get the actual terminal size
@@ -847,7 +885,11 @@ fn test_terminal_cursor_boundary_condition() {
     harness.editor_mut().open_terminal();
     let buffer_id = harness.editor().active_buffer_id();
 
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
         if let Ok(mut state) = handle.state.lock() {
             let (_, rows) = state.size();
@@ -885,7 +927,11 @@ fn test_terminal_resize_cursor_out_of_bounds() {
     harness.editor_mut().open_terminal();
     let buffer_id = harness.editor().active_buffer_id();
 
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
 
     // First, position cursor at row 60 in a 70-row terminal
     if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
@@ -992,7 +1038,10 @@ fn test_session_restore_terminal_active_buffer() {
         // Verify terminal is active
         let active_buffer_before = harness.editor().active_buffer_id();
         assert!(
-            harness.editor().is_terminal_buffer(active_buffer_before),
+            harness
+                .editor()
+                .active_window()
+                .is_terminal_buffer(active_buffer_before),
             "Terminal should be active buffer before save"
         );
 
@@ -1038,7 +1087,10 @@ fn test_session_restore_terminal_active_buffer() {
 
         // Check what buffer is active according to Editor's active_buffer field (for INPUT)
         let active_buffer_for_input = harness.editor().active_buffer_id();
-        let input_is_terminal = harness.editor().is_terminal_buffer(active_buffer_for_input);
+        let input_is_terminal = harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(active_buffer_for_input);
 
         eprintln!(
             "After restore: active_buffer (for input) = {:?}, is_terminal = {}",
@@ -1167,7 +1219,10 @@ fn test_ui_bindings_work_in_terminal_mode() {
     );
 
     let terminal_buffer = harness.editor().active_buffer_id();
-    assert!(harness.editor().is_terminal_buffer(terminal_buffer));
+    assert!(harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(terminal_buffer));
 
     // Use Alt+[ to switch to previous split (this should work in terminal mode
     // because it's a UI binding and keyboard capture is OFF)
@@ -1179,7 +1234,10 @@ fn test_ui_bindings_work_in_terminal_mode() {
     // Should have switched to the left split (non-terminal buffer)
     let new_buffer = harness.editor().active_buffer_id();
     assert!(
-        !harness.editor().is_terminal_buffer(new_buffer),
+        !harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(new_buffer),
         "Should have switched to non-terminal buffer via Alt+["
     );
 
@@ -1326,7 +1384,10 @@ fn test_terminal_split_switch_exits_terminal_mode() {
 
     let terminal_buffer = harness.editor().active_buffer_id();
     assert!(
-        harness.editor().is_terminal_buffer(terminal_buffer),
+        harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(terminal_buffer),
         "Active buffer should be terminal"
     );
 
@@ -1376,7 +1437,10 @@ fn test_terminal_split_switch_exits_terminal_mode() {
     // Verify the active buffer is no longer the terminal
     let active_after_click = harness.editor().active_buffer_id();
     assert!(
-        !harness.editor().is_terminal_buffer(active_after_click),
+        !harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(active_after_click),
         "Active buffer should be non-terminal after clicking left split"
     );
 
@@ -1447,7 +1511,10 @@ fn test_click_between_splits_terminal_focus() {
 
     let terminal_buffer = harness.editor().active_buffer_id();
     assert!(
-        harness.editor().is_terminal_buffer(terminal_buffer),
+        harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(terminal_buffer),
         "Active buffer should be terminal"
     );
 
@@ -1473,6 +1540,7 @@ fn test_click_between_splits_terminal_focus() {
         assert!(
             harness
                 .editor()
+                .active_window()
                 .is_terminal_buffer(harness.editor().active_buffer_id()),
             "Iteration {}: Active buffer should be terminal before clicking file split",
             iteration
@@ -1500,6 +1568,7 @@ fn test_click_between_splits_terminal_focus() {
         assert!(
             !harness
                 .editor()
+                .active_window()
                 .is_terminal_buffer(harness.editor().active_buffer_id()),
             "Iteration {}: Active buffer should be file (non-terminal) after clicking file split",
             iteration
@@ -1530,6 +1599,7 @@ fn test_click_between_splits_terminal_focus() {
         assert!(
             harness
                 .editor()
+                .active_window()
                 .is_terminal_buffer(harness.editor().active_buffer_id()),
             "Iteration {}: Active buffer should be terminal after clicking terminal split",
             iteration
@@ -1957,7 +2027,11 @@ fn test_terminal_view_follows_output_at_bottom() {
 
     // Get terminal dimensions
     let buffer_id = harness.editor().active_buffer_id();
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     let (_, rows) = harness
         .editor()
         .terminal_manager()
@@ -2013,7 +2087,11 @@ fn test_terminal_resize_on_enter_mode() {
 
     // Get terminal size after opening
     let buffer_id = harness.editor().active_buffer_id();
-    let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .unwrap();
     let (cols1, rows1) = harness
         .editor()
         .terminal_manager()
@@ -2138,7 +2216,11 @@ fn test_session_restore_terminal_scrollback() {
         harness.editor_mut().save_workspace().unwrap();
 
         // Get the backing file path for later verification
-        let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+        let terminal_id = harness
+            .editor()
+            .active_window()
+            .get_terminal_id(buffer_id)
+            .unwrap();
         backing_path_for_check = harness
             .editor()
             .terminal_backing_files()
@@ -2188,7 +2270,10 @@ fn test_session_restore_terminal_scrollback() {
 
         // Find the terminal buffer
         let buffer_id = harness.editor().active_buffer_id();
-        let is_terminal = harness.editor().is_terminal_buffer(buffer_id);
+        let is_terminal = harness
+            .editor()
+            .active_window()
+            .is_terminal_buffer(buffer_id);
 
         if is_terminal {
             // Get buffer content - CRITICAL: The scrollback content should be restored
@@ -2298,7 +2383,11 @@ fn test_scrollback_captured_after_session_restore() {
 
         // Get the backing file path for later verification
         let buffer_id = harness.editor().active_buffer_id();
-        let terminal_id = harness.editor().get_terminal_id(buffer_id).unwrap();
+        let terminal_id = harness
+            .editor()
+            .active_window()
+            .get_terminal_id(buffer_id)
+            .unwrap();
         backing_path_for_check = harness
             .editor()
             .terminal_backing_files()
@@ -3237,6 +3326,7 @@ fn test_terminal_shell_config_override() {
     let terminal_buffer = harness.editor().active_buffer_id();
     let terminal_id = harness
         .editor()
+        .active_window()
         .get_terminal_id(terminal_buffer)
         .expect("terminal buffer should have a terminal id");
     let shell = harness
@@ -3266,6 +3356,7 @@ fn test_hidden_terminal_resyncs_pty_size_when_revealed() {
     let terminal_buffer = harness.editor().active_buffer_id();
     let terminal_id = harness
         .editor()
+        .active_window()
         .get_terminal_id(terminal_buffer)
         .expect("terminal buffer should have a terminal id");
     let (cols_before, rows_before) = harness
@@ -3280,7 +3371,10 @@ fn test_hidden_terminal_resyncs_pty_size_when_revealed() {
     harness.new_buffer().unwrap();
     let other_buffer = harness.editor().active_buffer_id();
     assert_ne!(other_buffer, terminal_buffer);
-    assert!(!harness.editor().is_terminal_buffer(other_buffer));
+    assert!(!harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(other_buffer));
 
     // Shrink the host terminal while the PTY is hidden.  Without the fix,
     // `resize_visible_terminals` skips the hidden buffer and the PTY keeps

@@ -1248,6 +1248,22 @@ impl Window {
     pub fn current_preview(&self) -> Option<(LeafId, BufferId)> {
         self.preview
     }
+
+    // ---- Terminal-buffer query helpers ----
+
+    /// Check if a buffer is a terminal buffer (in this window).
+    pub fn is_terminal_buffer(&self, buffer_id: BufferId) -> bool {
+        self.terminal_buffers.contains_key(&buffer_id)
+    }
+
+    /// Get the terminal ID for a buffer (if it's a terminal buffer in
+    /// this window).
+    pub fn get_terminal_id(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<crate::services::terminal::TerminalId> {
+        self.terminal_buffers.get(&buffer_id).copied()
+    }
 }
 
 // Label-defaulting unit tests (`empty_label_defaults_to_root_basename`,

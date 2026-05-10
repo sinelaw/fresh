@@ -434,8 +434,9 @@ impl Editor {
 
         // For terminal buffers, use the terminal's initial CWD or fall back to project root
         // This avoids showing the terminal backing file directory which is confusing for users
-        let initial_dir = if self.is_terminal_buffer(buffer_id) {
-            self.get_terminal_id(buffer_id)
+        let initial_dir = if self.active_window().is_terminal_buffer(buffer_id) {
+            self.active_window()
+                .get_terminal_id(buffer_id)
                 .and_then(|tid| self.active_window().terminal_manager.get(tid))
                 .and_then(|handle| handle.cwd())
                 .unwrap_or_else(|| self.working_dir.clone())

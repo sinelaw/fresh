@@ -149,7 +149,7 @@ impl Editor {
                 continue;
             }
 
-            if self.is_terminal_buffer(*buffer_id)
+            if self.active_window().is_terminal_buffer(*buffer_id)
                 || self.active_window().is_composite_buffer(*buffer_id)
             {
                 continue;
@@ -415,7 +415,7 @@ impl Editor {
 
         // Ensure key context is Normal for non-terminal buffers
         // This handles the edge case where split/buffer don't change but we clicked from FileExplorer
-        if !self.is_terminal_buffer(buffer_id) {
+        if !self.active_window().is_terminal_buffer(buffer_id) {
             self.key_context = crate::input::keybindings::KeyContext::Normal;
         }
 

@@ -54,7 +54,7 @@ impl Editor {
                 && row < content_rect.y + content_rect.height
             {
                 // Check if this is a terminal buffer
-                if self.is_terminal_buffer(*buffer_id) {
+                if self.active_window().is_terminal_buffer(*buffer_id) {
                     return Some((*buffer_id, *content_rect));
                 }
             }

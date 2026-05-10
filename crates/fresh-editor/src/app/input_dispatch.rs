@@ -39,7 +39,10 @@ impl Editor {
             // Review Diff via the command palette), the active buffer is no
             // longer a terminal. Exit terminal mode so the new buffer's
             // keybindings work.
-            if !self.is_terminal_buffer(self.active_buffer()) {
+            if !self
+                .active_window()
+                .is_terminal_buffer(self.active_buffer())
+            {
                 self.active_window_mut().terminal_mode = false;
                 self.key_context = crate::input::keybindings::KeyContext::Normal;
                 return None; // fall through to normal input dispatch
@@ -55,7 +58,11 @@ impl Editor {
 
         // Check for keys that should re-enter terminal mode from scrollback view.
         // Any plain character key exits scrollback and is forwarded to the terminal.
-        if self.is_terminal_buffer(self.active_buffer()) && should_enter_terminal_mode(event) {
+        if self
+            .active_window()
+            .is_terminal_buffer(self.active_buffer())
+            && should_enter_terminal_mode(event)
+        {
             self.enter_terminal_mode();
             // Forward the key to the terminal so the user's input isn't lost
             self.send_terminal_key(event.code, event.modifiers);
