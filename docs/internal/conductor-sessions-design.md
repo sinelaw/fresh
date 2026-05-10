@@ -2127,14 +2127,92 @@ logs, navigation history, bookmarks, composite panels, async
 LSP bridge, chrome) lives directly on `Window`. Switching is
 a single `active_window = id` pointer write.
 
-**Outstanding work** is now Tier-2-and-onward fields from the
-audit at the top of this doc (small per-window state still on
-Editor: `scroll_sync_manager`, `previous_viewports`, `preview`,
-`hover`, `search_state`, file-explorer chrome flags, etc.) plus
-the Step 0g inline-borrow-debt drain (~33 handler sites that
-should move to `impl Window` once a cross-window consumer
-forces the issue). None of these block Conductor MVP — the
-core architectural promise is delivered.
+**Step 0m — Tier-2-and-onward field migration + canonical handler
+moves.** Every Tier-2 field from the audit at the top of this doc
+has shipped onto `Window` plus several beyond:
+
+- Foundation infrastructure: `WindowResources` bundle of editor-
+  global Arc-shared services (config, grammar/theme/keybinding/
+  command registries, fs_manager, authority, time_source,
+  dir_context), `BufferIdAllocator` (Arc<AtomicUsize> shared),
+  `WindowControlEvent` enum + `Editor::dispatch_to_active_window`
+  helper threading both `&mut Window` and `&PluginManager` via
+  disjoint sub-field borrows.
+
+- Per-window fields moved: `preview`, `terminal_mode`,
+  `terminal_mode_resume`, `seen_byte_ranges`,
+  `previous_viewports`, `same_buffer_scroll_sync`,
+  `interactive_replace_state`, `scroll_sync_manager`,
+  `file_explorer_visible/sync_in_progress/width/side`,
+  `pending_file_explorer_show_*`, `file_explorer_decorations`,
+  `file_explorer_decoration_cache`, `hover`, `search_state`,
+  `search_namespace`, `pending_search_range`,
+  `live_grep_last_state`, `overlay_preview_state`,
+  `auto_revert_enabled`, `file_rapid_change_counts`,
+  `goto_line_preview`, `pending_async_prompt_callback`,
+  `pending_quit_unnamed_save`, `search_case_sensitive/whole_word/
+  use_regex/confirm_each`, `scheduled_diagnostic_pull`,
+  `scheduled_inlay_hints_request`, `user_dismissed_lsp_languages`,
+  `editor_mode`, `prompt_histories`, `pending_close_buffer`.
+
+- Canonical Window helpers: `active_buffer`, `active_state`/`_mut`,
+  `active_cursors`/`_mut`, `active_event_log`/`_mut`,
+  `effective_active_pair`, `effective_active_split`,
+  `set_status_message`/`clear_status_message`, `config()`,
+  `authority()`, `alloc_buffer_id()`.
+
+- Methods moved to `impl Window`: composite-buffer query/mutate
+  helpers (`is_composite_buffer`, `get_composite`/`_mut`,
+  `set_composite_alignment`, `close_composite_buffer`,
+  `composite_focus_next/prev`); buffer-group helpers
+  (`grouped_split_ratio`/`set_*`, `is_non_scrollable_buffer`);
+  bookmark methods (`set_bookmark`, `clear_bookmark`,
+  `list_bookmarks`); preview-tab orchestrators
+  (`promote_buffer_from_preview`, `promote_active_buffer_from_preview`,
+  `promote_current_preview`, `promote_preview_if_not_in_split`,
+  `is_buffer_preview`, `current_preview`); terminal-buffer queries
+  (`is_terminal_buffer`, `get_terminal_id`); pane-buffer invariant
+  updater (`set_pane_buffer`); tab-bar scroll
+  (`ensure_active_tab_visible`); search overlay clears
+  (`clear_search_highlights`, `clear_search_overlays`,
+  `update_search_highlights`); 6 file-explorer leaf delegators
+  (extend_selection_up/down, toggle_select, select_all,
+  search_push_char, search_pop_char).
+
+**Outstanding work.** What remains on `impl Editor` falls into two
+categories:
+
+1. **Genuinely cross-window or editor-global** — workspace
+   serialization, lifecycle (quit/restart/detach), plugin-runtime
+   dispatch, theme/config reload, top-level render & mouse
+   routing, recovery service orchestration, cross-window helpers
+   like `detach_buffer_from_all_windows`. These stay on Editor by
+   design.
+
+2. **Mixed handlers blocked on `apply_event_to_active_buffer`** —
+   the central event-application pipeline fires plugin hooks,
+   updates LSP, manages preview promotion, and is called by every
+   buffer-mutating handler. Until it moves to `impl Window` (or
+   plugin_manager is shareable), every popup/scroll/cursor
+   handler that goes through it stays on Editor. Moving
+   `apply_event_to_active_buffer` is the next architectural step
+   — its dependencies are now per-window (preview, lsp,
+   buffers, event_logs, splits, scheduled_*) so the move is
+   blocked only on plugin-hook firing being available from
+   `Window`. Three options for that:
+   - Pass `&PluginManager` as a parameter (current dispatcher
+     pattern).
+   - Wrap PluginManager in `Arc<Mutex<...>>` (interior
+     mutability — the user pushed back on this for the
+     compile-time-vs-runtime safety regression).
+   - Refactor PluginManager's API to entirely `&self` via inner
+     `Mutex<inner>` (cleaner than #2 but more invasive).
+
+The Step 0g inline-borrow-debt drain (~33 handler sites with
+`__win = self.windows.get_mut(&self.active_window)` boilerplate)
+shrinks naturally as more handlers move to `impl Window`. None
+of this blocks Conductor MVP — the core architectural promise is
+delivered.
 
 ### Step 1 — `Session` struct, single forced session  `[interim — superseded by Step 0]`
 
