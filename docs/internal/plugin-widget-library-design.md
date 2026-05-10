@@ -456,26 +456,59 @@ Key invariants to preserve during migration:
 ### 4.2 Plugin migrations beyond `search_replace.ts`
 
 This is how reach (goal #5: same shape across every panel) gets
-done. Heaviest payoff order, per call-site density:
+done. Status (✅ migrated, 🚧 partial, ❌ untouched, ⏸ blocked):
 
-* `git_log.ts` — Toolbar + Table.
-* `lib/finder.ts` — already a panel manager; convert to `List` +
-  `Prompt` (after Layer lands).
-* `audit_mode.ts` — Tree + List + RawBuffer escape hatch.
-* `dashboard.ts` — Toolbar + List.
-* `theme_editor.ts` — settings-style controls.
-* `pkg.ts` — the `// TODO: Plugin UI Component Library` literal.
+* ✅ **`git_log.ts`** (commits `c0d90b8` + `ffb413c`). Toolbar
+  → `Row` of `Button`s + `widget_event "activate"` routing.
+  Log pane → `List` widget; dropped the byte-offset row table
+  + `cursor_moved` hook + `setBufferShowCursors`. Detail
+  pane stays on `setPanelContent` (pure diff text, no
+  widget benefit). Toolbar+log net −57 LOC.
+* 🚧 **`pkg.ts`** (commit `59a42b3`). List panel → `List`
+  widget (drop manual `▸` cursor + selection styling, gain
+  click + wheel for free); footer → `HintBar`. Header
+  (search + filter buttons + sync) and detail (action
+  buttons) still use `setPanelContent` because they
+  participate in the plugin's cross-panel `FocusTarget`
+  cycle which a single widget panel can't model — needs
+  either a single combined panel (major UI restructure) or
+  the cross-panel focus stack the §4.1 Compositor work
+  introduces.
+* 🚧 **`theme_editor.ts`** (commit `4f74b97`). Footer →
+  `HintBar`. Tree panel (header + separator + filter line +
+  selectable section/field rows with `▸` markers) and
+  picker panel (named-color list + palette grid + preview
+  lines + color-edit popup) still use `setPanelContent` —
+  the picker's color-edit popup needs `Prompt`/`Layer`
+  (blocked on §4.1).
+* ⏸ **`audit_mode.ts`** (4792 LOC, untouched). Multi-pane
+  review UI: toolbar with grouped key hints separated by
+  `│` (HintBar can't render groups today — needs an
+  enhanced HintBar variant or a custom widget), diff pane,
+  comments pane, sticky header, staging UI. Multi-session
+  migration on its own.
+* ⏸ **`dashboard.ts`** (1903 LOC, untouched). Animated
+  centered ASCII frame with click regions, slide-in
+  transitions, skip-redraw hash optimization. Doesn't map
+  cleanly to a widget tree without losing the visual; would
+  need a UI redesign rather than a substitution.
+* ⏸ **`lib/finder.ts`** + **`find_references.ts`**.
+  Blocked on `Prompt` → `Layer` (§4.1). The shape is right
+  for `List` + `Prompt`; just waiting for the compositor.
 
-Each plugin migration is mostly mechanical once the widgets it needs
+Each migrated plugin is mostly mechanical once the widgets it needs
 exist. The work is in (a) discovering hidden assumptions in plugin
 state machines (e.g. `search_replace`'s `focusPanel`/`queryField`/
-`optionIndex` triple), and (b) reconciling event flow with whatever
-async work the plugin already does (debounce, LSP, git).
+`optionIndex` triple, `pkg.ts`'s `FocusTarget` enum), and (b)
+reconciling event flow with whatever async work the plugin already
+does (debounce, LSP, git).
 
-`Toolbar` (composes Button + Toggle into a horizontal Row) and
-`Table` (`git_log` log, `find_references`, audit) need to land as
-new widget kinds during this phase. `Transient` (Magit-style menu)
-falls out of the Compositor work.
+`Toolbar` is shipped as a TS convention (`row(button(), button(),
+flexSpacer())`) without needing a new widget kind. `Table` was
+considered necessary for `git_log` but `List` turned out to handle
+pre-rendered column-aligned rows fine; revisit when a consumer
+needs explicit columns (live resize, column-header sort, etc.).
+`Transient` (Magit-style menu) falls out of the Compositor work.
 
 ### 4.3 Settings adoption
 
