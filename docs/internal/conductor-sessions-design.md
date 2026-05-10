@@ -2179,6 +2179,28 @@ has shipped onto `Window` plus several beyond:
   (extend_selection_up/down, toggle_select, select_all,
   search_push_char, search_pop_char).
 
+**Step 0n — `apply_event_to_active_buffer` decomposition.** The
+central event-application pipeline that every buffer-mutating
+handler routes through has been hollowed out: each step it used to
+inline now lives on `impl Window`, with the Editor-side method now a
+thin orchestrator. Helpers moved in this phase:
+
+- `schedule_folding_ranges_refresh` /
+  `schedule_semantic_tokens_full_refresh` — debounced LSP refresh
+  schedulers, pure per-window state.
+- `invalidate_layouts_for_buffer` — split-tree walk for
+  layout/view-transform invalidation.
+- `collect_lsp_changes` / `calculate_event_line_info` — pre-edit
+  LSP position translation and line-shift calculation, both
+  read-only window-state operations.
+- `adjust_other_split_cursors_for_event` — cross-split cursor
+  adjustment within a single window.
+- `handle_scroll_event` / `handle_set_viewport_event` /
+  `handle_recenter_event` — viewport handlers for view-only events
+  that bypass the buffer entirely.
+- `send_lsp_changes_for_buffer` — incremental `didChange` /
+  `didOpen` dispatch with debounce-pull rescheduling.
+
 **Outstanding work.** What remains on `impl Editor` falls into two
 categories:
 
@@ -2189,24 +2211,20 @@ categories:
    like `detach_buffer_from_all_windows`. These stay on Editor by
    design.
 
-2. **Mixed handlers blocked on `apply_event_to_active_buffer`** —
-   the central event-application pipeline fires plugin hooks,
-   updates LSP, manages preview promotion, and is called by every
-   buffer-mutating handler. Until it moves to `impl Window` (or
-   plugin_manager is shareable), every popup/scroll/cursor
-   handler that goes through it stays on Editor. Moving
-   `apply_event_to_active_buffer` is the next architectural step
-   — its dependencies are now per-window (preview, lsp,
-   buffers, event_logs, splits, scheduled_*) so the move is
-   blocked only on plugin-hook firing being available from
-   `Window`. Three options for that:
-   - Pass `&PluginManager` as a parameter (current dispatcher
-     pattern).
-   - Wrap PluginManager in `Arc<Mutex<...>>` (interior
-     mutability — the user pushed back on this for the
-     compile-time-vs-runtime safety regression).
-   - Refactor PluginManager's API to entirely `&self` via inner
-     `Mutex<inner>` (cleaner than #2 but more invasive).
+2. **`trigger_plugin_hooks_for_event` and the apex
+   `apply_event_to_active_buffer` orchestrator.** The hook-firing
+   path calls `update_plugin_state_snapshot`, which iterates *all*
+   windows for the session list and reads true editor-global state
+   (clipboard, working_dir, authority, stored diagnostics/folding
+   ranges, config). That makes it cross-window by definition; it
+   stays on Editor. The apex `apply_event_to_active_buffer`
+   remains as a small Editor coordinator that delegates each step
+   to `Window` and then fires hooks — moving it fully to `impl
+   Window` would require either splitting the hook trigger out as
+   a callback (Editor caller invokes it after Window pre-work) or
+   inverting the snapshot-update direction. Neither is currently
+   blocking Conductor work; the apex is now ~30 lines of Editor
+   coordination over Window primitives, down from ~150.
 
 The Step 0g inline-borrow-debt drain (~33 handler sites with
 `__win = self.windows.get_mut(&self.active_window)` boilerplate)
