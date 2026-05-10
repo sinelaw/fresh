@@ -42,6 +42,31 @@ pub fn find_widget_by_key<'a>(spec: &'a WidgetSpec, target: &str) -> Option<&'a 
     }
 }
 
+/// Insert `text` at `cursor` within `value`, returning `(new_value,
+/// new_cursor)`. `cursor` is a UTF-8 byte offset; if it lands
+/// mid-multibyte (which the existing key handlers shouldn't
+/// produce, but external state could) it snaps down to the
+/// preceding char boundary before insertion.
+///
+/// Used by both `TextInput` and `TextArea` for the printable-char
+/// dispatch path (`mode_text_input:<char>`). The terminal layer
+/// only delivers IME-committed text — preedit is invisible to the
+/// editor — so `text` here is always a final UTF-8 string and may
+/// be one codepoint (typical), one grapheme cluster (combining
+/// marks), or a multi-codepoint commit (some IMEs push the full
+/// word in one event).
+pub fn apply_text_char(value: &str, cursor: usize, text: &str) -> (String, usize) {
+    let mut cursor = cursor.min(value.len());
+    while cursor > 0 && !value.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    let mut new_value = String::with_capacity(value.len() + text.len());
+    new_value.push_str(&value[..cursor]);
+    new_value.push_str(text);
+    new_value.push_str(&value[cursor..]);
+    (new_value, cursor + text.len())
+}
+
 /// Apply a non-printable editing key to a `(value, cursor)` pair,
 /// returning `(new_value, new_cursor)`. `cursor` is a UTF-8 byte
 /// offset clamped to `[0, value.len()]`.
@@ -537,6 +562,66 @@ mod tests {
     #[test]
     fn unknown_key_is_noop() {
         assert_eq!(apply_text_input_key("abc", 1, "Wat"), ("abc".into(), 1));
+    }
+
+    // ---- apply_text_char (IME-commit / printable insertion) ----
+
+    #[test]
+    fn apply_text_char_inserts_ascii_at_cursor() {
+        assert_eq!(apply_text_char("Hello", 5, "!"), ("Hello!".into(), 6));
+        assert_eq!(apply_text_char("Hxllo", 1, "e"), ("Hexllo".into(), 2));
+    }
+
+    #[test]
+    fn apply_text_char_inserts_multibyte_codepoint() {
+        // "你" is 3 bytes (0xE4 0xBD 0xA0).
+        let (v, c) = apply_text_char("", 0, "你");
+        assert_eq!(v, "你");
+        assert_eq!(c, 3);
+    }
+
+    #[test]
+    fn apply_text_char_ime_commit_step_by_step() {
+        // IME commits "你好" as two consecutive single-codepoint
+        // events (the typical Pinyin → CJK flow).
+        let (v, c) = apply_text_char("", 0, "你");
+        let (v, c) = apply_text_char(&v, c, "好");
+        assert_eq!(v, "你好");
+        assert_eq!(c, 6);
+    }
+
+    #[test]
+    fn apply_text_char_ime_commit_multi_codepoint_in_one_event() {
+        // Some IMEs commit the whole word in one push — must work
+        // identically to step-by-step.
+        let (v, c) = apply_text_char("", 0, "你好");
+        assert_eq!(v, "你好");
+        assert_eq!(c, 6);
+    }
+
+    #[test]
+    fn apply_text_char_inserts_into_middle_of_existing_text() {
+        // "He|llo" — cursor at byte 2, insert "你". Expected:
+        // "He你llo", cursor at byte 5 (2 + 3).
+        let (v, c) = apply_text_char("Hello", 2, "你");
+        assert_eq!(v, "He你llo");
+        assert_eq!(c, 5);
+    }
+
+    #[test]
+    fn apply_text_char_snaps_mid_multibyte_cursor_down_to_boundary() {
+        // Cursor at byte 1 of "你" (mid-multibyte) — snap down to
+        // byte 0, then insert.
+        let (v, c) = apply_text_char("你", 1, "X");
+        assert_eq!(v, "X你");
+        assert_eq!(c, 1);
+    }
+
+    #[test]
+    fn apply_text_char_clamps_cursor_past_end() {
+        let (v, c) = apply_text_char("ab", 99, "c");
+        assert_eq!(v, "abc");
+        assert_eq!(c, 3);
     }
 
     #[test]
