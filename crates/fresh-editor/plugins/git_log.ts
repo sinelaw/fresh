@@ -8,6 +8,7 @@ import {
   fetchCommitShow,
   fetchGitLog,
 } from "./lib/git_history.ts";
+import { button, flexSpacer, row, WidgetPanel } from "./lib/index.ts";
 
 const editor = getEditor();
 
@@ -37,8 +38,10 @@ interface GitLogState {
   logBufferId: number | null;
   detailBufferId: number | null;
   toolbarBufferId: number | null;
-  /** Click-regions for the toolbar's buttons, populated by `renderToolbar`. */
-  toolbarButtons: ToolbarButton[];
+  /** Widget panel rendering the toolbar (Row of Buttons). Created in
+   * `show_git_log` once the buffer group exists; cleaned up in
+   * `git_log_close`. */
+  toolbarPanel: WidgetPanel | null;
   commits: GitCommit[];
   selectedIndex: number;
   /** Cached `git show` output for the currently-displayed detail commit. */
@@ -71,7 +74,7 @@ const state: GitLogState = {
   logBufferId: null,
   detailBufferId: null,
   toolbarBufferId: null,
-  toolbarButtons: [],
+  toolbarPanel: null,
   commits: [],
   selectedIndex: 0,
   detailCache: null,
@@ -177,116 +180,69 @@ const GROUP_LAYOUT = JSON.stringify({
 // =============================================================================
 // Toolbar
 // =============================================================================
+//
+// The toolbar is a one-row panel mounted above the log/detail split. It's
+// rendered through the widget runtime — a `Row` of `Button` widgets — so
+// the host owns hit-testing, focus styling, and keystroke dispatch, and the
+// plugin only handles the resulting `widget_event` actions.
+//
+// Each button's `key` is a stable identifier (`toolbar.tab`, `toolbar.q`,
+// etc.) that `widget_event` carries back so the plugin can look up the
+// right handler without per-row column arithmetic. The previous custom
+// hit-region tracking (`state.toolbarButtons`, `on_git_log_toolbar_click`)
+// is gone.
 
-interface ToolbarHint {
+interface ToolbarItem {
   key: string;
   label: string;
-  /** Click action — `null` for hints that are keyboard-only (j/k, PgUp). */
-  onClick: (() => void | Promise<void>) | null;
+  onClick: () => void | Promise<void>;
 }
 
-interface ToolbarButton {
-  row: number;
-  startCol: number;
-  endCol: number;
-  onClick: (() => void | Promise<void>) | null;
-}
+const TOOLBAR_KEY_PREFIX = "toolbar.";
 
-function toolbarHints(): ToolbarHint[] {
+function toolbarItems(): ToolbarItem[] {
   return [
-    { key: "Tab", label: "switch pane", onClick: git_log_tab },
-    { key: "RET", label: "open file", onClick: git_log_enter },
-    { key: "y", label: "copy hash", onClick: git_log_copy_hash },
-    { key: "r", label: "refresh", onClick: git_log_refresh },
-    { key: "q", label: "quit", onClick: git_log_q },
+    { key: "tab", label: "Tab switch pane", onClick: git_log_tab },
+    { key: "ret", label: "RET open file", onClick: git_log_enter },
+    { key: "y", label: "y copy hash", onClick: git_log_copy_hash },
+    { key: "r", label: "r refresh", onClick: git_log_refresh },
+    { key: "q", label: "q quit", onClick: git_log_q },
   ];
 }
 
-/**
- * Build the single-row toolbar. Each hint renders as a discrete button with
- * its own background so it reads as clickable; the column range of each
- * button is captured in `state.toolbarButtons` so `on_git_log_toolbar_click`
- * can map a mouse click back to the right handler.
- */
-function buildToolbarEntries(width: number): TextPropertyEntry[] {
-  const W = Math.max(20, width);
-  const buttons: ToolbarButton[] = [];
-  let text = "";
-  const overlays: InlineOverlay[] = [];
-
-  for (const hint of toolbarHints()) {
-    const body = ` [${hint.key}] ${hint.label} `;
-    const bodyLen = body.length;
-    const gap = text.length > 0 ? 1 : 0;
-    if (text.length + gap + bodyLen > W) break;
-
-    if (gap) text += " ";
-
-    const startCol = text.length;
-    const startByte = utf8Len(text);
-    text += body;
-    const endByte = utf8Len(text);
-    const endCol = text.length;
-
-    overlays.push({
-      start: startByte,
-      end: endByte,
-      style: { bg: "ui.status_bar_bg" },
-    });
-    const keyDisplay = `[${hint.key}]`;
-    const keyStartByte = startByte + utf8Len(" ");
-    const keyEndByte = keyStartByte + utf8Len(keyDisplay);
-    overlays.push({
-      start: keyStartByte,
-      end: keyEndByte,
-      style: { fg: "editor.fg", bold: true },
-    });
-    overlays.push({
-      start: keyEndByte,
-      end: endByte,
-      style: { fg: "editor.line_number_fg" },
-    });
-
-    buttons.push({ row: 0, startCol, endCol, onClick: hint.onClick });
-  }
-
-  state.toolbarButtons = buttons;
-
-  return [
-    {
-      text: text + "\n",
-      properties: { type: "git-log-toolbar" },
-      style: { bg: "editor.bg", extendToLineEnd: true },
-      inlineOverlays: overlays,
-    },
-  ];
+function toolbarSpec(): WidgetSpec {
+  const items = toolbarItems();
+  // `flexSpacer` at the end pushes the buttons to the left and lets the
+  // toolbar background extend across the row.
+  return row(
+    ...items.map((item) =>
+      button(item.label, { key: TOOLBAR_KEY_PREFIX + item.key }),
+    ),
+    flexSpacer(),
+  );
 }
 
 function renderToolbar(): void {
-  if (state.groupId === null) return;
-  const vp = editor.getViewport();
-  const width = vp ? vp.width : 80;
-  editor.setPanelContent(state.groupId, "toolbar", buildToolbarEntries(width));
+  if (state.toolbarPanel === null) return;
+  state.toolbarPanel.set(toolbarSpec());
 }
 
-function on_git_log_toolbar_click(data: {
-  buffer_id: number | null;
-  buffer_row: number | null;
-  buffer_col: number | null;
-}): void {
-  if (!state.isOpen) return;
-  if (data.buffer_id === null || data.buffer_id !== state.toolbarBufferId) return;
-  if (data.buffer_row === null || data.buffer_col === null) return;
-  const row = data.buffer_row;
-  const col = data.buffer_col;
-  const hit = state.toolbarButtons.find(
-    (b) => b.row === row && col >= b.startCol && col < b.endCol
-  );
-  if (hit && hit.onClick) {
-    void hit.onClick();
+editor.on("widget_event", (data) => {
+  if (
+    state.toolbarPanel === null ||
+    data.panel_id !== state.toolbarPanel.id()
+  ) {
+    return;
   }
-}
-registerHandler("on_git_log_toolbar_click", on_git_log_toolbar_click);
+  if (data.event_type !== "activate") return;
+  const items = toolbarItems();
+  for (const item of items) {
+    if (data.widget_key === TOOLBAR_KEY_PREFIX + item.key) {
+      void item.onClick();
+      return;
+    }
+  }
+});
 
 function on_git_log_resize(_data: { width: number; height: number }): void {
   if (!state.isOpen) return;
@@ -456,6 +412,9 @@ async function show_git_log(): Promise<void> {
   state.logBufferId = (group.panels["log"] as number | undefined) ?? null;
   state.detailBufferId = (group.panels["detail"] as number | undefined) ?? null;
   state.toolbarBufferId = (group.panels["toolbar"] as number | undefined) ?? null;
+  if (state.toolbarBufferId !== null) {
+    state.toolbarPanel = new WidgetPanel(state.toolbarBufferId);
+  }
   state.selectedIndex = 0;
   state.detailCache = null;
   state.isOpen = true;
@@ -489,7 +448,6 @@ async function show_git_log(): Promise<void> {
     editor.focusBufferGroupPanel(state.groupId, "log");
   }
   editor.on("cursor_moved", on_git_log_cursor_moved);
-  editor.on("mouse_click", on_git_log_toolbar_click);
   editor.on("resize", on_git_log_resize);
   editor.on("buffer_closed", on_git_log_buffer_closed);
 
@@ -505,15 +463,18 @@ registerHandler("show_git_log", show_git_log);
 function git_log_cleanup(): void {
   if (!state.isOpen) return;
   editor.off("cursor_moved", on_git_log_cursor_moved);
-  editor.off("mouse_click", on_git_log_toolbar_click);
   editor.off("resize", on_git_log_resize);
   editor.off("buffer_closed", on_git_log_buffer_closed);
+  // The buffer-group's `close` will tear down the toolbar buffer too,
+  // which implicitly drops the widget panel rendering into it. We
+  // still null out the handle so any stray `renderToolbar()` call
+  // post-cleanup is a no-op.
+  state.toolbarPanel = null;
   state.isOpen = false;
   state.groupId = null;
   state.logBufferId = null;
   state.detailBufferId = null;
   state.toolbarBufferId = null;
-  state.toolbarButtons = [];
   state.commits = [];
   state.selectedIndex = 0;
   state.detailCache = null;
