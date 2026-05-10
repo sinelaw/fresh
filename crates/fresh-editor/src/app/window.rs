@@ -1421,6 +1421,49 @@ impl Window {
         }
     }
 
+    // ---- LSP scheduling helpers ----
+
+    /// Schedule a folding-range refresh for a buffer (debounced). The
+    /// debounce window timestamp is stored on the window's per-buffer
+    /// folding-ranges debounce map.
+    pub fn schedule_folding_ranges_refresh(&mut self, buffer_id: BufferId) {
+        const FOLDING_RANGES_DEBOUNCE_MS: u64 = 300;
+        let next_time = std::time::Instant::now()
+            + std::time::Duration::from_millis(FOLDING_RANGES_DEBOUNCE_MS);
+        self.folding_ranges_debounce.insert(buffer_id, next_time);
+    }
+
+    /// Schedule a full semantic-tokens refresh for a buffer (debounced).
+    /// No-op when `enable_semantic_tokens_full` is off in the active
+    /// config.
+    pub fn schedule_semantic_tokens_full_refresh(&mut self, buffer_id: BufferId) {
+        const SEMANTIC_TOKENS_FULL_DEBOUNCE_MS: u64 = 500;
+        if !self.resources.config.editor.enable_semantic_tokens_full {
+            return;
+        }
+        let next_time = std::time::Instant::now()
+            + std::time::Duration::from_millis(SEMANTIC_TOKENS_FULL_DEBOUNCE_MS);
+        self.semantic_tokens_full_debounce
+            .insert(buffer_id, next_time);
+    }
+
+    /// Invalidate cached layouts and view transforms for every split
+    /// that displays `buffer_id`. Pure window-state mutation: walks
+    /// the window's split tree and view-state map.
+    pub fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
+        let Some((mgr, vs_map)) = self.splits.as_mut() else {
+            return;
+        };
+        let splits_for_buffer = mgr.splits_for_buffer(buffer_id);
+        for split_id in splits_for_buffer {
+            if let Some(view_state) = vs_map.get_mut(&split_id) {
+                view_state.invalidate_layout();
+                view_state.view_transform = None;
+                view_state.view_transform_stale = true;
+            }
+        }
+    }
+
     /// Atomically update both sides of the pane-buffer invariant for a
     /// given leaf split: the split tree's stored buffer AND the matching
     /// `SplitViewState.active_buffer` / `keyed_states` map.

@@ -1138,7 +1138,8 @@ impl Editor {
                 }
 
                 // Schedule folding range refresh
-                self.schedule_folding_ranges_refresh(buffer_id);
+                self.active_window_mut()
+                    .schedule_folding_ranges_refresh(buffer_id);
             }
             LspSpawnResult::NotAutoStart => {
                 tracing::debug!(

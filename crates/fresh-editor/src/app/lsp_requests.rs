@@ -60,10 +60,8 @@ fn lsp_range_contains(range: &lsp_types::Range, line: u32, character: u32) -> bo
     true
 }
 
-const SEMANTIC_TOKENS_FULL_DEBOUNCE_MS: u64 = 500;
 const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
 const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
-const FOLDING_RANGES_DEBOUNCE_MS: u64 = 300;
 /// Debounce window between the last buffer edit and the next inlay hints
 /// re-request. Matches the diagnostic-pull debounce to keep network chatter
 /// low while still refreshing hints after brief editing pauses (including
@@ -3425,14 +3423,6 @@ impl Editor {
         }
     }
 
-    /// Schedule a folding range refresh for a buffer (debounced).
-    pub(crate) fn schedule_folding_ranges_refresh(&mut self, buffer_id: BufferId) {
-        let next_time = Instant::now() + Duration::from_millis(FOLDING_RANGES_DEBOUNCE_MS);
-        self.active_window_mut()
-            .folding_ranges_debounce
-            .insert(buffer_id, next_time);
-    }
-
     /// Issue a debounced folding range request if the timer has elapsed.
     pub(crate) fn maybe_request_folding_ranges_debounced(&mut self, buffer_id: BufferId) {
         let Some(ready_at) = self
@@ -3676,18 +3666,6 @@ impl Editor {
                 tracing::debug!("Failed to request semantic tokens: {}", e);
             }
         }
-    }
-
-    /// Schedule a full semantic token refresh for a buffer (debounced).
-    pub(crate) fn schedule_semantic_tokens_full_refresh(&mut self, buffer_id: BufferId) {
-        if !self.config.editor.enable_semantic_tokens_full {
-            return;
-        }
-
-        let next_time = Instant::now() + Duration::from_millis(SEMANTIC_TOKENS_FULL_DEBOUNCE_MS);
-        self.active_window_mut()
-            .semantic_tokens_full_debounce
-            .insert(buffer_id, next_time);
     }
 
     /// Issue a debounced full semantic token request if the timer has elapsed.

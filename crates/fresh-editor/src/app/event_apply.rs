@@ -122,18 +122,22 @@ impl Editor {
         // Note: recovery_pending is set automatically by the buffer on edits
         match event {
             Event::Insert { .. } | Event::Delete { .. } | Event::BulkEdit { .. } => {
-                self.invalidate_layouts_for_buffer(self.active_buffer());
-                self.schedule_semantic_tokens_full_refresh(self.active_buffer());
-                self.schedule_folding_ranges_refresh(self.active_buffer());
+                let buf = self.active_buffer();
+                let win = self.active_window_mut();
+                win.invalidate_layouts_for_buffer(buf);
+                win.schedule_semantic_tokens_full_refresh(buf);
+                win.schedule_folding_ranges_refresh(buf);
             }
             Event::Batch { events, .. } => {
                 let has_edits = events
                     .iter()
                     .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
                 if has_edits {
-                    self.invalidate_layouts_for_buffer(self.active_buffer());
-                    self.schedule_semantic_tokens_full_refresh(self.active_buffer());
-                    self.schedule_folding_ranges_refresh(self.active_buffer());
+                    let buf = self.active_buffer();
+                    let win = self.active_window_mut();
+                    win.invalidate_layouts_for_buffer(buf);
+                    win.schedule_semantic_tokens_full_refresh(buf);
+                    win.schedule_folding_ranges_refresh(buf);
                 }
             }
             _ => {}
@@ -480,7 +484,8 @@ impl Editor {
         };
 
         // Post-processing (layout invalidation, split cursor sync, etc.)
-        self.invalidate_layouts_for_buffer(self.active_buffer());
+        let buf = self.active_buffer();
+        self.active_window_mut().invalidate_layouts_for_buffer(buf);
         self.adjust_other_split_cursors_for_event(&bulk_edit);
         // Note: Do NOT clear search overlays - markers track through edits for F3/Shift+F3
 
@@ -1049,40 +1054,4 @@ impl Editor {
         }
     }
 
-    /// Invalidate layouts for all splits viewing a specific buffer
-    ///
-    /// Called after buffer content changes (Insert/Delete) to mark
-    /// layouts as dirty, forcing rebuild on next access.
-    /// Also clears any cached view transform since its token source_offsets
-    /// become stale after buffer edits.
-    pub(super) fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
-        // Find all splits that display this buffer
-        let splits_for_buffer = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .splits_for_buffer(buffer_id);
-
-        // Invalidate layout and clear stale view transform for each split
-        for split_id in splits_for_buffer {
-            if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&split_id)
-            {
-                view_state.invalidate_layout();
-                // Clear cached view transform — its token source_offsets are from
-                // before the edit and would cause conceals to be applied at wrong positions.
-                // The view_transform_request hook will fire on the next render to rebuild it.
-                view_state.view_transform = None;
-                // Mark as stale so that any pending SubmitViewTransform commands
-                // (from a previous view_transform_request) are rejected.
-                view_state.view_transform_stale = true;
-            }
-        }
-    }
 }

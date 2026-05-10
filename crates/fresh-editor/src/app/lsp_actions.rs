@@ -1250,7 +1250,8 @@ impl Editor {
         let _ = __next_id;
         let _ = lsp;
         let _ = handle;
-        self.schedule_folding_ranges_refresh(buffer_id);
+        self.active_window_mut()
+            .schedule_folding_ranges_refresh(buffer_id);
     }
 
     /// Set up a plugin development workspace for LSP support on a buffer.

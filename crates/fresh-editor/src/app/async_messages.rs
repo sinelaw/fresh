@@ -423,7 +423,8 @@ impl Editor {
         let buffer_id = match dispatch {
             FoldingDispatch::Apply { buffer_id } => buffer_id,
             FoldingDispatch::Stale { buffer_id } => {
-                self.schedule_folding_ranges_refresh(buffer_id);
+                self.active_window_mut()
+                    .schedule_folding_ranges_refresh(buffer_id);
                 return;
             }
             FoldingDispatch::Skip => return,
@@ -1597,7 +1598,8 @@ impl Editor {
             .map(|(id, _)| id)
             .collect();
         for buffer_id in buffer_ids {
-            self.schedule_semantic_tokens_full_refresh(buffer_id);
+            self.active_window_mut()
+                .schedule_semantic_tokens_full_refresh(buffer_id);
         }
     }
 
@@ -1609,7 +1611,8 @@ impl Editor {
             .map(|(id, _)| id)
             .collect();
         for buffer_id in buffer_ids {
-            self.schedule_folding_ranges_refresh(buffer_id);
+            self.active_window_mut()
+                .schedule_folding_ranges_refresh(buffer_id);
         }
     }
 
