@@ -773,8 +773,43 @@ impl Editor {
             Arc::new(serde_json::to_value(&*config_arc).unwrap_or(serde_json::Value::Null));
         let config_snapshot_anchor = Arc::clone(&config_arc);
 
+        // The buffer-id allocator starts at the same value as
+        // `next_buffer_id`. Both are kept in sync by every allocation
+        // path (`Editor::alloc_buffer_id` advances both); the allocator
+        // is what gets cloned into every `Window` so handlers on
+        // `impl Window` can mint ids without an `Editor` reference.
+        let buffer_id_alloc = crate::app::window_resources::BufferIdAllocator::new(2);
+
+        // The local-host filesystem handle. Hoisted here (rather than
+        // constructed inline in the `Editor` literal below) so the
+        // base window's `WindowResources` and the editor share the same
+        // `Arc` from the start.
+        let local_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+
+        // Build the resource bundle every `Window` gets a clone of. The
+        // base window receives one clone here; subsequent windows
+        // (created via `Editor::create_window_at` or first-dive seeding
+        // in `set_active_window`) reach back to `Editor::window_resources()`
+        // for an equivalent bundle.
+        let base_resources = crate::app::window_resources::WindowResources {
+            config: Arc::clone(&config_arc),
+            grammar_registry: Arc::clone(&grammar_registry),
+            theme_registry: Arc::clone(&theme_registry),
+            theme_cache: Arc::clone(&theme_cache),
+            keybindings: Arc::clone(&keybindings),
+            command_registry: Arc::clone(&command_registry),
+            fs_manager: Arc::clone(&fs_manager),
+            local_filesystem: Arc::clone(&local_filesystem),
+            buffer_id_alloc: buffer_id_alloc.clone(),
+            authority: authority.clone(),
+            time_source: Arc::clone(&time_source),
+            dir_context: dir_context.clone(),
+        };
+
         let mut editor = Editor {
             next_buffer_id: 2,
+            buffer_id_alloc: buffer_id_alloc.clone(),
             config: config_arc,
             config_snapshot_anchor,
             config_cached_json,
@@ -825,7 +860,7 @@ impl Editor {
             authority,
             pending_authority: None,
             remote_indicator_override: None,
-            local_filesystem: Arc::new(crate::model::filesystem::StdFileSystem),
+            local_filesystem: Arc::clone(&local_filesystem),
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
             file_explorer_width,
@@ -861,6 +896,7 @@ impl Editor {
                     fresh_core::WindowId(1),
                     "",
                     working_dir.clone(),
+                    base_resources,
                 );
                 // Hand the eagerly-spawned LSP manager + the initial
                 // split layout off to the base window — that's where

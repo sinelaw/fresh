@@ -611,6 +611,28 @@ impl Editor {
         self.active_window
     }
 
+    /// Allocate the next globally-unique `BufferId`. Use this in
+    /// `impl Editor` handler bodies that mint new buffer ids. Handlers
+    /// that have already moved to `impl Window` use
+    /// `Window::alloc_buffer_id` (which delegates to the same
+    /// `Arc<BufferIdAllocator>` shared via `WindowResources`).
+    ///
+    /// Keeps `next_buffer_id` in sync with the allocator's high-water
+    /// mark so workspace snapshots that read the `next_buffer_id`
+    /// counter directly continue to see a correct value. The
+    /// allocator's atomic is the source of truth; this counter mirrors
+    /// it for serialization compatibility.
+    pub(crate) fn alloc_buffer_id(&mut self) -> fresh_core::BufferId {
+        let id = self.buffer_id_alloc.next();
+        // Bump the legacy counter past the freshly-issued id so
+        // workspace serialization snapshots see a value at least one
+        // greater than every issued id.
+        if id.0 + 1 > self.next_buffer_id {
+            self.next_buffer_id = id.0 + 1;
+        }
+        id
+    }
+
     /// Number of sessions currently in the editor. Always 1 until
     /// the multi-session step lands.
     pub fn session_count(&self) -> usize {

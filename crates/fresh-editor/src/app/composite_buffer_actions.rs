@@ -232,8 +232,7 @@ impl Editor {
         layout: CompositeLayout,
         sources: Vec<SourcePane>,
     ) -> BufferId {
-        let buffer_id = BufferId(self.next_buffer_id);
-        self.next_buffer_id += 1;
+        let buffer_id = self.alloc_buffer_id();
 
         let composite =
             CompositeBuffer::new(buffer_id, name.clone(), mode.clone(), layout, sources);

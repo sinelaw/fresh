@@ -611,8 +611,7 @@ impl Editor {
         ph.record_movement(active_buffer_id, position, anchor);
         ph.commit_pending_movement();
 
-        let buffer_id = BufferId(self.next_buffer_id);
-        self.next_buffer_id += 1;
+        let buffer_id = self.alloc_buffer_id();
 
         let mut state = EditorState::new(
             self.terminal_width,

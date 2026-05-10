@@ -86,6 +86,7 @@ mod virtual_buffers;
 pub mod warning_domains;
 pub mod window;
 mod window_actions;
+pub mod window_resources;
 pub mod workspace;
 
 use anyhow::Result as AnyhowResult;
@@ -336,8 +337,24 @@ pub struct Editor {
     // Use `self.active_buffer()` to get the active buffer ID.
     // event_logs moved onto `Window` (Step 0e). Undo logs follow the
     // buffer storage, so they live alongside the buffer they describe.
-    /// Next buffer ID to assign
+    /// Next buffer ID to assign.
+    ///
+    /// **Use [`Self::alloc_buffer_id`] instead of direct mutation.**
+    /// Direct `self.next_buffer_id += 1` works only on `impl Editor`
+    /// — methods that run on `impl Window` allocate via the shared
+    /// `Arc<BufferIdAllocator>` in `WindowResources`. Keeping this
+    /// counter as the canonical source means a handler on `Editor`
+    /// can still increment locally; the allocator's atomic stays in
+    /// sync because both go through `alloc_buffer_id`.
     next_buffer_id: usize,
+
+    /// Globally-unique buffer-id allocator shared by `Arc` clone with
+    /// every `Window` (via `WindowResources`). Handlers on
+    /// `impl Window` call `Window::alloc_buffer_id()` which delegates
+    /// here; handlers on `impl Editor` call `Editor::alloc_buffer_id()`
+    /// which does the same plus advances the local `next_buffer_id`
+    /// snapshot. Both routes produce the same monotonic id sequence.
+    pub(crate) buffer_id_alloc: crate::app::window_resources::BufferIdAllocator,
 
     /// Configuration.
     ///

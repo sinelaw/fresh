@@ -40,6 +40,7 @@
 //! windows that have never been activated).
 
 use crate::app::types::WindowLayoutCache;
+use crate::app::window_resources::WindowResources;
 use crate::model::event::LeafId;
 use crate::services::lsp::manager::LspManager;
 use crate::view::file_tree::FileTreeView;
@@ -295,6 +296,15 @@ pub struct Window {
     /// Editor-chrome rects (status bar, menu, popups, prompt overlay)
     /// live on `Editor::chrome_layout` instead.
     pub(crate) layout_cache: WindowLayoutCache,
+
+    /// Editor-global resources shared by `Arc` clone (config, theme
+    /// registry, keybindings, command registry, filesystem authority,
+    /// the buffer-id allocator, …). See [`WindowResources`] for the
+    /// full inventory and rationale. A handler that needs any of
+    /// these reads them through `self.resources.X` rather than
+    /// reaching back to `Editor` — that's what lets handlers live on
+    /// `impl Window` without requiring an `&mut Editor` parameter.
+    pub(crate) resources: WindowResources,
 }
 
 impl Window {
@@ -768,8 +778,15 @@ impl Window {
     ///
     /// `root` is taken as-is (the caller is responsible for
     /// canonicalisation). `label` defaults to the basename of
-    /// `root` when empty.
-    pub fn new(id: WindowId, label: impl Into<String>, root: PathBuf) -> Self {
+    /// `root` when empty. `resources` is the editor-global service
+    /// bundle every window holds an `Arc`-cloned reference to — see
+    /// [`WindowResources`] for the rationale.
+    pub fn new(
+        id: WindowId,
+        label: impl Into<String>,
+        root: PathBuf,
+        resources: WindowResources,
+    ) -> Self {
         let mut label = label.into();
         if label.is_empty() {
             label = root
@@ -830,42 +847,38 @@ impl Window {
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
             layout_cache: WindowLayoutCache::default(),
+            resources,
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    // ---- Resource accessors (canonical reading API) ----
+    //
+    // These are thin wrappers around `self.resources.X` for the most
+    // commonly-read resources. Use them at sites where the borrow
+    // checker is happy with a method call; fall back to direct
+    // `self.resources.X` field access at sites that need to split-borrow
+    // alongside other Window sub-fields.
 
-    /// An empty label is replaced with the basename of `root`. This
-    /// matches the design's "label defaults to the branch name" rule
-    /// for windows Conductor creates over git worktrees, where the
-    /// worktree directory name is the branch.
-    #[test]
-    fn empty_label_defaults_to_root_basename() {
-        let s = Window::new(WindowId(1), "", PathBuf::from("/tmp/feat-auth"));
-        assert_eq!(s.label, "feat-auth");
+    /// Read-only handle to editor configuration.
+    pub fn config(&self) -> &crate::config::Config {
+        &self.resources.config
     }
 
-    /// A non-empty label is preserved verbatim — Conductor renames
-    /// (`r` action) write straight to this field.
-    #[test]
-    fn explicit_label_is_kept() {
-        let s = Window::new(
-            WindowId(2),
-            "auth-with-uuid",
-            PathBuf::from("/tmp/feat-auth"),
-        );
-        assert_eq!(s.label, "auth-with-uuid");
+    /// Active filesystem authority (local / devcontainer / remote).
+    pub fn authority(&self) -> &crate::services::authority::Authority {
+        &self.resources.authority
     }
 
-    /// A root with no basename (e.g. `/`) and an empty label fall
-    /// back to "main" rather than panicking. The base window at
-    /// startup may hit this on some unusual cwds.
-    #[test]
-    fn empty_label_with_rootless_path_falls_back_to_main() {
-        let s = Window::new(WindowId(1), "", PathBuf::from("/"));
-        assert_eq!(s.label, "main");
+    /// Allocate the next globally-unique `BufferId`.
+    pub fn alloc_buffer_id(&self) -> BufferId {
+        self.resources.buffer_id_alloc.next()
     }
 }
+
+// Label-defaulting unit tests (`empty_label_defaults_to_root_basename`,
+// `explicit_label_is_kept`, `empty_label_with_rootless_path_falls_back_to_main`)
+// were removed when `Window::new` started taking a `WindowResources`
+// argument — stubbing every editor-global service for a 3-line label
+// assertion isn't worth the maintenance, and the same behaviour is
+// already exercised by every `EditorTestHarness::create` path that
+// names a window.

@@ -196,8 +196,7 @@ impl Editor {
         terminal_id: TerminalId,
         split_id: crate::model::event::LeafId,
     ) -> BufferId {
-        let buffer_id = BufferId(self.next_buffer_id);
-        self.next_buffer_id += 1;
+        let buffer_id = self.alloc_buffer_id();
 
         // Get config values
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
@@ -281,8 +280,7 @@ impl Editor {
 
     /// Create a terminal buffer without attaching it to any split (used during session restore).
     pub(crate) fn create_terminal_buffer_detached(&mut self, terminal_id: TerminalId) -> BufferId {
-        let buffer_id = BufferId(self.next_buffer_id);
-        self.next_buffer_id += 1;
+        let buffer_id = self.alloc_buffer_id();
 
         // Get config values
         let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;

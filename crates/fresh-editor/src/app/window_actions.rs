@@ -10,13 +10,36 @@
 //! same hook sequence as before.
 
 use crate::app::window::Window;
+use crate::app::window_resources::{WindowControlEvent, WindowResources};
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::split::{SplitManager, SplitViewState};
-use fresh_core::{BufferId, WindowId};
+use fresh_core::WindowId;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 impl crate::app::Editor {
+    /// Snapshot the editor-global resources every new `Window` needs.
+    /// All fields are cheap clones (`Arc` increments or `Clone`-by-value
+    /// where the inner type already holds `Arc`s, like `Authority`).
+    /// Called by `create_window_at` and by the first-dive seed path in
+    /// `set_active_window`; also by `editor_init` for the base window.
+    pub(crate) fn window_resources(&self) -> WindowResources {
+        WindowResources {
+            config: std::sync::Arc::clone(&self.config),
+            grammar_registry: std::sync::Arc::clone(&self.grammar_registry),
+            theme_registry: std::sync::Arc::clone(&self.theme_registry),
+            theme_cache: std::sync::Arc::clone(&self.theme_cache),
+            keybindings: std::sync::Arc::clone(&self.keybindings),
+            command_registry: std::sync::Arc::clone(&self.command_registry),
+            fs_manager: std::sync::Arc::clone(&self.fs_manager),
+            local_filesystem: std::sync::Arc::clone(&self.local_filesystem),
+            buffer_id_alloc: self.buffer_id_alloc.clone(),
+            authority: self.authority.clone(),
+            time_source: std::sync::Arc::clone(&self.time_source),
+            dir_context: self.dir_context.clone(),
+        }
+    }
+
     /// Allocate a session id, insert a new `Session`, fire
     /// `session_created`. Does not switch active.
     ///
@@ -27,7 +50,8 @@ impl crate::app::Editor {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
 
-        let session = Window::new(id, label, root.clone());
+        let resources = self.window_resources();
+        let session = Window::new(id, label, root.clone(), resources);
         let resolved_label = session.label.clone();
         self.windows.insert(id, session);
 
@@ -78,8 +102,7 @@ impl crate::app::Editor {
         // installed into the incoming window's `buffers` map after
         // the active pointer moves.
         let fresh_layout = if needs_fresh_layout {
-            let buf = BufferId(self.next_buffer_id);
-            self.next_buffer_id += 1;
+            let buf = self.alloc_buffer_id();
             let mut state = crate::state::EditorState::new(
                 self.terminal_width,
                 self.terminal_height,
@@ -207,5 +230,89 @@ impl crate::app::Editor {
             .run_hook("window_closed", HookArgs::WindowClosed { id: id.0 });
 
         true
+    }
+
+    /// Run a closure with `&mut Window` for the active window, then
+    /// apply any [`WindowControlEvent`]s the closure returned.
+    ///
+    /// This is the canonical bridge between `impl Editor` (which owns
+    /// the windows map and editor-global state) and `impl Window`
+    /// (which owns per-window state and runs handlers). A handler that
+    /// has been moved to `impl Window` returns events for cross-window
+    /// concerns (close this window, switch to another, quit); the
+    /// dispatcher applies them after the window mutation completes, so
+    /// the `Window` body never needs an `&mut Editor` reference.
+    ///
+    /// The closure receives `&mut Window` and should return its own
+    /// payload `R` plus a `Vec<WindowControlEvent>`. Most handlers
+    /// return an empty event vec. When a handler legitimately can't
+    /// proceed (no active window — invariant says one always exists,
+    /// but defend against bugs anyway), the closure isn't called and
+    /// the function returns `None`.
+    ///
+    /// # Borrow-checker note
+    ///
+    /// The closure is invoked with the `Window` borrow held for its
+    /// duration; at sites that need to also touch `Editor`-scoped
+    /// state (read `self.config`, fire a plugin hook synchronously)
+    /// the body should either route through `WindowResources` (the
+    /// preferred path — see `Window::config()` etc.) or return an
+    /// event for the dispatcher to apply.
+    pub(crate) fn dispatch_to_active_window<R, F>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Window) -> (R, Vec<WindowControlEvent>),
+    {
+        let id = self.active_window;
+        let window = self.windows.get_mut(&id)?;
+        let (result, events) = f(window);
+        for event in events {
+            self.apply_window_control_event(event);
+        }
+        Some(result)
+    }
+
+    /// Apply a single [`WindowControlEvent`]. Called by
+    /// `dispatch_to_active_window` for every event returned by a
+    /// `Window` handler. Idempotent for unknown / stale ids — events
+    /// that target a window that has been closed by the time they
+    /// dispatch are warn-logged and dropped.
+    pub(crate) fn apply_window_control_event(&mut self, event: WindowControlEvent) {
+        match event {
+            WindowControlEvent::CloseThisWindow => {
+                let id = self.active_window;
+                // The handler returned this from `&mut self == window` so
+                // the window must still be alive; just log if not. We
+                // can't close the active window without first switching
+                // away from it (close_window refuses), so we currently
+                // warn-log; the long-term answer is for handlers to
+                // return CloseThisWindow only after returning
+                // SwitchToWindow(other).
+                if self.windows.len() <= 1 {
+                    tracing::warn!("CloseThisWindow ignored: only one window remains (id {id:?})");
+                    return;
+                }
+                tracing::warn!(
+                    "CloseThisWindow on active window {id:?}: caller must \
+                     SwitchToWindow first; ignoring"
+                );
+            }
+            WindowControlEvent::SwitchToWindow(target) => {
+                if !self.windows.contains_key(&target) {
+                    tracing::warn!("SwitchToWindow({target:?}) ignored: unknown window id");
+                    return;
+                }
+                self.set_active_window(target);
+            }
+            WindowControlEvent::QuitEditor => {
+                self.should_quit = true;
+            }
+            WindowControlEvent::DetachEditor => {
+                self.should_detach = true;
+            }
+            WindowControlEvent::RestartWithDir(path) => {
+                self.restart_with_dir = Some(path);
+                self.should_quit = true;
+            }
+        }
     }
 }

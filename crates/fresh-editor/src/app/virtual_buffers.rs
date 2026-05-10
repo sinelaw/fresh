@@ -66,8 +66,7 @@ impl Editor {
             self.active_buffer()
         } else {
             // Create new buffer ID
-            let id = BufferId(self.next_buffer_id);
-            self.next_buffer_id += 1;
+            let id = self.alloc_buffer_id();
             id
         };
 
@@ -297,8 +296,7 @@ impl Editor {
         mode: String,
         read_only: bool,
     ) -> BufferId {
-        let buffer_id = BufferId(self.next_buffer_id);
-        self.next_buffer_id += 1;
+        let buffer_id = self.alloc_buffer_id();
 
         let mut state = EditorState::new(
             self.terminal_width,
@@ -337,8 +335,7 @@ impl Editor {
         mode: String,
         read_only: bool,
     ) -> BufferId {
-        let buffer_id = BufferId(self.next_buffer_id);
-        self.next_buffer_id += 1;
+        let buffer_id = self.alloc_buffer_id();
 
         let mut state = EditorState::new(
             self.terminal_width,

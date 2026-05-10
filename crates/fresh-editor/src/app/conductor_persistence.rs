@@ -252,7 +252,8 @@ impl Editor {
 
         for ps in env.windows {
             let id = WindowId(ps.id);
-            let mut s = Window::new(id, ps.label, ps.root);
+            let resources = self.window_resources();
+            let mut s = Window::new(id, ps.label, ps.root, resources);
             s.plugin_state = ps.plugin_state;
             self.windows.insert(id, s);
         }
