@@ -1064,6 +1064,15 @@ pub struct SplitManager {
 
     /// Labels for leaf splits (e.g., "sidebar" to mark managed splits)
     labels: HashMap<SplitId, String>,
+
+    /// Most-recently-active leaf that did NOT carry `SplitRole::UtilityDock`.
+    /// Used by file-open routing so that opening a file while a utility
+    /// panel (Search/Replace, Quickfix, terminal-in-dock) holds focus
+    /// lands the new buffer in the user's last editor pane instead of
+    /// turning the dock into a tab strip for ordinary files. Maintained
+    /// transparently by `set_active_split`; falls back to a tree walk
+    /// when this entry is empty or stale.
+    last_non_dock_leaf: Option<LeafId>,
 }
 
 impl SplitManager {
@@ -1076,6 +1085,7 @@ impl SplitManager {
             next_split_id: 1,
             maximized_split: None,
             labels: HashMap::new(),
+            last_non_dock_leaf: Some(LeafId(split_id)),
         }
     }
 
@@ -1097,6 +1107,14 @@ impl SplitManager {
     pub fn replace_root(&mut self, new_root: SplitNode, new_active: LeafId) {
         self.root = new_root;
         self.active_split = new_active;
+        // The previously-tracked LRU leaf no longer exists in the new
+        // tree. Re-seed from the new active when it isn't a dock,
+        // otherwise leave empty and rely on the tree-walk fallback.
+        self.last_non_dock_leaf = if self.leaf_role(new_active) != Some(SplitRole::UtilityDock) {
+            Some(new_active)
+        } else {
+            None
+        };
     }
 
     /// Get the currently active split ID
@@ -1109,10 +1127,43 @@ impl SplitManager {
         // Verify the split exists
         if self.root.find(split_id.into()).is_some() {
             self.active_split = split_id;
+            // Track the LRU non-dock leaf so file-open routing can
+            // recover the last editor pane after a utility panel
+            // (Search/Replace, Quickfix, terminal-in-dock) takes focus.
+            if self.leaf_role(split_id) != Some(SplitRole::UtilityDock) {
+                self.last_non_dock_leaf = Some(split_id);
+            }
             true
         } else {
             false
         }
+    }
+
+    /// Role of a leaf split, or `None` if the leaf has no role tag or
+    /// the id doesn't reference a leaf.
+    pub fn leaf_role(&self, split_id: LeafId) -> Option<SplitRole> {
+        self.root.find(split_id.into()).and_then(|node| node.role())
+    }
+
+    /// Most recent active leaf that wasn't a utility-dock pane, or
+    /// (if no such record exists or it's been since closed) the first
+    /// non-dock leaf encountered in a tree walk. Returns `None` only
+    /// when every leaf in the tree carries `SplitRole::UtilityDock` —
+    /// a degenerate state the editor never actually reaches.
+    pub fn last_non_dock_leaf(&self) -> Option<LeafId> {
+        self.last_non_dock_leaf
+            .filter(|leaf| self.leaf_role(*leaf) != Some(SplitRole::UtilityDock))
+            .filter(|leaf| self.root.find((*leaf).into()).is_some())
+            .or_else(|| self.find_first_non_dock_leaf())
+    }
+
+    /// First leaf in tree order without `SplitRole::UtilityDock`.
+    /// Used as the deterministic fallback when LRU tracking is empty.
+    pub fn find_first_non_dock_leaf(&self) -> Option<LeafId> {
+        self.root
+            .leaf_split_ids()
+            .into_iter()
+            .find(|leaf| self.leaf_role(*leaf) != Some(SplitRole::UtilityDock))
     }
 
     /// Get the buffer ID of the active split (if it's a leaf)

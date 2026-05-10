@@ -27,6 +27,17 @@ impl Editor {
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
     /// Saving the buffer will create the file.
     pub fn open_file(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        // If the active leaf is a utility-dock pane (Search/Replace,
+        // Quickfix, terminal-in-dock), the user almost never wants the
+        // newly-opened file to land there — the dock hosts panel-style
+        // content, not editor buffers. Snap the active leaf back to
+        // the most recent regular editor leaf BEFORE the open path
+        // runs, so both downstream routing decisions —
+        // `preferred_split_for_file` (which adds the new buffer as a
+        // tab) and `set_active_buffer` (which makes it the active
+        // buffer) — see a non-dock active leaf and route consistently.
+        self.redirect_active_split_away_from_dock_if_needed();
+
         // Check whether the active buffer had a file path before loading.
         // If it didn't, open_file_no_focus may replace the empty initial buffer
         // in-place (same buffer ID, new content), and we need to notify plugins.
@@ -101,6 +112,39 @@ impl Editor {
         }
 
         Ok(buffer_id)
+    }
+
+    /// If the active split leaf carries `SplitRole::UtilityDock`,
+    /// move the active leaf back to the user's last regular editor
+    /// leaf (or the first non-dock leaf as a fallback). Called from
+    /// the file-open path so that opening a file while a utility
+    /// panel holds focus doesn't turn the dock into a tab strip for
+    /// ordinary files.
+    fn redirect_active_split_away_from_dock_if_needed(&mut self) {
+        use crate::view::split::SplitRole;
+        let Some(mgr) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.splits.as_ref())
+            .map(|(m, _)| m)
+        else {
+            return;
+        };
+        let active = mgr.active_split();
+        if mgr.leaf_role(active) != Some(SplitRole::UtilityDock) {
+            return;
+        }
+        let Some(target) = mgr.last_non_dock_leaf() else {
+            return; // Degenerate: every leaf is a dock — leave as is.
+        };
+        if target == active {
+            return;
+        }
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_active_split(target);
     }
 
     /// Open a file without switching focus to it
