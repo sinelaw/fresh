@@ -1954,7 +1954,7 @@ impl Editor {
                 self.toggle_comment();
             }
             Action::ToggleFold => {
-                self.toggle_fold_at_cursor();
+                self.active_window_mut().toggle_fold_at_cursor();
             }
             Action::GoToMatchingBracket => {
                 self.goto_matching_bracket();

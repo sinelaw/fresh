@@ -550,7 +550,8 @@ impl Editor {
             };
 
         if toggle_fold_byte.is_some() {
-            self.toggle_fold_at_byte(buffer_id, target_position);
+            self.active_window_mut()
+                .toggle_fold_at_byte(buffer_id, target_position);
             return Ok(());
         }
 

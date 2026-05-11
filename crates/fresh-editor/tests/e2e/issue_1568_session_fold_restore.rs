@@ -95,7 +95,10 @@ fn helper() {
         // Collapse the `fn helper()` block (line 6, 0-indexed) via the
         // public toggle API — the same code path Toggle Fold invokes.
         let buffer_id = harness.editor().active_buffer();
-        harness.editor_mut().toggle_fold_at_line(buffer_id, 6);
+        harness
+            .editor_mut()
+            .active_window_mut()
+            .toggle_fold_at_line(buffer_id, 6);
         harness.render().unwrap();
 
         // Sanity: `fn helper()` is now collapsed — a `▸` indicator

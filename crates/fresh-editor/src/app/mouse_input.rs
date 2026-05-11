@@ -117,7 +117,8 @@ impl Editor {
                     if let Some((buffer_id, byte_pos)) =
                         self.fold_toggle_line_at_screen_position(col, row)
                     {
-                        self.toggle_fold_at_byte(buffer_id, byte_pos);
+                        self.active_window_mut()
+                            .toggle_fold_at_byte(buffer_id, byte_pos);
                         needs_render = true;
                         return Ok(needs_render);
                     }

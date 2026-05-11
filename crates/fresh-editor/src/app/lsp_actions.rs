@@ -627,7 +627,13 @@ impl Editor {
         }
     }
 
-    /// Toggle folding at the current cursor position.
+    // `toggle_fold_at_cursor`, `toggle_fold_at_line`, and the
+    // `toggle_fold_at_byte` wrapper live on `impl Window` — call them via
+    // `self.active_window_mut().toggle_fold_at_*(...)`.
+}
+
+impl crate::app::window::Window {
+    /// Toggle folding at the current cursor position in the active buffer.
     pub fn toggle_fold_at_cursor(&mut self) {
         let buffer_id = self.active_buffer();
         let pos = self.active_cursors().primary().position;
@@ -639,15 +645,9 @@ impl Editor {
     /// Kept for callers that only have a line number (e.g. gutter clicks
     /// that already resolved the line).  Converts to a byte position and
     /// delegates to [`Self::toggle_fold_at_byte`].
-    pub fn toggle_fold_at_line(&mut self, buffer_id: BufferId, line: usize) {
+    pub fn toggle_fold_at_line(&mut self, buffer_id: crate::model::event::BufferId, line: usize) {
         let byte_pos = {
-            let Some(state) = self
-                .windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .get(&buffer_id)
-            else {
+            let Some(state) = self.buffers.get(&buffer_id) else {
                 return;
             };
             state.buffer.line_start_offset(line).unwrap_or_else(|| {
@@ -659,18 +659,6 @@ impl Editor {
         self.toggle_fold_at_byte(buffer_id, byte_pos);
     }
 
-    /// Toggle folding at the given byte position in the specified
-    /// buffer in the active window. Thin shim over
-    /// `Window::toggle_fold_at_byte` — the body lives there because
-    /// the operation is purely window-scoped (buffer state + view
-    /// state).
-    pub fn toggle_fold_at_byte(&mut self, buffer_id: BufferId, byte_pos: usize) {
-        self.active_window_mut()
-            .toggle_fold_at_byte(buffer_id, byte_pos);
-    }
-}
-
-impl crate::app::window::Window {
     /// Toggle folding at the given byte position in the specified buffer.
     pub fn toggle_fold_at_byte(
         &mut self,
