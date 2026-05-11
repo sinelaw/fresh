@@ -729,7 +729,7 @@ impl Editor {
     /// way subsequent presses look for the search substring rather than the
     /// whole word, which would skip other substring occurrences (issue #1697).
     pub fn add_cursor_at_next_match(&mut self) {
-        if let Some(range) = self.search_match_at_primary_cursor() {
+        if let Some(range) = self.active_window().search_match_at_primary_cursor() {
             let primary_id = self.active_cursors().primary_id();
             let primary = self.active_cursors().primary();
             let event = Event::MoveCursor {

@@ -1871,6 +1871,43 @@ impl Window {
         self.search_state = None;
     }
 
+    /// Check if semantic highlight debounce timer has expired for any
+    /// buffer in this window. Returns true if a redraw is needed because
+    /// the debounce period has elapsed and semantic highlights need to
+    /// be recomputed.
+    pub fn check_semantic_highlight_timer(&self) -> bool {
+        for state in self.buffers.values() {
+            if let Some(remaining) = state.reference_highlight_overlay.needs_redraw() {
+                if remaining.is_zero() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// If an active search has placed the cursor inside a match, return that
+    /// match's byte range.  Used by Ctrl-D ("Add cursor at next match") so a
+    /// substring search drives the selection — instead of expanding to the
+    /// whole word — when the user presses Ctrl-D right after searching
+    /// (issue #1697).
+    pub fn search_match_at_primary_cursor(&self) -> Option<std::ops::Range<usize>> {
+        let search_state = self.search_state.as_ref()?;
+        let pos = self.active_cursors().primary().position;
+        let idx = match search_state.matches.binary_search(&pos) {
+            Ok(i) => i,
+            Err(0) => return None,
+            Err(i) => i - 1,
+        };
+        let start = search_state.matches[idx];
+        let len = *search_state.match_lengths.get(idx)?;
+        if pos < start + len {
+            Some(start..start + len)
+        } else {
+            None
+        }
+    }
+
     /// Update search highlights in the visible viewport for the active
     /// buffer. Caller passes theme colors as parameters because `theme`
     /// is editor-global (not yet on `Window.resources`).

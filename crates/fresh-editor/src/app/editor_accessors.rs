@@ -1118,26 +1118,13 @@ impl Editor {
         }
     }
 
-    /// Check if semantic highlight debounce timer has expired
+    /// Check if semantic highlight debounce timer has expired.
     ///
-    /// Returns true if a redraw is needed because the debounce period has elapsed
-    /// and semantic highlights need to be recomputed.
+    /// Thin Editor-side wrapper around the per-window check on
+    /// `Window::check_semantic_highlight_timer`. Semantic-highlight overlays
+    /// live on the active window's buffers, so the actual scan delegates there.
     pub fn check_semantic_highlight_timer(&self) -> bool {
-        // Check all buffers for pending semantic highlight redraws
-        for state in self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .values()
-        {
-            if let Some(remaining) = state.reference_highlight_overlay.needs_redraw() {
-                if remaining.is_zero() {
-                    return true;
-                }
-            }
-        }
-        false
+        self.active_window().check_semantic_highlight_timer()
     }
 
     /// Check if diagnostic pull timer has expired and trigger re-pull if so.
