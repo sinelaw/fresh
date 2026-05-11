@@ -10,9 +10,7 @@ use anyhow::Result as AnyhowResult;
 
 use crate::model::event::{BufferId, LeafId};
 
-use super::Editor;
-
-impl Editor {
+impl crate::app::window::Window {
     /// Handle mouse wheel scroll event
     pub(super) fn handle_mouse_scroll(
         &mut self,
@@ -22,7 +20,7 @@ impl Editor {
     ) -> AnyhowResult<()> {
         // Notify plugins of mouse scroll so they can handle it for virtual buffers
         let buffer_id = self.active_buffer();
-        self.plugin_manager.read().unwrap().run_hook(
+        self.resources.plugin_manager.read().unwrap().run_hook(
             "mouse_scroll",
             fresh_core::hooks::HookArgs::MouseScroll {
                 buffer_id,
@@ -33,14 +31,14 @@ impl Editor {
         );
 
         // Check if scroll is over the file explorer
-        if let Some(explorer_area) = self.active_layout().file_explorer_area {
+        if let Some(explorer_area) = self.layout_cache.file_explorer_area {
             if col >= explorer_area.x
                 && col < explorer_area.x + explorer_area.width
                 && row >= explorer_area.y
                 && row < explorer_area.y + explorer_area.height
             {
                 // Scroll the file explorer
-                if let Some(explorer) = self.file_explorer_mut() {
+                if let Some(explorer) = self.file_explorer.as_mut() {
                     let count = explorer.visible_count();
                     if count == 0 {
                         return Ok(());
@@ -72,9 +70,8 @@ impl Editor {
         // Fall back to the active split if the pointer isn't over any split area.
         let (target_split, buffer_id) = self.split_at_position(col, row).unwrap_or_else(|| {
             (
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.splits.as_ref())
+                self.splits
+                    .as_ref()
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split(),
@@ -85,20 +82,18 @@ impl Editor {
         // Panels marked non-scrollable (buffer-group toolbars/headers/footers
         // default to this) swallow the wheel event — their content is pinned
         // so scrolling would just shift the visible rows by one line.
-        if self.active_window().is_non_scrollable_buffer(buffer_id) {
+        if self.is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
         // Check if this is a composite buffer - if so, use composite scroll
-        if self.active_window().is_composite_buffer(buffer_id) {
+        if self.is_composite_buffer(buffer_id) {
             let max_row = self
-                .active_window_mut()
                 .composite_buffers
                 .get(&buffer_id)
                 .map(|c| c.row_count().saturating_sub(1))
                 .unwrap_or(0);
             if let Some(view_state) = self
-                .active_window_mut()
                 .composite_view_states
                 .get_mut(&(target_split, buffer_id))
             {
@@ -114,17 +109,16 @@ impl Editor {
 
         // Get view_transform tokens from SplitViewState (if any)
         let view_transform_tokens = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
+            .splits
+            .as_ref()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&target_split)
             .and_then(|vs| vs.view_transform.as_ref())
             .map(|vt| vt.tokens.clone());
 
-        let tab_size = self.config.editor.tab_size;
-        self.active_window_mut().scroll_split_by_lines(
+        let tab_size = self.config().editor.tab_size;
+        self.scroll_split_by_lines(
             buffer_id,
             target_split,
             delta,
@@ -144,9 +138,8 @@ impl Editor {
     ) -> AnyhowResult<()> {
         let (target_split, buffer_id) = self.split_at_position(col, row).unwrap_or_else(|| {
             (
-                self.windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.splits.as_ref())
+                self.splits
+                    .as_ref()
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split(),
@@ -154,14 +147,12 @@ impl Editor {
             )
         });
 
-        if self.active_window().is_non_scrollable_buffer(buffer_id) {
+        if self.is_non_scrollable_buffer(buffer_id) {
             return Ok(());
         }
 
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .split_view_states_mut()
             .expect("active window must have a populated split layout")
             .get_mut(&target_split)
         {
@@ -194,13 +185,13 @@ impl Editor {
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
-        let drag_start_row = match self.active_window_mut().mouse_state.drag_start_row {
+        let drag_start_row = match self.mouse_state.drag_start_row {
             Some(r) => r,
             None => return Ok(()), // No drag start, shouldn't happen
         };
 
         // Handle composite buffers - use row-based scrolling
-        if self.active_window().is_composite_buffer(buffer_id) {
+        if self.is_composite_buffer(buffer_id) {
             return self.handle_composite_scrollbar_drag_relative(
                 row,
                 drag_start_row,
@@ -210,25 +201,20 @@ impl Editor {
             );
         }
 
-        let drag_start_top_byte = match self.active_window_mut().mouse_state.drag_start_top_byte {
+        let drag_start_top_byte = match self.mouse_state.drag_start_top_byte {
             Some(b) => b,
             None => return Ok(()), // No drag start, shouldn't happen
         };
 
-        let drag_start_view_line_offset = self
-            .active_window_mut()
-            .mouse_state
-            .drag_start_view_line_offset
-            .unwrap_or(0);
+        let drag_start_view_line_offset = self.mouse_state.drag_start_view_line_offset.unwrap_or(0);
 
         // Calculate the offset in rows (still used for large files)
         let row_offset = (row as i32) - (drag_start_row as i32);
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
+            .splits
+            .as_ref()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
@@ -237,9 +223,8 @@ impl Editor {
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
+            .splits
+            .as_ref()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
@@ -251,31 +236,27 @@ impl Editor {
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
         let (wrap_width, show_line_numbers) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
+            .splits
+            .as_ref()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
             .unwrap_or((80, true));
 
+        // Snapshot config values up front so the mutable borrow on `self.buffers`
+        // below doesn't conflict with `self.config()`.
+        let large_file_threshold = self.config().editor.large_file_threshold_bytes as usize;
+
         // Get the buffer state and calculate target position using RELATIVE movement
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
-        let scroll_position = if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
+        let scroll_position = if let Some(state) = &mut self.buffers.get_mut(&buffer_id) {
             let scrollbar_height = scrollbar_rect.height as usize;
             if scrollbar_height == 0 {
                 return Ok(());
             }
 
             let buffer_len = state.buffer.len();
-            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 
             // Use relative movement: calculate scroll change based on row_offset from drag start
             if buffer_len <= large_file_threshold {
@@ -391,9 +372,7 @@ impl Editor {
 
         // Set viewport top to this position in SplitViewState
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .split_view_states_mut()
             .expect("active window must have a populated split layout")
             .get_mut(&split_id)
         {
@@ -434,7 +413,7 @@ impl Editor {
         };
 
         // Handle composite buffers - use row-based scrolling
-        if self.active_window().is_composite_buffer(buffer_id) {
+        if self.is_composite_buffer(buffer_id) {
             return self.handle_composite_scrollbar_jump(
                 ratio,
                 split_id,
@@ -445,9 +424,8 @@ impl Editor {
 
         // Get viewport height from SplitViewState
         let viewport_height = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
+            .splits
+            .as_ref()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
@@ -456,9 +434,8 @@ impl Editor {
 
         // Check if line wrapping is enabled
         let line_wrap_enabled = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
+            .splits
+            .as_ref()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
@@ -466,26 +443,22 @@ impl Editor {
             .unwrap_or(false);
 
         let (wrap_width, show_line_numbers) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
+            .splits
+            .as_ref()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
             .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
             .unwrap_or((80, true));
 
+        // Snapshot config up front so the mutable borrow on `self.buffers`
+        // below doesn't conflict with `self.config()`.
+        let large_file_threshold = self.config().editor.large_file_threshold_bytes as usize;
+
         // Get the buffer state and calculate scroll position
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
-        let scroll_position = if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
+        let scroll_position = if let Some(state) = &mut self.buffers.get_mut(&buffer_id) {
             let buffer_len = state.buffer.len();
-            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
 
             // For small files, use precise line-based calculations
             // For large files, fall back to byte-based estimation
@@ -574,9 +547,7 @@ impl Editor {
 
         // Set viewport top to this position in SplitViewState
         if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .split_view_states_mut()
             .expect("active window must have a populated split layout")
             .get_mut(&split_id)
         {
@@ -602,7 +573,6 @@ impl Editor {
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
         let total_rows = self
-            .active_window_mut()
             .composite_buffers
             .get(&buffer_id)
             .map(|c| c.row_count())
@@ -612,11 +582,7 @@ impl Editor {
         let target_row = (ratio * max_scroll_row as f64).round() as usize;
         let target_row = target_row.min(max_scroll_row);
 
-        if let Some(view_state) = self
-            .active_window_mut()
-            .composite_view_states
-            .get_mut(&(split_id, buffer_id))
-        {
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
             view_state.set_scroll_row(target_row, max_scroll_row);
         }
         Ok(())
@@ -632,17 +598,12 @@ impl Editor {
         buffer_id: BufferId,
         scrollbar_rect: ratatui::layout::Rect,
     ) -> AnyhowResult<()> {
-        let drag_start_scroll_row = match self
-            .active_window_mut()
-            .mouse_state
-            .drag_start_composite_scroll_row
-        {
+        let drag_start_scroll_row = match self.mouse_state.drag_start_composite_scroll_row {
             Some(r) => r,
             None => return Ok(()),
         };
 
         let total_rows = self
-            .active_window_mut()
             .composite_buffers
             .get(&buffer_id)
             .map(|c| c.row_count())
@@ -693,11 +654,7 @@ impl Editor {
         let target_row = (target_scroll_ratio * max_scroll_row as f64).round() as usize;
         let target_row = target_row.min(max_scroll_row);
 
-        if let Some(view_state) = self
-            .active_window_mut()
-            .composite_view_states
-            .get_mut(&(split_id, buffer_id))
-        {
+        if let Some(view_state) = self.composite_view_states.get_mut(&(split_id, buffer_id)) {
             view_state.set_scroll_row(target_row, max_scroll_row);
         }
         Ok(())

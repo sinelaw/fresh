@@ -263,12 +263,14 @@ impl Editor {
             }
             MouseEventKind::ScrollLeft => {
                 // Native horizontal scroll left
-                self.handle_horizontal_scroll(col, row, -3)?;
+                self.active_window_mut()
+                    .handle_horizontal_scroll(col, row, -3)?;
                 needs_render = true;
             }
             MouseEventKind::ScrollRight => {
                 // Native horizontal scroll right
-                self.handle_horizontal_scroll(col, row, 3)?;
+                self.active_window_mut()
+                    .handle_horizontal_scroll(col, row, 3)?;
                 needs_render = true;
             }
             MouseEventKind::Down(MouseButton::Right) => {
@@ -341,7 +343,8 @@ impl Editor {
         delta: i32,
     ) -> AnyhowResult<()> {
         if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-            self.handle_horizontal_scroll(col, row, delta)?;
+            self.active_window_mut()
+                .handle_horizontal_scroll(col, row, delta)?;
         } else if self.handle_prompt_scroll(delta) {
             // prompt consumed the scroll
         } else if self.is_file_open_active()
@@ -352,6 +355,7 @@ impl Editor {
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
         } else if self
+            .active_window()
             .split_at_position(col, row)
             .map(|(_, buffer_id)| self.handle_widget_panel_wheel(buffer_id, delta))
             .unwrap_or(false)
@@ -372,7 +376,8 @@ impl Editor {
                     crate::input::keybindings::KeyContext::Normal;
             }
             self.dismiss_transient_popups();
-            self.handle_mouse_scroll(col, row, delta)?;
+            self.active_window_mut()
+                .handle_mouse_scroll(col, row, delta)?;
         }
         Ok(())
     }
@@ -787,22 +792,8 @@ impl Editor {
             .is_some_and(|layout| layout.contains(col, row))
     }
 
-    /// Find the split whose content or scrollbar area contains (col, row).
-    /// Returns the split id and its buffer id, or None if not over any split.
-    pub(super) fn split_at_position(&self, col: u16, row: u16) -> Option<(LeafId, BufferId)> {
-        for &(split_id, buffer_id, content_rect, scrollbar_rect, _, _) in
-            &self.active_layout().split_areas
-        {
-            let in_content = in_rect(col, row, content_rect);
-            let in_scrollbar = scrollbar_rect.width > 0
-                && scrollbar_rect.height > 0
-                && in_rect(col, row, scrollbar_rect);
-            if in_content || in_scrollbar {
-                return Some((split_id, buffer_id));
-            }
-        }
-        None
-    }
+    // `split_at_position` lives on `impl Window` — call it via
+    // `self.active_window().split_at_position(col, row)`.
 
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
@@ -1885,9 +1876,13 @@ impl Editor {
             }
         } else {
             self.active_window_mut().mouse_state.dragging_scrollbar = Some(split_id);
-            if let Err(e) =
-                self.handle_scrollbar_jump(col, row, split_id, buffer_id, scrollbar_rect)
-            {
+            if let Err(e) = self.active_window_mut().handle_scrollbar_jump(
+                col,
+                row,
+                split_id,
+                buffer_id,
+                scrollbar_rect,
+            ) {
                 return Some(Err(e));
             }
             self.active_window_mut().mouse_state.hover_target =
@@ -2276,15 +2271,17 @@ impl Editor {
     pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         // If dragging scrollbar, update scroll position
         if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
-            // Find the buffer and scrollbar rect for this split
+            // Snapshot split_areas so we don't borrow `self.active_layout()` and
+            // `self.active_window_mut()` simultaneously below.
+            let split_areas = self.active_layout().split_areas.clone();
             for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
-                &self.active_layout().split_areas
+                &split_areas
             {
                 if *split_id == dragging_split_id {
                     // Check if we started dragging from the thumb (have drag_start_row)
                     if self.active_window().mouse_state.drag_start_row.is_some() {
                         // Relative drag from thumb
-                        self.handle_scrollbar_drag_relative(
+                        self.active_window_mut().handle_scrollbar_drag_relative(
                             row,
                             *split_id,
                             *buffer_id,
@@ -2292,7 +2289,7 @@ impl Editor {
                         )?;
                     } else {
                         // Jump drag (started from track)
-                        self.handle_scrollbar_jump(
+                        self.active_window_mut().handle_scrollbar_jump(
                             col,
                             row,
                             *split_id,

@@ -2161,6 +2161,119 @@ impl Window {
         }
     }
 
+    /// Move the cursor to a visible position within the current viewport.
+    /// Called after scrollbar operations to ensure the cursor is in view.
+    pub fn move_cursor_to_visible_area(&mut self, split_id: LeafId, buffer_id: BufferId) {
+        let (top_byte, viewport_height) =
+            if let Some(view_state) = self.splits.as_ref().and_then(|(_, vs)| vs.get(&split_id)) {
+                (
+                    view_state.viewport.top_byte,
+                    view_state.viewport.height as usize,
+                )
+            } else {
+                return;
+            };
+
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            let buffer_len = state.buffer.len();
+
+            let mut iter = state.buffer.line_iterator(top_byte, 80);
+            let mut bottom_byte = buffer_len;
+
+            for _ in 0..viewport_height {
+                if let Some((pos, line)) = iter.next_line() {
+                    bottom_byte = pos + line.len();
+                } else {
+                    bottom_byte = buffer_len;
+                    break;
+                }
+            }
+
+            if let Some(view_state) = self
+                .split_view_states_mut()
+                .and_then(|vs| vs.get_mut(&split_id))
+            {
+                let cursor_pos = view_state.cursors.primary().position;
+                if cursor_pos < top_byte || cursor_pos > bottom_byte {
+                    let cursor = view_state.cursors.primary_mut();
+                    cursor.position = top_byte;
+                    // Keep the existing sticky_column value so vertical
+                    // navigation preserves column.
+                }
+            }
+        }
+    }
+
+    /// Calculate the maximum allowed scroll position so the last line
+    /// is always at the bottom unless the buffer is smaller than the
+    /// viewport. Pure function on `Buffer`; lives on `Window` so the
+    /// scrollbar helpers (also on `Window`) can reach it.
+    pub fn calculate_max_scroll_position(
+        buffer: &mut crate::model::buffer::Buffer,
+        viewport_height: usize,
+    ) -> usize {
+        if viewport_height == 0 {
+            return 0;
+        }
+
+        let buffer_len = buffer.len();
+        if buffer_len == 0 {
+            return 0;
+        }
+
+        let mut line_count = 0;
+        let mut iter = buffer.line_iterator(0, 80);
+        while iter.next_line().is_some() {
+            line_count += 1;
+        }
+
+        if line_count <= viewport_height {
+            return 0;
+        }
+
+        let scrollable_lines = line_count.saturating_sub(viewport_height);
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let mut current_line = 0;
+        let mut max_byte_pos = 0;
+
+        while current_line < scrollable_lines {
+            if let Some((pos, _content)) = iter.next_line() {
+                max_byte_pos = pos;
+                current_line += 1;
+            } else {
+                break;
+            }
+        }
+
+        max_byte_pos
+    }
+
+    /// Find the split whose content or scrollbar area contains the
+    /// screen cell `(col, row)`. Returns the split id and its buffer
+    /// id, or `None` when the position falls outside every split's
+    /// content rect and outside every scrollbar gutter.
+    pub fn split_at_position(&self, col: u16, row: u16) -> Option<(LeafId, BufferId)> {
+        for &(split_id, buffer_id, content_rect, scrollbar_rect, _, _) in
+            &self.layout_cache.split_areas
+        {
+            let in_content = col >= content_rect.x
+                && col < content_rect.x + content_rect.width
+                && row >= content_rect.y
+                && row < content_rect.y + content_rect.height;
+            let in_scrollbar = scrollbar_rect.width > 0
+                && scrollbar_rect.height > 0
+                && col >= scrollbar_rect.x
+                && col < scrollbar_rect.x + scrollbar_rect.width
+                && row >= scrollbar_rect.y
+                && row < scrollbar_rect.y + scrollbar_rect.height;
+            if in_content || in_scrollbar {
+                return Some((split_id, buffer_id));
+            }
+        }
+        None
+    }
+
     /// If a per-edit diagnostic-pull debounce has fired, send a fresh
     /// `textDocument/diagnostic` request to the language server for the
     /// scheduled buffer. Returns false because the new diagnostics arrive
