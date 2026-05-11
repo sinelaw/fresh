@@ -324,39 +324,22 @@ impl Editor {
             .or(self.active_window().editor_mode.as_deref())
     }
 
-    /// Check if LSP has any active progress tasks (e.g., indexing)
+    /// Check if LSP has any active progress tasks (e.g., indexing).
+    /// Thin delegator to active window — LSP progress is per-window state.
     pub fn has_active_lsp_progress(&self) -> bool {
-        !self.active_window().lsp_progress.is_empty()
+        self.active_window().has_active_lsp_progress()
     }
 
-    /// Get the current LSP progress info (if any)
+    /// Get the current LSP progress info (if any).
+    /// Thin delegator to active window.
     pub fn get_lsp_progress(&self) -> Vec<(String, String, Option<String>)> {
-        self.active_window()
-            .lsp_progress
-            .iter()
-            .map(|(token, info)| (token.clone(), info.title.clone(), info.message.clone()))
-            .collect()
+        self.active_window().get_lsp_progress()
     }
 
-    /// Check if any LSP server for a given language is running (ready)
+    /// Check if any LSP server for a given language is running (ready).
+    /// Thin delegator to active window — LSP server statuses are per-window.
     pub fn is_lsp_server_ready(&self, language: &str) -> bool {
-        use crate::services::async_bridge::LspServerStatus;
-        self.active_window()
-            .lsp_server_statuses
-            .iter()
-            .any(|((lang, server_name), status)| {
-                if !matches!(status, LspServerStatus::Running) {
-                    return false;
-                }
-                if lang == language {
-                    return true;
-                }
-                // Check if this server's scope accepts the queried language
-                self.lsp()
-                    .and_then(|lsp| lsp.server_scope(server_name))
-                    .map(|scope| scope.accepts(language))
-                    .unwrap_or(false)
-            })
+        self.active_window().is_lsp_server_ready(language)
     }
 
     /// Get stored LSP diagnostics (for testing and external access)
@@ -1052,20 +1035,10 @@ impl Editor {
         self.active_window().warning_domains.general.count
     }
 
-    /// Update LSP warning domain from server statuses
+    /// Update LSP warning domain from server statuses.
+    /// Thin delegator — both inputs and outputs live on the active window.
     pub fn update_lsp_warning_domain(&mut self) {
-        let active_id = self.active_window;
-        // Clone statuses to avoid borrowing self while we mutate active_window_mut().
-        let statuses = self
-            .windows
-            .get(&active_id)
-            .expect("active window present")
-            .lsp_server_statuses
-            .clone();
-        self.active_window_mut()
-            .warning_domains
-            .lsp
-            .update_from_statuses(&statuses);
+        self.active_window_mut().update_lsp_warning_domain();
     }
 
     /// Check if mouse hover timer has expired and trigger LSP hover request

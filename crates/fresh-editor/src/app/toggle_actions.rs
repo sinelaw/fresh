@@ -70,51 +70,38 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
-    /// Toggle tab bar visibility
+    // `toggle_tab_bar` / `toggle_status_bar` / `toggle_prompt_line` bodies
+    // moved to `impl Window` — they flip a per-window flag and emit a
+    // per-window status message. Editor exposes thin wrappers below so
+    // existing callers (action dispatch, e2e tests) keep working
+    // unchanged.
+
+    /// Toggle the active window's tab-bar visibility.
     pub fn toggle_tab_bar(&mut self) {
-        self.active_window_mut().tab_bar_visible = !self.active_window_mut().tab_bar_visible;
-        let status = if self.active_window_mut().tab_bar_visible {
-            t!("toggle.tab_bar_shown")
-        } else {
-            t!("toggle.tab_bar_hidden")
-        };
-        self.set_status_message(status.to_string());
+        self.active_window_mut().toggle_tab_bar();
     }
 
-    /// Get tab bar visibility
+    /// Toggle the active window's status-bar visibility.
+    pub fn toggle_status_bar(&mut self) {
+        self.active_window_mut().toggle_status_bar();
+    }
+
+    /// Toggle the active window's prompt-line visibility.
+    pub fn toggle_prompt_line(&mut self) {
+        self.active_window_mut().toggle_prompt_line();
+    }
+
+    /// Get tab bar visibility (thin delegator to active window).
     pub fn tab_bar_visible(&self) -> bool {
         self.active_window().tab_bar_visible
     }
 
-    /// Toggle status bar visibility
-    pub fn toggle_status_bar(&mut self) {
-        self.active_window_mut().status_bar_visible = !self.active_window_mut().status_bar_visible;
-        let status = if self.active_window_mut().status_bar_visible {
-            t!("toggle.status_bar_shown")
-        } else {
-            t!("toggle.status_bar_hidden")
-        };
-        self.set_status_message(status.to_string());
-    }
-
-    /// Get status bar visibility
+    /// Get status bar visibility (thin delegator to active window).
     pub fn status_bar_visible(&self) -> bool {
         self.active_window().status_bar_visible
     }
 
-    /// Toggle prompt line visibility
-    pub fn toggle_prompt_line(&mut self) {
-        self.active_window_mut().prompt_line_visible =
-            !self.active_window_mut().prompt_line_visible;
-        let status = if self.active_window_mut().prompt_line_visible {
-            t!("toggle.prompt_line_shown")
-        } else {
-            t!("toggle.prompt_line_hidden")
-        };
-        self.set_status_message(status.to_string());
-    }
-
-    /// Get prompt line visibility
+    /// Get prompt line visibility (thin delegator to active window).
     pub fn prompt_line_visible(&self) -> bool {
         self.active_window().prompt_line_visible
     }

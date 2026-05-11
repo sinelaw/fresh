@@ -774,6 +774,39 @@ impl Window {
         }
     }
 
+    /// Toggle this window's tab-bar visibility and post a status message.
+    pub fn toggle_tab_bar(&mut self) {
+        self.tab_bar_visible = !self.tab_bar_visible;
+        let key = if self.tab_bar_visible {
+            "toggle.tab_bar_shown"
+        } else {
+            "toggle.tab_bar_hidden"
+        };
+        self.set_status_message(rust_i18n::t!(key).to_string());
+    }
+
+    /// Toggle this window's status-bar visibility and post a status message.
+    pub fn toggle_status_bar(&mut self) {
+        self.status_bar_visible = !self.status_bar_visible;
+        let key = if self.status_bar_visible {
+            "toggle.status_bar_shown"
+        } else {
+            "toggle.status_bar_hidden"
+        };
+        self.set_status_message(rust_i18n::t!(key).to_string());
+    }
+
+    /// Toggle this window's prompt-line visibility and post a status message.
+    pub fn toggle_prompt_line(&mut self) {
+        self.prompt_line_visible = !self.prompt_line_visible;
+        let key = if self.prompt_line_visible {
+            "toggle.prompt_line_shown"
+        } else {
+            "toggle.prompt_line_hidden"
+        };
+        self.set_status_message(rust_i18n::t!(key).to_string());
+    }
+
     /// Toggle this window's same-buffer scroll-sync flag and post a
     /// status message announcing the new state.
     pub fn toggle_scroll_sync(&mut self) {
@@ -1869,6 +1902,52 @@ impl Window {
     pub fn clear_search_highlights(&mut self) {
         self.clear_search_overlays();
         self.search_state = None;
+    }
+
+    /// Check if LSP has any active progress tasks (e.g., indexing) in
+    /// this window.
+    pub fn has_active_lsp_progress(&self) -> bool {
+        !self.lsp_progress.is_empty()
+    }
+
+    /// Snapshot of the current LSP progress entries for this window:
+    /// `(token, title, message)` tuples.
+    pub fn get_lsp_progress(&self) -> Vec<(String, String, Option<String>)> {
+        self.lsp_progress
+            .iter()
+            .map(|(token, info)| (token.clone(), info.title.clone(), info.message.clone()))
+            .collect()
+    }
+
+    /// Check if any LSP server for `language` is running in this
+    /// window. Includes servers registered under another language whose
+    /// scope accepts `language` (universal servers).
+    pub fn is_lsp_server_ready(&self, language: &str) -> bool {
+        use crate::services::async_bridge::LspServerStatus;
+        self.lsp_server_statuses
+            .iter()
+            .any(|((lang, server_name), status)| {
+                if !matches!(status, LspServerStatus::Running) {
+                    return false;
+                }
+                if lang == language {
+                    return true;
+                }
+                self.lsp
+                    .as_ref()
+                    .and_then(|lsp| lsp.server_scope(server_name))
+                    .map(|scope| scope.accepts(language))
+                    .unwrap_or(false)
+            })
+    }
+
+    /// Recompute the LSP warning-domain level for this window from its
+    /// `lsp_server_statuses` map. Called whenever a server transitions
+    /// state.
+    pub fn update_lsp_warning_domain(&mut self) {
+        // Clone to release the immutable borrow before mutating warning_domains.
+        let statuses = self.lsp_server_statuses.clone();
+        self.warning_domains.lsp.update_from_statuses(&statuses);
     }
 
     /// Check if semantic highlight debounce timer has expired for any
