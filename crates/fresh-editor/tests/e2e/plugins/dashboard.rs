@@ -104,15 +104,13 @@ fn dashboard_opens_when_no_file_is_queued() {
         .unwrap();
 }
 
-/// End-to-end check for the bringup slide-in. Opens the dashboard,
-/// waits semantically for the animation runner to drain (no fixed
-/// timer), then confirms the dashboard is rendered at its resting
-/// position by sampling a glyph inside the ASCII "FRESH" banner. The
-/// animation itself shifts cells vertically, so the banner only lands
-/// at its final row once the effect reports Done; that's exactly the
-/// semantic we wait on.
+/// End-to-end check for dashboard bringup. Opens the dashboard, waits
+/// for it to become the active buffer, and confirms the ASCII "FRESH"
+/// banner is rendered. The dashboard no longer animates on bringup —
+/// the panel lands at its final position immediately — so we just wait
+/// for the buffer to be active and the screen to reflect it.
 #[test]
-fn dashboard_bringup_animation_settles_and_renders() {
+fn dashboard_bringup_renders_banner() {
     let (mut harness, _tmp) = harness_with_dashboard_plugin();
 
     harness.editor_mut().fire_ready_hook();
@@ -126,35 +124,11 @@ fn dashboard_bringup_animation_settles_and_renders() {
         })
         .unwrap();
 
-    // Wait for the bringup effect to actually start. This guards
-    // against a regression where the plugin never calls
-    // animate_virtual_buffer (e.g. if the viewport_changed trigger
-    // silently breaks) — the test would otherwise pass trivially
-    // because a never-started animation looks identical to a
-    // finished one. Sample the monotonic counter rather than the
-    // transient `is_active()` so a slow-polling iteration on a busy
-    // CI box can't straddle the entire animation window.
+    // Wait until the banner makes it through the async paint plumbing
+    // and onto the rendered screen.
     harness
-        .wait_until(|h| h.editor().active_window().animations.total_started() > 0)
+        .wait_until(|h| h.screen_to_string().contains("FRESH"))
         .unwrap();
-
-    // Now settle the bringup animation: the runner flips is_active to
-    // false once every effect returns Done, so this fires exactly
-    // when the final resting frame has been painted.
-    harness
-        .wait_until(|h| !h.editor().active_window().animations.is_active())
-        .unwrap();
-
-    // Post-settle: the banner row is at its natural position and the
-    // "FRESH" text is readable on screen. Don't assert against the
-    // status bar — it gets repainted asynchronously. The banner is
-    // well inside the dashboard's own Rect.
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("FRESH"),
-        "dashboard banner should be visible after bringup settles — screen:\n{}",
-        screen
-    );
 
     harness.assert_no_plugin_errors();
 }

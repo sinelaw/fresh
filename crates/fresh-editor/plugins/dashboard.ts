@@ -201,11 +201,6 @@ type RegisteredSection = {
 let dashboardBufferId: number | null = null;
 let fetchToken = 0; // bumped each open; late fetches from a prior open no-op.
 
-// Id of the in-flight slide-in, so we can cancel it when starting a
-// new one (on content change) or when the dashboard is closed
-// mid-slide. Null once the animation settles or is cleared.
-let activeAnimationId: number | null = null;
-
 // Hash of all entries at the last paint (post-focus-highlight too —
 // it's what ultimately lands in the virtual buffer). Used to decide
 // whether setVirtualBufferContent needs to run at all: identical
@@ -213,42 +208,10 @@ let activeAnimationId: number | null = null;
 // round-trip entirely.
 let lastPaintedFullKey: string | null = null;
 
-// Hash of the entries with the clock stamp stripped. Animations only
-// fire when THIS hash changes, so the 1 Hz clock tick on the top
-// frame updates in place without re-sliding the whole dashboard.
-// Keyboard focus changes don't move this hash either (the hash is
-// taken before the focus overlay is laid on top), so Tab/Shift-Tab
-// pan the highlight without re-animating.
-let lastPaintedStructuralKey: string | null = null;
-
 // focusedIndex the last successful setVirtualBufferContent ran with.
-// Paired with the keys above so we can tell "focus moved but section
-// data is the same" (update VB for the highlight, no animation).
+// Paired with the key above so we can tell "focus moved but content
+// is the same" and still update VB for the highlight.
 let lastPaintedFocusedIndex = -1;
-
-// Matches an HH:MM:SS clock stamp. Anything shaped like that is
-// stripped from the structural hash so clock ticks don't animate.
-// The frame renderer is the only dashboard author that emits such a
-// string; if a third-party section happens to show a value in the
-// same shape, the worst case is "we don't re-animate when that
-// value changes" — acceptable noise floor.
-const CLOCK_RE = /\d\d:\d\d:\d\d/g;
-
-// Edge the slide-in enters from. Maps 1:1 to the plugin API's `from`
-// field and is resolved from config (plugins.dashboard.slide_from) on
-// each paint() so hot-reload of the setting Just Works. Defaults to
-// "right" (new content pushes in from the right, old exits left).
-type SlideFrom = "top" | "bottom" | "left" | "right";
-function resolveSlideFrom(): SlideFrom {
-    const config = editor.getConfig() as Record<string, unknown> | null;
-    const plugins = config?.plugins as Record<string, unknown> | undefined;
-    const dashCfg = plugins?.dashboard as Record<string, unknown> | undefined;
-    const raw = dashCfg?.slide_from;
-    if (raw === "top" || raw === "bottom" || raw === "left" || raw === "right") {
-        return raw;
-    }
-    return "right";
-}
 
 // Registered sections, in render order. Built-ins are registered at
 // plugin load (see the bottom of this file); third-party plugins
@@ -735,6 +698,13 @@ function paint(dims?: { width: number; height: number }) {
     const entries: TextPropertyEntry[] = [];
     for (let i = 0; i < topPad; i++) entries.push({ text: "\n" });
     for (const e of drawToEntries(drawn)) entries.push(e);
+    // Pad below the frame so the buffer covers the full viewport height.
+    // Without this, rows past the last frame line render with
+    // `editor.after_eof_bg` (a deliberate shade off from `editor.bg` to mark
+    // end-of-file in code buffers) and show up as a different-colored strip
+    // at the bottom of the dashboard.
+    const bottomPad = Math.max(0, height - topPad - frameHeight);
+    for (let i = 0; i < bottomPad; i++) entries.push({ text: "\n" });
 
     // Translate frame-relative row actions to absolute buffer rows by
     // shifting by the vertical padding we just prepended. Columns are
@@ -775,32 +745,15 @@ function paint(dims?: { width: number; height: number }) {
             ((focusedIndex % targets.length) + targets.length) % targets.length;
     }
 
-    // Two hashes, taken BEFORE the focus highlight goes on top:
-    //   fullKey      — everything including the clock. Drives the
-    //                  setVirtualBufferContent skip check, so the
-    //                  clock still redraws in place every second.
-    //   structuralKey — clock stamps stripped. Drives the animation.
-    //                  A clock tick alone does not flip this, so it
-    //                  updates silently; a real section data change
-    //                  does, and the slide fires.
+    // Taken BEFORE the focus highlight goes on top — fullKey captures
+    // everything (including the clock) that ultimately lands in the
+    // virtual buffer. Drives the setVirtualBufferContent skip check,
+    // so the clock still redraws in place every second.
     const fullKey = JSON.stringify(entries);
-    const structuralKey = fullKey.replace(CLOCK_RE, "##:##:##");
     const fullChanged = fullKey !== lastPaintedFullKey;
-    const structuralChanged = structuralKey !== lastPaintedStructuralKey;
     const focusChanged = focusedIndex !== lastPaintedFocusedIndex;
-    // A resize / viewport-shape change reshapes frame padding, dash
-    // runs, and centering, which flips the structural hash even when
-    // section data is unchanged. We repaint so the new layout takes
-    // effect but skip the slide — nothing NEW showed up, the user is
-    // just resizing a window. openDashboard clears lastPaintedW/H to
-    // -1 so the first paint after open doesn't trip this guard.
-    const dimsChanged =
-        lastPaintedW !== -1 &&
-        lastPaintedH !== -1 &&
-        (width !== lastPaintedW || height !== lastPaintedH);
 
-    // Identical render → short-circuit. Nothing to push to the
-    // buffer, nothing to animate.
+    // Identical render → short-circuit. Nothing to push to the buffer.
     if (!fullChanged && !focusChanged) {
         return;
     }
@@ -838,25 +791,7 @@ function paint(dims?: { width: number; height: number }) {
     lastPaintedW = width;
     lastPaintedH = height;
     lastPaintedFullKey = fullKey;
-    lastPaintedStructuralKey = structuralKey;
     lastPaintedFocusedIndex = focusedIndex;
-
-    // Structural-change-driven re-animation: fire only when the
-    // section payload actually differs AND the dashboard isn't just
-    // reshaping in place (clock tick, focus move, and resize all
-    // land here without animating). Cancel any in-flight slide
-    // first so the new one snapshots the fresh content.
-    if (structuralChanged && !dimsChanged) {
-        if (activeAnimationId !== null) {
-            editor.cancelAnimation(activeAnimationId);
-        }
-        activeAnimationId = editor.animateVirtualBuffer(bufferId, {
-            kind: "slideIn",
-            from: resolveSlideFrom(),
-            durationMs: 520,
-            delayMs: 0,
-        });
-    }
 }
 
 // Open a URL in the user's browser via the platform's "open" helper.
@@ -1613,12 +1548,8 @@ async function openDashboard() {
     }
 
     // Clear the content/focus keys and dims so the first paint after
-    // open is treated as a content change and the slide-in fires.
-    // Dim reset is needed because open is the one case where we DO
-    // want the animation despite "dims changed" (there was no prior
-    // dimension, so the change is really "buffer just appeared").
+    // open is treated as a content change.
     lastPaintedFullKey = null;
-    lastPaintedStructuralKey = null;
     lastPaintedFocusedIndex = -1;
     lastPaintedW = -1;
     lastPaintedH = -1;
@@ -1694,10 +1625,6 @@ registerHandler(
         // If the dashboard itself was closed, clear our handle so we'll
         // re-open on the next "last tab closed" event.
         if (dashboardBufferId !== null && e.buffer_id === dashboardBufferId) {
-            if (activeAnimationId !== null) {
-                editor.cancelAnimation(activeAnimationId);
-                activeAnimationId = null;
-            }
             dashboardBufferId = null;
             return;
         }
@@ -1717,10 +1644,6 @@ registerHandler(
     "dashboardOnAfterFileOpen",
     (_e: { buffer_id: number; path: string }) => {
         if (dashboardBufferId === null) return;
-        if (activeAnimationId !== null) {
-            editor.cancelAnimation(activeAnimationId);
-            activeAnimationId = null;
-        }
         editor.closeBuffer(dashboardBufferId);
         dashboardBufferId = null;
     },
