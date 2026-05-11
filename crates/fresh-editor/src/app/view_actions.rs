@@ -25,7 +25,9 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .get_buffer_id(active_split.into())
             .unwrap_or(crate::model::event::BufferId(0));
-        let default_wrap = self.resolve_line_wrap_for_buffer(active_buffer);
+        let default_wrap = self
+            .active_window()
+            .resolve_line_wrap_for_buffer(active_buffer);
         let default_line_numbers = self.config.editor.line_numbers;
         let page_width = self
             .buffers()

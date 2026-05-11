@@ -436,10 +436,12 @@ impl Editor {
 
         // Add buffer to the preferred split's tabs (but don't switch to it)
         // Uses preferred_split_for_file() to avoid opening in labeled splits (e.g., sidebars)
-        let target_split = self.preferred_split_for_file();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
-        let page_view = self.resolve_page_view_for_buffer(buffer_id);
+        let target_split = self.active_window().preferred_split_for_file();
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
+        let page_view = self.active_window().resolve_page_view_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -492,112 +494,8 @@ impl Editor {
         Ok(buffer_id)
     }
 
-    /// Open a local file (always uses local filesystem, not remote)
-    ///
-    /// This is used for opening local files like log files when in remote mode.
-    /// Unlike `open_file`, this always uses the local filesystem even when
-    /// the editor is connected to a remote server.
-    pub fn open_local_file(&mut self, path: &Path) -> anyhow::Result<BufferId> {
-        // Resolve relative paths against working_dir
-        let resolved_path = if path.is_relative() {
-            self.working_dir.join(path)
-        } else {
-            path.to_path_buf()
-        };
-
-        // Save user-visible path for language detection before canonicalizing
-        let display_path = resolved_path.clone();
-
-        // Canonicalize the path
-        let canonical_path = resolved_path
-            .canonicalize()
-            .unwrap_or_else(|_| resolved_path.clone());
-        let path = canonical_path.as_path();
-
-        // Check if already open
-        let already_open = self
-            .buffers()
-            .iter()
-            .find(|(_, state)| state.buffer.file_path() == Some(path))
-            .map(|(id, _)| *id);
-
-        if let Some(id) = already_open {
-            self.set_active_buffer(id);
-            return Ok(id);
-        }
-
-        // Create new buffer
-        let buffer_id = self.alloc_buffer_id();
-
-        // Load from canonical path (for I/O and dedup), detect language from
-        // display path (for glob pattern matching against user-visible names).
-        let buffer = crate::model::buffer::Buffer::load_from_file(
-            &canonical_path,
-            self.config.editor.large_file_threshold_bytes as usize,
-            Arc::clone(&self.local_filesystem),
-        )?;
-        let first_line = buffer.first_line_lossy();
-        let detected =
-            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
-                &display_path,
-                first_line.as_deref(),
-                &self.grammar_registry,
-                &self.config.languages,
-                self.config.default_language.as_deref(),
-            );
-        let state = EditorState::from_buffer_with_language(buffer, detected);
-
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .insert(buffer_id, state);
-        self.active_window_mut()
-            .event_logs
-            .insert(buffer_id, crate::model::event::EventLog::new());
-
-        // Create metadata
-        let metadata = super::types::BufferMetadata::with_file(
-            path.to_path_buf(),
-            &display_path,
-            &self.working_dir,
-            self.authority.path_translation.as_ref(),
-        );
-        self.active_window_mut()
-            .buffer_metadata
-            .insert(buffer_id, metadata);
-
-        // Add to preferred split's tabs (avoids labeled splits like sidebars)
-        let target_split = self.preferred_split_for_file();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
-            view_state.add_buffer(buffer_id);
-            let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
-                line_wrap,
-                self.config.editor.wrap_indent,
-                wrap_column,
-                self.config.editor.rulers.clone(),
-            );
-        }
-
-        self.set_active_buffer(buffer_id);
-
-        let display_name = path.display().to_string();
-        self.active_window_mut().status_message =
-            Some(t!("buffer.opened", name = display_name).to_string());
-
-        Ok(buffer_id)
-    }
+    // `open_local_file` lives on `impl Window` — call it via
+    // `self.active_window_mut().open_local_file(path)`.
 
     /// Open a file with a specific encoding (no auto-detection).
     ///
@@ -700,9 +598,11 @@ impl Editor {
             .insert(buffer_id, metadata);
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
-        let target_split = self.preferred_split_for_file();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let target_split = self.active_window().preferred_split_for_file();
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -885,9 +785,11 @@ impl Editor {
             .insert(buffer_id, metadata);
 
         // Add to preferred split's tabs (avoids labeled splits like sidebars)
-        let target_split = self.preferred_split_for_file();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let target_split = self.active_window().preferred_split_for_file();
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -1219,9 +1121,11 @@ impl Editor {
         // Wire the buffer into a tab on the preferred split, mirroring
         // the host-file path. Skip `watch_file` — there's no host
         // file to inotify, and the spawned-fetch is one-shot.
-        let target_split = self.preferred_split_for_file();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let target_split = self.active_window().preferred_split_for_file();
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)

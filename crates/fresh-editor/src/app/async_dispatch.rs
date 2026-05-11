@@ -141,7 +141,8 @@ impl Editor {
                             tracing::info!("Opening LSP stderr log in background: {:?}", log_path);
                             match self.open_file_no_focus(&log_path) {
                                 Ok(buffer_id) => {
-                                    self.mark_buffer_read_only(buffer_id, true);
+                                    self.active_window_mut()
+                                        .mark_buffer_read_only(buffer_id, true);
                                     self.active_window_mut().status_message = Some(format!(
                                         "LSP error ({}): {} - See stderr log",
                                         language, error

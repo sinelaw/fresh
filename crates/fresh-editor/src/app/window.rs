@@ -2006,6 +2006,120 @@ impl Window {
             })
     }
 
+    /// Open a local file in this window (always uses local filesystem,
+    /// not remote). Used for opening files like the warning log when
+    /// the editor is connected to a remote server. Returns the buffer
+    /// id and switches the active buffer to it (via
+    /// [`Window::set_active_buffer`], so no plugin hook fires — the
+    /// Editor caller is responsible for re-firing
+    /// `buffer_activated` if the hook is required).
+    pub fn open_local_file(&mut self, path: &std::path::Path) -> anyhow::Result<BufferId> {
+        // Resolve relative paths against this window's root.
+        let resolved_path = if path.is_relative() {
+            self.root.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        // Save user-visible path for language detection before canonicalizing.
+        let display_path = resolved_path.clone();
+
+        // Canonicalize the path.
+        let canonical_path = resolved_path
+            .canonicalize()
+            .unwrap_or_else(|_| resolved_path.clone());
+        let path = canonical_path.as_path();
+
+        // Check if already open.
+        let already_open = self
+            .buffers
+            .iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(path))
+            .map(|(id, _)| *id);
+
+        if let Some(id) = already_open {
+            self.set_active_buffer(id);
+            return Ok(id);
+        }
+
+        // Create new buffer.
+        let buffer_id = self.alloc_buffer_id();
+
+        // Load from canonical path (for I/O and dedup), detect language from
+        // display path (for glob pattern matching against user-visible names).
+        let buffer = crate::model::buffer::Buffer::load_from_file(
+            &canonical_path,
+            self.config().editor.large_file_threshold_bytes as usize,
+            std::sync::Arc::clone(&self.resources.local_filesystem),
+        )?;
+        let first_line = buffer.first_line_lossy();
+        let detected =
+            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                &display_path,
+                first_line.as_deref(),
+                &self.resources.grammar_registry,
+                &self.config().languages,
+                self.config().default_language.as_deref(),
+            );
+        let state = crate::state::EditorState::from_buffer_with_language(buffer, detected);
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        // Create metadata.
+        let metadata = crate::app::types::BufferMetadata::with_file(
+            path.to_path_buf(),
+            &display_path,
+            &self.root,
+            self.authority().path_translation.as_ref(),
+        );
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Add to preferred split's tabs (avoids labeled splits like sidebars).
+        let target_split = self.preferred_split_for_file();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        // Snapshot config values before taking the mutable view-states borrow
+        // so the closure body doesn't have to re-borrow `self`.
+        let cfg = self.config().editor.clone();
+        if let Some(view_state) = self
+            .split_view_states_mut()
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
+            view_state.add_buffer(buffer_id);
+            let buf_state = view_state.ensure_buffer_state(buffer_id);
+            buf_state.apply_config_defaults(
+                cfg.line_numbers,
+                cfg.highlight_current_line,
+                line_wrap,
+                cfg.wrap_indent,
+                wrap_column,
+                cfg.rulers,
+            );
+        }
+
+        self.set_active_buffer(buffer_id);
+
+        let display_name = path.display().to_string();
+        self.set_status_message(rust_i18n::t!("buffer.opened", name = display_name).to_string());
+
+        Ok(buffer_id)
+    }
+
+    /// Mark a buffer in this window as read-only (or writable), keeping
+    /// the per-buffer metadata `read_only` flag and the editor state's
+    /// `editing_disabled` flag in sync.
+    pub fn mark_buffer_read_only(&mut self, buffer_id: BufferId, read_only: bool) {
+        if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
+            metadata.read_only = read_only;
+        }
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.editing_disabled = read_only;
+        }
+    }
+
     /// Clear all warning indicators for this window (general + LSP) and
     /// post a "Warnings cleared" status message.
     pub fn clear_warnings(&mut self) {

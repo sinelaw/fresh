@@ -125,8 +125,10 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -376,8 +378,10 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)

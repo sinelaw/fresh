@@ -543,9 +543,10 @@ impl Editor {
         } else if let Some(language) = action_key.strip_prefix("log:") {
             let log_path = crate::services::log_dirs::lsp_log_path(language);
             if log_path.exists() {
-                match self.open_local_file(&log_path) {
+                match self.active_window_mut().open_local_file(&log_path) {
                     Ok(buffer_id) => {
-                        self.mark_buffer_read_only(buffer_id, true);
+                        self.active_window_mut()
+                            .mark_buffer_read_only(buffer_id, true);
                     }
                     Err(e) => {
                         self.active_window_mut().status_message =

@@ -297,22 +297,8 @@ impl Editor {
         false
     }
 
-    /// Mark a buffer as read-only, setting both metadata and editor state consistently.
-    /// This is the single entry point for making a buffer read-only.
-    pub fn mark_buffer_read_only(&mut self, buffer_id: BufferId, read_only: bool) {
-        if let Some(metadata) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
-            metadata.read_only = read_only;
-        }
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.editing_disabled = read_only;
-        }
-    }
+    // `mark_buffer_read_only` lives on `impl Window` — call it via
+    // `self.active_window_mut().mark_buffer_read_only(buffer_id, ro)`.
 
     /// Get the effective mode for the active buffer.
     ///
@@ -849,9 +835,10 @@ impl Editor {
     pub fn open_status_log(&mut self) {
         if let Some(path) = self.status_log_path.clone() {
             // Use open_local_file since log files are always local
-            match self.open_local_file(&path) {
+            match self.active_window_mut().open_local_file(&path) {
                 Ok(buffer_id) => {
-                    self.mark_buffer_read_only(buffer_id, true);
+                    self.active_window_mut()
+                        .mark_buffer_read_only(buffer_id, true);
                 }
                 Err(e) => {
                     tracing::error!("Failed to open status log: {}", e);
@@ -916,9 +903,10 @@ impl Editor {
             .clone()
         {
             // Use open_local_file since log files are always local
-            match self.open_local_file(&path) {
+            match self.active_window_mut().open_local_file(&path) {
                 Ok(buffer_id) => {
-                    self.mark_buffer_read_only(buffer_id, true);
+                    self.active_window_mut()
+                        .mark_buffer_read_only(buffer_id, true);
                 }
                 Err(e) => {
                     tracing::error!("Failed to open warning log: {}", e);

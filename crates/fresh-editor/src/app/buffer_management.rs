@@ -19,80 +19,49 @@ use crate::state::EditorState;
 use super::buffer_config_resolve;
 use super::Editor;
 
-impl Editor {
+impl crate::app::window::Window {
     /// Resolve the effective line_wrap setting for a buffer, considering language overrides.
-    pub(super) fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
-        match self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-        {
-            Some(state) => buffer_config_resolve::line_wrap(&state.language, &self.config),
-            None => self.config.editor.line_wrap,
+    pub(crate) fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
+        match self.buffers.get(&buffer_id) {
+            Some(state) => buffer_config_resolve::line_wrap(&state.language, self.config()),
+            None => self.config().editor.line_wrap,
         }
     }
 
     /// Resolve page view settings for a buffer from its language config.
-    pub(super) fn resolve_page_view_for_buffer(
+    pub(crate) fn resolve_page_view_for_buffer(
         &self,
         buffer_id: BufferId,
     ) -> Option<Option<usize>> {
-        let state = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)?;
-        buffer_config_resolve::page_view(&state.language, &self.config)
+        let state = self.buffers.get(&buffer_id)?;
+        buffer_config_resolve::page_view(&state.language, self.config())
     }
 
     /// Resolve the effective wrap_column for a buffer, considering language overrides.
-    pub(super) fn resolve_wrap_column_for_buffer(&self, buffer_id: BufferId) -> Option<usize> {
-        match self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-        {
-            Some(state) => buffer_config_resolve::wrap_column(&state.language, &self.config),
-            None => self.config.editor.wrap_column,
+    pub(crate) fn resolve_wrap_column_for_buffer(&self, buffer_id: BufferId) -> Option<usize> {
+        match self.buffers.get(&buffer_id) {
+            Some(state) => buffer_config_resolve::wrap_column(&state.language, self.config()),
+            None => self.config().editor.wrap_column,
         }
     }
 
     /// Get the preferred split for opening a file.
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).
-    pub(super) fn preferred_split_for_file(&self) -> LeafId {
-        let active = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        if self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .get_label(active.into())
-            .is_none()
-        {
+    pub(crate) fn preferred_split_for_file(&self) -> LeafId {
+        let (mgr, _) = self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout");
+        let active = mgr.active_split();
+        if mgr.get_label(active.into()).is_none() {
             return active;
         }
-        self.windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .find_unlabeled_leaf()
-            .unwrap_or(active)
+        mgr.find_unlabeled_leaf().unwrap_or(active)
     }
+}
 
+impl Editor {
     /// Open a file in "preview" (ephemeral) mode and return its buffer ID.
     ///
     /// Used for exploratory single-click opens from the file explorer. If the
@@ -138,7 +107,7 @@ impl Editor {
         // the same one (it calls `preferred_split_for_file` internally),
         // so this mirrors its logic. If that invariant ever drifts we'd
         // open the preview in one split and track it in another.
-        let target_split = self.preferred_split_for_file();
+        let target_split = self.active_window().preferred_split_for_file();
 
         // Snapshot the buffer IDs that already back a real file, so we can
         // tell "opened a previously-unknown file" from "switched to one
@@ -596,8 +565,10 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)

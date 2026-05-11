@@ -1014,7 +1014,7 @@ impl Editor {
                 .copied()
                 .or_else(|| path_to_buffer.get(&self.working_dir.join(ro_path)).copied());
             if let Some(id) = buffer_id {
-                self.mark_buffer_read_only(id, true);
+                self.active_window_mut().mark_buffer_read_only(id, true);
             }
         }
     }
@@ -1689,9 +1689,11 @@ impl Editor {
                         view_state.apply_config_defaults(
                             self.config.editor.line_numbers,
                             self.config.editor.highlight_current_line,
-                            self.resolve_line_wrap_for_buffer(second_buffer_id),
+                            self.active_window()
+                                .resolve_line_wrap_for_buffer(second_buffer_id),
                             self.config.editor.wrap_indent,
-                            self.resolve_wrap_column_for_buffer(second_buffer_id),
+                            self.active_window()
+                                .resolve_wrap_column_for_buffer(second_buffer_id),
                             self.config.editor.rulers.clone(),
                         );
                         self.windows

@@ -199,9 +199,11 @@ impl Editor {
             // don't conflict with the &mut view_state borrow.
             let line_numbers = self.config.editor.line_numbers;
             let highlight_current_line = self.config.editor.highlight_current_line;
-            let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+            let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
             let wrap_indent = self.config.editor.wrap_indent;
-            let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+            let wrap_column = self
+                .active_window()
+                .resolve_wrap_column_for_buffer(buffer_id);
             let rulers = self.config.editor.rulers.clone();
             if let Some(view_state) = self
                 .windows
@@ -244,9 +246,10 @@ impl Editor {
                     view_state.apply_config_defaults(
                         self.config.editor.line_numbers,
                         self.config.editor.highlight_current_line,
-                        self.resolve_line_wrap_for_buffer(buffer_id),
+                        self.active_window().resolve_line_wrap_for_buffer(buffer_id),
                         self.config.editor.wrap_indent,
-                        self.resolve_wrap_column_for_buffer(buffer_id),
+                        self.active_window()
+                            .resolve_wrap_column_for_buffer(buffer_id),
                         self.config.editor.rulers.clone(),
                     );
                     view_state.ensure_buffer_state(buffer_id).show_line_numbers = false;
@@ -1347,9 +1350,10 @@ impl Editor {
                             view_state.apply_config_defaults(
                                 self.config.editor.line_numbers,
                                 self.config.editor.highlight_current_line,
-                                self.resolve_line_wrap_for_buffer(buffer_id),
+                                self.active_window().resolve_line_wrap_for_buffer(buffer_id),
                                 self.config.editor.wrap_indent,
-                                self.resolve_wrap_column_for_buffer(buffer_id),
+                                self.active_window()
+                                    .resolve_wrap_column_for_buffer(buffer_id),
                                 self.config.editor.rulers.clone(),
                             );
                             // Terminals don't wrap — keep escape
@@ -1434,8 +1438,11 @@ impl Editor {
                         .split_manager_mut()
                         .get_buffer_id(leaf_id.into())
                         .unwrap_or(BufferId(0));
-                    let effective_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
-                    let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+                    let effective_wrap =
+                        self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+                    let wrap_column = self
+                        .active_window()
+                        .resolve_wrap_column_for_buffer(buffer_id);
                     if let Some(view_state) = self
                         .windows
                         .get_mut(&self.active_window)
@@ -1500,7 +1507,8 @@ impl Editor {
                     .get(&buffer_id)
                     .map(|m| !m.read_only)
                     .unwrap_or(false);
-                self.mark_buffer_read_only(buffer_id, is_now_read_only);
+                self.active_window_mut()
+                    .mark_buffer_read_only(buffer_id, is_now_read_only);
 
                 let state_str = if is_now_read_only {
                     t!("view.state_enabled").to_string()
