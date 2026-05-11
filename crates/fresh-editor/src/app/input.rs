@@ -957,7 +957,7 @@ impl Editor {
                 if self.active_window_mut().key_context
                     == crate::input::keybindings::KeyContext::FileExplorer
                 {
-                    self.file_explorer_copy();
+                    self.active_window_mut().file_explorer_copy();
                     return Ok(());
                 }
                 // Check if active buffer is a composite buffer
@@ -976,7 +976,7 @@ impl Editor {
                 if self.active_window_mut().key_context
                     == crate::input::keybindings::KeyContext::FileExplorer
                 {
-                    self.file_explorer_cut();
+                    self.active_window_mut().file_explorer_cut();
                     return Ok(());
                 }
                 if self.active_window().is_editing_disabled() {
@@ -1840,8 +1840,8 @@ impl Editor {
             Action::FileExplorerSearchBackspace => {
                 self.active_window_mut().file_explorer_search_pop_char()
             }
-            Action::FileExplorerCopy => self.file_explorer_copy(),
-            Action::FileExplorerCut => self.file_explorer_cut(),
+            Action::FileExplorerCopy => self.active_window_mut().file_explorer_copy(),
+            Action::FileExplorerCut => self.active_window_mut().file_explorer_cut(),
             Action::FileExplorerPaste => self.file_explorer_paste(),
             Action::FileExplorerDuplicate => self.file_explorer_duplicate(),
             Action::FileExplorerCopyFullPath => self.file_explorer_copy_path(false),

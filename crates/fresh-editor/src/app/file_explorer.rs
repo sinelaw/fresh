@@ -1040,61 +1040,9 @@ impl Editor {
             );
     }
 
-    pub fn file_explorer_clipboard(&self) -> Option<&FileExplorerClipboard> {
-        self.active_window().file_explorer_clipboard.as_ref()
-    }
-
-    pub fn file_explorer_copy(&mut self) {
-        self.set_explorer_clipboard(false);
-    }
-
-    pub fn file_explorer_cut(&mut self) {
-        self.set_explorer_clipboard(true);
-    }
-
-    fn set_explorer_clipboard(&mut self, is_cut: bool) {
-        let Some(explorer) = self.file_explorer() else {
-            return;
-        };
-        let root_id = explorer.tree().root_id();
-        let selected_ids = explorer.effective_selection();
-        let paths: Vec<PathBuf> = selected_ids
-            .iter()
-            .filter(|&&id| id != root_id)
-            .filter_map(|&id| explorer.tree().get_node(id).map(|n| n.entry.path.clone()))
-            .collect();
-        if paths.is_empty() {
-            let msg = if is_cut {
-                t!("explorer.cannot_cut_root").to_string()
-            } else {
-                t!("explorer.cannot_copy_root").to_string()
-            };
-            self.set_status_message(msg);
-            return;
-        }
-        let msg = if paths.len() == 1 {
-            let name = paths[0]
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if is_cut {
-                t!("explorer.cut", name = &name).to_string()
-            } else {
-                t!("explorer.copied", name = &name).to_string()
-            }
-        } else {
-            let count = paths.len();
-            if is_cut {
-                t!("explorer.cut_n", count = count).to_string()
-            } else {
-                t!("explorer.copied_n", count = count).to_string()
-            }
-        };
-        self.active_window_mut().file_explorer_clipboard =
-            Some(FileExplorerClipboard { paths, is_cut });
-        self.set_status_message(msg);
-    }
+    // `file_explorer_clipboard`, `file_explorer_copy`, `file_explorer_cut`
+    // and the shared `set_explorer_clipboard` helper live on `impl Window`
+    // — call them via `self.active_window()` / `self.active_window_mut()`.
 
     pub fn file_explorer_paste(&mut self) {
         let clipboard = match self.active_window().file_explorer_clipboard.clone() {
@@ -1717,6 +1665,68 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
+    /// Read-only access to this window's file-explorer cut/copy clipboard.
+    pub fn file_explorer_clipboard(&self) -> Option<&FileExplorerClipboard> {
+        self.file_explorer_clipboard.as_ref()
+    }
+
+    /// Copy the file-explorer selection to this window's clipboard.
+    pub fn file_explorer_copy(&mut self) {
+        self.set_explorer_clipboard(false);
+    }
+
+    /// Cut the file-explorer selection to this window's clipboard.
+    pub fn file_explorer_cut(&mut self) {
+        self.set_explorer_clipboard(true);
+    }
+
+    /// Shared body of `file_explorer_copy` and `file_explorer_cut`: read
+    /// the explorer's selection, derive the path list, and prime the
+    /// window's clipboard slot with a `FileExplorerClipboard`. Posts a
+    /// status message summarising what got stashed.
+    fn set_explorer_clipboard(&mut self, is_cut: bool) {
+        let Some(explorer) = self.file_explorer.as_ref() else {
+            return;
+        };
+        let root_id = explorer.tree().root_id();
+        let selected_ids = explorer.effective_selection();
+        let paths: Vec<PathBuf> = selected_ids
+            .iter()
+            .filter(|&&id| id != root_id)
+            .filter_map(|&id| explorer.tree().get_node(id).map(|n| n.entry.path.clone()))
+            .collect();
+        if paths.is_empty() {
+            let msg = if is_cut {
+                t!("explorer.cannot_cut_root").to_string()
+            } else {
+                t!("explorer.cannot_copy_root").to_string()
+            };
+            self.set_status_message(msg);
+            return;
+        }
+        let msg = if paths.len() == 1 {
+            let name = paths[0]
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if is_cut {
+                t!("explorer.cut", name = &name).to_string()
+            } else {
+                t!("explorer.copied", name = &name).to_string()
+            }
+        } else {
+            let count = paths.len();
+            if is_cut {
+                t!("explorer.cut_n", count = count).to_string()
+            } else {
+                t!("explorer.copied_n", count = count).to_string()
+            }
+        };
+        self.file_explorer_clipboard = Some(FileExplorerClipboard { paths, is_cut });
+        self.set_status_message(msg);
+    }
+
     /// Spawn an async expand-to-path of this window's file-explorer tree,
     /// targeting the active buffer's file. No-op when the explorer isn't
     /// visible, a sync is already running, or the target path is outside

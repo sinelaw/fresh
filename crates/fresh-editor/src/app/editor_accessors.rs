@@ -115,43 +115,9 @@ impl Editor {
             .deliver_response(response);
     }
 
-    /// Remove a pending semantic token request from tracking maps.
-    pub(super) fn take_pending_semantic_token_request(
-        &mut self,
-        request_id: u64,
-    ) -> Option<SemanticTokenFullRequest> {
-        if let Some(request) = self
-            .active_window_mut()
-            .pending_semantic_token_requests
-            .remove(&request_id)
-        {
-            self.active_window_mut()
-                .semantic_tokens_in_flight
-                .remove(&request.buffer_id);
-            Some(request)
-        } else {
-            None
-        }
-    }
-
-    /// Remove a pending semantic token range request from tracking maps.
-    pub(super) fn take_pending_semantic_token_range_request(
-        &mut self,
-        request_id: u64,
-    ) -> Option<SemanticTokenRangeRequest> {
-        if let Some(request) = self
-            .active_window_mut()
-            .pending_semantic_token_range_requests
-            .remove(&request_id)
-        {
-            self.active_window_mut()
-                .semantic_tokens_range_in_flight
-                .remove(&request.buffer_id);
-            Some(request)
-        } else {
-            None
-        }
-    }
+    // `take_pending_semantic_token_request` and
+    // `take_pending_semantic_token_range_request` live on `impl Window`
+    // — call them via `self.active_window_mut()`.
 
     /// Get all keybindings as (key, action) pairs
     pub fn get_all_keybindings(&self) -> Vec<(String, String)> {

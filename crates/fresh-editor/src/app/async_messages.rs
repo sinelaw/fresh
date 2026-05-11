@@ -476,7 +476,9 @@ impl Editor {
             requested_range,
             requested_start_line,
             requested_end_line,
-        ) = if let Some(range_request) = self.take_pending_semantic_token_range_request(request_id)
+        ) = if let Some(range_request) = self
+            .active_window_mut()
+            .take_pending_semantic_token_range_request(request_id)
         {
             (
                 range_request.buffer_id,
@@ -486,7 +488,10 @@ impl Editor {
                 Some(range_request.start_line),
                 Some(range_request.end_line),
             )
-        } else if let Some(full_request) = self.take_pending_semantic_token_request(request_id) {
+        } else if let Some(full_request) = self
+            .active_window_mut()
+            .take_pending_semantic_token_request(request_id)
+        {
             (
                 full_request.buffer_id,
                 full_request.version,

@@ -2125,6 +2125,36 @@ impl Window {
         tracing::debug!("Saved file state on close for {:?}", abs_path);
     }
 
+    /// Remove a pending semantic-token request from this window's tracking maps.
+    pub(crate) fn take_pending_semantic_token_request(
+        &mut self,
+        request_id: u64,
+    ) -> Option<crate::app::SemanticTokenFullRequest> {
+        if let Some(request) = self.pending_semantic_token_requests.remove(&request_id) {
+            self.semantic_tokens_in_flight.remove(&request.buffer_id);
+            Some(request)
+        } else {
+            None
+        }
+    }
+
+    /// Remove a pending semantic-token range request from this window's tracking maps.
+    pub(crate) fn take_pending_semantic_token_range_request(
+        &mut self,
+        request_id: u64,
+    ) -> Option<crate::app::SemanticTokenRangeRequest> {
+        if let Some(request) = self
+            .pending_semantic_token_range_requests
+            .remove(&request_id)
+        {
+            self.semantic_tokens_range_in_flight
+                .remove(&request.buffer_id);
+            Some(request)
+        } else {
+            None
+        }
+    }
+
     /// If a per-edit diagnostic-pull debounce has fired, send a fresh
     /// `textDocument/diagnostic` request to the language server for the
     /// scheduled buffer. Returns false because the new diagnostics arrive
