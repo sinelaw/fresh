@@ -56,7 +56,11 @@ fn test_start_lsp_disabled_for_unconfigured_language() -> anyhow::Result<()> {
 
     // The warning indicator should NOT be active
     assert!(
-        !harness.editor().get_warning_domains().has_any_warnings(),
+        !harness
+            .editor()
+            .active_window()
+            .warning_domains
+            .has_any_warnings(),
         "Opening a text file and trying to start LSP should not trigger a warning indicator"
     );
 
@@ -124,7 +128,11 @@ fn test_no_lsp_warning_for_text_file() -> anyhow::Result<()> {
 
     // No warnings should be active
     assert!(
-        !harness.editor().get_warning_domains().has_any_warnings(),
+        !harness
+            .editor()
+            .active_window()
+            .warning_domains
+            .has_any_warnings(),
         "Opening a plain text file should not produce any warnings"
     );
 

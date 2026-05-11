@@ -894,20 +894,19 @@ impl Editor {
     }
 
     /// Get the warning domain registry
-    pub fn get_warning_domains(&self) -> &WarningDomainRegistry {
-        &self.active_window().warning_domains
-    }
+    // Warning-domain accessors live on `impl Window`:
+    //  - `clear_warnings` — call as `self.active_window_mut().clear_warnings()`.
+    //  - Read access via `active_window().warning_domains` directly
+    //    (and its `.general` / `.lsp` sub-registries).
+    // `has_lsp_error`, `get_effective_warning_level`,
+    // `get_general_warning_level`, `get_general_warning_count`,
+    // `get_warning_domains`, `get_warning_log_path`,
+    // `clear_warning_indicator` were thin getters with no remaining
+    // callers and have been removed.
 
-    /// Get the warning log path (for opening when user clicks indicator)
-    pub fn get_warning_log_path(&self) -> Option<&PathBuf> {
-        self.active_window()
-            .warning_domains
-            .general
-            .log_path
-            .as_ref()
-    }
-
-    /// Open the warning log file (user-initiated action)
+    /// Open the warning log file (user-initiated action). Stays on
+    /// `impl Editor` because it calls editor-orchestration helpers
+    /// (`open_local_file`, `mark_buffer_read_only`).
     pub fn open_warning_log(&mut self) {
         if let Some(path) = self
             .active_window_mut()
@@ -926,39 +925,6 @@ impl Editor {
                 }
             }
         }
-    }
-
-    /// Clear the general warning indicator (user dismissed)
-    pub fn clear_warning_indicator(&mut self) {
-        self.active_window_mut().warning_domains.general.clear();
-    }
-
-    /// Clear all warning indicators (user dismissed via command)
-    pub fn clear_warnings(&mut self) {
-        self.active_window_mut().warning_domains.general.clear();
-        self.active_window_mut().warning_domains.lsp.clear();
-        self.active_window_mut().status_message = Some("Warnings cleared".to_string());
-    }
-
-    /// Check if any LSP server is in error state
-    pub fn has_lsp_error(&self) -> bool {
-        self.active_window().warning_domains.lsp.level() == WarningLevel::Error
-    }
-
-    /// Get the effective warning level for the status bar (LSP indicator)
-    /// Returns Error if LSP has errors, Warning if there are warnings, None otherwise
-    pub fn get_effective_warning_level(&self) -> WarningLevel {
-        self.active_window().warning_domains.lsp.level()
-    }
-
-    /// Get the general warning level (for the general warning badge)
-    pub fn get_general_warning_level(&self) -> WarningLevel {
-        self.active_window().warning_domains.general.level()
-    }
-
-    /// Get the general warning count
-    pub fn get_general_warning_count(&self) -> usize {
-        self.active_window().warning_domains.general.count
     }
 
     // `update_lsp_warning_domain` lives on `impl Window` — call it via

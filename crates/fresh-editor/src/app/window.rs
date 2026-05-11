@@ -2006,6 +2006,14 @@ impl Window {
             })
     }
 
+    /// Clear all warning indicators for this window (general + LSP) and
+    /// post a "Warnings cleared" status message.
+    pub fn clear_warnings(&mut self) {
+        self.warning_domains.general.clear();
+        self.warning_domains.lsp.clear();
+        self.set_status_message("Warnings cleared".to_string());
+    }
+
     /// Recompute the LSP warning-domain level for this window from its
     /// `lsp_server_statuses` map. Called whenever a server transitions
     /// state.

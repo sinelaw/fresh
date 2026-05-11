@@ -1025,7 +1025,7 @@ impl Editor {
                 self.show_remote_indicator_popup();
             }
             Action::ClearWarnings => {
-                self.clear_warnings();
+                self.active_window_mut().clear_warnings();
             }
             Action::CommandPalette => {
                 // CommandPalette now delegates to QuickOpen (which starts with ">" prefix
