@@ -552,7 +552,8 @@ impl Editor {
 
         // If in terminal mode, send paste to the terminal PTY
         if self.active_window().terminal_mode {
-            self.send_terminal_input(normalized.as_bytes());
+            self.active_window_mut()
+                .send_terminal_input(normalized.as_bytes());
             return;
         }
 

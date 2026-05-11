@@ -2353,7 +2353,8 @@ impl Editor {
                 // Paste clipboard contents into terminal as a single batch
                 if self.active_window().terminal_mode {
                     if let Some(text) = self.clipboard.paste() {
-                        self.send_terminal_input(text.as_bytes());
+                        self.active_window_mut()
+                            .send_terminal_input(text.as_bytes());
                     }
                 }
             }

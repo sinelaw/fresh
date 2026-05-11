@@ -67,7 +67,8 @@ impl Editor {
         {
             self.enter_terminal_mode();
             // Forward the key to the terminal so the user's input isn't lost
-            self.send_terminal_key(event.code, event.modifiers);
+            self.active_window_mut()
+                .send_terminal_key(event.code, event.modifiers);
             return Some(InputResult::Consumed);
         }
 
@@ -451,7 +452,7 @@ impl Editor {
                 }
             }
             DeferredAction::SendTerminalKey(code, modifiers) => {
-                self.send_terminal_key(code, modifiers);
+                self.active_window_mut().send_terminal_key(code, modifiers);
             }
             DeferredAction::SendTerminalMouse {
                 col,
@@ -459,7 +460,8 @@ impl Editor {
                 kind,
                 modifiers,
             } => {
-                self.send_terminal_mouse(col, row, kind, modifiers);
+                self.active_window_mut()
+                    .send_terminal_mouse(col, row, kind, modifiers);
             }
             DeferredAction::ExitTerminalMode { explicit } => {
                 self.active_window_mut().terminal_mode = false;

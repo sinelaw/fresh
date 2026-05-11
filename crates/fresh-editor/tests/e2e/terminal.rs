@@ -236,7 +236,10 @@ fn test_terminal_input() {
     harness.editor_mut().open_terminal();
 
     // Send some input
-    harness.editor_mut().send_terminal_input(b"echo hello\n");
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"echo hello\n");
 
     // The input should have been sent (we can't easily verify the output
     // without async processing, but we verify no panic)
@@ -477,6 +480,7 @@ fn test_terminal_buffer_sync_on_exit() {
     // Send commands to the shell to generate output
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'SYNC_TEST_MARKER'\n");
 
     // Wait for the output to appear on screen
@@ -773,6 +777,7 @@ fn test_bug_view_scrolls_to_cursor_on_resume() {
     // Use printf to generate numbered lines
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"for i in $(seq 1 100); do echo \"Line $i\"; done\n");
 
     // Wait for the last line to appear
@@ -783,6 +788,7 @@ fn test_bug_view_scrolls_to_cursor_on_resume() {
     // Add a unique marker at the prompt that we can search for
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'PROMPT_MARKER_XYZ'\n");
 
     // Wait for the marker to appear
@@ -2063,6 +2069,7 @@ fn test_terminal_view_follows_output_at_bottom() {
     // Now type a unique marker that we can search for
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo BOTTOM_MARKER_XYZ\n");
 
     // Wait for the marker to appear on screen
@@ -2184,6 +2191,7 @@ fn test_session_restore_terminal_scrollback() {
         // Generate unique scrollback content
         harness
             .editor_mut()
+            .active_window_mut()
             .send_terminal_input(b"echo 'SCROLLBACK_MARKER_12345'\n");
 
         // Wait for the marker to appear
@@ -2362,6 +2370,7 @@ fn test_scrollback_captured_after_session_restore() {
         // Generate scrollback content with FIRST marker
         harness
             .editor_mut()
+            .active_window_mut()
             .send_terminal_input(b"echo 'FIRST_SESSION_MARKER_AAA'\n");
 
         // Wait for the marker to appear
@@ -2440,6 +2449,7 @@ fn test_scrollback_captured_after_session_restore() {
         // Use many lines to ensure SECOND_MARKER gets pushed into scrollback history
         harness
             .editor_mut()
+            .active_window_mut()
             .send_terminal_input(b"echo 'SECOND_SESSION_MARKER_BBB'\n");
 
         harness
@@ -2449,6 +2459,7 @@ fn test_scrollback_captured_after_session_restore() {
         // Generate more output to push SECOND_MARKER into scrollback
         harness
             .editor_mut()
+            .active_window_mut()
             .send_terminal_input(b"for i in $(seq 1 50); do echo \"Post-restore line $i\"; done\n");
 
         harness
@@ -2526,6 +2537,7 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
     // Use a unique marker at the START that we can verify we can scroll back to
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'START_MARKER_12345'\n");
 
     // Wait for the start marker
@@ -2536,6 +2548,7 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
     // Generate many lines to push the start marker into scrollback
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"for i in $(seq 1 50); do echo \"Line $i of output\"; done\n");
 
     // Wait for the last line to appear (ensures command completed)
@@ -2546,6 +2559,7 @@ fn test_scrollback_stable_after_multiple_mode_toggles() {
     // Add an end marker
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'END_MARKER_67890'\n");
 
     harness
@@ -2741,6 +2755,7 @@ fn test_scrollback_viewport_resets_on_reentry() {
     // Generate enough output to create scrollback history
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'HISTORY_START_MARKER'\n");
 
     harness
@@ -2750,6 +2765,7 @@ fn test_scrollback_viewport_resets_on_reentry() {
     // Generate many lines to push the start marker into scrollback
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"for i in $(seq 1 50); do echo \"History line $i\"; done\n");
 
     harness
@@ -2759,6 +2775,7 @@ fn test_scrollback_viewport_resets_on_reentry() {
     // Add an end marker that will be visible at the bottom
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'BOTTOM_MARKER_XYZ'\n");
 
     harness
@@ -2840,6 +2857,7 @@ fn test_scrollback_viewport_resets_on_reentry_mouse_scroll() {
     // Generate enough output to create scrollback history
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'HISTORY_START_MARKER'\n");
 
     harness
@@ -2849,6 +2867,7 @@ fn test_scrollback_viewport_resets_on_reentry_mouse_scroll() {
     // Generate many lines to push the start marker into scrollback
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"for i in $(seq 1 50); do echo \"History line $i\"; done\n");
 
     harness
@@ -2858,6 +2877,7 @@ fn test_scrollback_viewport_resets_on_reentry_mouse_scroll() {
     // Add an end marker that will be visible at the bottom
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'BOTTOM_MARKER_XYZ'\n");
 
     harness
@@ -2935,6 +2955,7 @@ fn test_terminal_exit_keeps_buffer_with_message() {
     // Generate some output before exiting
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo 'BEFORE_EXIT_MARKER'\n");
 
     harness
@@ -2942,7 +2963,10 @@ fn test_terminal_exit_keeps_buffer_with_message() {
         .unwrap();
 
     // Exit the terminal by typing 'exit'
-    harness.editor_mut().send_terminal_input(b"exit\n");
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"exit\n");
 
     // Wait for terminal to exit and buffer to show the exit message
     harness
@@ -3027,7 +3051,10 @@ fn test_windows_terminal_shows_prompt_and_executes_command() {
     // Send a simple Windows command: echo with a unique marker
     let marker = "FRESH_TERMINAL_TEST_12345";
     let command = format!("echo {}\r\n", marker);
-    harness.editor_mut().send_terminal_input(command.as_bytes());
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(command.as_bytes());
 
     // Wait for the echo output to appear
     let output_result = harness.wait_until(|h| {
@@ -3073,13 +3100,17 @@ fn test_bracket_paste_in_terminal_mode() {
     // Wait for shell prompt to be ready by sending a simple command first
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo SHELL_READY\n");
     harness
         .wait_until(|h| h.screen_to_string().contains("SHELL_READY"))
         .unwrap();
 
     // Now start `cat` which echoes stdin back to stdout
-    harness.editor_mut().send_terminal_input(b"cat\n");
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"cat\n");
 
     // Wait for cat to start (it consumes the echo of the command)
     harness
@@ -3104,7 +3135,10 @@ fn test_bracket_paste_in_terminal_mode() {
     assert!(harness.editor().is_terminal_mode());
 
     // Clean up: send Ctrl+D to exit cat
-    harness.editor_mut().send_terminal_input(b"\x04");
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"\x04");
 }
 
 /// Test that arrow keys work in programs that enable application cursor keys (DECCKM).
@@ -3217,6 +3251,7 @@ fn test_arrow_keys_in_less() {
     let less_cmd = format!("less {}\n", test_file.display());
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(less_cmd.as_bytes());
     eprintln!("[arrow_keys] sent less command: {}", less_cmd.trim());
 

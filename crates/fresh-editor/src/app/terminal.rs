@@ -391,114 +391,11 @@ impl Editor {
     // `self.active_window().is_terminal_buffer(...)` /
     // `.get_terminal_id(...)`.
 
-    /// Get the terminal state for the active buffer (if it's a terminal buffer)
-    pub fn get_active_terminal_state(
-        &self,
-    ) -> Option<std::sync::MutexGuard<'_, crate::services::terminal::TerminalState>> {
-        let terminal_id = self
-            .active_window()
-            .terminal_buffers
-            .get(&self.active_buffer())?;
-        let handle = self.active_window().terminal_manager.get(*terminal_id)?;
-        handle.state.lock().ok()
-    }
-
-    /// Send input to the active terminal
-    pub fn send_terminal_input(&mut self, data: &[u8]) {
-        if let Some(&terminal_id) = self
-            .active_window()
-            .terminal_buffers
-            .get(&self.active_buffer())
-        {
-            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
-                handle.write(data);
-            }
-        }
-    }
-
-    /// Send a key event to the active terminal
-    pub fn send_terminal_key(
-        &mut self,
-        code: crossterm::event::KeyCode,
-        modifiers: crossterm::event::KeyModifiers,
-    ) {
-        let app_cursor = self
-            .get_active_terminal_state()
-            .map(|s| s.is_app_cursor())
-            .unwrap_or(false);
-        if let Some(bytes) =
-            crate::services::terminal::pty::key_to_pty_bytes(code, modifiers, app_cursor)
-        {
-            self.send_terminal_input(&bytes);
-        }
-    }
-
-    /// Send a mouse event to the active terminal
-    pub fn send_terminal_mouse(
-        &mut self,
-        col: u16,
-        row: u16,
-        kind: crate::input::handler::TerminalMouseEventKind,
-        modifiers: crossterm::event::KeyModifiers,
-    ) {
-        use crate::input::handler::TerminalMouseEventKind;
-
-        // Check if terminal uses SGR mouse encoding
-        let use_sgr = self
-            .get_active_terminal_state()
-            .map(|s| s.uses_sgr_mouse())
-            .unwrap_or(true); // Default to SGR as it's the modern standard
-
-        // For alternate scroll mode, convert scroll to arrow keys
-        let uses_alt_scroll = self
-            .get_active_terminal_state()
-            .map(|s| s.uses_alternate_scroll())
-            .unwrap_or(false);
-
-        if uses_alt_scroll {
-            match kind {
-                TerminalMouseEventKind::ScrollUp => {
-                    // Send up arrow 3 times (typical scroll amount)
-                    for _ in 0..3 {
-                        self.send_terminal_input(b"\x1b[A");
-                    }
-                    return;
-                }
-                TerminalMouseEventKind::ScrollDown => {
-                    // Send down arrow 3 times
-                    for _ in 0..3 {
-                        self.send_terminal_input(b"\x1b[B");
-                    }
-                    return;
-                }
-                _ => {}
-            }
-        }
-
-        // Encode mouse event for terminal
-        let bytes = if use_sgr {
-            encode_sgr_mouse(col, row, kind, modifiers)
-        } else {
-            encode_x10_mouse(col, row, kind, modifiers)
-        };
-
-        if let Some(bytes) = bytes {
-            self.send_terminal_input(&bytes);
-        }
-    }
-
-    /// Check if the active terminal buffer is in alternate screen mode.
-    /// Programs like vim, less, htop use alternate screen mode.
-    pub fn is_terminal_in_alternate_screen(&self, buffer_id: BufferId) -> bool {
-        if let Some(&terminal_id) = self.active_window().terminal_buffers.get(&buffer_id) {
-            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
-                if let Ok(state) = handle.state.lock() {
-                    return state.is_alternate_screen();
-                }
-            }
-        }
-        false
-    }
+    // `get_active_terminal_state`, `send_terminal_input`,
+    // `send_terminal_key`, `send_terminal_mouse`, and
+    // `is_terminal_in_alternate_screen` live on `impl Window` — they
+    // only touch this window's `terminal_buffers` + `terminal_manager`.
+    // Call them via `self.active_window()` / `self.active_window_mut()`.
 
     /// Get terminal dimensions based on split size
     pub(crate) fn get_terminal_dimensions(&self) -> (u16, u16) {
@@ -540,7 +437,7 @@ impl Editor {
         }
 
         // Send the key to the terminal
-        self.send_terminal_key(code, modifiers);
+        self.active_window_mut().send_terminal_key(code, modifiers);
         true
     }
 
@@ -638,6 +535,108 @@ impl Editor {
 }
 
 impl Window {
+    /// Get the terminal state for the active buffer (if it's a terminal buffer).
+    pub fn get_active_terminal_state(
+        &self,
+    ) -> Option<std::sync::MutexGuard<'_, crate::services::terminal::TerminalState>> {
+        let terminal_id = self.terminal_buffers.get(&self.active_buffer())?;
+        let handle = self.terminal_manager.get(*terminal_id)?;
+        handle.state.lock().ok()
+    }
+
+    /// Send input bytes to this window's active terminal (no-op if the
+    /// active buffer is not a terminal).
+    pub fn send_terminal_input(&mut self, data: &[u8]) {
+        if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer()) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                handle.write(data);
+            }
+        }
+    }
+
+    /// Send a key event to this window's active terminal. Picks
+    /// "application cursor" vs "normal cursor" escape sequences
+    /// based on the terminal's current state.
+    pub fn send_terminal_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) {
+        let app_cursor = self
+            .get_active_terminal_state()
+            .map(|s| s.is_app_cursor())
+            .unwrap_or(false);
+        if let Some(bytes) =
+            crate::services::terminal::pty::key_to_pty_bytes(code, modifiers, app_cursor)
+        {
+            self.send_terminal_input(&bytes);
+        }
+    }
+
+    /// Send a mouse event to this window's active terminal.
+    pub fn send_terminal_mouse(
+        &mut self,
+        col: u16,
+        row: u16,
+        kind: crate::input::handler::TerminalMouseEventKind,
+        modifiers: crossterm::event::KeyModifiers,
+    ) {
+        use crate::input::handler::TerminalMouseEventKind;
+
+        // Check if terminal uses SGR mouse encoding.
+        let use_sgr = self
+            .get_active_terminal_state()
+            .map(|s| s.uses_sgr_mouse())
+            .unwrap_or(true);
+
+        // For alternate scroll mode, convert scroll to arrow keys.
+        let uses_alt_scroll = self
+            .get_active_terminal_state()
+            .map(|s| s.uses_alternate_scroll())
+            .unwrap_or(false);
+
+        if uses_alt_scroll {
+            match kind {
+                TerminalMouseEventKind::ScrollUp => {
+                    for _ in 0..3 {
+                        self.send_terminal_input(b"\x1b[A");
+                    }
+                    return;
+                }
+                TerminalMouseEventKind::ScrollDown => {
+                    for _ in 0..3 {
+                        self.send_terminal_input(b"\x1b[B");
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        let bytes = if use_sgr {
+            encode_sgr_mouse(col, row, kind, modifiers)
+        } else {
+            encode_x10_mouse(col, row, kind, modifiers)
+        };
+
+        if let Some(bytes) = bytes {
+            self.send_terminal_input(&bytes);
+        }
+    }
+
+    /// Check if the given terminal buffer in this window is in
+    /// alternate-screen mode (vim/less/htop etc.).
+    pub fn is_terminal_in_alternate_screen(&self, buffer_id: BufferId) -> bool {
+        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(state) = handle.state.lock() {
+                    return state.is_alternate_screen();
+                }
+            }
+        }
+        false
+    }
+
     /// Resize a single terminal buffer's PTY (only if `buffer_id`
     /// belongs to this window's terminal_buffers map).
     pub fn resize_terminal(&mut self, buffer_id: BufferId, cols: u16, rows: u16) {

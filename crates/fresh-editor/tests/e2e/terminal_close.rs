@@ -219,6 +219,7 @@ fn test_closing_other_buffer_resumes_terminal_correctly() {
     // Type a command with a unique marker
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo UNIQUEMARKER_ABC_123\n");
 
     // Wait for the output to appear
@@ -281,6 +282,7 @@ fn test_closing_other_buffer_resumes_terminal_correctly() {
     // Type a second command to verify terminal is fully working
     harness
         .editor_mut()
+        .active_window_mut()
         .send_terminal_input(b"echo SECONDMARKER_XYZ_789\n");
 
     // Wait for the second output

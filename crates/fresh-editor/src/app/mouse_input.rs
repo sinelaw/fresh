@@ -78,7 +78,10 @@ impl Editor {
 
         // Check if we should forward mouse events to the terminal
         // Forward if: in terminal mode, mouse is over terminal buffer, and terminal is in alternate screen mode
-        if let Some(result) = self.try_forward_mouse_to_terminal(col, row, mouse_event) {
+        if let Some(result) =
+            self.active_window_mut()
+                .try_forward_mouse_to_terminal(col, row, mouse_event)
+        {
             return result;
         }
 
