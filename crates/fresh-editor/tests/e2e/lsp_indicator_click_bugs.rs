@@ -142,6 +142,24 @@ done
     script_path
 }
 
+/// Fake LSP that exits immediately with a non-zero status. Makes the
+/// editor's spawn-and-watch path fire `lsp_server_error` (caught by
+/// the embedded `rust-lsp.ts` plugin), without going down the
+/// "command not found" branch that bypasses spawn entirely.
+fn create_immediately_exiting_server_script(dir: &std::path::Path) -> std::path::PathBuf {
+    let script = "#!/bin/bash\nexit 1\n";
+    let script_path = dir.join("fake_exiting_lsp.sh");
+    std::fs::write(&script_path, script).expect("write exiting LSP script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+    }
+    script_path
+}
+
 /// Build a minimal `Config` that points the `rust` LSP at `command`
 /// (any executable that speaks LSP framing), with `auto_start = true`
 /// so opening a `.rs` file kicks the server off.
@@ -192,9 +210,29 @@ fn active_popup_count(harness: &EditorTestHarness) -> usize {
 //
 // Expected: at most one popup on screen for a single user gesture.
 
+/// Reproduces the user's "several kinds of popups" complaint.
+///
+/// `show_lsp_status_popup` fires the `lsp_status_clicked` hook and then
+/// — unconditionally — also pushes the built-in LSP Servers popup
+/// (`popup_dialogs.rs:108`). If a plugin handler reacts to that hook by
+/// pushing its own popup (the embedded `rust-lsp.ts` plugin does this
+/// in production), the two popups end up stacked.
+///
+/// We can't reliably drive the plugin's TS handler from inside the
+/// e2e harness (loading the embedded plugin set is best-effort under
+/// test, and the spawn path that fires `lsp_server_error` is fragile),
+/// so we exercise the exact same code path the plugin would: push a
+/// popup via `show_popup` *before* calling `show_lsp_status_popup`. A
+/// correctly-wired `show_lsp_status_popup` would notice that the hook
+/// (or any prior step) left a popup on top of the stack and refrain
+/// from stacking the LSP Servers popup over it.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn issue_1_click_stacks_plugin_popup_and_lsp_servers_popup() -> anyhow::Result<()> {
+    use fresh::model::event::{
+        PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
+    };
+
     let temp = tempfile::tempdir()?;
     let file = temp.path().join("hello.rs");
     std::fs::write(&file, "fn main() {}\n")?;
@@ -203,43 +241,77 @@ fn issue_1_click_stacks_plugin_popup_and_lsp_servers_popup() -> anyhow::Result<(
         140,
         40,
         HarnessOptions::new()
-            .with_config(config_with_rust_lsp("/definitely/not/a/real/rust-analyzer"))
+            .with_config(config_with_rust_lsp("rust-analyzer"))
             .with_working_dir(temp.path().to_path_buf()),
     )?;
-
     harness.open_file(&file)?;
-    // Wait for the spawn attempt to fail and for the plugin's
-    // `lsp_server_error` hook to run (it sets the status message
-    // "Rust LSP server '…' not found. Click status bar for help.").
-    harness.wait_until(|h| {
-        h.get_status_bar()
-            .contains("not found. Click status bar for help.")
-            || h.screen_to_string()
-                .contains("not found. Click status bar for help.")
-    })?;
+    harness.render()?;
 
-    // Click the indicator. This fires the `lsp_status_clicked` hook AND
-    // unconditionally builds the LSP-servers popup.
+    // Simulate what the rust-lsp plugin does in response to
+    // `lsp_status_clicked`: push an action popup.
+    let plugin_popup = PopupData {
+        kind: PopupKindHint::List,
+        title: Some("Rust Language Server Not Found".to_string()),
+        description: Some("plugin-side popup".to_string()),
+        transient: false,
+        content: PopupContentData::List {
+            items: vec![PopupListItemData {
+                text: "Disable Rust LSP".to_string(),
+                detail: None,
+                icon: None,
+                data: Some("disable".to_string()),
+            }],
+            selected: 0,
+        },
+        position: PopupPositionData::Centered,
+        width: 50,
+        max_height: 6,
+        bordered: true,
+    };
+    harness.editor_mut().show_popup(plugin_popup);
+    let count_after_plugin_popup = active_popup_count(&harness);
+    assert_eq!(
+        count_after_plugin_popup, 1,
+        "precondition: exactly one popup on the stack after the plugin's push"
+    );
+
+    // Now the editor proceeds with the rest of `show_lsp_status_popup`:
+    // it calls `build_and_show_lsp_status_popup` unconditionally
+    // (popup_dialogs.rs:108) — that's the line under test.
     harness.editor_mut().show_lsp_status_popup();
     harness.render()?;
 
-    let count = active_popup_count(&harness);
+    let count_after = active_popup_count(&harness);
     let screen = harness.screen_to_string();
 
-    // The plugin's popup title is "Rust Language Server Not Found"; the
-    // built-in popup's title is "LSP Servers (rust)". Both appear today.
-    let plugin_popup_visible = screen.contains("Rust Language Server Not Found");
-    let lsp_servers_popup_visible = screen.contains("LSP Servers (rust)");
-
-    assert!(
-        !(plugin_popup_visible && lsp_servers_popup_visible),
-        "BUG: clicking the LSP indicator showed BOTH the rust-lsp plugin \
-         popup AND the built-in LSP Servers popup at the same time. \
-         A single gesture should produce at most one popup.\n\
-         popup stack depth = {count}\n\
-         Screen:\n{screen}"
+    assert_eq!(
+        count_after, 1,
+        "BUG: `show_lsp_status_popup` stacks its built-in popup on top \
+         of one already pushed by a plugin's `lsp_status_clicked` \
+         handler — the user sees two popups for one click. Stack went \
+         from 1 (plugin popup) to {count_after} after \
+         `show_lsp_status_popup` ran. Screen:\n{screen}"
     );
     Ok(())
+}
+
+/// Run `condition` against the harness once every 50ms (with renders
+/// between checks) until it returns true or `timeout` elapses.
+/// Returns whether the condition was met.
+fn wait_for<F>(harness: &mut EditorTestHarness, timeout: Duration, mut condition: F) -> bool
+where
+    F: FnMut(&EditorTestHarness) -> bool,
+{
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        let _ = harness.render();
+        if condition(harness) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        harness.advance_time(Duration::from_millis(50));
+    }
+    condition(harness)
 }
 
 // ---------------------------------------------------------------------------
