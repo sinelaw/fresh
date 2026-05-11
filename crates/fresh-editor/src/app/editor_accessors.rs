@@ -382,70 +382,10 @@ impl Editor {
         }
     }
 
-    /// Get a list of currently running LSP server languages
-    pub fn running_lsp_servers(&self) -> Vec<String> {
-        self.lsp()
-            .map(|lsp| lsp.running_servers())
-            .unwrap_or_default()
-    }
-
-    /// Return the number of pending completion requests.
-    pub fn pending_completion_requests_count(&self) -> usize {
-        self.active_window().pending_completion_requests.len()
-    }
-
-    /// Return the number of stored completion items.
-    pub fn completion_items_count(&self) -> usize {
-        self.active_window()
-            .completion_items
-            .as_ref()
-            .map_or(0, |v| v.len())
-    }
-
-    /// Return the number of initialized LSP servers for a given language.
-    pub fn initialized_lsp_server_count(&self, language: &str) -> usize {
-        self.lsp()
-            .map(|lsp| {
-                lsp.get_handles(language)
-                    .iter()
-                    .filter(|sh| sh.capabilities.initialized)
-                    .count()
-            })
-            .unwrap_or(0)
-    }
-
-    /// Shutdown an LSP server by language (marks it as disabled until manual restart)
-    ///
-    /// Returns true if the server was found and shutdown, false otherwise
-    pub fn shutdown_lsp_server(&mut self, language: &str) -> bool {
-        let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
-            lsp.shutdown_server(language)
-        } else {
-            false
-        }
-    }
-
-    /// Enable event log streaming to a file
-    pub fn enable_event_streaming<P: AsRef<Path>>(&mut self, path: P) -> AnyhowResult<()> {
-        // Enable streaming for all existing event logs
-        for event_log in self.active_window_mut().event_logs.values_mut() {
-            event_log.enable_streaming(&path)?;
-        }
-        Ok(())
-    }
-
-    /// Log keystroke for debugging
-    pub fn log_keystroke(&mut self, key_code: &str, modifiers: &str) {
-        let buffer_id = self.active_buffer();
-        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
-            event_log.log_keystroke(key_code, modifiers);
-        }
-    }
+    // `running_lsp_servers`, `pending_completion_requests_count`,
+    // `completion_items_count`, `initialized_lsp_server_count`, and
+    // `shutdown_lsp_server` live on `impl Window` — call them via
+    // `self.active_window()` / `self.active_window_mut()`.
 
     /// Set up warning log monitoring
     ///

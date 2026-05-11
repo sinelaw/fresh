@@ -69,7 +69,12 @@ fn test_completion_works_when_server_silently_drops_semantic_tokens() -> anyhow:
     // the fake server. Without the transport fix, the editor still reaches
     // this point — initialize itself is answered — but every later request
     // wedges behind the unanswered semantic-tokens request.
-    harness.wait_until(|h| h.editor().initialized_lsp_server_count("rust") >= 1)?;
+    harness.wait_until(|h| {
+        h.editor()
+            .active_window()
+            .initialized_lsp_server_count("rust")
+            >= 1
+    })?;
 
     // Move into the function body and type a few characters. Each keypress
     // generates a `textDocument/didChange` notification. With the bug, those
@@ -89,9 +94,9 @@ fn test_completion_works_when_server_silently_drops_semantic_tokens() -> anyhow:
     // The completion popup must show the fake item ("median") within a
     // bounded time well below the per-request timeout. Without the fix this
     // never resolves and `wait_until` times out.
-    harness.wait_until(|h| h.editor().completion_items_count() > 0)?;
+    harness.wait_until(|h| h.editor().active_window().completion_items_count() > 0)?;
 
-    let n = harness.editor().completion_items_count();
+    let n = harness.editor().active_window().completion_items_count();
     assert!(
         n >= 1,
         "expected completion popup to render at least one item from the fake LSP, got {n}",

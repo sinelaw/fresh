@@ -755,7 +755,9 @@ fn handle_first_run_setup(
 ) -> AnyhowResult<()> {
     if let Some(log_path) = &args.event_log {
         tracing::trace!("Event logging enabled: {}", log_path.display());
-        editor.enable_event_streaming(log_path)?;
+        editor
+            .active_window_mut()
+            .enable_event_streaming(log_path)?;
     }
     // The warning-log channel and status-log path used to be wired up
     // here from `tracing_handles`; that wiring now lives in the main
@@ -4194,7 +4196,9 @@ fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> AnyhowResult<()
     // Log the keystroke
     let key_code = format!("{:?}", key_event.code);
     let modifiers = format!("{:?}", key_event.modifiers);
-    editor.log_keystroke(&key_code, &modifiers);
+    editor
+        .active_window_mut()
+        .log_keystroke(&key_code, &modifiers);
 
     // Delegate to the editor's handle_key method
     editor.handle_key(key_event.code, key_event.modifiers)?;

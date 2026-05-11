@@ -168,7 +168,12 @@ fn test_completion_popup_has_no_duplicates_after_second_request_1514() -> anyhow
 
     // Wait until the LSP server has initialized so completion requests
     // will actually reach the fake server and come back.
-    harness.wait_until(|h| h.editor().initialized_lsp_server_count("rust") >= 1)?;
+    harness.wait_until(|h| {
+        h.editor()
+            .active_window()
+            .initialized_lsp_server_count("rust")
+            >= 1
+    })?;
 
     // ---- Round 1: first indented empty line ----------------------------
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;

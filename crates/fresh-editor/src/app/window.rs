@@ -1904,6 +1904,71 @@ impl Window {
         self.search_state = None;
     }
 
+    /// List the languages with currently-running LSP server handles in
+    /// this window. Wraps `LspManager::running_servers`.
+    pub fn running_lsp_servers(&self) -> Vec<String> {
+        self.lsp
+            .as_ref()
+            .map(|lsp| lsp.running_servers())
+            .unwrap_or_default()
+    }
+
+    /// Number of in-flight completion requests for this window.
+    pub fn pending_completion_requests_count(&self) -> usize {
+        self.pending_completion_requests.len()
+    }
+
+    /// Number of stored completion items currently visible in this
+    /// window's completion popup.
+    pub fn completion_items_count(&self) -> usize {
+        self.completion_items.as_ref().map_or(0, |v| v.len())
+    }
+
+    /// Number of initialized (handshake-complete) LSP servers for
+    /// `language` in this window.
+    pub fn initialized_lsp_server_count(&self, language: &str) -> usize {
+        self.lsp
+            .as_ref()
+            .map(|lsp| {
+                lsp.get_handles(language)
+                    .iter()
+                    .filter(|sh| sh.capabilities.initialized)
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Shutdown the LSP server for `language` in this window (marks it
+    /// disabled until manual restart). Returns true if a server was
+    /// shutdown, false if no server was running for that language.
+    pub fn shutdown_lsp_server(&mut self, language: &str) -> bool {
+        self.lsp
+            .as_mut()
+            .map(|lsp| lsp.shutdown_server(language))
+            .unwrap_or(false)
+    }
+
+    /// Enable event-log streaming to `path` for every buffer's event
+    /// log in this window.
+    pub fn enable_event_streaming<P: AsRef<std::path::Path>>(
+        &mut self,
+        path: P,
+    ) -> anyhow::Result<()> {
+        for event_log in self.event_logs.values_mut() {
+            event_log.enable_streaming(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Log a keystroke against the active buffer's event log. No-op if
+    /// the active buffer has no log entry.
+    pub fn log_keystroke(&mut self, key_code: &str, modifiers: &str) {
+        let buffer_id = self.active_buffer();
+        if let Some(event_log) = self.event_logs.get_mut(&buffer_id) {
+            event_log.log_keystroke(key_code, modifiers);
+        }
+    }
+
     /// Check if LSP has any active progress tasks (e.g., indexing) in
     /// this window.
     pub fn has_active_lsp_progress(&self) -> bool {

@@ -88,7 +88,12 @@ fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
     // fired at that point is dropped on the floor and the popup never
     // materialises, hitting nextest's 180s timeout (see sibling
     // `lsp_code_action_modal.rs`).
-    harness.wait_until(|h| h.editor().initialized_lsp_server_count("rust") >= 2)?;
+    harness.wait_until(|h| {
+        h.editor()
+            .active_window()
+            .initialized_lsp_server_count("rust")
+            >= 2
+    })?;
 
     // Position cursor on "let x = 5;" (line 2)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;

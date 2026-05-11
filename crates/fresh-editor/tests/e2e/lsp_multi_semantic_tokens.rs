@@ -76,6 +76,7 @@ fn test_multi_lsp_semantic_tokens_capability_mismatch() -> anyhow::Result<()> {
     // Wait for LSP to be running
     harness.wait_until(|h| {
         h.editor()
+            .active_window()
             .running_lsp_servers()
             .contains(&"rust".to_string())
     })?;

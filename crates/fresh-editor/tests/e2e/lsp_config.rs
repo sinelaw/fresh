@@ -62,7 +62,7 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
     harness.render()?;
 
     // Verify LSP is NOT running initially (because enabled=false)
-    let running_servers = harness.editor().running_lsp_servers();
+    let running_servers = harness.editor().active_window().running_lsp_servers();
     assert!(
         !running_servers.contains(&"rust".to_string()),
         "LSP should NOT be running initially when enabled=false in config"
@@ -93,7 +93,7 @@ fn test_start_lsp_command_works_when_config_disabled() -> anyhow::Result<()> {
     }
 
     // Verify LSP IS NOW running despite config having enabled=false
-    let running_servers = harness.editor().running_lsp_servers();
+    let running_servers = harness.editor().active_window().running_lsp_servers();
     assert!(
         running_servers.contains(&"rust".to_string()),
         "LSP should be running after manual Start LSP command, even when config has enabled=false. Running servers: {:?}",
@@ -299,7 +299,7 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
     harness.render()?;
 
     // Verify LSP is NOT running (enabled=false)
-    let running_servers = harness.editor().running_lsp_servers();
+    let running_servers = harness.editor().active_window().running_lsp_servers();
     assert!(
         !running_servers.contains(&"rust".to_string()),
         "LSP should NOT be running initially when enabled=false"
@@ -341,7 +341,7 @@ fn test_lsp_manager_config_updated_via_set_lsp_config() -> anyhow::Result<()> {
     }
 
     // Verify LSP started (because we updated config to enabled=true via set_lsp_config)
-    let running_servers = harness.editor().running_lsp_servers();
+    let running_servers = harness.editor().active_window().running_lsp_servers();
     assert!(
         running_servers.contains(&"rust".to_string()),
         "LSP should start after config is updated via set_lsp_config. Running: {:?}",

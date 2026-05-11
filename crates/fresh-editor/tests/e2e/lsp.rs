@@ -3874,28 +3874,33 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
     harness
         .wait_until(|h| {
             h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })
         .expect("LSP server for rust should start after file open");
 
-    let running_before = harness.editor().running_lsp_servers();
+    let running_before = harness.editor().active_window().running_lsp_servers();
     eprintln!("Running LSP servers before stop: {:?}", running_before);
 
     // Stop the LSP server (simulating user running "stop lsp" command)
-    let stopped = harness.editor_mut().shutdown_lsp_server("rust");
+    let stopped = harness
+        .editor_mut()
+        .active_window_mut()
+        .shutdown_lsp_server("rust");
     assert!(stopped, "shutdown_lsp_server should return true");
 
     // Wait for the LSP server to stop using semantic wait
     harness
         .wait_until(|h| {
             !h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })
         .expect("LSP server for rust should stop after shutdown");
 
-    let running_after_stop = harness.editor().running_lsp_servers();
+    let running_after_stop = harness.editor().active_window().running_lsp_servers();
     eprintln!("Running LSP servers after stop: {:?}", running_after_stop);
 
     // Now type some text - this triggers send_lsp_changes_for_buffer
@@ -3906,7 +3911,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
     harness.process_async_and_render()?;
 
     // Verify the LSP is STILL not running (the bug fix prevents auto-restart)
-    let running_after_edit = harness.editor().running_lsp_servers();
+    let running_after_edit = harness.editor().active_window().running_lsp_servers();
     eprintln!("Running LSP servers after edit: {:?}", running_after_edit);
     assert!(
         !running_after_edit.contains(&"rust".to_string()),
@@ -3918,7 +3923,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
     harness.type_text("// Another edit\n")?;
     harness.process_async_and_render()?;
 
-    let running_final = harness.editor().running_lsp_servers();
+    let running_final = harness.editor().active_window().running_lsp_servers();
     eprintln!("Running LSP servers after second edit: {:?}", running_final);
     assert!(
         !running_final.contains(&"rust".to_string()),
@@ -6033,7 +6038,7 @@ fn test_hover_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
 
     // Verify LSP server was NOT spawned after just opening the file
     // (because auto_start is false and we haven't manually started it)
-    let running_before_hover = harness.editor().running_lsp_servers();
+    let running_before_hover = harness.editor().active_window().running_lsp_servers();
     assert!(
         !running_before_hover.contains(&"rust".to_string()),
         "LSP server should NOT be spawned after opening file when auto_start=false"
@@ -6059,7 +6064,7 @@ fn test_hover_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     // NOT be started by a hover request when auto_start is disabled.
     //
     // This test SHOULD PASS (LSP not started), but currently FAILS due to the bug.
-    let running_after_hover = harness.editor().running_lsp_servers();
+    let running_after_hover = harness.editor().active_window().running_lsp_servers();
     assert!(
         !running_after_hover.contains(&"rust".to_string()),
         "LSP server should NOT be auto-started by hover when auto_start=false. \
@@ -6123,7 +6128,7 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     harness.render()?;
 
     // Verify LSP server was NOT spawned after just opening the file
-    let running_before_typing = harness.editor().running_lsp_servers();
+    let running_before_typing = harness.editor().active_window().running_lsp_servers();
     assert!(
         !running_before_typing.contains(&"rust".to_string()),
         "LSP server should NOT be spawned after opening file when auto_start=false"
@@ -6140,7 +6145,7 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
     }
 
     // Verify LSP was NOT started by typing
-    let running_after_typing = harness.editor().running_lsp_servers();
+    let running_after_typing = harness.editor().active_window().running_lsp_servers();
     assert!(
         !running_after_typing.contains(&"rust".to_string()),
         "LSP server should NOT be auto-started by typing when auto_start=false. \
@@ -9494,6 +9499,7 @@ done
     assert!(
         !harness
             .editor()
+            .active_window()
             .running_lsp_servers()
             .contains(&"lua".to_string()),
         "LSP should not be running before manual start"
@@ -9611,6 +9617,7 @@ fn test_restart_lsp_prompt_shows_suggestions() -> anyhow::Result<()> {
     harness
         .wait_until(|h| {
             h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })
@@ -9698,18 +9705,23 @@ fn test_restart_lsp_prompt_restarts_stopped_server() -> anyhow::Result<()> {
     harness
         .wait_until(|h| {
             h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })
         .expect("LSP server should start");
 
     // Stop the LSP server
-    let stopped = harness.editor_mut().shutdown_lsp_server("rust");
+    let stopped = harness
+        .editor_mut()
+        .active_window_mut()
+        .shutdown_lsp_server("rust");
     assert!(stopped, "shutdown_lsp_server should return true");
 
     harness
         .wait_until(|h| {
             !h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })
@@ -9723,6 +9735,7 @@ fn test_restart_lsp_prompt_restarts_stopped_server() -> anyhow::Result<()> {
     harness
         .wait_until(|h| {
             h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })
@@ -9780,6 +9793,7 @@ fn test_stop_lsp_via_prompt_no_warning() -> anyhow::Result<()> {
     harness
         .wait_until(|h| {
             h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })
@@ -9802,6 +9816,7 @@ fn test_stop_lsp_via_prompt_no_warning() -> anyhow::Result<()> {
     harness
         .wait_until(|h| {
             !h.editor()
+                .active_window()
                 .running_lsp_servers()
                 .contains(&"rust".to_string())
         })

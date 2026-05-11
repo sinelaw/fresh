@@ -62,7 +62,12 @@ fn test_inlay_hint_skipped_when_server_does_not_advertise_capability() -> anyhow
     // `initialized_lsp_server_count` counts handles whose capabilities
     // arrived via `LspInitialized` — the same handler that dispatches
     // the inlay-hint / pull-diagnostic follow-ups.
-    harness.wait_until(|h| h.editor().initialized_lsp_server_count("json") > 0)?;
+    harness.wait_until(|h| {
+        h.editor()
+            .active_window()
+            .initialized_lsp_server_count("json")
+            > 0
+    })?;
 
     // Phase 2: trigger a hover and wait for the server to receive it.
     // LSP commands for this server share one outgoing channel, so a hover
