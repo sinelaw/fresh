@@ -810,9 +810,9 @@ pub struct Editor {
     /// Calibration wizard state (when calibration modal is open)
     pub(crate) calibration_wizard: Option<calibration_wizard::CalibrationWizard>,
 
-    /// Event debug dialog state (when event debug modal is open)
-    pub(crate) event_debug: Option<event_debug::EventDebug>,
-
+    // `event_debug` modal state moved to `Window` — each window has its
+    // own debug overlay (the dialog records keystrokes destined for that
+    // window's input pipeline, so it's logically per-window).
     /// Keybinding editor state (when keybinding editor modal is open)
     pub(crate) keybinding_editor: Option<keybinding_editor::KeybindingEditor>,
 

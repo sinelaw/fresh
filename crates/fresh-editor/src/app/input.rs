@@ -473,8 +473,9 @@ impl Editor {
         // Event debug dialog intercepts ALL key events before any other processing.
         // This must be checked here (not just in main.rs/gui) so it works in
         // client/server mode where handle_key is called directly.
-        if self.is_event_debug_active() {
-            self.handle_event_debug_input(&key_event);
+        if self.active_window().is_event_debug_active() {
+            self.active_window_mut()
+                .handle_event_debug_input(&key_event);
             return Ok(());
         }
 
@@ -2425,7 +2426,7 @@ impl Editor {
                 self.open_calibration_wizard();
             }
             Action::EventDebug => {
-                self.open_event_debug();
+                self.active_window_mut().open_event_debug();
             }
             Action::SuspendProcess => {
                 self.request_suspend();

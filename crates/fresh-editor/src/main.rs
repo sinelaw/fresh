@@ -4041,10 +4041,12 @@ where
 
         // Event debug dialog receives ALL RAW events (before any translation or processing)
         // This is essential for diagnosing terminal keybinding issues
-        if editor.is_event_debug_active() {
+        if editor.active_window().is_event_debug_active() {
             if let CrosstermEvent::Key(key_event) = event {
                 if key_event.kind == KeyEventKind::Press {
-                    editor.handle_event_debug_input(&key_event);
+                    editor
+                        .active_window_mut()
+                        .handle_event_debug_input(&key_event);
                     needs_render = true;
                 }
             }

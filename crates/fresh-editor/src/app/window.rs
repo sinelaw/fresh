@@ -624,6 +624,11 @@ pub struct Window {
     /// Theme inspector popup (Ctrl+Right-Click) anchored in this window.
     pub theme_info_popup: Option<crate::app::types::ThemeInfoPopup>,
 
+    /// Event debug dialog state (when the event-debug modal is open in
+    /// this window). The dialog records keystrokes for the window's
+    /// input pipeline so it's logically per-window.
+    pub event_debug: Option<crate::app::event_debug::EventDebug>,
+
     /// File-open dialog state (when PromptType::OpenFile is active in
     /// this window's prompt).
     pub file_open_state: Option<crate::app::file_open::FileOpenState>,
@@ -1623,6 +1628,7 @@ impl Window {
             tab_context_menu: None,
             file_explorer_context_menu: None,
             theme_info_popup: None,
+            event_debug: None,
             file_open_state: None,
             file_browser_layout: None,
             buffer_groups: HashMap::new(),

@@ -259,7 +259,7 @@ impl Editor {
             preview_window_id: None,
             settings_state: None,
             calibration_wizard: None,
-            event_debug: None,
+            // event_debug moved to Window
             keybinding_editor: None,
             stdin_stream: stdin_stream::StdinStream::default(),
             global_popups: crate::view::popup::PopupManager::new(),

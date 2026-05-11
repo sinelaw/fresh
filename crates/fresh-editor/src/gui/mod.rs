@@ -177,14 +177,16 @@ impl GuiApplication for EditorApp {
         );
 
         // Event debug dialog intercepts ALL key events before normal processing.
-        if self.editor.is_event_debug_active() {
+        if self.editor.active_window().is_event_debug_active() {
             let raw_event = crossterm::event::KeyEvent {
                 code: key_event.code,
                 modifiers: key_event.modifiers,
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             };
-            self.editor.handle_event_debug_input(&raw_event);
+            self.editor
+                .active_window_mut()
+                .handle_event_debug_input(&raw_event);
             return Ok(());
         }
 
