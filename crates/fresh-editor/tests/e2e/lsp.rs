@@ -9923,14 +9923,12 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
     // assertion read.
     let mut captured: Option<String> = None;
     harness
-        .wait_until(|_| {
-            match std::fs::read_to_string(&log_path) {
-                Ok(c) if c.contains("failed to spawn") && c.contains(&bogus) => {
-                    captured = Some(c);
-                    true
-                }
-                _ => false,
+        .wait_until(|_| match std::fs::read_to_string(&log_path) {
+            Ok(c) if c.contains("failed to spawn") && c.contains(&bogus) => {
+                captured = Some(c);
+                true
             }
+            _ => false,
         })
         .expect("LSP spawn-failure stub log should be written when spawn fails");
 

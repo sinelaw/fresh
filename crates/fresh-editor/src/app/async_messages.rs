@@ -1147,15 +1147,13 @@ impl Editor {
         // indexing after external kill" user report.
         if matches!(status, LspServerStatus::Error | LspServerStatus::Shutdown) {
             let any_running_for_lang =
-                self.active_window().lsp_server_statuses.iter().any(
-                    |((lang, _), s)| {
+                self.active_window()
+                    .lsp_server_statuses
+                    .iter()
+                    .any(|((lang, _), s)| {
                         lang == &language
-                            && !matches!(
-                                s,
-                                LspServerStatus::Error | LspServerStatus::Shutdown,
-                            )
-                    },
-                );
+                            && !matches!(s, LspServerStatus::Error | LspServerStatus::Shutdown,)
+                    });
             if !any_running_for_lang {
                 let lang_owned = language.clone();
                 self.active_window_mut()
