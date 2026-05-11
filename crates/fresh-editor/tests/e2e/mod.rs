@@ -100,6 +100,7 @@ pub mod lsp_cross_language_diagnostic_pull;
 pub mod lsp_diagnostic_flow;
 pub mod lsp_env;
 pub mod lsp_goto_definition_readonly;
+pub mod lsp_indicator_click_bugs;
 pub mod lsp_indicator_click_to_open;
 pub mod lsp_inlay_hints_capability;
 pub mod lsp_lifecycle_visibility;
