@@ -36,7 +36,8 @@ impl Editor {
         // `preferred_split_for_file` (which adds the new buffer as a
         // tab) and `set_active_buffer` (which makes it the active
         // buffer) — see a non-dock active leaf and route consistently.
-        self.redirect_active_split_away_from_dock_if_needed();
+        self.active_window_mut()
+            .redirect_active_split_away_from_dock_if_needed();
 
         // Check whether the active buffer had a file path before loading.
         // If it didn't, open_file_no_focus may replace the empty initial buffer
@@ -124,39 +125,9 @@ impl Editor {
     /// Routing falls back to the first non-dock leaf in tree order
     /// when the user has only ever interacted with the dock — a
     /// rare boot-state path.
-    fn redirect_active_split_away_from_dock_if_needed(&mut self) {
-        use crate::view::split::SplitRole;
-        let Some(mgr) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(m, _)| m)
-        else {
-            return;
-        };
-        let active = mgr.active_split();
-        if mgr.leaf_role(active) != Some(SplitRole::UtilityDock) {
-            return;
-        }
-        let is_editor_leaf = |leaf| mgr.leaf_role(leaf) != Some(SplitRole::UtilityDock);
-        let target = mgr.last_focused_where(is_editor_leaf).or_else(|| {
-            mgr.root()
-                .leaf_split_ids()
-                .into_iter()
-                .find(|leaf| is_editor_leaf(*leaf))
-        });
-        let Some(target) = target else {
-            return; // Degenerate: every leaf is a dock — leave as is.
-        };
-        if target == active {
-            return;
-        }
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_active_split(target);
-    }
+    // `redirect_active_split_away_from_dock_if_needed` lives on
+    // `impl Window` — call it via
+    // `self.active_window_mut().redirect_active_split_away_from_dock_if_needed()`.
 
     /// Open a file without switching focus to it
     ///
@@ -468,7 +439,8 @@ impl Editor {
 
         // Restore global file state (scroll/cursor position) if available
         // This persists file positions across projects and editor instances
-        self.restore_global_file_state(buffer_id, path, target_split);
+        self.active_window_mut()
+            .restore_global_file_state(buffer_id, path, target_split);
 
         // Emit control event
         self.emit_event(
@@ -829,88 +801,10 @@ impl Editor {
     ///
     /// This looks up the file's saved state from the global file states store
     /// and applies it to both the EditorState (cursor) and SplitViewState (viewport).
-    fn restore_global_file_state(&mut self, buffer_id: BufferId, path: &Path, split_id: LeafId) {
-        use crate::workspace::PersistedFileWorkspace;
-
-        // Load the per-file state for this path (lazy load from disk)
-        let file_state = match PersistedFileWorkspace::load(path) {
-            Some(state) => state,
-            None => return, // No saved state for this file
-        };
-
-        self.active_window_mut()
-            .restore_buffer_state_in_split(buffer_id, split_id, &file_state);
-    }
-
-    /// Save file state when a buffer is closed (for per-file session persistence)
-    pub(super) fn save_file_state_on_close(&self, buffer_id: BufferId) {
-        use crate::workspace::{
-            PersistedFileWorkspace, SerializedCursor, SerializedFileState, SerializedScroll,
-        };
-
-        // Get the file path for this buffer
-        let abs_path = match self.active_window().buffer_metadata.get(&buffer_id) {
-            Some(metadata) => match metadata.file_path() {
-                Some(path) => path.to_path_buf(),
-                None => return, // Not a file buffer
-            },
-            None => return,
-        };
-
-        // Find a split that has this buffer open to get the view state
-        let view_state = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .values()
-            .find(|vs| vs.has_buffer(buffer_id));
-
-        let view_state = match view_state {
-            Some(vs) => vs,
-            None => return, // No split has this buffer
-        };
-
-        // Get the per-buffer view state (not necessarily the active buffer in this split)
-        let buf_state = match view_state.keyed_states.get(&buffer_id) {
-            Some(bs) => bs,
-            None => return,
-        };
-
-        // Capture the current state
-        let primary_cursor = buf_state.cursors.primary();
-        let file_state = SerializedFileState {
-            cursor: SerializedCursor {
-                position: primary_cursor.position,
-                anchor: primary_cursor.anchor,
-                sticky_column: primary_cursor.sticky_column,
-            },
-            additional_cursors: buf_state
-                .cursors
-                .iter()
-                .skip(1)
-                .map(|(_, cursor)| SerializedCursor {
-                    position: cursor.position,
-                    anchor: cursor.anchor,
-                    sticky_column: cursor.sticky_column,
-                })
-                .collect(),
-            scroll: SerializedScroll {
-                top_byte: buf_state.viewport.top_byte,
-                top_view_line_offset: buf_state.viewport.top_view_line_offset,
-                left_column: buf_state.viewport.left_column,
-            },
-            view_mode: Default::default(),
-            compose_width: None,
-            plugin_state: std::collections::HashMap::new(),
-            folds: Vec::new(),
-        };
-
-        // Save to disk
-        PersistedFileWorkspace::save(&abs_path, file_state);
-        tracing::debug!("Saved file state on close for {:?}", abs_path);
-    }
+    // `restore_global_file_state` and `save_file_state_on_close` live
+    // on `impl Window` — call them via
+    // `self.active_window_mut().restore_global_file_state(...)` and
+    // `self.active_window().save_file_state_on_close(...)`.
 
     /// Open the file an LSP response URI points at, handling the three
     /// cases the goto-def / references / workspace-edit handlers all

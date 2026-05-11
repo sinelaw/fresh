@@ -220,55 +220,7 @@ impl Editor {
     /// validated before being returned.
     #[inline]
     fn effective_active_pair(&self) -> (crate::model::event::LeafId, BufferId) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        if let Some(vs) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&active_split)
-        {
-            if vs.active_group_tab.is_some() {
-                if let Some(inner_leaf) = vs.focused_group_leaf {
-                    if let Some(inner_vs) = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.splits.as_ref())
-                        .map(|(_, vs)| vs)
-                        .expect("active window must have a populated split layout")
-                        .get(&inner_leaf)
-                    {
-                        let inner_buf = inner_vs.active_buffer;
-                        if self
-                            .windows
-                            .get(&self.active_window)
-                            .map(|w| &w.buffers)
-                            .expect("active window present")
-                            .contains_key(&inner_buf)
-                            && inner_vs.keyed_states.contains_key(&inner_buf)
-                        {
-                            return (inner_leaf, inner_buf);
-                        }
-                    }
-                }
-            }
-        }
-        let outer_buf = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_buffer_id()
-            .expect("Editor always has at least one buffer");
-        (active_split, outer_buf)
+        self.active_window().effective_active_pair()
     }
 
     /// Get the mode name for the active buffer (if it's a virtual buffer)
@@ -971,75 +923,10 @@ impl Editor {
     // `check_semantic_highlight_timer` lives on `impl Window` — call it
     // via `self.active_window().check_semantic_highlight_timer()`.
 
-    /// Check if diagnostic pull timer has expired and trigger re-pull if so.
-    ///
-    /// Debounced diagnostic re-pull after document changes — waits 500ms after
-    /// the last edit before requesting fresh diagnostics from the LSP server.
-    pub fn check_diagnostic_pull_timer(&mut self) -> bool {
-        let Some((buffer_id, trigger_time)) = self.active_window().scheduled_diagnostic_pull else {
-            return false;
-        };
-
-        if Instant::now() < trigger_time {
-            return false;
-        }
-
-        self.active_window_mut().scheduled_diagnostic_pull = None;
-
-        // Get URI and language for this buffer
-        let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
-            return false;
-        };
-        let Some(uri) = metadata.file_uri().cloned() else {
-            return false;
-        };
-        let Some(language) = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-            .map(|s| s.language.clone())
-        else {
-            return false;
-        };
-
-        let __active_id = self.active_window;
-
-        let Some(__win) = self.windows.get_mut(&__active_id) else {
-            return false;
-        };
-        let diagnostic_result_ids = &__win.diagnostic_result_ids;
-        let Some(lsp) = __win.lsp.as_mut() else {
-            return false;
-        };
-        let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
-        else {
-            return false;
-        };
-        let client = &mut sh.handle;
-
-        let request_id = __win.next_lsp_request_id;
-        __win.next_lsp_request_id += 1;
-        let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
-        if let Err(e) =
-            client.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
-        {
-            tracing::debug!(
-                "Failed to pull diagnostics after edit for {}: {}",
-                uri.as_str(),
-                e
-            );
-        } else {
-            tracing::debug!(
-                "Pulling diagnostics after edit for {} (request_id={})",
-                uri.as_str(),
-                request_id
-            );
-        }
-
-        false // no immediate redraw needed; diagnostics arrive asynchronously
-    }
+    // `check_diagnostic_pull_timer` lives on `impl Window` — call it via
+    // `self.active_window_mut().check_diagnostic_pull_timer()`. Pulls
+    // run against the active window's LSP manager and its per-window
+    // `scheduled_diagnostic_pull` debounce slot.
 
     /// Check if completion trigger timer has expired and trigger completion if so
     ///

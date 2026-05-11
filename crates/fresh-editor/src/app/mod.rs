@@ -142,7 +142,7 @@ pub fn editor_tick(
     if editor.check_completion_trigger_timer() {
         needs_render = true;
     }
-    editor.check_diagnostic_pull_timer();
+    editor.active_window_mut().check_diagnostic_pull_timer();
     if editor.check_warning_log() {
         needs_render = true;
     }

@@ -2006,6 +2006,181 @@ impl Window {
             })
     }
 
+    /// If the active leaf carries `SplitRole::UtilityDock`, move the
+    /// active leaf back to the user's last regular editor leaf (or any
+    /// non-dock leaf as a fallback). Called from the file-open path so
+    /// that opening a file while a utility panel holds focus doesn't
+    /// turn the dock into a tab strip for ordinary files.
+    pub fn redirect_active_split_away_from_dock_if_needed(&mut self) {
+        use crate::view::split::SplitRole;
+        let Some((mgr, _)) = self.splits.as_ref() else {
+            return;
+        };
+        let active = mgr.active_split();
+        if mgr.leaf_role(active) != Some(SplitRole::UtilityDock) {
+            return;
+        }
+        let is_editor_leaf = |leaf| mgr.leaf_role(leaf) != Some(SplitRole::UtilityDock);
+        let target = mgr.last_focused_where(is_editor_leaf).or_else(|| {
+            mgr.root()
+                .leaf_split_ids()
+                .into_iter()
+                .find(|leaf| is_editor_leaf(*leaf))
+        });
+        let Some(target) = target else {
+            return;
+        };
+        if target == active {
+            return;
+        }
+        self.split_manager_mut()
+            .expect("active window must have a populated split layout")
+            .set_active_split(target);
+    }
+
+    /// Restore per-file state (cursors, scroll, etc.) for a buffer in a
+    /// specific split, lazily loaded from disk via
+    /// `PersistedFileWorkspace::load`. No-op if there's no saved state
+    /// for this path.
+    pub fn restore_global_file_state(
+        &mut self,
+        buffer_id: BufferId,
+        path: &std::path::Path,
+        split_id: LeafId,
+    ) {
+        use crate::workspace::PersistedFileWorkspace;
+
+        let file_state = match PersistedFileWorkspace::load(path) {
+            Some(state) => state,
+            None => return,
+        };
+
+        self.restore_buffer_state_in_split(buffer_id, split_id, &file_state);
+    }
+
+    /// Save file state when a buffer is closed (for per-file session
+    /// persistence). Walks this window's splits to find one that has
+    /// the buffer; no-op if no split contains it or the buffer isn't
+    /// a real on-disk file.
+    pub fn save_file_state_on_close(&self, buffer_id: BufferId) {
+        use crate::workspace::{
+            PersistedFileWorkspace, SerializedCursor, SerializedFileState, SerializedScroll,
+        };
+
+        let abs_path = match self.buffer_metadata.get(&buffer_id) {
+            Some(metadata) => match metadata.file_path() {
+                Some(path) => path.to_path_buf(),
+                None => return,
+            },
+            None => return,
+        };
+
+        let view_state = self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout")
+            .1
+            .values()
+            .find(|vs| vs.has_buffer(buffer_id));
+
+        let view_state = match view_state {
+            Some(vs) => vs,
+            None => return,
+        };
+
+        let buf_state = match view_state.keyed_states.get(&buffer_id) {
+            Some(bs) => bs,
+            None => return,
+        };
+
+        let primary_cursor = buf_state.cursors.primary();
+        let file_state = SerializedFileState {
+            cursor: SerializedCursor {
+                position: primary_cursor.position,
+                anchor: primary_cursor.anchor,
+                sticky_column: primary_cursor.sticky_column,
+            },
+            additional_cursors: buf_state
+                .cursors
+                .iter()
+                .skip(1)
+                .map(|(_, cursor)| SerializedCursor {
+                    position: cursor.position,
+                    anchor: cursor.anchor,
+                    sticky_column: cursor.sticky_column,
+                })
+                .collect(),
+            scroll: SerializedScroll {
+                top_byte: buf_state.viewport.top_byte,
+                top_view_line_offset: buf_state.viewport.top_view_line_offset,
+                left_column: buf_state.viewport.left_column,
+            },
+            view_mode: Default::default(),
+            compose_width: None,
+            plugin_state: std::collections::HashMap::new(),
+            folds: Vec::new(),
+        };
+
+        PersistedFileWorkspace::save(&abs_path, file_state);
+        tracing::debug!("Saved file state on close for {:?}", abs_path);
+    }
+
+    /// If a per-edit diagnostic-pull debounce has fired, send a fresh
+    /// `textDocument/diagnostic` request to the language server for the
+    /// scheduled buffer. Returns false because the new diagnostics arrive
+    /// asynchronously — the response handler will trigger any redraw.
+    pub fn check_diagnostic_pull_timer(&mut self) -> bool {
+        let Some((buffer_id, trigger_time)) = self.scheduled_diagnostic_pull else {
+            return false;
+        };
+
+        if std::time::Instant::now() < trigger_time {
+            return false;
+        }
+
+        self.scheduled_diagnostic_pull = None;
+
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return false;
+        };
+        let Some(uri) = metadata.file_uri().cloned() else {
+            return false;
+        };
+        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+            return false;
+        };
+
+        let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
+        let request_id = self.next_lsp_request_id;
+        self.next_lsp_request_id += 1;
+
+        let Some(lsp) = self.lsp.as_mut() else {
+            return false;
+        };
+        let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
+        else {
+            return false;
+        };
+        if let Err(e) =
+            sh.handle
+                .document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
+        {
+            tracing::debug!(
+                "Failed to pull diagnostics after edit for {}: {}",
+                uri.as_str(),
+                e
+            );
+        } else {
+            tracing::debug!(
+                "Pulling diagnostics after edit for {} (request_id={})",
+                uri.as_str(),
+                request_id
+            );
+        }
+
+        false
+    }
+
     /// Open a local file in this window (always uses local filesystem,
     /// not remote). Used for opening files like the warning log when
     /// the editor is connected to a remote server. Returns the buffer
