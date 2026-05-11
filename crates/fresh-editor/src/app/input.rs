@@ -1518,7 +1518,7 @@ impl Editor {
                 self.set_status_message(t!("view.read_only_state", state = state_str).to_string());
             }
             Action::TogglePageView => {
-                self.handle_toggle_page_view();
+                self.active_window_mut().handle_toggle_page_view();
             }
             Action::SetPageWidth => {
                 let active_split = self

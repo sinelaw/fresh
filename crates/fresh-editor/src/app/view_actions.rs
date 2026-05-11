@@ -1,48 +1,41 @@
 //! View mode action handlers.
 //!
-//! This module contains handlers for view-related actions like compose mode toggling.
+//! This module contains handlers for view-related actions like compose mode
+//! toggling. All bodies live on `impl Window` — none of the helpers reach
+//! editor-global state (plugin manager, mode registry, etc.); they manipulate
+//! per-window split-view-state and animations.
 
-use super::Editor;
+use crate::app::window::Window;
 use crate::model::event::LeafId;
 use crate::state::ViewMode;
 use rust_i18n::t;
 
-impl Editor {
-    /// Toggle between Compose and Source view modes.
+impl Window {
+    /// Toggle between Compose and Source view modes for the active split.
     pub fn handle_toggle_page_view(&mut self) {
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        let active_buffer = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
+        let (mgr, _) = self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout");
+        let active_split = mgr.active_split();
+        let active_buffer = mgr
             .get_buffer_id(active_split.into())
             .unwrap_or(crate::model::event::BufferId(0));
-        let default_wrap = self
-            .active_window()
-            .resolve_line_wrap_for_buffer(active_buffer);
-        let default_line_numbers = self.config.editor.line_numbers;
+        let default_wrap = self.resolve_line_wrap_for_buffer(active_buffer);
+        let default_line_numbers = self.config().editor.line_numbers;
         let page_width = self
-            .buffers()
+            .buffers
             .get(&active_buffer)
-            .and_then(|s| self.config.languages.get(&s.language))
+            .and_then(|s| self.config().languages.get(&s.language))
             .and_then(|lc| lc.page_width)
-            .or(self.config.editor.page_width);
+            .or(self.config().editor.page_width);
 
         let view_mode = {
-            let current = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.splits.as_ref())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
+            let (_, vs_map) = self
+                .splits
+                .as_ref()
+                .expect("active window must have a populated split layout");
+            let current = vs_map
                 .get(&active_split)
                 .map(|vs| vs.view_mode.clone())
                 .unwrap_or(ViewMode::Source);
@@ -54,9 +47,7 @@ impl Editor {
 
         // Update split view state (source of truth for view mode and line numbers)
         if let Some(vs) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
+            .split_view_states_mut()
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
@@ -106,7 +97,7 @@ impl Editor {
         if direction == 0 {
             return;
         }
-        if !self.config.editor.animations {
+        if !self.config().editor.animations {
             return;
         }
         let Some(area) = self.split_or_group_content_rect(split_id) else {
@@ -120,7 +111,7 @@ impl Editor {
         } else {
             crate::view::animation::Edge::Left
         };
-        self.active_window_mut().animations.start(
+        self.animations.start(
             area,
             crate::view::animation::AnimationKind::SlideIn {
                 from,
@@ -144,7 +135,7 @@ impl Editor {
     /// group occupies on screen.
     fn split_or_group_content_rect(&self, split_id: LeafId) -> Option<ratatui::layout::Rect> {
         if let Some(rect) = self
-            .active_layout()
+            .layout_cache
             .split_areas
             .iter()
             .find(|(sid, _, _, _, _, _)| *sid == split_id)
@@ -156,21 +147,18 @@ impl Editor {
         // Fallback: is this split hosting a buffer-group tab? If so,
         // walk the group's inner subtree to collect its leaf ids and
         // union their cached content rects.
-        let group_leaf = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&split_id)
-            .and_then(|vs| vs.active_group_tab)?;
-        let subtree = self.active_window().grouped_subtrees.get(&group_leaf)?;
+        let (_, vs_map) = self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout");
+        let group_leaf = vs_map.get(&split_id).and_then(|vs| vs.active_group_tab)?;
+        let subtree = self.grouped_subtrees.get(&group_leaf)?;
 
         let mut inner_leaves: Vec<LeafId> = Vec::new();
         collect_leaf_ids(subtree, &mut inner_leaves);
 
         let mut union: Option<ratatui::layout::Rect> = None;
-        for (sid, _, content, _, _, _) in &self.active_layout().split_areas {
+        for (sid, _, content, _, _, _) in &self.layout_cache.split_areas {
             if !inner_leaves.contains(sid) {
                 continue;
             }
