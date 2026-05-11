@@ -394,7 +394,7 @@ fn test_explorer_menu_in_menu_bar() {
     );
 
     // Focus editor and check that Explorer menu is hidden
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness.render().unwrap();
 
     let menu_bar_after = harness.get_menu_bar();

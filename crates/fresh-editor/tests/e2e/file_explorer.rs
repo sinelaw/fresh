@@ -323,7 +323,7 @@ fn test_file_explorer_focus_switching() {
     assert!(harness.editor().file_explorer_visible());
 
     // Focus the editor (without toggling file explorer off)
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness.render().unwrap();
 
     // File explorer should still be visible, just not focused
@@ -381,7 +381,7 @@ fn test_focus_file_explorer_action() {
     assert!(harness.editor().file_explorer_visible());
 
     // Switch focus back to editor
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness.render().unwrap();
 
     // File explorer should still be visible
@@ -1304,7 +1304,7 @@ fn test_auto_select_file_on_focus_switch() {
     // but for e2e, visibility is a good proxy
 
     // Now open a different file and switch focus again
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness
         .editor_mut()
         .open_file(&project_root.join("README.md"))
@@ -1956,7 +1956,7 @@ fn test_folder_modified_indicator_cleared_after_save() {
     );
 
     // Focus editor and save the file
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness
         .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
         .unwrap();
@@ -2861,7 +2861,7 @@ fn test_saving_gitignore_reloads_ignore_patterns() {
 
     // Open .gitignore, append `.target_file`, save.
     harness.editor_mut().open_file(&gitignore_path).unwrap();
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
         .unwrap();
@@ -2922,7 +2922,7 @@ fn test_saving_nested_gitignore_reloads_for_that_dir() {
 
     // Edit the nested .gitignore.
     harness.editor_mut().open_file(&nested_gitignore).unwrap();
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
         .unwrap();
@@ -3773,7 +3773,7 @@ fn test_follow_active_buffer_syncs_explorer_on_tab_switch() {
     // Open the explorer but keep focus in the editor so the sync hook is
     // eligible (it is gated on `key_context != FileExplorer`).
     harness.editor_mut().toggle_file_explorer();
-    harness.editor_mut().focus_editor();
+    harness.editor_mut().active_window_mut().focus_editor();
     harness
         .wait_until(|h| h.screen_to_string().contains("File Explorer"))
         .unwrap();

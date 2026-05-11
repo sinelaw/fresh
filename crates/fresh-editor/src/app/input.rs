@@ -1821,7 +1821,7 @@ impl Editor {
             }
             Action::ResetBufferSettings => self.reset_buffer_settings(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
-            Action::FocusEditor => self.focus_editor(),
+            Action::FocusEditor => self.active_window_mut().focus_editor(),
             Action::FileExplorerUp => self.file_explorer_navigate_up(),
             Action::FileExplorerDown => self.file_explorer_navigate_down(),
             Action::FileExplorerPageUp => self.file_explorer_page_up(),
@@ -1836,7 +1836,9 @@ impl Editor {
             Action::FileExplorerRename => self.file_explorer_rename(),
             Action::FileExplorerToggleHidden => self.file_explorer_toggle_hidden(),
             Action::FileExplorerToggleGitignored => self.file_explorer_toggle_gitignored(),
-            Action::FileExplorerSearchClear => self.file_explorer_search_clear(),
+            Action::FileExplorerSearchClear => {
+                self.active_window_mut().file_explorer_search_clear()
+            }
             Action::FileExplorerSearchBackspace => {
                 self.active_window_mut().file_explorer_search_pop_char()
             }

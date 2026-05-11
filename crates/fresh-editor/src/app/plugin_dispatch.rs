@@ -576,10 +576,12 @@ impl Editor {
                 namespace,
                 decorations,
             } => {
-                self.handle_set_file_explorer_decorations(namespace, decorations);
+                self.active_window_mut()
+                    .handle_set_file_explorer_decorations(namespace, decorations);
             }
             PluginCommand::ClearFileExplorerDecorations { namespace } => {
-                self.handle_clear_file_explorer_decorations(&namespace);
+                self.active_window_mut()
+                    .handle_clear_file_explorer_decorations(&namespace);
             }
 
             // ==================== Status/Prompt Commands ====================

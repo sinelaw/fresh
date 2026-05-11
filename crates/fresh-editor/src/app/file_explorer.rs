@@ -119,10 +119,8 @@ impl Editor {
         }
     }
 
-    pub fn focus_editor(&mut self) {
-        self.active_window_mut().key_context = KeyContext::Normal;
-        self.set_status_message(t!("editor.focused").to_string());
-    }
+    // `focus_editor` lives on `impl Window` — call it via
+    // `self.active_window_mut().focus_editor()`.
 
     pub(crate) fn init_file_explorer(&mut self) {
         // Use working directory as root. For remote mode, fall back to the remote
@@ -374,7 +372,8 @@ impl Editor {
 
             // Rebuild decoration cache outside the explorer borrow
             if needs_decoration_rebuild {
-                self.rebuild_file_explorer_decoration_cache();
+                self.active_window_mut()
+                    .rebuild_file_explorer_decoration_cache();
             }
         }
     }
@@ -400,7 +399,7 @@ impl Editor {
                         self.set_status_message(
                             t!("explorer.opened_file", name = &name).to_string(),
                         );
-                        self.focus_editor();
+                        self.active_window_mut().focus_editor();
                     }
                     Err(e) => {
                         // Check if this is a large file encoding confirmation error
@@ -951,30 +950,8 @@ impl Editor {
     }
 
     /// Clear the file explorer search (or multi-selection, pending cut, or transfer focus)
-    pub fn file_explorer_search_clear(&mut self) {
-        // A pending cut has no other exit: the user marked files for cut
-        // but hasn't pasted yet, and there's no visible button to undo it.
-        // Before this, Escape just transferred focus to the editor while
-        // the clipboard stayed primed, so the next Ctrl+V in the explorer
-        // would silently move a file the user had effectively "forgotten".
-        if matches!(
-            self.active_window().file_explorer_clipboard,
-            Some(FileExplorerClipboard { is_cut: true, .. })
-        ) {
-            self.active_window_mut().file_explorer_clipboard = None;
-            self.set_status_message(t!("explorer.cut_cancelled").to_string());
-            return;
-        }
-        if let Some(explorer) = self.file_explorer_mut() {
-            if explorer.has_multi_selection() {
-                explorer.clear_multi_selection();
-            } else if explorer.is_search_active() {
-                explorer.search_clear();
-            } else {
-                self.focus_editor();
-            }
-        }
-    }
+    // `file_explorer_search_clear` lives on `impl Window` — call it via
+    // `self.active_window_mut().file_explorer_search_clear()`.
 
     // `file_explorer_extend_selection_up/down`,
     // `file_explorer_toggle_select`, `file_explorer_select_all`,
@@ -982,63 +959,10 @@ impl Editor {
     // moved to `impl Window`. Editor callers reach them via
     // `self.active_window_mut().file_explorer_X(...)`.
 
-    pub fn handle_set_file_explorer_decorations(
-        &mut self,
-        namespace: String,
-        decorations: Vec<crate::view::file_tree::FileExplorerDecoration>,
-    ) {
-        let normalized: Vec<crate::view::file_tree::FileExplorerDecoration> = decorations
-            .into_iter()
-            .filter_map(|mut decoration| {
-                let path = if decoration.path.is_absolute() {
-                    decoration.path
-                } else {
-                    self.working_dir.join(&decoration.path)
-                };
-                let path = normalize_path(&path);
-                if path.starts_with(&self.working_dir) {
-                    decoration.path = path;
-                    Some(decoration)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        self.active_window_mut()
-            .file_explorer_decorations
-            .insert(namespace, normalized);
-        self.rebuild_file_explorer_decoration_cache();
-    }
-
-    pub fn handle_clear_file_explorer_decorations(&mut self, namespace: &str) {
-        self.active_window_mut()
-            .file_explorer_decorations
-            .remove(namespace);
-        self.rebuild_file_explorer_decoration_cache();
-    }
-
-    pub(super) fn rebuild_file_explorer_decoration_cache(&mut self) {
-        let decorations = self
-            .active_window()
-            .file_explorer_decorations
-            .values()
-            .flat_map(|entries| entries.iter().cloned());
-
-        // Collect symlink mappings from the file explorer
-        let symlink_mappings = self
-            .file_explorer()
-            .as_ref()
-            .map(|fe| fe.collect_symlink_mappings())
-            .unwrap_or_default();
-
-        self.active_window_mut().file_explorer_decoration_cache =
-            crate::view::file_tree::FileExplorerDecorationCache::rebuild(
-                decorations,
-                &self.working_dir,
-                &symlink_mappings,
-            );
-    }
+    // `handle_set_file_explorer_decorations`,
+    // `handle_clear_file_explorer_decorations`, and
+    // `rebuild_file_explorer_decoration_cache` live on `impl Window` —
+    // call them via `self.active_window_mut()`.
 
     // `file_explorer_clipboard`, `file_explorer_copy`, `file_explorer_cut`
     // and the shared `set_explorer_clipboard` helper live on `impl Window`
@@ -1665,6 +1589,107 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
+    /// Shift focus back to the editor pane (away from the file explorer)
+    /// and post a per-window "Editor focused" status message.
+    pub fn focus_editor(&mut self) {
+        self.key_context = KeyContext::Normal;
+        self.set_status_message(t!("editor.focused").to_string());
+    }
+
+    /// Clear file-explorer state in priority order:
+    ///   1. If a pending cut sits in the clipboard, just cancel it (so a
+    ///      forgotten cut can't silently move a file on the next paste).
+    ///   2. If the explorer has a multi-selection, clear it.
+    ///   3. If the explorer's search input is active, clear the query.
+    ///   4. Otherwise, transfer focus back to the editor.
+    pub fn file_explorer_search_clear(&mut self) {
+        if matches!(
+            self.file_explorer_clipboard,
+            Some(FileExplorerClipboard { is_cut: true, .. })
+        ) {
+            self.file_explorer_clipboard = None;
+            self.set_status_message(t!("explorer.cut_cancelled").to_string());
+            return;
+        }
+        let action = self.file_explorer.as_mut().map(|explorer| {
+            if explorer.has_multi_selection() {
+                explorer.clear_multi_selection();
+                None
+            } else if explorer.is_search_active() {
+                explorer.search_clear();
+                None
+            } else {
+                Some(())
+            }
+        });
+        if let Some(Some(())) = action {
+            self.focus_editor();
+        }
+    }
+
+    /// Install (or replace) a namespace of plugin-supplied file-explorer
+    /// decorations for this window. Paths outside the window root are
+    /// dropped silently. Triggers a rebuild of the per-path decoration
+    /// cache the renderer reads.
+    pub fn handle_set_file_explorer_decorations(
+        &mut self,
+        namespace: String,
+        decorations: Vec<crate::view::file_tree::FileExplorerDecoration>,
+    ) {
+        let root = self.root.clone();
+        let normalized: Vec<crate::view::file_tree::FileExplorerDecoration> = decorations
+            .into_iter()
+            .filter_map(|mut decoration| {
+                let path = if decoration.path.is_absolute() {
+                    decoration.path
+                } else {
+                    root.join(&decoration.path)
+                };
+                let path = crate::app::normalize_path(&path);
+                if path.starts_with(&root) {
+                    decoration.path = path;
+                    Some(decoration)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.file_explorer_decorations.insert(namespace, normalized);
+        self.rebuild_file_explorer_decoration_cache();
+    }
+
+    /// Drop a namespace of plugin-supplied decorations and rebuild the
+    /// per-path cache without it.
+    pub fn handle_clear_file_explorer_decorations(&mut self, namespace: &str) {
+        self.file_explorer_decorations.remove(namespace);
+        self.rebuild_file_explorer_decoration_cache();
+    }
+
+    /// Recompute the `file_explorer_decoration_cache` from the current
+    /// per-namespace decoration entries + the explorer's symlink
+    /// mappings. Called after any decoration-mutating operation.
+    pub fn rebuild_file_explorer_decoration_cache(&mut self) {
+        let decorations: Vec<_> = self
+            .file_explorer_decorations
+            .values()
+            .flat_map(|entries| entries.iter().cloned())
+            .collect();
+
+        let symlink_mappings = self
+            .file_explorer
+            .as_ref()
+            .map(|fe| fe.collect_symlink_mappings())
+            .unwrap_or_default();
+
+        self.file_explorer_decoration_cache =
+            crate::view::file_tree::FileExplorerDecorationCache::rebuild(
+                decorations.into_iter(),
+                &self.root,
+                &symlink_mappings,
+            );
+    }
+
     /// Read-only access to this window's file-explorer cut/copy clipboard.
     pub fn file_explorer_clipboard(&self) -> Option<&FileExplorerClipboard> {
         self.file_explorer_clipboard.as_ref()
