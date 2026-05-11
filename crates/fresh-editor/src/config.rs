@@ -743,8 +743,8 @@ impl Default for StatusBarConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EditorConfig {
     // ===== Display =====
-    /// Enable frame-buffer animations (tab-switch slides,
-    /// plugin-driven effects). When `false`, every animation
+    /// Enable frame-buffer animations (tab-switch slides, dashboard
+    /// bringup, plugin-driven effects). When `false`, every animation
     /// call is a no-op: the UI is fully static and each render lands
     /// the final frame immediately. Useful on slow terminals, over
     /// SSH, or for users who prefer no motion.

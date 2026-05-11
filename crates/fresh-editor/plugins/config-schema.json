@@ -278,7 +278,7 @@
       "type": "object",
       "properties": {
         "animations": {
-          "description": "Enable frame-buffer animations (tab-switch slides,\nplugin-driven effects). When `false`, every animation\ncall is a no-op: the UI is fully static and each render lands\nthe final frame immediately. Useful on slow terminals, over\nSSH, or for users who prefer no motion.",
+          "description": "Enable frame-buffer animations (tab-switch slides, dashboard\nbringup, plugin-driven effects). When `false`, every animation\ncall is a no-op: the UI is fully static and each render lands\nthe final frame immediately. Useful on slow terminals, over\nSSH, or for users who prefer no motion.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
