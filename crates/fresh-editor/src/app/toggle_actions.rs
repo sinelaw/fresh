@@ -230,6 +230,10 @@ impl Editor {
     pub fn toggle_inlay_hints(&mut self) {
         let new_value = !self.config.editor.enable_inlay_hints;
         self.config_mut().editor.enable_inlay_hints = new_value;
+        // `Window::send_lsp_changes_for_buffer` reads
+        // `resources.config.editor.enable_inlay_hints`; sync so the per-edit
+        // LSP refresh sees the new value without waiting for a reload.
+        self.sync_windows_config();
 
         if self.config.editor.enable_inlay_hints {
             // Re-request inlay hints for the active buffer
@@ -394,6 +398,14 @@ impl Editor {
         let theme_loader = ThemeLoader::new(self.dir_context.themes_dir());
         self.theme_registry = std::sync::Arc::new(theme_loader.load_all(&[]));
         self.expanded_menus_cache.invalidate();
+
+        // Propagate the new registry to every window's resources so
+        // window-side reads see the updated catalogue. (Theme registry
+        // is `Arc<ThemeRegistry>` not `Arc<RwLock<>>`, so swapping the
+        // Editor's pointer leaves Window clones stale unless we sync.)
+        for w in self.windows.values_mut() {
+            w.resources.theme_registry = self.theme_registry.clone();
+        }
 
         // Update shared theme cache for plugin access
         *self.theme_cache.write().unwrap() = self.theme_registry.to_json_map();

@@ -609,6 +609,12 @@ impl Editor {
                         .expect("freshly-received grammar registry Arc must be uniquely owned")
                         .apply_language_config(&self.config.languages);
                     self.grammar_registry = registry;
+                    // Propagate the new grammar registry to every window's
+                    // resources so window-side syntax detection picks up the
+                    // freshly-built grammars without waiting for a restart.
+                    for w in self.windows.values_mut() {
+                        w.resources.grammar_registry = self.grammar_registry.clone();
+                    }
                     self.grammar_build_in_progress = false;
 
                     // Re-detect syntax for all open buffers with the full registry

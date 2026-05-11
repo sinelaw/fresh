@@ -32,6 +32,14 @@ impl Editor {
     /// the only way to mutate through `self.config` is via this accessor —
     /// there is no code path that can silently leave a reader with stale
     /// data.
+    ///
+    /// Window-side reads (`Window::config()`) read a *separate* Arc clone
+    /// stashed in `WindowResources`. Mutations through `config_mut`
+    /// therefore leave window clones stale until [`Editor::sync_windows_config`]
+    /// runs. Callers that mutate a config field which Window code reads
+    /// (e.g. `editor.line_wrap`, `editor.enable_inlay_hints`,
+    /// `languages`, etc.) must call `sync_windows_config()` afterwards.
+    /// `set_config` does this automatically.
     pub fn config_mut(&mut self) -> &mut Config {
         Arc::make_mut(&mut self.config)
     }
@@ -40,8 +48,24 @@ impl Editor {
     /// by tests that want to swap in a freshly-parsed file. Constructs a
     /// fresh `Arc`, so any snapshot that still holds the old value sees
     /// the pointer move and will reserialize on the next refresh.
+    ///
+    /// Also propagates the new `Arc` to every window's
+    /// `resources.config`, so window-scoped reads see the swap.
     pub fn set_config(&mut self, new_config: Config) {
         self.config = Arc::new(new_config);
+        self.sync_windows_config();
+    }
+
+    /// Propagate `self.config` to every window's `resources.config` so
+    /// window-side reads (`Window::config()`) see the latest value.
+    /// `Arc::clone` is cheap, so this is a constant-time fanout per
+    /// window. Called from `set_config` and at the end of any
+    /// `config_mut()`-driven mutation that affects window-read fields.
+    pub(crate) fn sync_windows_config(&mut self) {
+        let cfg = self.config.clone();
+        for w in self.windows.values_mut() {
+            w.resources.config = cfg.clone();
+        }
     }
 
     /// Replace the cached raw user config. Like `set_config`, constructs
@@ -394,6 +418,14 @@ impl Editor {
     /// during construction.
     pub fn set_boot_authority(&mut self, authority: crate::services::authority::Authority) {
         self.authority = authority;
+        // Propagate the new authority to every window's resources so
+        // window-side filesystem/path-translation reads (`Window::authority()`)
+        // see the swap. `Authority` carries internal `Arc`s, so this just
+        // clones cheap handles.
+        let auth = self.authority.clone();
+        for w in self.windows.values_mut() {
+            w.resources.authority = auth.clone();
+        }
         // Propagate the authority's long-running spawner into the LSP
         // manager so `force_spawn` can route server processes through
         // the right backend. The editor rebuilds on every authority
