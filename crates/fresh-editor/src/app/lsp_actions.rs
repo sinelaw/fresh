@@ -592,6 +592,38 @@ impl Editor {
                     );
                 }
             }
+
+            // Stop any servers currently running for this language —
+            // persisting `enabled = false` alone left the running
+            // server alive (the user saw "LSP disabled" in the status
+            // bar while rust-analyzer kept indexing in the background).
+            // For anything else the user would have picked Stop; this
+            // row's "Disable" label promises both halves. Send didClose
+            // for each server we're about to drop so the server tears
+            // down its document state cleanly before the handle goes
+            // away.
+            let running_server_names: Vec<String> = self
+                .active_window()
+                .lsp_server_statuses
+                .iter()
+                .filter_map(|((l, name), status)| {
+                    if l == &lang
+                        && !matches!(
+                            status,
+                            crate::services::async_bridge::LspServerStatus::Shutdown,
+                        )
+                    {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for name in &running_server_names {
+                self.send_did_close_to_server(&lang, name);
+                self.stop_lsp_server_and_cleanup(&lang, Some(name));
+            }
+
             self.active_window_mut().status_message = Some(format!("LSP disabled for {}.", lang));
         } else if let Some(language) = action_key.strip_prefix("enable:") {
             // Symmetric re-enable: flip `enabled = true` on every

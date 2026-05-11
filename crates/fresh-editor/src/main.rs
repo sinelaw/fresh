@@ -3994,8 +3994,13 @@ where
         }
 
         // Active animations force a render every FRAME_DURATION.
+        // Same for an in-flight LSP `$/progress` — the status-bar
+        // spinner is wall-clock-derived (see
+        // `lsp_status::compose_lsp_status`) and needs a periodic
+        // re-render to advance even when no other event fires.
         let animations_active = editor.active_window().animations.is_active();
-        if animations_active {
+        let lsp_progress_active = editor.active_window().has_active_lsp_progress();
+        if animations_active || lsp_progress_active {
             needs_render = true;
         }
 
@@ -4019,16 +4024,16 @@ where
             } else {
                 Duration::from_millis(50)
             };
-            // While animations are running, cap the timeout so the next
-            // iteration fires in time for the next frame — but never past
-            // the earliest animation deadline.
-            if editor.active_window().animations.is_active() {
+            // Cap the timeout for any time-driven UI element that needs
+            // periodic frames — animations and the LSP status-bar
+            // spinner. `next_periodic_redraw_deadline` rolls both into
+            // one Option<Instant>; when it's `Some`, we also bound the
+            // wait to the next frame so the render budget is respected.
+            if let Some(deadline) = editor.next_periodic_redraw_deadline() {
                 let until_next_frame = FRAME_DURATION.saturating_sub(last_render.elapsed());
                 timeout = timeout.min(until_next_frame);
-                if let Some(deadline) = editor.active_window().animations.next_deadline() {
-                    let until_deadline = deadline.saturating_duration_since(Instant::now());
-                    timeout = timeout.min(until_deadline);
-                }
+                let until_deadline = deadline.saturating_duration_since(Instant::now());
+                timeout = timeout.min(until_deadline);
             }
 
             poll_event(timeout)?

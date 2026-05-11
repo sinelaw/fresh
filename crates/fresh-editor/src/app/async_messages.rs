@@ -1137,6 +1137,36 @@ impl Editor {
             }
         }
 
+        // When a server transitions to Error or Shutdown, drop any
+        // `$/progress` entries for this language if no other server is
+        // still alive for it. The dead server will never emit the
+        // matching `end` notification, so without this prune the
+        // status-bar spinner stays stuck on the rotating braille glyph
+        // (and the status popup keeps showing "Indexing …") even
+        // though the process is gone — that's the "popup still says
+        // indexing after external kill" user report.
+        if matches!(status, LspServerStatus::Error | LspServerStatus::Shutdown) {
+            let any_running_for_lang =
+                self.active_window().lsp_server_statuses.iter().any(
+                    |((lang, _), s)| {
+                        lang == &language
+                            && !matches!(
+                                s,
+                                LspServerStatus::Error | LspServerStatus::Shutdown,
+                            )
+                    },
+                );
+            if !any_running_for_lang {
+                let lang_owned = language.clone();
+                self.active_window_mut()
+                    .lsp_progress
+                    .retain(|_, info| info.language != lang_owned);
+            }
+            // Refresh the popup so any in-progress "(ready) ⏳ Indexing"
+            // rows for this server flip to "(not running)" right away.
+            self.refresh_lsp_status_popup_if_open();
+        }
+
         // Emit control event
         let status_str = match status {
             LspServerStatus::Starting => "starting",

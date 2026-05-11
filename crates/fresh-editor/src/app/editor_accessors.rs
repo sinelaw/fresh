@@ -256,6 +256,35 @@ impl Editor {
     // `is_lsp_server_ready` live on `impl Window` — call them via
     // `self.active_window().has_active_lsp_progress()` etc.
 
+    /// The earliest wall-clock deadline at which the main event loop
+    /// needs to wake up and re-render, *purely because of internal
+    /// time-driven UI elements* (animations, the LSP status-bar
+    /// spinner). Returns `None` when no time-driven UI is in flight —
+    /// the loop can sleep until the next user / async event without
+    /// missing a frame.
+    ///
+    /// The `Some` case includes the LSP-progress spinner: its glyph
+    /// is computed from `SystemTime::now() / 100ms`, so the loop has
+    /// to wake at ~100ms cadence to actually advance it. Without
+    /// this signal, the indicator would only tick when an unrelated
+    /// event caused a frame, and the user would see a "frozen"
+    /// spinner whenever the server stopped emitting `$/progress`
+    /// (e.g. died externally — see #1941 issue 3).
+    pub fn next_periodic_redraw_deadline(&self) -> Option<std::time::Instant> {
+        let lsp_progress_deadline = if self.active_window().has_active_lsp_progress() {
+            // 100ms matches the spinner-glyph period in
+            // `lsp_status::compose_lsp_status`.
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(100))
+        } else {
+            None
+        };
+        let anim_deadline = self.active_window().animations.next_deadline();
+        [lsp_progress_deadline, anim_deadline]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
     /// Get stored LSP diagnostics (for testing and external access)
     /// Returns a reference to the diagnostics map keyed by file URI
     pub fn get_stored_diagnostics(&self) -> &HashMap<String, Vec<lsp_types::Diagnostic>> {

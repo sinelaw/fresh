@@ -443,7 +443,7 @@ fn issue_3_external_kill_leaves_popup_state_stale() -> anyhow::Result<()> {
 
     // Wait for progress to be active — that's the signal the server is
     // up and emitting `$/progress` notifications.
-    harness.wait_until(|h| h.editor().has_active_lsp_progress())?;
+    harness.wait_until(|h| h.editor().active_window().has_active_lsp_progress())?;
 
     // Find the server pid via the script-log marker (the script's
     // background `emit_progress` runs in the same process group).
@@ -455,15 +455,13 @@ fn issue_3_external_kill_leaves_popup_state_stale() -> anyhow::Result<()> {
         .status();
 
     // Give the OS a moment to actually deliver the signal and for the
-    // editor's stdout-read loop to see EOF. The fix should propagate
-    // that EOF into `lsp_server_statuses` / `lsp_progress` cleanup —
-    // *that* is what we're testing for. Use wall-clock waits, not
-    // wait_until, because we want to assert behaviour at a specific
-    // point, not "eventually".
-    for _ in 0..40 {
-        std::thread::sleep(Duration::from_millis(50));
-        harness.render()?;
-    }
+    // editor's stdout-read loop to see EOF, then for the async
+    // bridge to deliver the resulting `LspStatusUpdate { Error }` to
+    // the editor's tick handler. We use `wait_until` so each iteration
+    // both sleeps a bit AND pumps async messages via `editor_tick`,
+    // which is what handles the status update — calling `render`
+    // alone wouldn't drain the async queue.
+    let _ = harness.wait_until(|h| !h.editor().active_window().has_active_lsp_progress());
 
     // The popup the user would see if they click the indicator right
     // now. Equivalent of `show_lsp_status_popup` from the click path.
@@ -534,7 +532,7 @@ fn issue_4_disable_lsp_does_not_stop_running_server() -> anyhow::Result<()> {
     )?;
 
     harness.open_file(&file)?;
-    harness.wait_until(|h| h.editor().is_lsp_server_ready("rust"))?;
+    harness.wait_until(|h| h.editor().active_window().is_lsp_server_ready("rust"))?;
 
     // Sanity preconditions.
     assert!(
@@ -597,23 +595,17 @@ fn issue_4_disable_lsp_does_not_stop_running_server() -> anyhow::Result<()> {
 // `lsp_status::compose_lsp_status` derives the braille glyph from
 // `SystemTime::now() / 100ms`, so the *value* changes every 100ms — but
 // the editor must actually call render for the screen to reflect that.
-// There's no animation/timer registered for the case "LSP progress is
-// active", so in real-world use, between two unrelated events the
-// indicator looks frozen.
+// In production, between two unrelated events the main loop blocks on
+// `poll_event` with a long timeout — so the indicator only ticks when
+// a user / LSP event fires.
 //
-// We can't directly assert "the terminal redraws on its own" from a
-// test harness (the harness drives `render` explicitly). What we *can*
-// assert is the underlying contract that any fix needs to honour:
-// **while `lsp_progress` is active, the editor must request the next
-// frame to land within roughly the spinner period (≤ ~120ms)**.
+// The contract a fix must honour: **while `lsp_progress` is active,
+// the editor must report a sub-spinner-period redraw deadline so the
+// main event loop knows to wake up at ~100ms cadence and re-render.**
 //
-// Today that contract isn't expressed anywhere — there's no
-// `Editor::next_redraw_deadline()` that reports a sub-second deadline
-// when progress is in flight. The most direct symptom we can hit from
-// a test is the `view::animation` runner: if a frame schedule existed,
-// `animations.is_active()` would be true while progress is active.
-// We assert that, knowing it fails today and that any fix should make
-// it pass.
+// `Editor::next_periodic_redraw_deadline()` is the API. While progress
+// is active it must return `Some(deadline)` with `deadline - now ≤
+// 120ms` (a small slack over the 100ms spinner period).
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
@@ -639,48 +631,34 @@ fn issue_5_spinner_has_no_auto_redraw_schedule() -> anyhow::Result<()> {
             .with_working_dir(temp.path().to_path_buf()),
     )?;
     harness.open_file(&file)?;
-    harness.wait_until(|h| h.editor().has_active_lsp_progress())?;
-
-    // Drain any pending input/IO so the next render reflects steady
-    // state — we want to measure "what would happen if the user does
-    // nothing".
+    harness.wait_until(|h| h.editor().active_window().has_active_lsp_progress())?;
     harness.render()?;
 
-    // Capture the indicator glyph from the status row.
+    // Capture the indicator glyph from the status row, for the
+    // diagnostic message.
     let glyph_now = current_spinner_glyph(&harness);
 
-    // Wall-clock pause longer than the spinner's documented 100ms
-    // period, *without* sending any input or LSP traffic. In real life
-    // this is the user just looking at the screen.
-    std::thread::sleep(Duration::from_millis(350));
-
-    // Render once. If the editor had requested a scheduled frame at
-    // ~100ms (the fix), this re-render is exactly what that scheduler
-    // would have triggered — and the glyph would now be different.
-    // Today nothing requests it, but if a user-driven re-render
-    // happens, the glyph WILL be different because the formula uses
-    // wall-clock time and we slept 350ms. So this test passes today
-    // in the harness even though it doesn't in real life.
-    //
-    // Hence the actual assertion: the editor must EXPOSE a way to
-    // know it wants a redraw. We probe `has_active_lsp_progress` →
-    // there's no companion `next_render_deadline()` accessor. Until
-    // such an accessor exists, the indicator can't tick on its own.
-    //
-    // Concretely we assert: while progress is active, the active
-    // window's animation runner should be active (so the main loop
-    // re-renders at frame rate). This is one viable hook for the
-    // fix and is currently false.
-    let animations_active = harness.editor().active_window().animations.is_active();
+    let deadline = harness.editor().next_periodic_redraw_deadline();
+    let deadline = deadline.unwrap_or_else(|| {
+        panic!(
+            "BUG: while LSP `$/progress` is in flight the editor returns \
+             `next_periodic_redraw_deadline() = None`, so the main event \
+             loop has no signal to wake up and advance the spinner. \
+             `compose_lsp_status` recomputes the glyph every 100ms from \
+             wall-clock time but only when *something* causes a frame; \
+             without a periodic deadline the indicator looks frozen \
+             between unrelated events. glyph at t=0: {glyph_now}"
+        )
+    });
+    let until = deadline.saturating_duration_since(std::time::Instant::now());
     assert!(
-        animations_active,
-        "BUG: while LSP `$/progress` is in flight, the editor exposes \
-         no scheduled-redraw signal — `animations.is_active()` is \
-         false. `compose_lsp_status` recomputes the spinner glyph \
-         every 100ms from wall-clock time, but nothing in the main \
-         loop knows to re-render at that cadence, so in real use the \
-         indicator only advances when an unrelated event causes a \
-         frame. glyph at t=0: {glyph_now}"
+        until <= Duration::from_millis(120),
+        "BUG: while LSP progress is active the redraw deadline must \
+         land within ~one spinner period (100ms), but \
+         `next_periodic_redraw_deadline()` returned a deadline {}ms \
+         away. The main loop would sleep through too many frames to \
+         keep the spinner moving.",
+        until.as_millis()
     );
     Ok(())
 }

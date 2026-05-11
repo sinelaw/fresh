@@ -94,7 +94,10 @@ impl Editor {
             .active_window()
             .is_lsp_language_user_dismissed(&language);
 
-        // Fire the LspStatusClicked hook for plugins
+        // Fire the LspStatusClicked hook for plugins. A plugin's
+        // handler may itself push a popup (e.g. the embedded
+        // rust-lsp.ts plugin shows install instructions when its
+        // `rustLspError` is set).
         self.plugin_manager.read().unwrap().run_hook(
             "lsp_status_clicked",
             crate::services::plugins::hooks::HookArgs::LspStatusClicked {
@@ -104,6 +107,19 @@ impl Editor {
                 user_dismissed,
             },
         );
+
+        // If something is already on the popup stack at this point
+        // — either pushed by the hook above (the common case: a
+        // plugin's `editor.showActionPopup` in response to
+        // `lsp_status_clicked`) or already showing when the user
+        // clicked the indicator — don't stack the built-in LSP
+        // Servers popup on top. The hook's popup is the more
+        // contextual answer to the click; layering two popups for
+        // one gesture is the user-reported "I had several kinds of
+        // popups" bug.
+        if self.active_state().popups.top().is_some() {
+            return;
+        }
 
         self.build_and_show_lsp_status_popup(&language, true);
     }

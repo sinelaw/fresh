@@ -84,9 +84,23 @@ impl Editor {
         // configured key (default `Alt+T`). The PopupData event itself
         // doesn't carry this — it's a view-layer concern set after the
         // converter pushes the Popup onto the active buffer's stack.
+        //
+        // Same logic for the popup's background / border styles: the
+        // `convert_popup_data_to_popup` shim (state.rs:1040) has no
+        // theme handle, so it pushes a popup with a default-dark
+        // background. Override it here with the active theme's
+        // `popup_bg` / `popup_border_fg` so e.g. a plugin's
+        // `showActionPopup` doesn't render as a near-black rectangle
+        // inside a light theme.
         let hint = self.popup_focus_key_hint();
+        let (popup_bg, popup_border_fg) = {
+            let theme = self.theme();
+            (theme.popup_bg, theme.popup_border_fg)
+        };
         if let Some(top) = self.active_state_mut().popups.top_mut() {
             top.focus_key_hint = hint;
+            top.background_style = ratatui::style::Style::default().bg(popup_bg);
+            top.border_style = ratatui::style::Style::default().fg(popup_border_fg);
         }
     }
 

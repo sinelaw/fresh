@@ -9856,10 +9856,21 @@ fn test_stop_lsp_via_prompt_no_warning() -> anyhow::Result<()> {
 #[test]
 fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
-    let test_file = temp_dir.path().join("test.rs");
-    std::fs::write(&test_file, "fn main() {}\n")?;
+    // Use Pascal (an LSP-uncontested language in our test suite) so the
+    // global per-language log file at `lsp_log_path("pascal")` isn't
+    // raced by any other concurrent test in the same cargo-test
+    // process. The previous incarnation of this test used `.rs` /
+    // `rust`, which is the LSP language probed by ~49 other tests in
+    // this file — whenever any of them spawned a rust LSP it would
+    // `File::create` (truncate) the shared log, and if that landed
+    // between our stub write and the read below we'd assert against
+    // an empty / overwritten file. The stub-log production code is
+    // language-agnostic, so any unique-to-this-test language
+    // exercises the same path without the global-state race.
+    let test_file = temp_dir.path().join("test.pas");
+    std::fs::write(&test_file, "begin end.\n")?;
 
-    // Configure LSP for `rust` with a command that definitely
+    // Configure LSP for `pascal` with a command that definitely
     // does not exist on PATH or anywhere on disk. The spawn
     // attempt must fail synchronously inside `LspHandle::spawn`,
     // which routes through the `Err(e)` branch we patched.
@@ -9871,7 +9882,7 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
 
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
-        "rust".to_string(),
+        "pascal".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: bogus.clone(),
             args: vec![],
@@ -9896,7 +9907,7 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
     )?;
 
     // Snapshot any pre-existing log to detect the stub overwrite.
-    let log_path = fresh::services::log_dirs::lsp_log_path("rust");
+    let log_path = fresh::services::log_dirs::lsp_log_path("pascal");
     let _ = std::fs::remove_file(&log_path);
 
     // Open the file: triggers auto-spawn → spawn fails →
@@ -9904,16 +9915,26 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // The spawn failure path runs synchronously inside the
-    // open_file → try_spawn flow, but we tick a few times in
-    // case the runtime defers the write. The stub is a single
-    // `fs::write` call right after the `tracing::error!`, so
-    // it should land within the first tick.
+    // Wait for the stub log to land *with* our specific bogus path
+    // and the failure marker, and capture its contents the moment
+    // they match — this defends against a future regression where
+    // some other concurrent test starts using `lsp_log_path("pascal")`
+    // and overwrites the file between the existence check and the
+    // assertion read.
+    let mut captured: Option<String> = None;
     harness
-        .wait_until(|_| log_path.exists())
+        .wait_until(|_| {
+            match std::fs::read_to_string(&log_path) {
+                Ok(c) if c.contains("failed to spawn") && c.contains(&bogus) => {
+                    captured = Some(c);
+                    true
+                }
+                _ => false,
+            }
+        })
         .expect("LSP spawn-failure stub log should be written when spawn fails");
 
-    let contents = std::fs::read_to_string(&log_path)?;
+    let contents = captured.expect("captured contents on success");
     assert!(
         contents.contains("failed to spawn"),
         "stub log should explain the spawn failure; got:\n{contents}"
