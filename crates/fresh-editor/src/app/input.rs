@@ -150,7 +150,7 @@ impl Editor {
         // active split is (the user's editor pane), and we'd then
         // have to clean up that phantom tab after moving the buffer
         // to the dock. Detached creation skips the phantom entirely.
-        let buffer_id = self.create_virtual_buffer_detached(
+        let buffer_id = self.active_window_mut().create_virtual_buffer_detached(
             "*Quickfix*".to_string(),
             "quickfix-list".to_string(),
             true,
@@ -1011,10 +1011,10 @@ impl Editor {
                 self.handle_redo();
             }
             Action::ShowHelp => {
-                self.open_help_manual();
+                self.active_window_mut().open_help_manual();
             }
             Action::ShowKeyboardShortcuts => {
-                self.open_keyboard_shortcuts();
+                self.active_window_mut().open_keyboard_shortcuts();
             }
             Action::ShowWarnings => {
                 self.show_warnings_popup();

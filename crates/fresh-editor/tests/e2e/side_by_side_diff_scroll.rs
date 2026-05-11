@@ -22,10 +22,10 @@ fn setup_side_by_side_diff(
     hunks: &[DiffHunk],
 ) -> BufferId {
     // Create two hidden virtual buffers for old and new content
-    let old_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
+    let old_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
 
     // Set content on the old buffer
     harness
@@ -33,10 +33,10 @@ fn setup_side_by_side_diff(
         .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(old_content)])
         .unwrap();
 
-    let new_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
+    let new_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
 
     // Set content on the new buffer
     harness

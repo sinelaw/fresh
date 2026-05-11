@@ -59,19 +59,19 @@ fn setup_diff(
     new_content: &str,
     hunks: &[DiffHunk],
 ) -> BufferId {
-    let old_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
+    let old_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(old_content)])
         .unwrap();
 
-    let new_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
+    let new_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(new_content)])
@@ -252,19 +252,19 @@ fn setup_diff_with_initial_focus(
     hunks: &[DiffHunk],
     initial_focus_hunk: usize,
 ) -> BufferId {
-    let old_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
+    let old_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(old_content)])
         .unwrap();
 
-    let new_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
+    let new_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(new_content)])
@@ -409,19 +409,19 @@ fn test_flush_layout_enables_hunk_nav_before_render() {
     // view state doesn't exist yet. Create a fresh composite buffer,
     // switch to it without rendering, then use flushLayout.
 
-    let old_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("OLD2".to_string(), "text".to_string(), true);
+    let old_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("OLD2".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(&old_content)])
         .unwrap();
 
-    let new_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("NEW2".to_string(), "text".to_string(), true);
+    let new_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("NEW2".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(&new_content)])
@@ -496,19 +496,19 @@ fn test_flush_layout_jump_to_third_hunk_before_render() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     let (old_content, new_content, hunks) = generate_multi_hunk_content();
 
-    let old_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
+    let old_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("OLD".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(&old_content)])
         .unwrap();
 
-    let new_buffer_id =
-        harness
-            .editor_mut()
-            .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
+    let new_buffer_id = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("NEW".to_string(), "text".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(&new_content)])

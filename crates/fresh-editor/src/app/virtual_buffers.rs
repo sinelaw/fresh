@@ -292,134 +292,9 @@ impl Editor {
     /// buffer would briefly appear as a phantom tab in whatever the
     /// previously-active split was, requiring a separate cleanup
     /// pass to remove it.
-    pub fn create_virtual_buffer_detached(
-        &mut self,
-        name: String,
-        mode: String,
-        read_only: bool,
-    ) -> BufferId {
-        let buffer_id = self.alloc_buffer_id();
-
-        let mut state = EditorState::new(
-            self.terminal_width,
-            self.terminal_height,
-            self.config.editor.large_file_threshold_bytes as usize,
-            Arc::clone(&self.authority.filesystem),
-        );
-        // Set syntax highlighting based on buffer name (e.g., "*OURS*.c"
-        // gets C highlighting). Mirrors create_virtual_buffer.
-        state.set_language_from_name(&name, &self.grammar_registry);
-        state
-            .margins
-            .configure_for_line_numbers(self.config.editor.line_numbers);
-
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .insert(buffer_id, state);
-        self.active_window_mut()
-            .event_logs
-            .insert(buffer_id, crate::model::event::EventLog::new());
-
-        // Set virtual buffer metadata
-        let metadata = super::types::BufferMetadata::virtual_buffer(name, mode, read_only);
-        self.active_window_mut()
-            .buffer_metadata
-            .insert(buffer_id, metadata);
-
-        buffer_id
-    }
-
-    pub fn create_virtual_buffer(
-        &mut self,
-        name: String,
-        mode: String,
-        read_only: bool,
-    ) -> BufferId {
-        let buffer_id = self.alloc_buffer_id();
-
-        let mut state = EditorState::new(
-            self.terminal_width,
-            self.terminal_height,
-            self.config.editor.large_file_threshold_bytes as usize,
-            Arc::clone(&self.authority.filesystem),
-        );
-        // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
-
-        // Set syntax highlighting based on buffer name (e.g., "*OURS*.c" will get C highlighting)
-        state.set_language_from_name(&name, &self.grammar_registry);
-
-        // Apply line_numbers default from config
-        state
-            .margins
-            .configure_for_line_numbers(self.config.editor.line_numbers);
-
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .insert(buffer_id, state);
-        self.active_window_mut()
-            .event_logs
-            .insert(buffer_id, crate::model::event::EventLog::new());
-
-        // Set virtual buffer metadata
-        let metadata = super::types::BufferMetadata::virtual_buffer(name, mode, read_only);
-        self.active_window_mut()
-            .buffer_metadata
-            .insert(buffer_id, metadata);
-
-        // Add buffer to the active split's open_buffers (tabs)
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.splits.as_ref())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self
-            .active_window()
-            .resolve_wrap_column_for_buffer(buffer_id);
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&active_split)
-        {
-            view_state.add_buffer(buffer_id);
-            let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
-                line_wrap,
-                self.config.editor.wrap_indent,
-                wrap_column,
-                self.config.editor.rulers.clone(),
-            );
-        } else {
-            // Create view state if it doesn't exist
-            let mut view_state =
-                SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
-            view_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
-                line_wrap,
-                self.config.editor.wrap_indent,
-                wrap_column,
-                self.config.editor.rulers.clone(),
-            );
-            self.windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .insert(active_split, view_state);
-        }
-
-        buffer_id
-    }
+    // `create_virtual_buffer_detached` and `create_virtual_buffer` live
+    // on `impl Window` — call them via
+    // `self.active_window_mut().create_virtual_buffer*(...)`.
 
     /// Set the content of a virtual buffer with text properties.
     /// Thin shim over [`Window::set_virtual_buffer_content`].
@@ -434,6 +309,114 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
+    /// Create a virtual buffer without attaching it to any split's tab list.
+    ///
+    /// Like [`Self::create_virtual_buffer`] but does **not** add the new
+    /// buffer to any split's tab list. Use when the caller is going to
+    /// seed a freshly-created split (e.g. the Utility Dock leaf) with
+    /// the new buffer directly — without it, the buffer would briefly
+    /// appear as a phantom tab in the previously-active split, requiring
+    /// a separate cleanup pass to remove it.
+    pub fn create_virtual_buffer_detached(
+        &mut self,
+        name: String,
+        mode: String,
+        read_only: bool,
+    ) -> BufferId {
+        let buffer_id = self.alloc_buffer_id();
+
+        let mut state = EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            self.config().editor.large_file_threshold_bytes as usize,
+            Arc::clone(&self.authority().filesystem),
+        );
+        state.set_language_from_name(&name, &self.resources.grammar_registry);
+        state
+            .margins
+            .configure_for_line_numbers(self.config().editor.line_numbers);
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        let metadata = crate::app::types::BufferMetadata::virtual_buffer(name, mode, read_only);
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        buffer_id
+    }
+
+    /// Create a virtual buffer and add it to the active split's tab bar.
+    pub fn create_virtual_buffer(
+        &mut self,
+        name: String,
+        mode: String,
+        read_only: bool,
+    ) -> BufferId {
+        let buffer_id = self.alloc_buffer_id();
+
+        let mut state = EditorState::new(
+            self.terminal_width,
+            self.terminal_height,
+            self.config().editor.large_file_threshold_bytes as usize,
+            Arc::clone(&self.authority().filesystem),
+        );
+        state.set_language_from_name(&name, &self.resources.grammar_registry);
+        state
+            .margins
+            .configure_for_line_numbers(self.config().editor.line_numbers);
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        let metadata = crate::app::types::BufferMetadata::virtual_buffer(name, mode, read_only);
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        let (mgr, _) = self
+            .splits
+            .as_ref()
+            .expect("active window must have a populated split layout");
+        let active_split = mgr.active_split();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let cfg = self.config().editor.clone();
+        let terminal_width = self.terminal_width;
+        let terminal_height = self.terminal_height;
+        if let Some(view_state) = self
+            .split_view_states_mut()
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
+            view_state.add_buffer(buffer_id);
+            let buf_state = view_state.ensure_buffer_state(buffer_id);
+            buf_state.apply_config_defaults(
+                cfg.line_numbers,
+                cfg.highlight_current_line,
+                line_wrap,
+                cfg.wrap_indent,
+                wrap_column,
+                cfg.rulers.clone(),
+            );
+        } else {
+            let mut view_state =
+                SplitViewState::with_buffer(terminal_width, terminal_height, buffer_id);
+            view_state.apply_config_defaults(
+                cfg.line_numbers,
+                cfg.highlight_current_line,
+                line_wrap,
+                cfg.wrap_indent,
+                wrap_column,
+                cfg.rulers,
+            );
+            self.split_view_states_mut()
+                .expect("active window must have a populated split layout")
+                .insert(active_split, view_state);
+        }
+
+        buffer_id
+    }
+
     /// Replace a virtual buffer's content + overlays + cursors clamp.
     /// Pure window-state mutation: rewrites the buffer text, clears
     /// and re-installs overlays for the new content, and clamps every

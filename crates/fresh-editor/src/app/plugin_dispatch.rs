@@ -1969,7 +1969,9 @@ impl Editor {
         hidden_from_tabs: bool,
         request_id: Option<u64>,
     ) {
-        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        let buffer_id =
+            self.active_window_mut()
+                .create_virtual_buffer(name.clone(), mode.clone(), read_only);
         tracing::info!(
             "Created virtual buffer '{}' with mode '{}' (id={:?})",
             name,
@@ -2110,7 +2112,11 @@ impl Editor {
                     .map(|(mgr, _)| mgr)
                     .expect("active window must have a populated split layout")
                     .active_split();
-                let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+                let buffer_id = self.active_window_mut().create_virtual_buffer(
+                    name.clone(),
+                    mode.clone(),
+                    read_only,
+                );
                 if let Some(state) = self
                     .windows
                     .get_mut(&self.active_window)
@@ -2253,7 +2259,9 @@ impl Editor {
             .active_split();
 
         // Create the virtual buffer first
-        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        let buffer_id =
+            self.active_window_mut()
+                .create_virtual_buffer(name.clone(), mode.clone(), read_only);
         tracing::info!(
             "Created virtual buffer '{}' with mode '{}' in split (id={:?})",
             name,
@@ -2434,7 +2442,9 @@ impl Editor {
         request_id: Option<u64>,
     ) {
         // Create the virtual buffer
-        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        let buffer_id =
+            self.active_window_mut()
+                .create_virtual_buffer(name.clone(), mode.clone(), read_only);
         tracing::info!(
             "Created virtual buffer '{}' with mode '{}' for existing split {:?} (id={:?})",
             name,
@@ -3221,7 +3231,9 @@ impl Editor {
     }
 
     fn handle_create_virtual_buffer(&mut self, name: String, mode: String, read_only: bool) {
-        let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);
+        let buffer_id =
+            self.active_window_mut()
+                .create_virtual_buffer(name.clone(), mode.clone(), read_only);
         tracing::info!(
             "Created virtual buffer '{}' with mode '{}' (id={:?})",
             name,

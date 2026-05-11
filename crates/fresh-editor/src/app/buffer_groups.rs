@@ -291,8 +291,11 @@ impl super::Editor {
         match desc {
             LayoutDesc::Scrollable { id, scrollable } => {
                 let scrollable = scrollable.unwrap_or(true);
-                let buffer_id =
-                    self.create_virtual_buffer(format!("*{}*", id), mode.to_string(), true);
+                let buffer_id = self.active_window_mut().create_virtual_buffer(
+                    format!("*{}*", id),
+                    mode.to_string(),
+                    true,
+                );
                 if let Some(state) = self
                     .windows
                     .get_mut(&self.active_window)
@@ -318,8 +321,11 @@ impl super::Editor {
                 scrollable,
             } => {
                 let scrollable = scrollable.unwrap_or(false);
-                let buffer_id =
-                    self.create_virtual_buffer(format!("*{}*", id), mode.to_string(), true);
+                let buffer_id = self.active_window_mut().create_virtual_buffer(
+                    format!("*{}*", id),
+                    mode.to_string(),
+                    true,
+                );
                 if let Some(state) = self
                     .windows
                     .get_mut(&self.active_window)

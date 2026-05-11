@@ -44,11 +44,10 @@ fn action_popup_renders_over_virtual_buffer() {
 
     // Create a virtual buffer mimicking the Dashboard plugin: a tab that
     // a plugin opens to fill the whole split before the popup appears.
-    let dashboard_buffer = harness.editor_mut().create_virtual_buffer(
-        "Dashboard".to_string(),
-        "dashboard".to_string(),
-        true,
-    );
+    let dashboard_buffer = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("Dashboard".to_string(), "dashboard".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(
@@ -101,11 +100,10 @@ fn action_popup_renders_over_virtual_buffer() {
 fn action_popup_dismisses_on_escape() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    let dashboard_buffer = harness.editor_mut().create_virtual_buffer(
-        "Dashboard".to_string(),
-        "dashboard".to_string(),
-        true,
-    );
+    let dashboard_buffer = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("Dashboard".to_string(), "dashboard".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(
@@ -143,11 +141,10 @@ fn action_popup_persists_across_buffer_switch() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Start on a file-style buffer.
-    let scratch = harness.editor_mut().create_virtual_buffer(
-        "scratch".to_string(),
-        "text".to_string(),
-        false,
-    );
+    let scratch = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("scratch".to_string(), "text".to_string(), false);
     harness
         .editor_mut()
         .set_virtual_buffer_content(
@@ -170,11 +167,10 @@ fn action_popup_persists_across_buffer_switch() {
 
     // Open a Dashboard-style virtual buffer and switch to it. With the old
     // buffer-scoped popup the popup would be lost here.
-    let dashboard = harness.editor_mut().create_virtual_buffer(
-        "Dashboard".to_string(),
-        "dashboard".to_string(),
-        true,
-    );
+    let dashboard = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("Dashboard".to_string(), "dashboard".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(
