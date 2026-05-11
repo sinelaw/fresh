@@ -481,7 +481,7 @@ fn issue_3_external_kill_leaves_popup_state_stale() -> anyhow::Result<()> {
     // BUG: progress entries should not survive the server's death —
     // an `end` notification will never arrive.
     assert!(
-        !harness.editor().has_active_lsp_progress(),
+        !harness.editor().active_window().has_active_lsp_progress(),
         "BUG: `lsp_progress` still has entries for the dead server. The \
          editor must drop them on EOF.\nScreen:\n{screen}"
     );
@@ -536,7 +536,7 @@ fn issue_4_disable_lsp_does_not_stop_running_server() -> anyhow::Result<()> {
 
     // Sanity preconditions.
     assert!(
-        harness.editor().is_lsp_server_ready("rust"),
+        harness.editor().active_window().is_lsp_server_ready("rust"),
         "precondition: rust LSP must be ready before we disable it"
     );
 
@@ -564,7 +564,7 @@ fn issue_4_disable_lsp_does_not_stop_running_server() -> anyhow::Result<()> {
 
     // The bug: the still-running server should have been torn down.
     assert!(
-        !harness.editor().is_lsp_server_ready("rust"),
+        !harness.editor().active_window().is_lsp_server_ready("rust"),
         "BUG: after `dismiss:rust` the rust LSP server is still \
          reported as ready. Disable must imply Stop for any running \
          servers, otherwise the user sees `LSP disabled` in the \
