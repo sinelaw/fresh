@@ -1,8 +1,12 @@
 # Conductor & Sessions Design
 
 > **Status**: Design Document
-> **Date**: May 2026
-> **Branch**: `claude/plan-conductor-architecture-6YsJt`
+> **Date**: May 2026 (last updated: May 2026 — Tier 1–7 migration
+> status, Editor → Window resource-sync fix, prep steps for the
+> next migration batch)
+> **Branch**: `claude/plan-conductor-architecture-6YsJt` (design),
+> `claude/move-editor-to-window-csOP0` (Tier 7 migrations,
+> follow-up to PR #1936)
 > **Driving feature**: "Conductor" multi-agent orchestration UI (PRD external).
 > **Core change required**: first-class `Session` abstraction in the editor.
 
@@ -60,13 +64,13 @@ Steps 0a–0k shipped per-window state for the major subsystems
 (buffers, splits, file_explorer, lsp, terminals, event_logs,
 position_history, bookmarks, grouped_subtrees, composite buffers,
 LSP request-tracking maps, async bridges, status_message + prompt).
-Audit of the remaining `impl Editor` fields finds the following
-state that is *not truly cross-window* and should follow the same
-recipe — state moves to `Window`, methods that mutate it follow.
-Listed in priority order; each tier is roughly the size of one
-shipped step above.
+Tier 1 (buffer_metadata) and most of Tiers 2–6 shipped through
+PR #1936 and the follow-up branch `claude/move-editor-to-window-csOP0`,
+including the resource-sync fix described below. The remaining
+`impl Editor` surface is genuinely editor-global by design or
+requires structural prep (Tier 7) before another batch can land.
 
-**Tier 1 — biggest leverage, do first.**
+**Tier 1 — biggest leverage, do first.** ✅ **Shipped (Step 0l).**
 
 * `buffer_metadata: HashMap<BufferId, BufferMetadata>` →
   `Window`. *Shipped as Step 0l.* Tracks `Window.buffers`
@@ -83,73 +87,116 @@ shipped step above.
   caller needed (`lsp`, `event_logs`, `splits`, etc.).
   `scroll_sync::ensure_active_tab_visible` is now one TODO
   closer to moving onto `impl Window` — only `composite_buffers`
-  blocked the move pre-0l, and that field is already per-window,
-  so this is a follow-up cleanup once a consumer needs it.
+  blocked the move pre-0l, and that field is already per-window.
 
-**Tier 2 — small per-window state that's clearly miscategorised.**
+**Tier 2 — small per-window state that's clearly miscategorised.** ✅ **Shipped.**
 
-* `scroll_sync_manager: ScrollSyncManager` → `Window`. Manages
-  cross-split scroll groups within one window's split tree.
-* `same_buffer_scroll_sync: bool` → `Window`. Per-window UX
-  toggle.
-* `previous_viewports: HashMap<LeafId, ...>` → `Window`. Per-
-  window split view state.
-* `preview: Option<(LeafId, BufferId)>` → `Window`. Preview-tab
-  state for one window.
-* `seen_byte_ranges: HashMap<BufferId, ...>` → `Window`. Keyed
-  by BufferId.
-* `terminal_mode: bool`, `terminal_mode_resume` → `Window`.
-  Terminal-mode toggle for the active terminal in the active
-  window. (Terminals are already per-window.)
-* `auto_revert_enabled: bool`, `file_rapid_change_counts` →
-  `Window`. Auto-revert state — `file_mod_times` is already
-  per-window.
-* `goto_line_preview`, `pending_async_prompt_callback`,
-  `pending_quit_unnamed_save` → `Window`. Per-window prompt /
-  UX state.
-* `interactive_replace_state` → `Window`. Per-window search
-  state.
+All listed fields moved onto `Window` in PR #1936:
 
-**Tier 3 — per-window LSP state still on Editor.**
+* `scroll_sync_manager`, `same_buffer_scroll_sync`,
+  `previous_viewports`, `preview`, `seen_byte_ranges`,
+  `terminal_mode`, `terminal_mode_resume`, auto-revert state
+  (`last_auto_revert_poll`, `dir_mod_times`,
+  `git_index_resolved`, `pending_file_poll_rx`,
+  `pending_dir_poll_rx`), `goto_line_preview`,
+  `interactive_replace_state`.
+
+**Tier 3 — per-window LSP state still on Editor.** ✅ **Shipped.**
+
+All listed fields and the methods that operate on them now
+live on `Window`:
 
 * `stored_diagnostics`, `stored_push_diagnostics`,
-  `stored_pull_diagnostics`, `stored_folding_ranges` → `Window`.
-  URI-keyed, but each URI maps to a buffer in a specific
-  window. The trade-off: two windows opening the same path
-  duplicate diagnostic-pull work — acceptable because Conductor
-  windows are over different project roots in practice.
-* `lsp_window_messages`, `lsp_log_messages`,
-  `lsp_server_statuses`, `lsp_progress` → `Window`. Each window
-  has its own `LspManager`; the message log / status / progress
-  describe that manager's servers, not the editor's.
-* `lsp_diagnostic_namespace` → `Window`. Buffer overlay
-  namespace, follows the buffer.
+  `stored_pull_diagnostics`, `stored_folding_ranges`,
+  `lsp_window_messages`, `lsp_log_messages`,
+  `lsp_server_statuses`, `lsp_progress`,
+  `lsp_diagnostic_namespace`, `diagnostic_result_ids`,
+  `next_lsp_request_id` and the pending-request maps.
+* `Window::update_lsp_warning_domain`,
+  `Window::check_diagnostic_pull_timer`,
+  `Window::has_active_lsp_progress`,
+  `Window::get_lsp_progress`,
+  `Window::is_lsp_server_ready`,
+  `Window::running_lsp_servers`,
+  `Window::initialized_lsp_server_count`,
+  `Window::shutdown_lsp_server` ship in the follow-up branch.
 
-**Tier 4 — per-window UX / search.**
+**Tier 4 — per-window UX / search.** ✅ **Shipped.**
 
-* `hover: HoverState` → `Window`. Hover-popup correlation, per-
-  window context.
-* `search_state`, `search_namespace`, `pending_search_range`
-  → `Window`. Per-window active search.
-* `live_grep_last_state`, `overlay_preview_state` → `Window`.
-  Per-window panel state.
+* `hover`, `search_state`, `search_namespace`,
+  `pending_search_range`, `live_grep_last_state`,
+  `overlay_preview_state` all on `Window`.
+* `Window::search_match_at_primary_cursor`,
+  `Window::check_semantic_highlight_timer`,
+  `Window::clear_warnings` (general + LSP domains) shipped.
 
-**Tier 5 — file-explorer chrome flags.**
+**Tier 5 — file-explorer chrome flags.** ✅ **Shipped.**
 
 * `file_explorer_visible`, `file_explorer_sync_in_progress`,
   `file_explorer_decorations`, `file_explorer_decoration_cache`,
   `pending_file_explorer_show_*`, `file_explorer_width`,
-  `file_explorer_side` → `Window`. The explorer's `FileTreeView`
-  is already per-window; the visibility / decoration-cache /
-  layout state should follow it.
+  `file_explorer_side`, `file_explorer_clipboard` on `Window`.
+* `Window::focus_editor`, `Window::file_explorer_search_clear`,
+  `Window::handle_set_file_explorer_decorations`,
+  `Window::handle_clear_file_explorer_decorations`,
+  `Window::rebuild_file_explorer_decoration_cache`,
+  `Window::file_explorer_copy`, `Window::file_explorer_cut`,
+  `Window::set_explorer_clipboard` shipped.
 
-**Tier 6 — completion service.**
+**Tier 6 — completion service.** ✅ **Shipped.**
 
-* `completion_service: CompletionService` → either `Arc<>`
-  shared OR per-window. State-machine for buffer-word /
-  dabbrev / LSP / plugin completion providers. Per-window is
-  the natural model since the providers it orchestrates are
-  per-window already.
+* `completion_service` now lives on `Window` and uses the
+  window's own provider state (dabbrev, buffer words, LSP,
+  plugin providers).
+* `Window::take_pending_semantic_token_request` and
+  `Window::take_pending_semantic_token_range_request` shipped.
+
+**Tier 7 — full-file `impl Editor` → `impl Window` migrations.**
+✅ **Six files shipped** on the follow-up branch:
+
+* `view_actions.rs` — page-view toggle, tab-switch animation,
+  split content-rect lookup.
+* `terminal_mouse.rs` — mouse-event forwarding to PTY in
+  alternate-screen mode. Pulled five terminal-IO helpers
+  (`get_active_terminal_state`, `send_terminal_input`,
+  `send_terminal_key`, `send_terminal_mouse`,
+  `is_terminal_in_alternate_screen`) onto `Window` to make this
+  possible.
+* `event_debug_actions.rs` — event-debug modal handlers; the
+  `event_debug: Option<EventDebug>` field also moved from
+  `Editor` to `Window` because the dialog records keystrokes
+  destined for one window's input pipeline.
+* `help_actions.rs` — `open_help_manual` /
+  `open_keyboard_shortcuts`. Pulled `create_virtual_buffer` and
+  `create_virtual_buffer_detached` onto `Window` to make this
+  possible.
+* `scrollbar_input.rs` — entire scrollbar input cluster (705
+  lines: mouse-wheel, horizontal pan, scrollbar drag and jump,
+  plus composite-buffer variants). Pulled
+  `split_at_position`, `move_cursor_to_visible_area`, and
+  `calculate_max_scroll_position` onto `Window` for it.
+* `menu_context.rs` — nine private menu-context helpers
+  (`is_line_numbers_visible`, `is_lsp_available`, etc.) on
+  `Window`. The orchestrator `update_menu_context` stays on
+  `Editor` because it writes `self.menu_state.context` — the
+  only file-internal Editor-global access.
+
+Plus method-level migrations in many other files (chrome toggle
+trio, fold toggles, file-open helpers, resolver methods, etc.) —
+without delegators, callers go through `self.active_window()` /
+`self.active_window_mut()` directly.
+
+**Resource propagation fix.** `WindowResources` clones the editor's
+`Arc<Config>`, `Arc<ThemeRegistry>`, `Arc<GrammarRegistry>`, and
+`Authority` at construction. Until the follow-up branch, mutations
+on the editor side left each window holding a stale clone — only
+exposed once `Window::resolve_line_wrap_for_buffer` and
+`Window::open_local_file` started routing through `Window::config()`.
+Fixed by adding `Editor::sync_windows_config` (called from
+`set_config` and the one `config_mut`-using path that flips a
+window-read field, `toggle_inlay_hints`), and analogous propagation
+in `Editor::set_boot_authority`, `Editor::reload_themes`, and the
+async-dispatch grammar-rebuild handler.
 
 **Borderline (decide per-case, not necessarily move):**
 
@@ -163,48 +210,122 @@ shipped step above.
 * `watch_path_handles` — registration source dependent
   (plugin? window?). Stay editor-global.
 * `tab_bar_visible`, `prompt_line_visible`, `menu_bar_visible`,
-  `status_bar_visible` — chrome flags. Editor-wide today and
-  most editors keep them so. Stay.
+  `status_bar_visible` — chrome flags. Moved to `Window` in PR
+  #1936; per-window toggling is the right model when a window
+  has its own status bar. (Was listed in this section in the
+  earlier draft as "stay editor-global"; the design call flipped
+  during the PR.)
 
 **What truly stays on Editor (no movement planned):**
 
 * Process resources: `tokio_runtime`, `authority`,
   `local_filesystem`, `fs_manager`, `working_dir`,
   `dir_context`, `time_source`, `clipboard`,
-  `event_broadcaster`.
-* Editor-global runtimes: `plugin_manager` (one QuickJS),
-  `keybindings` (`Arc<RwLock>`), `mode_registry`,
+  `event_broadcaster`. (All but `clipboard` are now also
+  cloned onto every `Window.resources` via the WindowResources
+  bundle so window-side handlers can reach them; the canonical
+  store stays on `Editor`.)
+* Editor-global runtimes: `plugin_manager` (one QuickJS,
+  Arc-shared via `WindowResources`), `keybindings`
+  (`Arc<RwLock>`, shared via `WindowResources`), `mode_registry`,
   `command_registry`, `quick_open_registry`,
   `grammar_registry`, `theme_registry`, `theme`, `config`
   (`Arc`).
-* Terminal-level: `terminal_width/height`, `key_translator`,
-  `key_context`, `mouse_state`, `mouse_enabled`,
-  `pending_escape_sequences`, `last_window_title`.
-* App-level chrome: `chrome_layout`, `menu_state`, `menus`,
-  `menu_*_visible`, `expanded_menus_cache`, `theme_cache`,
+* Terminal-level: `terminal_width/height` (mirrored onto each
+  `Window`), `key_translator`, `pending_escape_sequences`,
+  `last_window_title`.
+* App-level chrome: `menu_state`, `menus`,
+  `expanded_menus_cache`, `theme_cache`,
   `software_cursor_only`, `session_mode`, `ansi_background*`,
-  `background_fade`.
-* Modal singletons: `settings_state`, `calibration_wizard`,
-  `keybinding_editor`, `global_popups`, `tab_context_menu`,
-  `file_explorer_context_menu`, `theme_info_popup`,
-  `file_open_state`, `file_browser_layout`,
-  `file_explorer_clipboard`.
+  `background_fade`. (`chrome_layout` is now per-window.)
+* Modal singletons that are genuinely process-scope:
+  `settings_state`, `calibration_wizard`, `keybinding_editor`,
+  `global_popups`. (Per-window modal state — `event_debug`,
+  `theme_info_popup`, `file_explorer_context_menu`,
+  `tab_context_menu`, `file_open_state`, `file_browser_layout`,
+  `file_explorer_clipboard` — moved to `Window`.)
 * Plugin-spawned process tracking: `background_process_handles`,
-  `host_process_handles`, `host_process_kill_senders`,
-  `wait_tracking`, `completed_waits`.
+  `host_process_handles`, `host_process_kill_senders`.
+  Per-buffer or per-window `wait_tracking` / `completed_waits`
+  moved to `Window`.
 * Editor-global async bridge (plugin runtime callbacks, file-
   open dialog).
 * Lifecycle: `should_quit`, `should_detach`, `restart_with_dir`,
   `pending_authority`, `session_name`, `plugin_errors`.
+* Recovery: `recovery_service` (one `.recovery/` dir per editor
+  session — `save_buffer_to_recovery` writes to disk, not to a
+  per-window store).
 * Test-only: `last_path_change_for_test`,
   `last_watch_response_for_test`.
+
+### Remaining `impl Editor` blocks: structural prep needed
+
+The remaining files with `impl Editor` survive because they
+orchestrate plugin hooks, mutate editor-global modal state, or
+write to the recovery service. Two prep steps unlock the next
+batch:
+
+**Prep step 1 — Move `clipboard` onto `WindowResources`.**
+`Editor::clipboard: Clipboard` is the last per-process service
+that hasn't been bundled. Three files block on it:
+`composite_buffer_actions::handle_composite_copy` (writes the
+selection text), `clipboard.rs::paste`/`copy_selection` (the
+whole file is the clipboard surface), and parts of
+`text_ops.rs`. Once `Clipboard` is a `Window::clipboard()`
+accessor backed by an `Arc<Mutex<Clipboard>>` in `WindowResources`
+(the same pattern theme/plugin_manager already follow), the
+copy/paste cluster can migrate by file.
+
+**Prep step 2 — Expose plugin-hook firing from `Window`.**
+The remaining hard blocker is `Editor::apply_event_to_active_buffer`
+and its sibling `Editor::apply_events_as_bulk_edit`. Both fire
+plugin hooks (`after_insert`, `after_delete`, etc.) that LSP
+relies on for `didChange` consistency. Today `Window::apply_event_to_buffer`
+exists as the no-hook version; the gap is a Window-side
+`apply_event_to_active_buffer_with_hooks` that reads
+`self.resources.plugin_manager` and calls `run_hook` itself.
+The Editor wrapper then becomes a thin delegator (plus its
+existing snapshot refresh). Files that unblock once this lands:
+
+* `undo_actions.rs`, `diagnostic_jumps.rs`,
+  `bookmark_actions.rs` — small, two- or three-method files
+  that fire one or two hook-bearing events each.
+* `dabbrev_actions.rs` — calls `log_and_apply_event` from
+  multiple sites.
+* `text_ops.rs` — `smart_home`, `toggle_comment`,
+  `goto_matching_bracket` all fire MoveCursor events through
+  the hook orchestrator.
+* `popup_overlay_actions.rs` — `Show`/`Hide`/`AddOverlay`/
+  `RemoveOverlay`/`PopupSelectNext` events all route through
+  the Editor orchestrator today.
+* `search_ops.rs` — `perform_replace`,
+  `start_interactive_replace`, and the bulk-edit path each
+  have one apply call.
+
+**What's genuinely editor-global (no migration planned):**
+
+* `menu_context::update_menu_context`, `menu_actions.rs`,
+  `keybinding_editor_actions.rs` — write `self.menu_state` /
+  `self.menus`, both single-instance per process.
+* `calibration_actions.rs` — `self.key_translator` is one
+  calibration per process.
+* `recovery_actions.rs` — `self.recovery_service` owns the
+  on-disk `.recovery/` dir; not per-window.
+* `lifecycle.rs` — `should_quit`, `should_detach`,
+  `session_mode`, `update_checker`, etc.
+* `conductor_persistence.rs` — by definition iterates every
+  window.
+* `file_open_queue::process_pending_file_opens` — orchestrates
+  through `Editor::open_file` and large-file encoding prompts.
+* `file_open_orchestrators.rs::open_file` and family — still
+  the canonical place that fires `buffer_activated` /
+  `buffer_opened` hooks.
 
 **Architectural test (re-stated for this audit):** if a Window
 handler body needs to know its own `WindowId` to call into
 editor-level logic, that's a sign the editor-level logic is in
-the wrong place. Every field above in Tiers 1–6 fails this test
-today (handlers route through `active_window_mut().X` accessors
-where `X` should just be a direct `Window` field).
+the wrong place. With Tiers 1–6 shipped, the remaining failures
+of this test all live in the two prep-step targets above.
 
 ### The model
 
