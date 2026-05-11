@@ -136,7 +136,7 @@ pub fn editor_tick(
     if editor.check_mouse_hover_timer() {
         needs_render = true;
     }
-    if editor.check_semantic_highlight_timer() {
+    if editor.active_window().check_semantic_highlight_timer() {
         needs_render = true;
     }
     if editor.check_completion_trigger_timer() {

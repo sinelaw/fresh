@@ -181,7 +181,7 @@ done
     })?;
 
     // Verify the universal LSP is serving the rust language
-    harness.wait_until(|h| h.editor().is_lsp_server_ready("rust"))?;
+    harness.wait_until(|h| h.editor().active_window().is_lsp_server_ready("rust"))?;
 
     // --- Test Go-to-Definition ---
     // Move cursor to line 6 (0-indexed: 5), on "Point" in "let p = Point { x: 1.0 };"

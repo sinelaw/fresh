@@ -641,7 +641,7 @@ impl EditorTestHarness {
         // positioning, content_area_rows) stay stable. The user-facing
         // default is auto-hide (show_prompt_line=false); tests that need
         // to exercise the auto-hide path do so via the runtime toggle
-        // (`editor.toggle_prompt_line()`) or the Settings UI rather than
+        // (`editor.active_window_mut().toggle_prompt_line()`) or the Settings UI rather than
         // by passing a config, so the override here never gets in their
         // way.
         config.editor.show_prompt_line = true;

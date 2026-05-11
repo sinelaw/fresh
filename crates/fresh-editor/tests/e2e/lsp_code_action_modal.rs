@@ -70,7 +70,7 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
     // would be dropped on the floor (empirically reproduced: code-actions
     // request fires, LSP initialize arrives ~170ms later, the popup never
     // materialises and the test hits nextest's 180s ceiling).
-    harness.wait_until(|h| h.editor().is_lsp_server_ready("rust"))?;
+    harness.wait_until(|h| h.editor().active_window().is_lsp_server_ready("rust"))?;
 
     // Position cursor on "let x = 5;" (line 2)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
@@ -166,7 +166,7 @@ fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
     // Wait for the LSP server to reach `Running` state — see sibling test
     // for the rationale (the status-bar `LSP (on)` label turns on during
     // `Starting`, before the handshake completes).
-    harness.wait_until(|h| h.editor().is_lsp_server_ready("rust"))?;
+    harness.wait_until(|h| h.editor().active_window().is_lsp_server_ready("rust"))?;
 
     // Position cursor
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;

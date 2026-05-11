@@ -316,7 +316,7 @@ fn test_stop_lsp_server_clears_stale_progress_spinner() -> anyhow::Result<()> {
     // for `rust`. `has_active_lsp_progress` on the editor is the
     // authoritative view into that map; we use it as the readiness
     // signal rather than scraping spinner glyphs out of the screen.
-    harness.wait_until(|h| h.editor().has_active_lsp_progress())?;
+    harness.wait_until(|h| h.editor().active_window().has_active_lsp_progress())?;
 
     // Sanity: the visible indicator is in spinner mode, not "(on)"
     // or "(off)". The spinner's exact glyph rotates with wall-clock,
@@ -338,7 +338,7 @@ fn test_stop_lsp_server_clears_stale_progress_spinner() -> anyhow::Result<()> {
     // should read the configured-but-not-running "LSP (off)".
     let screen = harness.screen_to_string();
     assert!(
-        !harness.editor().has_active_lsp_progress(),
+        !harness.editor().active_window().has_active_lsp_progress(),
         "BUG: `lsp_progress` still has entries for the stopped server. \
          That keeps the spinner branch in `compose_lsp_status` live \
          forever, since the `end` notification is never coming. \

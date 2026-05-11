@@ -166,7 +166,7 @@ fn test_config_show_tab_bar_false() {
     );
 
     // The tab bar toggle getter should return false
-    assert!(!harness.editor().tab_bar_visible());
+    assert!(!harness.editor().active_window().tab_bar_visible);
 }
 
 /// Test that config option show_menu_bar: false hides menu bar on startup
@@ -203,7 +203,7 @@ fn test_both_bars_hidden() {
 
     // Content should start at row 0 or close to it
     // Since both bars are hidden, more screen real estate is available
-    assert!(!harness.editor().tab_bar_visible());
+    assert!(!harness.editor().active_window().tab_bar_visible);
 }
 
 /// Test that tab bar toggle works correctly when opening multiple files
@@ -256,7 +256,7 @@ fn test_tab_bar_toggle_with_multiple_buffers() {
 
     // Tab bar should be hidden
     harness.assert_screen_contains("Tab bar hidden");
-    assert!(!harness.editor().tab_bar_visible());
+    assert!(!harness.editor().active_window().tab_bar_visible);
 
     // Show tab bar again
     harness
@@ -272,7 +272,7 @@ fn test_tab_bar_toggle_with_multiple_buffers() {
 
     // Tab bar should be visible with both files
     harness.assert_screen_contains("Tab bar shown");
-    assert!(harness.editor().tab_bar_visible());
+    assert!(harness.editor().active_window().tab_bar_visible);
 }
 
 /// Test that status bar is visible by default
@@ -397,7 +397,7 @@ fn test_all_bars_hidden() {
 fn test_prompt_line_visible_by_default() {
     let harness = EditorTestHarness::new(80, 24).unwrap();
     assert!(
-        harness.editor().prompt_line_visible(),
+        harness.editor().active_window().prompt_line_visible,
         "Prompt line should be visible by default"
     );
 }
@@ -410,10 +410,13 @@ fn test_prompt_line_visible_by_default() {
 #[test]
 fn test_toggle_prompt_line_off_hides_it() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    assert!(harness.editor().prompt_line_visible());
-    harness.editor_mut().toggle_prompt_line();
+    assert!(harness.editor().active_window().prompt_line_visible);
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .toggle_prompt_line();
     assert!(
-        !harness.editor().prompt_line_visible(),
+        !harness.editor().active_window().prompt_line_visible,
         "Prompt line should be hidden after toggling it off"
     );
 }
@@ -425,7 +428,7 @@ fn test_settings_show_prompt_line_applies_immediately() {
     harness.render().unwrap();
 
     // Prompt line should be visible initially
-    assert!(harness.editor().prompt_line_visible());
+    assert!(harness.editor().active_window().prompt_line_visible);
 
     // Open settings
     harness.open_settings().unwrap();
@@ -460,7 +463,7 @@ fn test_settings_show_prompt_line_applies_immediately() {
 
     // Prompt line should now be hidden (applied immediately, not requiring restart)
     assert!(
-        !harness.editor().prompt_line_visible(),
+        !harness.editor().active_window().prompt_line_visible,
         "Prompt line should be hidden after toggling show_prompt_line off via Settings UI"
     );
 }
@@ -477,7 +480,7 @@ fn test_toggle_prompt_line_via_command_palette() {
     harness.render().unwrap();
 
     // Prompt line should be visible initially
-    assert!(harness.editor().prompt_line_visible());
+    assert!(harness.editor().active_window().prompt_line_visible);
 
     // Open command palette
     harness
@@ -497,7 +500,7 @@ fn test_toggle_prompt_line_via_command_palette() {
 
     // Prompt line should now be hidden
     harness.assert_screen_contains("Prompt line hidden");
-    assert!(!harness.editor().prompt_line_visible());
+    assert!(!harness.editor().active_window().prompt_line_visible);
 
     // Toggle back - open command palette again
     harness
@@ -514,7 +517,7 @@ fn test_toggle_prompt_line_via_command_palette() {
 
     // Prompt line should be visible again
     harness.assert_screen_contains("Prompt line shown");
-    assert!(harness.editor().prompt_line_visible());
+    assert!(harness.editor().active_window().prompt_line_visible);
 }
 
 /// Regression test for issue #1156: toggling the menu bar via the View menu /

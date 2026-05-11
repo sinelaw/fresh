@@ -70,41 +70,10 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
-    // `toggle_tab_bar` / `toggle_status_bar` / `toggle_prompt_line` bodies
-    // moved to `impl Window` — they flip a per-window flag and emit a
-    // per-window status message. Editor exposes thin wrappers below so
-    // existing callers (action dispatch, e2e tests) keep working
-    // unchanged.
-
-    /// Toggle the active window's tab-bar visibility.
-    pub fn toggle_tab_bar(&mut self) {
-        self.active_window_mut().toggle_tab_bar();
-    }
-
-    /// Toggle the active window's status-bar visibility.
-    pub fn toggle_status_bar(&mut self) {
-        self.active_window_mut().toggle_status_bar();
-    }
-
-    /// Toggle the active window's prompt-line visibility.
-    pub fn toggle_prompt_line(&mut self) {
-        self.active_window_mut().toggle_prompt_line();
-    }
-
-    /// Get tab bar visibility (thin delegator to active window).
-    pub fn tab_bar_visible(&self) -> bool {
-        self.active_window().tab_bar_visible
-    }
-
-    /// Get status bar visibility (thin delegator to active window).
-    pub fn status_bar_visible(&self) -> bool {
-        self.active_window().status_bar_visible
-    }
-
-    /// Get prompt line visibility (thin delegator to active window).
-    pub fn prompt_line_visible(&self) -> bool {
-        self.active_window().prompt_line_visible
-    }
+    // `toggle_tab_bar` / `toggle_status_bar` / `toggle_prompt_line` and
+    // their `*_visible` getters live on `impl Window` — call them via
+    // `self.active_window_mut().toggle_tab_bar()` etc. (or read
+    // `active_window().tab_bar_visible` for the flag directly).
 
     /// Toggle vertical scrollbar visibility
     pub fn toggle_vertical_scrollbar(&mut self) {

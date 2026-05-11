@@ -1755,10 +1755,10 @@ edition = "2021"
         }
         harness.render()?;
 
-        let has_progress = harness.editor().has_active_lsp_progress();
+        let has_progress = harness.editor().active_window().has_active_lsp_progress();
         if has_progress {
             had_progress = true;
-            let progress = harness.editor().get_lsp_progress();
+            let progress = harness.editor().active_window().get_lsp_progress();
             if i % 10 == 0 {
                 // Log progress every second
                 for (_, title, msg) in &progress {
@@ -2735,7 +2735,7 @@ edition = "2021"
         harness.render()?;
 
         // Check actual LSP server status
-        if harness.editor().is_lsp_server_ready("rust") {
+        if harness.editor().active_window().is_lsp_server_ready("rust") {
             eprintln!("✓ rust-analyzer ready (iteration {}, {}ms)", i, i * 100);
             lsp_ready = true;
             break;
@@ -2767,12 +2767,12 @@ edition = "2021"
         let _ = harness.editor_mut().process_async_messages();
         harness.render()?;
 
-        let has_progress = harness.editor().has_active_lsp_progress();
+        let has_progress = harness.editor().active_window().has_active_lsp_progress();
         if has_progress {
             had_progress = true;
             if i % 20 == 0 {
                 // Log progress every 2 seconds
-                let progress = harness.editor().get_lsp_progress();
+                let progress = harness.editor().active_window().get_lsp_progress();
                 for (_, title, msg) in &progress {
                     eprintln!("  [{}ms] Progress: {} - {:?}", i * 100, title, msg);
                 }
@@ -3016,8 +3016,8 @@ fn test_lsp_progress_status_display() -> anyhow::Result<()> {
         harness.render()?;
 
         // Check LSP progress state
-        let has_progress = harness.editor().has_active_lsp_progress();
-        let progress = harness.editor().get_lsp_progress();
+        let has_progress = harness.editor().active_window().has_active_lsp_progress();
+        let progress = harness.editor().active_window().get_lsp_progress();
 
         if has_progress && !progress.is_empty() {
             for (_token, title, message) in &progress {
@@ -3086,7 +3086,7 @@ fn test_lsp_progress_status_display() -> anyhow::Result<()> {
     assert!(seen_end, "Progress should have ended");
 
     // After progress ends, there should be no active progress
-    let final_progress = harness.editor().has_active_lsp_progress();
+    let final_progress = harness.editor().active_window().has_active_lsp_progress();
     assert!(
         !final_progress,
         "Should have no active progress after completion"

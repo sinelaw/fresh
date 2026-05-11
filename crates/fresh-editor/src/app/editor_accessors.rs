@@ -324,23 +324,9 @@ impl Editor {
             .or(self.active_window().editor_mode.as_deref())
     }
 
-    /// Check if LSP has any active progress tasks (e.g., indexing).
-    /// Thin delegator to active window — LSP progress is per-window state.
-    pub fn has_active_lsp_progress(&self) -> bool {
-        self.active_window().has_active_lsp_progress()
-    }
-
-    /// Get the current LSP progress info (if any).
-    /// Thin delegator to active window.
-    pub fn get_lsp_progress(&self) -> Vec<(String, String, Option<String>)> {
-        self.active_window().get_lsp_progress()
-    }
-
-    /// Check if any LSP server for a given language is running (ready).
-    /// Thin delegator to active window — LSP server statuses are per-window.
-    pub fn is_lsp_server_ready(&self, language: &str) -> bool {
-        self.active_window().is_lsp_server_ready(language)
-    }
+    // `has_active_lsp_progress`, `get_lsp_progress`, and
+    // `is_lsp_server_ready` live on `impl Window` — call them via
+    // `self.active_window().has_active_lsp_progress()` etc.
 
     /// Get stored LSP diagnostics (for testing and external access)
     /// Returns a reference to the diagnostics map keyed by file URI
@@ -1035,11 +1021,8 @@ impl Editor {
         self.active_window().warning_domains.general.count
     }
 
-    /// Update LSP warning domain from server statuses.
-    /// Thin delegator — both inputs and outputs live on the active window.
-    pub fn update_lsp_warning_domain(&mut self) {
-        self.active_window_mut().update_lsp_warning_domain();
-    }
+    // `update_lsp_warning_domain` lives on `impl Window` — call it via
+    // `self.active_window_mut().update_lsp_warning_domain()`.
 
     /// Check if mouse hover timer has expired and trigger LSP hover request
     ///
@@ -1091,14 +1074,8 @@ impl Editor {
         }
     }
 
-    /// Check if semantic highlight debounce timer has expired.
-    ///
-    /// Thin Editor-side wrapper around the per-window check on
-    /// `Window::check_semantic_highlight_timer`. Semantic-highlight overlays
-    /// live on the active window's buffers, so the actual scan delegates there.
-    pub fn check_semantic_highlight_timer(&self) -> bool {
-        self.active_window().check_semantic_highlight_timer()
-    }
+    // `check_semantic_highlight_timer` lives on `impl Window` — call it
+    // via `self.active_window().check_semantic_highlight_timer()`.
 
     /// Check if diagnostic pull timer has expired and trigger re-pull if so.
     ///

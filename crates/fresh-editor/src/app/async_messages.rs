@@ -1067,7 +1067,7 @@ impl Editor {
             .insert(key, status);
 
         // Update warning domain for LSP status indicator
-        self.update_lsp_warning_domain();
+        self.active_window_mut().update_lsp_warning_domain();
 
         // When a server becomes ready, send didOpen for all open buffers of
         // that language so the server can start providing diagnostics, etc.

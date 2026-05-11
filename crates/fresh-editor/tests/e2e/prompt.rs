@@ -30,8 +30,11 @@ fn test_mid_render_start_prompt_async_keeps_prompt_visible() {
     // Match the user-reported environment (200x50 tmux pane, default
     // auto-hide prompt line).
     let mut harness = EditorTestHarness::new(200, 50).unwrap();
-    harness.editor_mut().toggle_prompt_line();
-    assert!(!harness.editor().prompt_line_visible());
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .toggle_prompt_line();
+    assert!(!harness.editor().active_window().prompt_line_visible);
 
     // Set a status message so the bottom row's status-bar content is
     // distinguishable from the editor body. The marker word lets the

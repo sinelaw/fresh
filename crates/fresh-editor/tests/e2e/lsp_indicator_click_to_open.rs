@@ -196,7 +196,7 @@ fn test_popup_hugs_status_bar_in_both_prompt_modes() -> anyhow::Result<()> {
 
     // Mode 1: prompt line visible (harness default). Open the popup,
     // assert no gap between popup bottom and status bar.
-    assert!(harness.editor().prompt_line_visible());
+    assert!(harness.editor().active_window().prompt_line_visible);
     harness.editor_mut().show_lsp_status_popup();
     harness.render()?;
     let screen = harness.screen_to_string();
@@ -218,8 +218,11 @@ fn test_popup_hugs_status_bar_in_both_prompt_modes() -> anyhow::Result<()> {
     // real user flow because a status-bar click triggers a render
     // before dispatching `ShowLspStatus`.
     harness.editor_mut().show_lsp_status_popup(); // toggles closed
-    harness.editor_mut().toggle_prompt_line();
-    assert!(!harness.editor().prompt_line_visible());
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .toggle_prompt_line();
+    assert!(!harness.editor().active_window().prompt_line_visible);
     harness.render()?;
 
     // Mode 2: prompt line hidden. Same invariant.

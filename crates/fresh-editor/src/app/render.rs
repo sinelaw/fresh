@@ -987,7 +987,10 @@ impl Editor {
                         }
                         level
                     };
-                    (lsp_level, self.get_general_warning_count())
+                    (
+                        lsp_level,
+                        self.active_window().warning_domains.general.count,
+                    )
                 } else {
                     (WarningLevel::None, 0)
                 };
