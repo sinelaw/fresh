@@ -150,9 +150,16 @@ impl Editor {
         }
     }
 
-    /// Insert completion text, replacing the word prefix at cursor.
+    /// Insert completion text, replacing the word prefix at *every* cursor.
     /// If the text contains LSP snippet syntax, it will be expanded.
+    ///
+    /// Multi-cursor: each cursor's own word prefix is replaced, so cursors
+    /// stay in lock-step after the accept (issue #1901, accept path). All
+    /// per-cursor edits go through `apply_events_as_bulk_edit` so undo is
+    /// atomic.
     fn insert_completion_text(&mut self, text: String) {
+        use crate::model::event::CursorId;
+
         // Check if this is a snippet and expand it
         let (insert_text, cursor_offset) = if is_snippet(&text) {
             let expanded = expand_snippet(&text);
@@ -161,70 +168,89 @@ impl Editor {
             (text, None)
         };
 
-        let (cursor_id, cursor_pos, word_start) = {
-            let cursors = self.active_cursors();
-            let cursor_id = cursors.primary_id();
-            let cursor_pos = cursors.primary().position;
-            let state = self.active_state();
-            let word_start = find_completion_word_start(&state.buffer, cursor_pos);
-            (cursor_id, cursor_pos, word_start)
+        // Collect per-cursor data: id, current position, word_start, prefix text.
+        let cursor_data: Vec<(CursorId, usize, usize, String)> = {
+            let positions: Vec<(CursorId, usize)> = self
+                .active_cursors()
+                .iter()
+                .map(|(id, c)| (id, c.position))
+                .collect();
+            positions
+                .into_iter()
+                .map(|(id, pos)| {
+                    let word_start = {
+                        let state = self.active_state();
+                        find_completion_word_start(&state.buffer, pos)
+                    };
+                    let prefix = if word_start < pos {
+                        self.active_state_mut().get_text_range(word_start, pos)
+                    } else {
+                        String::new()
+                    };
+                    (id, pos, word_start, prefix)
+                })
+                .collect()
         };
 
-        let deleted_text = if word_start < cursor_pos {
-            self.active_state_mut()
-                .get_text_range(word_start, cursor_pos)
+        // Build delete+insert events. `apply_events_as_bulk_edit` sorts by
+        // descending position internally, so emission order doesn't matter.
+        let mut events: Vec<Event> = Vec::new();
+        for (cursor_id, pos, word_start, prefix) in &cursor_data {
+            if *word_start < *pos {
+                events.push(Event::Delete {
+                    range: *word_start..*pos,
+                    deleted_text: prefix.clone(),
+                    cursor_id: *cursor_id,
+                });
+            }
+            events.push(Event::Insert {
+                position: *word_start,
+                text: insert_text.clone(),
+                cursor_id: *cursor_id,
+            });
+        }
+
+        if events.is_empty() {
+            return;
+        }
+
+        let description = "Accept completion".to_string();
+        if cursor_data.len() > 1 || events.len() > 1 {
+            // Multi-cursor (or replacement = delete+insert): one atomic bulk edit.
+            if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
+                self.active_event_log_mut().append(bulk_edit);
+            }
         } else {
-            String::new()
-        };
+            for event in events {
+                self.log_and_apply_event(&event);
+            }
+        }
 
-        let insert_pos = if word_start < cursor_pos {
-            let delete_event = Event::Delete {
-                range: word_start..cursor_pos,
-                deleted_text,
-                cursor_id,
-            };
-
-            self.log_and_apply_event(&delete_event);
-
-            let buffer_len = self.active_state().buffer.len();
-            word_start.min(buffer_len)
-        } else {
-            cursor_pos
-        };
-
-        let insert_event = Event::Insert {
-            position: insert_pos,
-            text: insert_text.clone(),
-            cursor_id,
-        };
-
-        self.log_and_apply_event(&insert_event);
-
-        // If this was a snippet, position cursor at the snippet's $0 location
+        // Snippet placement: after the bulk edit, each cursor sits at the end
+        // of its own inserted text; the snippet's $0 sits `cursor_offset` bytes
+        // into that text. Walk each cursor back to its $0 placeholder.
         if let Some(offset) = cursor_offset {
-            let new_cursor_pos = insert_pos + offset;
-            // Get current cursor position after the insert
-            let current_pos = self.active_cursors().primary().position;
-            if current_pos != new_cursor_pos {
-                let move_event = Event::MoveCursor {
-                    cursor_id,
-                    old_position: current_pos,
-                    new_position: new_cursor_pos,
-                    old_anchor: None,
-                    new_anchor: None,
-                    old_sticky_column: 0,
-                    new_sticky_column: 0,
-                };
-                let split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                let buffer_id = self.active_buffer();
-                self.active_window_mut()
-                    .apply_event_to_buffer(buffer_id, split_id, &move_event);
+            if offset != insert_text.len() {
+                let move_events: Vec<Event> = self
+                    .active_cursors()
+                    .iter()
+                    .map(|(cursor_id, cursor)| {
+                        let current = cursor.position;
+                        let target = current.saturating_sub(insert_text.len()) + offset;
+                        Event::MoveCursor {
+                            cursor_id,
+                            old_position: current,
+                            new_position: target,
+                            old_anchor: cursor.anchor,
+                            new_anchor: None,
+                            old_sticky_column: cursor.sticky_column,
+                            new_sticky_column: 0,
+                        }
+                    })
+                    .collect();
+                for event in move_events {
+                    self.log_and_apply_event(&event);
+                }
             }
         }
     }
