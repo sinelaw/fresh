@@ -10,7 +10,7 @@
 //! same hook sequence as before.
 
 use crate::app::window::Window;
-use crate::app::window_resources::{WindowControlEvent, WindowResources};
+use crate::app::window_resources::WindowResources;
 use crate::services::plugins::hooks::HookArgs;
 use crate::view::split::{SplitManager, SplitViewState};
 use fresh_core::WindowId;
@@ -200,21 +200,6 @@ impl crate::app::Editor {
         // Placeholder for eager warm-up of file_explorer / LSP.
     }
 
-    /// Insert a buffer into the active window's storage. Step 0c
-    /// made `Window.buffers` the authoritative store; this is the
-    /// canonical attach path.
-    #[allow(dead_code)]
-    pub(crate) fn insert_buffer_into_active_window(
-        &mut self,
-        buffer_id: fresh_core::BufferId,
-        state: crate::state::EditorState,
-    ) {
-        let id = self.active_window;
-        if let Some(w) = self.windows.get_mut(&id) {
-            w.buffers.insert(buffer_id, state);
-        }
-    }
-
     /// Remove a buffer from whichever window holds it. Returns the
     /// removed `EditorState` if the buffer was found. Step 0c: each
     /// buffer lives in exactly one window, so this is at most one
@@ -262,103 +247,4 @@ impl crate::app::Editor {
         true
     }
 
-    /// Run a closure with `&mut Window` for the active window plus a
-    /// `&PluginManager` reference, then apply any
-    /// [`WindowControlEvent`]s the closure returned.
-    ///
-    /// This is the canonical bridge between `impl Editor` (which owns
-    /// the windows map, the singleton `PluginManager`, and editor-
-    /// global state) and `impl Window` (which owns per-window state
-    /// and runs handlers). A handler moved to `impl Window` fires
-    /// plugin hooks via the `&PluginManager` parameter directly — no
-    /// `Arc<Mutex<…>>` wrapping, no interior mutability, no runtime
-    /// lock-acquisition surprises. Cross-window orchestration goes
-    /// through the returned `Vec<WindowControlEvent>`.
-    ///
-    /// The `&PluginManager` and `&mut Window` borrows are disjoint
-    /// sub-fields of `Editor`, so the borrow checker accepts both for
-    /// the closure's lifetime without any interior mutability.
-    ///
-    /// The closure returns its own payload `R` plus a
-    /// `Vec<WindowControlEvent>`. Most handlers return an empty event
-    /// vec. When a handler legitimately can't proceed (no active
-    /// window — invariant says one always exists, but defend against
-    /// bugs anyway), the closure isn't called and the function
-    /// returns `None`.
-    ///
-    /// # When to use
-    ///
-    /// - Handler bodies that mutate window state and fire plugin
-    ///   hooks: take this dispatcher.
-    /// - Handler bodies that *only* mutate window state (no hooks):
-    ///   call the `Window` method directly via
-    ///   `self.active_window_mut().X(...)` — no need for the
-    ///   dispatcher's machinery.
-    #[allow(dead_code)]
-    pub(crate) fn dispatch_to_active_window<R, F>(&mut self, f: F) -> Option<R>
-    where
-        F: FnOnce(
-            &mut Window,
-            &crate::services::plugins::manager::PluginManager,
-        ) -> (R, Vec<WindowControlEvent>),
-    {
-        let id = self.active_window;
-        // Hold the read guard for the closure call, then drop it before
-        // applying control events (which take `&mut self`).
-        let (result, events) = {
-            let plugins = self.plugin_manager.read().unwrap();
-            let window = self.windows.get_mut(&id)?;
-            f(window, &plugins)
-        };
-        for event in events {
-            self.apply_window_control_event(event);
-        }
-        Some(result)
-    }
-
-    /// Apply a single [`WindowControlEvent`]. Called by
-    /// `dispatch_to_active_window` for every event returned by a
-    /// `Window` handler. Idempotent for unknown / stale ids — events
-    /// that target a window that has been closed by the time they
-    /// dispatch are warn-logged and dropped.
-    #[allow(dead_code)]
-    pub(crate) fn apply_window_control_event(&mut self, event: WindowControlEvent) {
-        match event {
-            WindowControlEvent::CloseThisWindow => {
-                let id = self.active_window;
-                // The handler returned this from `&mut self == window` so
-                // the window must still be alive; just log if not. We
-                // can't close the active window without first switching
-                // away from it (close_window refuses), so we currently
-                // warn-log; the long-term answer is for handlers to
-                // return CloseThisWindow only after returning
-                // SwitchToWindow(other).
-                if self.windows.len() <= 1 {
-                    tracing::warn!("CloseThisWindow ignored: only one window remains (id {id:?})");
-                    return;
-                }
-                tracing::warn!(
-                    "CloseThisWindow on active window {id:?}: caller must \
-                     SwitchToWindow first; ignoring"
-                );
-            }
-            WindowControlEvent::SwitchToWindow(target) => {
-                if !self.windows.contains_key(&target) {
-                    tracing::warn!("SwitchToWindow({target:?}) ignored: unknown window id");
-                    return;
-                }
-                self.set_active_window(target);
-            }
-            WindowControlEvent::QuitEditor => {
-                self.should_quit = true;
-            }
-            WindowControlEvent::DetachEditor => {
-                self.should_detach = true;
-            }
-            WindowControlEvent::RestartWithDir(path) => {
-                self.restart_with_dir = Some(path);
-                self.should_quit = true;
-            }
-        }
-    }
 }

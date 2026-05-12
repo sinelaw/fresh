@@ -3324,8 +3324,6 @@ impl Editor {
 
         if !lsp.semantic_tokens_range_supported(&language) {
             // Fall back to full document tokens if no server supports range.
-            // End the borrow first so the recursive call can re-borrow.
-            let _ = __buffers_ref;
             self.maybe_request_semantic_tokens(buffer_id);
             return;
         }

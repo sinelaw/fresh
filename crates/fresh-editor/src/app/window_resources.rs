@@ -17,11 +17,6 @@
 //! etc., without any `Editor` reference. Methods that previously had to
 //! sit on `impl Editor` to read these can move to `impl Window`.
 //!
-//! The single canonical channel back to `Editor` for cross-window
-//! orchestration is [`WindowControlEvent`] — a `Window` method *returns*
-//! events for things only `Editor` can do (close this window, switch
-//! windows, quit), and the calling Editor dispatcher applies them.
-//!
 //! ## What stays on `Editor` (not in `WindowResources`)
 //!
 //! - `next_buffer_id` allocator (separate concept — see
@@ -52,9 +47,8 @@ use crate::services::authority::Authority;
 use crate::services::fs::FsManager;
 use crate::services::time_source::SharedTimeSource;
 use crate::view::theme::ThemeRegistry;
-use fresh_core::{BufferId, WindowId};
+use fresh_core::BufferId;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -191,45 +185,4 @@ pub struct WindowResources {
 
     /// Editor-wide event broadcaster (cloneable, Arc inside).
     pub event_broadcaster: crate::model::control_event::EventBroadcaster,
-}
-
-/// Cross-window orchestration events that a `Window` handler returns to
-/// its calling `Editor` dispatcher.
-///
-/// A `Window` method should mutate its own state directly and only
-/// return events for things genuinely outside its scope — closing this
-/// window, switching to another, quitting, restarting. The set is
-/// deliberately small; new variants are added only when a concrete
-/// migration surfaces a need.
-///
-/// The `Editor::dispatch_to_active_window` helper drains any returned
-/// events and applies them after the `Window` mutation completes, so
-/// no `&mut Editor` reference leaks into the `Window` method body.
-#[derive(Debug, Clone)]
-#[must_use = "WindowControlEvents must be applied by the Editor dispatcher; \
-              dropping them silently swallows cross-window orchestration"]
-pub enum WindowControlEvent {
-    /// Close the window the handler was running on. Used by handlers
-    /// like "close last buffer in this window" or Conductor's "kill
-    /// session" action.
-    CloseThisWindow,
-
-    /// Switch the active window pointer to the named window. The
-    /// caller is responsible for guaranteeing the id exists in
-    /// `Editor.windows`; the dispatcher will warn-and-ignore on miss.
-    SwitchToWindow(WindowId),
-
-    /// Quit the editor process (graceful shutdown — workspace save,
-    /// LSP teardown, plugin shutdown all run).
-    QuitEditor,
-
-    /// Detach from the editor process (daemon stays running, client
-    /// disconnects).
-    DetachEditor,
-
-    /// Restart the editor process rooted at the given directory. Used
-    /// by "open folder" flows that switch the entire editor's project
-    /// root (distinct from `createWindow`, which adds a window
-    /// alongside the existing ones).
-    RestartWithDir(PathBuf),
 }

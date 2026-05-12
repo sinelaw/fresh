@@ -2092,8 +2092,10 @@ allocation). What remained for 0i, now done:
   removed every call site (~14 locations across virtual
   buffers, terminal, file open, macros, composite buffers,
   buffer management). Buffer inserts go directly into
-  `Window.buffers` via the canonical
-  `insert_buffer_into_active_window` path.
+  `Window.buffers` — either as `self.buffers.insert(...)` from
+  `impl Window` methods, or as `self.windows.get_mut(&id)?.
+  buffers.insert(...)` from the few `impl Editor` paths that
+  install state into a specific target window.
 * Updated test-helper comments in `editor_accessors.rs` that
   still framed the assertions as "warm-swap restored the
   stash" — the assertions remain correct, but they're now
@@ -2255,10 +2257,12 @@ has shipped onto `Window` plus several beyond:
 - Foundation infrastructure: `WindowResources` bundle of editor-
   global Arc-shared services (config, grammar/theme/keybinding/
   command registries, fs_manager, authority, time_source,
-  dir_context), `BufferIdAllocator` (Arc<AtomicUsize> shared),
-  `WindowControlEvent` enum + `Editor::dispatch_to_active_window`
-  helper threading both `&mut Window` and `&PluginManager` via
-  disjoint sub-field borrows.
+  dir_context), `BufferIdAllocator` (Arc<AtomicUsize> shared).
+  A speculative `WindowControlEvent` + `dispatch_to_active_window`
+  pair was originally added for cross-window orchestration from
+  `impl Window` handlers, but the migrations that shipped all use
+  the simpler `self.active_window_mut().method(...)` pattern
+  instead, so the unused dispatcher was removed.
 
 - Per-window fields moved: `preview`, `terminal_mode`,
   `terminal_mode_resume`, `seen_byte_ranges`,
