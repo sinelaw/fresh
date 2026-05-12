@@ -404,17 +404,16 @@ fn test_live_diff_highlights_empty_removed_line() {
         // pipe separator, then nothing else (empty content).
         if trimmed.contains('-')
             && trimmed.contains('│')
-            && trimmed.split('│').nth(1).is_some_and(|body| {
-                body.chars().all(|c| c.is_whitespace())
-            })
+            && trimmed
+                .split('│')
+                .nth(1)
+                .is_some_and(|body| body.chars().all(|c| c.is_whitespace()))
         {
             empty_del_row = Some(y);
             break;
         }
     }
-    let empty_del_row = empty_del_row.expect(
-        "never found an empty deletion virtual row on screen",
-    );
+    let empty_del_row = empty_del_row.expect("never found an empty deletion virtual row on screen");
 
     // The empty deletion row should be filled with the red
     // diff_remove_bg out to the viewport edge — sample at col 40.

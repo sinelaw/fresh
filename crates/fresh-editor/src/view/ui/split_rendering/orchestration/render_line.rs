@@ -1185,10 +1185,8 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     if current_view_line.line_start != LineStart::AfterInjectedNewline {
                         return None;
                     }
-                    let token_style = current_view_line
-                        .virtual_line_style
-                        .as_ref()
-                        .or_else(|| {
+                    let token_style =
+                        current_view_line.virtual_line_style.as_ref().or_else(|| {
                             current_view_line
                                 .char_styles
                                 .first()
