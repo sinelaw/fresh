@@ -516,6 +516,7 @@ mod tests {
             tab_starts: HashSet::new(),
             line_start: LineStart::AfterSourceNewline,
             ends_with_newline: true,
+            virtual_gutter_glyph: None,
         }];
 
         let indicators = fold_indicators_for_viewport(&state, &folds, &view_lines);

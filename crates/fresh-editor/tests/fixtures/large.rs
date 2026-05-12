@@ -5550,9 +5550,20 @@ impl Editor {
                 above,
                 namespace,
                 priority,
+                gutter_glyph,
+                gutter_color,
             } => {
                 self.handle_add_virtual_line(
-                    buffer_id, position, text, fg_color, bg_color, above, namespace, priority,
+                    buffer_id,
+                    position,
+                    text,
+                    fg_color,
+                    bg_color,
+                    above,
+                    namespace,
+                    priority,
+                    gutter_glyph,
+                    gutter_color,
                 );
             }
             PluginCommand::ClearVirtualTextNamespace {

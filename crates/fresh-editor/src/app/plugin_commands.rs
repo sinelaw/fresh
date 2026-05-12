@@ -370,6 +370,8 @@ impl Editor {
         above: bool,
         namespace: String,
         priority: i32,
+        gutter_glyph: Option<String>,
+        gutter_color_spec: Option<fresh_core::api::OverlayColorSpec>,
     ) {
         use crate::view::theme::named_color_from_str;
         use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
@@ -396,6 +398,13 @@ impl Editor {
 
         let (fg_fallback, fg_theme_key) = split(fg_color);
         let (bg_fallback, bg_theme_key) = split(bg_color);
+        // Gutter glyph theme keys are resolved eagerly because the
+        // gutter is rendered without going through the theme-key
+        // resolution path that the line-text fg/bg use. We accept the
+        // same `OverlayColorSpec` for consistency, but only bake the
+        // fallback color here — full theme-key-on-gutter would need
+        // a deeper change in the gutter renderer.
+        let (gutter_color_fallback, _gutter_theme_key) = split(gutter_color_spec);
 
         let mut style = Style::default();
         if let Some(c) = fg_fallback {
@@ -429,6 +438,8 @@ impl Editor {
                 placement,
                 ns,
                 priority,
+                gutter_glyph,
+                gutter_color_fallback,
             );
         }
     }

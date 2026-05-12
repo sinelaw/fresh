@@ -3046,6 +3046,13 @@ impl JsEditorApi {
     ///     theme-key string (e.g. `"editor.line_number_fg"`).  Theme keys
     ///     are resolved at render time so the line follows theme changes.
     ///     Both default to `null` (no foreground / transparent background).
+    ///   * `gutterGlyph` — optional single character (any short string)
+    ///     rendered in the line-number column on this virtual line's
+    ///     first visual row. Use to mark e.g. a deletion line with "-"
+    ///     so the indicator sits next to the deleted content instead
+    ///     of on the following source line.
+    ///   * `gutterColor` — color for `gutterGlyph`, same shape as
+    ///     `fg`/`bg`. Falls back to the theme's line-number fg.
     #[allow(clippy::too_many_arguments)]
     pub fn add_virtual_line<'js>(
         &self,
@@ -3078,6 +3085,11 @@ impl JsEditorApi {
 
         let fg_color = parse_color_spec("fg", &options);
         let bg_color = parse_color_spec("bg", &options);
+        let gutter_glyph = options
+            .get::<_, String>("gutterGlyph")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let gutter_color = parse_color_spec("gutterColor", &options);
 
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -3098,6 +3110,8 @@ impl JsEditorApi {
                 above,
                 namespace,
                 priority,
+                gutter_glyph,
+                gutter_color,
             })
             .is_ok())
     }
@@ -5170,50 +5184,43 @@ fn parse_view_token_style(
     obj: &rquickjs::Object<'_>,
     idx: usize,
 ) -> rquickjs::Result<Option<fresh_core::api::ViewTokenStyle>> {
-    use fresh_core::api::ViewTokenStyle;
+    use fresh_core::api::{TokenColor, ViewTokenStyle};
 
     let style_obj: Option<rquickjs::Object> = obj.get("style").ok();
     let Some(s) = style_obj else {
         return Ok(None);
     };
 
-    let fg: Option<Vec<u8>> = s.get("fg").ok();
-    let bg: Option<Vec<u8>> = s.get("bg").ok();
-
-    // Validate color arrays
-    let fg_color = if let Some(ref c) = fg {
-        if c.len() < 3 {
-            tracing::warn!(
-                "token[{}]: style.fg has {} elements, expected 3 (RGB)",
-                idx,
-                c.len()
-            );
-            None
-        } else {
-            Some((c[0], c[1], c[2]))
+    // fg/bg accept either `[r, g, b]` (legacy) or a string — a named
+    // ANSI color (`"Red"`, `"Default"`, …) or a theme key
+    // (`"editor.diff_remove_bg"`). Try the array form first, then fall
+    // back to a string.
+    fn parse_color(
+        s: &rquickjs::Object<'_>,
+        field: &str,
+        idx: usize,
+    ) -> rquickjs::Result<Option<TokenColor>> {
+        if let Ok(arr) = s.get::<_, Vec<u8>>(field) {
+            if arr.len() < 3 {
+                tracing::warn!(
+                    "token[{}]: style.{} has {} elements, expected 3 (RGB)",
+                    idx,
+                    field,
+                    arr.len()
+                );
+                return Ok(None);
+            }
+            return Ok(Some(TokenColor::Rgb(arr[0], arr[1], arr[2])));
         }
-    } else {
-        None
-    };
-
-    let bg_color = if let Some(ref c) = bg {
-        if c.len() < 3 {
-            tracing::warn!(
-                "token[{}]: style.bg has {} elements, expected 3 (RGB)",
-                idx,
-                c.len()
-            );
-            None
-        } else {
-            Some((c[0], c[1], c[2]))
+        if let Ok(name) = s.get::<_, String>(field) {
+            return Ok(Some(TokenColor::Named(name)));
         }
-    } else {
-        None
-    };
+        Ok(None)
+    }
 
     Ok(Some(ViewTokenStyle {
-        fg: fg_color,
-        bg: bg_color,
+        fg: parse_color(&s, "fg", idx)?,
+        bg: parse_color(&s, "bg", idx)?,
         bold: s.get("bold").unwrap_or(false),
         italic: s.get("italic").unwrap_or(false),
     }))

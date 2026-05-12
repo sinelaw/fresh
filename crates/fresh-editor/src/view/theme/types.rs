@@ -279,6 +279,77 @@ pub fn named_color_from_str(name: &str) -> Option<Color> {
     }
 }
 
+/// Convert a ratatui `Color` into the lossless `TokenColor::Named`
+/// string form used by `ViewTokenStyle` (for everything except
+/// `Color::Rgb`, which uses the array variant). The corresponding
+/// inverse lives on [`TokenColorExt::to_ratatui`].
+fn token_color_named_from_ratatui(color: Color) -> &'static str {
+    match color {
+        Color::Black => "Black",
+        Color::Red => "Red",
+        Color::Green => "Green",
+        Color::Yellow => "Yellow",
+        Color::Blue => "Blue",
+        Color::Magenta => "Magenta",
+        Color::Cyan => "Cyan",
+        Color::Gray => "Gray",
+        Color::DarkGray => "DarkGray",
+        Color::LightRed => "LightRed",
+        Color::LightGreen => "LightGreen",
+        Color::LightYellow => "LightYellow",
+        Color::LightBlue => "LightBlue",
+        Color::LightMagenta => "LightMagenta",
+        Color::LightCyan => "LightCyan",
+        Color::White => "White",
+        Color::Reset => "Default",
+        // Rgb and Indexed are handled by callers; this fn is for the
+        // named-only set above.
+        _ => "Default",
+    }
+}
+
+/// Resolve a `TokenColor` (the lossless RGB-or-named color carried by
+/// `ViewTokenStyle`) and produce a ratatui `Color` ready for the
+/// renderer. Named strings try (in order) an ANSI name, then
+/// `"Indexed:N"` for 256-color values, then a theme-key lookup
+/// against `theme`. Unknown strings fall through to `Color::Reset`
+/// so a typo in a plugin can't make text disappear.
+pub trait TokenColorExt {
+    fn to_ratatui(&self, theme: &Theme) -> Color;
+    fn from_ratatui(color: Color) -> Option<fresh_core::api::TokenColor>;
+}
+
+impl TokenColorExt for fresh_core::api::TokenColor {
+    fn to_ratatui(&self, theme: &Theme) -> Color {
+        use fresh_core::api::TokenColor;
+        match self {
+            TokenColor::Rgb(r, g, b) => Color::Rgb(*r, *g, *b),
+            TokenColor::Named(name) => {
+                if let Some(c) = named_color_from_str(name) {
+                    return c;
+                }
+                if let Some(rest) = name.strip_prefix("Indexed:") {
+                    if let Ok(n) = rest.parse::<u8>() {
+                        return Color::Indexed(n);
+                    }
+                }
+                theme.resolve_theme_key(name).unwrap_or(Color::Reset)
+            }
+        }
+    }
+
+    fn from_ratatui(color: Color) -> Option<fresh_core::api::TokenColor> {
+        use fresh_core::api::TokenColor;
+        match color {
+            Color::Rgb(r, g, b) => Some(TokenColor::Rgb(r, g, b)),
+            Color::Indexed(n) => Some(TokenColor::Named(format!("Indexed:{n}"))),
+            other => Some(TokenColor::Named(
+                token_color_named_from_ratatui(other).to_string(),
+            )),
+        }
+    }
+}
+
 impl From<Color> for ColorDef {
     fn from(color: Color) -> Self {
         match color {
@@ -449,6 +520,21 @@ pub struct EditorColors {
     /// Diff modified line background
     #[serde(default = "default_diff_modify_bg")]
     pub diff_modify_bg: ColorDef,
+    /// Foreground used for text rendered ON TOP OF `diff_add_bg`.
+    /// Optional: when unset, plugins fall back to
+    /// `ui.file_status_added_fg`. Set this on themes whose
+    /// `file_status_added_fg` collides with `diff_add_bg` (e.g. the
+    /// `terminal` theme where both default to ANSI Green).
+    #[serde(default)]
+    pub diff_add_fg: Option<ColorDef>,
+    /// Foreground used for text rendered ON TOP OF `diff_remove_bg`.
+    /// Optional: when unset, falls back to `ui.file_status_deleted_fg`.
+    #[serde(default)]
+    pub diff_remove_fg: Option<ColorDef>,
+    /// Foreground used for text rendered ON TOP OF `diff_modify_bg`.
+    /// Optional: when unset, falls back to `ui.file_status_modified_fg`.
+    #[serde(default)]
+    pub diff_modify_fg: Option<ColorDef>,
     /// Vertical ruler background color
     #[serde(default = "default_ruler_bg")]
     pub ruler_bg: ColorDef,
@@ -1149,6 +1235,19 @@ pub struct Theme {
     pub diff_add_highlight_bg: Color,
     /// Brighter background for inline diff highlighting on removed content
     pub diff_remove_highlight_bg: Color,
+    /// Foreground for text drawn ON TOP OF a diff bg.
+    ///
+    /// `None` means "don't override fg" — overlays that point at this
+    /// key leave the cell's existing fg alone, so syntax highlighting
+    /// shows through on added/modified lines. Themes whose
+    /// `file_status_*_fg` collides with the corresponding
+    /// `diff_*_bg` (e.g. the `terminal` theme, where both default to
+    /// ANSI Red/Green) explicitly set the key to a contrasting color
+    /// so the text becomes readable; everyone else inherits `None`
+    /// and the line keeps its original colors.
+    pub diff_add_fg: Option<Color>,
+    pub diff_remove_fg: Option<Color>,
+    pub diff_modify_fg: Option<Color>,
 
     // UI element colors
     pub tab_active_fg: Color,
@@ -1333,6 +1432,9 @@ impl From<ThemeFile> for Theme {
                 .diff_remove_highlight_bg
                 .map(|c| c.into())
                 .unwrap_or_else(|| brighten_color(file.editor.diff_remove_bg.into(), 40)),
+            diff_add_fg: file.editor.diff_add_fg.clone().map(|c| c.into()),
+            diff_remove_fg: file.editor.diff_remove_fg.clone().map(|c| c.into()),
+            diff_modify_fg: file.editor.diff_modify_fg.clone().map(|c| c.into()),
             tab_active_fg: file.ui.tab_active_fg.into(),
             tab_active_bg: file.ui.tab_active_bg.into(),
             tab_inactive_fg: file.ui.tab_inactive_fg.into(),
@@ -1520,6 +1622,9 @@ impl From<Theme> for ThemeFile {
                 diff_add_highlight_bg: Some(theme.diff_add_highlight_bg.into()),
                 diff_remove_highlight_bg: Some(theme.diff_remove_highlight_bg.into()),
                 diff_modify_bg: theme.diff_modify_bg.into(),
+                diff_add_fg: theme.diff_add_fg.map(|c| c.into()),
+                diff_remove_fg: theme.diff_remove_fg.map(|c| c.into()),
+                diff_modify_fg: theme.diff_modify_fg.map(|c| c.into()),
                 ruler_bg: theme.ruler_bg.into(),
                 whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
                 after_eof_bg: Some(theme.after_eof_bg.into()),
@@ -1812,6 +1917,14 @@ impl Theme {
                 "diff_add_bg" => Some(self.diff_add_bg),
                 "diff_remove_bg" => Some(self.diff_remove_bg),
                 "diff_modify_bg" => Some(self.diff_modify_bg),
+                // `diff_*_fg` are intentionally `Option<Color>` —
+                // `None` means "no override, let syntax/cell fg show
+                // through". Returning `None` here propagates that all
+                // the way through `OverlayFace::ThemedStyle` so
+                // overlays don't clobber the syntax color.
+                "diff_add_fg" => self.diff_add_fg,
+                "diff_remove_fg" => self.diff_remove_fg,
+                "diff_modify_fg" => self.diff_modify_fg,
                 "ruler_bg" => Some(self.ruler_bg),
                 "whitespace_indicator_fg" => Some(self.whitespace_indicator_fg),
                 _ => None,
@@ -1916,6 +2029,16 @@ impl Theme {
                 "diff_add_bg" => Some(&mut self.diff_add_bg),
                 "diff_remove_bg" => Some(&mut self.diff_remove_bg),
                 "diff_modify_bg" => Some(&mut self.diff_modify_bg),
+                // `Option<Color>` — only addressable for mutation
+                // when already set in the theme JSON. UI-driven
+                // override of an unset key isn't supported yet;
+                // users who want to opt a theme into a diff-fg
+                // override edit the JSON directly. Keeps the
+                // resolve / resolve_mut lock-step the regression
+                // test enforces.
+                "diff_add_fg" => self.diff_add_fg.as_mut(),
+                "diff_remove_fg" => self.diff_remove_fg.as_mut(),
+                "diff_modify_fg" => self.diff_modify_fg.as_mut(),
                 "ruler_bg" => Some(&mut self.ruler_bg),
                 "whitespace_indicator_fg" => Some(&mut self.whitespace_indicator_fg),
                 _ => None,

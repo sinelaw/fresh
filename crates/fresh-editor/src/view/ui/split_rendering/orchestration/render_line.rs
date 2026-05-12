@@ -21,7 +21,7 @@ use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::char_width;
 use crate::state::EditorState;
 use crate::view::overlay::Overlay;
-use crate::view::theme::Theme;
+use crate::view::theme::{Theme, TokenColorExt};
 use crate::view::ui::view_pipeline::{should_show_line_number, LineStart, ViewLine};
 use crate::view::virtual_text::VirtualTextPosition;
 use ratatui::layout::Rect;
@@ -240,6 +240,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 tab_starts: HashSet::new(),
                 line_start: LineStart::Beginning,
                 ends_with_newline: false,
+                virtual_gutter_glyph: None,
             })
         } else {
             break;
@@ -379,6 +380,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 byte_offset_mode,
                 highlight_current_line,
                 is_active,
+                virtual_gutter_glyph: current_view_line.virtual_gutter_glyph.as_ref(),
             },
             &mut line_spans,
             &mut line_view_map,
@@ -1178,8 +1180,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                         .char_styles
                         .first()
                         .and_then(|s| s.as_ref())?;
-                    let (r, g, b) = token_style.bg?;
-                    let bg = ratatui::style::Color::Rgb(r, g, b);
+                    let bg = token_style.bg.as_ref()?.to_ratatui(theme);
                     Some(ratatui::style::Style::default().fg(bg).bg(bg))
                 });
 

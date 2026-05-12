@@ -453,6 +453,7 @@ fn rust_to_typescript(ty: &Type, attrs: &[Attribute]) -> String {
                 | "ActionPopupOptions"
                 | "ViewTokenWire"
                 | "ViewTokenStyle"
+                | "TokenColor"
                 | "LayoutHints"
                 | "FileExplorerDecoration"
                 | "TsCompositeLayoutConfig"

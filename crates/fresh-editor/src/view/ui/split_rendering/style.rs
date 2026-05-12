@@ -4,9 +4,9 @@
 
 use crate::primitives::display_width::char_width;
 use crate::primitives::visual_layout::wrap_str_to_width;
-use crate::view::theme::{color_to_rgb, Theme};
+use crate::view::theme::{color_to_rgb, Theme, TokenColorExt};
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
-use fresh_core::api::ViewTokenStyle;
+use fresh_core::api::{TokenColor, ViewTokenStyle};
 use ratatui::style::{Color, Modifier, Style};
 use std::collections::HashSet;
 
@@ -23,7 +23,9 @@ pub(super) fn inline_diagnostic_style(priority: i32, theme: &Theme) -> Style {
 
 /// Style for fold placeholder text (italic, dimmed).
 pub(super) fn fold_placeholder_style(theme: &Theme) -> ViewTokenStyle {
-    let fg = color_to_rgb(theme.line_number_fg).or_else(|| color_to_rgb(theme.editor_fg));
+    let fg = color_to_rgb(theme.line_number_fg)
+        .or_else(|| color_to_rgb(theme.editor_fg))
+        .map(|(r, g, b)| TokenColor::Rgb(r, g, b));
     ViewTokenStyle {
         fg,
         bg: None,
@@ -139,16 +141,17 @@ pub(super) fn create_wrapped_virtual_lines(
     text: &str,
     style: Style,
     wrap_width: Option<usize>,
+    gutter_glyph: Option<(String, Color)>,
 ) -> Vec<ViewLine> {
+    // `TokenColor` faithfully captures every `ratatui::Color` variant
+    // (RGB, named ANSI, indexed, `Reset`) so themes like `terminal` —
+    // which use named ANSI colors for the diff backgrounds — survive
+    // round-tripping through `ViewTokenStyle` and reach the renderer
+    // intact. Previously only `Color::Rgb` survived, so virtual lines
+    // dropped the bg on ANSI-only themes.
     let token_style = ViewTokenStyle {
-        fg: style.fg.and_then(|c| match c {
-            Color::Rgb(r, g, b) => Some((r, g, b)),
-            _ => None,
-        }),
-        bg: style.bg.and_then(|c| match c {
-            Color::Rgb(r, g, b) => Some((r, g, b)),
-            _ => None,
-        }),
+        fg: style.fg.and_then(TokenColor::from_ratatui),
+        bg: style.bg.and_then(TokenColor::from_ratatui),
         bold: style.add_modifier.contains(Modifier::BOLD),
         italic: style.add_modifier.contains(Modifier::ITALIC),
     };
@@ -167,16 +170,29 @@ pub(super) fn create_wrapped_virtual_lines(
     if chunk_ranges.is_empty() {
         // Empty input still produces one empty virtual line so it
         // contributes a row to the screen, matching prior behaviour.
-        return vec![build_virtual_view_line("", &token_style)];
+        return vec![build_virtual_view_line("", &token_style, gutter_glyph)];
     }
 
-    chunk_ranges
-        .into_iter()
-        .map(|r| build_virtual_view_line(&text[r], &token_style))
-        .collect()
+    // The gutter glyph belongs to the *virtual line as a whole*, not
+    // its wrapped sub-rows, so it only goes on the first ViewLine
+    // produced; continuation rows get `None`.
+    let mut rows: Vec<ViewLine> = Vec::with_capacity(chunk_ranges.len());
+    let mut glyph = gutter_glyph;
+    for r in chunk_ranges {
+        rows.push(build_virtual_view_line(
+            &text[r],
+            &token_style,
+            glyph.take(),
+        ));
+    }
+    rows
 }
 
-fn build_virtual_view_line(text: &str, token_style: &ViewTokenStyle) -> ViewLine {
+fn build_virtual_view_line(
+    text: &str,
+    token_style: &ViewTokenStyle,
+    gutter_glyph: Option<(String, Color)>,
+) -> ViewLine {
     let len = text.chars().count();
     ViewLine {
         text: text.to_string(),
@@ -188,6 +204,7 @@ fn build_virtual_view_line(text: &str, token_style: &ViewTokenStyle) -> ViewLine
         tab_starts: HashSet::new(),
         line_start: LineStart::AfterInjectedNewline,
         ends_with_newline: true,
+        virtual_gutter_glyph: gutter_glyph,
     }
 }
 
@@ -197,7 +214,7 @@ mod tests {
 
     #[test]
     fn create_wrapped_virtual_lines_no_wrap_returns_one_line() {
-        let lines = create_wrapped_virtual_lines("hello world", Style::default(), None);
+        let lines = create_wrapped_virtual_lines("hello world", Style::default(), None, None);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "hello world");
         assert_eq!(lines[0].line_start, LineStart::AfterInjectedNewline);
@@ -205,7 +222,7 @@ mod tests {
 
     #[test]
     fn create_wrapped_virtual_lines_empty_input_yields_single_empty_row() {
-        let lines = create_wrapped_virtual_lines("", Style::default(), Some(20));
+        let lines = create_wrapped_virtual_lines("", Style::default(), Some(20), None);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].text.is_empty());
         assert_eq!(lines[0].line_start, LineStart::AfterInjectedNewline);
@@ -215,7 +232,7 @@ mod tests {
     fn create_wrapped_virtual_lines_splits_no_boundary_at_hard_cap() {
         // No word boundary anywhere — must hard-cap at width.
         let text: String = std::iter::repeat('X').take(50).collect();
-        let lines = create_wrapped_virtual_lines(&text, Style::default(), Some(20));
+        let lines = create_wrapped_virtual_lines(&text, Style::default(), Some(20), None);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].text.chars().count(), 20);
         assert_eq!(lines[1].text.chars().count(), 20);
@@ -236,6 +253,7 @@ mod tests {
             "the quick brown fox jumps over the lazy dog",
             Style::default(),
             Some(18),
+            None,
         );
         assert!(lines.len() >= 2);
         // Concatenating the segment texts must round-trip the input.

@@ -57,6 +57,13 @@ pub struct ViewLine {
     pub line_start: LineStart,
     /// Whether this line ends with a newline character
     pub ends_with_newline: bool,
+    /// Gutter glyph to render in the line-number column. Only set on
+    /// the first visual row of a virtual line (`AfterInjectedNewline`)
+    /// whose source `VirtualText` carried a `gutter_glyph`. None on
+    /// source lines and on continuation rows of wrapped virtual
+    /// lines, so a multi-row deletion places a single "-" next to its
+    /// first row, not on every wrapped sub-row.
+    pub virtual_gutter_glyph: Option<(String, ratatui::style::Color)>,
 }
 
 impl ViewLine {
@@ -279,6 +286,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                     tab_starts: HashSet::new(),
                     line_start: LineStart::AfterSourceNewline,
                     ends_with_newline: false,
+                    virtual_gutter_glyph: None,
                 });
             }
             return None;
@@ -589,6 +597,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
             tab_starts,
             line_start,
             ends_with_newline,
+            virtual_gutter_glyph: None,
         })
     }
 }

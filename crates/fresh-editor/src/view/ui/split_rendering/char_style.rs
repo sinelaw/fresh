@@ -7,7 +7,7 @@
 //! never leak to callers outside `split_rendering`.
 
 use crate::view::overlay::{Overlay, OverlayFace};
-use crate::view::theme::Theme;
+use crate::view::theme::{Theme, TokenColorExt};
 use fresh_core::api::ViewTokenStyle;
 use ratatui::style::{Color, Modifier, Style};
 
@@ -67,14 +67,14 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     // Otherwise use ANSI/syntax/theme default
     let mut style = if let Some(ts) = ctx.token_style {
         let mut s = Style::default();
-        if let Some((r, g, b)) = ts.fg {
-            s = s.fg(Color::Rgb(r, g, b));
+        if let Some(ref fg) = ts.fg {
+            s = s.fg(fg.to_ratatui(ctx.theme));
         } else {
             s = s.fg(ctx.theme.editor_fg);
             fg_theme_key = Some("editor.fg");
         }
-        if let Some((r, g, b)) = ts.bg {
-            s = s.bg(Color::Rgb(r, g, b));
+        if let Some(ref bg) = ts.bg {
+            s = s.bg(bg.to_ratatui(ctx.theme));
         }
         if ts.bold {
             s = s.add_modifier(Modifier::BOLD);

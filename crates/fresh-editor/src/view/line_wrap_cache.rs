@@ -307,6 +307,7 @@ pub fn layout_for_plain_text(
             tab_starts: std::collections::HashSet::new(),
             line_start: LineStart::Beginning,
             ends_with_newline: false,
+            virtual_gutter_glyph: None,
         });
     }
     lines
@@ -543,6 +544,7 @@ pub fn compute_line_layout(
             tab_starts: std::collections::HashSet::new(),
             line_start: crate::view::ui::view_pipeline::LineStart::Beginning,
             ends_with_newline: false,
+            virtual_gutter_glyph: None,
         });
     }
     result
@@ -597,6 +599,7 @@ pub fn placeholder_layout_for_row_count(n: u32) -> Vec<ViewLine> {
             tab_starts: std::collections::HashSet::new(),
             line_start: LineStart::Beginning,
             ends_with_newline: false,
+            virtual_gutter_glyph: None,
         })
         .collect()
 }
@@ -795,6 +798,7 @@ mod tests {
                 tab_starts: std::collections::HashSet::new(),
                 line_start: LineStart::Beginning,
                 ends_with_newline: false,
+                virtual_gutter_glyph: None,
             })
             .collect()
     }

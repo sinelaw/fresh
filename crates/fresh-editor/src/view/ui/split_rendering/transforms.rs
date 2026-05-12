@@ -800,10 +800,17 @@ pub(super) fn inject_virtual_lines(
                     && *anchor_pos < end
                     && vtext.position == VirtualTextPosition::LineAbove
                 {
+                    let glyph = vtext.gutter_glyph.as_ref().map(|g| {
+                        (
+                            g.clone(),
+                            vtext.gutter_color.unwrap_or(theme.line_number_fg),
+                        )
+                    });
                     result.extend(create_wrapped_virtual_lines(
                         &vtext.text,
                         vtext.resolved_style(theme),
                         wrap_width,
+                        glyph,
                     ));
                 }
             }
@@ -817,10 +824,17 @@ pub(super) fn inject_virtual_lines(
                     && *anchor_pos < end
                     && vtext.position == VirtualTextPosition::LineBelow
                 {
+                    let glyph = vtext.gutter_glyph.as_ref().map(|g| {
+                        (
+                            g.clone(),
+                            vtext.gutter_color.unwrap_or(theme.line_number_fg),
+                        )
+                    });
                     result.extend(create_wrapped_virtual_lines(
                         &vtext.text,
                         vtext.resolved_style(theme),
                         wrap_width,
+                        glyph,
                     ));
                 }
             }

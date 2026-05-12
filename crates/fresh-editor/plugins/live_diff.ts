@@ -36,19 +36,21 @@ const NS_OVERLAY = "live-diff-overlay";
 // on the same line — but in practice users will run one or the other.
 const PRIORITY = 9;
 
-// Theme keys for backgrounds and virtual-line foregrounds. These are
-// resolved at render time by the editor, so the diff colors track
-// the active theme automatically.  All bundled themes provide
-// `editor.diff_*_bg` (defaulted via serde) and `ui.file_status_*_fg`
-// (falls through to `diagnostic.{info,warning,error}_fg` when the
-// theme doesn't override).
+// Theme keys for backgrounds and "on top of bg" foregrounds. These
+// are resolved at render time by the editor, so the diff colors track
+// the active theme automatically. The `editor.diff_*_fg` keys are
+// purpose-built for "text drawn on top of the matching diff bg" —
+// they default to `ui.file_status_*_fg` so themes that haven't been
+// updated still work, but themes whose `file_status_*_fg` collides
+// with `diff_*_bg` (e.g. `terminal`, where both resolve to ANSI Red)
+// override `editor.diff_*_fg` to a contrasting color.
 const THEME = {
   addedBg: "editor.diff_add_bg",
-  addedFg: "ui.file_status_added_fg",
+  addedFg: "editor.diff_add_fg",
   modifiedBg: "editor.diff_modify_bg",
-  modifiedFg: "ui.file_status_modified_fg",
+  modifiedFg: "editor.diff_modify_fg",
   removedBg: "editor.diff_remove_bg",
-  removedFg: "ui.file_status_deleted_fg",
+  removedFg: "editor.diff_remove_fg",
 };
 
 // `setLineIndicator` only accepts RGB triples (not theme keys), so the
@@ -75,6 +77,21 @@ const MAX_DIFF_LINES = 20_000;
 // Soft cap on the LCS DP table; past this we stop computing virtual lines.
 const MAX_DP_CELLS = 4_000_000;
 
+// Similarity (Sørensen–Dice over character LCS) above which a 1:1
+// modified pair is rendered as "modified" (bg-only highlight on the
+// new line, no deletion virtual line). Below this we split the pair
+// into a `removed` (virtual deletion line) + `added` (bg-highlighted)
+// hunk pair so the change reads as a rewrite, not an in-place edit.
+//
+// 0.5 matches `difflib.SequenceMatcher.ratio()`-style heuristics used
+// by VS Code, IntelliJ and most diff viewers.
+const SIMILARITY_THRESHOLD = 0.5;
+// Bail out of char-LCS on huge lines; cost is O(m * n).
+const MAX_LINE_LCS_CHARS = 2000;
+// Bail out of word-LCS when either side has more tokens than this;
+// O(m * n) in tokens.
+const MAX_WORD_TOKENS = 1000;
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -86,6 +103,16 @@ type DiffMode =
 
 type HunkKind = "added" | "removed" | "modified";
 
+/** Byte range inside a single new-side line, used to emphasise the
+ * word-level diff result with bold + underline overlays. Offsets are
+ * UTF-8 byte offsets relative to the start of the line, NOT the
+ * buffer — `renderHunks` adds the line's own byte offset before
+ * passing them to `addOverlay`. */
+interface WordRange {
+  start: number;
+  end: number;
+}
+
 interface Hunk {
   kind: HunkKind;
   /** First changed new-side line (0-indexed). */
@@ -94,6 +121,12 @@ interface Hunk {
   newCount: number;
   /** Old-side text, line by line, no trailing newline. */
   oldLines: string[];
+  /** Word-level diff results, one entry per new-side line in this
+   * hunk. Set only on `modified` hunks above the similarity threshold
+   * — where we suppress the virtual deletion line and instead bold +
+   * underline the actually-changed words on the new line. `undefined`
+   * for unrefined hunks and for `added`/`removed` hunks. */
+  wordRanges?: WordRange[][];
 }
 
 interface BufferDiffState {
@@ -434,6 +467,229 @@ function fillOldLines(hunks: Hunk[], oldLines: string[]): void {
 }
 
 // =============================================================================
+// Similarity + word-level diff
+// =============================================================================
+
+/**
+ * Sørensen–Dice-style similarity ratio over a character LCS:
+ *
+ *   ratio = 2 * |LCS(a, b)| / (|a| + |b|)
+ *
+ * Range `0.0..1.0`. Empty / empty is `1.0`; either-side-empty is `0.0`.
+ * Both sides are stripped of their common prefix and suffix first so
+ * "abcdef" vs "abcXYZdef" pays only for the middle DP table.
+ */
+function lineSimilarity(a: string, b: string): number {
+  if (a.length === 0 && b.length === 0) return 1.0;
+  if (a.length === 0 || b.length === 0) return 0.0;
+  if (a.length > MAX_LINE_LCS_CHARS || b.length > MAX_LINE_LCS_CHARS) {
+    // Quadratic char LCS is too expensive on huge lines (minified
+    // JS, base64 blobs). Treat as different so we don't stall the
+    // render; the caller falls back to "split into removed+added".
+    return 0.0;
+  }
+  let prefix = 0;
+  const minLen = Math.min(a.length, b.length);
+  while (prefix < minLen && a[prefix] === b[prefix]) prefix++;
+  let aEnd = a.length;
+  let bEnd = b.length;
+  while (aEnd > prefix && bEnd > prefix && a[aEnd - 1] === b[bEnd - 1]) {
+    aEnd--;
+    bEnd--;
+  }
+  const equal = prefix + (a.length - aEnd);
+  const m = aEnd - prefix;
+  const n = bEnd - prefix;
+  if (m === 0 || n === 0) {
+    return (2 * equal) / (a.length + b.length);
+  }
+  const stride = n + 1;
+  const dp: number[] = new Array((m + 1) * stride).fill(0);
+  for (let i = 1; i <= m; i++) {
+    const ai = a[prefix + i - 1];
+    for (let j = 1; j <= n; j++) {
+      if (ai === b[prefix + j - 1]) {
+        dp[i * stride + j] = dp[(i - 1) * stride + (j - 1)] + 1;
+      } else {
+        const x = dp[(i - 1) * stride + j];
+        const y = dp[i * stride + (j - 1)];
+        dp[i * stride + j] = x >= y ? x : y;
+      }
+    }
+  }
+  const middleLcs = dp[m * stride + n];
+  return (2 * (equal + middleLcs)) / (a.length + b.length);
+}
+
+/** A run of word, whitespace, or punctuation characters, with the
+ * UTF-8 byte offsets it occupies inside its source string. */
+interface Token {
+  text: string;
+  byteStart: number;
+  byteEnd: number;
+}
+
+const WORD_CHAR = /[A-Za-z0-9_]/;
+const WHITESPACE_CHAR = /\s/;
+
+/** Tokenize into word runs (`\w+`), whitespace runs (`\s+`), and
+ * single non-word non-whitespace characters. Byte offsets are
+ * computed once per run via `editor.utf8ByteLength` so downstream
+ * overlays can index without re-scanning the string. */
+function tokenize(s: string): Token[] {
+  const tokens: Token[] = [];
+  let i = 0;
+  let bytePos = 0;
+  while (i < s.length) {
+    let j = i;
+    const c = s[i];
+    if (WHITESPACE_CHAR.test(c)) {
+      while (j < s.length && WHITESPACE_CHAR.test(s[j])) j++;
+    } else if (WORD_CHAR.test(c)) {
+      while (j < s.length && WORD_CHAR.test(s[j])) j++;
+    } else {
+      j = i + 1;
+    }
+    const text = s.slice(i, j);
+    const byteLen = editor.utf8ByteLength(text);
+    tokens.push({ text, byteStart: bytePos, byteEnd: bytePos + byteLen });
+    bytePos += byteLen;
+    i = j;
+  }
+  return tokens;
+}
+
+/**
+ * Compute the byte ranges of words on the new-side line that are not
+ * part of the longest common token subsequence with the old-side
+ * line. Whitespace-only tokens are never highlighted (whitespace
+ * changes mid-word look like noise; whole-line whitespace edits are
+ * handled by the line-level diff). Adjacent unmatched non-whitespace
+ * tokens are coalesced into a single range so a renamed
+ * `foo.bar.baz` becomes one underline, not three.
+ */
+function computeWordDiff(oldS: string, newS: string): WordRange[] {
+  const oldTokens = tokenize(oldS);
+  const newTokens = tokenize(newS);
+  const m = oldTokens.length;
+  const n = newTokens.length;
+  if (n === 0) return [];
+  if (m === 0 || m > MAX_WORD_TOKENS || n > MAX_WORD_TOKENS) {
+    // Either nothing to compare against or the line is so long that
+    // the token DP would dwarf the line-level pass. Mark every non-
+    // whitespace token as changed so the user still sees *something*.
+    return collapseRanges(
+      newTokens
+        .filter((t) => !WHITESPACE_CHAR.test(t.text[0] ?? "")),
+    );
+  }
+  const stride = n + 1;
+  const dp: number[] = new Array((m + 1) * stride).fill(0);
+  for (let i = 1; i <= m; i++) {
+    const ot = oldTokens[i - 1].text;
+    for (let j = 1; j <= n; j++) {
+      if (ot === newTokens[j - 1].text) {
+        dp[i * stride + j] = dp[(i - 1) * stride + (j - 1)] + 1;
+      } else {
+        const x = dp[(i - 1) * stride + j];
+        const y = dp[i * stride + (j - 1)];
+        dp[i * stride + j] = x >= y ? x : y;
+      }
+    }
+  }
+  // Backtrack to find which newTokens are in the LCS pairing.
+  const matched: boolean[] = new Array(n).fill(false);
+  let i = m;
+  let j = n;
+  while (i > 0 && j > 0) {
+    if (oldTokens[i - 1].text === newTokens[j - 1].text) {
+      matched[j - 1] = true;
+      i--;
+      j--;
+    } else if (dp[(i - 1) * stride + j] >= dp[i * stride + (j - 1)]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  const unmatched: Token[] = [];
+  for (let k = 0; k < n; k++) {
+    if (matched[k]) continue;
+    const t = newTokens[k];
+    if (WHITESPACE_CHAR.test(t.text[0] ?? "")) continue;
+    unmatched.push(t);
+  }
+  return collapseRanges(unmatched);
+}
+
+/** Merge adjacent or touching token ranges into a single range so
+ * downstream overlay creation costs are O(runs), not O(tokens). */
+function collapseRanges(tokens: Token[]): WordRange[] {
+  const ranges: WordRange[] = [];
+  for (const t of tokens) {
+    const last = ranges[ranges.length - 1];
+    if (last && last.end === t.byteStart) {
+      last.end = t.byteEnd;
+    } else {
+      ranges.push({ start: t.byteStart, end: t.byteEnd });
+    }
+  }
+  return ranges;
+}
+
+/**
+ * Post-process `opsToHunks` output: split low-similarity 1:1
+ * `modified` hunks into separate `removed` (virtual deletion line) +
+ * `added` (bg-highlighted) hunks. High-similarity pairs stay as
+ * `modified` but drop their old lines (so no virtual line renders)
+ * and gain a `wordRanges` entry that drives the bold + underline
+ * word-level overlay.
+ *
+ * Hunks that don't have a 1:1 mapping (e.g. 3 old lines becoming 2
+ * new lines) keep their original shape — the pairing is ambiguous,
+ * and forcing a rewrite-style split would just create misleading
+ * "removed" lines.
+ */
+function refineHunks(hunks: Hunk[], newLines: string[]): Hunk[] {
+  const out: Hunk[] = [];
+  for (const h of hunks) {
+    if (h.kind !== "modified" || h.oldLines.length !== h.newCount) {
+      out.push(h);
+      continue;
+    }
+    for (let i = 0; i < h.newCount; i++) {
+      const oldLine = h.oldLines[i];
+      const newLine = newLines[h.newStart + i] ?? "";
+      const sim = lineSimilarity(oldLine, newLine);
+      if (sim >= SIMILARITY_THRESHOLD) {
+        const ranges = computeWordDiff(oldLine, newLine);
+        out.push({
+          kind: "modified",
+          newStart: h.newStart + i,
+          newCount: 1,
+          oldLines: [],
+          wordRanges: [ranges],
+        });
+      } else {
+        out.push({
+          kind: "removed",
+          newStart: h.newStart + i,
+          newCount: 0,
+          oldLines: [oldLine],
+        });
+        out.push({
+          kind: "added",
+          newStart: h.newStart + i,
+          newCount: 1,
+          oldLines: [],
+        });
+      }
+    }
+  }
+  return out;
+}
+
+// =============================================================================
 // Rendering
 // =============================================================================
 
@@ -490,20 +746,18 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
   const lineCount = lineStarts.length;
 
   // Group new-side lines per kind for batched setLineIndicators.
+  // `removed` hunks have no new-side line they belong on — their
+  // indicator rides directly on the virtual deletion line itself
+  // via `addVirtualLine`'s `gutterGlyph`, so it sits next to the
+  // deleted content instead of on the source line that happens to
+  // follow it.
   const addedLines: number[] = [];
   const modifiedLines: number[] = [];
-  const removedAnchors: number[] = [];
 
   for (const h of state.hunks) {
-    if (h.kind === "removed") {
-      // Anchor on the line that took the deletion's place. If newStart
-      // is past EOF, step back to the last real line.
-      let anchor = h.newStart;
-      if (anchor >= lineCount) anchor = Math.max(0, lineCount - 1);
-      removedAnchors.push(anchor);
-    } else if (h.kind === "added") {
+    if (h.kind === "added") {
       for (let i = 0; i < h.newCount; i++) addedLines.push(h.newStart + i);
-    } else {
+    } else if (h.kind === "modified") {
       for (let i = 0; i < h.newCount; i++) modifiedLines.push(h.newStart + i);
     }
   }
@@ -520,17 +774,20 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
       GUTTER_COLORS.modified[0], GUTTER_COLORS.modified[1], GUTTER_COLORS.modified[2], PRIORITY,
     );
   }
-  if (removedAnchors.length > 0) {
-    editor.setLineIndicators(
-      bid, removedAnchors, NS_GUTTER, SYMBOLS.removed,
-      GUTTER_COLORS.removed[0], GUTTER_COLORS.removed[1], GUTTER_COLORS.removed[2], PRIORITY,
-    );
-  }
 
   // Background highlights and virtual lines, all sync now.
   for (const h of state.hunks) {
     if (h.kind === "added" || h.kind === "modified") {
       const bg = h.kind === "added" ? THEME.addedBg : THEME.modifiedBg;
+      // Passing `fg` as a theme key lets each theme decide whether to
+      // override the cell's existing fg: themes that DEFINE
+      // `editor.diff_*_fg` (e.g. `terminal`, where the ANSI bg would
+      // otherwise collide with same-named syntax colors) get a
+      // contrasting fg painted on; themes that don't define the key
+      // resolve to `None` in `OverlayFace::ThemedStyle`, so the
+      // overlay leaves the cell's fg alone and syntax highlighting
+      // shows through unchanged.
+      const fg = h.kind === "added" ? THEME.addedFg : THEME.modifiedFg;
       for (let i = 0; i < h.newCount; i++) {
         const line = h.newStart + i;
         if (line >= lineCount) break;
@@ -547,12 +804,43 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
         if (end <= start) end = start + 1;
         editor.addOverlay(bid, NS_OVERLAY, start, end, {
           bg,
+          fg,
           underline: false,
           bold: false,
           italic: false,
           strikethrough: false,
           extendToLineEnd: true,
         });
+      }
+
+      // Word-level diff: bold + underline the changed words on the
+      // new-side line of a refined high-similarity modified hunk.
+      // `wordRanges` is set only by `refineHunks` and uses byte
+      // offsets relative to each new-side line's start, so we add the
+      // line's own start byte before passing to `addOverlay`.
+      if (h.wordRanges) {
+        for (let i = 0; i < h.newCount; i++) {
+          const line = h.newStart + i;
+          if (line >= lineCount) break;
+          const lineByteStart = lineStarts[line];
+          const ranges = h.wordRanges[i];
+          if (!ranges) continue;
+          for (const r of ranges) {
+            editor.addOverlay(
+              bid,
+              NS_OVERLAY,
+              lineByteStart + r.start,
+              lineByteStart + r.end,
+              {
+                bold: true,
+                underline: true,
+                italic: false,
+                strikethrough: false,
+                extendToLineEnd: false,
+              },
+            );
+          }
+        }
       }
     }
 
@@ -569,9 +857,9 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
     const anchor = lineStarts[anchorLine];
 
     for (let i = 0; i < h.oldLines.length; i++) {
-      // No "- " prefix — the red bg/fg is the visual signal, and the user
-      // prefers any "-" indicator to live in the gutter rather than
-      // inside the buffer content.
+      // No "- " prefix in the line text — the indicator goes in the
+      // gutter via `gutterGlyph` so it sits next to the deletion
+      // line itself, not on the source line that follows it.
       editor.addVirtualLine(
         bid,
         anchor,
@@ -579,6 +867,8 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
         {
           fg: THEME.removedFg,
           bg: THEME.removedBg,
+          gutterGlyph: SYMBOLS.removed,
+          gutterColor: GUTTER_COLORS.removed,
         },
         above,
         NS_VLINE,
@@ -650,8 +940,13 @@ async function recompute(bufferId: number): Promise<void> {
       return;
     }
 
-    const hunks = opsToHunks(ops);
-    fillOldLines(hunks, state.oldLines);
+    const rawHunks = opsToHunks(ops);
+    fillOldLines(rawHunks, state.oldLines);
+    // Decide per-line whether each `modified` pair is a similar
+    // in-place edit (keep as `modified`, drop the virtual deletion
+    // line, mark changed words) or a low-similarity rewrite (split
+    // into separate `removed` + `added` hunks).
+    const hunks = refineHunks(rawHunks, newLines);
 
     // Skip 2: same hunks as last render. The user can edit inside an
     // already-flagged region without changing line counts (e.g., typing

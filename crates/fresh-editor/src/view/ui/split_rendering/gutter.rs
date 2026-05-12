@@ -41,6 +41,11 @@ pub(super) struct LeftMarginContext<'a> {
     pub byte_offset_mode: bool,
     pub highlight_current_line: bool,
     pub is_active: bool,
+    /// Optional glyph + color rendered into the indicator slot for
+    /// virtual lines (`ViewLine::virtual_gutter_glyph`). Source lines
+    /// pass `None` and fall back to the existing
+    /// diagnostic/fold/line-indicator lookup chain.
+    pub virtual_gutter_glyph: Option<&'a (String, Color)>,
 }
 
 /// Render the left margin (indicators + line numbers + separator) to the
@@ -63,8 +68,20 @@ pub(super) fn render_left_margin(
         None
     };
 
-    // For continuation lines, don't show any indicators
-    if ctx.is_continuation {
+    // Virtual lines whose source `VirtualText` carries a `gutter_glyph`
+    // get their own indicator (e.g. live-diff's "-" on a deletion
+    // line). This wins over the "continuation = blank" rule below so
+    // the glyph actually appears in the gutter; subsequent wrapped
+    // rows of the same virtual line set `virtual_gutter_glyph` to
+    // `None`, so they keep the blank fallback.
+    if let Some((glyph, color)) = ctx.virtual_gutter_glyph {
+        let mut style = Style::default().fg(*color);
+        if let Some(bg) = indicator_bg {
+            style = style.bg(bg);
+        }
+        push_span_with_map(line_spans, line_view_map, glyph.clone(), style, None);
+    } else if ctx.is_continuation {
+        // For continuation lines, don't show any indicators
         let mut style = Style::default();
         if let Some(bg) = indicator_bg {
             style = style.bg(bg);

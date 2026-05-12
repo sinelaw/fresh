@@ -24,7 +24,7 @@ use fresh_core::api::{
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
     PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult,
     SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
-    TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
+    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
     VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
@@ -89,6 +89,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
 
         // View transform types
         "ViewTokenWireKind" => Some(ViewTokenWireKind::decl(&cfg)),
+        "TokenColor" => Some(TokenColor::decl(&cfg)),
         "ViewTokenStyle" => Some(ViewTokenStyle::decl(&cfg)),
         "ViewTokenWire" => Some(ViewTokenWire::decl(&cfg)),
 
@@ -237,6 +238,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "LayoutHints",                    // Used by plugins for view transforms
     "ViewTokenWire",                  // Used by plugins for view transforms
     "ViewTokenWireKind",              // Used by ViewTokenWire
+    "TokenColor",                     // Used by ViewTokenStyle fg/bg
     "ViewTokenStyle",                 // Used by ViewTokenWire
     "PromptSuggestion",               // Used by plugins for prompt suggestions
     "DirEntry",                       // Used by plugins for directory entries
@@ -746,6 +748,7 @@ mod tests {
             "TsCompositeHunk",
             "TsCreateCompositeBufferOptions",
             "ViewTokenWireKind",
+            "TokenColor",
             "ViewTokenStyle",
             "ViewTokenWire",
             "TsActionPopupAction",

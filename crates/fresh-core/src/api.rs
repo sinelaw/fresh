@@ -817,6 +817,27 @@ pub enum ViewTokenWireKind {
     BinaryByte(u8),
 }
 
+/// Color carried by a `ViewTokenStyle`. Untagged so JSON plugins can
+/// keep passing `[r, g, b]` arrays, while richer themes can use named
+/// ANSI colors (`"Red"`, `"LightGreen"`, `"Default"`) or theme keys
+/// (`"editor.diff_remove_bg"`). The renderer resolves named/theme
+/// strings against the active theme at draw time; unknown strings
+/// fall through to the terminal's default color.
+///
+/// `Color::Indexed(N)` round-trips through the `"Indexed:N"` form so
+/// 256-color values from a ratatui `Color` survive the
+/// `ViewTokenStyle` boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(untagged)]
+#[ts(export)]
+pub enum TokenColor {
+    /// RGB color as [r, g, b] array
+    #[ts(type = "[number, number, number]")]
+    Rgb(u8, u8, u8),
+    /// Named ANSI color, `"Default"`, `"Indexed:N"`, or a theme key.
+    Named(String),
+}
+
 /// Styling for view tokens (used for injected annotations)
 ///
 /// This allows plugins to specify styling for tokens that don't have a source
@@ -826,14 +847,14 @@ pub enum ViewTokenWireKind {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ViewTokenStyle {
-    /// Foreground color as RGB tuple
+    /// Foreground color. Either `[r, g, b]` or a named/theme string —
+    /// see [`TokenColor`].
     #[serde(default)]
-    #[ts(type = "[number, number, number] | null")]
-    pub fg: Option<(u8, u8, u8)>,
-    /// Background color as RGB tuple
+    pub fg: Option<TokenColor>,
+    /// Background color. Either `[r, g, b]` or a named/theme string —
+    /// see [`TokenColor`].
     #[serde(default)]
-    #[ts(type = "[number, number, number] | null")]
-    pub bg: Option<(u8, u8, u8)>,
+    pub bg: Option<TokenColor>,
     /// Whether to render in bold
     #[serde(default)]
     pub bold: bool,
@@ -1950,6 +1971,14 @@ pub enum PluginCommand {
         namespace: String,
         /// Priority for ordering multiple lines at same position (higher = later)
         priority: i32,
+        /// Optional gutter glyph rendered in the line-number column on
+        /// the first visual row of this virtual line. Used by diff
+        /// plugins to put a "-" directly on the deletion line itself
+        /// instead of the source line that follows it.
+        gutter_glyph: Option<String>,
+        /// Color for `gutter_glyph` (RGB or theme key). Falls back to
+        /// `theme.line_number_fg` when `None`.
+        gutter_color: Option<OverlayColorSpec>,
     },
 
     /// Clear all virtual texts in a namespace
@@ -3793,8 +3822,9 @@ mod fromjs_impls {
 
         #[test]
         fn view_token_style_decodes_boolean_flags() {
-            // `fg`/`bg` are `Option<(u8, u8, u8)>` which rquickjs_serde does
-            // not decode from plain JS arrays, so we pin down the boolean
+            // `fg`/`bg` are `Option<TokenColor>` (untagged: RGB array or
+            // named string). rquickjs_serde struggles with the untagged
+            // variant from a plain JS array, so we pin down the boolean
             // flags — enough to prove the body actually ran.
             let got: ViewTokenStyle = eval_as("({bold: true, italic: true})");
             assert!(got.bold);

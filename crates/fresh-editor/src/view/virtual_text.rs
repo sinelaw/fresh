@@ -19,7 +19,7 @@
 //!
 //! This ensures frame coherence: render always sees a consistent snapshot of virtual text.
 
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use std::collections::HashMap;
 
 use crate::model::marker::{MarkerId, MarkerList};
@@ -99,6 +99,16 @@ pub struct VirtualText {
     pub string_id: Option<String>,
     /// Optional namespace for bulk removal (like Overlay's namespace)
     pub namespace: Option<VirtualTextNamespace>,
+    /// Optional gutter glyph rendered in the line-number column on the
+    /// FIRST visual row of this virtual line. Subsequent wrapped rows
+    /// keep a blank gutter. `None` (the default) renders blank, which
+    /// matches the legacy behaviour. Used by `live_diff` to place "-"
+    /// directly on the deletion line itself instead of the source
+    /// line that happens to follow it.
+    pub gutter_glyph: Option<String>,
+    /// Foreground color for `gutter_glyph`. Falls back to
+    /// `theme.line_number_fg` when `None`.
+    pub gutter_color: Option<Color>,
 }
 
 impl VirtualText {
@@ -208,6 +218,8 @@ impl VirtualTextManager {
                 priority,
                 string_id: None,
                 namespace: None,
+                gutter_glyph: None,
+                gutter_color: None,
             },
         );
         self.bump_version();
@@ -256,6 +268,8 @@ impl VirtualTextManager {
                 priority,
                 string_id: None,
                 namespace: None,
+                gutter_glyph: None,
+                gutter_color: None,
             },
         );
         self.bump_version();
@@ -294,6 +308,8 @@ impl VirtualTextManager {
                 priority,
                 string_id: Some(string_id),
                 namespace: None,
+                gutter_glyph: None,
+                gutter_color: None,
             },
         );
         self.bump_version();
@@ -338,6 +354,8 @@ impl VirtualTextManager {
                 priority,
                 string_id: Some(string_id),
                 namespace: None,
+                gutter_glyph: None,
+                gutter_color: None,
             },
         );
 
@@ -377,6 +395,8 @@ impl VirtualTextManager {
             placement,
             namespace,
             priority,
+            None,
+            None,
         )
     }
 
@@ -399,6 +419,8 @@ impl VirtualTextManager {
         placement: VirtualTextPosition,
         namespace: VirtualTextNamespace,
         priority: i32,
+        gutter_glyph: Option<String>,
+        gutter_color: Option<Color>,
     ) -> VirtualTextId {
         debug_assert!(
             placement.is_line(),
@@ -422,6 +444,8 @@ impl VirtualTextManager {
                 priority,
                 string_id: None,
                 namespace: Some(namespace),
+                gutter_glyph,
+                gutter_color,
             },
         );
         self.bump_version();
