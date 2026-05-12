@@ -4003,6 +4003,24 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Contribute (or replace, or clear) menu rows for the LSP-Servers
+    /// popup. Pass an empty `items` to clear this plugin's slice for
+    /// the given language. See `PluginCommand::SetLspMenuContributions`.
+    pub fn set_lsp_menu_contributions(
+        &self,
+        plugin_id: String,
+        language: String,
+        items: Vec<fresh_core::api::LspMenuItem>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetLspMenuContributions {
+                plugin_id,
+                language,
+                items,
+            })
+            .is_ok()
+    }
+
     /// Disable LSP for a specific language
     pub fn disable_lsp_for_language(&self, language: String) -> bool {
         self.command_sender

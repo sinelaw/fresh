@@ -526,6 +526,17 @@ type ActionPopupOptions = {
 	*/
 	actions: Array<TsActionPopupAction>;
 };
+type TsLspMenuItem = {
+	/**
+	* Stable identifier used as the `action_id` in the resulting
+	* `action_popup_result` event (prefixed by `{plugin_id}|`).
+	*/
+	id: string;
+	/**
+	* Display label shown in the popup row.
+	*/
+	label: string;
+};
 type FileExplorerDecoration = {
 	/**
 	* File path to decorate
@@ -2276,6 +2287,12 @@ interface EditorAPI {
 	* Takes a typed ActionPopupOptions struct - serde validates field names at runtime
 	*/
 	showActionPopup(opts: ActionPopupOptions): boolean;
+	/**
+	* Contribute (or replace, or clear) menu rows for the LSP-Servers
+	* popup. Pass an empty `items` to clear this plugin's slice for
+	* the given language. See `PluginCommand::SetLspMenuContributions`.
+	*/
+	setLspMenuContributions(pluginId: string, language: string, items: TsLspMenuItem[]): boolean;
 	/**
 	* Disable LSP for a specific language
 	*/

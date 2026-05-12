@@ -484,6 +484,53 @@ impl Editor {
         }
         items.push(log_item);
 
+        // Plugin-contributed rows — injected between View Log and
+        // Dismiss as an extra "Plugin actions" section. This is the
+        // merge half of "Option B" (#1941 follow-up): instead of
+        // plugins pushing their own separate popup via
+        // `editor.showActionPopup` (which stacked on top of this one
+        // and confused the user), they install rows here via
+        // `PluginCommand::SetLspMenuContributions` and the editor
+        // routes the eventual selection back via
+        // `action_popup_result` with `popup_id = "lsp_status"` and
+        // `action_id = "{plugin_id}|{item_id}"`.
+        //
+        // Sorted by (plugin_id, item index) for stable ordering so
+        // the popup doesn't shuffle rows between renders. A single
+        // header row labels the section when there's at least one
+        // contributed item, so the user can tell the rows below come
+        // from a plugin (vs. built-in actions like Stop/Restart).
+        let mut contributed: Vec<(&String, &Vec<crate::app::LspMenuItem>)> = self
+            .active_window()
+            .lsp_menu_contributions
+            .iter()
+            .filter_map(|((lang, plugin_id), items)| {
+                if lang == language && !items.is_empty() {
+                    Some((plugin_id, items))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        contributed.sort_by(|a, b| a.0.cmp(b.0));
+        if !contributed.is_empty() {
+            // Section header — non-actionable, mimics the language
+            // header at the top (no data → not clickable).
+            items.push(crate::view::popup::PopupListItem::new(
+                "  ─ Plugin actions ─".to_string(),
+            ));
+            for (plugin_id, plugin_items) in contributed {
+                for it in plugin_items {
+                    let key = format!("plugin:{}|{}", plugin_id, it.id);
+                    items.push(
+                        crate::view::popup::PopupListItem::new(format!("    {}", it.label))
+                            .with_data(key.clone()),
+                    );
+                    action_keys.push((key, it.label.clone()));
+                }
+            }
+        }
+
         // Trailing Dismiss row — gives users an on-screen way out of
         // the popup without having to know that Esc works. The key
         // label is looked up from the keybinding resolver so a

@@ -496,6 +496,22 @@ pub struct Window {
     pub lsp_server_statuses:
         HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
 
+    /// Plugin-contributed menu items merged into the LSP-Servers popup
+    /// (the one opened by clicking the LSP indicator). Keyed by
+    /// `(language, plugin_id)` so each plugin owns its own slice and
+    /// can refresh it independently. The items render as an extra
+    /// section in `build_and_show_lsp_status_popup` between the
+    /// built-in actions and the trailing "View Log / Dismiss" rows.
+    /// Selecting one fires `action_popup_result` with `popup_id =
+    /// "lsp_status"` and `action_id = "{plugin_id}|{item_id}"` so the
+    /// contributing plugin can react.
+    ///
+    /// See #1941 follow-up "Option B": instead of plugins pushing
+    /// their own separate popup (which created the stacked-popup UX
+    /// problem), they contribute items into the single LSP-Servers
+    /// popup.
+    pub lsp_menu_contributions: HashMap<(String, String), Vec<crate::app::LspMenuItem>>,
+
     /// Recent `window/showMessage` payloads from this window's LSP
     /// servers. Bounded ring (newest entries kept, drops the oldest
     /// when the soft cap is exceeded).
@@ -1595,6 +1611,7 @@ impl Window {
             diagnostic_result_ids: HashMap::new(),
             lsp_progress: HashMap::new(),
             lsp_server_statuses: HashMap::new(),
+            lsp_menu_contributions: HashMap::new(),
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),
             stored_push_diagnostics: HashMap::new(),

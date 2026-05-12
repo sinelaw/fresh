@@ -460,6 +460,7 @@ fn rust_to_typescript(ty: &Type, attrs: &[Attribute]) -> String {
                 | "TsCompositePaneStyle"
                 | "TsHighlightSpan"
                 | "TsActionPopupAction"
+                | "TsLspMenuItem"
                 | "JsDiagnostic"
                 | "CreateTerminalOptions"
                 | "TerminalResult" => type_name,
@@ -468,6 +469,7 @@ fn rust_to_typescript(ty: &Type, attrs: &[Attribute]) -> String {
                 "CompositeHunk" => "TsCompositeHunk".to_string(),
                 "CreateCompositeBufferOptions" => "TsCreateCompositeBufferOptions".to_string(),
                 "Suggestion" => "PromptSuggestion".to_string(),
+                "LspMenuItem" => "TsLspMenuItem".to_string(),
 
                 // Default: use type name as-is
                 _ => type_name,

@@ -1064,6 +1064,14 @@ impl Editor {
                 self.handle_show_action_popup(popup_id, title, message, actions);
             }
 
+            PluginCommand::SetLspMenuContributions {
+                plugin_id,
+                language,
+                items,
+            } => {
+                self.handle_set_lsp_menu_contributions(plugin_id, language, items);
+            }
+
             PluginCommand::DisableLspForLanguage { language } => {
                 self.handle_disable_lsp_for_language(language);
             }
@@ -2637,6 +2645,36 @@ impl Editor {
             popup_id,
             self.global_popups.all().len()
         );
+    }
+
+    /// Install (or replace, or clear) a plugin's contributions for the
+    /// LSP-Servers popup. Passing an empty `items` removes any
+    /// previous contribution from this `plugin_id` for this
+    /// `language`. Mirrors the editor-side half of
+    /// `PluginCommand::SetLspMenuContributions`.
+    ///
+    /// If the LSP-Servers popup is currently open for this language,
+    /// refresh it in place so the new rows show up immediately
+    /// rather than only on the next click.
+    fn handle_set_lsp_menu_contributions(
+        &mut self,
+        plugin_id: String,
+        language: String,
+        items: Vec<fresh_core::api::LspMenuItem>,
+    ) {
+        let key = (language.clone(), plugin_id.clone());
+        if items.is_empty() {
+            self.active_window_mut().lsp_menu_contributions.remove(&key);
+        } else {
+            self.active_window_mut()
+                .lsp_menu_contributions
+                .insert(key, items);
+        }
+        // If the popup is on screen right now, re-render it so the
+        // change is immediately visible — the alternative is "next
+        // click sees it" which feels unresponsive when the plugin
+        // is reacting to an event the user just triggered.
+        self.refresh_lsp_status_popup_if_open();
     }
 
     fn handle_create_terminal(

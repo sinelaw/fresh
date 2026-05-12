@@ -408,6 +408,25 @@ impl Editor {
     ///   user has an on-screen "Dismiss" affordance (close is handled
     ///   upstream in `handle_popup_confirm` before this is called)
     pub fn handle_lsp_status_action(&mut self, action_key: &str) {
+        // Plugin-contributed rows in the LSP-Servers popup carry an
+        // action_key like `plugin:{plugin_id}|{item_id}`. The popup
+        // builder injects these from
+        // `Window::lsp_menu_contributions`; selecting one fires the
+        // standard `action_popup_result` hook so the contributing
+        // plugin can react. The `popup_id` is the fixed string
+        // "lsp_status" so a plugin can disambiguate from popups it
+        // owns directly via `editor.showActionPopup`.
+        if let Some(rest) = action_key.strip_prefix("plugin:") {
+            let (plugin_id, item_id) = rest.split_once('|').unwrap_or((rest, ""));
+            self.plugin_manager.read().unwrap().run_hook(
+                "action_popup_result",
+                crate::services::plugins::hooks::HookArgs::ActionPopupResult {
+                    popup_id: "lsp_status".to_string(),
+                    action_id: format!("{}|{}", plugin_id, item_id),
+                },
+            );
+            return;
+        }
         if action_key == "cancel_popup" {
             // Popup is already closed by `handle_popup_confirm`; the
             // row only exists to give the user an on-screen surface

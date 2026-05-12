@@ -168,7 +168,8 @@ pub fn editor_tick(
 pub(crate) use path_utils::normalize_path;
 
 use self::types::{
-    LspMessageEntry, LspProgressInfo, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
+    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, TabContextMenu,
+    DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;

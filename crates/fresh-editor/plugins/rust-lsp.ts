@@ -42,8 +42,37 @@ const INSTALL_COMMANDS = {
   brew: "brew install rust-analyzer",
 };
 
-// Track error state for Rust LSP
+// Stable plugin id used as the namespace for our menu contributions
+// and as the prefix on every `action_popup_result.action_id` we
+// receive back from the editor.
+const PLUGIN_ID = "rust-lsp";
+
+// Track error state for Rust LSP so the menu contributions can be
+// installed (when there's an error) or cleared (after recovery).
 let rustLspError: { serverCommand: string; message: string } | null = null;
+
+/**
+ * Install the "fix-it" rows into the LSP-Servers popup for `rust`.
+ * Mirrors the previous `showActionPopup` payload: copy-install
+ * commands and a disable shortcut. Re-call with an empty array to
+ * clear our slice.
+ *
+ * Implements the merge half of #1941 follow-up "Option B": we no
+ * longer push our own separate popup; instead the editor's built-in
+ * LSP-Servers popup includes our rows under a "Plugin actions"
+ * section.
+ */
+function publishMenuContributions(): void {
+  if (rustLspError === null) {
+    editor.setLspMenuContributions(PLUGIN_ID, "rust", []);
+    return;
+  }
+  editor.setLspMenuContributions(PLUGIN_ID, "rust", [
+    { id: "copy_rustup", label: `Copy: ${INSTALL_COMMANDS.rustup}` },
+    { id: "copy_brew", label: `Copy: ${INSTALL_COMMANDS.brew}` },
+    { id: "disable", label: "Disable Rust LSP" },
+  ]);
+}
 
 /**
  * Handle LSP server errors for Rust
@@ -59,16 +88,18 @@ editor.on("lsp_server_error", (data) => {
 
   editor.debug(`rust-lsp: Server error - ${data.error_type}: ${data.message}`);
 
-  // Store error state for later reference
+  // Store error state for later reference, install fix-it rows into
+  // the LSP-Servers popup.
   rustLspError = {
     serverCommand: data.server_command,
     message: data.message,
   };
+  publishMenuContributions();
 
   // Show a status message for immediate feedback
   if (data.error_type === "not_found") {
     editor.setStatus(
-      `Rust LSP server '${data.server_command}' not found. Click status bar for help.`
+      `Rust LSP server '${data.server_command}' not found. Click the LSP indicator for help.`
     );
   } else {
     editor.setStatus(`Rust LSP error: ${data.message}`);
@@ -76,57 +107,28 @@ editor.on("lsp_server_error", (data) => {
 });
 
 /**
- * Handle status bar click when there's a Rust LSP error
+ * Detect recovery and clear stale fix-it rows
  */
 
 
-// Register hook for status bar clicks
+// Register hook for status bar clicks — used here ONLY to detect
+// LSP recovery and clear stale contributions. The actual "fix-it"
+// popup is the editor's built-in LSP-Servers popup with our
+// contributed rows merged in (no more separate popup).
 editor.on("lsp_status_clicked", (data) => {
-  editor.debug(
-    `rust-lsp: lsp_status_clicked hook received - language=${data.language}, has_error=${data.has_error}, rustLspError=${rustLspError ? "SET" : "NULL"}`
-  );
-
   if (data.language !== "rust") {
     return;
   }
 
-  // Recovery: if `rustLspError` was set from a previous failure but
-  // the editor now reports the language as no-error (the LSP came
-  // back up — e.g. a successful auto-restart after an external
-  // kill), clear the stale error state and bow out so the built-in
-  // LSP Servers popup can take over. Without this, a click after
-  // recovery would still surface our "Rust Language Server Not
-  // Found" install-help popup, with a title that no longer
-  // describes the current state — #1941 issue 3.
+  // Recovery: editor now reports no error for rust → LSP came back
+  // up (e.g. successful auto-restart after an external kill). Clear
+  // our error state and remove the fix-it rows from the popup so
+  // the user just sees the standard server actions. (#1941 issue 3)
   if (!data.has_error && rustLspError !== null) {
-    editor.debug("rust-lsp: LSP recovered; clearing stale rustLspError");
+    editor.debug("rust-lsp: LSP recovered; clearing rustLspError + menu rows");
     rustLspError = null;
-    return;
+    publishMenuContributions();
   }
-
-  // Only handle Rust language clicks when there's an error
-  if (!rustLspError) {
-    editor.debug(
-      `rust-lsp: Skipping - language check=${data.language !== "rust"}, error check=${!rustLspError}`
-    );
-    return;
-  }
-
-  editor.debug("rust-lsp: Status clicked, showing help popup");
-
-  // Show action popup with install options
-  const result = editor.showActionPopup({
-    id: "rust-lsp-help",
-    title: "Rust Language Server Not Found",
-    message: `"${rustLspError.serverCommand}" provides code completion, diagnostics, and navigation for Rust files. Copy a command below to install it, or search online for your platform.`,
-    actions: [
-      { id: "copy_rustup", label: `Copy: ${INSTALL_COMMANDS.rustup}` },
-      { id: "copy_brew", label: `Copy: ${INSTALL_COMMANDS.brew}` },
-      { id: "disable", label: "Disable Rust LSP" },
-      { id: "dismiss", label: "Dismiss (ESC)" },
-    ],
-  });
-  editor.debug(`rust-lsp: showActionPopup returned ${result}`);
 });
 
 /**
@@ -140,15 +142,17 @@ editor.on("action_popup_result", (data) => {
     `rust-lsp: action_popup_result received - popup_id=${data.popup_id}, action_id=${data.action_id}`
   );
 
-  // Only handle our popup
-  if (data.popup_id !== "rust-lsp-help") {
-    editor.debug("rust-lsp: Not our popup, skipping");
+  // The editor routes contributed-row picks with `popup_id =
+  // "lsp_status"` and `action_id = "{plugin_id}|{item_id}"`.
+  const prefix = `${PLUGIN_ID}|`;
+  if (data.popup_id !== "lsp_status" || !data.action_id.startsWith(prefix)) {
     return;
   }
+  const itemId = data.action_id.slice(prefix.length);
 
-  editor.debug(`rust-lsp: Action selected - ${data.action_id}, rustLspError will remain SET`);
+  editor.debug(`rust-lsp: Action selected - ${itemId}`);
 
-  switch (data.action_id) {
+  switch (itemId) {
     case "copy_rustup":
       editor.setClipboard(INSTALL_COMMANDS.rustup);
       editor.setStatus("Copied: " + INSTALL_COMMANDS.rustup);
@@ -163,15 +167,11 @@ editor.on("action_popup_result", (data) => {
       editor.disableLspForLanguage("rust");
       editor.setStatus("Rust LSP disabled");
       rustLspError = null;
-      break;
-
-    case "dismiss":
-    case "dismissed":
-      // Just close the popup without action
+      publishMenuContributions();
       break;
 
     default:
-      editor.debug(`rust-lsp: Unknown action: ${data.action_id}`);
+      editor.debug(`rust-lsp: Unknown action: ${itemId}`);
   }
 });
 

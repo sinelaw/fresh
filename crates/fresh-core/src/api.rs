@@ -2630,6 +2630,32 @@ pub enum PluginCommand {
         actions: Vec<ActionPopupAction>,
     },
 
+    /// Contribute (or replace, or clear) a set of menu rows for the
+    /// LSP-Servers popup (the popup opened by clicking the LSP
+    /// indicator). Each plugin owns its own slice keyed by
+    /// `plugin_id`; passing an empty `items` clears that slice.
+    ///
+    /// Rationale: previously plugins reacting to `lsp_status_clicked`
+    /// pushed their own separate action popup via `ShowActionPopup`,
+    /// which stacked over the built-in LSP-Servers popup and created
+    /// the UX conflict in PR #1941. This command lets plugins
+    /// contribute rows that merge into the existing popup instead.
+    /// Selecting a contributed row fires `action_popup_result` with
+    /// `popup_id = "lsp_status"` and `action_id =
+    /// "{plugin_id}|{id}"`.
+    SetLspMenuContributions {
+        /// Stable plugin identifier used both as the namespace for
+        /// this slice of contributions and as the prefix of the
+        /// resulting `action_popup_result.action_id`.
+        plugin_id: String,
+        /// Language whose LSP-Servers popup should display these
+        /// rows (e.g. "rust", "python").
+        language: String,
+        /// The rows to install. Empty clears any previous
+        /// contribution from this `plugin_id` for this `language`.
+        items: Vec<LspMenuItem>,
+    },
+
     /// Disable LSP for a specific language and persist to config
     DisableLspForLanguage {
         /// The language to disable LSP for (e.g., "python", "rust")
@@ -3137,6 +3163,19 @@ pub struct ActionPopupAction {
     pub label: String,
 }
 
+/// Plugin-contributed row in the LSP-Servers popup.
+/// See `PluginCommand::SetLspMenuContributions`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export, rename = "TsLspMenuItem")]
+pub struct LspMenuItem {
+    /// Stable identifier used as the `action_id` in the resulting
+    /// `action_popup_result` event (prefixed by `{plugin_id}|`).
+    pub id: String,
+    /// Display label shown in the popup row.
+    pub label: String,
+}
+
 /// Options for showActionPopup
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -3600,6 +3639,7 @@ mod fromjs_impls {
         ActionSpec,
         ActionPopupAction,
         ActionPopupOptions,
+        LspMenuItem,
         ViewTokenWire,
         ViewTokenStyle,
         LayoutHints,

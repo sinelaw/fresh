@@ -95,6 +95,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // UI types (ts-rs renames these with Ts prefix)
         "TsActionPopupAction" | "ActionPopupAction" => Some(ActionPopupAction::decl(&cfg)),
         "ActionPopupOptions" => Some(ActionPopupOptions::decl(&cfg)),
+        "TsLspMenuItem" | "LspMenuItem" => Some(fresh_core::api::LspMenuItem::decl(&cfg)),
         "TsHighlightSpan" => Some(TsHighlightSpan::decl(&cfg)),
         "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
 
@@ -247,6 +248,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ActionSpec",                     // Used by executeActions
     "TsActionPopupAction",            // Used by ActionPopupOptions.actions
     "ActionPopupOptions",             // Used by showActionPopup
+    "TsLspMenuItem",                  // Used by setLspMenuContributions
     "FileExplorerDecoration",         // Used by setFileExplorerDecorations
     "FormatterPackConfig",            // Used by LanguagePackConfig.formatter
     "ProcessLimitsPackConfig",        // Used by LspServerPackConfig.process_limits
@@ -1256,6 +1258,7 @@ mod tests {
             "removeScrollSyncGroup",
             "executeActions",
             "showActionPopup",
+            "setLspMenuContributions",
             "disableLspForLanguage",
             "setLspRootUri",
             "getAllDiagnostics",

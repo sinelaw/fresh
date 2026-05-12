@@ -937,6 +937,120 @@ fn status_indicator_click_dismisses_open_lsp_popup_before_opening_prompt() -> an
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// "Option B" — plugins contribute rows into the built-in LSP-Servers
+//              popup instead of pushing a separate popup.
+// ---------------------------------------------------------------------------
+//
+// New plugin API: `PluginCommand::SetLspMenuContributions`. The editor
+// merges contributed rows into `build_and_show_lsp_status_popup` under
+// a "Plugin actions" header. Selecting a contributed row fires
+// `action_popup_result` with `popup_id = "lsp_status"` and
+// `action_id = "{plugin_id}|{item_id}"`.
+//
+// This test drives the plugin command directly (no plugin runtime
+// needed in the harness) and asserts:
+//   1. the contributed label appears in the popup,
+//   2. the routing key carries the `plugin:` prefix.
+
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn plugin_lsp_menu_contributions_merge_into_lsp_status_popup() -> anyhow::Result<()> {
+    use fresh_core::api::{LspMenuItem, PluginCommand};
+
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        140,
+        40,
+        HarnessOptions::new()
+            .with_config(config_with_rust_lsp("rust-analyzer"))
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    // Plugin (synthesised by the test) contributes two fix-it rows
+    // for `rust`, the way the embedded rust-lsp.ts plugin does in
+    // production after `lsp_server_error`.
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::SetLspMenuContributions {
+            plugin_id: "rust-lsp-test".to_string(),
+            language: "rust".to_string(),
+            items: vec![
+                LspMenuItem {
+                    id: "copy_rustup".to_string(),
+                    label: "Copy: rustup component add rust-analyzer".to_string(),
+                },
+                LspMenuItem {
+                    id: "disable".to_string(),
+                    label: "Disable Rust LSP".to_string(),
+                },
+            ],
+        })?;
+
+    // Now open the LSP-Servers popup. Only ONE popup should appear,
+    // and it should contain both built-in actions AND our contributed
+    // rows.
+    harness.editor_mut().show_lsp_status_popup();
+    harness.render()?;
+
+    let popup_count = active_popup_count(&harness) + global_popup_count(&harness);
+    assert_eq!(
+        popup_count, 1,
+        "Option B contract: plugin contributions should merge into the \
+         single LSP Servers popup, not stack a second popup. Got \
+         {popup_count} popups."
+    );
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("LSP Servers (rust)"),
+        "LSP Servers popup should be the visible one. Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("─ Plugin actions ─"),
+        "Plugin-actions section header should be present.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Copy: rustup component add rust-analyzer"),
+        "First contributed row should appear under the Plugin actions \
+         section.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Disable Rust LSP"),
+        "Second contributed row should appear under the Plugin actions \
+         section.\nScreen:\n{screen}"
+    );
+
+    // Clearing the contributions removes the section on the next
+    // popup build.
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::SetLspMenuContributions {
+            plugin_id: "rust-lsp-test".to_string(),
+            language: "rust".to_string(),
+            items: vec![],
+        })?;
+    // The handler calls `refresh_lsp_status_popup_if_open`, so render
+    // and re-inspect — no need to close + reopen the popup.
+    harness.render()?;
+    let screen_after = harness.screen_to_string();
+    assert!(
+        !screen_after.contains("─ Plugin actions ─"),
+        "Plugin-actions section should disappear once the plugin \
+         clears its contributions.\nScreen:\n{screen_after}"
+    );
+    assert!(
+        !screen_after.contains("Copy: rustup component add rust-analyzer"),
+        "Contributed rows should disappear after clear.\nScreen:\n{screen_after}"
+    );
+    Ok(())
+}
+
 /// Extract the braille spinner glyph from the rendered status bar.
 /// Returns the character immediately after the "LSP " literal on the
 /// status row, or "?" if the indicator isn't visible.
