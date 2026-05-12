@@ -64,6 +64,13 @@ pub struct ViewLine {
     /// lines, so a multi-row deletion places a single "-" next to its
     /// first row, not on every wrapped sub-row.
     pub virtual_gutter_glyph: Option<(String, ratatui::style::Color)>,
+    /// Line-level style for plugin-injected virtual lines
+    /// (`AfterInjectedNewline`). Carries the `bg` the plugin asked for
+    /// even when `text` is empty, so the renderer's row-fill path can
+    /// stripe an empty deletion virtual line with the diff-remove bg
+    /// (it can't recover the bg from `char_styles.first()` when there
+    /// are no chars). `None` for source lines.
+    pub virtual_line_style: Option<ViewTokenStyle>,
 }
 
 impl ViewLine {
@@ -287,6 +294,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                     line_start: LineStart::AfterSourceNewline,
                     ends_with_newline: false,
                     virtual_gutter_glyph: None,
+                    virtual_line_style: None,
                 });
             }
             return None;
@@ -598,6 +606,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
             line_start,
             ends_with_newline,
             virtual_gutter_glyph: None,
+            virtual_line_style: None,
         })
     }
 }

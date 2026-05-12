@@ -241,6 +241,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 line_start: LineStart::Beginning,
                 ends_with_newline: false,
                 virtual_gutter_glyph: None,
+                virtual_line_style: None,
             })
         } else {
             break;
@@ -1172,14 +1173,27 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 // line's own style bg so plugins (live-diff, audit_mode)
                 // can paint a full-row stripe by setting bg on the
                 // virtual line itself, mirroring extend_to_line_end.
+                //
+                // Read the bg from `virtual_line_style` (which the
+                // virtual-line builder always sets, even when `text` is
+                // empty), with `char_styles.first()` as a fallback for
+                // any virtual ViewLine that didn't go through the
+                // builder. Empty deletion virtual rows have zero chars,
+                // so without `virtual_line_style` they used to render
+                // without the diff-remove bg stripe.
                 let fill_style = fill_style.or_else(|| {
                     if current_view_line.line_start != LineStart::AfterInjectedNewline {
                         return None;
                     }
                     let token_style = current_view_line
-                        .char_styles
-                        .first()
-                        .and_then(|s| s.as_ref())?;
+                        .virtual_line_style
+                        .as_ref()
+                        .or_else(|| {
+                            current_view_line
+                                .char_styles
+                                .first()
+                                .and_then(|s| s.as_ref())
+                        })?;
                     let bg = token_style.bg.as_ref()?.to_ratatui(theme);
                     Some(ratatui::style::Style::default().fg(bg).bg(bg))
                 });

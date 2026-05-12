@@ -205,6 +205,7 @@ fn build_virtual_view_line(
         line_start: LineStart::AfterInjectedNewline,
         ends_with_newline: true,
         virtual_gutter_glyph: gutter_glyph,
+        virtual_line_style: Some(token_style.clone()),
     }
 }
 

@@ -344,6 +344,89 @@ fn test_live_diff_highlights_empty_added_line() {
     );
 }
 
+/// Regression: a deletion virtual row whose OLD content is empty was
+/// rendered without the red `diff_remove_bg` stripe — only its `-`
+/// gutter glyph showed up, so an empty deleted line looked like blank
+/// editor space rather than part of the deletion block.
+///
+/// Cause: the bg-fill fallback for virtual lines reads
+/// `current_view_line.char_styles.first()` to recover the line's
+/// intended bg, but an empty virtual line has zero chars, so `.first()`
+/// returns None and no fill style is applied.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_highlights_empty_removed_line() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // HEAD has a blank line in the middle; working tree drops it. The
+    // plugin should render that blank line as a virtual deletion row
+    // (just the gutter `-` plus a full-width red stripe).
+    repo.create_file("src/utils.rs", "head\n\ntail\n");
+    repo.git_add(&["src/utils.rs"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    repo.modify_file("src/utils.rs", "head\ntail\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        20,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_glyph(&s, '-') && has_text(&s, "tail")
+        })
+        .unwrap();
+
+    // Find the row whose first non-whitespace cell is `-` AND whose
+    // text body (after the gutter) is empty — that's our empty
+    // deletion virtual row.
+    let buf = harness.buffer();
+    let mut empty_del_row: Option<u16> = None;
+    for y in 0..buf.area.height {
+        let mut row = String::new();
+        for x in 0..buf.area.width {
+            row.push_str(buf[(x, y)].symbol());
+        }
+        let trimmed = row.trim_end();
+        // Gutter shape on a deletion virtual row: leading `-`, then the
+        // pipe separator, then nothing else (empty content).
+        if trimmed.contains('-')
+            && trimmed.contains('│')
+            && trimmed.split('│').nth(1).is_some_and(|body| {
+                body.chars().all(|c| c.is_whitespace())
+            })
+        {
+            empty_del_row = Some(y);
+            break;
+        }
+    }
+    let empty_del_row = empty_del_row.expect(
+        "never found an empty deletion virtual row on screen",
+    );
+
+    // The empty deletion row should be filled with the red
+    // diff_remove_bg out to the viewport edge — sample at col 40.
+    let bg = buf[(40, empty_del_row)].style().bg;
+    assert_eq!(
+        bg,
+        Some(ratatui::style::Color::Rgb(70, 35, 35)),
+        "empty deletion virtual row at y={empty_del_row} should be \
+         filled with diff_remove_bg (70, 35, 35) at col 40; saw {bg:?}",
+    );
+}
+
 /// Regression: pressing Down through empty lines used to skip them
 /// when live-diff was enabled. With the plugin off, cursor moved one
 /// line at a time as expected; with the plugin on, Down jumped from
