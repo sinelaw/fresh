@@ -637,9 +637,9 @@ editor.on("window_created", async (payload) => {
   ) {
     const intent = pendingNewSession;
     pendingNewSession = null;
-    // sessionId routes the terminal into the new session's
-    // membership + stashed split tree without diving — the
-    // user's base view stays put.
+    // windowId attaches the terminal to the new session's split
+    // tree; we then dive so the user sees the shell/agent
+    // immediately — creating a session is a visit-now action.
     const term = await editor.createTerminal({
       cwd: intent.root,
       focus: false,
@@ -657,6 +657,7 @@ editor.on("window_created", async (payload) => {
     if (intent.cmd) {
       editor.sendTerminalInput(term.terminalId, intent.cmd + "\n");
     }
+    editor.setActiveWindow(id);
   }
   refreshPromptIfOpen();
 });
