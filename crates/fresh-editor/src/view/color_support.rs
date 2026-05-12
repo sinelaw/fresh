@@ -30,95 +30,119 @@ impl ColorCapability {
     /// Detect the terminal's color capability
     /// Can be overridden with FRESH_COLOR_MODE env var: "truecolor", "256", or "16"
     pub fn detect() -> Self {
-        // Check for manual override first
-        if let Ok(mode) = std::env::var("FRESH_COLOR_MODE") {
-            match mode.to_lowercase().as_str() {
-                "truecolor" | "24bit" | "true" => return ColorCapability::TrueColor,
-                "256" | "256color" => return ColorCapability::Color256,
-                "16" | "basic" | "ansi" => return ColorCapability::Color16,
-                _ => {} // Fall through to auto-detection
-            }
+        detect_from_env(|k| std::env::var(k).ok(), cfg!(target_os = "windows"))
+    }
+}
+
+/// Pure detection logic, parameterised on an environment lookup and the
+/// `is_windows` flag so it can be exercised from unit tests on any host.
+fn detect_from_env<F>(get_env: F, is_windows: bool) -> ColorCapability
+where
+    F: Fn(&str) -> Option<String>,
+{
+    // Check for manual override first
+    if let Some(mode) = get_env("FRESH_COLOR_MODE") {
+        match mode.to_lowercase().as_str() {
+            "truecolor" | "24bit" | "true" => return ColorCapability::TrueColor,
+            "256" | "256color" => return ColorCapability::Color256,
+            "16" | "basic" | "ansi" => return ColorCapability::Color16,
+            _ => {} // Fall through to auto-detection
+        }
+    }
+
+    // Check TERM first for multiplexers that don't support truecolor
+    // (they may pass through COLORTERM from the outer terminal)
+    if let Some(term) = get_env("TERM") {
+        let t = term.to_lowercase();
+
+        // GNU Screen doesn't support truecolor - cap at 256
+        if t.starts_with("screen") {
+            return ColorCapability::Color256;
         }
 
-        // Check TERM first for multiplexers that don't support truecolor
-        // (they may pass through COLORTERM from the outer terminal)
-        if let Ok(term) = std::env::var("TERM") {
-            let t = term.to_lowercase();
-
-            // GNU Screen doesn't support truecolor - cap at 256
-            if t.starts_with("screen") {
-                return ColorCapability::Color256;
-            }
-
-            // tmux usually supports 256, some configs support truecolor
-            if t.starts_with("tmux") {
-                if t.contains("direct") {
-                    return ColorCapability::TrueColor;
-                }
-                // Check COLORTERM - tmux can pass through truecolor if configured
-                if let Ok(colorterm) = std::env::var("COLORTERM") {
-                    let ct = colorterm.to_lowercase();
-                    if ct == "truecolor" || ct == "24bit" {
-                        return ColorCapability::TrueColor;
-                    }
-                }
-                return ColorCapability::Color256;
-            }
-        }
-
-        // Check COLORTERM - reliable for truecolor (but not inside Screen/tmux)
-        if let Ok(colorterm) = std::env::var("COLORTERM") {
-            let ct = colorterm.to_lowercase();
-            if ct == "truecolor" || ct == "24bit" {
+        // tmux usually supports 256, some configs support truecolor
+        if t.starts_with("tmux") {
+            if t.contains("direct") {
                 return ColorCapability::TrueColor;
             }
+            // Check COLORTERM - tmux can pass through truecolor if configured
+            if let Some(colorterm) = get_env("COLORTERM") {
+                let ct = colorterm.to_lowercase();
+                if ct == "truecolor" || ct == "24bit" {
+                    return ColorCapability::TrueColor;
+                }
+            }
+            return ColorCapability::Color256;
         }
+    }
 
-        // Windows Terminal sets WT_SESSION and supports truecolor
-        if std::env::var("WT_SESSION").is_ok() {
+    // Check COLORTERM - reliable for truecolor (but not inside Screen/tmux)
+    if let Some(colorterm) = get_env("COLORTERM") {
+        let ct = colorterm.to_lowercase();
+        if ct == "truecolor" || ct == "24bit" {
+            return ColorCapability::TrueColor;
+        }
+    }
+
+    // Windows Terminal sets WT_SESSION (and/or WT_PROFILE_ID) and supports truecolor.
+    if get_env("WT_SESSION").is_some() || get_env("WT_PROFILE_ID").is_some() {
+        return ColorCapability::TrueColor;
+    }
+
+    // Check TERM for other indicators
+    if let Some(term) = get_env("TERM") {
+        let t = term.to_lowercase();
+
+        // Check for truecolor indicators
+        if t.contains("truecolor") || t.contains("24bit") || t.contains("direct") {
             return ColorCapability::TrueColor;
         }
 
-        // Check TERM for other indicators
-        if let Ok(term) = std::env::var("TERM") {
-            let t = term.to_lowercase();
-
-            // Check for truecolor indicators
-            if t.contains("truecolor") || t.contains("24bit") || t.contains("direct") {
-                return ColorCapability::TrueColor;
-            }
-
-            // Check for 256color
-            if t.contains("256color") || t.contains("256-color") {
-                return ColorCapability::Color256;
-            }
-
-            // Modern terminals that support truecolor
-            if t.contains("kitty")
-                || t.contains("alacritty")
-                || t.contains("iterm")
-                || t.contains("vte")
-                || t.contains("konsole")
-                || t.contains("gnome")
-                || t.contains("wezterm")
-            {
-                return ColorCapability::TrueColor;
-            }
-
-            // xterm usually supports 256
-            if t.starts_with("xterm") {
-                return ColorCapability::Color256;
-            }
-
-            // Linux console, dumb terminal - basic colors only
-            if t == "linux" || t == "cons25" || t == "dumb" {
-                return ColorCapability::Color16;
-            }
+        // Modern terminals that support truecolor (check before the 256color
+        // fallback so values like "xterm-kitty" don't get pinned to 256).
+        if t.contains("kitty")
+            || t.contains("alacritty")
+            || t.contains("iterm")
+            || t.contains("vte")
+            || t.contains("konsole")
+            || t.contains("gnome")
+            || t.contains("wezterm")
+        {
+            return ColorCapability::TrueColor;
         }
 
-        // Default to 256 as safe middle ground
-        ColorCapability::Color256
+        // Linux console, dumb terminal - basic colors only
+        if t == "linux" || t == "cons25" || t == "dumb" {
+            return ColorCapability::Color16;
+        }
+
+        // On Windows, an xterm-style TERM (e.g. xterm-256color) almost
+        // certainly means Windows Terminal / ConPTY / mintty / a similar
+        // modern emulator, all of which support truecolor. WT_SESSION is
+        // usually set, but is missing when fresh is launched indirectly —
+        // for example via File Explorer's address bar (issue #1919). Prefer
+        // truecolor in this case rather than down-grading to 256.
+        if is_windows {
+            return ColorCapability::TrueColor;
+        }
+
+        // Check for 256color
+        if t.contains("256color") || t.contains("256-color") {
+            return ColorCapability::Color256;
+        }
+
+        // xterm usually supports 256
+        if t.starts_with("xterm") {
+            return ColorCapability::Color256;
+        }
+    } else if is_windows {
+        // No TERM set at all on Windows — modern Windows console hosts
+        // (ConPTY in Windows 10 1809+) speak VT and support truecolor.
+        return ColorCapability::TrueColor;
     }
+
+    // Default to 256 as safe middle ground
+    ColorCapability::Color256
 }
 
 /// Convert an RGB color to the nearest 256-color palette index
@@ -545,6 +569,148 @@ fn enforce_minimum_contrast(buffer: &mut ratatui::buffer::Buffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// Build an env lookup closure from a slice of (key, value) pairs.
+    fn env_from(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).into(), (*v).into()))
+            .collect();
+        move |k: &str| map.get(k).cloned()
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #1919: Windows Terminal launched via File Explorer address bar
+    // does not set WT_SESSION but does set TERM=xterm-256color. Detection
+    // should still pick TrueColor on Windows.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_issue_1919_windows_xterm_256color_without_wt_session() {
+        // Reproduces the exact env reported in the issue: TERM is set to a
+        // 256color value, WT_SESSION is absent, COLORTERM is absent.
+        let env = env_from(&[("TERM", "xterm-256color")]);
+        assert_eq!(
+            detect_from_env(&env, /* is_windows = */ true),
+            ColorCapability::TrueColor,
+            "On Windows, TERM=xterm-256color without WT_SESSION should still pick TrueColor"
+        );
+    }
+
+    #[test]
+    fn test_issue_1919_windows_no_term_no_wt_session() {
+        // Same scenario but with no TERM at all (e.g. WT launched from the
+        // start menu pre-fix used WT_SESSION; we now also cover the case
+        // where neither variable is present).
+        let env = env_from(&[]);
+        assert_eq!(
+            detect_from_env(&env, true),
+            ColorCapability::TrueColor,
+            "On Windows with no TERM and no WT_SESSION, default to TrueColor"
+        );
+    }
+
+    #[test]
+    fn test_issue_1919_windows_with_wt_session_still_truecolor() {
+        // Regression check: the original WT_SESSION path must still work.
+        let env = env_from(&[("WT_SESSION", "abc-123"), ("TERM", "xterm-256color")]);
+        assert_eq!(detect_from_env(&env, true), ColorCapability::TrueColor);
+    }
+
+    #[test]
+    fn test_issue_1919_windows_with_wt_profile_id_only() {
+        // WT also exposes WT_PROFILE_ID; accept it as an equivalent signal.
+        let env = env_from(&[("WT_PROFILE_ID", "{guid}")]);
+        assert_eq!(detect_from_env(&env, true), ColorCapability::TrueColor);
+    }
+
+    #[test]
+    fn test_issue_1919_non_windows_xterm_256color_still_256() {
+        // The pre-fix behaviour for non-Windows is preserved: on Linux,
+        // TERM=xterm-256color → Color256, not TrueColor.
+        let env = env_from(&[("TERM", "xterm-256color")]);
+        assert_eq!(
+            detect_from_env(&env, /* is_windows = */ false),
+            ColorCapability::Color256
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Other detect_from_env scenarios — guards against regressions in the
+    // refactor.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_detect_override_truecolor() {
+        let env = env_from(&[("FRESH_COLOR_MODE", "truecolor")]);
+        assert_eq!(detect_from_env(&env, false), ColorCapability::TrueColor);
+    }
+
+    #[test]
+    fn test_detect_override_256() {
+        // Override beats a Windows host that would otherwise prefer truecolor.
+        let env = env_from(&[("FRESH_COLOR_MODE", "256"), ("TERM", "xterm-256color")]);
+        assert_eq!(detect_from_env(&env, true), ColorCapability::Color256);
+    }
+
+    #[test]
+    fn test_detect_override_16() {
+        let env = env_from(&[("FRESH_COLOR_MODE", "ansi")]);
+        assert_eq!(detect_from_env(&env, true), ColorCapability::Color16);
+    }
+
+    #[test]
+    fn test_detect_colorterm_truecolor() {
+        let env = env_from(&[("COLORTERM", "truecolor"), ("TERM", "xterm-256color")]);
+        assert_eq!(detect_from_env(&env, false), ColorCapability::TrueColor);
+    }
+
+    #[test]
+    fn test_detect_screen_caps_at_256() {
+        // Screen never gets truecolor even on Windows.
+        let env = env_from(&[("TERM", "screen-256color"), ("COLORTERM", "truecolor")]);
+        assert_eq!(detect_from_env(&env, true), ColorCapability::Color256);
+    }
+
+    #[test]
+    fn test_detect_tmux_with_colorterm_truecolor() {
+        let env = env_from(&[("TERM", "tmux-256color"), ("COLORTERM", "truecolor")]);
+        assert_eq!(detect_from_env(&env, false), ColorCapability::TrueColor);
+    }
+
+    #[test]
+    fn test_detect_tmux_without_colorterm_is_256() {
+        let env = env_from(&[("TERM", "tmux-256color")]);
+        assert_eq!(detect_from_env(&env, false), ColorCapability::Color256);
+    }
+
+    #[test]
+    fn test_detect_kitty_term() {
+        // xterm-kitty must be recognised as truecolor even though it contains
+        // neither "256color" nor an explicit COLORTERM.
+        let env = env_from(&[("TERM", "xterm-kitty")]);
+        assert_eq!(detect_from_env(&env, false), ColorCapability::TrueColor);
+    }
+
+    #[test]
+    fn test_detect_dumb_term_is_16() {
+        // dumb wins over the Windows truecolor preference.
+        let env = env_from(&[("TERM", "dumb")]);
+        assert_eq!(detect_from_env(&env, true), ColorCapability::Color16);
+    }
+
+    #[test]
+    fn test_detect_linux_console_is_16() {
+        let env = env_from(&[("TERM", "linux")]);
+        assert_eq!(detect_from_env(&env, false), ColorCapability::Color16);
+    }
+
+    #[test]
+    fn test_detect_default_fallback_non_windows() {
+        let env = env_from(&[]);
+        assert_eq!(detect_from_env(&env, false), ColorCapability::Color256);
+    }
 
     #[test]
     fn test_rgb_to_256_black() {
