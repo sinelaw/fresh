@@ -701,7 +701,8 @@ fn test_live_diff_down_arrow_traverses_deletion_block() {
     // before_01..before_05 each occupy 10 bytes ("before_NN\n"). After 4
     // Downs from byte 0 we should be at the start of `before_05`, byte 40.
     assert_eq!(
-        pos_before, 40,
+        pos_before,
+        40,
         "expected cursor at start of `before_05` (byte 40); saw byte \
          {pos_before}. Screen:\n{}",
         harness.screen_to_string()

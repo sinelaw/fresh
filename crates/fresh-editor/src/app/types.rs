@@ -1271,12 +1271,19 @@ impl WindowLayoutCache {
 
     /// Move by visual line using the cached mappings
     /// Returns (new_position, new_visual_column) or None if at boundary
+    ///
+    /// `buffer_len` is the byte length of the underlying buffer; the
+    /// walker uses it to distinguish a legitimate trailing-EOF empty
+    /// row (`line_end_byte == buffer_len`) from a plugin-injected empty
+    /// virtual row in the middle of the buffer (line_end_byte inherited
+    /// from the previous row and < buffer_len).
     pub fn move_visual_line(
         &self,
         split_id: LeafId,
         current_pos: usize,
         goal_visual_col: usize,
         direction: i8, // -1 = up, 1 = down
+        buffer_len: usize,
     ) -> Option<(usize, usize)> {
         let mappings = self.view_line_mappings.get(&split_id)?;
         let current_row = self.find_visual_row(split_id, current_pos)?;
@@ -1318,18 +1325,29 @@ impl WindowLayoutCache {
                 break;
             }
             let mapping = mappings.get(target_row)?;
-            let is_plugin_virtual =
+            let is_empty_row =
                 mapping.visual_to_char.is_empty() || mapping.char_source_bytes.is_empty();
-            if !is_plugin_virtual {
+            if !is_empty_row {
                 // The row has columns but none carry a source byte — most
                 // likely a plugin-injected decoration with padding.  Keep
                 // looking.
                 continue;
             }
-            // Empty mapping (no visual columns) is how EOF-related virtual
-            // rows are represented; those are legitimate cursor stops so we
-            // accept them and fall out of the loop.
-            break;
+            // Distinguish the legitimate trailing-EOF empty row (created
+            // with `line_end_byte = buffer_len`) from a plugin-injected
+            // empty virtual row in the middle of the buffer (line_end_byte
+            // inherited from the previous row, strictly less than
+            // buffer_len).  The latter happens with live-diff deletion
+            // hunks that start with a blank line: the virtual `-` row
+            // for the blank looks identical in shape to an EOF row, and
+            // stopping on it strands the cursor at the previous source
+            // line's EOL (the inherited line_end_byte).  Keep walking
+            // past it so the visual-line motion can reach the real next
+            // line below (or fall through to the caller's byte-based
+            // fallback if it's off-screen).
+            if mapping.line_end_byte == buffer_len {
+                break;
+            }
         }
 
         let target_mapping = mappings.get(target_row)?;
