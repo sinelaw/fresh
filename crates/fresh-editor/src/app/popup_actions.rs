@@ -384,65 +384,60 @@ impl Editor {
     }
 
     /// Handle typing a character while completion popup is open.
-    /// Inserts the character into the buffer and re-filters the completion list.
+    /// Inserts the character at every cursor and re-filters the completion list.
+    ///
+    /// Routes through `Action::InsertChar` so multi-cursor edits land in lock-
+    /// step with normal typing: secondary cursors stay in sync with the
+    /// primary one (issue #1901) and a single bulk-edit goes into the undo log.
     pub fn handle_popup_type_char(&mut self, c: char) {
-        // First, insert the character into the buffer
-        let (cursor_id, cursor_pos) = {
-            let cursors = self.active_cursors();
-            (cursors.primary_id(), cursors.primary().position)
-        };
+        use crate::input::keybindings::Action;
 
-        let insert_event = Event::Insert {
-            position: cursor_pos,
-            text: c.to_string(),
-            cursor_id,
-        };
+        if let Some(events) = self
+            .active_window_mut()
+            .action_to_events(Action::InsertChar(c))
+        {
+            if events.len() > 1 {
+                let description = format!("Insert '{}'", c);
+                if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
+                    self.active_event_log_mut().append(bulk_edit);
+                }
+            } else {
+                for event in events {
+                    self.log_and_apply_event(&event);
+                }
+            }
+        }
 
-        self.log_and_apply_event(&insert_event);
-
-        // Now re-filter the completion list
         self.refilter_completion_popup();
     }
 
     /// Handle backspace while completion popup is open.
-    /// Deletes a character and re-filters the completion list.
+    /// Deletes one character behind every cursor and re-filters the
+    /// completion list.
+    ///
+    /// Routes through `Action::DeleteBackward` so multi-cursor edits stay in
+    /// sync (issue #1901). The action handler already no-ops cursors at the
+    /// start of the buffer.
     pub fn handle_popup_backspace(&mut self) {
-        let (cursor_id, cursor_pos) = {
-            let cursors = self.active_cursors();
-            (cursors.primary_id(), cursors.primary().position)
-        };
+        use crate::input::keybindings::Action;
 
-        // Don't do anything if at start of buffer
-        if cursor_pos == 0 {
-            return;
+        if let Some(events) = self
+            .active_window_mut()
+            .action_to_events(Action::DeleteBackward)
+        {
+            if events.len() > 1 {
+                if let Some(bulk_edit) =
+                    self.apply_events_as_bulk_edit(events, "Backspace".to_string())
+                {
+                    self.active_event_log_mut().append(bulk_edit);
+                }
+            } else {
+                for event in events {
+                    self.log_and_apply_event(&event);
+                }
+            }
         }
 
-        // Find the previous character boundary
-        let prev_pos = {
-            let state = self.active_state();
-            let text = match state.buffer.to_string() {
-                Some(t) => t,
-                None => return,
-            };
-            // Find the previous character
-            text[..cursor_pos]
-                .char_indices()
-                .last()
-                .map(|(i, _)| i)
-                .unwrap_or(0)
-        };
-
-        let deleted_text = self.active_state_mut().get_text_range(prev_pos, cursor_pos);
-
-        let delete_event = Event::Delete {
-            range: prev_pos..cursor_pos,
-            deleted_text,
-            cursor_id,
-        };
-
-        self.log_and_apply_event(&delete_event);
-
-        // Now re-filter the completion list
         self.refilter_completion_popup();
     }
 
