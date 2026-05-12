@@ -212,6 +212,7 @@ pub mod theme;
 pub mod theme_screenshots;
 pub mod toggle_bars;
 pub mod toggle_comment;
+pub mod toggle_line_wrap_command;
 pub mod triple_click;
 pub mod undo_bulk_edit_after_save;
 pub mod undo_redo;
