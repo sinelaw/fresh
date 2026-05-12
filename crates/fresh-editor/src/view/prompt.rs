@@ -485,6 +485,10 @@ impl Prompt {
                 return;
             }
         }
+        // Input has diverged from whatever the plugin pre-filtered
+        // for — invalidate the marker so a later return to that
+        // same input doesn't reuse a now-stale list.
+        self.suggestions_set_for_input = None;
 
         let Some(original) = &self.original_suggestions else {
             return;
