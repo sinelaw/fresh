@@ -598,3 +598,131 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
         "unchanged 'else' row ({row_else}) should come before OLD bot virtual line ({row_old_bot})",
     );
 }
+
+/// Regression: with live-diff active, deleting 3+ consecutive lines in
+/// the middle of a buffer (so the deletion is rendered as a block of
+/// virtual `-` lines between two real lines) used to block Down-arrow
+/// motion when the deletion block starts with an EMPTY line. The
+/// cursor would sit on the real line just before the deletion block,
+/// jump to end-of-line on the first Down (as if it were on the last
+/// line of the buffer), and then refuse to move further. Pressing
+/// Down repeatedly never reached the next real line.
+///
+/// Trigger details: a deletion virtual row whose visible text is empty
+/// confuses the visual-line walker, so the next-real-line lookup falls
+/// through to the byte-based fallback and snaps the cursor to EOL of
+/// the current line. Non-empty deletion rows alone do not trigger it.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_down_arrow_traverses_deletion_block() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // Build a HEAD with a long deletion block in the middle: 5 lines
+    // before, 12 lines that will be deleted, and 5 lines after. The
+    // bug only manifests when the "real next line" after the deletion
+    // is OUTSIDE the cached view-line mappings — i.e. off-screen —
+    // because that's the case where `move_visual_line` returns None
+    // and the byte-based fallback takes over and snaps to end-of-line.
+    let mut head_lines = Vec::new();
+    for i in 1..=5 {
+        head_lines.push(format!("before_{i:02}"));
+    }
+    // First deleted line is empty — that's the user-reported shape
+    // (their README hunk started with a blank line). Then a mix of
+    // text and blanks, since their hunk had several blanks too.
+    head_lines.push(String::new());
+    head_lines.push("DELETED_LINE_02".into());
+    head_lines.push(String::new());
+    head_lines.push("DELETED_LINE_04".into());
+    head_lines.push(String::new());
+    head_lines.push("DELETED_LINE_06".into());
+    head_lines.push(String::new());
+    for i in 1..=5 {
+        head_lines.push(format!("after_{i:02}"));
+    }
+    let head_text = head_lines.join("\n") + "\n";
+    repo.create_file("src/utils.rs", &head_text);
+    repo.git_add(&["src/utils.rs"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // Working tree: drop the 12 middle lines. The plugin should render
+    // them as virtual `-` rows anchored above `after_01`.
+    let mut work_lines = Vec::new();
+    for i in 1..=5 {
+        work_lines.push(format!("before_{i:02}"));
+    }
+    for i in 1..=5 {
+        work_lines.push(format!("after_{i:02}"));
+    }
+    let work_text = work_lines.join("\n") + "\n";
+    repo.modify_file("src/utils.rs", &work_text);
+
+    // Small viewport so the 12 virtual deletion rows + the rows after
+    // them don't all fit on screen at once. ~14 content rows after
+    // menu/tab/status overhead means the `after_*` lines can be off
+    // screen when the cursor is on `before_05`.
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        18,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    // Wait for the deletion glyph + a known middle deletion marker.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_glyph(&s, '-') && has_text(&s, "DELETED_LINE_02")
+        })
+        .unwrap();
+
+    // Move cursor to start of buffer, then to end of `before_05` —
+    // the real line immediately before the deletion block.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    let pos_before = harness.cursor_position();
+    // before_01..before_05 each occupy 10 bytes ("before_NN\n"). After 4
+    // Downs from byte 0 we should be at the start of `before_05`, byte 40.
+    assert_eq!(
+        pos_before, 40,
+        "expected cursor at start of `before_05` (byte 40); saw byte \
+         {pos_before}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Buffer (working tree) is "before_01\n...before_05\nafter_01\n...after_05\n".
+    //   before_05 starts at byte 40
+    //   after_01  starts at byte 50 (10 bytes per `before_NN\n` line)
+    // Down once from byte 40 should land at byte 50. With the bug, the
+    // deletion virtual block fools the visual-line motion into thinking
+    // the buffer ends after `before_05`, so the cursor either snaps to
+    // end-of-line on `before_05` (byte 49) or stays stuck at 40.
+    let screen_before_down = harness.screen_to_string();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let pos_after = harness.cursor_position();
+    assert_eq!(
+        pos_after, 50,
+        "Down from `before_05` should reach `after_01` (byte 50); saw \
+         byte {pos_after} — deletion virtual block is blocking cursor \
+         motion (cursor snaps to EOL of `before_05` instead). \
+         Screen at moment of Down:\n{screen_before_down}",
+    );
+}
