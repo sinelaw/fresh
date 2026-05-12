@@ -2512,11 +2512,13 @@ impl Editor {
             width: results_area.width,
             height: 1,
         };
-        // Use the editor's default bg for the input row so it
-        // visually reads as an editable text field (the popup bg
-        // is reserved for non-editable chrome — toolbar, results
-        // list). Both colours come from theme keys, no hardcoded
-        // RGB.
+        // Two distinct styles on this row so the user can tell
+        // the static title (`prompt.message`) apart from the
+        // editable input field. Title gets the popup-chrome bg
+        // (matching the toolbar/footer); input + right-side
+        // padding + count get the editor bg so they read as one
+        // contiguous text field. All colours from theme keys.
+        let title_style = Style::default().fg(theme.prompt_fg).bg(theme.suggestion_bg);
         let input_style = Style::default().fg(theme.prompt_fg).bg(theme.editor_bg);
         let count_str = if prompt.suggestions.is_empty() {
             String::new()
@@ -2544,7 +2546,7 @@ impl Editor {
         let used = str_width(&prompt.message) + str_width(&truncated_input) + count_w;
         let pad = (results_area.width as usize).saturating_sub(used + right_gap);
         let line = Line::from(vec![
-            Span::styled(prompt.message.clone(), input_style),
+            Span::styled(prompt.message.clone(), title_style),
             Span::styled(truncated_input, input_style),
             Span::styled(" ".repeat(pad), input_style),
             Span::styled(
