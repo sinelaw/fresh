@@ -190,6 +190,39 @@ fn active_popup_count(harness: &EditorTestHarness) -> usize {
     harness.editor().active_state().popups.all().len()
 }
 
+/// Helper: count popups on the editor-wide `global_popups` stack —
+/// where `editor.showActionPopup` (and therefore the rust-lsp plugin's
+/// "Not Found" popup) actually lands.
+fn global_popup_count(harness: &EditorTestHarness) -> usize {
+    harness.editor().global_popups().all().len()
+}
+
+/// Push a plugin action popup through the same path the rust-lsp.ts
+/// plugin's `editor.showActionPopup` ends up at — i.e. through
+/// `Editor::handle_plugin_command(PluginCommand::ShowActionPopup …)`.
+/// This bypasses the buffer-local `Event::ShowPopup` path entirely and
+/// lands the popup on `global_popups`, exactly where the production
+/// bug surfaces.
+fn push_plugin_action_popup(
+    harness: &mut EditorTestHarness,
+    popup_id: &str,
+    title: &str,
+) -> anyhow::Result<()> {
+    use fresh_core::api::{ActionPopupAction, PluginCommand};
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::ShowActionPopup {
+            popup_id: popup_id.to_string(),
+            title: title.to_string(),
+            message: "plugin-side popup".to_string(),
+            actions: vec![ActionPopupAction {
+                id: "dismiss".to_string(),
+                label: "Dismiss".to_string(),
+            }],
+        })?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Issue 1 — clicking the LSP indicator stacks two popups when the
 //           rust-lsp plugin handles `lsp_status_clicked`.
@@ -659,6 +692,158 @@ fn issue_5_spinner_has_no_auto_redraw_schedule() -> anyhow::Result<()> {
          away. The main loop would sleep through too many frames to \
          keep the spinner moving.",
         until.as_millis()
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Issue 1 (variant b) — plugin popup goes through `global_popups`,
+//                       not `active_state().popups`.
+// ---------------------------------------------------------------------------
+//
+// The original `issue_1_click_stacks_plugin_popup_and_lsp_servers_popup`
+// test simulated the plugin by pre-pushing a popup to the *buffer-local*
+// `active_state().popups` stack. That caught one half of the bug, but
+// the embedded `rust-lsp.ts` plugin's `editor.showActionPopup` in
+// practice lands in the *editor-wide* `global_popups` stack
+// (see `handle_show_action_popup` in `app/plugin_dispatch.rs`). A fix
+// that only checks `active_state().popups` would still leave the
+// double-popup behaviour the user reported:
+//
+//   1. user clicks the LSP indicator
+//   2. `show_lsp_status_popup` builds the "LSP Servers (rust)" popup
+//      and pushes it to `active_state().popups`
+//   3. the plugin's `lsp_status_clicked` handler runs async, lands a
+//      `PluginCommand::ShowActionPopup` in the editor's queue
+//   4. next tick: `handle_show_action_popup` pushes the "Rust Language
+//      Server Not Found" popup to `global_popups`
+//   5. render: both popups visible
+//
+// Contract: at the end of the sequence, exactly one popup should be
+// drawn across the two stacks.
+
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn issue_1_plugin_popup_lands_on_global_popups_after_lsp_servers_popup() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        140,
+        40,
+        HarnessOptions::new()
+            .with_config(config_with_rust_lsp("rust-analyzer"))
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    // Step (a): the user clicks the indicator; the editor builds the
+    // LSP Servers popup synchronously and pushes it to
+    // `active_state().popups`.
+    harness.editor_mut().show_lsp_status_popup();
+    assert_eq!(
+        active_popup_count(&harness),
+        1,
+        "precondition: LSP Servers popup must land on active_state \
+         when no plugin popup is in flight"
+    );
+    assert_eq!(
+        global_popup_count(&harness),
+        0,
+        "precondition: nothing on global_popups yet"
+    );
+
+    // Step (b): the plugin's async `editor.showActionPopup` arrives on
+    // the next tick. We invoke `handle_plugin_command` directly — the
+    // same dispatcher the async bridge would call — so the test
+    // doesn't depend on plugin loading at all.
+    push_plugin_action_popup(
+        &mut harness,
+        "rust-lsp-help",
+        "Rust Language Server Not Found",
+    )?;
+
+    let total = active_popup_count(&harness) + global_popup_count(&harness);
+    let screen = {
+        harness.render()?;
+        harness.screen_to_string()
+    };
+
+    assert_eq!(
+        total,
+        1,
+        "BUG: after the plugin's async-arriving popup pushes to \
+         `global_popups`, the previously-built LSP Servers popup on \
+         `active_state().popups` is still there — the user sees TWO \
+         popups (plugin one on top, LSP Servers one underneath) for \
+         one indicator click. Total popups across both stacks: \
+         {total} (active={}, global={}).\nScreen:\n{screen}",
+        active_popup_count(&harness),
+        global_popup_count(&harness),
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Issue 4 — repeated clicks stack identical plugin popups on top of
+//           each other.
+// ---------------------------------------------------------------------------
+//
+// `handle_show_action_popup` uses `self.global_popups.show(popup_obj)`
+// — plain `show`, not `show_or_replace`. Each click that fires the
+// `lsp_status_clicked` hook while the plugin's `rustLspError` is set
+// re-pushes the same "Rust Language Server Not Found" popup. Dismiss
+// one and the next identical popup is revealed underneath, exactly
+// matching the user's "if I click many times this popup sometimes
+// stacks - dismissing it I see the same popup underneath".
+//
+// Contract: pushing N action popups with the same `popup_id` must
+// leave at most one of them on the stack — the de-dup is keyed on
+// the `popup_id`, which is exactly what `PopupResolver::PluginAction
+// { popup_id }` already carries on each popup.
+
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn issue_4_repeated_plugin_action_popup_pushes_stack_instead_of_replace() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        140,
+        40,
+        HarnessOptions::new()
+            .with_config(config_with_rust_lsp("rust-analyzer"))
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+    harness.open_file(&file)?;
+    harness.render()?;
+
+    // Simulate three rapid indicator-clicks while the plugin's
+    // `rustLspError` is set: each one fires `lsp_status_clicked`,
+    // which on the plugin side calls `editor.showActionPopup` with
+    // the same `popup_id` "rust-lsp-help".
+    for _ in 0..3 {
+        push_plugin_action_popup(
+            &mut harness,
+            "rust-lsp-help",
+            "Rust Language Server Not Found",
+        )?;
+    }
+
+    let depth = global_popup_count(&harness);
+    assert_eq!(
+        depth, 1,
+        "BUG: three `showActionPopup` calls with the SAME `popup_id` \
+         stacked 3 popups on `global_popups`. The user dismisses one, \
+         sees the same popup underneath, dismisses it again, sees yet \
+         another — matching the user-reported \"this popup sometimes \
+         stacks; dismissing it I see the same popup underneath\". \
+         `handle_show_action_popup` should de-dup by `popup_id` (use \
+         `show_or_replace`-style logic on `global_popups`). Stack \
+         depth: {depth}",
     );
     Ok(())
 }

@@ -256,6 +256,17 @@ impl Editor {
     // `is_lsp_server_ready` live on `impl Window` — call them via
     // `self.active_window().has_active_lsp_progress()` etc.
 
+    /// Read-only view of the editor-wide popup stack.
+    ///
+    /// `global_popups` itself is `pub(crate)` so its internals stay
+    /// private to the app module; tests need to inspect its depth /
+    /// contents to verify "no two popups stacked across the buffer-
+    /// local and global stacks" invariants (e.g. issue 1 of the LSP
+    /// indicator-click bugs), so we expose an immutable accessor here.
+    pub fn global_popups(&self) -> &crate::view::popup::PopupManager {
+        &self.global_popups
+    }
+
     /// The earliest wall-clock deadline at which the main event loop
     /// needs to wake up and re-render, *purely because of internal
     /// time-driven UI elements* (animations, the LSP status-bar
