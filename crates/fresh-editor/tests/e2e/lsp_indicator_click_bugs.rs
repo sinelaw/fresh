@@ -879,10 +879,12 @@ fn status_indicator_click_dismisses_open_lsp_popup_before_opening_prompt() -> an
             .with_working_dir(temp.path().to_path_buf()),
     )?;
     harness.open_file(&file)?;
-    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
+    harness.render()?;
 
-    // Step (a): open the LSP-Servers popup — this is what the user
-    // had on screen when they reached for the language indicator.
+    // Step (a): open the LSP-Servers popup directly (no need to wait
+    // for any particular LSP status — `show_lsp_status_popup` builds
+    // the popup from whatever state is present, including "configured
+    // but not running" / "error").
     harness.editor_mut().show_lsp_status_popup();
     harness.render()?;
     assert!(
