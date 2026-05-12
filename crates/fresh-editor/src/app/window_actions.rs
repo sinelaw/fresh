@@ -246,5 +246,4 @@ impl crate::app::Editor {
 
         true
     }
-
 }

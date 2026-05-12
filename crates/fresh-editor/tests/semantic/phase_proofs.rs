@@ -12,9 +12,7 @@ use crate::common::scenario::context::{
 };
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::modal_scenario::{assert_modal_scenario, ModalScenario};
-use crate::common::scenario::observable::{
-    FsState, ModalState, RoundTripGrid, WorkspaceState,
-};
+use crate::common::scenario::observable::{FsState, ModalState, RoundTripGrid, WorkspaceState};
 use crate::common::scenario::persistence_scenario::{
     assert_persistence_scenario, PersistenceScenario,
 };
