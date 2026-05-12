@@ -197,6 +197,56 @@ impl Editor {
         self.apply_event_to_active_buffer(&event);
     }
 
+    /// Dismiss popups that overlap with a new modal UI (a prompt
+    /// opening, a status-bar indicator switching to a picker, etc.).
+    ///
+    /// Targets menu-style popups (`List` / `Action`) on both the
+    /// buffer-local and editor-wide stacks. `Completion` and `Hover`
+    /// popups are intentionally left alone: a Completion popup is
+    /// driven by typing into the very prompt that may have just
+    /// opened (e.g. type-to-filter), and a `Hover` popup is a
+    /// transient documentation overlay that the existing transient-
+    /// dismiss logic already handles.
+    ///
+    /// Use this before opening any prompt or other top-level picker
+    /// so a previously-open LSP-Servers popup (or plugin action
+    /// popup) doesn't keep overlapping the new UI. The user-reported
+    /// flow that motivated this is: LSP indicator popup open →
+    /// click the language indicator → language picker prompt opens,
+    /// LSP popup stays overlapping it. (#1941 follow-up)
+    pub fn dismiss_menu_popups_for_prompt(&mut self) {
+        use crate::view::popup::PopupKind;
+
+        // Buffer-local popup stack — drop menu/action popups.
+        // ClearPopups is a single event that nukes the whole stack;
+        // since menu/action popups dominate the stack and we don't
+        // expect a mixed stack of completion-under-menu, this is a
+        // pragmatic over-approximation. If a future caller stacks a
+        // Completion under a List on the same buffer, we'd need to
+        // selectively pop instead — there's no current callsite that
+        // does that.
+        let buffer_local_has_menu_or_action = self
+            .active_state()
+            .popups
+            .all()
+            .iter()
+            .any(|p| matches!(p.kind, PopupKind::List | PopupKind::Action));
+        if buffer_local_has_menu_or_action {
+            self.clear_popups();
+        }
+
+        // Editor-wide popup stack: pop popups while the top is a
+        // List/Action menu popup. Skip if the top is a Completion or
+        // Hover popup (the rule above).
+        while self
+            .global_popups
+            .top()
+            .is_some_and(|p| matches!(p.kind, PopupKind::List | PopupKind::Action))
+        {
+            self.global_popups.hide();
+        }
+    }
+
     // === LSP Confirmation Popup ===
 
     /// Show the LSP confirmation popup for a language server

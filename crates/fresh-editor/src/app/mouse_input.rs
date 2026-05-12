@@ -1978,33 +1978,49 @@ impl Editor {
         if row != status_row {
             return None;
         }
+        // Helper: dismiss any open menu-style popup (LSP-Servers, plugin
+        // action popups, etc.) before opening a new modal UI. Without
+        // this, clicking a different status-bar indicator while a
+        // popup is up leaves the popup overlapping the new prompt or
+        // picker — the user-reported #1941 follow-up.
+        //
+        // Skipped for the LSP indicator itself: it has its own toggle
+        // semantics inside `show_lsp_status_popup` (second click closes
+        // the popup), which we don't want to undermine.
         if let Some((r, s, e)) = self.active_chrome().status_bar_line_ending_area {
             if row == r && col >= s && col < e {
+                self.dismiss_menu_popups_for_prompt();
                 return Some(self.handle_action(Action::SetLineEnding));
             }
         }
         if let Some((r, s, e)) = self.active_chrome().status_bar_encoding_area {
             if row == r && col >= s && col < e {
+                self.dismiss_menu_popups_for_prompt();
                 return Some(self.handle_action(Action::SetEncoding));
             }
         }
         if let Some((r, s, e)) = self.active_chrome().status_bar_language_area {
             if row == r && col >= s && col < e {
+                self.dismiss_menu_popups_for_prompt();
                 return Some(self.handle_action(Action::SetLanguage));
             }
         }
         if let Some((r, s, e)) = self.active_chrome().status_bar_lsp_area {
             if row == r && col >= s && col < e {
+                // Intentionally NOT calling `dismiss_menu_popups_for_prompt`
+                // here — `show_lsp_status_popup` owns the toggle.
                 return Some(self.handle_action(Action::ShowLspStatus));
             }
         }
         if let Some((r, s, e)) = self.active_chrome().status_bar_remote_area {
             if row == r && col >= s && col < e {
+                self.dismiss_menu_popups_for_prompt();
                 return Some(self.handle_action(Action::ShowRemoteIndicatorMenu));
             }
         }
         if let Some((r, s, e)) = self.active_chrome().status_bar_warning_area {
             if row == r && col >= s && col < e {
+                self.dismiss_menu_popups_for_prompt();
                 return Some(self.handle_action(Action::ShowWarnings));
             }
         }

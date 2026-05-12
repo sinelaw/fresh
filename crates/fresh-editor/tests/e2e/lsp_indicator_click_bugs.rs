@@ -848,6 +848,93 @@ fn issue_4_repeated_plugin_action_popup_pushes_stack_instead_of_replace() -> any
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Follow-up — opening a prompt (e.g. clicking the language indicator
+//             while the LSP-Servers popup is up) must dismiss the popup.
+// ---------------------------------------------------------------------------
+//
+// User-reported after the previous round of fixes:
+//   "when the lsp indicator popup is open -> click on the language
+//    indicator, which brings up a prompt -> the lsp popup stays open
+//    and overlaps the prompt. it should close the popup. same for any
+//    other popup probably?"
+//
+// The fix is `Editor::dismiss_menu_popups_for_prompt`, called from
+// every non-LSP status-bar indicator's click branch in
+// `handle_click_status_bar`. This test asserts the behaviour through
+// a status-bar mouse click — the exact path the user follows.
+
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn status_indicator_click_dismisses_open_lsp_popup_before_opening_prompt() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let file = temp.path().join("hello.rs");
+    std::fs::write(&file, "fn main() {}\n")?;
+
+    let mut harness = EditorTestHarness::create(
+        140,
+        40,
+        HarnessOptions::new()
+            .with_config(config_with_rust_lsp("rust-analyzer"))
+            .with_working_dir(temp.path().to_path_buf()),
+    )?;
+    harness.open_file(&file)?;
+    harness.wait_until(|h| h.get_status_bar().contains("LSP (off)"))?;
+
+    // Step (a): open the LSP-Servers popup — this is what the user
+    // had on screen when they reached for the language indicator.
+    harness.editor_mut().show_lsp_status_popup();
+    harness.render()?;
+    assert!(
+        active_popup_count(&harness) >= 1,
+        "precondition: LSP Servers popup should be open"
+    );
+    assert!(
+        harness.screen_to_string().contains("LSP Servers (rust)"),
+        "precondition: LSP Servers popup should be drawn"
+    );
+
+    // Step (b): the user clicks the language indicator on the status
+    // bar. Find its column on the rendered screen and inject a mouse
+    // click at that cell.
+    let screen = harness.screen_to_string();
+    let status_row_idx = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Rust") && l.contains("LSP"))
+        .map(|(i, _)| i as u16)
+        .expect("status row with Rust language indicator must be present");
+    let status_row = screen.lines().nth(status_row_idx as usize).unwrap();
+    let language_col = status_row
+        .find("Rust")
+        .expect("status row should contain Rust language label") as u16;
+    harness.mouse_click(language_col, status_row_idx)?;
+    harness.render()?;
+
+    // Expected: the LSP-Servers popup must be gone, and the editor
+    // should now be in prompt-mode for the language picker.
+    let screen_after = harness.screen_to_string();
+    assert!(
+        !screen_after.contains("LSP Servers (rust)"),
+        "BUG: after clicking the language indicator while the LSP \
+         Servers popup was open, the popup remained on screen and \
+         overlapped the language-picker prompt.\nScreen:\n{screen_after}"
+    );
+    assert_eq!(
+        active_popup_count(&harness),
+        0,
+        "BUG: LSP Servers popup state should be gone from the popup \
+         stack — got {} popup(s) remaining.\nScreen:\n{screen_after}",
+        active_popup_count(&harness)
+    );
+    assert!(
+        harness.editor().is_prompting(),
+        "precondition: the language indicator click should have \
+         opened the language-picker prompt. Screen:\n{screen_after}"
+    );
+    Ok(())
+}
+
 /// Extract the braille spinner glyph from the rendered status bar.
 /// Returns the character immediately after the "LSP " literal on the
 /// status row, or "?" if the indicator isn't visible.
