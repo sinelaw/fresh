@@ -1075,6 +1075,13 @@ pub struct ViewLineMapping {
     /// Last valid byte position in this visual row (newline for real lines, last char for wrapped)
     /// Clicks past end of visible text position cursor here
     pub line_end_byte: usize,
+    /// True iff this visual row was rendered for a plugin-injected
+    /// virtual line (live-diff deletion overlays, markdown_compose
+    /// borders, …) rather than for actual buffer content. Used by
+    /// `move_visual_line` to skip past these rows without stranding
+    /// the cursor on a position whose `line_end_byte` was inherited
+    /// from the previous source row.
+    pub is_plugin_virtual: bool,
 }
 
 impl ViewLineMapping {
@@ -1271,35 +1278,32 @@ impl WindowLayoutCache {
 
     /// Move by visual line using the cached mappings
     /// Returns (new_position, new_visual_column) or None if at boundary
-    ///
-    /// `buffer_len` is the byte length of the underlying buffer; the
-    /// walker uses it to distinguish a legitimate trailing-EOF empty
-    /// row (`line_end_byte == buffer_len`) from a plugin-injected empty
-    /// virtual row in the middle of the buffer (line_end_byte inherited
-    /// from the previous row and < buffer_len).
     pub fn move_visual_line(
         &self,
         split_id: LeafId,
         current_pos: usize,
         goal_visual_col: usize,
         direction: i8, // -1 = up, 1 = down
-        buffer_len: usize,
     ) -> Option<(usize, usize)> {
         let mappings = self.view_line_mappings.get(&split_id)?;
         let current_row = self.find_visual_row(split_id, current_pos)?;
 
         // Walk past purely-virtual rows (e.g. markdown_compose table top/
-        // bottom borders and inter-row separators).  Those rows have no
-        // source mapping at all — their `char_source_bytes` are all `None`
-        // and their `line_end_byte` is inherited from the adjacent content
-        // row.  If MoveDown/MoveUp stopped on them the cursor would land on
-        // a byte that's already at the row above's end, which in turn
-        // causes Down-after-table to teleport back to an earlier position
-        // (regression exposed by markdown_compose's table border feature).
+        // bottom borders and inter-row separators, live-diff deletion
+        // virtual lines).  Those rows are plugin-injected and their
+        // `line_end_byte` is inherited from the adjacent content row.
+        // If MoveDown/MoveUp stopped on them the cursor would land on a
+        // byte that's already at the row above's end, which in turn
+        // causes Down-after-table to teleport back to an earlier
+        // position (regression exposed by markdown_compose's table
+        // border feature) or strands the cursor at the previous line's
+        // EOL when a live-diff deletion hunk starts with a blank line
+        // (regression exposed by the live-diff plugin).
         //
-        // A row is "navigable" iff at least one of its visual columns maps
-        // to a real source byte.  Skip entirely-virtual rows in the move
-        // direction until we hit a navigable one or run off the edge.
+        // A row is "navigable" iff at least one of its visual columns
+        // maps to a real source byte.  Skip entirely-virtual rows in
+        // the move direction until we hit a navigable one or run off
+        // the edge.
         let mut target_row = current_row;
         let navigable = |idx: usize| -> bool {
             mappings
@@ -1320,34 +1324,25 @@ impl WindowLayoutCache {
             // Either the next row has real source content, or we've reached
             // a legitimate non-source row that the rest of the editor
             // already treats as a cursor stop (trailing empty line at EOF,
-            // implicit blank final line).  In either case stop walking.
+            // implicit blank final line, empty source line between
+            // paragraphs).  In either case stop walking.
             if navigable(target_row) {
                 break;
             }
             let mapping = mappings.get(target_row)?;
-            let is_empty_row =
-                mapping.visual_to_char.is_empty() || mapping.char_source_bytes.is_empty();
-            if !is_empty_row {
-                // The row has columns but none carry a source byte — most
-                // likely a plugin-injected decoration with padding.  Keep
-                // looking.
+            if mapping.is_plugin_virtual {
+                // Plugin-injected virtual row (live-diff deletion lines,
+                // markdown_compose table borders, …).  Its
+                // `line_end_byte` is inherited from the previous row, so
+                // stopping here would strand the cursor at the previous
+                // source line's EOL.  Keep walking.
                 continue;
             }
-            // Distinguish the legitimate trailing-EOF empty row (created
-            // with `line_end_byte = buffer_len`) from a plugin-injected
-            // empty virtual row in the middle of the buffer (line_end_byte
-            // inherited from the previous row, strictly less than
-            // buffer_len).  The latter happens with live-diff deletion
-            // hunks that start with a blank line: the virtual `-` row
-            // for the blank looks identical in shape to an EOF row, and
-            // stopping on it strands the cursor at the previous source
-            // line's EOL (the inherited line_end_byte).  Keep walking
-            // past it so the visual-line motion can reach the real next
-            // line below (or fall through to the caller's byte-based
-            // fallback if it's off-screen).
-            if mapping.line_end_byte == buffer_len {
-                break;
-            }
+            // Empty mapping that isn't plugin-virtual: a real empty
+            // source line (paragraph separator), the trailing empty
+            // EOF row, or the implicit blank final line.  These are
+            // legitimate cursor stops.
+            break;
         }
 
         let target_mapping = mappings.get(target_row)?;

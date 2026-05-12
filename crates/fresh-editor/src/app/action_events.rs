@@ -227,7 +227,6 @@ impl crate::app::window::Window {
         // Use the *effective* active split + buffer so that cursor motion in
         // a focused buffer-group panel reads the panel's own cursors and
         // buffer instead of the group host's.
-        let buffer_len: usize;
         let cursor_data: Vec<_> = {
             let active_split = self.effective_active_split();
             let active_buffer = self.active_buffer();
@@ -240,7 +239,6 @@ impl crate::app::window::Window {
                 .unwrap()
                 .cursors;
             let state = (&self.buffers).get(&active_buffer).unwrap();
-            buffer_len = state.buffer.len();
             cursors
                 .iter()
                 .map(|(cursor_id, cursor)| {
@@ -328,7 +326,6 @@ impl crate::app::window::Window {
                         from_pos,
                         goal_visual_col,
                         *direction,
-                        buffer_len,
                     ) {
                         Some(result) => result,
                         None => {

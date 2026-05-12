@@ -1281,10 +1281,24 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         } else {
             Vec::new()
         };
+        // Mark plugin-injected virtual rows so `move_visual_line` can
+        // skip them.  Both the first row (AfterInjectedNewline) and any
+        // wrap continuations (AfterBreak whose content has no source
+        // bytes) belong to the virtual line.
+        let is_plugin_virtual =
+            matches!(
+                current_view_line.line_start,
+                LineStart::AfterInjectedNewline
+            ) || (matches!(current_view_line.line_start, LineStart::AfterBreak)
+                && !current_view_line
+                    .char_source_bytes
+                    .iter()
+                    .any(|b| b.is_some()));
         view_line_mappings.push(ViewLineMapping {
             char_source_bytes: content_map.clone(),
             visual_to_char: (0..content_map.len()).collect(),
             line_end_byte,
+            is_plugin_virtual,
         });
 
         // Track if line was empty before moving line_spans
@@ -1461,6 +1475,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 char_source_bytes: Vec::new(),
                 visual_to_char: Vec::new(),
                 line_end_byte: buffer_len,
+                is_plugin_virtual: false,
             });
 
             // NOTE: We intentionally do NOT update last_line_end here.
@@ -1497,6 +1512,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     char_source_bytes: Vec::new(),
                     visual_to_char: Vec::new(),
                     line_end_byte: state.buffer.len(),
+                    is_plugin_virtual: false,
                 });
             }
         }
