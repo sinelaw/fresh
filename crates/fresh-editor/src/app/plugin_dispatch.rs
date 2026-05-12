@@ -2580,7 +2580,58 @@ impl Editor {
         popup_obj.resolver = crate::view::popup::PopupResolver::PluginAction {
             popup_id: popup_id.clone(),
         };
-        self.global_popups.show(popup_obj);
+
+        // `convert_popup_data_to_popup` hardcodes a default dark
+        // background because it has no theme handle (it's called from
+        // `EditorState::apply` too). Restamp the active theme's
+        // `popup_bg` / `popup_border_fg` here so plugin popups don't
+        // render as a near-black rectangle on top of a light theme —
+        // #1941 issue 2.
+        {
+            let theme = self.theme();
+            popup_obj.background_style = ratatui::style::Style::default().bg(theme.popup_bg);
+            popup_obj.border_style = ratatui::style::Style::default().fg(theme.popup_border_fg);
+        }
+
+        // Dismiss any built-in LSP-status popup that the editor put
+        // on `active_state().popups` in response to the same click —
+        // the plugin's popup is the contextual answer and stacking
+        // ours underneath leaves two popups for one user gesture
+        // (#1941 issue 1). Done here (rather than at the
+        // `show_lsp_status_popup` call site) because plugin handlers
+        // run *asynchronously*: by the time the `ShowActionPopup`
+        // command reaches us, the LSP-Servers popup has already
+        // landed. Re-run on every plugin push (not just the first
+        // dedup'd one) because rapid repeated clicks can re-add the
+        // LSP-Servers popup between consecutive plugin commands.
+        while self
+            .active_state()
+            .popups
+            .top()
+            .is_some_and(|p| matches!(p.resolver, crate::view::popup::PopupResolver::LspStatus))
+        {
+            self.active_state_mut().popups.hide();
+        }
+
+        // Dedup by `popup_id`: if a previous `showActionPopup` with
+        // the same id is still on the stack (common: repeated
+        // indicator clicks fire `lsp_status_clicked` over and over,
+        // each one re-pushing "rust-lsp-help"), replace it in place
+        // instead of stacking another copy. Without this, dismissing
+        // one reveals the same popup underneath — #1941 issue 4.
+        let existing_idx = self.global_popups.all().iter().position(|p| {
+            matches!(
+                &p.resolver,
+                crate::view::popup::PopupResolver::PluginAction { popup_id: id } if id == &popup_id,
+            )
+        });
+        if let Some(idx) = existing_idx {
+            if let Some(slot) = self.global_popups.get_mut(idx) {
+                *slot = popup_obj;
+            }
+        } else {
+            self.global_popups.show(popup_obj);
+        }
         tracing::info!(
             "Action popup shown: id={}, stack_depth={}",
             popup_id,

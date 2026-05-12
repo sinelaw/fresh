@@ -86,8 +86,26 @@ editor.on("lsp_status_clicked", (data) => {
     `rust-lsp: lsp_status_clicked hook received - language=${data.language}, has_error=${data.has_error}, rustLspError=${rustLspError ? "SET" : "NULL"}`
   );
 
+  if (data.language !== "rust") {
+    return;
+  }
+
+  // Recovery: if `rustLspError` was set from a previous failure but
+  // the editor now reports the language as no-error (the LSP came
+  // back up — e.g. a successful auto-restart after an external
+  // kill), clear the stale error state and bow out so the built-in
+  // LSP Servers popup can take over. Without this, a click after
+  // recovery would still surface our "Rust Language Server Not
+  // Found" install-help popup, with a title that no longer
+  // describes the current state — #1941 issue 3.
+  if (!data.has_error && rustLspError !== null) {
+    editor.debug("rust-lsp: LSP recovered; clearing stale rustLspError");
+    rustLspError = null;
+    return;
+  }
+
   // Only handle Rust language clicks when there's an error
-  if (data.language !== "rust" || !rustLspError) {
+  if (!rustLspError) {
     editor.debug(
       `rust-lsp: Skipping - language check=${data.language !== "rust"}, error check=${!rustLspError}`
     );
