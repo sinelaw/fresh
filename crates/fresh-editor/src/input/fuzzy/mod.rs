@@ -63,6 +63,19 @@ pub(crate) mod score {
     /// in the target but not necessarily from position 0). This ensures that
     /// e.g. "results" in "results.json" ranks above scattered r-e-s-u-l-t-s.
     pub const CONTIGUOUS_SUBSTRING: i32 = 64;
+    /// Bonus for a contiguous match that begins at the start of the basename
+    /// (immediately after the last `/`, or position 0 if there is no `/`).
+    /// Stacks with the existing word-boundary bonus to give nested basename
+    /// prefix matches (e.g. "ts" -> ".../tsconfig.json") a decisive edge over
+    /// equally-contiguous matches that sit inside the basename (e.g. "ts" ->
+    /// ".../pkg.ts", where "ts" comes after the extension dot).
+    pub const BASENAME_PREFIX: i32 = 64;
+    /// Bonus for a contiguous match that begins at the start of an interior
+    /// path segment (immediately after some `/` other than the one preceding
+    /// the basename). Smaller than `BASENAME_PREFIX` because the basename is
+    /// the more common search target, but still enough to outrank arbitrary
+    /// mid-segment substring matches.
+    pub const PATH_SEGMENT_PREFIX: i32 = 32;
 }
 
 /// Result of a fuzzy match, containing match status and quality score
@@ -454,6 +467,65 @@ mod tests {
             "exact target should score higher: exact={}, partial={}",
             exact.score,
             partial.score
+        );
+    }
+
+    #[test]
+    fn test_basename_prefix_beats_intra_segment_match() {
+        // Typing "ts" should rank `tsconfig.json` (basename starts with the
+        // prefix) above unrelated files whose basename merely *contains*
+        // "ts" as a contiguous substring after the extension dot
+        // (e.g. `pkg.ts`, `finder.ts`).  Without the basename-prefix bonus,
+        // both score identically because each match earns the same
+        // word-boundary + contiguous bonuses.
+        let prefix = fuzzy_match("ts", "crates/fresh-editor/plugins/tsconfig.json");
+        for distractor in &[
+            "crates/fresh-editor/plugins/pkg.ts",
+            "crates/fresh-editor/plugins/lib/finder.ts",
+            "crates/fresh-editor/plugins/lib/index.ts",
+            "crates/fresh-editor/plugins/diagnostics_panel.ts",
+        ] {
+            let other = fuzzy_match("ts", distractor);
+            assert!(prefix.matched && other.matched);
+            assert!(
+                prefix.score > other.score,
+                "tsconfig.json ({}) must outrank {} ({})",
+                prefix.score,
+                distractor,
+                other.score
+            );
+        }
+    }
+
+    #[test]
+    fn test_directory_segment_prefix_beats_intra_segment_match() {
+        // A directory segment that starts with the prefix should also
+        // outrank a mid-segment match, even when it isn't the basename.
+        let dir_prefix = fuzzy_match("ts", "crates/ts-parser/src/lib.rs");
+        let intra = fuzzy_match("ts", "crates/fresh-editor/plugins/pkg.ts");
+        assert!(dir_prefix.matched && intra.matched);
+        assert!(
+            dir_prefix.score > intra.score,
+            "ts-parser/... ({}) must outrank pkg.ts ({})",
+            dir_prefix.score,
+            intra.score
+        );
+    }
+
+    #[test]
+    fn test_basename_prefix_outranks_directory_prefix() {
+        // When both a basename and an interior directory start with the
+        // same prefix, the basename should win — typing "ts" is far more
+        // often a search for a file named tsconfig.json than for a file
+        // *inside* a directory whose name happens to start with "ts".
+        let basename = fuzzy_match("ts", "crates/fresh-editor/plugins/tsconfig.json");
+        let dir = fuzzy_match("ts", "crates/ts-parser/src/lib.rs");
+        assert!(basename.matched && dir.matched);
+        assert!(
+            basename.score > dir.score,
+            "basename-prefix tsconfig.json ({}) must outrank dir-prefix ts-parser/... ({})",
+            basename.score,
+            dir.score
         );
     }
 

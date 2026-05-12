@@ -201,6 +201,7 @@ fn score_single_term(
     }
 
     // Exact match bonus: query matches entire target.
+    let mut credited_full_path_prefix = false;
     if query_len == target_len {
         final_score += score::EXACT_MATCH;
     } else if target_len > query_len && is_contiguous {
@@ -212,9 +213,39 @@ fn score_single_term(
             if next_char == '.' {
                 // Highest priority: exact basename match (before extension).
                 final_score += score::EXACT_MATCH;
+                credited_full_path_prefix = true;
             } else if next_char == '-' || next_char == '_' || next_char == ' ' {
                 // Second priority: match before word separator.
                 final_score += score::EXACT_BASENAME_MATCH;
+                credited_full_path_prefix = true;
+            }
+        }
+    }
+
+    // Path-segment prefix bonus.  A contiguous match that begins at the start
+    // of a path segment (basename or interior directory) outranks an equally
+    // contiguous match that lands mid-segment.  This is what users expect
+    // when typing a short query like "ts": a basename starting with "ts"
+    // (e.g. `tsconfig.json`) should rank above unrelated files whose only
+    // `ts` happens to follow an extension dot (e.g. `pkg.ts`, `finder.ts`).
+    //
+    // Skipped when the existing `EXACT_*` block above already credited a
+    // full-path prefix that ends in a separator — those matches are already
+    // in the top tier and would be double-counted otherwise.
+    if is_contiguous
+        && !credited_full_path_prefix
+        && !positions.is_empty()
+        && positions.len() == query_len
+    {
+        let start = positions[0];
+        let starts_segment = start == 0 || (start > 0 && target_chars[start - 1] == '/');
+        if starts_segment {
+            let last_slash = target_chars.iter().rposition(|&c| c == '/');
+            let basename_start = last_slash.map(|i| i + 1).unwrap_or(0);
+            if start == basename_start {
+                final_score += score::BASENAME_PREFIX;
+            } else {
+                final_score += score::PATH_SEGMENT_PREFIX;
             }
         }
     }
