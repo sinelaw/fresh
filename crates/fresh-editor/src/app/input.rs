@@ -1422,12 +1422,13 @@ impl Editor {
             Action::ToggleLineWrap => {
                 let new_value = !self.config.editor.line_wrap;
                 self.config_mut().editor.line_wrap = new_value;
-                // Window-side reads (`Window::config()`, which backs
-                // `resolve_line_wrap_for_buffer` below) read a separate Arc
-                // clone of the config. Without this sync the resolve call
-                // would see the pre-toggle value and we'd write the *old*
-                // line-wrap state back into the viewport — silently no-op'ing
-                // the toggle while still flipping the status message.
+                // `resolve_line_wrap_for_buffer` below reads
+                // `Window::config()`, which holds a *separate* `Arc<Config>`
+                // clone from the Editor's. Without this sync the resolve
+                // would return the pre-toggle value and we'd write the
+                // *old* line-wrap state back into the viewport — silently
+                // no-op'ing the toggle while still flipping the status
+                // message. See `Editor::config_mut` for the broader rule.
                 self.sync_windows_config();
 
                 // Update all viewports to reflect the new line wrap setting,
