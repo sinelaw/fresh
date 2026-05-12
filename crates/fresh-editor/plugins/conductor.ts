@@ -164,14 +164,27 @@ function ageString(createdAt: number): string {
   return `${Math.floor(sec / 3600)}h`;
 }
 
+// Suggestion value reserved for the "+ New session" pseudo-row.
+// Distinct from every numeric session id, so prompt_confirmed
+// can tell it apart.
+const NEW_SESSION_VALUE = "__new__";
+
 function buildSuggestions(): PromptSuggestion[] {
   reconcileSessions();
   const ids = Array.from(conductorSessions.keys()).sort(
     (a, b) => a - b,
   );
-  promptSessionIds = ids;
+  // Sentinel -1 keeps promptSessionIds aligned 1:1 with the
+  // visible suggestion rows so promptSelectedIndex still indexes
+  // it directly. -1 means "the [+ New] pseudo-row".
+  promptSessionIds = [-1, ...ids];
   const activeId = editor.activeWindow();
-  return ids.map((id) => {
+  const newRow: PromptSuggestion = {
+    text: "+ New session",
+    description: "Create a new worktree-rooted session",
+    value: NEW_SESSION_VALUE,
+  };
+  const sessionRows = ids.map((id) => {
     const s = conductorSessions.get(id)!;
     const stateText = id === activeId ? "ACT " : STATE_GLYPH[s.state];
     const ageText = ageString(s.createdAt);
@@ -181,6 +194,7 @@ function buildSuggestions(): PromptSuggestion[] {
       value: String(id),
     };
   });
+  return [newRow, ...sessionRows];
 }
 
 function refreshPromptIfOpen(): void {
@@ -201,44 +215,40 @@ const PROMPT_TYPE = "conductor-room";
 function openControlRoom(): void {
   const activeId = editor.activeWindow();
   originalActiveSessionBeforePrompt = activeId;
-  editor.startPrompt("Conductor — sessions", PROMPT_TYPE, true);
+  // Trailing " │ " separates the static title from the user's
+  // search input — without it typed characters jam right up
+  // against "sessions".
+  editor.startPrompt("Conductor — sessions  │  ", PROMPT_TYPE, true);
   editor.setPromptSuggestions(buildSuggestions());
-  // Land the cursor on the session the user was just in, not on
-  // the top of the list. buildSuggestions() populates
-  // promptSessionIds in the same order as the suggestion list.
+  // Pseudo-row sits at index 0 (sentinel -1 in promptSessionIds),
+  // so the active session's row is at indexOf(activeId).
   const activeIdx = promptSessionIds.indexOf(activeId);
-  promptSelectedIndex = activeIdx >= 0 ? activeIdx : 0;
+  promptSelectedIndex = activeIdx > 0 ? activeIdx : 0;
   if (activeIdx > 0) {
     editor.setPromptSelectedIndex(activeIdx);
   }
-  // Primitive #2 chrome: hotkey-hint footer rendered along the
-  // bottom row of the floating overlay's results pane. Each
-  // segment is a styled-text span so the bracketed key letters
-  // pick up the theme's `ui.help_key_fg` colour the same way the
-  // overlay title does.
   editor.setPromptFooter([
     { text: " " },
     { text: "↑↓", style: { fg: "ui.help_key_fg" } },
     { text: " preview  " },
     { text: "Enter", style: { fg: "ui.help_key_fg" } },
-    { text: " dive  " },
+    { text: " dive/new  " },
     { text: "Esc", style: { fg: "ui.help_key_fg" } },
     { text: " close" },
   ]);
   editor.setStatus(
-    "Up/Down: preview  Enter: dive  Esc: cancel",
+    "Up/Down: preview  Enter: dive/new  Esc: cancel",
   );
 }
 
 editor.on("prompt_selection_changed", (e) => {
   if (e.prompt_type !== PROMPT_TYPE) return;
   promptSelectedIndex = e.selected_index;
-  // Primitive #1: render the highlighted session's full UI in
-  // the prompt's preview pane natively. No active-session
-  // mutation, no flicker — the editor under the prompt stays
-  // put while the right pane shows the previewed session.
+  // Render the highlighted session's full UI in the prompt's
+  // preview pane. Sentinel -1 (the [+ New] row) has nothing to
+  // preview — clear instead.
   const id = promptSessionIds[promptSelectedIndex];
-  if (typeof id === "number" && id !== editor.activeWindow()) {
+  if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
     editor.previewWindowInRect(id);
   } else {
     editor.clearWindowPreview();
@@ -247,15 +257,19 @@ editor.on("prompt_selection_changed", (e) => {
 
 editor.on("prompt_confirmed", (e) => {
   if (e.prompt_type === PROMPT_TYPE) {
-    // Enter commits: dive into the highlighted session for
-    // real. Clear the preview override so the next prompt
-    // session doesn't accidentally inherit it.
+    // Enter commits: dive into the highlighted session, or fire
+    // the new-session flow when the [+ New] pseudo-row is the
+    // selected value.
     editor.clearWindowPreview();
+    originalActiveSessionBeforePrompt = null;
+    if (e.input === NEW_SESSION_VALUE) {
+      startNewSession();
+      return;
+    }
     const id = promptSessionIds[promptSelectedIndex];
-    if (typeof id === "number" && id !== editor.activeWindow()) {
+    if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
       editor.setActiveWindow(id);
     }
-    originalActiveSessionBeforePrompt = null;
     return;
   }
 });
@@ -608,6 +622,11 @@ function killSelected(): void {
         Math.min(promptSelectedIndex, promptSessionIds.length - 1),
       )
     ];
+  // Sentinel: pseudo-row "+ New" has nothing to kill.
+  if (id === -1) {
+    editor.setStatus("Conductor: select a session row first");
+    return;
+  }
   if (id === 1) {
     editor.setStatus("Conductor: cannot kill the base session");
     return;
