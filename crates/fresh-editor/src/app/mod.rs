@@ -168,8 +168,7 @@ pub fn editor_tick(
 pub(crate) use path_utils::normalize_path;
 
 use self::types::{
-    FileExplorerContextMenu, InteractiveReplaceState, LspMessageEntry, LspProgressInfo, MouseState,
-    SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
+    LspMessageEntry, LspProgressInfo, SearchState, TabContextMenu, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;
@@ -191,8 +190,7 @@ use crate::services::time_source::{RealTimeSource, SharedTimeSource};
 use crate::state::EditorState;
 use crate::types::{LspLanguageConfig, LspServerConfig, ProcessLimits};
 use crate::view::file_tree::{FileTree, FileTreeView};
-use crate::view::prompt::{Prompt, PromptType};
-use crate::view::scroll_sync::ScrollSyncManager;
+use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
 use crate::view::ui::{
     FileExplorerRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
@@ -202,7 +200,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};

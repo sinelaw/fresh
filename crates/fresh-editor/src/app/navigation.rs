@@ -25,8 +25,6 @@
 
 use crate::model::buffer::LineNumber;
 
-use super::Editor;
-
 /// Whether the active cursor should be vertically recentered when a jump
 /// causes the viewport to scroll, and whether the selection anchor should
 /// be reset.

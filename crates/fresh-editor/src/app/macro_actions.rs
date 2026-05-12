@@ -8,7 +8,7 @@
 use rust_i18n::t;
 
 use crate::input::keybindings::Action;
-use crate::model::event::{BufferId, EventLog};
+use crate::model::event::EventLog;
 use crate::state::EditorState;
 
 use super::types::{BufferKind, BufferMetadata};

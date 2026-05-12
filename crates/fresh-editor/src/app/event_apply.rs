@@ -18,7 +18,7 @@
 
 use lsp_types::TextDocumentContentChangeEvent;
 
-use crate::model::event::{BufferId, Event, LeafId};
+use crate::model::event::Event;
 
 use super::types::EventLineInfo;
 use super::Editor;

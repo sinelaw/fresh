@@ -10,7 +10,6 @@
 //! Issue #597: Support click 3 times to select the whole line.
 
 use crate::common::harness::EditorTestHarness;
-use fresh::test_api::EditorTestApi;
 
 /// First content row depends on chrome (menu/tab bar). The
 /// editor exposes it via `harness.content_area_rows()`.

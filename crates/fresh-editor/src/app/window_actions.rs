@@ -203,6 +203,7 @@ impl crate::app::Editor {
     /// Insert a buffer into the active window's storage. Step 0c
     /// made `Window.buffers` the authoritative store; this is the
     /// canonical attach path.
+    #[allow(dead_code)]
     pub(crate) fn insert_buffer_into_active_window(
         &mut self,
         buffer_id: fresh_core::BufferId,
@@ -293,6 +294,7 @@ impl crate::app::Editor {
     ///   call the `Window` method directly via
     ///   `self.active_window_mut().X(...)` — no need for the
     ///   dispatcher's machinery.
+    #[allow(dead_code)]
     pub(crate) fn dispatch_to_active_window<R, F>(&mut self, f: F) -> Option<R>
     where
         F: FnOnce(
@@ -319,6 +321,7 @@ impl crate::app::Editor {
     /// `Window` handler. Idempotent for unknown / stale ids — events
     /// that target a window that has been closed by the time they
     /// dispatch are warn-logged and dropped.
+    #[allow(dead_code)]
     pub(crate) fn apply_window_control_event(&mut self, event: WindowControlEvent) {
         match event {
             WindowControlEvent::CloseThisWindow => {

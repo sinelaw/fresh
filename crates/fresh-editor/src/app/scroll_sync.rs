@@ -12,8 +12,6 @@ use crate::model::event::{BufferId, LeafId, SplitId};
 use crate::state::EditorState;
 use std::collections::HashMap;
 
-use super::Editor;
-
 impl crate::app::window::Window {
     /// Ensure the active tab in a split is visible by adjusting its
     /// scroll offset. Pure window-state mutation: split tree +

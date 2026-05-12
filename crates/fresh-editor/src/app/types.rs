@@ -86,7 +86,7 @@ pub(super) struct EventLineInfo {
 
 /// Search state for find/replace functionality
 #[derive(Debug, Clone)]
-pub(super) struct SearchState {
+pub(crate) struct SearchState {
     /// The search query
     pub query: String,
     /// All match positions in the buffer (byte offsets)
@@ -113,7 +113,7 @@ impl SearchState {
 
 /// State for interactive replace (query-replace)
 #[derive(Debug, Clone)]
-pub(super) struct InteractiveReplaceState {
+pub(crate) struct InteractiveReplaceState {
     /// The search pattern
     pub search: String,
     /// The replacement text
@@ -555,7 +555,7 @@ impl BufferMetadata {
 
 /// LSP progress information
 #[derive(Debug, Clone)]
-pub(super) struct LspProgressInfo {
+pub(crate) struct LspProgressInfo {
     pub language: String,
     pub title: String,
     pub message: Option<String>,
@@ -565,7 +565,7 @@ pub(super) struct LspProgressInfo {
 /// LSP message entry (for window messages and logs)
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(super) struct LspMessageEntry {
+pub(crate) struct LspMessageEntry {
     pub language: String,
     pub message_type: LspMessageType,
     pub message: String,
@@ -990,7 +990,7 @@ impl TabDragState {
 
 /// Mouse state tracking
 #[derive(Debug, Clone, Default)]
-pub(super) struct MouseState {
+pub(crate) struct MouseState {
     /// Whether we're currently dragging a vertical scrollbar
     pub dragging_scrollbar: Option<LeafId>,
     /// Whether we're currently dragging a horizontal scrollbar

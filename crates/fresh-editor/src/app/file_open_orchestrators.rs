@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use rust_i18n::t;
 
-use crate::model::event::{BufferId, LeafId};
+use crate::model::event::BufferId;
 use crate::state::EditorState;
 
 use super::Editor;

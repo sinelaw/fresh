@@ -702,6 +702,7 @@ impl Editor {
     }
 
     /// Active window's per-leaf view state map.
+    #[cfg(test)]
     pub(crate) fn split_view_states(
         &self,
     ) -> &std::collections::HashMap<crate::model::event::LeafId, crate::view::split::SplitViewState>

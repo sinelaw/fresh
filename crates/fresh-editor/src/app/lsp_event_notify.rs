@@ -10,7 +10,6 @@ use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
 use crate::model::event::{BufferId, Event};
 
 use super::window::Window;
-use super::Editor;
 
 impl Window {
     /// Collect all LSP text document changes from an event (recursively for batches)

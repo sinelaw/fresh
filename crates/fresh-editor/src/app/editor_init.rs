@@ -182,7 +182,6 @@ impl Editor {
     /// than capturing a new clock — so two editors built from the
     /// same parts agree on "now".
     pub(super) fn from_parts(parts: EditorParts) -> Self {
-        let now = parts.time_source.now();
         Editor {
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
@@ -965,14 +964,8 @@ impl Editor {
 
         t.phase("plugin_loading");
         // Extract config values before moving config into the struct
-        let file_explorer_width = config.file_explorer.width;
-        let file_explorer_side = config.file_explorer.side;
         let recovery_enabled = config.editor.recovery_enabled;
         let check_for_updates = config.check_for_updates;
-        let show_menu_bar = config.editor.show_menu_bar;
-        let show_tab_bar = config.editor.show_tab_bar;
-        let show_status_bar = config.editor.show_status_bar;
-        let show_prompt_line = config.editor.show_prompt_line;
 
         // Start periodic update checker if enabled (also sends daily telemetry)
         let update_checker = if check_for_updates {

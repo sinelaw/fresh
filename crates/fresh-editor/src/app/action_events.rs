@@ -11,8 +11,6 @@ use crate::input::actions::action_to_events as convert_action_to_events;
 use crate::input::keybindings::Action;
 use crate::model::event::{Event, LeafId};
 
-use super::Editor;
-
 impl crate::app::window::Window {
     /// Convert an action into a list of events to apply to the active buffer
     /// Returns None for actions that don't generate events (like Quit)

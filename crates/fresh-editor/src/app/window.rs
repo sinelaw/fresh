@@ -192,25 +192,26 @@ pub struct Window {
     pub pending_code_actions: Option<Vec<(String, lsp_types::CodeActionOrCommand)>>,
 
     /// Pending inlay-hints requests keyed by request id.
-    pub pending_inlay_hints_requests: std::collections::HashMap<u64, crate::app::InlayHintsRequest>,
+    pub(crate) pending_inlay_hints_requests:
+        std::collections::HashMap<u64, crate::app::InlayHintsRequest>,
 
     /// Pending folding-range requests + per-buffer in-flight tracking + debounce.
-    pub pending_folding_range_requests:
+    pub(crate) pending_folding_range_requests:
         std::collections::HashMap<u64, crate::app::FoldingRangeRequest>,
     pub folding_ranges_in_flight: std::collections::HashMap<BufferId, (u64, u64)>,
     pub folding_ranges_debounce: std::collections::HashMap<BufferId, std::time::Instant>,
 
     /// Pending semantic-tokens-full requests + per-buffer in-flight tracking +
     /// the next-allowed-refresh debounce.
-    pub pending_semantic_token_requests:
+    pub(crate) pending_semantic_token_requests:
         std::collections::HashMap<u64, crate::app::SemanticTokenFullRequest>,
-    pub semantic_tokens_in_flight:
+    pub(crate) semantic_tokens_in_flight:
         std::collections::HashMap<BufferId, (u64, u64, crate::app::SemanticTokensFullRequestKind)>,
     pub semantic_tokens_full_debounce: std::collections::HashMap<BufferId, std::time::Instant>,
 
     /// Pending semantic-tokens-range requests + per-buffer in-flight,
     /// last-request, and last-applied tracking.
-    pub pending_semantic_token_range_requests:
+    pub(crate) pending_semantic_token_range_requests:
         std::collections::HashMap<u64, crate::app::SemanticTokenRangeRequest>,
     pub semantic_tokens_range_in_flight:
         std::collections::HashMap<BufferId, (u64, usize, usize, u64)>,
@@ -361,7 +362,7 @@ pub struct Window {
     /// Drives the F+y/n/!/q UX during `replace_in_buffer` /
     /// `replace_all`. Per-window because the search target buffer
     /// and the visible matches are window-scoped.
-    pub interactive_replace_state: Option<crate::app::types::InteractiveReplaceState>,
+    pub(crate) interactive_replace_state: Option<crate::app::types::InteractiveReplaceState>,
 
     /// Cross-split scroll-sync manager for side-by-side diff views.
     /// Per-window because the splits it pairs are per-window.
@@ -396,10 +397,10 @@ pub struct Window {
     /// Hover-popup correlation state (which buffer / cursor a hover
     /// request was issued from). Per-window because hover requests
     /// route through the active window's LSP.
-    pub hover: crate::app::hover::HoverState,
+    pub(crate) hover: crate::app::hover::HoverState,
 
     /// Active find-in-buffer search session (if any).
-    pub search_state: Option<crate::app::types::SearchState>,
+    pub(crate) search_state: Option<crate::app::types::SearchState>,
 
     /// Overlay namespace used for search-result highlights. Per-window
     /// because the overlays it scopes are per-buffer (per-window).
@@ -427,7 +428,7 @@ pub struct Window {
 
     /// Cursor-position snapshot captured when the user opens the
     /// goto-line prompt, restored on Esc.
-    pub goto_line_preview: Option<crate::app::GotoLinePreviewSnapshot>,
+    pub(crate) goto_line_preview: Option<crate::app::GotoLinePreviewSnapshot>,
 
     /// Pending plugin-issued prompt callback id (used by
     /// `editor.startPrompt` to deliver the prompt result back).
@@ -488,7 +489,7 @@ pub struct Window {
     /// `$/progress` token → progress info for this window's LSP servers.
     /// Drives the spinner in the status bar's LSP pill. Per-window
     /// because the LspManager that emits these tokens is per-window.
-    pub lsp_progress: HashMap<String, crate::app::LspProgressInfo>,
+    pub(crate) lsp_progress: HashMap<String, crate::app::LspProgressInfo>,
 
     /// Status of each `(language, server_name)` pair attached to this
     /// window's LspManager (running, errored, restarting, …).
@@ -498,11 +499,11 @@ pub struct Window {
     /// Recent `window/showMessage` payloads from this window's LSP
     /// servers. Bounded ring (newest entries kept, drops the oldest
     /// when the soft cap is exceeded).
-    pub lsp_window_messages: Vec<crate::app::LspMessageEntry>,
+    pub(crate) lsp_window_messages: Vec<crate::app::LspMessageEntry>,
 
     /// Recent `window/logMessage` payloads from this window's LSP
     /// servers, on the same bounded-ring pattern as `lsp_window_messages`.
-    pub lsp_log_messages: Vec<crate::app::LspMessageEntry>,
+    pub(crate) lsp_log_messages: Vec<crate::app::LspMessageEntry>,
 
     /// Push-model diagnostics keyed by URI, then by server name. Each
     /// `publishDiagnostics` from a server replaces that server's slice
@@ -573,7 +574,7 @@ pub struct Window {
 
     /// Mouse drag/selection/scrollbar state for this window. Drag
     /// targets reference per-window LeafIds and BufferIds.
-    pub mouse_state: crate::app::types::MouseState,
+    pub(crate) mouse_state: crate::app::types::MouseState,
 
     /// Currently focused widget context (Normal / FileExplorer /
     /// Terminal / Prompt …). Per-window because each window has its
@@ -655,7 +656,7 @@ pub struct Window {
 
     /// Macro state (record/playback/registers) — one window's macro
     /// session at a time.
-    pub macros: crate::app::macros::MacroState,
+    pub(crate) macros: crate::app::macros::MacroState,
 
     /// Plugin-defined custom contexts active in this window (drives
     /// command palette visibility, e.g. "config-editor").
@@ -682,10 +683,10 @@ pub struct Window {
 
     /// Background line-scan state for this window (line counts for
     /// large files).
-    pub line_scan: crate::app::line_scan::LineScan,
+    pub(crate) line_scan: crate::app::line_scan::LineScan,
 
     /// Background search-scan state for this window.
-    pub search_scan: crate::app::search_scan::SearchScan,
+    pub(crate) search_scan: crate::app::search_scan::SearchScan,
 
     /// Anchor for the search-result overlay in this window.
     pub search_overlay_top_byte: Option<usize>,

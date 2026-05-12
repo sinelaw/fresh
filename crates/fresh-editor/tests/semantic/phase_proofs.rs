@@ -13,13 +13,10 @@ use crate::common::scenario::context::{
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::modal_scenario::{assert_modal_scenario, ModalScenario};
 use crate::common::scenario::observable::{
-    FsState, ModalState, PopupSnapshot, RoundTripGrid, WorkspaceState,
+    FsState, ModalState, RoundTripGrid, WorkspaceState,
 };
 use crate::common::scenario::persistence_scenario::{
     assert_persistence_scenario, PersistenceScenario,
-};
-use crate::common::scenario::terminal_io_scenario::{
-    assert_terminal_io_scenario_partial, GridExpect, TerminalIoScenario,
 };
 use crate::common::scenario::workspace_scenario::{assert_workspace_scenario, WorkspaceScenario};
 use fresh::test_api::Action;

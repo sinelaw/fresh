@@ -15,8 +15,6 @@ use rust_i18n::t;
 use std::io;
 use std::time::{Duration, Instant};
 
-use lsp_types::TextDocumentContentChangeEvent;
-
 use crate::model::event::{BufferId, Event};
 use crate::primitives::word_navigation::{find_word_end, find_word_start};
 use crate::state::EditorState;
@@ -3326,8 +3324,8 @@ impl Editor {
 
         if !lsp.semantic_tokens_range_supported(&language) {
             // Fall back to full document tokens if no server supports range.
-            // Drop the borrow first so the recursive call can re-borrow.
-            drop(__buffers_ref);
+            // End the borrow first so the recursive call can re-borrow.
+            let _ = __buffers_ref;
             self.maybe_request_semantic_tokens(buffer_id);
             return;
         }
