@@ -679,6 +679,15 @@ impl Editor {
                     prompt.footer = footer;
                 }
             }
+            PluginCommand::SetPromptSelectedIndex { index } => {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
+                    let len = prompt.suggestions.len();
+                    if len > 0 {
+                        let clamped = (index as usize).min(len - 1);
+                        prompt.selected_suggestion = Some(clamped);
+                    }
+                }
+            }
 
             // ==================== Session lifecycle ====================
             // See docs/internal/conductor-sessions-design.md.

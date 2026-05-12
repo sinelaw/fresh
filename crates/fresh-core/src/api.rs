@@ -2203,6 +2203,13 @@ pub enum PluginCommand {
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
 
+    /// Override the currently-highlighted suggestion row in the
+    /// open prompt. Clamped to the suggestion list's bounds; out-
+    /// of-range indices snap to the last row. No-op when there is
+    /// no open prompt or the list is empty. The renderer scrolls
+    /// the selection into view on the next frame.
+    SetPromptSelectedIndex { index: u32 },
+
     /// Add a menu item to an existing menu
     /// Add a menu item to an existing menu
     AddMenuItem {
@@ -4104,6 +4111,15 @@ impl PluginApi {
     /// the bottom of the results pane. Empty vec clears.
     pub fn set_prompt_footer(&self, footer: Vec<StyledText>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptFooter { footer })
+    }
+
+    /// Override the currently-highlighted suggestion row in the
+    /// open prompt. Useful when re-opening a picker and wanting
+    /// the previously-active entry to come up pre-selected
+    /// (e.g. Conductor highlighting the active session). The
+    /// editor clamps `index` to the list's bounds.
+    pub fn set_prompt_selected_index(&self, index: u32) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptSelectedIndex { index })
     }
 
     /// Add a menu item to an existing menu

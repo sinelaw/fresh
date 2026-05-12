@@ -2068,6 +2068,16 @@ interface EditorAPI {
 	*/
 	setPromptFooter(footer: StyledText[]): boolean;
 	/**
+	* Override the currently-highlighted suggestion row in the
+	* open prompt. The editor clamps `index` to the suggestion
+	* list's bounds and the renderer scrolls it into view on
+	* the next frame. No-op when no prompt is open or the
+	* suggestion list is empty. Typical use: re-opening a
+	* picker and pre-selecting the entry the user last acted on
+	* (Conductor highlights the active session).
+	*/
+	setPromptSelectedIndex(index: number): boolean;
+	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;

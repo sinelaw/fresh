@@ -199,10 +199,18 @@ function refreshPromptIfOpen(): void {
 const PROMPT_TYPE = "conductor-room";
 
 function openControlRoom(): void {
-  promptSelectedIndex = 0;
-  originalActiveSessionBeforePrompt = editor.activeWindow();
+  const activeId = editor.activeWindow();
+  originalActiveSessionBeforePrompt = activeId;
   editor.startPrompt("Conductor — sessions", PROMPT_TYPE, true);
   editor.setPromptSuggestions(buildSuggestions());
+  // Land the cursor on the session the user was just in, not on
+  // the top of the list. buildSuggestions() populates
+  // promptSessionIds in the same order as the suggestion list.
+  const activeIdx = promptSessionIds.indexOf(activeId);
+  promptSelectedIndex = activeIdx >= 0 ? activeIdx : 0;
+  if (activeIdx > 0) {
+    editor.setPromptSelectedIndex(activeIdx);
+  }
   // Primitive #2 chrome: hotkey-hint footer rendered along the
   // bottom row of the floating overlay's results pane. Each
   // segment is a styled-text span so the bracketed key letters

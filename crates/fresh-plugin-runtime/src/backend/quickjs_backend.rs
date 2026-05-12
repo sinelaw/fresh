@@ -3264,6 +3264,19 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Override the currently-highlighted suggestion row in the
+    /// open prompt. The editor clamps `index` to the suggestion
+    /// list's bounds and the renderer scrolls it into view on
+    /// the next frame. No-op when no prompt is open or the
+    /// suggestion list is empty. Typical use: re-opening a
+    /// picker and pre-selecting the entry the user last acted on
+    /// (Conductor highlights the active session).
+    pub fn set_prompt_selected_index(&self, index: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetPromptSelectedIndex { index })
+            .is_ok()
+    }
+
     // === Modes ===
 
     /// Define a buffer mode (takes bindings as array of [key, command] pairs)
