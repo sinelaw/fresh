@@ -3446,7 +3446,7 @@ impl Editor {
             if emb.window_id == 0 {
                 continue;
             }
-            let ex = inner.x.saturating_add(emb.byte_in_row as u16);
+            let ex = inner.x.saturating_add(emb.col_in_row as u16);
             let ey = inner.y.saturating_add(emb.buffer_row as u16);
             // Clip the embed rect to the panel's inner area so a
             // partially-offscreen embed (tiny terminal) doesn't

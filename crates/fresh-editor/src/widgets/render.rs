@@ -97,17 +97,18 @@ pub struct RenderOutput {
     pub embeds: Vec<EmbedRect>,
 }
 
-/// A rectangle reserved by a `WindowEmbed` widget. Origin is
-/// the panel-relative top-left in cells; `width_cols` is the
-/// number of display columns (≈ chars on monospace ASCII);
-/// `height_rows` matches the spec's `rows`. The host's render
-/// path resolves cell coordinates to screen positions at paint
-/// time and invokes the per-window renderer scoped to the rect.
+/// A rectangle reserved by a `WindowEmbed` widget. All
+/// coordinates are in display **columns** (not bytes), so the
+/// host can map straight to screen cells via `inner.x +
+/// col_in_row`. `width_cols` is the column count; `height_rows`
+/// matches the spec's `rows`. The host's floating-panel render
+/// walks these and invokes the per-window paint path scoped to
+/// the rect.
 #[derive(Debug, Clone, Copy)]
 pub struct EmbedRect {
     pub window_id: u32,
     pub buffer_row: u32,
-    pub byte_in_row: u32,
+    pub col_in_row: u32,
     pub width_cols: u32,
     pub height_rows: u32,
 }
@@ -474,7 +475,12 @@ fn render_collected(
                             focus_cursor = Some(fc);
                         }
                         for mut emb in child_embeds {
-                            emb.byte_in_row += inline_shift as u32;
+                            // Inline shift is in bytes; for ASCII
+                            // inline content this matches columns,
+                            // which is the only case that lands here
+                            // in practice (single-row embeds are
+                            // rare).
+                            emb.col_in_row += inline_shift as u32;
                             embeds.push(emb);
                         }
                         match acc.as_mut() {
@@ -1136,9 +1142,12 @@ fn render_collected(
                 fc.byte_in_row += prefix_bytes as u32;
                 focus_cursor = Some(fc);
             }
+            // Embeds are column-addressed; the `│ ` prefix is
+            // 4 UTF-8 bytes but only 2 display columns wide.
+            let prefix_cols = LEFT_BORDER_PREFIX.chars().count() as u32;
             for mut emb in child_embeds {
                 emb.buffer_row += 1;
-                emb.byte_in_row += prefix_bytes as u32;
+                emb.col_in_row += prefix_cols;
                 embeds.push(emb);
             }
 
@@ -1173,7 +1182,7 @@ fn render_collected(
             embeds.push(EmbedRect {
                 window_id: *window_id,
                 buffer_row: 0,
-                byte_in_row: 0,
+                col_in_row: 0,
                 width_cols: panel_width,
                 height_rows: *embed_rows,
             });
@@ -2263,13 +2272,17 @@ fn zip_row_blocks(
                 RowPiece::Inline { entry, hits, focus_cursor, embeds: inline_embeds } => {
                     let inline_cols = entry.text.chars().count();
                     let byte_shift = text.len();
+                    // Cumulative column width to the left of this
+                    // piece, for embed positioning. Embeds are
+                    // column-addressed, not byte-addressed.
+                    let col_shift = text.chars().count() as u32;
                     if row_idx == 0 {
                         text.push_str(&entry.text);
                         for emb in inline_embeds {
                             out_embeds.push(EmbedRect {
                                 window_id: emb.window_id,
                                 buffer_row: starting_row + emb.buffer_row,
-                                byte_in_row: emb.byte_in_row + byte_shift as u32,
+                                col_in_row: emb.col_in_row + col_shift,
                                 width_cols: emb.width_cols,
                                 height_rows: emb.height_rows,
                             });
@@ -2308,6 +2321,9 @@ fn zip_row_blocks(
                 RowPiece::Block { column_width, entries, hits, focus_cursor, embeds: block_embeds } => {
                     let block_w = *column_width as usize;
                     let byte_shift = text.len();
+                    // Cumulative column width to the left of this
+                    // block, for embed positioning.
+                    let col_shift = text.chars().count() as u32;
                     // Emit each embed exactly once, on the row
                     // where its top edge lands. The embed's
                     // buffer_row is relative to the block's row
@@ -2317,7 +2333,7 @@ fn zip_row_blocks(
                             out_embeds.push(EmbedRect {
                                 window_id: emb.window_id,
                                 buffer_row: starting_row + emb.buffer_row,
-                                byte_in_row: emb.byte_in_row + byte_shift as u32,
+                                col_in_row: emb.col_in_row + col_shift,
                                 width_cols: emb.width_cols,
                                 height_rows: emb.height_rows,
                             });
