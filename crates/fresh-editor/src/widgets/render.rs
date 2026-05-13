@@ -90,6 +90,26 @@ pub struct RenderOutput {
     pub focus_key: String,
     pub tabbable: Vec<String>,
     pub focus_cursor: Option<FocusCursor>,
+    /// Rectangles reserved by `WindowEmbed` widgets. Each entry
+    /// names a window id and the cell range (relative to the
+    /// rendered panel's inner area) the host should paint that
+    /// window into after laying down the regular entries.
+    pub embeds: Vec<EmbedRect>,
+}
+
+/// A rectangle reserved by a `WindowEmbed` widget. Origin is
+/// the panel-relative top-left in cells; `width_cols` is the
+/// number of display columns (≈ chars on monospace ASCII);
+/// `height_rows` matches the spec's `rows`. The host's render
+/// path resolves cell coordinates to screen positions at paint
+/// time and invokes the per-window renderer scoped to the rect.
+#[derive(Debug, Clone, Copy)]
+pub struct EmbedRect {
+    pub window_id: u32,
+    pub buffer_row: u32,
+    pub byte_in_row: u32,
+    pub width_cols: u32,
+    pub height_rows: u32,
 }
 
 /// Render a spec to a [`RenderOutput`].
@@ -119,7 +139,7 @@ pub fn render_spec(
     };
 
     let mut next_state = HashMap::new();
-    let (entries, hits, focus_cursor) =
+    let (entries, hits, focus_cursor, embeds) =
         render_collected(spec, prev, &mut next_state, &focus_key, panel_width);
     RenderOutput {
         entries,
@@ -128,6 +148,7 @@ pub fn render_spec(
         focus_key,
         tabbable,
         focus_cursor,
+        embeds,
     }
 }
 
@@ -167,6 +188,7 @@ fn predicts_block(spec: &WidgetSpec) -> bool {
         WidgetSpec::Tree { .. } => true,
         WidgetSpec::List { .. } => true,
         WidgetSpec::Text { rows, .. } => *rows > 1,
+        WidgetSpec::WindowEmbed { rows, .. } => *rows > 1,
         WidgetSpec::Raw { entries, .. } => entries.len() > 1,
         WidgetSpec::Row { children, .. } => children.iter().any(predicts_block),
         _ => false,
@@ -185,6 +207,11 @@ enum RowPiece {
         /// text — the Row collapse pass shifts it by the merged
         /// inline_shift before publishing.
         focus_cursor: Option<FocusCursor>,
+        /// Embed rects propagated up from this inline child.
+        /// Inlines collapse to row 0, so embeds inside them are
+        /// pinned to that row. Rare but worth carrying through
+        /// rather than dropping.
+        embeds: Vec<EmbedRect>,
     },
     Block {
         /// Allocated column width for the zip path. May differ
@@ -195,6 +222,11 @@ enum RowPiece {
         entries: Vec<TextPropertyEntry>,
         hits: Vec<HitArea>,
         focus_cursor: Option<FocusCursor>,
+        /// Embed rects propagated up from this block child.
+        /// Their `buffer_row` is already relative to the block's
+        /// own row 0; the zip pass shifts row by `starting_row`
+        /// and byte_in_row by the block's `byte_shift`.
+        embeds: Vec<EmbedRect>,
     },
     Flex,
 }
@@ -266,12 +298,18 @@ fn render_collected(
     next_state: &mut HashMap<String, WidgetInstanceState>,
     focus_key: &str,
     panel_width: u32,
-) -> (Vec<TextPropertyEntry>, Vec<HitArea>, Option<FocusCursor>) {
+) -> (
+    Vec<TextPropertyEntry>,
+    Vec<HitArea>,
+    Option<FocusCursor>,
+    Vec<EmbedRect>,
+) {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut hits: Vec<HitArea> = Vec::new();
     // At most one TextInput is focused per panel, so the cursor
     // position bubbles up through containers as a single Option.
     let mut focus_cursor: Option<FocusCursor> = None;
+    let mut embeds: Vec<EmbedRect> = Vec::new();
     match spec {
         WidgetSpec::Row { children, .. } => {
             // Two-pass layout for Row:
@@ -340,7 +378,7 @@ fn render_collected(
                     continue;
                 }
                 let child_panel_width = per_child_width[idx];
-                let (child_entries, child_hits, child_focus) =
+                let (child_entries, child_hits, child_focus, child_embeds) =
                     render_collected(child, prev, next_state, focus_key, child_panel_width);
                 if child_entries.is_empty() {
                     debug_assert!(child_hits.is_empty(), "empty children produce no hits");
@@ -357,6 +395,7 @@ fn render_collected(
                         entry,
                         hits: child_hits,
                         focus_cursor: child_focus,
+                        embeds: child_embeds,
                     });
                 } else {
                     row_pieces.push(RowPiece::Block {
@@ -364,6 +403,7 @@ fn render_collected(
                         entries: child_entries,
                         hits: child_hits,
                         focus_cursor: child_focus,
+                        embeds: child_embeds,
                     });
                 }
             }
@@ -374,7 +414,14 @@ fn render_collected(
                 .iter()
                 .any(|p| matches!(p, RowPiece::Block { .. }));
             if has_blocks {
-                zip_row_blocks(row_pieces, panel_width, &mut entries, &mut hits, &mut focus_cursor);
+                zip_row_blocks(
+                    row_pieces,
+                    panel_width,
+                    &mut entries,
+                    &mut hits,
+                    &mut focus_cursor,
+                    &mut embeds,
+                );
             } else {
 
             // Compute flex sizing.
@@ -410,6 +457,7 @@ fn render_collected(
                         mut entry,
                         hits: child_hits,
                         focus_cursor: child_focus,
+                        embeds: child_embeds,
                     } => {
                         let inline_shift = match acc.as_ref() {
                             Some(e) => e.text.len(),
@@ -424,6 +472,10 @@ fn render_collected(
                             // buffer_row stays 0 — caller shifts.
                             fc.byte_in_row += inline_shift as u32;
                             focus_cursor = Some(fc);
+                        }
+                        for mut emb in child_embeds {
+                            emb.byte_in_row += inline_shift as u32;
+                            embeds.push(emb);
                         }
                         match acc.as_mut() {
                             Some(merged) => merge_inline(merged, &mut entry),
@@ -472,7 +524,7 @@ fn render_collected(
         }
         WidgetSpec::Col { children, .. } => {
             for child in children {
-                let (child_entries, child_hits, child_focus) =
+                let (child_entries, child_hits, child_focus, child_embeds) =
                     render_collected(child, prev, next_state, focus_key, panel_width);
                 let row_offset = entries.len() as u32;
                 for mut h in child_hits {
@@ -482,6 +534,10 @@ fn render_collected(
                 if let Some(mut fc) = child_focus {
                     fc.buffer_row += row_offset;
                     focus_cursor = Some(fc);
+                }
+                for mut emb in child_embeds {
+                    emb.buffer_row += row_offset;
+                    embeds.push(emb);
                 }
                 entries.extend(child_entries);
             }
@@ -1040,7 +1096,7 @@ fn render_collected(
             // Inner area: 1 column of border + 1 column of
             // padding on each side ⇒ 4 columns of chrome.
             let inner_width = panel_width.saturating_sub(4).max(1);
-            let (child_entries, child_hits, child_focus) =
+            let (child_entries, child_hits, child_focus, child_embeds) =
                 render_collected(child, prev, next_state, focus_key, inner_width);
 
             // Render the top border with the label embedded as a
@@ -1080,8 +1136,47 @@ fn render_collected(
                 fc.byte_in_row += prefix_bytes as u32;
                 focus_cursor = Some(fc);
             }
+            for mut emb in child_embeds {
+                emb.buffer_row += 1;
+                emb.byte_in_row += prefix_bytes as u32;
+                embeds.push(emb);
+            }
 
             entries.push(render_section_bottom_border(total_cols));
+        }
+        WidgetSpec::WindowEmbed {
+            window_id,
+            rows: embed_rows,
+            ..
+        } => {
+            // Emit `rows` blank lines of `panel_width` width so
+            // layout reserves the rectangle. The host paint
+            // path overlays the native window render on top of
+            // these blanks after the rest of the panel paints.
+            let cols = panel_width.max(1) as usize;
+            for _ in 0..*embed_rows {
+                let mut text = String::with_capacity(cols + 1);
+                for _ in 0..cols {
+                    text.push(' ');
+                }
+                text.push('\n');
+                entries.push(TextPropertyEntry {
+                    text,
+                    properties: Default::default(),
+                    style: None,
+                    inline_overlays: Vec::new(),
+                    segments: Vec::new(),
+                    pad_to_chars: None,
+                    truncate_to_chars: None,
+                });
+            }
+            embeds.push(EmbedRect {
+                window_id: *window_id,
+                buffer_row: 0,
+                byte_in_row: 0,
+                width_cols: panel_width,
+                height_rows: *embed_rows,
+            });
         }
         WidgetSpec::Raw {
             entries: raw_entries,
@@ -1103,7 +1198,7 @@ fn render_collected(
             }
         }
     }
-    (entries, hits, focus_cursor)
+    (entries, hits, focus_cursor, embeds)
 }
 
 // =========================================================================
@@ -2142,6 +2237,7 @@ fn zip_row_blocks(
     out_entries: &mut Vec<TextPropertyEntry>,
     out_hits: &mut Vec<HitArea>,
     out_focus_cursor: &mut Option<FocusCursor>,
+    out_embeds: &mut Vec<EmbedRect>,
 ) {
     let starting_row = out_entries.len() as u32;
     let _ = panel_width;
@@ -2164,11 +2260,20 @@ fn zip_row_blocks(
         let mut overlays: Vec<InlineOverlay> = Vec::new();
         for piece in &pieces {
             match piece {
-                RowPiece::Inline { entry, hits, focus_cursor } => {
+                RowPiece::Inline { entry, hits, focus_cursor, embeds: inline_embeds } => {
                     let inline_cols = entry.text.chars().count();
                     let byte_shift = text.len();
                     if row_idx == 0 {
                         text.push_str(&entry.text);
+                        for emb in inline_embeds {
+                            out_embeds.push(EmbedRect {
+                                window_id: emb.window_id,
+                                buffer_row: starting_row + emb.buffer_row,
+                                byte_in_row: emb.byte_in_row + byte_shift as u32,
+                                width_cols: emb.width_cols,
+                                height_rows: emb.height_rows,
+                            });
+                        }
                         for overlay in &entry.inline_overlays {
                             overlays.push(InlineOverlay {
                                 start: overlay.start + byte_shift,
@@ -2200,9 +2305,24 @@ fn zip_row_blocks(
                 RowPiece::Flex => {
                     // Skipped — see fn doc.
                 }
-                RowPiece::Block { column_width, entries, hits, focus_cursor } => {
+                RowPiece::Block { column_width, entries, hits, focus_cursor, embeds: block_embeds } => {
                     let block_w = *column_width as usize;
                     let byte_shift = text.len();
+                    // Emit each embed exactly once, on the row
+                    // where its top edge lands. The embed's
+                    // buffer_row is relative to the block's row
+                    // 0; absolute = starting_row + that.
+                    if row_idx == 0 {
+                        for emb in block_embeds {
+                            out_embeds.push(EmbedRect {
+                                window_id: emb.window_id,
+                                buffer_row: starting_row + emb.buffer_row,
+                                byte_in_row: emb.byte_in_row + byte_shift as u32,
+                                width_cols: emb.width_cols,
+                                height_rows: emb.height_rows,
+                            });
+                        }
+                    }
                     if let Some(line) = entries.get(row_idx) {
                         let mut line_text = line.text.clone();
                         // Strip the entry's trailing newline so it

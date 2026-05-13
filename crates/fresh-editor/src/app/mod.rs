@@ -928,6 +928,13 @@ pub(crate) struct FloatingWidgetState {
     pub entries: Vec<fresh_core::text_property::TextPropertyEntry>,
     /// Hardware-cursor target when a `TextInput` is focused.
     pub focus_cursor: Option<crate::widgets::FocusCursor>,
+    /// Window-embed rectangles reserved by `WindowEmbed`
+    /// widgets in the panel's spec. After the entries paint
+    /// down their (blank) cells, the floating panel render
+    /// walks these and invokes the per-window paint path
+    /// scoped to each rect — giving us a live render of the
+    /// referenced editor window inside the floating overlay.
+    pub embeds: Vec<crate::widgets::EmbedRect>,
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,

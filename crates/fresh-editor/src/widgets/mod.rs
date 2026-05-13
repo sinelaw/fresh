@@ -24,4 +24,4 @@ pub use actions::{
     set_tree_nodes_in_spec, tree_parent_index,
 };
 pub use registry::{HitArea, PanelId, WidgetInstanceState, WidgetPanelState, WidgetRegistry};
-pub use render::{render_spec, FocusCursor, RenderOutput};
+pub use render::{render_spec, EmbedRect, FocusCursor, RenderOutput};

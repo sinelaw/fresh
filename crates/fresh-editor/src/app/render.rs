@@ -3393,13 +3393,14 @@ impl Editor {
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
-        let (width_pct, height_pct, entries, focus_cursor) =
+        let (width_pct, height_pct, entries, focus_cursor, embeds) =
             match self.floating_widget_panel.as_ref() {
                 Some(fwp) => (
                     fwp.width_pct,
                     fwp.height_pct,
                     fwp.entries.clone(),
                     fwp.focus_cursor,
+                    fwp.embeds.clone(),
                 ),
                 None => return,
             };
@@ -3433,6 +3434,46 @@ impl Editor {
                 &theme,
             );
         }
+
+        // Walk WindowEmbed widgets and paint their referenced
+        // editor window into the cells they reserved. Each embed
+        // rect is panel-relative; translate to screen cells via
+        // `inner`. We temporarily borrow `preview_window_id` to
+        // reuse the existing per-window paint path — it reads
+        // that field to decide which session to draw.
+        let saved_preview = self.preview_window_id;
+        for emb in &embeds {
+            if emb.window_id == 0 {
+                continue;
+            }
+            let ex = inner.x.saturating_add(emb.byte_in_row as u16);
+            let ey = inner.y.saturating_add(emb.buffer_row as u16);
+            // Clip the embed rect to the panel's inner area so a
+            // partially-offscreen embed (tiny terminal) doesn't
+            // paint into the frame border.
+            let max_w = inner
+                .x
+                .saturating_add(inner.width)
+                .saturating_sub(ex);
+            let max_h = inner
+                .y
+                .saturating_add(inner.height)
+                .saturating_sub(ey);
+            let w = (emb.width_cols as u16).min(max_w);
+            let h = (emb.height_rows as u16).min(max_h);
+            if w == 0 || h == 0 {
+                continue;
+            }
+            let rect = ratatui::layout::Rect {
+                x: ex,
+                y: ey,
+                width: w,
+                height: h,
+            };
+            self.preview_window_id = Some(fresh_core::WindowId(emb.window_id as u64));
+            self.render_session_preview_into_rect(frame, rect, &theme);
+        }
+        self.preview_window_id = saved_preview;
 
         if let Some(fc) = focus_cursor {
             let cx = inner.x.saturating_add(byte_to_screen_col(

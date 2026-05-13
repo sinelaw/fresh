@@ -948,6 +948,22 @@ type WidgetSpec = {
 	widthPct?: number | null;
 	key?: string | null;
 } | {
+	"kind": "windowEmbed";
+	/**
+	* Numeric editor-window id, matching `WindowId(N).0`.
+	* `0` (or any unknown id) renders empty placeholder
+	* rows without dispatching the per-window render.
+	* `u32` rather than `u64` to keep the TS binding a
+	* plain `number`; window ids never exceed 4B in
+	* practice.
+	*/
+	windowId: number;
+	/**
+	* Number of visible rows the embed should occupy.
+	*/
+	rows: number;
+	key?: string | null;
+} | {
 	"kind": "raw";
 	entries: Array<TextPropertyEntry>;
 	key?: string | null;

@@ -30,6 +30,7 @@ import {
   styledRow,
   text,
   textInputChar,
+  windowEmbed,
   type WidgetSpec,
 } from "./lib/widgets.ts";
 
@@ -355,10 +356,25 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       });
     }
   }
+  // The embed reserves the bulk of the preview pane so the host
+  // can paint the selected window's live UI (splits, terminals,
+  // syntax highlighting) underneath the action button row.
+  // Height matches the picker list's visibleRows so the two
+  // panes stay aligned vertically.
+  const embedRows = Math.max(4, openListVisibleRows() - 7);
   return labeledSection({
     label: s ? `[${s.id}] ${s.label}` : "Preview",
     child: col(
       { kind: "raw", entries: buildPreviewEntries(s) },
+      spacer(0),
+      // Live window render. `windowId: 0` (no session selected)
+      // is a no-op on the host side — the embed reserves the
+      // rows but no paint happens.
+      windowEmbed({
+        windowId: s ? s.id : 0,
+        rows: embedRows,
+        key: "live-preview",
+      }),
       spacer(0),
       row(
         flexSpacer(),

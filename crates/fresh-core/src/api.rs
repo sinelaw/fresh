@@ -1523,6 +1523,32 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// Reserve a rectangle in the widget layout for the host to
+    /// natively paint the editor `Window` identified by
+    /// `window_id`. The widget itself renders only blank lines
+    /// so subsequent passes (split tree, terminal grids, syntax
+    /// highlighting, decorations) can be drawn into the
+    /// reserved cells by the existing per-window render path.
+    ///
+    /// `rows` controls the embed's height. Width is whatever
+    /// the parent container allocates (`panel_width` for a
+    /// direct Col child; the block's `column_width` inside a
+    /// Row's horizontal-zip path). Used by Conductor's open
+    /// dialog so the preview pane shows a live render of the
+    /// highlighted session.
+    WindowEmbed {
+        /// Numeric editor-window id, matching `WindowId(N).0`.
+        /// `0` (or any unknown id) renders empty placeholder
+        /// rows without dispatching the per-window render.
+        /// `u32` rather than `u64` to keep the TS binding a
+        /// plain `number`; window ids never exceed 4B in
+        /// practice.
+        window_id: u32,
+        /// Number of visible rows the embed should occupy.
+        rows: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     /// Imperative-virtual-buffer escape hatch. The plugin supplies
     /// `TextPropertyEntry[]` exactly as it would for
     /// `setVirtualBufferContent`; the host inlines those entries into

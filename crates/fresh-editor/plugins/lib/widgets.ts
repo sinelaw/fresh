@@ -416,6 +416,28 @@ export function textInput(
   });
 }
 
+/** Reserve a rectangle in the layout for the host to natively
+ * render the editor window identified by `windowId`. The widget
+ * itself emits `rows` blank lines so layout reserves the space;
+ * the host's paint path then overlays the live window UI (split
+ * tree, terminals, syntax highlighting, decorations) into the
+ * reserved rectangle.
+ *
+ * `windowId` of 0 (or any unknown id) renders the placeholder
+ * blanks without dispatching the per-window paint. */
+export function windowEmbed(options: {
+  windowId: number;
+  rows: number;
+  key?: string;
+}): WidgetSpec {
+  return {
+    kind: "windowEmbed",
+    windowId: options.windowId,
+    rows: options.rows,
+    key: options.key,
+  };
+}
+
 /** Group a single child widget inside a rounded, thin border
  * with `label` printed as a top-left legend (HTML
  * `<fieldset>` semantics). The host renders three rows:
