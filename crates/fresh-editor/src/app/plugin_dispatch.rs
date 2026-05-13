@@ -92,21 +92,14 @@ fn buffer_line_byte_offset(
 fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
     use fresh_core::api::WidgetSpec;
     match spec {
-        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-            for c in children {
-                if let Some(k) = find_scrollable_widget_key(c) {
-                    return Some(k);
-                }
-            }
-            None
-        }
         WidgetSpec::Tree { key: Some(k), .. } | WidgetSpec::List { key: Some(k), .. }
             if !k.is_empty() =>
         {
-            Some(k.clone())
+            return Some(k.clone());
         }
-        _ => None,
+        _ => {}
     }
+    spec.children().find_map(find_scrollable_widget_key)
 }
 
 fn collect_visible_tree_indices(

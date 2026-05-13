@@ -1518,6 +1518,49 @@ pub enum WidgetSpec {
     },
 }
 
+impl WidgetSpec {
+    /// Iterate this widget's immediate child specs in declaration
+    /// order. Container kinds (`Row`, `Col`, `LabeledSection`)
+    /// return their nested children; leaf kinds return an empty
+    /// iterator.
+    ///
+    /// Generic tree walkers (focus dispatch, hit-area lookup,
+    /// scrollable-widget detection, instance-state mutation) call
+    /// this instead of pattern-matching every container variant
+    /// by hand, so adding a new container kind is a single update
+    /// here rather than touching every walker. The box is the
+    /// price for returning an iterator whose type depends on the
+    /// variant; the allocation is single-digit-byte and dwarfed
+    /// by everything else in the dispatch path.
+    pub fn children(&self) -> Box<dyn Iterator<Item = &WidgetSpec> + '_> {
+        match self {
+            WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
+                Box::new(children.iter())
+            }
+            WidgetSpec::LabeledSection { child, .. } => {
+                Box::new(std::iter::once(child.as_ref()))
+            }
+            _ => Box::new(std::iter::empty()),
+        }
+    }
+
+    /// Mutable counterpart of [`children`]. Same set of container
+    /// kinds, same semantics — the iterator yields exclusive
+    /// references so walkers that mutate (e.g. `set_*_in_spec`)
+    /// can recurse generically.
+    pub fn children_mut(&mut self) -> Box<dyn Iterator<Item = &mut WidgetSpec> + '_> {
+        match self {
+            WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
+                Box::new(children.iter_mut())
+            }
+            WidgetSpec::LabeledSection { child, .. } => {
+                Box::new(std::iter::once(child.as_mut()))
+            }
+            _ => Box::new(std::iter::empty()),
+        }
+    }
+}
+
 /// Action a plugin can request the widget runtime to perform on a
 /// mounted panel. Bundled into a single `WidgetCommand` PluginCommand
 /// so the plugin's TypeScript layer exposes one routing method

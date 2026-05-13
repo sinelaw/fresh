@@ -19,25 +19,25 @@ pub fn find_widget_by_key<'a>(spec: &'a WidgetSpec, target: &str) -> Option<&'a 
     if target.is_empty() {
         return None;
     }
+    if leaf_key_matches(spec, target) {
+        return Some(spec);
+    }
+    spec.children().find_map(|c| find_widget_by_key(c, target))
+}
+
+/// True iff `spec` is a focusable leaf kind whose `key` equals
+/// `target`. Container kinds (`Row`, `Col`, `LabeledSection`)
+/// never match — tree walkers handle descent generically through
+/// [`WidgetSpec::children`] and only call this on each node to
+/// see whether the search terminates there.
+fn leaf_key_matches(spec: &WidgetSpec, target: &str) -> bool {
     match spec {
-        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-            for c in children {
-                if let Some(found) = find_widget_by_key(c, target) {
-                    return Some(found);
-                }
-            }
-            None
-        }
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::List { key: Some(k), .. }
-        | WidgetSpec::Tree { key: Some(k), .. }
-            if k == target =>
-        {
-            Some(spec)
-        }
-        _ => None,
+        | WidgetSpec::Tree { key: Some(k), .. } => k == target,
+        _ => false,
     }
 }
 
@@ -285,25 +285,14 @@ pub fn set_toggle_checked_in_spec(
     if widget_key.is_empty() {
         return false;
     }
-    match spec {
-        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-            for c in children {
-                if set_toggle_checked_in_spec(c, widget_key, new_checked) {
-                    return true;
-                }
-            }
-            false
+    if let WidgetSpec::Toggle { checked, key, .. } = spec {
+        if key.as_deref() == Some(widget_key) {
+            *checked = new_checked;
+            return true;
         }
-        WidgetSpec::Toggle { checked, key, .. } => {
-            if key.as_deref() == Some(widget_key) {
-                *checked = new_checked;
-                true
-            } else {
-                false
-            }
-        }
-        _ => false,
     }
+    spec.children_mut()
+        .any(|c| set_toggle_checked_in_spec(c, widget_key, new_checked))
 }
 
 /// In-place mutate a `List`'s `items` and `item_keys` fields.
@@ -317,32 +306,29 @@ pub fn set_list_items_in_spec(
     if widget_key.is_empty() {
         return false;
     }
-    match spec {
-        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-            // Workaround: take ownership of items to avoid double-borrow on recursive call
-            for c in children.iter_mut() {
-                if c.contains_key(widget_key) {
-                    return set_list_items_in_spec(c, widget_key, new_items, new_item_keys);
-                }
-            }
-            false
+    if let WidgetSpec::List {
+        items,
+        item_keys,
+        key,
+        ..
+    } = spec
+    {
+        if key.as_deref() == Some(widget_key) {
+            *items = new_items;
+            *item_keys = new_item_keys;
+            return true;
         }
-        WidgetSpec::List {
-            items,
-            item_keys,
-            key,
-            ..
-        } => {
-            if key.as_deref() == Some(widget_key) {
-                *items = new_items;
-                *item_keys = new_item_keys;
-                true
-            } else {
-                false
-            }
-        }
-        _ => false,
     }
+    // Descend only into the child that contains the target so
+    // `new_items` / `new_item_keys` aren't dropped on dead-end
+    // siblings (we take them by value, so each recursive call
+    // moves them).
+    for c in spec.children_mut() {
+        if c.contains_key(widget_key) {
+            return set_list_items_in_spec(c, widget_key, new_items, new_item_keys);
+        }
+    }
+    false
 }
 
 /// In-place mutate a `Tree`'s `nodes` and `item_keys` fields.
@@ -361,31 +347,25 @@ pub fn set_tree_nodes_in_spec(
     if widget_key.is_empty() {
         return false;
     }
-    match spec {
-        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-            for c in children.iter_mut() {
-                if c.contains_key(widget_key) {
-                    return set_tree_nodes_in_spec(c, widget_key, new_nodes, new_item_keys);
-                }
-            }
-            false
+    if let WidgetSpec::Tree {
+        nodes,
+        item_keys,
+        key,
+        ..
+    } = spec
+    {
+        if key.as_deref() == Some(widget_key) {
+            *nodes = new_nodes;
+            *item_keys = new_item_keys;
+            return true;
         }
-        WidgetSpec::Tree {
-            nodes,
-            item_keys,
-            key,
-            ..
-        } => {
-            if key.as_deref() == Some(widget_key) {
-                *nodes = new_nodes;
-                *item_keys = new_item_keys;
-                true
-            } else {
-                false
-            }
-        }
-        _ => false,
     }
+    for c in spec.children_mut() {
+        if c.contains_key(widget_key) {
+            return set_tree_nodes_in_spec(c, widget_key, new_nodes, new_item_keys);
+        }
+    }
+    false
 }
 
 /// Stamp `Some(checked)` onto every `TreeNode` whose item-key
@@ -407,25 +387,16 @@ pub fn set_tree_checked_keys_in_spec(
     if widget_key.is_empty() {
         return false;
     }
-    match spec {
-        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-            for c in children.iter_mut() {
-                if c.contains_key(widget_key) {
-                    return set_tree_checked_keys_in_spec(c, widget_key, checked, keys);
-                }
-            }
-            false
-        }
-        WidgetSpec::Tree {
-            nodes,
-            item_keys,
-            key,
-            ..
-        } => {
-            if key.as_deref() != Some(widget_key) {
-                return false;
-            }
-            let target: std::collections::HashSet<&str> = keys.iter().map(String::as_str).collect();
+    if let WidgetSpec::Tree {
+        nodes,
+        item_keys,
+        key,
+        ..
+    } = spec
+    {
+        if key.as_deref() == Some(widget_key) {
+            let target: std::collections::HashSet<&str> =
+                keys.iter().map(String::as_str).collect();
             for (i, node) in nodes.iter_mut().enumerate() {
                 if node.checked.is_none() {
                     continue;
@@ -435,10 +406,11 @@ pub fn set_tree_checked_keys_in_spec(
                     node.checked = Some(checked);
                 }
             }
-            true
+            return true;
         }
-        _ => false,
     }
+    spec.children_mut()
+        .any(|c| set_tree_checked_keys_in_spec(c, widget_key, checked, keys))
 }
 
 /// Resolve the absolute `nodes` index of the parent of `child_idx`
@@ -467,17 +439,15 @@ trait ContainsKey {
 
 impl ContainsKey for WidgetSpec {
     fn contains_key(&self, widget_key: &str) -> bool {
-        match self {
-            WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-                children.iter().any(|c| c.contains_key(widget_key))
-            }
+        let direct = match self {
             WidgetSpec::Toggle { key, .. }
             | WidgetSpec::Button { key, .. }
             | WidgetSpec::Text { key, .. }
             | WidgetSpec::List { key, .. }
             | WidgetSpec::Tree { key, .. } => key.as_deref() == Some(widget_key),
             _ => false,
-        }
+        };
+        direct || self.children().any(|c| c.contains_key(widget_key))
     }
 }
 

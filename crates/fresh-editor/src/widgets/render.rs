@@ -172,14 +172,6 @@ fn ensure_trailing_newline(entry: &mut TextPropertyEntry) {
 /// `Raw`, `Spacer`, `HintBar` skip.
 fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
     match spec {
-        WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
-            for c in children {
-                collect_tabbable(c, out);
-            }
-        }
-        WidgetSpec::LabeledSection { child, .. } => {
-            collect_tabbable(child, out);
-        }
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
@@ -190,6 +182,9 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
             out.push(k.clone());
         }
         _ => {}
+    }
+    for c in spec.children() {
+        collect_tabbable(c, out);
     }
 }
 
@@ -1284,18 +1279,17 @@ pub fn render_button(label: &str, focused: bool, kind: ButtonKind) -> TextProper
 
     let base_style = match kind {
         ButtonKind::Normal => OverlayOptions::default(),
-        // Primary uses the active-menu fg/bg pair (themes ship
-        // these as a tuned contrasting pair), giving the
-        // affirmative action a filled-button look without
-        // relying on focus.
+        // Primary marks the affirmative action with a bold,
+        // strong fg drawn directly on the surrounding surface —
+        // no opinionated bg. Focus is the only state that paints
+        // a backing color (handled below).
         ButtonKind::Primary => OverlayOptions {
-            fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
-            bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+            fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
             bold: true,
             ..Default::default()
         },
-        // Danger is intentionally fg-only — red text on whatever
-        // surface the button sits on, no opinionated bg.
+        // Danger gets the error fg, bold, on the surrounding
+        // surface — same fg-only treatment as Primary.
         ButtonKind::Danger => OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_DANGER_FG)),
             bold: true,
@@ -2124,18 +2118,22 @@ mod tests {
     }
 
     #[test]
-    fn button_primary_pairs_menu_active_fg_with_menu_active_bg() {
+    fn button_primary_unfocused_is_bold_help_key_fg_with_no_bg() {
+        // Primary marks the "good" action with a bold, strong fg
+        // on the surrounding surface. Only the focused state
+        // paints a backing colour — verified in
+        // `button_focused_overrides_with_menu_active_keys`.
         let entry = render_button("Submit", false, ButtonKind::Primary);
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
         assert!(style.bold);
         assert_eq!(
             style.fg.as_ref().and_then(|c| c.as_theme_key()),
-            Some("ui.menu_active_fg"),
+            Some("ui.help_key_fg"),
         );
-        assert_eq!(
-            style.bg.as_ref().and_then(|c| c.as_theme_key()),
-            Some("ui.menu_active_bg"),
+        assert!(
+            style.bg.is_none(),
+            "unfocused primary must not paint a bg"
         );
     }
 
