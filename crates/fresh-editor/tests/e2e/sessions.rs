@@ -81,6 +81,7 @@ fn open_file_in_background_targets_inactive_session() {
         .create_window_at(project_dir.join("wt-alpha-open"), "alpha".into());
 
     let active_buffer_before = harness.editor().active_buffer();
+    let alpha_count_before = harness.editor().session(alpha).unwrap().buffers.len();
 
     harness
         .editor_mut()
@@ -97,11 +98,13 @@ fn open_file_in_background_targets_inactive_session() {
         "openFileInBackground with inactive sessionId must not move active focus"
     );
 
-    // Alpha's membership has gained the file's buffer.
+    // Alpha's membership has gained the file's buffer on top of
+    // whatever seed buffers create_window_at installed.
     let alpha_count = harness.editor().session(alpha).unwrap().buffers.len();
     assert_eq!(
-        alpha_count, 1,
-        "alpha should own exactly the file we opened into it"
+        alpha_count,
+        alpha_count_before + 1,
+        "alpha should have gained exactly the file we opened into it"
     );
 
     // Alpha's splits stash now has the buffer ready to render
@@ -134,6 +137,7 @@ fn create_terminal_targets_inactive_session_via_session_id() {
 
     let active_before = harness.editor().active_session_id();
     let active_buffer_before = harness.editor().active_buffer();
+    let alpha_count_before = harness.editor().session(alpha).unwrap().buffers.len();
 
     // Drive the dispatch path directly — going through the JS
     // runtime would require a full plugin load with TS compile.
@@ -164,11 +168,13 @@ fn create_terminal_targets_inactive_session_via_session_id() {
         "active buffer must not change when terminal targets an inactive session"
     );
 
-    // Alpha's membership set has gained a new buffer (the terminal).
+    // Alpha's membership set has gained a new buffer (the terminal)
+    // on top of whatever seed buffers create_window_at installed.
     let alpha_buffers_count = harness.editor().session(alpha).unwrap().buffers.len();
     assert_eq!(
-        alpha_buffers_count, 1,
-        "alpha should have exactly the new terminal buffer attached"
+        alpha_buffers_count,
+        alpha_count_before + 1,
+        "alpha should have gained exactly the new terminal buffer"
     );
 
     // Alpha's stashed splits now have a leaf for the terminal,
