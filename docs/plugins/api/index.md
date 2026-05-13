@@ -580,7 +580,7 @@ interface CreateTerminalOptions {
 | `direction` | Split direction: `"horizontal"` or `"vertical"` (default: `"vertical"`) |
 | `ratio` | Split ratio 0.0–1.0 (default: 0.5) |
 | `focus` | Whether to focus the new terminal split (default: true) |
-| `windowId` | When set, attach the terminal to the named session's stashed split tree instead of the active session. The user's current view stays put; the terminal appears on dive-in. Used by Conductor to spawn agents into background worktrees. |
+| `windowId` | When set, attach the terminal to the named session's stashed split tree instead of the active session. The user's current view stays put; the terminal appears on dive-in. Used by Orchestrator to spawn agents into background worktrees. |
 
 ### WindowInfo
 

@@ -1,7 +1,7 @@
 //! Editor methods for window lifecycle (create, switch, close).
 //!
 //! Windows are introduced in
-//! `docs/internal/conductor-sessions-design.md`. After Step 0b each
+//! `docs/internal/orchestrator-sessions-design.md`. After Step 0b each
 //! window owns its file tree, file mod-times, LSP set, panel-id
 //! map, and split layout outright. `set_active_window` is therefore
 //! a pointer write (plus seed-buffer allocation when diving into a
@@ -57,7 +57,7 @@ impl crate::app::Editor {
     /// first-dive seed path), so the window is renderable
     /// immediately. Without this, never-dived windows have
     /// `splits == None` and any cross-window render (e.g. the
-    /// Conductor preview pane's `WindowEmbed`) draws blank.
+    /// Orchestrator preview pane's `WindowEmbed`) draws blank.
     pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
@@ -213,7 +213,7 @@ impl crate::app::Editor {
     }
 
     /// Eagerly initialise an inactive session's per-session
-    /// state without diving. Useful for plugins (Conductor) that
+    /// state without diving. Useful for plugins (Orchestrator) that
     /// want to pay the warm-up cost (file-tree walk, ignore
     /// matcher, etc.) ahead of the user's first dive.
     ///

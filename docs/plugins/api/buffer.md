@@ -353,7 +353,7 @@ setPromptTitle(title: StyledText[]): boolean
 
 Set the footer chrome row of the floating-overlay prompt's
 results pane. Plugins use this for hotkey-hint banners — for
-example, the Conductor plugin renders
+example, the Orchestrator plugin renders
 `↑↓ preview  Enter dive  Esc close`. Empty array clears the
 footer. Has no visible effect on non-overlay prompts.
 
@@ -1139,24 +1139,24 @@ removeScrollSyncGroup(group_id: number): boolean
 |------|------|-------------|
 | `group_id` | `number` | - |
 
-## Windows / Conductor API
+## Windows / Orchestrator API
 
 A *window* (modelled on a VS Code window) is a project-rooted
 bundle of editor state — file explorer, LSP set, file watchers,
 split layout, and buffer membership — that can be swapped in
 and out as a unit. The "base" window at startup is
 `WindowId(1)`. Subsequent windows are created by plugins
-(typically the first-party Conductor plugin, which uses windows
+(typically the first-party Orchestrator plugin, which uses windows
 to drive parallel-agent worktrees).
 
 > **Naming note.** Internally the editor calls these "windows"
 > to disambiguate from Fresh's pre-existing workspace-recovery
-> and config-layer "session" concepts. Conductor's UX still
+> and config-layer "session" concepts. Orchestrator's UX still
 > presents them as "agent sessions" because that's the
 > parallel-agents domain language users see. Plugin API names
 > all use `Window` / `windowId`.
 
-See `docs/internal/conductor-sessions-design.md` for the full
+See `docs/internal/orchestrator-sessions-design.md` for the full
 architecture rationale.
 
 ### `createWindow`
@@ -1230,8 +1230,8 @@ floating-overlay prompt's preview pane on the next frame.
 Cleared automatically when the prompt closes; call
 `clearWindowPreview` to clear earlier.
 
-This is *Primitive #1* of the Conductor design and is the
-mechanism the Conductor plugin uses to show a live preview of
+This is *Primitive #1* of the Orchestrator design and is the
+mechanism the Orchestrator plugin uses to show a live preview of
 the highlighted session as the user moves the selection in
 the session list.
 
@@ -1295,7 +1295,7 @@ When `opts.windowId` is set the terminal attaches to that
 session's stashed split tree without diving — the user's
 current view stays put and the terminal becomes visible only
 when the user dives into the named session. This is how
-Conductor spawns agents into background worktrees without
+Orchestrator spawns agents into background worktrees without
 disturbing the foreground session.
 
 ```typescript

@@ -1,7 +1,7 @@
 //! E2E tests for the `terminal_output` and `terminal_exit` plugin hooks.
 //!
-//! These hooks are the smallest core change in the Conductor design
-//! (`docs/internal/conductor-sessions-design.md`). They let plugins
+//! These hooks are the smallest core change in the Orchestrator design
+//! (`docs/internal/orchestrator-sessions-design.md`). They let plugins
 //! observe PTY lifecycle without a separate readback API: every PTY
 //! data batch fires `terminal_output` with a snapshot of the cursor
 //! row's text, and every PTY-process exit fires `terminal_exit` with

@@ -58,12 +58,12 @@ getHandlers(event_name: string): string[]
 |------|------|-------------|
 | `event_name` | `string` | Name of the event |
 
-## Window / Conductor events
+## Window / Orchestrator events
 
 These events fire as the editor's window set changes. (The
 editor internally calls these "windows", modelled on VS Code
-windows; Conductor's UX presents them as "sessions" — they're
-the same thing.) See `docs/internal/conductor-sessions-design.md`
+windows; Orchestrator's UX presents them as "sessions" — they're
+the same thing.) See `docs/internal/orchestrator-sessions-design.md`
 for the full window model.
 
 | Event | Payload | When it fires |

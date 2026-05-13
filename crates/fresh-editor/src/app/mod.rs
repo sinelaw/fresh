@@ -14,7 +14,7 @@ mod click_geometry;
 mod click_handlers;
 mod clipboard;
 mod composite_buffer_actions;
-mod conductor_persistence;
+mod orchestrator_persistence;
 mod dabbrev_actions;
 mod diagnostic_jumps;
 mod editor_accessors;
@@ -580,7 +580,7 @@ pub struct Editor {
     /// existing read site. New code should prefer
     /// `self.active_window().root` so the eventual swap to a real
     /// active-session pointer is a no-op for the call site. See
-    /// `docs/internal/conductor-sessions-design.md` Step 1.
+    /// `docs/internal/orchestrator-sessions-design.md` Step 1.
     working_dir: PathBuf,
 
     /// All editor sessions, keyed by id. Initially holds exactly one
@@ -781,7 +781,7 @@ pub struct Editor {
     /// and the floating-overlay prompt is open, the overlay's
     /// preview pane renders the *entire* split tree of session
     /// `sid` natively — Primitive #1 in
-    /// `docs/internal/conductor-sessions-design.md` §
+    /// `docs/internal/orchestrator-sessions-design.md` §
     /// "Rich Control Room rendering".
     pub(crate) preview_window_id: Option<fresh_core::WindowId>,
 

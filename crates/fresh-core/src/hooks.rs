@@ -316,7 +316,7 @@ pub enum HookArgs {
 
     /// A new editor session was created. Fires after the session is
     /// added to `Editor.sessions`, before any UI retarget. Plugins
-    /// (like Conductor) use this to reconcile their per-session
+    /// (like Orchestrator) use this to reconcile their per-session
     /// bookkeeping with the editor.
     WindowCreated {
         /// The new session's stable id.
@@ -377,7 +377,7 @@ pub enum HookArgs {
     },
 
     /// A path under a `watchPath`-registered watcher changed.
-    /// Plugins (Conductor's collision radar, etc.) use this to
+    /// Plugins (Orchestrator's collision radar, etc.) use this to
     /// build path → modifying-session-set matrices. Fires once per
     /// raw `notify` event — no debouncing in core; plugins coalesce
     /// per their policy.

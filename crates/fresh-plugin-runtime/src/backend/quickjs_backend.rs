@@ -1462,7 +1462,7 @@ impl JsEditorApi {
     /// session. Setting it to an inactive session id loads the
     /// file's buffer and adds it as a tab in that session's
     /// stashed split tree, ready to be revealed on next dive.
-    /// Conductor uses this to populate worktree sessions with
+    /// Orchestrator uses this to populate worktree sessions with
     /// preselected files.
     pub fn open_file_in_background(
         &self,
@@ -3252,7 +3252,7 @@ impl JsEditorApi {
 
     /// Set the footer chrome row of the floating-overlay prompt's
     /// results pane. Plugins use this for hotkey-hint banners
-    /// (Conductor's `[n] new   [d] dive   [Esc] close` row).
+    /// (Orchestrator's `[n] new   [d] dive   [Esc] close` row).
     /// Empty array clears the footer. Has no visible effect on
     /// non-overlay prompts.
     pub fn set_prompt_footer(
@@ -3270,7 +3270,7 @@ impl JsEditorApi {
     /// the next frame. No-op when no prompt is open or the
     /// suggestion list is empty. Typical use: re-opening a
     /// picker and pre-selecting the entry the user last acted on
-    /// (Conductor highlights the active session).
+    /// (Orchestrator highlights the active session).
     pub fn set_prompt_selected_index(&self, index: u32) -> bool {
         self.command_sender
             .send(PluginCommand::SetPromptSelectedIndex { index })
@@ -3387,7 +3387,7 @@ impl JsEditorApi {
 
     // === Sessions ===
     //
-    // See docs/internal/conductor-sessions-design.md. The base
+    // See docs/internal/orchestrator-sessions-design.md. The base
     // session is always id 1 and survives every editor session.
     // Plugins observe lifecycle through the `window_created`,
     // `window_closed`, and `active_window_changed` hooks; the
@@ -3490,7 +3490,7 @@ impl JsEditorApi {
     /// override and the preview falls back to the existing
     /// path-based phantom-leaf renderer.
     ///
-    /// Conductor calls this on each prompt-selection-change so
+    /// Orchestrator calls this on each prompt-selection-change so
     /// the right pane shows the highlighted session's full
     /// editor UI live — splits, terminals, syntax highlighting,
     /// decorations — at native rendering cost.
@@ -3871,7 +3871,7 @@ impl JsEditorApi {
     /// underlying storage lives on `Session.plugin_state` and
     /// swaps with the rest of session state on `setActiveWindow`.
     /// Plugins that genuinely want per-project state use this;
-    /// Conductor itself uses `setGlobalState` because its session
+    /// Orchestrator itself uses `setGlobalState` because its session
     /// list lives above session boundaries.
     pub fn set_window_state<'js>(
         &self,

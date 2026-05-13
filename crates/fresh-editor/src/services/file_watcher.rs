@@ -17,7 +17,7 @@
 //! all have per-process file-descriptor / handle limits. A single
 //! shared `Watcher` reuses one fd per directory across plugins
 //! that happen to watch the same path, which matters once
-//! Conductor's collision radar is watching one path per worktree
+//! Orchestrator's collision radar is watching one path per worktree
 //! across N sessions.
 
 use crate::services::async_bridge::{AsyncBridge, AsyncMessage, PathChangeKind};

@@ -540,7 +540,7 @@ impl Editor {
         let mut buffer_metadata: HashMap<BufferId, BufferMetadata> = HashMap::new();
         buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
-        // Read conductor persistence (`.fresh/windows.json` and
+        // Read orchestrator persistence (`.fresh/windows.json` and
         // `.fresh/state/*.json`) before the LSP and base-window
         // construction below. Pulling persistence in here lets the
         // factory build the right windows up front: previously this
@@ -551,11 +551,11 @@ impl Editor {
         // factory picks the persisted active id/root, attaches the
         // seed buffer + LSP to it directly, and the constructor
         // sees a well-formed windows map.
-        let persisted_env = crate::app::conductor_persistence::read_persisted_windows_env(
+        let persisted_env = crate::app::orchestrator_persistence::read_persisted_windows_env(
             filesystem.as_ref(),
             &working_dir,
         );
-        let plugin_global_state = crate::app::conductor_persistence::read_persisted_plugin_state(
+        let plugin_global_state = crate::app::orchestrator_persistence::read_persisted_plugin_state(
             filesystem.as_ref(),
             &working_dir,
         );
@@ -1224,7 +1224,7 @@ impl Editor {
         editor.clipboard.apply_config(&editor.config.clipboard);
 
         // Seed splits/buffers for every persisted inactive window so they
-        // render in preview surfaces (Conductor's WindowEmbed) before the
+        // render in preview surfaces (Orchestrator's WindowEmbed) before the
         // user first dives in. Without this, restored windows have
         // `splits == None` and paint blank in the preview pane. We also
         // catch the (rarer) inverse where splits is set but the buffer

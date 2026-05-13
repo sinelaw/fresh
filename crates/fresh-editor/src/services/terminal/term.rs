@@ -175,7 +175,7 @@ impl TerminalState {
     /// Snapshot of the cursor row's text content as a plain string.
     ///
     /// Used by the `terminal_output` plugin hook so listeners (e.g.
-    /// the Conductor agent state machine) can match prompt patterns
+    /// the Orchestrator agent state machine) can match prompt patterns
     /// without a separate readback API. Returns cells `[0..cursor_col)`
     /// of the cursor row so a legitimate trailing space typed by the
     /// program (typical for prompts like `"... (Y/n): "`) is
@@ -734,7 +734,7 @@ mod tests {
 
     /// `last_visible_line` returns the text on the cursor row, with
     /// the alacritty right-edge padding trimmed. This is the payload
-    /// the `terminal_output` plugin hook surfaces to the Conductor
+    /// the `terminal_output` plugin hook surfaces to the Orchestrator
     /// state machine for prompt detection.
     #[test]
     fn test_last_visible_line_returns_cursor_row() {

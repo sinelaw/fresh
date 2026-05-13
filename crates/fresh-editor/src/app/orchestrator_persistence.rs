@@ -1,7 +1,7 @@
-//! Cross-restart persistence for Conductor sessions and
+//! Cross-restart persistence for Orchestrator sessions and
 //! plugin global state.
 //!
-//! On quit, `save_conductor_state` writes:
+//! On quit, `save_orchestrator_state` writes:
 //!   - `<working_dir>/.fresh/windows.json` — list of sessions
 //!     (id, label, root, per-session plugin_state) plus the
 //!     last-active session id and the next id to allocate so
@@ -82,12 +82,12 @@ pub(crate) fn read_persisted_windows_env(
         Ok(bytes) => match serde_json::from_slice::<PersistedWindows>(&bytes) {
             Ok(env) => Some(env),
             Err(e) => {
-                tracing::warn!("conductor persistence: failed to parse {windows_p:?}: {e}");
+                tracing::warn!("orchestrator persistence: failed to parse {windows_p:?}: {e}");
                 None
             }
         },
         Err(e) => {
-            tracing::warn!("conductor persistence: failed to read {windows_p:?}: {e}");
+            tracing::warn!("orchestrator persistence: failed to read {windows_p:?}: {e}");
             None
         }
     }
@@ -110,7 +110,7 @@ pub(crate) fn read_persisted_plugin_state(
     let entries = match filesystem.read_dir(&state_dir) {
         Ok(es) => es,
         Err(e) => {
-            tracing::warn!("conductor persistence: failed to read {state_dir:?}: {e}");
+            tracing::warn!("orchestrator persistence: failed to read {state_dir:?}: {e}");
             return out;
         }
     };
@@ -133,12 +133,12 @@ pub(crate) fn read_persisted_plugin_state(
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        tracing::warn!("conductor persistence: failed to parse {path:?}: {e}");
+                        tracing::warn!("orchestrator persistence: failed to parse {path:?}: {e}");
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("conductor persistence: failed to read {path:?}: {e}");
+                tracing::warn!("orchestrator persistence: failed to read {path:?}: {e}");
             }
         }
     }
@@ -154,7 +154,7 @@ fn state_dir(working_dir: &Path) -> PathBuf {
 }
 
 fn plugin_state_path(working_dir: &Path, plugin: &str) -> PathBuf {
-    // Plugin names are short identifiers (`conductor`,
+    // Plugin names are short identifiers (`orchestrator`,
     // `live_grep`, …) so no escaping is needed for typical
     // input. Reject anything that would escape the state dir to
     // avoid `../`-style traversal in case a plugin picks a
@@ -175,11 +175,11 @@ impl Editor {
     /// effort: filesystem errors are logged at WARN and swallowed
     /// so a transient `.fresh/` permission glitch doesn't block
     /// quit.
-    pub fn save_conductor_state(&self) {
+    pub fn save_orchestrator_state(&self) {
         let working_dir = self.working_dir().to_path_buf();
         let fresh_dir = working_dir.join(".fresh");
         if let Err(e) = self.authority.filesystem.create_dir_all(&fresh_dir) {
-            tracing::warn!("conductor persistence: failed to create {fresh_dir:?}: {e}");
+            tracing::warn!("orchestrator persistence: failed to create {fresh_dir:?}: {e}");
             return;
         }
 
@@ -207,11 +207,11 @@ impl Editor {
             Ok(bytes) => {
                 let path = windows_path(&working_dir);
                 if let Err(e) = self.authority.filesystem.write_file(&path, &bytes) {
-                    tracing::warn!("conductor persistence: failed to write {path:?}: {e}");
+                    tracing::warn!("orchestrator persistence: failed to write {path:?}: {e}");
                 }
             }
             Err(e) => {
-                tracing::warn!("conductor persistence: failed to serialise sessions: {e}");
+                tracing::warn!("orchestrator persistence: failed to serialise sessions: {e}");
             }
         }
 
@@ -221,14 +221,14 @@ impl Editor {
         let state_dir = state_dir(&working_dir);
         if !self.plugin_global_state.is_empty() {
             if let Err(e) = self.authority.filesystem.create_dir_all(&state_dir) {
-                tracing::warn!("conductor persistence: failed to create {state_dir:?}: {e}");
+                tracing::warn!("orchestrator persistence: failed to create {state_dir:?}: {e}");
                 return;
             }
         }
         for (plugin, map) in &self.plugin_global_state {
             if !plugin_name_is_safe(plugin) {
                 tracing::warn!(
-                    "conductor persistence: skipping plugin with unsafe name: {plugin:?}"
+                    "orchestrator persistence: skipping plugin with unsafe name: {plugin:?}"
                 );
                 continue;
             }
@@ -239,12 +239,12 @@ impl Editor {
                 Ok(bytes) => {
                     let path = plugin_state_path(&working_dir, plugin);
                     if let Err(e) = self.authority.filesystem.write_file(&path, &bytes) {
-                        tracing::warn!("conductor persistence: failed to write {path:?}: {e}");
+                        tracing::warn!("orchestrator persistence: failed to write {path:?}: {e}");
                     }
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "conductor persistence: failed to serialise plugin {plugin}: {e}"
+                        "orchestrator persistence: failed to serialise plugin {plugin}: {e}"
                     );
                 }
             }

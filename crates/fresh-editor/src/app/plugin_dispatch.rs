@@ -160,7 +160,7 @@ impl Editor {
         // lockstep with the canonical seat.
         snapshot.authority_label = self.authority.display_label.clone();
 
-        // Publish the session list so plugins (Conductor, etc.)
+        // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without
         // a separate notification path. Sorted by id for
         // deterministic order — `next_window_id` is monotonic
@@ -683,7 +683,7 @@ impl Editor {
             }
 
             // ==================== Session lifecycle ====================
-            // See docs/internal/conductor-sessions-design.md.
+            // See docs/internal/orchestrator-sessions-design.md.
             PluginCommand::CreateWindow { root, label } => {
                 if !root.is_absolute() {
                     tracing::warn!(
@@ -2714,7 +2714,7 @@ impl Editor {
         // terminal into that session's stashed split tree without
         // diving. The active session's UI is undisturbed; on next
         // dive into the target session, the terminal appears in its
-        // restored split layout. Conductor uses this so spawning an
+        // restored split layout. Orchestrator uses this so spawning an
         // agent doesn't pull the user away from the base session.
         let route_to_inactive = match target_session_id {
             Some(id) if id != self.active_window && self.windows.contains_key(&id) => Some(id),

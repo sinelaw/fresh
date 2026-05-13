@@ -1889,7 +1889,7 @@ impl Editor {
     /// selection or its label is not a `path:line[:col]` triple.
     /// Render the entire stashed split tree of `self.preview_window_id`
     /// into `inner` — Primitive #1 of
-    /// `docs/internal/conductor-sessions-design.md`'s "Rich
+    /// `docs/internal/orchestrator-sessions-design.md`'s "Rich
     /// Control Room rendering". Reuses the editor's existing
     /// `render_content` path against the previewed session's
     /// stashed `(SplitManager, view_states)` so syntax

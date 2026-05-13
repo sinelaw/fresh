@@ -326,7 +326,7 @@ fn render_collected(
             // the inline-collapse path — each block gets a
             // column budget and the layout walks block lines
             // left-to-right. See [the Phase 1b note in
-            // docs/internal/conductor-open-dialog-and-lifecycle.md]
+            // docs/internal/orchestrator-open-dialog-and-lifecycle.md]
             // for the rationale.
             //
             // Width allocation for the zip path: blocks share

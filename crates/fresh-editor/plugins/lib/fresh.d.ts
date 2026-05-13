@@ -622,7 +622,7 @@ type CreateTerminalOptions = {
 	/**
 	* Optional session id to attach the new terminal buffer to.
 	* Defaults to the active session at creation time. Setting this
-	* lets Conductor and similar plugins spawn a terminal *into* an
+	* lets Orchestrator and similar plugins spawn a terminal *into* an
 	* inactive session (e.g. an agent in a worktree the user hasn't
 	* dived into yet). The terminal's split is created in that
 	* session's stashed split tree; the buffer is attached to the
@@ -1576,7 +1576,7 @@ interface EditorAPI {
 	* session. Setting it to an inactive session id loads the
 	* file's buffer and adds it as a tab in that session's
 	* stashed split tree, ready to be revealed on next dive.
-	* Conductor uses this to populate worktree sessions with
+	* Orchestrator uses this to populate worktree sessions with
 	* preselected files.
 	*/
 	openFileInBackground(path: string, windowId?: number): boolean;
@@ -2122,7 +2122,7 @@ interface EditorAPI {
 	/**
 	* Set the footer chrome row of the floating-overlay prompt's
 	* results pane. Plugins use this for hotkey-hint banners
-	* (Conductor's `[n] new   [d] dive   [Esc] close` row).
+	* (Orchestrator's `[n] new   [d] dive   [Esc] close` row).
 	* Empty array clears the footer. Has no visible effect on
 	* non-overlay prompts.
 	*/
@@ -2134,7 +2134,7 @@ interface EditorAPI {
 	* the next frame. No-op when no prompt is open or the
 	* suggestion list is empty. Typical use: re-opening a
 	* picker and pre-selecting the entry the user last acted on
-	* (Conductor highlights the active session).
+	* (Orchestrator highlights the active session).
 	*/
 	setPromptSelectedIndex(index: number): boolean;
 	/**
@@ -2215,7 +2215,7 @@ interface EditorAPI {
 	* override and the preview falls back to the existing
 	* path-based phantom-leaf renderer.
 	* 
-	* Conductor calls this on each prompt-selection-change so
+	* Orchestrator calls this on each prompt-selection-change so
 	* the right pane shows the highlighted session's full
 	* editor UI live — splits, terminals, syntax highlighting,
 	* decorations — at native rendering cost.
@@ -2324,7 +2324,7 @@ interface EditorAPI {
 	* underlying storage lives on `Session.plugin_state` and
 	* swaps with the rest of session state on `setActiveWindow`.
 	* Plugins that genuinely want per-project state use this;
-	* Conductor itself uses `setGlobalState` because its session
+	* Orchestrator itself uses `setGlobalState` because its session
 	* list lives above session boundaries.
 	*/
 	setWindowState(key: string, value: unknown): boolean;
@@ -2884,7 +2884,7 @@ interface HookEventMap {
 		/** "modify" | "create" | "delete" | "rename" | "other" */
 		kind: string;
 	};
-	// ── editor sessions (Conductor; see conductor-sessions-design.md) ────────
+	// ── editor sessions (Orchestrator; see orchestrator-sessions-design.md) ────────
 	window_created: {
 		id: number;
 		label: string;

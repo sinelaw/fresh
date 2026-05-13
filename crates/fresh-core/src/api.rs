@@ -388,7 +388,7 @@ fn default_window_id() -> WindowId {
 /// by `editor.listWindows()` and carried in the snapshot. Mirrors
 /// the editor-side `Session` struct — see
 /// `crates/fresh-editor/src/app/session.rs` and
-/// `docs/internal/conductor-sessions-design.md`.
+/// `docs/internal/orchestrator-sessions-design.md`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct WindowInfo {
@@ -906,7 +906,7 @@ pub struct EditorStateSnapshot {
     ///
     /// Equal to `sessions[i].root` where `sessions[i].id == active_window_id`.
     /// Plugins that just need "where am I" can read this directly; plugins
-    /// orchestrating multiple sessions (Conductor) iterate `sessions`.
+    /// orchestrating multiple sessions (Orchestrator) iterate `sessions`.
     pub working_dir: PathBuf,
     /// All editor sessions, in id order. Always non-empty (the base
     /// session is `id == 1`). Updated when sessions are
@@ -1533,7 +1533,7 @@ pub enum WidgetSpec {
     /// `rows` controls the embed's height. Width is whatever
     /// the parent container allocates (`panel_width` for a
     /// direct Col child; the block's `column_width` inside a
-    /// Row's horizontal-zip path). Used by Conductor's open
+    /// Row's horizontal-zip path). Used by Orchestrator's open
     /// dialog so the preview pane shows a live render of the
     /// highlighted session.
     WindowEmbed {
@@ -1867,11 +1867,11 @@ pub enum PluginCommand {
     /// Tell the editor that the floating-overlay prompt's
     /// preview pane should render the **entire** split tree of
     /// session `id` (Primitive #1 in
-    /// `docs/internal/conductor-sessions-design.md`). `None`
+    /// `docs/internal/orchestrator-sessions-design.md`). `None`
     /// clears the override and falls back to the existing
     /// path-based phantom-leaf preview.
     ///
-    /// Conductor sets this when the user navigates the session
+    /// Orchestrator sets this when the user navigates the session
     /// list so the right-hand pane shows the highlighted
     /// session's full editor UI live (splits, terminals,
     /// syntax highlighting, decorations) — rendered natively
@@ -2329,7 +2329,7 @@ pub enum PluginCommand {
     /// Plugin-supplied footer chrome rendered along the bottom
     /// row of the floating-overlay's results pane (Primitive #2
     /// chrome region in
-    /// `docs/internal/conductor-sessions-design.md`). Conductor
+    /// `docs/internal/orchestrator-sessions-design.md`). Orchestrator
     /// uses this for hotkey-hint rows. Empty vec clears the
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
@@ -2945,7 +2945,7 @@ pub enum PluginCommand {
         persistent: bool,
         /// Optional session id to attach the new terminal buffer to.
         /// `None` (default) attaches to the active session at creation
-        /// time — the historical behaviour. `Some(id)` lets Conductor
+        /// time — the historical behaviour. `Some(id)` lets Orchestrator
         /// (and any plugin spawning agents in worktrees) attach the
         /// terminal to its target session without diving first; the
         /// terminal's split is created in that session's stashed split
@@ -3760,7 +3760,7 @@ pub struct CreateTerminalOptions {
     pub persistent: Option<bool>,
     /// Optional session id to attach the new terminal buffer to.
     /// Defaults to the active session at creation time. Setting this
-    /// lets Conductor and similar plugins spawn a terminal *into* an
+    /// lets Orchestrator and similar plugins spawn a terminal *into* an
     /// inactive session (e.g. an agent in a worktree the user hasn't
     /// dived into yet). The terminal's split is created in that
     /// session's stashed split tree; the buffer is attached to the
@@ -4260,7 +4260,7 @@ impl PluginApi {
     /// Override the currently-highlighted suggestion row in the
     /// open prompt. Useful when re-opening a picker and wanting
     /// the previously-active entry to come up pre-selected
-    /// (e.g. Conductor highlighting the active session). The
+    /// (e.g. Orchestrator highlighting the active session). The
     /// editor clamps `index` to the list's bounds.
     pub fn set_prompt_selected_index(&self, index: u32) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptSelectedIndex { index })

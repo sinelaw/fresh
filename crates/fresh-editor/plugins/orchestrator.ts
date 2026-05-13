@@ -1,17 +1,17 @@
 /// <reference path="./lib/fresh.d.ts" />
 //
-// Conductor — multi-agent / multi-worktree session orchestration.
+// Orchestrator — multi-agent / multi-worktree session orchestration.
 //
-// MVP scope (`docs/internal/conductor-sessions-design.md`):
+// MVP scope (`docs/internal/orchestrator-sessions-design.md`):
 //
-//   - "Conductor: Open" opens a floating overlay prompt listing
+//   - "Orchestrator: Open" opens a floating overlay prompt listing
 //     every session with its state column. Up/Down navigates,
 //     Enter dives into the selected session.
-//   - "Conductor: New Session" opens a single floating widget
+//   - "Orchestrator: New Session" opens a single floating widget
 //     form with three optional fields (session name, agent
 //     command, branch), allocates a worktree-rooted session and
 //     spawns the agent in a terminal attached to it.
-//   - "Conductor: Kill Selected" closes the session whose row is
+//   - "Orchestrator: Kill Selected" closes the session whose row is
 //     currently highlighted in the open prompt.
 //   - Agent state column updates from terminal_output regex and
 //     terminal_exit code: RUNNING / AWAITING / READY / ERRORED.
@@ -45,17 +45,17 @@ type AgentState = "running" | "awaiting" | "ready" | "errored" | "killed";
 interface AgentSession {
   // Editor's stable session id.
   id: number;
-  // Display label (defaults to root basename — Conductor never
+  // Display label (defaults to root basename — Orchestrator never
   // renames externally-created sessions).
   label: string;
   // Absolute filesystem root.
   root: string;
-  // The terminal id Conductor spawned in this session, if any.
+  // The terminal id Orchestrator spawned in this session, if any.
   terminalId: number | null;
   // Last parsed agent state. "active" is computed at render
   // time from `editor.activeWindow()`, not stored.
   state: AgentState;
-  // Wall-clock ms when conductor.new fired createWindow.
+  // Wall-clock ms when orchestrator.new fired createWindow.
   createdAt: number;
 }
 
@@ -63,12 +63,12 @@ interface AgentSession {
 // Module state — editor-global, survives every dive.
 // =============================================================================
 
-const conductorSessions = new Map<number, AgentSession>();
+const orchestratorSessions = new Map<number, AgentSession>();
 
 // Pending session-creation intent. Stashed across the
 // async `createWindow → window_created hook` handoff so the
 // hook handler can attach the spawned terminal. (Internally
-// the editor calls these "windows"; Conductor still presents
+// the editor calls these "windows"; Orchestrator still presents
 // them as "sessions" in its UX.)
 let pendingNewSession:
   | { label: string; branch: string; cmd: string; root: string }
@@ -101,17 +101,17 @@ interface NewSessionForm {
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
 
-const NEW_SESSION_MODE = "conductor-new-form";
+const NEW_SESSION_MODE = "orchestrator-new-form";
 
 // Open dialog state. `null` ⇒ the picker isn't mounted. Lives
 // alongside the new-session form state but is independent of
-// it — the two dialogs share the conductor mode plumbing but
+// it — the two dialogs share the orchestrator mode plumbing but
 // not their data.
 interface OpenDialogState {
   // Filter input value + cursor byte. Mirrors what the host
   // renders inside the panel's filter TextInput.
   filter: { value: string; cursor: number };
-  // Subset of `conductorSessions` keys that pass the filter,
+  // Subset of `orchestratorSessions` keys that pass the filter,
   // in display order. Recomputed on every filter change.
   filteredIds: number[];
   // The selection inside the list widget. The host owns the
@@ -138,7 +138,7 @@ interface OpenDialogState {
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
-const OPEN_MODE = "conductor-open";
+const OPEN_MODE = "orchestrator-open";
 
 // =============================================================================
 // Session-list reconciliation
@@ -149,9 +149,9 @@ function reconcileSessions(): void {
   const seen = new Set<number>();
   for (const s of editorSessions) {
     seen.add(s.id);
-    const existing = conductorSessions.get(s.id);
+    const existing = orchestratorSessions.get(s.id);
     if (!existing) {
-      conductorSessions.set(s.id, {
+      orchestratorSessions.set(s.id, {
         id: s.id,
         label: s.label,
         root: s.root,
@@ -167,8 +167,8 @@ function reconcileSessions(): void {
       existing.root = s.root;
     }
   }
-  for (const id of conductorSessions.keys()) {
-    if (!seen.has(id)) conductorSessions.delete(id);
+  for (const id of orchestratorSessions.keys()) {
+    if (!seen.has(id)) orchestratorSessions.delete(id);
   }
 }
 
@@ -194,12 +194,12 @@ function ageString(createdAt: number): string {
 // =============================================================================
 // Open dialog — widget-based session picker (Phase 1 of the
 // open-dialog redesign; see docs/internal/
-// conductor-open-dialog-and-lifecycle.md).
+// orchestrator-open-dialog-and-lifecycle.md).
 //
 // Dive is the only action the dialog wires up directly. Other
 // lifecycle commands (Stop / Archive / Delete / New) ship in
 // later phases. New session is still reachable through the
-// "Conductor: New Session" palette command in the meantime.
+// "Orchestrator: New Session" palette command in the meantime.
 // =============================================================================
 
 // Case-insensitive substring match over a session's label and
@@ -208,13 +208,13 @@ function ageString(createdAt: number): string {
 // first. Empty needle returns the full list in numeric-id order.
 function filterSessions(needle: string): number[] {
   reconcileSessions();
-  const ids = Array.from(conductorSessions.keys()).sort((a, b) => a - b);
+  const ids = Array.from(orchestratorSessions.keys()).sort((a, b) => a - b);
   if (!needle) return ids;
   const n = needle.toLowerCase();
   type Scored = { id: number; score: number; len: number };
   const matches: Scored[] = [];
   for (const id of ids) {
-    const s = conductorSessions.get(id)!;
+    const s = orchestratorSessions.get(id)!;
     const label = s.label.toLowerCase();
     const root = s.root.toLowerCase();
     if (label.startsWith(n)) {
@@ -235,7 +235,7 @@ function filterSessions(needle: string): number[] {
 //   * other states use the default fg
 //   * label in default fg
 function renderListItem(id: number, activeId: number): TextPropertyEntry {
-  const s = conductorSessions.get(id);
+  const s = orchestratorSessions.get(id);
   if (!s) {
     return styledRow([{ text: `[${id}] (unknown)` }]);
   }
@@ -401,7 +401,7 @@ function buildOpenSpec(): WidgetSpec {
     : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
   const selectedId = selIdx >= 0 ? filtered[selIdx] : -1;
   const selectedSession = selectedId > 0
-    ? conductorSessions.get(selectedId)
+    ? orchestratorSessions.get(selectedId)
     : undefined;
 
   return col(
@@ -410,7 +410,7 @@ function buildOpenSpec(): WidgetSpec {
       entries: [
         styledRow([
           {
-            text: "CONDUCTOR :: Sessions",
+            text: "ORCHESTRATOR :: Sessions",
             style: { fg: "ui.popup_border_fg", bold: true },
           },
         ]),
@@ -520,7 +520,7 @@ function openControlRoom(): void {
   if (openPanel) return;
   reconcileSessions();
   const activeId = editor.activeWindow();
-  const ids = Array.from(conductorSessions.keys()).sort((a, b) => a - b);
+  const ids = Array.from(orchestratorSessions.keys()).sort((a, b) => a - b);
   const activeIdx = ids.indexOf(activeId);
   const listVisibleRows = openListVisibleRows();
   openDialog = {
@@ -566,7 +566,7 @@ function stopSelectedSession(): void {
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number" || id <= 0) return;
   if (id === 1) {
-    editor.setStatus("Conductor: cannot stop the base session");
+    editor.setStatus("Orchestrator: cannot stop the base session");
     return;
   }
   editor.signalWindow(id, "SIGTERM");
@@ -577,11 +577,11 @@ function stopSelectedSession(): void {
   setTimeout(() => {
     editor.signalWindow(id, "SIGKILL");
   }, 2000);
-  editor.setStatus(`Conductor: stop signal sent to session [${id}]`);
+  editor.setStatus(`Orchestrator: stop signal sent to session [${id}]`);
 }
 
 // ---------------------------------------------------------------------
-// Archive manifest — `<XDG>/conductor/<repo-slug>/archived.json`.
+// Archive manifest — `<XDG>/orchestrator/<repo-slug>/archived.json`.
 // Records sessions that have been archived (stopped + worktree moved
 // to `.archived/`). Used today by the Archive action; Unarchive and
 // "Show archived" surface in a follow-up phase.
@@ -607,7 +607,7 @@ interface ArchiveManifest {
 function archiveManifestPath(repoRoot: string): string {
   return editor.pathJoin(
     editor.getDataDir(),
-    "conductor",
+    "orchestrator",
     slugify(repoRoot),
     "archived.json",
   );
@@ -650,16 +650,16 @@ async function archiveSelectedSession(): Promise<void> {
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number" || id <= 0) return;
   if (id === 1) {
-    editor.setStatus("Conductor: cannot archive the base session");
+    editor.setStatus("Orchestrator: cannot archive the base session");
     return;
   }
   if (id === editor.activeWindow()) {
     editor.setStatus(
-      "Conductor: dive elsewhere first, then archive this session",
+      "Orchestrator: dive elsewhere first, then archive this session",
     );
     return;
   }
-  const session = conductorSessions.get(id);
+  const session = orchestratorSessions.get(id);
   if (!session) return;
 
   // Resolve the repo root from cwd (the user is in the
@@ -671,7 +671,7 @@ async function archiveSelectedSession(): Promise<void> {
     cwd,
   );
   if (top.exit_code !== 0) {
-    editor.setStatus("Conductor: archive failed — not a git repository");
+    editor.setStatus("Orchestrator: archive failed — not a git repository");
     return;
   }
   const repoRoot = (top.stdout || "").trim();
@@ -692,7 +692,7 @@ async function archiveSelectedSession(): Promise<void> {
   // consistent (the new path stays registered as a worktree).
   const archivedRoot = editor.pathJoin(
     editor.getDataDir(),
-    "conductor",
+    "orchestrator",
     slugify(repoRoot),
     ".archived",
     session.label,
@@ -700,7 +700,7 @@ async function archiveSelectedSession(): Promise<void> {
   const parent = editor.pathDirname(archivedRoot);
   if (!editor.createDir(parent)) {
     editor.setStatus(
-      `Conductor: archive failed — could not create ${parent}`,
+      `Orchestrator: archive failed — could not create ${parent}`,
     );
     return;
   }
@@ -711,7 +711,7 @@ async function archiveSelectedSession(): Promise<void> {
   );
   if (moveRes.exit_code !== 0) {
     editor.setStatus(
-      `Conductor: worktree move failed: ${
+      `Orchestrator: worktree move failed: ${
         lastNonEmptyLine(moveRes.stderr) || "unknown error"
       }`,
     );
@@ -719,7 +719,7 @@ async function archiveSelectedSession(): Promise<void> {
   }
 
   // Append manifest entry. The branch info is best-effort:
-  // we assume Conductor's convention of branch==label (set in
+  // we assume Orchestrator's convention of branch==label (set in
   // the new-session form) until a session knows its branch
   // separately.
   const manifest = loadArchiveManifest(repoRoot);
@@ -732,10 +732,10 @@ async function archiveSelectedSession(): Promise<void> {
   });
   if (!saveArchiveManifest(repoRoot, manifest)) {
     editor.setStatus(
-      "Conductor: archived, but failed to write archived.json",
+      "Orchestrator: archived, but failed to write archived.json",
     );
   } else {
-    editor.setStatus(`Conductor: archived [${id}] ${session.label}`);
+    editor.setStatus(`Orchestrator: archived [${id}] ${session.label}`);
   }
   triggerSyncAsync(repoRoot);
 }
@@ -752,7 +752,7 @@ async function archiveSelectedSession(): Promise<void> {
 //
 // The branch is orphan-style: a single root file `sessions.json` and
 // commits with the sessions snapshot. We maintain it through a
-// dedicated worktree at `<XDG>/conductor/.sync-workspace` so we don't
+// dedicated worktree at `<XDG>/orchestrator/.sync-workspace` so we don't
 // disturb the user's normal `git worktree` set.
 // ---------------------------------------------------------------------
 
@@ -762,7 +762,7 @@ let syncError: string | null = null;
 
 function deriveSyncUser(): string {
   // Priority order documented in
-  // docs/internal/conductor-open-dialog-and-lifecycle.md.
+  // docs/internal/orchestrator-open-dialog-and-lifecycle.md.
   const envOverride = editor.getEnv("FRESH_SESSIONS_USER");
   if (envOverride && envOverride.trim()) return envOverride.trim();
   const localPart = (envEmailLocalPart() || "").trim();
@@ -785,7 +785,7 @@ function envEmailLocalPart(): string | null {
 }
 
 function syncWorkspacePath(): string {
-  return editor.pathJoin(editor.getDataDir(), "conductor", ".sync-workspace");
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", ".sync-workspace");
 }
 
 // Fire-and-forget sync. Never blocks the caller; updates
@@ -930,7 +930,7 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
     version: 1,
     machine_id: editor.getEnv("HOSTNAME") || "unknown",
     updated_at: new Date().toISOString(),
-    active: Array.from(conductorSessions.values()).map((s) => ({
+    active: Array.from(orchestratorSessions.values()).map((s) => ({
       label: s.label,
       branch: s.label,
       base_ref: "origin/master",
@@ -949,14 +949,14 @@ async function deleteConfirmedSession(): Promise<void> {
   if (!openDialog || !openDialog.pendingConfirm) return;
   const { sessionId: id } = openDialog.pendingConfirm;
   openDialog.pendingConfirm = null;
-  const session = conductorSessions.get(id);
+  const session = orchestratorSessions.get(id);
   if (!session) {
     if (openPanel) openPanel.update(buildOpenSpec());
     return;
   }
   if (id === editor.activeWindow()) {
     editor.setStatus(
-      "Conductor: dive elsewhere first, then delete this session",
+      "Orchestrator: dive elsewhere first, then delete this session",
     );
     if (openPanel) openPanel.update(buildOpenSpec());
     return;
@@ -969,7 +969,7 @@ async function deleteConfirmedSession(): Promise<void> {
     cwd,
   );
   if (top.exit_code !== 0) {
-    editor.setStatus("Conductor: delete failed — not a git repository");
+    editor.setStatus("Orchestrator: delete failed — not a git repository");
     if (openPanel) openPanel.update(buildOpenSpec());
     return;
   }
@@ -988,7 +988,7 @@ async function deleteConfirmedSession(): Promise<void> {
   );
   if (removeRes.exit_code !== 0) {
     editor.setStatus(
-      `Conductor: worktree remove failed: ${
+      `Orchestrator: worktree remove failed: ${
         lastNonEmptyLine(removeRes.stderr) || "unknown error"
       }`,
     );
@@ -1008,7 +1008,7 @@ async function deleteConfirmedSession(): Promise<void> {
     saveArchiveManifest(repoRoot, manifest);
   }
 
-  editor.setStatus(`Conductor: deleted [${id}] ${session.label}`);
+  editor.setStatus(`Orchestrator: deleted [${id}] ${session.label}`);
   if (openPanel) openPanel.update(buildOpenSpec());
   triggerSyncAsync(repoRoot);
 }
@@ -1069,16 +1069,16 @@ async function detectDefaultBranch(repoRoot: string): Promise<string> {
 function nextAutoSessionName(): string {
   // Persisted counter so consecutive empty submits produce
   // session-1, session-2, … even across plugin reloads.
-  const counter = (editor.getGlobalState("conductor.session_counter") as
+  const counter = (editor.getGlobalState("orchestrator.session_counter") as
     | number
     | undefined) ?? 0;
   const next = counter + 1;
-  editor.setGlobalState("conductor.session_counter", next);
+  editor.setGlobalState("orchestrator.session_counter", next);
   return `session-${next}`;
 }
 
 // Three distinct styles for the header line: section keyword
-// ("CONDUCTOR"), structural separators ("::"), and step label. The
+// ("ORCHESTRATOR"), structural separators ("::"), and step label. The
 // border-fg key picks up the same accent the floating panel border
 // uses, so the title visually anchors to the dialog chrome.
 const HEADER_KEYWORD_STYLE = {
@@ -1104,7 +1104,7 @@ function buildFormSpec(): WidgetSpec {
         kind: "raw",
         entries: [
           styledRow([
-            { text: "CONDUCTOR", style: HEADER_KEYWORD_STYLE },
+            { text: "ORCHESTRATOR", style: HEADER_KEYWORD_STYLE },
             { text: " :: ", style: HEADER_SEP_STYLE },
             { text: "New Session Dialog", style: HEADER_LABEL_STYLE },
             { text: " :: ", style: HEADER_SEP_STYLE },
@@ -1209,7 +1209,7 @@ function buildFormSpec(): WidgetSpec {
 }
 
 // Derive a "my_org/project_name" style label from the current
-// working directory's tail. Conductor never opens this dialog
+// working directory's tail. Orchestrator never opens this dialog
 // outside of a workspace; if the cwd has fewer than two
 // components we fall back to whatever's there.
 function deriveProjectLabel(): string {
@@ -1229,7 +1229,7 @@ function renderForm(): void {
 function openForm(): void {
   pendingNewSession = null;
   const lastCmd =
-    (editor.getGlobalState("conductor.last_cmd") as string | undefined) ?? "";
+    (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
     name: { value: "", cursor: 0 },
     cmd: { value: lastCmd, cursor: lastCmd.length },
@@ -1295,7 +1295,7 @@ async function submitForm(): Promise<void> {
 
   const root = editor.pathJoin(
     editor.getDataDir(),
-    "conductor",
+    "orchestrator",
     slugify(repoRoot),
     sessionName,
   );
@@ -1337,7 +1337,7 @@ async function submitForm(): Promise<void> {
   }
 
   if (cmd) {
-    editor.setGlobalState("conductor.last_cmd", cmd);
+    editor.setGlobalState("orchestrator.last_cmd", cmd);
   }
 
   pendingNewSession = { label: sessionName, branch: branchName, cmd, root };
@@ -1354,18 +1354,18 @@ function startNewSession(): void {
 // panel, which routes to the focused widget. `mode_text_input`
 // handles printable input outside this list.
 const FORM_MODE_BINDINGS: [string, string][] = [
-  ["Tab", "conductor_form_key_tab"],
-  ["S-Tab", "conductor_form_key_shift_tab"],
-  ["Return", "conductor_form_key_enter"],
-  ["Escape", "conductor_form_key_escape"],
-  ["Backspace", "conductor_form_key_backspace"],
-  ["Delete", "conductor_form_key_delete"],
-  ["Home", "conductor_form_key_home"],
-  ["End", "conductor_form_key_end"],
-  ["Left", "conductor_form_key_left"],
-  ["Right", "conductor_form_key_right"],
-  ["Up", "conductor_form_key_up"],
-  ["Down", "conductor_form_key_down"],
+  ["Tab", "orchestrator_form_key_tab"],
+  ["S-Tab", "orchestrator_form_key_shift_tab"],
+  ["Return", "orchestrator_form_key_enter"],
+  ["Escape", "orchestrator_form_key_escape"],
+  ["Backspace", "orchestrator_form_key_backspace"],
+  ["Delete", "orchestrator_form_key_delete"],
+  ["Home", "orchestrator_form_key_home"],
+  ["End", "orchestrator_form_key_end"],
+  ["Left", "orchestrator_form_key_left"],
+  ["Right", "orchestrator_form_key_right"],
+  ["Up", "orchestrator_form_key_up"],
+  ["Down", "orchestrator_form_key_down"],
 ];
 
 editor.defineMode(NEW_SESSION_MODE, FORM_MODE_BINDINGS, true, true);
@@ -1375,35 +1375,35 @@ function dispatchFormKey(name: string): void {
   formPanel.command(widgetKey(name));
 }
 
-registerHandler("conductor_form_key_tab", () => dispatchFormKey("Tab"));
+registerHandler("orchestrator_form_key_tab", () => dispatchFormKey("Tab"));
 registerHandler(
-  "conductor_form_key_shift_tab",
+  "orchestrator_form_key_shift_tab",
   () => dispatchFormKey("Shift+Tab"),
 );
-registerHandler("conductor_form_key_enter", () => dispatchFormKey("Enter"));
-registerHandler("conductor_form_key_escape", () => {
+registerHandler("orchestrator_form_key_enter", () => dispatchFormKey("Enter"));
+registerHandler("orchestrator_form_key_escape", () => {
   if (form) closeForm();
 });
 registerHandler(
-  "conductor_form_key_backspace",
+  "orchestrator_form_key_backspace",
   () => dispatchFormKey("Backspace"),
 );
-registerHandler("conductor_form_key_delete", () => dispatchFormKey("Delete"));
-registerHandler("conductor_form_key_home", () => dispatchFormKey("Home"));
-registerHandler("conductor_form_key_end", () => dispatchFormKey("End"));
-registerHandler("conductor_form_key_left", () => dispatchFormKey("Left"));
-registerHandler("conductor_form_key_right", () => dispatchFormKey("Right"));
-registerHandler("conductor_form_key_up", () => dispatchFormKey("Up"));
-registerHandler("conductor_form_key_down", () => dispatchFormKey("Down"));
+registerHandler("orchestrator_form_key_delete", () => dispatchFormKey("Delete"));
+registerHandler("orchestrator_form_key_home", () => dispatchFormKey("Home"));
+registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
+registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
+registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
+registerHandler("orchestrator_form_key_up", () => dispatchFormKey("Up"));
+registerHandler("orchestrator_form_key_down", () => dispatchFormKey("Down"));
 
 // Printable input arrives via the global `mode_text_input` action.
 // Other plugins may also register a `mode_text_input` handler;
 // guard on `form` so this handler is a no-op outside the form.
-function conductor_mode_text_input(args: { text: string }): void {
+function orchestrator_mode_text_input(args: { text: string }): void {
   if (!form || !formPanel || !args?.text) return;
   formPanel.command(textInputChar(args.text));
 }
-registerHandler("mode_text_input", conductor_mode_text_input);
+registerHandler("mode_text_input", orchestrator_mode_text_input);
 
 editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
@@ -1527,7 +1527,7 @@ editor.on("widget_event", (e) => {
   }
 });
 
-// Legacy kill helper retained for the `Conductor: Kill Selected`
+// Legacy kill helper retained for the `Orchestrator: Kill Selected`
 // command-palette command. In the widget-based picker (Phase 1)
 // the open dialog has no kill action — Phase 3-5 will replace
 // this with Stop / Archive / Delete. When invoked while the
@@ -1537,31 +1537,31 @@ editor.on("widget_event", (e) => {
 function killSelected(): void {
   if (!openDialog) {
     editor.setStatus(
-      "Conductor: open the session list (Ctrl+P → Conductor: Open) first",
+      "Orchestrator: open the session list (Ctrl+P → Orchestrator: Open) first",
     );
     return;
   }
   const ids = openDialog.filteredIds;
   if (ids.length === 0) {
-    editor.setStatus("Conductor: no session selected");
+    editor.setStatus("Orchestrator: no session selected");
     return;
   }
   const id = ids[Math.max(0, Math.min(openDialog.selectedIndex, ids.length - 1))];
   if (id <= 0) {
-    editor.setStatus("Conductor: select a session row first");
+    editor.setStatus("Orchestrator: select a session row first");
     return;
   }
   if (id === 1) {
-    editor.setStatus("Conductor: cannot kill the base session");
+    editor.setStatus("Orchestrator: cannot kill the base session");
     return;
   }
   if (id === editor.activeWindow()) {
     editor.setStatus(
-      "Conductor: dive elsewhere first, then kill this session",
+      "Orchestrator: dive elsewhere first, then kill this session",
     );
     return;
   }
-  const s = conductorSessions.get(id);
+  const s = orchestratorSessions.get(id);
   if (s && s.terminalId !== null) {
     editor.closeTerminal(s.terminalId);
   }
@@ -1596,7 +1596,7 @@ editor.on("window_created", async (payload) => {
       state: "running",
       createdAt: Date.now(),
     };
-    conductorSessions.set(id, tracked);
+    orchestratorSessions.set(id, tracked);
     if (intent.cmd) {
       editor.sendTerminalInput(term.terminalId, intent.cmd + "\n");
     }
@@ -1627,7 +1627,7 @@ const AWAITING_RX = /(\(\s*[YyNn]\s*\/\s*[YyNn]\s*\):?\s*$)|(Press\s+(?:enter|re
 
 editor.on("terminal_output", (payload) => {
   const last = payload.last_line || "";
-  for (const s of conductorSessions.values()) {
+  for (const s of orchestratorSessions.values()) {
     if (s.terminalId === payload.terminal_id) {
       // RUNNING is the default; flip to AWAITING only when the
       // last visible line matches a prompt pattern. New output
@@ -1642,12 +1642,12 @@ editor.on("terminal_output", (payload) => {
 });
 
 editor.on("terminal_exit", (payload) => {
-  for (const s of conductorSessions.values()) {
+  for (const s of orchestratorSessions.values()) {
     if (s.terminalId === payload.terminal_id) {
       const code = payload.exit_code;
       // exit_code is currently always null (the editor's
       // wait-status capture is a follow-up). Treat unknown as
-      // ready — Conductor doesn't have a better heuristic and
+      // ready — Orchestrator doesn't have a better heuristic and
       // mis-marking a real error as "ready" is recoverable
       // (the user opens the dive and sees the failure).
       s.state = code === null || code === 0 ? "ready" : "errored";
@@ -1661,25 +1661,25 @@ editor.on("terminal_exit", (payload) => {
 // Commands
 // =============================================================================
 
-registerHandler("conductor_open", openControlRoom);
-registerHandler("conductor_new", startNewSession);
-registerHandler("conductor_kill", killSelected);
+registerHandler("orchestrator_open", openControlRoom);
+registerHandler("orchestrator_new", startNewSession);
+registerHandler("orchestrator_kill", killSelected);
 
 editor.registerCommand(
-  "Conductor: Open",
+  "Orchestrator: Open",
   "Show all editor sessions in a floating selector",
-  "conductor_open",
+  "orchestrator_open",
   null,
 );
 editor.registerCommand(
-  "Conductor: New Session",
+  "Orchestrator: New Session",
   "Spawn a new editor session in a worktree",
-  "conductor_new",
+  "orchestrator_new",
   null,
 );
 editor.registerCommand(
-  "Conductor: Kill Selected",
-  "Close the session highlighted in the open Conductor prompt",
-  "conductor_kill",
+  "Orchestrator: Kill Selected",
+  "Close the session highlighted in the open Orchestrator prompt",
+  "orchestrator_kill",
   null,
 );

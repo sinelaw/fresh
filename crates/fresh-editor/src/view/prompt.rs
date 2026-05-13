@@ -230,11 +230,11 @@ pub struct Prompt {
     /// Optional footer chrome shown along the bottom of the
     /// floating overlay's results pane (above the frame border).
     /// Plugin-controlled via `editor.setPromptFooter(segments)`.
-    /// Conductor uses this for hotkey-hint rows
+    /// Orchestrator uses this for hotkey-hint rows
     /// (e.g. " [n] new   [d] dive   [k] kill   [Esc] close").
     /// Empty by default; has no effect on non-overlay prompts.
     /// Implements the chrome-region piece of Primitive #2 in
-    /// docs/internal/conductor-sessions-design.md (the
+    /// docs/internal/orchestrator-sessions-design.md (the
     /// session_preview delegate region was already provided by
     /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,

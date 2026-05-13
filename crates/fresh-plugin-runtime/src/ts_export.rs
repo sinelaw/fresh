@@ -549,7 +549,7 @@ interface HookEventMap {
     kind: string;
   };
 
-  // ── editor sessions (Conductor; see conductor-sessions-design.md) ────────
+  // ── editor sessions (Orchestrator; see orchestrator-sessions-design.md) ────────
   window_created: { id: number; label: string; root: string };
   window_closed: { id: number };
   active_window_changed: { previous_id: number | null; active_id: number };

@@ -792,9 +792,9 @@ fn handle_first_run_setup(
                 tracing::warn!("Failed to restore workspace: {}", e);
             }
         }
-        // Each Conductor session lives in its own worktree and therefore
+        // Each Orchestrator session lives in its own worktree and therefore
         // gets its own per-dir workspace file. Restoring them here means
-        // their buffers/splits paint in the Conductor preview immediately
+        // their buffers/splits paint in the Orchestrator preview immediately
         // — no need to dive into a session just to populate it.
         editor.restore_inactive_window_workspaces();
     } else {
@@ -3586,7 +3586,7 @@ fn real_main() -> AnyhowResult<()> {
         // backend from the first tick.
         editor.set_boot_authority(current_authority.clone());
 
-        // Conductor cross-restart persistence is now loaded by
+        // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads
         // `.fresh/windows.json` + `.fresh/state/*.json` and builds
         // the initial windows map / `plugin_global_state` directly
@@ -3978,7 +3978,7 @@ where
             }
             if workspace_enabled {
                 // Save every window's workspace, not just the active one,
-                // so a Conductor restart paints buffers/splits in every
+                // so a Orchestrator restart paints buffers/splits in every
                 // session's preview pane without diving in.
                 if let Err(e) = editor.save_all_windows_workspaces() {
                     tracing::warn!("Failed to save workspaces: {}", e);
@@ -3987,10 +3987,10 @@ where
                 }
             }
 
-            // Conductor cross-restart persistence: write
+            // Orchestrator cross-restart persistence: write
             // `.fresh/sessions.json` and `.fresh/state/*.json`. Best-
             // effort; failures are logged inside, never block quit.
-            editor.save_conductor_state();
+            editor.save_orchestrator_state();
             break;
         }
 

@@ -1,6 +1,6 @@
 //! Wiring tests for the editor `Session` abstraction.
 //!
-//! Step 1 of the Conductor migration adds a single forced session to
+//! Step 1 of the Orchestrator migration adds a single forced session to
 //! `Editor` without changing any user-visible behaviour. These tests
 //! pin the boot invariants so subsequent migration steps don't break
 //! them silently:
@@ -120,7 +120,7 @@ fn open_file_in_background_targets_inactive_session() {
 /// `createTerminal({ sessionId })` for an inactive session attaches
 /// the buffer to that session's membership and seeds (or extends)
 /// its stashed split tree — without disturbing the active session.
-/// Conductor uses this to spawn agents in worktrees without diving.
+/// Orchestrator uses this to spawn agents in worktrees without diving.
 #[test]
 fn create_terminal_targets_inactive_session_via_session_id() {
     use fresh_core::api::PluginCommand;

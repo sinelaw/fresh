@@ -7,14 +7,14 @@
 //! quick-open, LSP roots) without recreating buffers, terminals, or
 //! plugin state — those live on the `Editor` and survive switches.
 //!
-//! See `docs/internal/conductor-sessions-design.md` for the full
+//! See `docs/internal/orchestrator-sessions-design.md` for the full
 //! design rationale.
 //!
 //! ## Naming
 //!
 //! Internally we call these "windows" (modelled on VS Code windows)
 //! to disambiguate from Fresh's pre-existing workspace-recovery and
-//! config-layer "session" concepts. Conductor presents windows as
+//! config-layer "session" concepts. Orchestrator presents windows as
 //! "agent sessions" in its UX, since the parallel-agents domain
 //! language is what users see — but the editor types are `Window`,
 //! `WindowId`, etc.

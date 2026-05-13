@@ -1,16 +1,16 @@
-# Conductor: Open Dialog Redesign + Session Lifecycle
+# Orchestrator: Open Dialog Redesign + Session Lifecycle
 
 > **Status**: Design Document
 > **Date**: May 2026
 > **Driving feature**: A picker UX for browsing/operating on
-> Conductor sessions, plus a richer session lifecycle (Stop /
+> Orchestrator sessions, plus a richer session lifecycle (Stop /
 > Archive / Delete) with cross-machine recovery.
 
 ## Motivation
 
-The current `Conductor: Open` picker is built on the legacy
+The current `Orchestrator: Open` picker is built on the legacy
 `startPrompt` infrastructure. It works for "list + filter +
-pick one", but it can't host the action surface Conductor
+pick one", but it can't host the action surface Orchestrator
 needs:
 
 - No per-session actions besides "dive" — killing a session
@@ -47,13 +47,13 @@ input), `list` (sessions), and `labeledSection` (chrome) widgets.
 ### Normal state — session highlighted, action menu in preview pane
 
 ```
-╭─ CONDUCTOR :: Sessions ────────────────────────────────────────────╮
+╭─ ORCHESTRATOR :: Sessions ────────────────────────────────────────────╮
 │ ╭─ Filter ───────────────────────────────────────────────────────╮ │
 │ │ [filter text                                                  ]│ │
 │ ╰────────────────────────────────────────────────────────────────╯ │
 │ ╭─ Sessions ─────────────╮ ╭─ [2] moshiko ──────────────────────╮  │
 │ │   [1] ACT  fresh       │ │ Root:  /home/noam/repos/fresh/     │  │
-│ │ ▸ [2] RUN  moshiko     │ │        .fresh/conductor/moshiko    │  │
+│ │ ▸ [2] RUN  moshiko     │ │        .fresh/orchestrator/moshiko    │  │
 │ │   [3] RUN  session-1   │ │ Age:   3m       State: RUN         │  │
 │ │   [4] RUN  session-2   │ │ pgid:  12345    pids: 12345, 12387 │  │
 │ │                        │ │ ────────────────────────────────── │  │
@@ -78,7 +78,7 @@ both recoverable (relaunch the agent; unarchive the session),
 so they fire immediately.
 
 ```
-╭─ CONDUCTOR :: Sessions ────────────────────────────────────────────╮
+╭─ ORCHESTRATOR :: Sessions ────────────────────────────────────────────╮
 │ ╭─ Filter ───────────────────────────────────────────────────────╮ │
 │ │ [filter text                                                  ]│ │
 │ ╰────────────────────────────────────────────────────────────────╯ │
@@ -234,7 +234,7 @@ inspect or fall back to manually.
 Layout:
 
 ```
-<XDG data dir>/conductor/<repo-slug>/
+<XDG data dir>/orchestrator/<repo-slug>/
 ├── session-1/                ← active
 ├── session-2/                ← active
 └── .archived/
@@ -247,8 +247,8 @@ Layout:
 what the new-session form already produces.
 
 A local manifest at
-`<XDG data dir>/conductor/<repo-slug>/archived.json` records
-the archived sessions so the conductor plugin can show them
+`<XDG data dir>/orchestrator/<repo-slug>/archived.json` records
+the archived sessions so the orchestrator plugin can show them
 in the "Show archived" view without scanning the filesystem:
 
 ```json
@@ -257,7 +257,7 @@ in the "Show archived" view without scanning the filesystem:
   "sessions": [
     {
       "label": "session-3",
-      "root": "<XDG>/conductor/<repo-slug>/.archived/session-3",
+      "root": "<XDG>/orchestrator/<repo-slug>/.archived/session-3",
       "branch": "session-3",
       "archived_at": "2026-05-13T11:00:00Z",
       "last_state": "ready"
@@ -331,9 +331,9 @@ Sync behaviour:
   footer when there is unsynced state, plus a one-line
   hover/status-bar message naming the last error. The
   indicator clears as soon as a subsequent push succeeds.
-  Users who care can run an explicit "Conductor: Sync Now"
+  Users who care can run an explicit "Orchestrator: Sync Now"
   command from the palette to retry on demand.
-- **Pull on open**: when `Conductor: Open` first loads in a
+- **Pull on open**: when `Orchestrator: Open` first loads in a
   fresh editor process, it tries
   `git fetch origin <user>/fresh-sessions` and merges any
   entries it doesn't already know about. Sessions whose
@@ -348,7 +348,7 @@ Sync behaviour:
   `refs/heads/<user>/fresh-sessions` so it doesn't pollute
   the default `git branch` output (Git already hides
   namespaced refs in many UIs). Users who want full opt-out
-  can set `fresh.conductor.sync = false` in their config.
+  can set `fresh.orchestrator.sync = false` in their config.
 
 This feature builds on top of the local manifest and ships
 in a later phase (see [Implementation phases](#implementation-phases)).
@@ -357,13 +357,13 @@ in a later phase (see [Implementation phases](#implementation-phases)).
 
 Shortcuts go through the existing keybinding pipeline rather
 than being hardcoded in the plugin. The plugin registers
-chord defaults under a `conductor-open` plugin mode:
+chord defaults under a `orchestrator-open` plugin mode:
 
 ```rust
 keybindings.load_plugin_chord_default(
-    KeyContext::Mode("conductor-open".into()),
+    KeyContext::Mode("orchestrator-open".into()),
     vec![(KeyCode::Char('s'), KeyModifiers::ALT)],
-    Action::PluginCommand("conductor_stop".into()),
+    Action::PluginCommand("orchestrator_stop".into()),
 );
 // …same for 'a' (archive), 'd' (delete), 'n' (new)
 ```
@@ -380,7 +380,7 @@ What this buys us:
   `format_keybinding`, which produces `Alt+D` on Linux /
   Windows and `⌥D` on macOS without the plugin caring.
 - **Mode scoping**: the chord only fires while the
-  `conductor-open` mode is active (i.e. the dialog is
+  `orchestrator-open` mode is active (i.e. the dialog is
   open), so `Alt+D` doesn't shadow anything global.
 
 This requires one small host change: the floating-widget-panel
@@ -396,7 +396,7 @@ existing swallow-don't-leak rule.
 
 - Build the layout: header, filter input, list + preview
   panes, focus model, default keys (Up/Down/Tab/Enter/Esc).
-- Plugin-side fuzzy filter over `conductorSessions` (small
+- Plugin-side fuzzy filter over `orchestratorSessions` (small
   ranker, substring + prefix bonus). No external action
   surface yet — Dive is the only action.
 - Smart-key forwarding: Up/Down/Enter on a focused single-line
@@ -437,7 +437,7 @@ existing swallow-don't-leak rule.
 ### Phase 4 — Archive / Unarchive
 
 - Local manifest at
-  `<XDG>/conductor/<repo-slug>/archived.json`.
+  `<XDG>/orchestrator/<repo-slug>/archived.json`.
 - `git worktree move` to / from the `.archived/` graveyard.
 - "Show archived" toggle in the filter section; archived rows
   rendered with dim fg + `ARCH` badge.
@@ -456,7 +456,7 @@ existing swallow-don't-leak rule.
 - Fetch + merge on dialog open. Render remote-only sessions
   as a distinct row category, resolvable via Dive (which
   performs the worktree fetch / create lazily).
-- `fresh.conductor.sync = false` config opt-out.
+- `fresh.orchestrator.sync = false` config opt-out.
 
 ## Open questions
 

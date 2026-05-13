@@ -12,7 +12,7 @@
 //!
 //! ## Why per-window?
 //!
-//! The Conductor lifecycle wants to terminate every process
+//! The Orchestrator lifecycle wants to terminate every process
 //! belonging to one editor session without touching the others.
 //! Routing through the window keeps that aggregation in one
 //! place — callers don't need to know how many terminals the
@@ -28,7 +28,7 @@
 //! authorities will plug in their own implementations that
 //! forward through `docker exec kill -PGRP …` or an SSH
 //! channel — see the design doc in
-//! `docs/internal/conductor-open-dialog-and-lifecycle.md` for
+//! `docs/internal/orchestrator-open-dialog-and-lifecycle.md` for
 //! how that fits into the broader lifecycle.
 
 use std::sync::Arc;
@@ -96,7 +96,7 @@ impl Signaller for LocalSignaller {
 
 /// One entry in a window's tracked process groups. The `label`
 /// is a human-readable hint shown in error messages and the
-/// Conductor preview pane (e.g. "terminal #3", "lsp:rust").
+/// Orchestrator preview pane (e.g. "terminal #3", "lsp:rust").
 #[derive(Debug, Clone)]
 pub struct ProcessGroupEntry {
     pub leader_pid: u32,

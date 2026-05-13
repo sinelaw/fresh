@@ -542,7 +542,7 @@ impl Editor {
                     self.active_window_mut().terminal_manager.close(terminal_id);
 
                     // Notify plugins after the editor's own exit handling
-                    // is complete. Conductor's state machine reads this
+                    // is complete. Orchestrator's state machine reads this
                     // to transition agents to READY (code 0) or ERRORED.
                     // `exit_code` is currently always `None` here; full
                     // wait-status capture is a follow-up commit.

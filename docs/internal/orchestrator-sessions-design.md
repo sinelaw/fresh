@@ -1,18 +1,18 @@
-# Conductor & Sessions Design
+# Orchestrator & Sessions Design
 
 > **Status**: Design Document
 > **Date**: May 2026 (last updated: May 2026 — Tier 1–7 migration
 > status, Editor → Window resource-sync fix, prep steps for the
 > next migration batch)
-> **Branch**: `claude/plan-conductor-architecture-6YsJt` (design),
+> **Branch**: `claude/plan-orchestrator-architecture-6YsJt` (design),
 > `claude/move-editor-to-window-csOP0` (Tier 7 migrations,
 > follow-up to PR #1936)
-> **Driving feature**: "Conductor" multi-agent orchestration UI (PRD external).
+> **Driving feature**: "Orchestrator" multi-agent orchestration UI (PRD external).
 > **Core change required**: first-class `Session` abstraction in the editor.
 
 ## Motivation
 
-The "Conductor" feature lets a developer run multiple AI coding agents
+The "Orchestrator" feature lets a developer run multiple AI coding agents
 (`aider`, `claude -p`, `opencode`, …) in parallel, each in its own git
 worktree, and switch between them from a single Fresh process. The PRD
 calls for two modes:
@@ -27,9 +27,9 @@ calls for two modes:
 
 The user-facing requirement that drives this design is:
 
-> Switching sessions from Conductor should feel like swapping the
+> Switching sessions from Orchestrator should feel like swapping the
 > entire Fresh state. File explorer, LSP, quick-open scope, ignore
-> rules, buffer set, splits — all of it retargets atomically. Conductor
+> rules, buffer set, splits — all of it retargets atomically. Orchestrator
 > itself stays anchored above the swap, with its session list,
 > collision matrix, and agent PTY handles untouched.
 
@@ -38,20 +38,20 @@ root. The cwd is read in dozens of places (`getCwd()` on the plugin
 API, file explorer init, LSP root URI, ignore-matcher construction,
 quick-open scoping, plugin path resolution). There is no abstraction
 that bundles "everything rooted at one project" so that several can
-coexist and one can be made active. A Conductor plugin alone cannot
+coexist and one can be made active. A Orchestrator plugin alone cannot
 deliver the required UX, because the things that need to retarget
 (file explorer, quick-open, LSP set) are core-owned and scoped
 implicitly to whatever `getCwd()` returns.
 
 This document specifies the smallest core abstraction that makes the
 required UX possible — a first-class `Session` — and the plugin-API
-surface a Conductor plugin needs on top of it. It deliberately does
-not specify the Conductor plugin itself; that is a follow-up doc once
+surface a Orchestrator plugin needs on top of it. It deliberately does
+not specify the Orchestrator plugin itself; that is a follow-up doc once
 this design is settled.
 
 ## Architecture priority: complete the session-as-window model first
 
-> **This is the top priority.** All further Conductor feature work
+> **This is the top priority.** All further Orchestrator feature work
 > (Control Room polish, hotkeys, diff/merge actions, collision
 > radar) is gated on completing the session-as-window architecture
 > below. The interim warm-swap implementation that currently sits
@@ -313,7 +313,7 @@ existing snapshot refresh). Files that unblock once this lands:
   on-disk `.recovery/` dir; not per-window.
 * `lifecycle.rs` — `should_quit`, `should_detach`,
   `session_mode`, `update_checker`, etc.
-* `conductor_persistence.rs` — by definition iterates every
+* `orchestrator_persistence.rs` — by definition iterates every
   window.
 * `file_open_queue::process_pending_file_opens` — orchestrates
   through `Editor::open_file` and large-file encoding prompts.
@@ -385,7 +385,7 @@ Earlier in this doc's history, buffer storage was deliberately
 kept Editor-global with `Session.buffers: HashSet<BufferId>` as
 a membership pointer (`§ Why each session owns its buffers`).
 The rationale was "two sessions might want to share a buffer"
-and "Conductor's terminal buffers need to be addressable from
+and "Orchestrator's terminal buffers need to be addressable from
 the Control Room."
 
 In practice both arguments fold:
@@ -394,7 +394,7 @@ In practice both arguments fold:
   alpha and beta to *diverge*, not propagate — that's the whole
   point of running independent worktrees. Forcing shared storage
   is the wrong default.
-- **Cross-session addressability.** Conductor lives in
+- **Cross-session addressability.** Orchestrator lives in
   editor-global plugin state and naturally has session ids; if
   it needs a buffer from another session it asks via
   `editor.sessions.get(sid).buffer(id)`, which is a one-line
@@ -420,7 +420,7 @@ The work landed on this branch is **not wasted**:
   become live fields on `Session` rather than `Option<…>`
   stashes — most of the storage shape is right; only the
   ownership semantics flip.
-- The Conductor plugin (Step 6) keeps working because its
+- The Orchestrator plugin (Step 6) keeps working because its
   plugin-API surface doesn't change.
 
 What gets discarded:
@@ -448,16 +448,16 @@ The migration sequence is laid out in `§ Migration sequence`,
   authority. Remote sessions are a follow-up.
 - Replacing the existing `panelId` / `utility_dock` machinery. This
   design composes on top of it (`§ Control Room placement`).
-- Hot-reload of the Conductor plugin itself. Standard plugin reload
+- Hot-reload of the Orchestrator plugin itself. Standard plugin reload
   semantics apply.
 
 ## MVP scope
 
-The minimum viable Conductor delivers the load-bearing UX claim:
+The minimum viable Orchestrator delivers the load-bearing UX claim:
 
 > spawn agents in parallel worktrees, switch between them with the
 > entire editor retargeting (file tree, LSP, quick-open, ignore
-> rules, buffer set, splits), and have Conductor's session list
+> rules, buffer set, splits), and have Orchestrator's session list
 > survive every switch unchanged.
 
 Everything else in this document is wanted but deferrable. Items
@@ -487,7 +487,7 @@ the index.
   `file_tree`, `ignore_matcher`, `lsp_clients`, `split_layout`,
   `view_states`, `panel_ids`
 - `Editor.sessions` + `active_session` pointer
-- Editor-global plugin state (where Conductor lives, by default)
+- Editor-global plugin state (where Orchestrator lives, by default)
 - Atomic dive (`setActiveSession`)
 - Lazy LSP startup on first activation
 
@@ -501,7 +501,7 @@ the index.
   change; `§ Background`)
 
 **Screens**
-- Empty Conductor (`Screen 1`) — full
+- Empty Orchestrator (`Screen 1`) — full
 - Control Room (`Screen 2`) — reduced column set: `#`, `LABEL`,
   `ROOT PATH`, `AGENT`, `STATE`, `DIFF`, `AGE`. The COMMITS
   column, memory header, and collision-radar pane are deferred;
@@ -544,13 +544,13 @@ status-bar awareness or pre-merge collision warnings.
 - `openDiffView` for a *native* side-by-side diff renderer
   invoked programmatically with arbitrary `oldText`/`newText`.
   MVP uses the existing review-diff feature instead, invoked from
-  Conductor's `d` action.
+  Orchestrator's `d` action.
 - `openFile({ sessionId })` (MVP only opens in active session)
 
 **Control Room enrichments**
 - `COMMITS` column
 - Header memory readout (`2.1GB / 32GB`)
-- `SYNCING` state and Conductor-driven git operations
+- `SYNCING` state and Orchestrator-driven git operations
 - `KILLED` tombstones with two-press semantics for `k`
 - Multi-select (Shift+arrow), parallel-attempts compare via `d`
   on a multi-selection
@@ -625,7 +625,7 @@ The plugin runtime lives on the Editor (singleton). Plugin state in
 JS is whatever the plugin module's top-level scope holds, which
 persists for the lifetime of the editor (or until plugin reload). No
 plugin state is currently scoped narrower than that. This is
-fortunate: it is exactly the property that lets Conductor "live above"
+fortunate: it is exactly the property that lets Orchestrator "live above"
 sessions for free, once sessions exist.
 
 ### `utility_dock` and virtual buffers
@@ -633,13 +633,13 @@ sessions for free, once sessions exist.
 `createVirtualBufferInSplit({ role: "utility_dock", … })` (handled at
 `crates/fresh-editor/src/app/plugin_dispatch.rs:2167` onward)
 implements a one-leaf-per-role dock for diagnostics, file explorer,
-search/replace, finder. Conductor's Control Room will use this same
+search/replace, finder. Orchestrator's Control Room will use this same
 dock with its own role tag.
 
 `defineMode(name, bindings, …)`
 (`crates/fresh-plugin-runtime/src/backend/quickjs_backend.rs:3196`)
 binds keys to commands within a named mode that virtual buffers can
-opt into via the `mode` field. This is how Conductor binds its own
+opt into via the `mode` field. This is how Orchestrator binds its own
 hotkeys.
 
 ### Terminal manager already emits the events we need
@@ -711,8 +711,8 @@ pub struct Editor {
                        |          Editor (global)          |
                        | -------------------------------   |
                        |   plugin runtime (one QuickJS)    |
-                       |   plugin_global_state ............| <- Conductor's
-                       |     conductor: {                  |    session list,
+                       |   plugin_global_state ............| <- Orchestrator's
+                       |     orchestrator: {                  |    session list,
                        |       sessions: Map,              |    collision matrix,
                        |       collisions: Map,            |    agent PTY refs
                        |       watchers: Map,              |
@@ -747,9 +747,9 @@ pub struct Editor {
 ```
 
 The renderer's only session-aware read is `editor.active_session()`.
-Everything `Conductor` owns is in `plugin_global_state`, which the
+Everything `Orchestrator` owns is in `plugin_global_state`, which the
 swap pointer does not touch — that is the structural property that
-makes "Conductor lives above sessions" true.
+makes "Orchestrator lives above sessions" true.
 
 ### Why each session owns its buffers (window model)
 
@@ -843,15 +843,15 @@ Two storage namespaces exposed to plugins:
 
 ```ts
 // Editor-global (default).
-editor.setGlobalState("conductor.sessions", JSON.stringify(state));
-editor.getGlobalState("conductor.sessions"): string | null;
+editor.setGlobalState("orchestrator.sessions", JSON.stringify(state));
+editor.getGlobalState("orchestrator.sessions"): string | null;
 
 // Session-scoped (opt-in).
 editor.setSessionState("my-plugin.foo", value);
 editor.getSessionState("my-plugin.foo"): unknown;  // current active session
 ```
 
-Conductor uses **only** the global namespace. Plugins that genuinely
+Orchestrator uses **only** the global namespace. Plugins that genuinely
 want per-project state (per-language helpers, per-repo lint configs)
 opt in to session scope.
 
@@ -893,7 +893,7 @@ CHANGES:                            UNCHANGED:
   buffer set + tabs                    plugin runtime + plugin_global_state
   active LSPs (now session 2's)        session 1's LSPs (kept warm)
   split layout                         session 1's watchers
-  status bar buffer state              Conductor's session list/collisions
+  status bar buffer state              Orchestrator's session list/collisions
 ```
 
 `editor.setActiveSession(id)` performs:
@@ -931,7 +931,7 @@ A typical lifecycle from a user's perspective:
 ```
 t=0   Editor starts
       Editor.sessions = { 1: "main" (active) }
-      plugin_global_state.conductor = { sessions: {}, collisions: {} }
+      plugin_global_state.orchestrator = { sessions: {}, collisions: {} }
 
 t=1   User: <Leader>o, n, "feat/auth", "aider --message ..."
       git worktree add ../wt-auth feat/auth
@@ -942,10 +942,10 @@ t=1   User: <Leader>o, n, "feat/auth", "aider --message ..."
 t=2   User: <Leader>o, Enter on session 2
       setActiveSession(2)        <-- atomic pointer swap
       Editor.sessions = { 1: main (warm), 2: feat/auth (active) }
-      Conductor's internal map: untouched
+      Orchestrator's internal map: untouched
 
 t=3   Agent finishes; transitions to READY (terminal_exit, code 0)
-      Conductor updates its map; status updates in Control Room
+      Orchestrator updates its map; status updates in Control Room
 
 t=4   User: <Leader>o, m on session 2 (review skipped)
       git -C /repo merge feat/auth
@@ -1031,7 +1031,7 @@ overlay declares a mode, plugin registers bindings (`Up`, `Down`,
 route through the same dispatcher used by every other buffer
 mode. No new input model.
 
-### How Conductor composes both
+### How Orchestrator composes both
 
 ```
 +-----------------------------------------------------------+
@@ -1116,7 +1116,7 @@ Status:
   side-by-side *collision radar* pane, multi-region custom
   layouts, or non-prompt overlays still requires this work.
   Tracked as a follow-up; the floating-prompt path covers the
-  Conductor MVP's needs.
+  Orchestrator MVP's needs.
 
 ## User-facing screens
 
@@ -1125,18 +1125,18 @@ they typically encounter them. Each entry: a sketch, the user
 objective the screen exists to satisfy, the flows that lead in and
 out, and the controls available.
 
-### Screen 1: Empty Conductor (first run)  `[MVP]`
+### Screen 1: Empty Orchestrator (first run)  `[MVP]`
 
 ```
 +------------------------------------------------------------------+
 | TABS:  src/main.rs                                               |
 +------------------------------------------------------------------+
 |                                                                  |
-|  +============== CONDUCTOR =================================+    |
+|  +============== ORCHESTRATOR =================================+    |
 |  |                                                          |    |
 |  |   No active sessions.                                    |    |
 |  |                                                          |    |
-|  |   Conductor lets you run multiple coding agents in       |    |
+|  |   Orchestrator lets you run multiple coding agents in       |    |
 |  |   parallel git worktrees and switch between them as if   |    |
 |  |   each were its own Fresh session.                       |    |
 |  |                                                          |    |
@@ -1199,7 +1199,7 @@ the dock and returns the user to whatever they were editing.
 +----------------------------------------------------------------------------------+
 | Enter:dive  n:new  d:diff  m:merge  k:kill  r:rename  Esc:close  Ctrl+n/p:cycle  |
 +----------------------------------------------------------------------------------+
-| NORMAL  Ln 12 Col 1            CONDUCTOR | 15 sessions, 2 awaiting, 3 collisions |
+| NORMAL  Ln 12 Col 1            ORCHESTRATOR | 15 sessions, 2 awaiting, 3 collisions |
 +----------------------------------------------------------------------------------+
 ```
 
@@ -1207,7 +1207,7 @@ the dock and returns the user to whatever they were editing.
 in one view, ranked by frequency:
 
 1. **Triage.** "Does anything need me right now?" — answered by the
-   header line, the bottom Conductor summary line, and the
+   header line, the bottom Orchestrator summary line, and the
    AWAITING/ERRORED rows. The user should be able to leave the
    screen in under two seconds if the answer is no.
 2. **Decide.** "Which session should I dive into / merge / kill?" —
@@ -1247,8 +1247,8 @@ awareness *inside* the Control Room.
 | `AWAITING (Y/n)` | Output ends in a recognised prompt pattern; agent has stopped. | Regex on terminal output. | MVP |
 | `READY` | Agent process exited cleanly (code 0). | `terminal_exit` event. | MVP |
 | `ERRORED` | Agent process exited non-zero. | `terminal_exit` event. | MVP |
-| `KILLED` | User pressed `k`; conductor sent SIGTERM. The row remains as a tombstone until dismissed (see "KILLED retention" in open questions). | User action. | MVP — but no tombstone in MVP; row drops immediately |
-| `SYNCING` | A git operation initiated by Conductor is in flight in this worktree (merge into base, pull from remote, push). The terminal may be unresponsive during this. | Conductor entered git operation. | v1.1+ |
+| `KILLED` | User pressed `k`; orchestrator sent SIGTERM. The row remains as a tombstone until dismissed (see "KILLED retention" in open questions). | User action. | MVP — but no tombstone in MVP; row drops immediately |
+| `SYNCING` | A git operation initiated by Orchestrator is in flight in this worktree (merge into base, pull from remote, push). The terminal may be unresponsive during this. | Orchestrator entered git operation. | v1.1+ |
 
 `KILLED` and `READY`/`ERRORED` are terminal states — the agent
 process is gone — but the worktree is *not* automatically removed.
@@ -1271,7 +1271,7 @@ patterns the design accommodates explicitly:
 - **One-shot scripts** — anything that runs to completion and
   exits. They flicker through RUNNING → READY/ERRORED.
 
-The Conductor plugin does not need to know which is which; the
+The Orchestrator plugin does not need to know which is which; the
 state machine is uniform.
 
 #### Parallel attempts on the same branch  `[MVP for spawn; v1.1+ for compare/promote-cluster]`
@@ -1280,7 +1280,7 @@ Rows 2/5, 3/6, 4/10 in the sketch above are deliberately on the
 same logical task (`feat/auth-v2`, `fix/redis-cache`,
 `UI-refactor`). PRD user story 1 ("spawn 3 different agents to
 explore 3 different architectural approaches in parallel") drives
-this. Conductor must allow:
+this. Orchestrator must allow:
 
 - Multiple sessions on the same branch name. Implementation:
   worktrees get unique paths (`-alt`, `-2`, …) so `git worktree
@@ -1310,7 +1310,7 @@ via config.
 - `<Leader>o` from any session.
 - Auto-open option (configurable, off by default): when any session
   transitions to AWAITING or ERRORED.
-- After a successful `conductor.new` or `conductor.merge`, returning
+- After a successful `orchestrator.new` or `orchestrator.merge`, returning
   here.
 
 **Exit.**
@@ -1387,14 +1387,14 @@ been pushed lives only in the worktree).
 
 **Objective.** Provide a *normal Fresh editing experience*, scoped
 to one worktree, with the agent's terminal a keystroke away. The
-user has to be able to forget Conductor exists for the duration of
+user has to be able to forget Orchestrator exists for the duration of
 their focused work — the IDE must not feel like a sub-mode of
-Conductor.
+Orchestrator.
 
 This screen is "as if Fresh always lived in this worktree."
 Everything that's normally in a Fresh session — file explorer,
 splits, LSP, quick-open, command palette, mouse — works unchanged.
-The only Conductor-specific affordances are:
+The only Orchestrator-specific affordances are:
 
 - The status bar shows the session label (`feat/auth`) and the
   agent's parsed state (`AWAITING`).
@@ -1476,7 +1476,7 @@ Two steps because the two questions are conceptually distinct:
 **Exit.**
 - `Esc` at any step: cancel, no worktree created, return to Control
   Room.
-- `Enter` on step 2 with a non-empty command: Conductor runs `git
+- `Enter` on step 2 with a non-empty command: Orchestrator runs `git
   worktree add`, calls `createSession`, calls `createTerminal`,
   sends the command, and returns to Control Room with the new
   session selected.
@@ -1486,7 +1486,7 @@ Two steps because the two questions are conceptually distinct:
 - *Resume existing branch*: type a name that matches an existing
   branch, accept the suggestion, agent boots in a worktree on that
   branch.
-- *Create new branch*: type a name that doesn't exist, Conductor
+- *Create new branch*: type a name that doesn't exist, Orchestrator
   creates the branch off `main` (configurable base) before the
   worktree.
 - *Reuse last command*: arrow down on step 2 to pick a recent
@@ -1503,7 +1503,7 @@ Two steps because the two questions are conceptually distinct:
 | Esc | Cancel |
 
 **Failure modes.** If `git worktree add` fails (dirty worktree,
-locked branch, path collision), Conductor surfaces the git error in
+locked branch, path collision), Orchestrator surfaces the git error in
 a `showActionPopup` and leaves the user in the Control Room with no
 state change.
 
@@ -1532,7 +1532,7 @@ state change.
 intervention is cheapest, rather than at merge time when the diffs
 have grown.
 
-This is the only Conductor screen that interrupts the user's work
+This is the only Orchestrator screen that interrupts the user's work
 unsolicited. It is therefore deliberately conservative: it fires
 once per collision-pair-per-session-pair, not on every subsequent
 edit.
@@ -1651,13 +1651,13 @@ editor.on("path_changed", handler: string): void;
 ```
 
 Backed by the `notify` crate. The `sessionId` field is informational
-(passed back in the event payload) so Conductor can build a
+(passed back in the event payload) so Orchestrator can build a
 `Map<path, Set<SessionId>>` collision matrix without juggling its
 own handle-to-session map.
 
 ### Plugin state scopes  `[MVP for global namespace; v1.1+ for session namespace]`
 
-The global namespace is `[MVP]` because Conductor itself uses it.
+The global namespace is `[MVP]` because Orchestrator itself uses it.
 The session namespace is `[v1.1+]` and exists for other plugins
 that genuinely want per-project state.
 
@@ -1678,7 +1678,7 @@ invisible to Plugin B).
 
 Cross-restart persistence is `[v1.1+]` — values live in the state
 snapshot only, so they survive plugin reloads (good enough for
-Conductor reloading itself) but not editor restarts. Persisting
+Orchestrator reloading itself) but not editor restarts. Persisting
 to `.fresh/state/<plugin>.json` is the v1.1+ extension.
 
 ### Diff rendering  `[v1.1+]`
@@ -1686,8 +1686,8 @@ to `.fresh/state/<plugin>.json` is the v1.1+ extension.
 MVP invokes the existing review-diff feature
 (`docs/internal/REVIEW_DIFF_*.md`,
 `docs/internal/SIDE_BY_SIDE_HUNK_NAV_REBINDABLE.md`) from
-Conductor's `d` action — Fresh already has a side-by-side review
-diff with hunk navigation, and Conductor reuses it pointed at the
+Orchestrator's `d` action — Fresh already has a side-by-side review
+diff with hunk navigation, and Orchestrator reuses it pointed at the
 selected session's worktree against the base. The
 `openDiffView` API below is a programmatic entry point with
 arbitrary `oldText`/`newText` for plugins that need to diff
@@ -1708,11 +1708,11 @@ The work is large (`§ Risks`) but factorable. Each step is a
 reviewable PR.
 
 > **Re-prioritised May 2026.** The branch landed the warm-swap
-> migration and a working Conductor MVP plugin, but identified
+> migration and a working Orchestrator MVP plugin, but identified
 > the warm-swap pattern itself as a half-finished architecture
 > (`§ Architecture priority`). **Step 0 below — the
 > session-as-window migration — is the new top priority and
-> blocks all other Conductor feature work** (single-key prompt
+> blocks all other Orchestrator feature work** (single-key prompt
 > hotkeys, `d`/`m` actions, AGENT/DIFF columns, full Primitive
 > #2, collision radar). Steps 4 / 7 / v1.1+ items resume after
 > Step 0 lands.
@@ -1758,7 +1758,7 @@ editor-global mutations, and the top-level dispatcher.
 >    window. Moving the method onto `impl Window` makes
 >    `&mut self` *be* the window; the body has no idea
 >    whether it's active.
-> 2. *It blocks "operate on a non-active window."* Conductor
+> 2. *It blocks "operate on a non-active window."* Orchestrator
 >    diffs and cross-window orchestration want to call the
 >    same handler against any window, not just the active
 >    one. An `impl Window` method makes that free
@@ -1894,7 +1894,7 @@ impl Window {
 
 What stays on `impl Editor`:
 
-- Genuinely cross-window operations (Conductor's compare-alpha-
+- Genuinely cross-window operations (Orchestrator's compare-alpha-
   vs-base, find-references-across-all-windows).
 - Window lifecycle (`create_window`, `set_active_window`,
   `close_window`).
@@ -1913,7 +1913,7 @@ returns — keeps `plugin_manager` off Window.
 
 This shape removes the macro / inline-direct-field-access
 workarounds entirely. It also makes "operate on a non-active
-window" first-class: Conductor's diff helper just calls
+window" first-class: Orchestrator's diff helper just calls
 `alpha.X(...)` and `base.Y(...)` directly, no swap, no
 "setActiveWindow before the operation" gymnastics.
 
@@ -1963,7 +1963,7 @@ support it.
    appropriate Window method, then handles the returned
    plugin hooks / events.
 
-Cross-window operations (Conductor diff, find-references-all)
+Cross-window operations (Orchestrator diff, find-references-all)
 stay on `impl Editor` because they really do touch multiple
 windows. They access them by id with explicit
 `self.windows.get(&id)` — no accessor wrappers needed.
@@ -2051,8 +2051,8 @@ shape the return value should be.
 This is genuinely the right cleanup, not a "could be nicer"
 nice-to-have: every inline-borrow site is a permanent
 "active-only" lock on a handler that should work against any
-window for Conductor's cross-window orchestration to compose
-cleanly. Leaving them inline means Conductor's diff /
+window for Orchestrator's cross-window orchestration to compose
+cleanly. Leaving them inline means Orchestrator's diff /
 find-references-all features will hit the same workarounds we
 just paid down. **Strong preference: drain this list as part
 of the work that introduces the first cross-window consumer.**
@@ -2084,7 +2084,7 @@ design's Primitive #1.
   consumer (e.g. a multi-window split-screen layout) needs
   to render two windows side-by-side in one frame.
 
-**0i — Remove the warm-swap helpers and Conductor's reliance
+**0i — Remove the warm-swap helpers and Orchestrator's reliance
 on them.** *Shipped.* The swap body in `set_active_window`
 went away in 0b (it's a pointer write plus first-dive seed
 allocation). What remained for 0i, now done:
@@ -2215,7 +2215,7 @@ are right now:
 **Shipped (compiles cleanly; 19 sessions e2e tests pass):**
 
 - Steps 1–6 from the original interim (warm-swap rendering of
-  every per-session subsystem; Conductor plugin MVP).
+  every per-session subsystem; Orchestrator plugin MVP).
 - **Step 0a** — `cached_layout` split into `Editor.chrome_layout`
   and `Window.layout_cache`.
 - **Step 0b** — every warm-swap stash converted to a live
@@ -2348,13 +2348,13 @@ categories:
    Window` would require either splitting the hook trigger out as
    a callback (Editor caller invokes it after Window pre-work) or
    inverting the snapshot-update direction. Neither is currently
-   blocking Conductor work; the apex is now ~30 lines of Editor
+   blocking Orchestrator work; the apex is now ~30 lines of Editor
    coordination over Window primitives, down from ~150.
 
 The Step 0g inline-borrow-debt drain (~33 handler sites with
 `__win = self.windows.get_mut(&self.active_window)` boilerplate)
 shrinks naturally as more handlers move to `impl Window`. None
-of this blocks Conductor MVP — the core architectural promise is
+of this blocks Orchestrator MVP — the core architectural promise is
 delivered.
 
 ### Step 1 — `Session` struct, single forced session  `[interim — superseded by Step 0]`
@@ -2418,9 +2418,9 @@ so plugin on-load handlers see the previous run's
 inert shells — first dive re-warms exactly like a freshly
 created session.
 
-### Step 6 — Conductor plugin (separate doc)  `[MVP — minimum viable plugin]`
+### Step 6 — Orchestrator plugin (separate doc)  `[MVP — minimum viable plugin]`
 
-A first-party plugin shipping in `crates/fresh-editor/plugins/conductor/`.
+A first-party plugin shipping in `crates/fresh-editor/plugins/orchestrator/`.
 Drives the whole feature. Uses only the APIs introduced above. The
 MVP plugin implements Screens 1–4 with the reduced column set and
 state set defined in `§ MVP scope`.
@@ -2429,7 +2429,7 @@ state set defined in `§ MVP scope`.
 
 A plugin-callable `openDiffView` with arbitrary content (not just
 two refs in a git repo). MVP doesn't need this because the existing
-review-diff feature covers the only Conductor diff use case
+review-diff feature covers the only Orchestrator diff use case
 (worktree vs base).
 
 ### Step 8 — session persistence across restart  `[implemented]`
@@ -2506,10 +2506,10 @@ Three architectures were considered:
 
 (C) was rejected because crash isolation is not a requirement and
 the per-process overhead, while not free, is small relative to LSP
-cost. (A) was rejected because "Conductor lives above sessions" is a
-load-bearing UX claim that (A) cannot honor — under (A), Conductor
+cost. (A) was rejected because "Orchestrator lives above sessions" is a
+load-bearing UX claim that (A) cannot honor — under (A), Orchestrator
 *is* the editor reaching into its own root, and every glitch in the
-in-place rebuild is a Conductor glitch. (B) is the architecture
+in-place rebuild is a Orchestrator glitch. (B) is the architecture
 that makes the UX claim true by construction.
 
 ## Open questions
@@ -2522,7 +2522,7 @@ that makes the UX claim true by construction.
 2. **Maximum sessions.** N=20 worktrees with N rust-analyzers will
    melt a laptop. A soft cap (configurable, default 8?) with a warning
    would be friendly. Out of scope for the core abstraction; can be
-   enforced in the Conductor plugin.
+   enforced in the Orchestrator plugin.
 
 3. **Session-aware command palette.** Should the palette show
    commands from all sessions, or just the active one? Default:
@@ -2549,10 +2549,10 @@ that makes the UX claim true by construction.
      within-session debugging aid, not durable record.
 
 7. **`SYNCING` semantics — what counts as a sync?** Three candidates:
-   - Conductor-initiated git operations on the worktree (merge,
+   - Orchestrator-initiated git operations on the worktree (merge,
      pull, push). Definitely.
    - User-initiated git operations from inside the worktree's
-     terminal (`git pull` typed by hand). Probably no — Conductor
+     terminal (`git pull` typed by hand). Probably no — Orchestrator
      can't reliably detect these.
    - Filesystem syncs after a remote agent edit (e.g. waiting for
      `aider` to finish writing a batch of files before recomputing
@@ -2565,9 +2565,9 @@ that makes the UX claim true by construction.
    Tentative: stay in `RUNNING`. Users who want explicit "the shell
    is idle at a prompt" indication can use a wrapper script.
 
-## Appendix: a Conductor plugin sketch (illustrative only)
+## Appendix: a Orchestrator plugin sketch (illustrative only)
 
-This is *not* a spec — the Conductor plugin gets its own design doc.
+This is *not* a spec — the Orchestrator plugin gets its own design doc.
 Included here only to illustrate that the API surface above is
 sufficient.
 
@@ -2575,7 +2575,7 @@ sufficient.
 const sessions = new Map<SessionId, AgentSession>();
 const collisions = new Map<string, Set<SessionId>>();
 
-editor.registerCommand("conductor.new", async () => {
+editor.registerCommand("orchestrator.new", async () => {
   const branch = await editor.startPrompt("Branch");
   const cmd    = await editor.startPrompt("Agent command");
   const wt     = await git.worktreeAdd(branch);
@@ -2587,9 +2587,9 @@ editor.registerCommand("conductor.new", async () => {
   rerenderControlRoom();
 });
 
-editor.registerCommand("conductor.dive", () => {
+editor.registerCommand("orchestrator.dive", () => {
   editor.setActiveSession(selectedSessionId);
-  // file tree, LSP, quick-open, splits all retarget. Conductor state untouched.
+  // file tree, LSP, quick-open, splits all retarget. Orchestrator state untouched.
 });
 
 editor.on("terminal_output", e => stateMachine.observe(e));
