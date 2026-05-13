@@ -1324,6 +1324,15 @@ pub enum WidgetSpec {
         /// host shows up to this many items per render.
         #[serde(default = "default_list_visible_rows")]
         visible_rows: u32,
+        /// Whether `Tab` / `Shift+Tab` will land focus on this
+        /// list. Defaults to `true` (lists are normal tabbable
+        /// widgets). Picker-style usage typically sets this to
+        /// `false` so Tab moves between the filter input and
+        /// the action buttons, while Up/Down on the focused
+        /// filter still forwards to the list via host smart-key
+        /// dispatch.
+        #[serde(default = "default_true")]
+        focusable: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

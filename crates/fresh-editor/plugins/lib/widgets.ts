@@ -193,6 +193,13 @@ export function list(options: {
   itemKeys?: string[];
   selectedIndex?: number;
   visibleRows: number;
+  /** Whether Tab / Shift+Tab lands focus on this list. Default
+   * true (matches other tabbable widgets). Set to false in
+   * picker-style layouts where the filter input stays focused
+   * and Up/Down forward to the list via host smart-keys —
+   * skipping the list in the Tab cycle keeps focus jumping
+   * straight between filter and action buttons. */
+  focusable?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -201,6 +208,7 @@ export function list(options: {
     itemKeys: options.itemKeys ?? [],
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
+    focusable: options.focusable ?? true,
     key: options.key,
   };
 }

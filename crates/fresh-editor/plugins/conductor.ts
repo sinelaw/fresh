@@ -404,6 +404,11 @@ function buildOpenSpec(): WidgetSpec {
           itemKeys,
           selectedIndex: selIdx,
           visibleRows: 12,
+          // Excluded from the Tab cycle — Up/Down on the
+          // filter input forwards to this list via host
+          // smart-keys, so Tab jumps straight to the action
+          // buttons instead of stopping here.
+          focusable: false,
           key: "sessions",
         }),
       }),

@@ -832,6 +832,16 @@ type WidgetSpec = {
 	* host shows up to this many items per render.
 	*/
 	visibleRows: number;
+	/**
+	* Whether `Tab` / `Shift+Tab` will land focus on this
+	* list. Defaults to `true` (lists are normal tabbable
+	* widgets). Picker-style usage typically sets this to
+	* `false` so Tab moves between the filter input and
+	* the action buttons, while Up/Down on the focused
+	* filter still forwards to the list via host smart-key
+	* dispatch.
+	*/
+	focusable: boolean;
 	key?: string | null;
 } | {
 	"kind": "tree";

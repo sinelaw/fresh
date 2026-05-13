@@ -35,7 +35,11 @@ const KEY_HELP_KEY_FG: &str = "ui.help_key_fg";
 const KEY_TOGGLE_ON_FG: &str = "ui.tab_active_fg";
 const KEY_FOCUSED_FG: &str = "ui.menu_active_fg";
 const KEY_FOCUSED_BG: &str = "ui.menu_active_bg";
-const KEY_DANGER_FG: &str = "ui.status_error_indicator_fg";
+// `ui.status_error_indicator_fg` defaults to white (designed as
+// the text-on-red status badge), so using it as a standalone fg
+// renders invisible against the panel bg. The diagnostic.error_fg
+// key is the canonical "red text" theme slot.
+const KEY_DANGER_FG: &str = "diagnostic.error_fg";
 const KEY_INPUT_BG: &str = "ui.prompt_bg";
 // Placeholder text uses the whitespace-indicator key — a dimmer
 // grey than `ui.menu_disabled_fg` (themes ship ~RGB(70,70,70)
@@ -207,10 +211,16 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
-        | WidgetSpec::List { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if !k.is_empty() =>
         {
+            out.push(k.clone());
+        }
+        WidgetSpec::List {
+            key: Some(k),
+            focusable,
+            ..
+        } if !k.is_empty() && *focusable => {
             out.push(k.clone());
         }
         _ => {}
@@ -525,6 +535,7 @@ fn render_collected(
             item_keys,
             selected_index,
             visible_rows,
+            focusable: _,
             key: list_key,
         } => {
             // Look up host-owned scroll + selected index from prev
@@ -2388,7 +2399,7 @@ mod tests {
         let entry = render_button("Delete", false, ButtonKind::Danger);
         assert_eq!(entry.inline_overlays.len(), 1);
         let fg = entry.inline_overlays[0].style.fg.as_ref().unwrap();
-        assert_eq!(fg.as_theme_key(), Some("ui.status_error_indicator_fg"));
+        assert_eq!(fg.as_theme_key(), Some("diagnostic.error_fg"));
         assert!(entry.inline_overlays[0].style.bold);
     }
 
@@ -2833,6 +2844,7 @@ mod tests {
             item_keys: vec!["a".into(), "b".into(), "c".into()],
             selected_index: -1,
             visible_rows: 10,
+            focusable: true,
             key: None,
         };
         let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
@@ -2858,6 +2870,7 @@ mod tests {
             item_keys: vec!["x".into(), "y".into()],
             selected_index: 1,
             visible_rows: 10,
+            focusable: true,
             key: None,
         };
         let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
@@ -2890,6 +2903,7 @@ mod tests {
                     selected_index: -1,
                     visible_rows: 10,
                     key: None,
+                    focusable: true,
                 },
             ],
             key: None,
@@ -2909,6 +2923,7 @@ mod tests {
             item_keys: vec!["match:42".into()],
             selected_index: 0,
             visible_rows: 10,
+            focusable: true,
             key: None,
         };
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
@@ -2924,6 +2939,7 @@ mod tests {
             item_keys: vec!["only".into()],
             selected_index: -1,
             visible_rows: 10,
+            focusable: true,
             key: None,
         };
         let (_, hits, _state) = render_no_focus(&spec, &HashMap::new());
@@ -2941,6 +2957,7 @@ mod tests {
             item_keys,
             selected_index: selected,
             visible_rows: visible,
+            focusable: true,
             key: key.map(|s| s.to_string()),
         }
     }
