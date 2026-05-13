@@ -2059,9 +2059,9 @@ impl Editor {
                 Ok(false) => tracing::trace!(
                     "No persisted workspace for inactive window {id}; seed layout kept"
                 ),
-                Err(e) => tracing::warn!(
-                    "Failed to restore workspace for inactive window {id}: {e}"
-                ),
+                Err(e) => {
+                    tracing::warn!("Failed to restore workspace for inactive window {id}: {e}")
+                }
             }
         }
 

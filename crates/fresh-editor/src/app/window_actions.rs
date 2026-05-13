@@ -182,9 +182,11 @@ impl crate::app::Editor {
         SplitManager,
         HashMap<crate::model::event::LeafId, SplitViewState>,
     )> {
-        if !self.windows.get(&id).is_some_and(|s| {
-            s.buffers.splits().is_none() || s.buffers.len() == 0
-        }) {
+        if !self
+            .windows
+            .get(&id)
+            .is_some_and(|s| s.buffers.splits().is_none() || s.buffers.len() == 0)
+        {
             return None;
         }
         let buf = self.alloc_buffer_id();

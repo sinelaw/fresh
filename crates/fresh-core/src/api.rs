@@ -1581,9 +1581,7 @@ impl WidgetSpec {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
                 Box::new(children.iter())
             }
-            WidgetSpec::LabeledSection { child, .. } => {
-                Box::new(std::iter::once(child.as_ref()))
-            }
+            WidgetSpec::LabeledSection { child, .. } => Box::new(std::iter::once(child.as_ref())),
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -1597,9 +1595,7 @@ impl WidgetSpec {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
                 Box::new(children.iter_mut())
             }
-            WidgetSpec::LabeledSection { child, .. } => {
-                Box::new(std::iter::once(child.as_mut()))
-            }
+            WidgetSpec::LabeledSection { child, .. } => Box::new(std::iter::once(child.as_mut())),
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -2980,10 +2976,7 @@ pub enum PluginCommand {
     /// container authorities, SSH agent for remote ones —
     /// see `app/window/process_group.rs`). Idempotent across
     /// already-exited groups: callers can retry safely.
-    SignalWindow {
-        id: WindowId,
-        signal: String,
-    },
+    SignalWindow { id: WindowId, signal: String },
 
     /// Project-wide grep search (async)
     /// Searches all project files via FileSystem trait, respecting .gitignore.
