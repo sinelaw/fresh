@@ -294,10 +294,13 @@ editor.on("prompt_selection_changed", (e) => {
   // Track the most recent real-session highlight so the bottom
   // "× Kill" pseudo-row knows which session to close, and
   // refresh suggestions so the kill row's description updates
-  // to name that target.
+  // to name that target. Re-emitting suggestions resets the
+  // host's cursor to the top of the list, so we re-pin it
+  // immediately to the row we just landed on.
   if (typeof id === "number" && id > 0 && id !== lastHighlightedSessionId) {
     lastHighlightedSessionId = id;
     editor.setPromptSuggestions(buildSuggestions());
+    editor.setPromptSelectedIndex(promptSelectedIndex);
   }
 });
 
