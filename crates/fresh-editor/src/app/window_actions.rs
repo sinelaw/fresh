@@ -157,10 +157,16 @@ impl crate::app::Editor {
     }
 
     /// Build a fresh seed buffer + split layout for `id` if that
-    /// window currently has `splits = None`. Returns `None` when the
-    /// window is unknown or already populated. The caller is
-    /// responsible for installing the returned tuple into the
-    /// window's fields.
+    /// window is missing either a split tree or any buffer to back
+    /// it. Returns `None` when the window is unknown or already
+    /// populated. The caller is responsible for installing the
+    /// returned tuple into the window's fields.
+    ///
+    /// Both branches (no splits, or splits but empty buffer map)
+    /// are pathological: render walks the active buffer and would
+    /// panic at `expect("active buffer must be present")` when the
+    /// split manager points at a buffer id that isn't in
+    /// `window.buffers`.
     ///
     /// Factored out of `set_active_window` so other call sites that
     /// need to populate an inert window shell can share the same
@@ -176,11 +182,9 @@ impl crate::app::Editor {
         SplitManager,
         HashMap<crate::model::event::LeafId, SplitViewState>,
     )> {
-        if !self
-            .windows
-            .get(&id)
-            .is_some_and(|s| s.buffers.splits().is_none())
-        {
+        if !self.windows.get(&id).is_some_and(|s| {
+            s.buffers.splits().is_none() || s.buffers.len() == 0
+        }) {
             return None;
         }
         let buf = self.alloc_buffer_id();

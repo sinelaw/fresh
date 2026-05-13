@@ -1226,11 +1226,14 @@ impl Editor {
         // Seed splits/buffers for every persisted inactive window so they
         // render in preview surfaces (Conductor's WindowEmbed) before the
         // user first dives in. Without this, restored windows have
-        // `splits == None` and paint blank in the preview pane.
+        // `splits == None` and paint blank in the preview pane. We also
+        // catch the (rarer) inverse where splits is set but the buffer
+        // map is empty — that combo is what hit the historic
+        // "active buffer must be present" panic in render.
         let needs_seed: Vec<fresh_core::WindowId> = editor
             .windows
             .iter()
-            .filter(|(_, s)| s.buffers.splits().is_none())
+            .filter(|(_, s)| s.buffers.splits().is_none() || s.buffers.len() == 0)
             .map(|(id, _)| *id)
             .collect();
         for id in needs_seed {
