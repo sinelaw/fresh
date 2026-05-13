@@ -23,6 +23,7 @@ import {
   FloatingWidgetPanel,
   hintBar,
   key as widgetKey,
+  labeledSection,
   row,
   spacer,
   styledRow,
@@ -84,6 +85,10 @@ interface NewSessionForm {
   branch: { value: string; cursor: number };
   submitting: boolean;
   lastError: string | null;
+  // Display-only "my_org/project_name" rendered in the
+  // dialog's subtitle. Computed once at openForm time from the
+  // current cwd so we don't subprocess on every render.
+  projectLabel: string;
 }
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
@@ -337,75 +342,140 @@ function nextAutoSessionName(): string {
   return `session-${next}`;
 }
 
+// Three distinct styles for the header line: section keyword
+// ("CONDUCTOR"), structural separators ("::"), and step label. The
+// border-fg key picks up the same accent the floating panel border
+// uses, so the title visually anchors to the dialog chrome.
+const HEADER_KEYWORD_STYLE = {
+  fg: "ui.popup_border_fg",
+  bold: true,
+} as const;
+const HEADER_SEP_STYLE = { fg: "ui.menu_disabled_fg" } as const;
+const HEADER_LABEL_STYLE = { fg: "ui.menu_active_fg", bold: true } as const;
+
+// Subtitle splits the static prefix "Project:" from the project
+// path so each gets its own foreground — matching the three-tier
+// (label / label-value / input) palette the design calls for.
+const SUBTITLE_LABEL_STYLE = { fg: "ui.menu_disabled_fg" } as const;
+const SUBTITLE_VALUE_STYLE = { fg: "ui.help_key_fg", bold: true } as const;
+
 function buildFormSpec(): WidgetSpec {
   if (!form) return col();
   const children: WidgetSpec[] = [
-    {
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: "Conductor — New Session",
-            style: { fg: "ui.popup_border_fg", bold: true },
-          },
-        ]),
-      ],
-    },
+    // === Header: title flanked by separators, centered. ==========
+    row(
+      flexSpacer(),
+      {
+        kind: "raw",
+        entries: [
+          styledRow([
+            { text: "CONDUCTOR", style: HEADER_KEYWORD_STYLE },
+            { text: " :: ", style: HEADER_SEP_STYLE },
+            { text: "New Session Dialog", style: HEADER_LABEL_STYLE },
+            { text: " :: ", style: HEADER_SEP_STYLE },
+            { text: "Review Synthesized", style: HEADER_LABEL_STYLE },
+          ]),
+        ],
+      },
+      flexSpacer(),
+    ),
+    // === Subtitle: centered project identifier. ==================
+    row(
+      flexSpacer(),
+      {
+        kind: "raw",
+        entries: [
+          styledRow([
+            { text: "Project: ", style: SUBTITLE_LABEL_STYLE },
+            { text: form.projectLabel, style: SUBTITLE_VALUE_STYLE },
+          ]),
+        ],
+      },
+      flexSpacer(),
+    ),
     spacer(0),
-    text({
-      value: form.name.value,
-      cursorByte: form.name.cursor,
-      label: "Session name",
-      placeholder: "(auto-generated)",
-      fieldWidth: 40,
-      key: "name",
+    // === Form body: three labeled, full-width inputs. ============
+    labeledSection({
+      label: "▸ Session Name",
+      child: text({
+        value: form.name.value,
+        cursorByte: form.name.cursor,
+        placeholder: "(auto-generated)",
+        fullWidth: true,
+        key: "name",
+      }),
     }),
-    text({
-      value: form.cmd.value,
-      cursorByte: form.cmd.cursor,
-      label: "Agent command",
-      placeholder: "(plain shell)",
-      fieldWidth: 40,
-      key: "cmd",
+    labeledSection({
+      label: "▸ Agent Command",
+      child: text({
+        value: form.cmd.value,
+        cursorByte: form.cmd.cursor,
+        placeholder: "(plain shell)",
+        fullWidth: true,
+        key: "cmd",
+      }),
     }),
-    text({
-      value: form.branch.value,
-      cursorByte: form.branch.cursor,
-      label: "Branch",
-      placeholder: "(off default branch)",
-      fieldWidth: 40,
-      key: "branch",
+    labeledSection({
+      label: "▸ Branch",
+      child: text({
+        value: form.branch.value,
+        cursorByte: form.branch.cursor,
+        placeholder: "(off default branch)",
+        fullWidth: true,
+        key: "branch",
+      }),
     }),
-    spacer(0),
   ];
   if (form.lastError) {
+    children.push(spacer(0));
     children.push({
       kind: "raw",
       entries: [
         styledRow([
-          { text: "Error: ", style: { fg: "ui.error_fg", bold: true } },
+          {
+            text: "Error: ",
+            style: { fg: "ui.status_error_indicator_fg", bold: true },
+          },
           { text: form.lastError },
         ]),
       ],
     });
-    children.push(spacer(0));
   }
   children.push(
+    spacer(0),
+    // === Button row: bottom-right aligned. =======================
     row(
       flexSpacer(),
-      button("Cancel", { key: "cancel" }),
+      button("Cancel", { intent: "danger", key: "cancel" }),
       spacer(2),
-      button("Create", { intent: "primary", key: "create" }),
+      button("Create Session", { intent: "primary", key: "create" }),
     ),
     spacer(0),
-    hintBar([
-      { keys: "Tab", label: "next" },
-      { keys: "S-Tab", label: "prev" },
-      { keys: "Enter", label: "submit" },
-      { keys: "Esc", label: "cancel" },
-    ]),
+    // === Footer: keybinding helper, centered. ====================
+    row(
+      flexSpacer(),
+      hintBar([
+        { keys: "Tab", label: "next" },
+        { keys: "S-Tab", label: "prev" },
+        { keys: "Enter", label: "submit" },
+        { keys: "Esc", label: "cancel" },
+      ]),
+      flexSpacer(),
+    ),
   );
   return col(...children);
+}
+
+// Derive a "my_org/project_name" style label from the current
+// working directory's tail. Conductor never opens this dialog
+// outside of a workspace; if the cwd has fewer than two
+// components we fall back to whatever's there.
+function deriveProjectLabel(): string {
+  const cwd = editor.getCwd();
+  const base = editor.pathBasename(cwd);
+  const parent = editor.pathBasename(editor.pathDirname(cwd));
+  if (parent && parent !== base) return `${parent}/${base}`;
+  return base || cwd;
 }
 
 function renderForm(): void {
@@ -423,6 +493,7 @@ function openForm(): void {
     branch: { value: "", cursor: 0 },
     submitting: false,
     lastError: null,
+    projectLabel: deriveProjectLabel(),
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
