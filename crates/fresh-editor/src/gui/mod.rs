@@ -222,8 +222,8 @@ impl GuiApplication for EditorApp {
             tracing::warn!("Failed to end recovery session: {}", e);
         }
         if self.workspace_enabled {
-            if let Err(e) = self.editor.save_workspace() {
-                tracing::warn!("Failed to save workspace: {}", e);
+            if let Err(e) = self.editor.save_all_windows_workspaces() {
+                tracing::warn!("Failed to save workspaces: {}", e);
             }
         }
     }

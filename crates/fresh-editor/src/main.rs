@@ -792,6 +792,11 @@ fn handle_first_run_setup(
                 tracing::warn!("Failed to restore workspace: {}", e);
             }
         }
+        // Each Conductor session lives in its own worktree and therefore
+        // gets its own per-dir workspace file. Restoring them here means
+        // their buffers/splits paint in the Conductor preview immediately
+        // — no need to dive into a session just to populate it.
+        editor.restore_inactive_window_workspaces();
     } else {
         if !workspace_enabled {
             tracing::info!("Skipping workspace restore: --no-restore was specified");
@@ -3972,10 +3977,13 @@ where
                 tracing::warn!("Failed to end recovery session: {}", e);
             }
             if workspace_enabled {
-                if let Err(e) = editor.save_workspace() {
-                    tracing::warn!("Failed to save workspace: {}", e);
+                // Save every window's workspace, not just the active one,
+                // so a Conductor restart paints buffers/splits in every
+                // session's preview pane without diving in.
+                if let Err(e) = editor.save_all_windows_workspaces() {
+                    tracing::warn!("Failed to save workspaces: {}", e);
                 } else {
-                    tracing::debug!("Workspace saved successfully");
+                    tracing::debug!("Workspaces saved successfully");
                 }
             }
 

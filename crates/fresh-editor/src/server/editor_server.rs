@@ -508,10 +508,10 @@ impl EditorServer {
             if let Err(e) = editor.end_recovery_session() {
                 tracing::warn!("Failed to end recovery session: {}", e);
             }
-            if let Err(e) = editor.save_workspace() {
-                tracing::warn!("Failed to save workspace: {}", e);
+            if let Err(e) = editor.save_all_windows_workspaces() {
+                tracing::warn!("Failed to save workspaces: {}", e);
             } else {
-                tracing::debug!("Workspace saved successfully");
+                tracing::debug!("Workspaces saved successfully");
             }
         }
 
@@ -655,8 +655,8 @@ impl EditorServer {
             if let Err(e) = editor.end_recovery_session() {
                 tracing::warn!("Rebuild: failed to end recovery session: {}", e);
             }
-            if let Err(e) = editor.save_workspace() {
-                tracing::warn!("Rebuild: failed to save workspace: {}", e);
+            if let Err(e) = editor.save_all_windows_workspaces() {
+                tracing::warn!("Rebuild: failed to save workspaces: {}", e);
             }
         }
 
