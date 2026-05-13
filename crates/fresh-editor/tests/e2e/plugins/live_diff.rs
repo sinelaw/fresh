@@ -130,11 +130,18 @@ fn test_live_diff_modified_line_shows_old_content_above() {
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
-    // Replace one line; the original text is unique enough to assert on.
+    // Replace the `format!` line with a deliberately rewrite-style
+    // line: the new content must share so little with the original
+    // that the live-diff classifier's Sørensen–Dice similarity
+    // (`SIMILARITY_THRESHOLD = 0.5`) falls below the threshold and the
+    // hunk is split into separate `removed` + `added` halves — only
+    // the `removed` half emits the OLD virtual line this test asserts
+    // on. A trivial 1-token swap looks like an in-place `modified`
+    // (bg-only, no virtual line) and never shows `[INFO]` on screen.
     repo.modify_file(
         "src/utils.rs",
         r#"pub fn format_output(msg: &str) -> String {
-    format!("LIVE_DIFF_REPLACED_LINE {}", msg)
+    panic!("EXTENSIVELY_REWRITTEN_BODY_LIVE_DIFF_REPLACED_LINE_WITH_LONG_UNIQUE_PAYLOAD_TO_DROP_SIMILARITY");
 }
 
 pub fn validate_config(config: &Config) -> bool {
@@ -154,9 +161,11 @@ pub fn validate_config(config: &Config) -> bool {
     enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "src/utils.rs");
 
-    // Wait for the modified glyph to appear.
+    // Low-similarity rewrite → `removed` + `added` split, so the
+    // OLD-content virtual line carries the `-` deletion glyph rather
+    // than the `~` modified glyph.
     harness
-        .wait_until(|h| has_glyph(&h.screen_to_string(), '~'))
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '-'))
         .unwrap();
 
     // The virtual line carries the OLD content (no leading "- " prefix —
@@ -417,12 +426,14 @@ fn test_live_diff_highlights_empty_removed_line() {
 
     // The empty deletion row should be filled with the red
     // diff_remove_bg out to the viewport edge — sample at col 40.
+    // `Config::default()` selects the `high-contrast` theme, whose
+    // `diff_remove_bg` is `[100, 0, 0]` (see `themes/high-contrast.json`).
     let bg = buf[(40, empty_del_row)].style().bg;
     assert_eq!(
         bg,
-        Some(ratatui::style::Color::Rgb(70, 35, 35)),
+        Some(ratatui::style::Color::Rgb(100, 0, 0)),
         "empty deletion virtual row at y={empty_del_row} should be \
-         filled with diff_remove_bg (70, 35, 35) at col 40; saw {bg:?}",
+         filled with diff_remove_bg (100, 0, 0) at col 40; saw {bg:?}",
     );
 }
 
@@ -534,9 +545,9 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     // OLD virtual lines with NEW source lines or with the unchanged
     // "else" context.
     // Mirror the user's edit sequence. The HEAD content is identical
-    // to what they had on disk; the user then *typed* the two ` + 1`
-    // additions in sequence, first on the if-body line and then on
-    // the else-body line. Each keystroke fires `after_insert`, which
+    // to what they had on disk; the user then *typed* a long unique
+    // suffix on each marker line, first on the if-body line and then
+    // on the else-body line. Each keystroke fires `after_insert`, which
     // schedules a debounced recompute — so both modifications and
     // both virtual lines should end up in place after a stable wait.
     // Long file that forces the modifications onto a scrolled
@@ -544,6 +555,14 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     // big buffer, not on a 5-line repro. Each filler line is a
     // unique string so the LCS can't accidentally match it
     // against the OLD/NEW markers.
+    //
+    // The appended payload is long enough to drop the live-diff
+    // Sørensen-Dice line-similarity below the `SIMILARITY_THRESHOLD`
+    // (0.5). Below the threshold each modification is split into
+    // separate `removed` + `added` halves and the `removed` half is
+    // what emits the OLD virtual line this test asserts on. A short
+    // tail like " + 1" classifies as in-place `modified` (bg-only,
+    // word-diff bold/underline) and never produces a virtual line.
     let mut head_lines = Vec::with_capacity(1290);
     for i in 1..=1280 {
         head_lines.push(format!("FILLER_LINE_NUMBER_{i:04}_unique"));
@@ -562,8 +581,11 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     let original_dir = repo.change_to_repo_dir();
     let _guard = DirGuard::new(original_dir);
 
+    // Wide viewport so the marker line + the long appended payload fit
+    // on a single visual row — wrap would invalidate the row-index
+    // assertions below.
     let mut harness = EditorTestHarness::with_config_and_working_dir(
-        120,
+        220,
         40,
         Config::default(),
         repo.path.clone(),
@@ -573,7 +595,15 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "code.rs");
 
-    // Jump to the if-body line (line 1282 / idx 1281), append ` + 1`.
+    // Long rewrite-style suffix the user "types" on each marker line.
+    // Same suffix on both lines is fine — the OLD/NEW row predicates
+    // disambiguate by per-line marker (IF vs ELSE), and use the suffix
+    // only to tell OLD virtual rows (don't contain it) from NEW source
+    // rows (do contain it).
+    const APPEND_PAYLOAD: &str =
+        " + REWRITE_PAYLOAD_DROPS_SIMILARITY_BELOW_HALF_THRESHOLD_LIVE_DIFF_REGRESSION_PADDING_xyz_ABC_DEF_GHI_001";
+
+    // Jump to the if-body line (line 1282 / idx 1281), append the payload.
     use crossterm::event::{KeyCode, KeyModifiers};
     harness
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
@@ -583,14 +613,14 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
         harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     }
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
-    harness.type_text(" + 1").unwrap();
+    harness.type_text(APPEND_PAYLOAD).unwrap();
     harness.render().unwrap();
 
     // Wait for the first modification to render with its OLD virtual line.
     let virtual_row_present = |screen: &str, marker: &str| {
         screen
             .lines()
-            .any(|l| l.contains(marker) && !l.contains(" + 1"))
+            .any(|l| l.contains(marker) && !l.contains(APPEND_PAYLOAD))
     };
     harness
         .wait_until(|h| virtual_row_present(&h.screen_to_string(), "UNIQUE_IF_BODY_OLD_MARKER"))
@@ -600,7 +630,7 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
-    harness.type_text(" + 1").unwrap();
+    harness.type_text(APPEND_PAYLOAD).unwrap();
     harness.render().unwrap();
 
     // Wait until BOTH OLD virtual lines are present as their own rows.
@@ -629,13 +659,13 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
             .join("\n")
     };
 
-    // After both edits the buffer holds `UNIQUE_IF_BODY_OLD_MARKER + 1` and `UNIQUE_ELSE_BODY_OLD_MARKER + 1`
-    // (the user appended ` + 1` to each line), and the virtual lines
-    // hold the bare `UNIQUE_IF_BODY_OLD_MARKER` / `UNIQUE_ELSE_BODY_OLD_MARKER`. Distinguish the source
-    // rows from the virtual rows by whether ` + 1` is present.
+    // After both edits the buffer holds the marker followed by
+    // `APPEND_PAYLOAD` on each line, and the virtual lines hold the
+    // bare marker. Distinguish source rows from virtual rows by
+    // whether the payload is present.
     let row_new_top = rows
         .iter()
-        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER + 1"))
+        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD))
         .unwrap_or_else(|| panic!("new top line not on screen. screen:\n{}", dump()));
     let row_else = rows
         .iter()
@@ -643,15 +673,15 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
         .unwrap_or_else(|| panic!("unchanged else line not on screen. screen:\n{}", dump()));
     let row_new_bot = rows
         .iter()
-        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER + 1"))
+        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD))
         .unwrap_or_else(|| panic!("new bot line not on screen. screen:\n{}", dump()));
     let row_old_top = rows
         .iter()
-        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(" + 1"))
+        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD))
         .unwrap_or_else(|| panic!("old top virtual line not on screen. screen:\n{}", dump()));
     let row_old_bot = rows
         .iter()
-        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(" + 1"))
+        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD))
         .unwrap_or_else(|| panic!("old bot virtual line not on screen. screen:\n{}", dump()));
 
     // Layout invariants:
