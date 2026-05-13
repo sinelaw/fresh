@@ -141,6 +141,20 @@ pub fn render_spec(
 /// predicted inline (matches its actual one-line render); a `Row`
 /// containing any block descendant is predicted block (so nested
 /// rows participate in the zip correctly).
+/// Extract the `width_pct` declaration of a Row child, if any
+/// and in-range (1..=100). Currently only `LabeledSection`
+/// carries this — other block kinds (Col, Tree, List,
+/// multi-line Text, Raw) participate in the equal-split path.
+/// Out-of-range (0, > 100, or unset) collapses to `None` so
+/// callers don't have to re-check.
+fn labeled_section_width_pct(spec: &WidgetSpec) -> Option<u32> {
+    let WidgetSpec::LabeledSection { width_pct, .. } = spec else {
+        return None;
+    };
+    width_pct
+        .filter(|pct| (1..=100).contains(pct))
+}
+
 fn predicts_block(spec: &WidgetSpec) -> bool {
     match spec {
         WidgetSpec::Col { children, .. } => {
@@ -173,6 +187,11 @@ enum RowPiece {
         focus_cursor: Option<FocusCursor>,
     },
     Block {
+        /// Allocated column width for the zip path. May differ
+        /// from the entries' natural widths (each block was
+        /// rendered with this as its `panel_width`, so the
+        /// entries should already fit).
+        column_width: u32,
         entries: Vec<TextPropertyEntry>,
         hits: Vec<HitArea>,
         focus_cursor: Option<FocusCursor>,
@@ -273,29 +292,54 @@ fn render_collected(
             // for the rationale.
             //
             // Width allocation for the zip path: blocks share
-            // `panel_width / block_count` evenly. Inline
-            // children render at full `panel_width` (they
-            // collapse to a single line so the value is just a
-            // soft cap). This is intentionally simple — a
-            // future `widthPct` field on Row children can
-            // refine the split if it ever matters.
-            let block_count = children.iter().filter(|c| predicts_block(c)).count();
-            let block_width = if block_count == 0 {
-                panel_width
-            } else {
-                ((panel_width as usize) / block_count).max(1) as u32
-            };
+            // `panel_width`. Children with a `width_pct`
+            // declaration get their explicit share first
+            // (`panel_width * pct / 100`); the remainder splits
+            // equally among blocks without an explicit width.
+            // Inline children render at full `panel_width` (they
+            // collapse to a single line so width is a soft cap).
+            let block_indices: Vec<usize> = children
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| predicts_block(c))
+                .map(|(i, _)| i)
+                .collect();
+            let block_count = block_indices.len();
+            // Per-child target width, aligned with `children`.
+            // For non-block children the value is unused; for
+            // blocks it's the panel_width passed to that child's
+            // render.
+            let mut per_child_width: Vec<u32> = children
+                .iter()
+                .map(|_| panel_width)
+                .collect();
+            if block_count > 0 {
+                let mut explicit_total: u32 = 0;
+                let mut explicit_count: u32 = 0;
+                for &idx in &block_indices {
+                    if let Some(pct) = labeled_section_width_pct(&children[idx]) {
+                        let w = (panel_width as u64 * pct as u64 / 100) as u32;
+                        per_child_width[idx] = w.max(1);
+                        explicit_total = explicit_total.saturating_add(w);
+                        explicit_count += 1;
+                    }
+                }
+                let remaining = panel_width.saturating_sub(explicit_total);
+                let implicit_count = (block_count as u32).saturating_sub(explicit_count).max(1);
+                let each_implicit = (remaining / implicit_count).max(1);
+                for &idx in &block_indices {
+                    if labeled_section_width_pct(&children[idx]).is_none() {
+                        per_child_width[idx] = each_implicit;
+                    }
+                }
+            }
             let mut row_pieces: Vec<RowPiece> = Vec::new();
-            for child in children {
+            for (idx, child) in children.iter().enumerate() {
                 if let WidgetSpec::Spacer { flex: true, .. } = child {
                     row_pieces.push(RowPiece::Flex);
                     continue;
                 }
-                let child_panel_width = if predicts_block(child) {
-                    block_width
-                } else {
-                    panel_width
-                };
+                let child_panel_width = per_child_width[idx];
                 let (child_entries, child_hits, child_focus) =
                     render_collected(child, prev, next_state, focus_key, child_panel_width);
                 if child_entries.is_empty() {
@@ -316,6 +360,7 @@ fn render_collected(
                     });
                 } else {
                     row_pieces.push(RowPiece::Block {
+                        column_width: child_panel_width,
                         entries: child_entries,
                         hits: child_hits,
                         focus_cursor: child_focus,
@@ -329,7 +374,7 @@ fn render_collected(
                 .iter()
                 .any(|p| matches!(p, RowPiece::Block { .. }));
             if has_blocks {
-                zip_row_blocks(row_pieces, block_width, panel_width, &mut entries, &mut hits, &mut focus_cursor);
+                zip_row_blocks(row_pieces, panel_width, &mut entries, &mut hits, &mut focus_cursor);
             } else {
 
             // Compute flex sizing.
@@ -2093,14 +2138,12 @@ fn pad_or_truncate_cols(text: &mut String, cols: usize) {
 /// starts).
 fn zip_row_blocks(
     pieces: Vec<RowPiece>,
-    block_width: u32,
     panel_width: u32,
     out_entries: &mut Vec<TextPropertyEntry>,
     out_hits: &mut Vec<HitArea>,
     out_focus_cursor: &mut Option<FocusCursor>,
 ) {
     let starting_row = out_entries.len() as u32;
-    let block_w = block_width as usize;
     let _ = panel_width;
 
     // Compute the merged height = max(block.entries.len()).
@@ -2157,7 +2200,8 @@ fn zip_row_blocks(
                 RowPiece::Flex => {
                     // Skipped — see fn doc.
                 }
-                RowPiece::Block { entries, hits, focus_cursor } => {
+                RowPiece::Block { column_width, entries, hits, focus_cursor } => {
+                    let block_w = *column_width as usize;
                     let byte_shift = text.len();
                     if let Some(line) = entries.get(row_idx) {
                         let mut line_text = line.text.clone();
@@ -4068,6 +4112,7 @@ mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "Name".into(),
             child: Box::new(make_text_input("hi", -1, false, false, 4, Some("n"))),
+            width_pct: None,
             key: None,
         };
         let prev = HashMap::new();
@@ -4090,6 +4135,7 @@ mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "".into(),
             child: Box::new(make_text_input("hi", -1, false, false, 4, Some("n"))),
+            width_pct: None,
             key: None,
         };
         let prev = HashMap::new();
@@ -4111,6 +4157,7 @@ mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "".into(),
             child: Box::new(make_text_input("ab", -1, false, true, 0, Some("n"))),
+            width_pct: None,
             key: None,
         };
         let prev = HashMap::new();
@@ -4132,6 +4179,7 @@ mod tests {
         let spec = WidgetSpec::LabeledSection {
             label: "".into(),
             child: Box::new(make_text_input("abc", 3, true, false, 4, Some("n"))),
+            width_pct: None,
             key: None,
         };
         let prev = HashMap::new();
@@ -4153,11 +4201,13 @@ mod tests {
                 WidgetSpec::LabeledSection {
                     label: "Name".into(),
                     child: Box::new(make_text_input("", -1, false, false, 0, Some("n"))),
+                    width_pct: None,
                     key: None,
                 },
                 WidgetSpec::LabeledSection {
                     label: "Cmd".into(),
                     child: Box::new(make_text_input("", -1, false, false, 0, Some("c"))),
+                    width_pct: None,
                     key: None,
                 },
             ],

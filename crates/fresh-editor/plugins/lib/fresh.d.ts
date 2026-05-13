@@ -936,6 +936,16 @@ type WidgetSpec = {
 	* is recursive.
 	*/
 	child: WidgetSpec;
+	/**
+	* When this section is a Block child of a Row, request
+	* `width_pct` percent of the row's `panel_width` instead
+	* of the equal-split default. Multiple siblings with
+	* `width_pct` set sum to ≤ 100; the remainder splits
+	* equally among siblings without an explicit width.
+	* Out-of-range values (0 or > 100) fall back to the
+	* equal-split path.
+	*/
+	widthPct?: number | null;
 	key?: string | null;
 } | {
 	"kind": "raw";

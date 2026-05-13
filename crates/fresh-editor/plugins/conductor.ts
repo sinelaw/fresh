@@ -287,6 +287,22 @@ function buildPreviewEntries(
   ];
 }
 
+// Approximate number of session rows the picker's list pane
+// should show. Derived from the active buffer's viewport so the
+// picker's row(list, preview) fills the panel and the hint bar
+// naturally sits at the bottom. Conservative — leaves room for
+// header, filter input, footer, and the section borders.
+function openListVisibleRows(): number {
+  const vp = editor.getViewport();
+  const h = vp ? vp.height : 30;
+  const panelH = Math.floor(h * 0.9);
+  // header (1) + spacer (1) + filter section (3) + spacer (1)
+  // + sessions section borders (2) + spacer (1) + footer (1)
+  // = 10 rows of chrome. Floor at 4 so a tiny terminal still
+  // shows something.
+  return Math.max(4, panelH - 10);
+}
+
 // Compose the right-hand preview pane. Normally it shows info
 // + action buttons (Stop, Archive, Delete); when a destructive
 // action is pending confirmation it swaps to a "Confirm
@@ -395,15 +411,19 @@ function buildOpenSpec(): WidgetSpec {
     }),
     // Two-pane: sessions list | preview. Renderer's `row()`
     // horizontally zips multi-line children so this composes
-    // the wireframed shape directly.
+    // the wireframed shape directly. Width split 25 / 75 —
+    // the preview pane carries the action buttons and the
+    // (Phase 7) live-window render, so it earns the bulk of
+    // the dialog.
     row(
       labeledSection({
         label: `Sessions (${filtered.length})`,
+        widthPct: 25,
         child: list({
           items,
           itemKeys,
           selectedIndex: selIdx,
-          visibleRows: 12,
+          visibleRows: openListVisibleRows(),
           // Excluded from the Tab cycle — Up/Down on the
           // filter input forwards to this list via host
           // smart-keys, so Tab jumps straight to the action
@@ -412,6 +432,9 @@ function buildOpenSpec(): WidgetSpec {
           key: "sessions",
         }),
       }),
+      // Preview pane has no explicit width — picks up the
+      // remaining 75% by default since the sessions list took
+      // 25%.
       buildPreviewPane(selectedSession),
     ),
     spacer(0),
@@ -490,7 +513,10 @@ function openControlRoom(): void {
     pendingConfirm: null,
   };
   openPanel = new FloatingWidgetPanel();
-  openPanel.mount(buildOpenSpec(), { widthPct: 80, heightPct: 70 });
+  // 90% × 90% of the terminal — the open dialog wants room for
+  // a real session list + preview pane, unlike the new-session
+  // form which stays compact.
+  openPanel.mount(buildOpenSpec(), { widthPct: 90, heightPct: 90 });
   if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }

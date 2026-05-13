@@ -433,12 +433,19 @@ export function textInput(
 export function labeledSection(options: {
   label?: string;
   child: WidgetSpec;
+  /** When this section is a Block child of a Row, request a
+   * specific share of the row's width as a percentage (1..=100).
+   * Out-of-range values fall back to the equal-split default.
+   * Useful for picker-style layouts: a narrow list pane next to
+   * a wide preview pane. */
+  widthPct?: number;
   key?: string;
 }): WidgetSpec {
   return {
     kind: "labeledSection",
     label: options.label ?? "",
     child: options.child,
+    widthPct: options.widthPct,
     key: options.key,
   };
 }

@@ -1511,6 +1511,15 @@ pub enum WidgetSpec {
         /// The single wrapped widget. Boxed because `WidgetSpec`
         /// is recursive.
         child: Box<WidgetSpec>,
+        /// When this section is a Block child of a Row, request
+        /// `width_pct` percent of the row's `panel_width` instead
+        /// of the equal-split default. Multiple siblings with
+        /// `width_pct` set sum to ≤ 100; the remainder splits
+        /// equally among siblings without an explicit width.
+        /// Out-of-range values (0 or > 100) fall back to the
+        /// equal-split path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width_pct: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
