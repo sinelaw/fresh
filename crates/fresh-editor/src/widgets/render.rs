@@ -2157,7 +2157,26 @@ fn zip_row_blocks(
                         }
                         let original_byte_len = line_text.len();
                         pad_or_truncate_cols(&mut line_text, block_w);
+                        let padded_byte_len = line_text.len();
                         text.push_str(&line_text);
+                        // Convert the entry's whole-line `style`
+                        // into an inline overlay covering the
+                        // block's column in the merged row. This is
+                        // what carries through the list widget's
+                        // selected-row bg (and any other
+                        // whole-entry styling on individual block
+                        // lines) — without it, the picker's
+                        // selection highlight disappears in the
+                        // zipped output.
+                        if let Some(line_style) = &line.style {
+                            overlays.push(InlineOverlay {
+                                start: byte_shift,
+                                end: byte_shift + padded_byte_len,
+                                style: line_style.clone(),
+                                properties: Default::default(),
+                                unit: OffsetUnit::Byte,
+                            });
+                        }
                         for overlay in &line.inline_overlays {
                             // Overlays whose end exceeds the
                             // truncated byte length get clamped to
