@@ -89,6 +89,12 @@ interface NewSessionForm {
   // dialog's subtitle. Computed once at openForm time from the
   // current cwd so we don't subprocess on every render.
   projectLabel: string;
+  // Resolved default branch (e.g. "origin/main"). Empty while
+  // the async `git fetch + symbolic-ref` probe is in flight;
+  // the branch input's placeholder reads this so the user sees
+  // the exact base ref the worktree will fork off if they
+  // leave the field blank.
+  defaultBranch: string;
 }
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
@@ -312,10 +318,17 @@ async function spawnCollect(
   return await editor.spawnProcess(command, args, cwd);
 }
 
+/// Resolve the origin's default branch as `"origin/<name>"`,
+/// refreshing the remote first so a moved HEAD on origin is
+/// picked up. Returns `"HEAD"` when there's no `origin` remote
+/// (purely-local repos) or the symbolic ref is missing — the
+/// caller treats that as the silent fallback.
 async function detectDefaultBranch(repoRoot: string): Promise<string> {
-  // `git symbolic-ref refs/remotes/origin/HEAD` → e.g.
-  // `refs/remotes/origin/main`. Strip the prefix; fall back to
-  // `HEAD` when no remote is set or the symbolic ref is missing.
+  // Refresh remote tracking. Failure (offline, no `origin`) is
+  // intentionally ignored: the local mirror, if any, is the
+  // best we can do, and the next call will surface the lack of
+  // a symbolic-ref.
+  await spawnCollect("git", ["-C", repoRoot, "fetch", "origin"], repoRoot);
   const res = await spawnCollect(
     "git",
     ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
@@ -323,8 +336,11 @@ async function detectDefaultBranch(repoRoot: string): Promise<string> {
   );
   if (res.exit_code === 0) {
     const trimmed = (res.stdout || "").trim();
-    const prefix = "refs/remotes/origin/";
+    const prefix = "refs/remotes/";
     if (trimmed.startsWith(prefix)) {
+      // e.g. "refs/remotes/origin/main" → "origin/main". This is
+      // what the new worktree is forked off, so the user sees the
+      // exact ref name they'd otherwise have to type by hand.
       return trimmed.slice(prefix.length);
     }
   }
@@ -420,7 +436,13 @@ function buildFormSpec(): WidgetSpec {
       child: text({
         value: form.branch.value,
         cursorByte: form.branch.cursor,
-        placeholder: "(off default branch)",
+        // Show the resolved base ref (e.g. `(off origin/main)`)
+        // so the user sees exactly what an empty submission will
+        // fork off. While the probe is still running we show a
+        // detecting hint instead of guessing a name.
+        placeholder: form.defaultBranch
+          ? `(off ${form.defaultBranch})`
+          : "(detecting default branch…)",
         fullWidth: true,
         key: "branch",
       }),
@@ -494,10 +516,30 @@ function openForm(): void {
     submitting: false,
     lastError: null,
     projectLabel: deriveProjectLabel(),
+    defaultBranch: "",
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
   editor.setEditorMode(NEW_SESSION_MODE);
+
+  // Probe origin's default branch in the background and update
+  // the branch field's placeholder once we know it. The dialog
+  // is interactive immediately — the probe just refines the hint
+  // from "(detecting…)" to the concrete ref name.
+  void (async () => {
+    const cwd = editor.getCwd();
+    const top = await spawnCollect(
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      cwd,
+    );
+    if (top.exit_code !== 0 || !form) return;
+    const repoRoot = (top.stdout || "").trim();
+    const branch = await detectDefaultBranch(repoRoot);
+    if (!form) return;
+    form.defaultBranch = branch;
+    renderForm();
+  })();
 }
 
 function closeForm(): void {
