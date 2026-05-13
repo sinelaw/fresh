@@ -175,20 +175,30 @@ function ageString(createdAt: number): string {
   return `${Math.floor(sec / 3600)}h`;
 }
 
-// Suggestion value reserved for the "+ New session" pseudo-row.
-// Distinct from every numeric session id, so prompt_confirmed
-// can tell it apart.
+// Suggestion values reserved for the pseudo-rows. Distinct from
+// every numeric session id, so prompt_confirmed can route on
+// `e.input` without consulting `promptSessionIds`.
 const NEW_SESSION_VALUE = "__new__";
+const KILL_SESSION_VALUE = "__kill__";
+
+// The most recently highlighted real session row in the open
+// prompt. The bottom "× Kill highlighted" pseudo-row acts on
+// this when activated — i.e. you select a session, arrow down
+// to the kill row, then Enter to kill the session you just
+// stepped away from. Null when the user hasn't touched a real
+// session yet.
+let lastHighlightedSessionId: number | null = null;
 
 function buildSuggestions(): PromptSuggestion[] {
   reconcileSessions();
   const ids = Array.from(conductorSessions.keys()).sort(
     (a, b) => a - b,
   );
-  // Sentinel -1 keeps promptSessionIds aligned 1:1 with the
-  // visible suggestion rows so promptSelectedIndex still indexes
-  // it directly. -1 means "the [+ New] pseudo-row".
-  promptSessionIds = [-1, ...ids];
+  // Sentinels: -1 = top "+ New" pseudo-row, -2 = bottom "× Kill"
+  // pseudo-row. promptSessionIds stays aligned 1:1 with the
+  // visible suggestion rows so promptSelectedIndex indexes it
+  // directly.
+  promptSessionIds = [-1, ...ids, -2];
   const activeId = editor.activeWindow();
   const newRow: PromptSuggestion = {
     text: "+ New session",
@@ -205,7 +215,19 @@ function buildSuggestions(): PromptSuggestion[] {
       value: String(id),
     };
   });
-  return [newRow, ...sessionRows];
+  // Kill row description shows the would-be target so the user
+  // sees which session their Enter is about to close.
+  const killTarget = lastHighlightedSessionId !== null
+    ? conductorSessions.get(lastHighlightedSessionId)
+    : undefined;
+  const killRow: PromptSuggestion = {
+    text: "× Kill highlighted session",
+    description: killTarget
+      ? `Closes [${killTarget.id}] ${killTarget.label}`
+      : "Arrow to a session row first",
+    value: KILL_SESSION_VALUE,
+  };
+  return [newRow, ...sessionRows, killRow];
 }
 
 function refreshPromptIfOpen(): void {
@@ -226,6 +248,7 @@ const PROMPT_TYPE = "conductor-room";
 function openControlRoom(): void {
   const activeId = editor.activeWindow();
   originalActiveSessionBeforePrompt = activeId;
+  lastHighlightedSessionId = null;
   // Trailing " │ " separates the static title from the user's
   // search input — without it typed characters jam right up
   // against "sessions".
@@ -237,18 +260,22 @@ function openControlRoom(): void {
   promptSelectedIndex = activeIdx > 0 ? activeIdx : 0;
   if (activeIdx > 0) {
     editor.setPromptSelectedIndex(activeIdx);
+    lastHighlightedSessionId = activeId;
+    // Re-render so the bottom kill row picks up the active
+    // session as its initial target.
+    editor.setPromptSuggestions(buildSuggestions());
   }
   editor.setPromptFooter([
     { text: " " },
     { text: "↑↓", style: { fg: "ui.help_key_fg" } },
     { text: " preview  " },
     { text: "Enter", style: { fg: "ui.help_key_fg" } },
-    { text: " dive/new  " },
+    { text: " dive/new/kill  " },
     { text: "Esc", style: { fg: "ui.help_key_fg" } },
     { text: " close" },
   ]);
   editor.setStatus(
-    "Up/Down: preview  Enter: dive/new  Esc: cancel",
+    "Up/Down: preview  Enter: dive/new/kill  Esc: cancel",
   );
 }
 
@@ -256,25 +283,37 @@ editor.on("prompt_selection_changed", (e) => {
   if (e.prompt_type !== PROMPT_TYPE) return;
   promptSelectedIndex = e.selected_index;
   // Render the highlighted session's full UI in the prompt's
-  // preview pane. Sentinel -1 (the [+ New] row) has nothing to
-  // preview — clear instead.
+  // preview pane. Pseudo-rows (-1 / -2) have nothing to preview
+  // — clear instead.
   const id = promptSessionIds[promptSelectedIndex];
   if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
     editor.previewWindowInRect(id);
   } else {
     editor.clearWindowPreview();
   }
+  // Track the most recent real-session highlight so the bottom
+  // "× Kill" pseudo-row knows which session to close, and
+  // refresh suggestions so the kill row's description updates
+  // to name that target.
+  if (typeof id === "number" && id > 0 && id !== lastHighlightedSessionId) {
+    lastHighlightedSessionId = id;
+    editor.setPromptSuggestions(buildSuggestions());
+  }
 });
 
 editor.on("prompt_confirmed", (e) => {
   if (e.prompt_type === PROMPT_TYPE) {
-    // Enter commits: dive into the highlighted session, or fire
-    // the new-session flow when the [+ New] pseudo-row is the
-    // selected value.
+    // Enter commits: dive into the highlighted session, fire the
+    // new-session flow on `+ New`, or close the most recently
+    // highlighted session on `× Kill`.
     editor.clearWindowPreview();
     originalActiveSessionBeforePrompt = null;
     if (e.input === NEW_SESSION_VALUE) {
       startNewSession();
+      return;
+    }
+    if (e.input === KILL_SESSION_VALUE) {
+      killLastHighlighted();
       return;
     }
     const id = promptSessionIds[promptSelectedIndex];
@@ -724,20 +763,9 @@ editor.on("widget_event", (e) => {
   }
 });
 
-function killSelected(): void {
-  if (promptSessionIds.length === 0) {
-    editor.setStatus("Conductor: open the session list first");
-    return;
-  }
-  const id =
-    promptSessionIds[
-      Math.max(
-        0,
-        Math.min(promptSelectedIndex, promptSessionIds.length - 1),
-      )
-    ];
-  // Sentinel: pseudo-row "+ New" has nothing to kill.
-  if (id === -1) {
+function killSessionById(id: number): void {
+  // Sentinel rows (-1 = `+ New`, -2 = `× Kill`) can't be killed.
+  if (id <= 0) {
     editor.setStatus("Conductor: select a session row first");
     return;
   }
@@ -756,6 +784,29 @@ function killSelected(): void {
     editor.closeTerminal(s.terminalId);
   }
   editor.closeWindow(id);
+}
+
+function killSelected(): void {
+  if (promptSessionIds.length === 0) {
+    editor.setStatus("Conductor: open the session list first");
+    return;
+  }
+  const id = promptSessionIds[
+    Math.max(0, Math.min(promptSelectedIndex, promptSessionIds.length - 1))
+  ];
+  killSessionById(id);
+}
+
+// Called when the user activates the `× Kill highlighted` pseudo-row
+// from the open prompt. Targets the most recently highlighted real
+// session row (tracked in `lastHighlightedSessionId`) rather than the
+// currently selected one, which by definition is the pseudo-row itself.
+function killLastHighlighted(): void {
+  if (lastHighlightedSessionId === null) {
+    editor.setStatus("Conductor: arrow to a session row first");
+    return;
+  }
+  killSessionById(lastHighlightedSessionId);
 }
 
 // =============================================================================
