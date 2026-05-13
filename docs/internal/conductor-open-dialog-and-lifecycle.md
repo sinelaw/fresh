@@ -145,6 +145,53 @@ Diving into an archived session implicitly unarchives it first
 
 ## Infrastructure work
 
+### Widget renderer: `row()` of multi-line children
+
+The two-pane wireframe (sessions list next to preview pane)
+is the natural composition `row(col(…), col(…))` — or
+equivalently `row(labeledSection(…), labeledSection(…))`,
+since `labeledSection` is multi-line by construction. The
+current widget renderer doesn't realise that shape: `row()`'s
+inline-collapse path only operates on single-line children;
+when it sees multi-line children it flushes each as a block
+**vertically**, so the panes stack instead of sitting
+side-by-side.
+
+Phase 1 shipped with a vertically-stacked layout to defer this
+work; the rest of the design assumes the proper two-pane shape.
+The fix is to extend `row()`'s second pass to zip multi-line
+children per line:
+
+1. Walk children, separate into inline pieces (single-line) and
+   block pieces (multi-line).
+2. Inline pieces collapse into a single line as today.
+3. Block pieces, when there are ≥1 in the row, get
+   horizontally zipped:
+   - allocate each block a column width — equal split of the
+     row's `panel_width` by default, with an optional explicit
+     weight (a future `widthPct` field on `Col` / `Row` /
+     `LabeledSection` if uneven splits become useful);
+   - for each row-index up to `max(height(block_i))`, build
+     a merged line by concatenating `block_left[i].text`
+     padded to its column width + `sep` + `block_right[i].text`;
+   - shift each non-first block's inline overlays right by
+     the cumulative byte width of the blocks to its left
+     (plus any separator bytes).
+4. The merged lines then flow into the row's output the same
+   way the inline-collapsed line does today, so callers like
+   `col` see one block per `row()` rather than per child.
+
+Heights don't have to match — short blocks are padded with
+spaces on the missing rows; the column they were given stays
+visually open. Overlays attached to those phantom rows aren't
+needed because the renderer is generating fresh blank lines.
+
+The change is local to `render.rs`'s Row arm. No new widget
+kind, no new spec field for Phase 1's two-pane; widths are
+implicit-equal-split. A widget-level `widthPct` parameter can
+arrive later if a phase needs an explicit ratio (e.g. a 40/60
+split for the preview).
+
 ### Process-group signal API
 
 Stop and the stop-leg of Archive / Delete need to terminate
@@ -345,14 +392,32 @@ existing swallow-don't-leak rule.
 
 ## Implementation phases
 
-### Phase 1 — Widget-based picker shell
+### Phase 1 — Widget-based picker shell *(shipped)*
 
-- Build the layout: header, filter input, two-pane (list +
-  preview), focus model, default keys (Up/Down/Tab/Enter/Esc).
+- Build the layout: header, filter input, list + preview
+  panes, focus model, default keys (Up/Down/Tab/Enter/Esc).
 - Plugin-side fuzzy filter over `conductorSessions` (small
   ranker, substring + prefix bonus). No external action
   surface yet — Dive is the only action.
+- Smart-key forwarding: Up/Down/Enter on a focused single-line
+  Text route to the panel's first List/Tree, so the filter
+  input stays focused for typing while arrows navigate.
+- Shipped with the panes stacked vertically because the
+  widget renderer's `row()` doesn't yet do horizontal zip
+  for multi-line children (see [Widget renderer:
+  `row()` of multi-line children](#widget-renderer-row-of-multi-line-children)).
 - Replaces today's `startPrompt`-based picker.
+
+### Phase 1b — `row()` of multi-line children
+
+- Extend `render.rs`'s Row arm so block children are zipped
+  per line instead of flushed vertically.
+- Flip the picker spec from a `col(filter, list, preview)`
+  fallback back to the wireframed
+  `row(labeledSection(list), labeledSection(preview))`.
+- No new widget kind or spec field; equal-width split is the
+  default. A `widthPct` field can arrive when a phase
+  demands an explicit ratio.
 
 ### Phase 2 — Process-group signal API
 
