@@ -38,6 +38,11 @@ const KEY_FOCUSED_BG: &str = "ui.menu_active_bg";
 const KEY_DANGER_FG: &str = "ui.status_error_indicator_fg";
 const KEY_INPUT_BG: &str = "ui.prompt_bg";
 const KEY_PLACEHOLDER_FG: &str = "ui.menu_disabled_fg";
+// Section-legend tint. `ui.help_key_fg` is the same key the
+// hint-bar uses to highlight keys against panel bg, so we know
+// it's tuned for readability against the same surface a
+// LabeledSection sits on.
+const KEY_SECTION_LABEL_FG: &str = "ui.help_key_fg";
 
 /// Where the host should place the buffer's hardware cursor — the
 /// terminal's blinking caret — when a `TextInput` is focused. Built
@@ -899,6 +904,7 @@ fn render_collected(
                     placeholder.as_deref(),
                     *max_visible_chars,
                     effective_field_width,
+                    *full_width,
                 );
                 new_scroll = 0;
                 if let Some(byte_in_row) = rendered.cursor_byte_in_entry {
@@ -1017,27 +1023,41 @@ const RIGHT_BORDER_SUFFIX: &str = " │";
 /// When `label` is empty the legend separators collapse and the
 /// border is one unbroken `─` run.
 fn render_section_top_border(label: &str, total_cols: usize) -> TextPropertyEntry {
-    // `╭`, `╮`, `─` each one display column but multiple bytes.
     let mut text = String::new();
+    let mut overlays: Vec<InlineOverlay> = Vec::new();
     text.push('╭');
     if label.is_empty() {
         for _ in 0..total_cols.saturating_sub(2) {
             text.push('─');
         }
     } else {
-        // `╭─ label ─...─╮`. 1 col for `╭`, 1 col for `─`,
-        // 1 col space, `label_cols`, 1 col space, then enough
-        // `─` to reach `total_cols - 1`, then `╮`.
+        // `╭─ label ─...─╮`. Capture the byte range of `label`
+        // (after the leading `─ ` and before the trailing ` `)
+        // so the renderer can paint it in a distinct fg, marking
+        // it as the section caption rather than border chrome.
         let label_cols = label.chars().count();
         let used = 1 + 1 + 1 + label_cols + 1; // ╭ ─ ` ` label ` `
         text.push('─');
         text.push(' ');
+        let label_byte_start = text.len();
         text.push_str(label);
+        let label_byte_end = text.len();
         text.push(' ');
         let remaining = total_cols.saturating_sub(used + 1); // -1 for `╮`
         for _ in 0..remaining {
             text.push('─');
         }
+        overlays.push(InlineOverlay {
+            start: label_byte_start,
+            end: label_byte_end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_SECTION_LABEL_FG)),
+                bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
     }
     text.push('╮');
     text.push('\n');
@@ -1045,7 +1065,7 @@ fn render_section_top_border(label: &str, total_cols: usize) -> TextPropertyEntr
         text,
         properties: Default::default(),
         style: None,
-        inline_overlays: Vec::new(),
+        inline_overlays: overlays,
         segments: Vec::new(),
         pad_to_chars: None,
         truncate_to_chars: None,
@@ -1264,12 +1284,21 @@ pub fn render_button(label: &str, focused: bool, kind: ButtonKind) -> TextProper
 
     let base_style = match kind {
         ButtonKind::Normal => OverlayOptions::default(),
+        // Primary uses the active-menu fg/bg pair (themes ship
+        // these as a tuned contrasting pair), giving the
+        // affirmative action a filled-button look without
+        // relying on focus.
         ButtonKind::Primary => OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+            bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
             bold: true,
             ..Default::default()
         },
+        // Danger is intentionally fg-only — red text on whatever
+        // surface the button sits on, no opinionated bg.
         ButtonKind::Danger => OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_DANGER_FG)),
+            bold: true,
             ..Default::default()
         },
     };
@@ -1522,8 +1551,15 @@ pub fn render_text_input(
     placeholder: Option<&str>,
     max_visible_chars: u32,
     field_width: u32,
+    full_width: bool,
 ) -> RenderedTextInput {
-    let show_placeholder = !focused && value.is_empty() && placeholder.is_some();
+    // Placeholder visibility: the value-empty state, regardless of
+    // focus. The placeholder remains in the field until the user
+    // types something — a focused-empty input still shows the
+    // hint. The cursor (when focused) sits on top of the
+    // placeholder's first char, which is the natural way the
+    // user "overwrites" the hint as they type.
+    let show_placeholder = value.is_empty() && placeholder.is_some();
 
     // Compute the user-cursor's char position within `value`. We
     // operate in bytes here, which is correct for the cursor on
@@ -1537,17 +1573,48 @@ pub fn render_text_input(
     // Build `<inner>` plus the byte offset of the cursor *within*
     // `<inner>` (not yet including `[`/label offsets). This is the
     // single place where field-width truncation/padding lives.
-    let (inner, cursor_in_inner) = if show_placeholder {
-        // Placeholder doesn't carry a cursor (never focused here).
-        (placeholder.unwrap_or("").to_string(), None)
+    let (inner, cursor_in_inner) = if show_placeholder && field_width == 0 {
+        // No constant width: render the placeholder as-is. Cursor
+        // (when focused) parks at byte 0 of the placeholder so
+        // the first typed char replaces it.
+        let inner = placeholder.unwrap_or("").to_string();
+        let cursor = if focused { Some(0usize) } else { None };
+        (inner, cursor)
+    } else if show_placeholder {
+        // Constant-width placeholder: pad / truncate the hint to
+        // the same total_inner width the value would occupy, so
+        // the bracketed field has a stable visual size whether
+        // the user has typed yet or not. Same `pad_extra = 1`
+        // rule as the value path (under `full_width`) so the
+        // closing bracket doesn't shift on focus.
+        let target = field_width as usize;
+        let pad_extra = if focused || full_width { 1 } else { 0 };
+        let total_inner = target + pad_extra;
+        let raw = placeholder.unwrap_or("");
+        let raw_chars: Vec<char> = raw.chars().collect();
+        let inner = if raw_chars.len() <= total_inner {
+            let mut s = raw.to_string();
+            while s.chars().count() < total_inner {
+                s.push(' ');
+            }
+            s
+        } else {
+            // Tail-truncate the placeholder with `…` so a long
+            // hint doesn't bleed past the field.
+            let keep = total_inner.saturating_sub(1);
+            let prefix: String = raw_chars.iter().take(keep).collect();
+            format!("{}…", prefix)
+        };
+        let cursor = if focused { Some(0usize) } else { None };
+        (inner, cursor)
     } else if field_width > 0 {
         // Constant-width. Visible value occupies `target` chars;
-        // when focused we add one trailing pad space so the cursor
-        // never lands on the closing bracket. Result inner width:
-        //   focused   → target + 1
-        //   unfocused → target
+        // when focused (or when the caller asked for `full_width`,
+        // which stabilises the visual width across focus
+        // transitions) we add one trailing pad space so the cursor
+        // never lands on the closing bracket.
         let target = field_width as usize;
-        let pad_extra = if focused { 1 } else { 0 };
+        let pad_extra = if focused || full_width { 1 } else { 0 };
         let total_inner = target + pad_extra;
         let value_chars: Vec<char> = value.chars().collect();
         if value_chars.len() <= target {
@@ -1631,6 +1698,7 @@ pub fn render_text_input(
             end: inner_byte_end,
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
+                italic: true,
                 ..Default::default()
             },
             properties: Default::default(),
@@ -2056,10 +2124,19 @@ mod tests {
     }
 
     #[test]
-    fn button_primary_is_bold() {
+    fn button_primary_pairs_menu_active_fg_with_menu_active_bg() {
         let entry = render_button("Submit", false, ButtonKind::Primary);
         assert_eq!(entry.inline_overlays.len(), 1);
-        assert!(entry.inline_overlays[0].style.bold);
+        let style = &entry.inline_overlays[0].style;
+        assert!(style.bold);
+        assert_eq!(
+            style.fg.as_ref().and_then(|c| c.as_theme_key()),
+            Some("ui.menu_active_fg"),
+        );
+        assert_eq!(
+            style.bg.as_ref().and_then(|c| c.as_theme_key()),
+            Some("ui.menu_active_bg"),
+        );
     }
 
     #[test]
@@ -2068,6 +2145,7 @@ mod tests {
         assert_eq!(entry.inline_overlays.len(), 1);
         let fg = entry.inline_overlays[0].style.fg.as_ref().unwrap();
         assert_eq!(fg.as_theme_key(), Some("ui.status_error_indicator_fg"));
+        assert!(entry.inline_overlays[0].style.bold);
     }
 
     #[test]
@@ -2752,20 +2830,20 @@ mod tests {
 
     #[test]
     fn text_input_renders_value_in_brackets() {
-        let entry = render_text_input("hello", -1, false, "", None, 0, 0).entry;
+        let entry = render_text_input("hello", -1, false, "", None, 0, 0, false).entry;
         assert_eq!(entry.text, "[hello]");
         assert!(entry.inline_overlays.is_empty());
     }
 
     #[test]
     fn text_input_with_label_prefixes_with_label_space() {
-        let entry = render_text_input("foo", -1, false, "Search:", None, 0, 0).entry;
+        let entry = render_text_input("foo", -1, false, "Search:", None, 0, 0, false).entry;
         assert_eq!(entry.text, "Search: [foo]");
     }
 
     #[test]
     fn text_input_focused_adds_input_bg_overlay() {
-        let entry = render_text_input("x", -1, true, "", None, 0, 0).entry;
+        let entry = render_text_input("x", -1, true, "", None, 0, 0, false).entry;
         // Focused → input-bg overlay (no cursor since cursor_byte < 0).
         assert_eq!(entry.inline_overlays.len(), 1);
         let bg = entry.inline_overlays[0].style.bg.as_ref().unwrap();
@@ -2778,7 +2856,7 @@ mod tests {
         // *within entry.text*. text = "[abc ]" (focused → trailing
         // pad space). 'a' at byte 1, 'b' at 2, 'c' at 3 — so a
         // cursor at value-byte 1 lands at entry-byte 2.
-        let r = render_text_input("abc", 1, true, "", None, 0, 0);
+        let r = render_text_input("abc", 1, true, "", None, 0, 0, false);
         assert_eq!(r.cursor_byte_in_entry, Some(2));
     }
 
@@ -2789,7 +2867,7 @@ mod tests {
         // overlaps the closing bracket. text = "[ab ]" → cursor
         // at value-byte 2 lands at entry-byte 3 (the space), not
         // at byte 4 (the `]`).
-        let r = render_text_input("ab", 2, true, "", None, 0, 0);
+        let r = render_text_input("ab", 2, true, "", None, 0, 0, false);
         assert_eq!(r.entry.text, "[ab ]");
         assert_eq!(r.cursor_byte_in_entry, Some(3));
         assert_ne!(r.cursor_byte_in_entry, Some(4), "must not overlap ]");
@@ -2797,28 +2875,34 @@ mod tests {
 
     #[test]
     fn text_input_unfocused_empty_shows_placeholder_in_muted() {
-        let entry = render_text_input("", -1, false, "", Some("type here"), 0, 0).entry;
+        let entry = render_text_input("", -1, false, "", Some("type here"), 0, 0, false).entry;
         assert_eq!(entry.text, "[type here]");
-        // One overlay for the placeholder muted color.
-        assert_eq!(entry.inline_overlays.len(), 1);
-        let fg = entry.inline_overlays[0].style.fg.as_ref().unwrap();
+        // Placeholder gets a muted-fg italic overlay.
+        let placeholder_overlay = entry
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.fg.as_ref().and_then(|c| c.as_theme_key()).is_some())
+            .expect("placeholder fg overlay");
+        let fg = placeholder_overlay.style.fg.as_ref().unwrap();
         assert_eq!(fg.as_theme_key(), Some("ui.menu_disabled_fg"));
+        assert!(placeholder_overlay.style.italic);
     }
 
     #[test]
-    fn text_input_focused_empty_does_not_show_placeholder() {
-        let entry = render_text_input("", -1, true, "", Some("type here"), 0, 0).entry;
-        // No placeholder when focused. Empty + focused + no
-        // field_width → trailing pad space so the cursor has
-        // somewhere to sit. text = "[ ]".
-        assert_eq!(entry.text, "[ ]");
+    fn text_input_focused_empty_still_shows_placeholder() {
+        // New behaviour: placeholder remains visible while focused
+        // until the user types something. Cursor parks at byte 0
+        // of the placeholder so the first keystroke replaces it.
+        let r = render_text_input("", -1, true, "", Some("type here"), 0, 0, false);
+        assert_eq!(r.entry.text, "[type here]");
+        assert_eq!(r.cursor_byte_in_entry, Some(1));
     }
 
     #[test]
     fn text_input_field_width_pads_short_value_unfocused() {
-        // field_width=10, unfocused → inner is 10 chars, no extra
-        // pad (cursor not visible anyway).
-        let r = render_text_input("hi", 2, false, "", None, 0, 10);
+        // field_width=10, unfocused, not full_width → inner is 10
+        // chars (no extra cursor-park pad).
+        let r = render_text_input("hi", 2, false, "", None, 0, 10, false);
         assert_eq!(r.entry.text, "[hi        ]");
     }
 
@@ -2827,7 +2911,7 @@ mod tests {
         // field_width=10, focused, value fills exactly 10 → inner
         // is 11 chars (10 + 1 cursor-park space) so the cursor at
         // end-of-value never lands on `]`.
-        let r = render_text_input("0123456789", 10, true, "", None, 0, 10);
+        let r = render_text_input("0123456789", 10, true, "", None, 0, 10, false);
         assert_eq!(r.entry.text, "[0123456789 ]");
         // Cursor at byte 10 of value → byte 10 of inner → byte 11
         // of entry.text (after `[`). That's the cursor-park space,
@@ -2837,10 +2921,28 @@ mod tests {
     }
 
     #[test]
+    fn text_input_field_width_full_width_pads_to_same_size_when_unfocused() {
+        // full_width=true makes the inner reserve the cursor-park
+        // space whether or not the input is focused, so the field
+        // doesn't "jump" wider on focus.
+        let r = render_text_input("hi", -1, false, "", None, 0, 10, true);
+        assert_eq!(r.entry.text, "[hi         ]"); // 10 + 1 trailing pad
+    }
+
+    #[test]
     fn text_input_field_width_head_truncates_long_value() {
         // 30-char value, field_width=10, unfocused → keep last 9
         // chars + `…`; no pad space.
-        let r = render_text_input("0123456789abcdefghijklmnopqrst", 30, false, "", None, 0, 10);
+        let r = render_text_input(
+            "0123456789abcdefghijklmnopqrst",
+            30,
+            false,
+            "",
+            None,
+            0,
+            10,
+            false,
+        );
         assert!(r.entry.text.contains("…lmnopqrst"));
     }
 
@@ -2848,7 +2950,7 @@ mod tests {
     fn text_input_field_width_clamps_cursor_in_dropped_prefix() {
         // Long value, field_width=5, focused, cursor at byte 0 (in
         // dropped prefix) → clamped to right after the `…`.
-        let r = render_text_input("abcdefghij", 0, true, "", None, 0, 5);
+        let r = render_text_input("abcdefghij", 0, true, "", None, 0, 5, false);
         // Inner = `…fghij ` (1 ellipsis + 4 tail chars + 1 pad).
         // Cursor at "right after `…`" = byte 3 of inner (3 = `…`'s
         // UTF-8 byte length). entry.text has `[` before, so
@@ -2859,7 +2961,7 @@ mod tests {
     #[test]
     fn text_input_truncates_long_value_keeping_tail_visible() {
         let value: String = "0123456789abcdefghij".to_string();
-        let entry = render_text_input(&value, -1, false, "", None, 6, 0).entry;
+        let entry = render_text_input(&value, -1, false, "", None, 6, 0, false).entry;
         // Tail-truncated to "…fghij" (max=6, take=5 chars).
         assert_eq!(entry.text, "[…fghij]");
     }

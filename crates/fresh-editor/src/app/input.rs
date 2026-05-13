@@ -2641,8 +2641,13 @@ impl Editor {
             return true;
         }
         if let KeyCode::Char(c) = code {
+            // Ctrl/Alt-modified chords are swallowed by the floating
+            // panel without further action — a modal dialog must
+            // not leak keys to global bindings like Ctrl-P or
+            // Alt-F. Plain (or Shift-only) chars feed printable
+            // text into the focused TextInput.
             if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
-                return false;
+                return true;
             }
             let ch = if modifiers.contains(KeyModifiers::SHIFT) {
                 c.to_uppercase().next().unwrap_or(c)
@@ -2657,6 +2662,10 @@ impl Editor {
             );
             return true;
         }
-        false
+        // Any other keystroke that reaches here (function keys,
+        // unhandled keycodes, etc.) is swallowed too — the modal
+        // is the exclusive owner of the input channel until it
+        // unmounts.
+        true
     }
 }
