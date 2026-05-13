@@ -2551,6 +2551,15 @@ interface EditorAPI {
 	*/
 	closeTerminal(terminalId: number): boolean;
 	/**
+	* Send `signal` ("SIGTERM" / "SIGKILL" / "SIGINT" / "SIGHUP")
+	* to every process group the window `id` is tracking. The
+	* window's authority decides delivery; this is the
+	* canonical entry point for "stop everything this window
+	* owns" rather than reaching at the terminal level. Returns
+	* `false` only when the command channel is closed.
+	*/
+	signalWindow(id: number, signal: string): boolean;
+	/**
 	* Force refresh of line display
 	*/
 	refreshLines(bufferId: number): boolean;

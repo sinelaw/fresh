@@ -40,7 +40,10 @@
 //! windows that have never been activated).
 
 pub mod buffers;
+pub mod process_group;
+
 pub use buffers::WindowBuffers;
+pub use process_group::{ProcessGroups, Signaller, LocalSignaller, ProcessGroupEntry};
 
 use crate::app::types::{ChromeLayout, WindowLayoutCache};
 use crate::app::window_resources::WindowResources;
@@ -713,6 +716,15 @@ pub struct Window {
     /// window has its own paste buffer; cross-window file ops would
     /// require a separately-shared clipboard.
     pub file_explorer_clipboard: Option<crate::app::file_explorer::FileExplorerClipboard>,
+
+    /// Process-group tracking for everything this window owns
+    /// (today: pty children from `terminal_manager.spawn`).
+    /// Exposed through `signal_all` so window-level lifecycle
+    /// operations can terminate every spawned process in one
+    /// call regardless of how many terminals the window owns —
+    /// see [`process_group`] module docs for the authority-
+    /// pluggable `Signaller` design.
+    pub process_groups: ProcessGroups,
 }
 
 impl Window {
@@ -1611,6 +1623,7 @@ impl Window {
             animations: crate::view::animation::AnimationRunner::default(),
             plugin_errors: Vec::new(),
             file_explorer_clipboard: None,
+            process_groups: ProcessGroups::default(),
             resources,
         }
     }

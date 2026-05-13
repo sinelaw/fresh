@@ -2928,6 +2928,19 @@ pub enum PluginCommand {
         terminal_id: TerminalId,
     },
 
+    /// Send `signal` to every process group tracked by the
+    /// window `id`. `signal` is one of `"SIGTERM"` / `"SIGKILL"`
+    /// / `"SIGINT"` / `"SIGHUP"`; the window's authority
+    /// determines the actual delivery mechanism (local
+    /// `kill(-pgid, …)` on host, `docker exec kill …` for
+    /// container authorities, SSH agent for remote ones —
+    /// see `app/window/process_group.rs`). Idempotent across
+    /// already-exited groups: callers can retry safely.
+    SignalWindow {
+        id: WindowId,
+        signal: String,
+    },
+
     /// Project-wide grep search (async)
     /// Searches all project files via FileSystem trait, respecting .gitignore.
     /// For open buffers with dirty edits, searches the buffer's piece tree.

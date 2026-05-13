@@ -1284,6 +1284,7 @@ mod tests {
             "createTerminal",
             "sendTerminalInput",
             "closeTerminal",
+            "signalWindow",
             "refreshLines",
             "getCurrentLocale",
             "loadPlugin",

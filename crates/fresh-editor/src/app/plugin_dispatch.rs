@@ -1233,6 +1233,10 @@ impl Editor {
                 self.handle_close_terminal(terminal_id);
             }
 
+            PluginCommand::SignalWindow { id, signal } => {
+                self.handle_signal_window(id, &signal);
+            }
+
             PluginCommand::GrepProject {
                 pattern,
                 fixed_string,
@@ -2788,6 +2792,21 @@ impl Editor {
                 self.active_window_mut()
                     .terminal_log_files
                     .insert(terminal_id, log_path.clone());
+                // Register the spawned pty session leader pid
+                // with the active window's process-group tracker
+                // so window-level signal operations (Stop /
+                // Archive / Delete) can reach it.
+                let leader_pid = self
+                    .active_window()
+                    .terminal_manager
+                    .get(terminal_id)
+                    .and_then(|h| h.pid());
+                if let Some(pid) = leader_pid {
+                    let label = format!("terminal #{}", terminal_id.0);
+                    self.active_window_mut()
+                        .process_groups
+                        .register(pid, label);
+                }
                 // Fix up backing path if the predicted ID didn't match
                 // the one the terminal manager handed out. Persistent
                 // terminals re-derive the stable `fresh-terminal-N.txt`
@@ -3061,6 +3080,23 @@ impl Editor {
         if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {
             if let Some(s) = self.windows.get_mut(&target) {
                 s.buffers.insert(buffer_id, state);
+            }
+        }
+        // Register the spawned pty session leader pid with the
+        // *target* window's process-group tracker. The terminal
+        // logically belongs to that session, so window-level
+        // lifecycle ops (Stop / Archive / Delete) on the target
+        // need to reach this pid even though the terminal_manager
+        // lives on the active window.
+        let leader_pid = self
+            .active_window()
+            .terminal_manager
+            .get(terminal_id)
+            .and_then(|h| h.pid());
+        if let Some(pid) = leader_pid {
+            let label = format!("terminal #{}", terminal_id.0);
+            if let Some(target_window) = self.windows.get_mut(&target) {
+                target_window.process_groups.register(pid, label);
             }
         }
 
@@ -5235,6 +5271,48 @@ impl Editor {
         } else {
             self.active_window_mut().terminal_manager.close(terminal_id);
             tracing::info!("Plugin closed terminal {:?} (no buffer found)", terminal_id);
+        }
+    }
+
+    /// Fan `signal` out to every process group the window
+    /// identified by `id` is tracking. The window's authority-
+    /// configured signaller (see `app/window/process_group.rs`)
+    /// decides how the signal is delivered. Failures from
+    /// individual groups land in the tracing log so a partial
+    /// failure surfaces without aborting the rest of the
+    /// stop flow.
+    fn handle_signal_window(&mut self, id: fresh_core::WindowId, signal: &str) {
+        let Some(window) = self.windows.get_mut(&id) else {
+            tracing::warn!(
+                "Plugin SignalWindow targeted unknown window {:?}",
+                id
+            );
+            return;
+        };
+        let results = window.process_groups.signal_all(signal);
+        for (entry, result) in results {
+            match result {
+                Ok(true) => tracing::info!(
+                    "SignalWindow {:?}: {} → pid {} ({})",
+                    id,
+                    signal,
+                    entry.leader_pid,
+                    entry.label
+                ),
+                Ok(false) => tracing::debug!(
+                    "SignalWindow {:?}: pid {} ({}) already exited",
+                    id,
+                    entry.leader_pid,
+                    entry.label
+                ),
+                Err(e) => tracing::warn!(
+                    "SignalWindow {:?}: pid {} ({}): {}",
+                    id,
+                    entry.leader_pid,
+                    entry.label,
+                    e
+                ),
+            }
         }
     }
 }

@@ -5060,6 +5060,21 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Send `signal` ("SIGTERM" / "SIGKILL" / "SIGINT" / "SIGHUP")
+    /// to every process group the window `id` is tracking. The
+    /// window's authority decides delivery; this is the
+    /// canonical entry point for "stop everything this window
+    /// owns" rather than reaching at the terminal level. Returns
+    /// `false` only when the command channel is closed.
+    pub fn signal_window(&self, id: f64, signal: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SignalWindow {
+                id: fresh_core::WindowId(id as u64),
+                signal,
+            })
+            .is_ok()
+    }
+
     // === Misc ===
 
     /// Force refresh of line display
