@@ -24,6 +24,7 @@ import {
   hintBar,
   key as widgetKey,
   labeledSection,
+  list,
   row,
   spacer,
   styledRow,
@@ -101,28 +102,30 @@ let formPanel: FloatingWidgetPanel | null = null;
 
 const NEW_SESSION_MODE = "conductor-new-form";
 
-// Last suggestion list shown in the open prompt. Mirrors the
-// snapshot the user sees so prompt_confirmed can map the
-// selected `value` back to a session id.
-let promptSessionIds: number[] = [];
-
-// Currently highlighted index in the open prompt, tracked via
-// prompt_selection_changed so "Conductor: Kill Selected" knows
-// which row the user is pointing at.
-let promptSelectedIndex = 0;
-
-// "Live preview by transient dive": while the prompt is open we
-// dive into whichever session the user has highlighted, so the
-// editor visible behind the floating overlay shows that
-// session's full UI (splits, terminals, buffers, all of it,
-// updating live). On Esc we restore the original active
-// session; on Enter we leave the dive in place.
-//
-// The warm-swap migration (Step 1f, splits + view_states +
-// LSPs + file explorer) makes these dives cheap — picking
-// up/down through the list is a sequence of pointer swaps,
-// not a UI rebuild.
-let originalActiveSessionBeforePrompt: number | null = null;
+// Open dialog state. `null` ⇒ the picker isn't mounted. Lives
+// alongside the new-session form state but is independent of
+// it — the two dialogs share the conductor mode plumbing but
+// not their data.
+interface OpenDialogState {
+  // Filter input value + cursor byte. Mirrors what the host
+  // renders inside the panel's filter TextInput.
+  filter: { value: string; cursor: number };
+  // Subset of `conductorSessions` keys that pass the filter,
+  // in display order. Recomputed on every filter change.
+  filteredIds: number[];
+  // The selection inside the list widget. The host owns the
+  // authoritative copy as instance state; this mirror lets
+  // `buildOpenSpec` render the matching preview pane without a
+  // round-trip.
+  selectedIndex: number;
+  // Active session at the moment the dialog opened. Recorded
+  // so a future "Esc restores active" affordance has the
+  // anchor it needs.
+  originalActiveSession: number;
+}
+let openDialog: OpenDialogState | null = null;
+let openPanel: FloatingWidgetPanel | null = null;
+const OPEN_MODE = "conductor-open";
 
 // =============================================================================
 // Session-list reconciliation
@@ -157,7 +160,7 @@ function reconcileSessions(): void {
 }
 
 // =============================================================================
-// Suggestion rendering
+// Session display helpers
 // =============================================================================
 
 const STATE_GLYPH: Record<AgentState, string> = {
@@ -175,167 +178,227 @@ function ageString(createdAt: number): string {
   return `${Math.floor(sec / 3600)}h`;
 }
 
-// Suggestion values reserved for the pseudo-rows. Distinct from
-// every numeric session id, so prompt_confirmed can route on
-// `e.input` without consulting `promptSessionIds`.
-const NEW_SESSION_VALUE = "__new__";
-const KILL_SESSION_VALUE = "__kill__";
+// =============================================================================
+// Open dialog — widget-based session picker (Phase 1 of the
+// open-dialog redesign; see docs/internal/
+// conductor-open-dialog-and-lifecycle.md).
+//
+// Dive is the only action the dialog wires up directly. Other
+// lifecycle commands (Stop / Archive / Delete / New) ship in
+// later phases. New session is still reachable through the
+// "Conductor: New Session" palette command in the meantime.
+// =============================================================================
 
-// The most recently highlighted real session row in the open
-// prompt. The bottom "× Kill highlighted" pseudo-row acts on
-// this when activated — i.e. you select a session, arrow down
-// to the kill row, then Enter to kill the session you just
-// stepped away from. Null when the user hasn't touched a real
-// session yet.
-let lastHighlightedSessionId: number | null = null;
-
-function buildSuggestions(): PromptSuggestion[] {
+// Case-insensitive substring match over a session's label and
+// root path. Ordering: prefix-of-label hits beat substring hits,
+// then ties broken by label length so shorter matches surface
+// first. Empty needle returns the full list in numeric-id order.
+function filterSessions(needle: string): number[] {
   reconcileSessions();
-  const ids = Array.from(conductorSessions.keys()).sort(
-    (a, b) => a - b,
-  );
-  // Sentinels: -1 = top "+ New" pseudo-row, -2 = bottom "× Kill"
-  // pseudo-row. promptSessionIds stays aligned 1:1 with the
-  // visible suggestion rows so promptSelectedIndex indexes it
-  // directly.
-  promptSessionIds = [-1, ...ids, -2];
-  const activeId = editor.activeWindow();
-  const newRow: PromptSuggestion = {
-    text: "+ New session",
-    description: "Create a new worktree-rooted session",
-    value: NEW_SESSION_VALUE,
-  };
-  const sessionRows = ids.map((id) => {
+  const ids = Array.from(conductorSessions.keys()).sort((a, b) => a - b);
+  if (!needle) return ids;
+  const n = needle.toLowerCase();
+  type Scored = { id: number; score: number; len: number };
+  const matches: Scored[] = [];
+  for (const id of ids) {
     const s = conductorSessions.get(id)!;
-    const stateText = id === activeId ? "ACT " : STATE_GLYPH[s.state];
-    const ageText = ageString(s.createdAt);
-    return {
-      text: `[${id}] ${stateText}  ${s.label}`,
-      description: `${ageText}  ${s.root}`,
-      value: String(id),
-    };
-  });
-  // Kill row description shows the would-be target so the user
-  // sees which session their Enter is about to close.
-  const killTarget = lastHighlightedSessionId !== null
-    ? conductorSessions.get(lastHighlightedSessionId)
+    const label = s.label.toLowerCase();
+    const root = s.root.toLowerCase();
+    if (label.startsWith(n)) {
+      matches.push({ id, score: 0, len: label.length });
+    } else if (label.includes(n)) {
+      matches.push({ id, score: 1, len: label.length });
+    } else if (root.includes(n)) {
+      matches.push({ id, score: 2, len: label.length });
+    }
+  }
+  matches.sort((a, b) => a.score - b.score || a.len - b.len || a.id - b.id);
+  return matches.map((m) => m.id);
+}
+
+// Build one rendered list-item row for `id`. Style cues:
+//   * `[id]` in `ui.help_key_fg`
+//   * `ACT` (active session) in `ui.tab_active_fg` + bold
+//   * other states use the default fg
+//   * label in default fg
+function renderListItem(id: number, activeId: number): TextPropertyEntry {
+  const s = conductorSessions.get(id);
+  if (!s) {
+    return styledRow([{ text: `[${id}] (unknown)` }]);
+  }
+  const isActive = id === activeId;
+  const stateText = isActive ? "ACT " : STATE_GLYPH[s.state];
+  return styledRow([
+    { text: `[${id}] `, style: { fg: "ui.help_key_fg" } },
+    {
+      text: stateText,
+      style: isActive
+        ? { fg: "ui.tab_active_fg", bold: true }
+        : { fg: "ui.menu_disabled_fg" },
+    },
+    { text: `  ${s.label}` },
+  ]);
+}
+
+// Preview-pane content for the currently selected session.
+// Plain info for Phase 1; later phases append pgid/pids + the
+// last terminal lines.
+function buildPreviewEntries(
+  s: AgentSession | undefined,
+): TextPropertyEntry[] {
+  if (!s) {
+    return [
+      styledRow([
+        {
+          text: "No session selected",
+          style: { fg: "editor.whitespace_indicator_fg", italic: true },
+        },
+      ]),
+    ];
+  }
+  const activeId = editor.activeWindow();
+  const isActive = s.id === activeId;
+  return [
+    styledRow([
+      { text: "Root:  ", style: { fg: "ui.menu_disabled_fg" } },
+      { text: s.root },
+    ]),
+    styledRow([
+      { text: "Age:   ", style: { fg: "ui.menu_disabled_fg" } },
+      { text: ageString(s.createdAt) },
+    ]),
+    styledRow([
+      { text: "State: ", style: { fg: "ui.menu_disabled_fg" } },
+      {
+        text: isActive ? "ACT" : STATE_GLYPH[s.state].trim(),
+        style: isActive
+          ? { fg: "ui.tab_active_fg", bold: true }
+          : undefined,
+      },
+    ]),
+    styledRow([
+      { text: "Term:  ", style: { fg: "ui.menu_disabled_fg" } },
+      { text: s.terminalId !== null ? String(s.terminalId) : "—" },
+    ]),
+  ];
+}
+
+function buildOpenSpec(): WidgetSpec {
+  if (!openDialog) return col();
+  const filtered = openDialog.filteredIds;
+  const activeId = editor.activeWindow();
+  const items = filtered.map((id) => renderListItem(id, activeId));
+  const itemKeys = filtered.map(String);
+  const selIdx = filtered.length === 0
+    ? -1
+    : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
+  const selectedId = selIdx >= 0 ? filtered[selIdx] : -1;
+  const selectedSession = selectedId > 0
+    ? conductorSessions.get(selectedId)
     : undefined;
-  const killRow: PromptSuggestion = {
-    text: "× Kill highlighted session",
-    description: killTarget
-      ? `Closes [${killTarget.id}] ${killTarget.label}`
-      : "Arrow to a session row first",
-    value: KILL_SESSION_VALUE,
-  };
-  return [newRow, ...sessionRows, killRow];
+
+  return col(
+    {
+      kind: "raw",
+      entries: [
+        styledRow([
+          {
+            text: "CONDUCTOR :: Sessions",
+            style: { fg: "ui.popup_border_fg", bold: true },
+          },
+        ]),
+      ],
+    },
+    spacer(0),
+    labeledSection({
+      label: "Filter",
+      child: text({
+        value: openDialog.filter.value,
+        cursorByte: openDialog.filter.cursor,
+        placeholder: "type to filter…",
+        fullWidth: true,
+        key: "filter",
+      }),
+    }),
+    row(
+      labeledSection({
+        label: `Sessions (${filtered.length})`,
+        child: list({
+          items,
+          itemKeys,
+          selectedIndex: selIdx,
+          visibleRows: 12,
+          key: "sessions",
+        }),
+      }),
+      spacer(2),
+      labeledSection({
+        label: selectedSession
+          ? `[${selectedSession.id}] ${selectedSession.label}`
+          : "Preview",
+        child: { kind: "raw", entries: buildPreviewEntries(selectedSession) },
+      }),
+    ),
+    spacer(0),
+    hintBar([
+      { keys: "↑↓", label: "nav" },
+      { keys: "Enter", label: "dive" },
+      { keys: "Esc", label: "close" },
+    ]),
+  );
 }
 
-function refreshPromptIfOpen(): void {
-  // editor.setPromptSuggestions is a no-op when no prompt of any
-  // type is open, so we can call it freely on every event.
-  // When the conductor prompt is open it picks up the new list;
-  // when something else is open we don't care, the next
-  // `Conductor: Open` will rebuild from scratch.
-  editor.setPromptSuggestions(buildSuggestions());
+function refreshOpenDialog(): void {
+  if (!openPanel || !openDialog) return;
+  openDialog.filteredIds = filterSessions(openDialog.filter.value);
+  // Clamp the selection into range so a fresh filter or a
+  // session vanishing under us doesn't leave us pointing past
+  // the end of the list.
+  if (openDialog.filteredIds.length === 0) {
+    openDialog.selectedIndex = 0;
+  } else if (openDialog.selectedIndex >= openDialog.filteredIds.length) {
+    openDialog.selectedIndex = openDialog.filteredIds.length - 1;
+  } else if (openDialog.selectedIndex < 0) {
+    openDialog.selectedIndex = 0;
+  }
+  openPanel.update(buildOpenSpec());
+  // The list widget's `selectedIndex` in the spec is initial-only;
+  // pin it via mutation so re-renders don't snap back to 0.
+  if (openDialog.filteredIds.length > 0) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+  }
 }
-
-// =============================================================================
-// Prompt orchestration
-// =============================================================================
-
-const PROMPT_TYPE = "conductor-room";
 
 function openControlRoom(): void {
+  if (openPanel) return;
+  reconcileSessions();
   const activeId = editor.activeWindow();
-  originalActiveSessionBeforePrompt = activeId;
-  lastHighlightedSessionId = null;
-  // Trailing " │ " separates the static title from the user's
-  // search input — without it typed characters jam right up
-  // against "sessions".
-  editor.startPrompt("Conductor — sessions  │  ", PROMPT_TYPE, true);
-  editor.setPromptSuggestions(buildSuggestions());
-  // Pseudo-row sits at index 0 (sentinel -1 in promptSessionIds),
-  // so the active session's row is at indexOf(activeId).
-  const activeIdx = promptSessionIds.indexOf(activeId);
-  promptSelectedIndex = activeIdx > 0 ? activeIdx : 0;
-  if (activeIdx > 0) {
-    editor.setPromptSelectedIndex(activeIdx);
-    lastHighlightedSessionId = activeId;
-    // Re-render so the bottom kill row picks up the active
-    // session as its initial target.
-    editor.setPromptSuggestions(buildSuggestions());
+  const ids = Array.from(conductorSessions.keys()).sort((a, b) => a - b);
+  const activeIdx = ids.indexOf(activeId);
+  openDialog = {
+    filter: { value: "", cursor: 0 },
+    filteredIds: ids,
+    selectedIndex: activeIdx >= 0 ? activeIdx : 0,
+    originalActiveSession: activeId,
+  };
+  openPanel = new FloatingWidgetPanel();
+  openPanel.mount(buildOpenSpec(), { widthPct: 80, heightPct: 70 });
+  if (openDialog.filteredIds.length > 0) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
-  editor.setPromptFooter([
-    { text: " " },
-    { text: "↑↓", style: { fg: "ui.help_key_fg" } },
-    { text: " preview  " },
-    { text: "Enter", style: { fg: "ui.help_key_fg" } },
-    { text: " dive/new/kill  " },
-    { text: "Esc", style: { fg: "ui.help_key_fg" } },
-    { text: " close" },
-  ]);
-  editor.setStatus(
-    "Up/Down: preview  Enter: dive/new/kill  Esc: cancel",
-  );
+  editor.setEditorMode(OPEN_MODE);
 }
 
-editor.on("prompt_selection_changed", (e) => {
-  if (e.prompt_type !== PROMPT_TYPE) return;
-  promptSelectedIndex = e.selected_index;
-  // Render the highlighted session's full UI in the prompt's
-  // preview pane. Pseudo-rows (-1 / -2) have nothing to preview
-  // — clear instead.
-  const id = promptSessionIds[promptSelectedIndex];
-  if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
-    editor.previewWindowInRect(id);
-  } else {
-    editor.clearWindowPreview();
+function closeOpenDialog(): void {
+  if (openPanel) {
+    openPanel.unmount();
+    openPanel = null;
   }
-  // Track the most recent real-session highlight so the bottom
-  // "× Kill" pseudo-row knows which session to close, and
-  // refresh suggestions so the kill row's description updates
-  // to name that target. Re-emitting suggestions resets the
-  // host's cursor to the top of the list, so we re-pin it
-  // immediately to the row we just landed on.
-  if (typeof id === "number" && id > 0 && id !== lastHighlightedSessionId) {
-    lastHighlightedSessionId = id;
-    editor.setPromptSuggestions(buildSuggestions());
-    editor.setPromptSelectedIndex(promptSelectedIndex);
-  }
-});
+  openDialog = null;
+  editor.setEditorMode(null);
+}
 
-editor.on("prompt_confirmed", (e) => {
-  if (e.prompt_type === PROMPT_TYPE) {
-    // Enter commits: dive into the highlighted session, fire the
-    // new-session flow on `+ New`, or close the most recently
-    // highlighted session on `× Kill`.
-    editor.clearWindowPreview();
-    originalActiveSessionBeforePrompt = null;
-    if (e.input === NEW_SESSION_VALUE) {
-      startNewSession();
-      return;
-    }
-    if (e.input === KILL_SESSION_VALUE) {
-      killLastHighlighted();
-      return;
-    }
-    const id = promptSessionIds[promptSelectedIndex];
-    if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
-      editor.setActiveWindow(id);
-    }
-    return;
-  }
-});
-
-editor.on("prompt_cancelled", (e) => {
-  if (e.prompt_type === PROMPT_TYPE) {
-    // Esc clears the preview override; active_session was
-    // never mutated so there's nothing to roll back.
-    editor.clearWindowPreview();
-    originalActiveSessionBeforePrompt = null;
-    return;
-  }
-});
+editor.defineMode(OPEN_MODE, [], true, true);
 
 // =============================================================================
 // New-session floating form
@@ -728,46 +791,122 @@ function conductor_mode_text_input(args: { text: string }): void {
 registerHandler("mode_text_input", conductor_mode_text_input);
 
 editor.on("widget_event", (e) => {
-  if (!form || !formPanel) return;
-  if (e.panel_id !== formPanel.id()) return;
-  if (e.event_type === "change") {
-    const field = e.widget_key;
-    const payload = (e.payload ?? {}) as Record<string, unknown>;
-    const value = payload.value;
-    const cursor = payload.cursorByte;
-    if (typeof value !== "string") return;
-    const slot = field === "name"
-      ? form.name
-      : field === "cmd"
-      ? form.cmd
-      : field === "branch"
-      ? form.branch
-      : null;
-    if (slot) {
-      slot.value = value;
-      if (typeof cursor === "number") slot.cursor = cursor;
+  // ---------------------------------------------------------------------
+  // New-session form
+  // ---------------------------------------------------------------------
+  if (form && formPanel && e.panel_id === formPanel.id()) {
+    if (e.event_type === "change") {
+      const field = e.widget_key;
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const value = payload.value;
+      const cursor = payload.cursorByte;
+      if (typeof value !== "string") return;
+      const slot = field === "name"
+        ? form.name
+        : field === "cmd"
+        ? form.cmd
+        : field === "branch"
+        ? form.branch
+        : null;
+      if (slot) {
+        slot.value = value;
+        if (typeof cursor === "number") slot.cursor = cursor;
+      }
+      return;
+    }
+    if (e.event_type === "activate") {
+      if (e.widget_key === "create") {
+        void submitForm();
+      } else if (e.widget_key === "cancel") {
+        closeForm();
+      }
+      return;
+    }
+    if (e.event_type === "cancel") {
+      // Host fires this when Esc unmounts the floating panel —
+      // clean up our own state to match.
+      form = null;
+      formPanel = null;
+      editor.setEditorMode(null);
+      return;
     }
     return;
   }
-  if (e.event_type === "activate") {
-    if (e.widget_key === "create") {
-      void submitForm();
-    } else if (e.widget_key === "cancel") {
-      closeForm();
+
+  // ---------------------------------------------------------------------
+  // Open dialog (session picker)
+  // ---------------------------------------------------------------------
+  if (openPanel && openDialog && e.panel_id === openPanel.id()) {
+    if (e.event_type === "change" && e.widget_key === "filter") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const value = payload.value;
+      const cursor = payload.cursorByte;
+      if (typeof value !== "string") return;
+      openDialog.filter.value = value;
+      if (typeof cursor === "number") openDialog.filter.cursor = cursor;
+      // Preserve highlighted session across the filter narrowing
+      // when possible — if the previously selected id is still in
+      // the new filtered set, keep it; otherwise reset to 0.
+      const prevId = openDialog.filteredIds[openDialog.selectedIndex];
+      const next = filterSessions(value);
+      openDialog.filteredIds = next;
+      const nextIdx = prevId !== undefined ? next.indexOf(prevId) : -1;
+      openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
+      refreshOpenDialog();
+      return;
+    }
+    if (e.event_type === "select" && e.widget_key === "sessions") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const idx = payload.index;
+      if (typeof idx === "number") {
+        openDialog.selectedIndex = idx;
+        // Update preview pane.
+        openPanel.update(buildOpenSpec());
+        // Re-pin the list selection so the spec re-emit doesn't
+        // snap it back to 0.
+        openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+      }
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "sessions") {
+      const id = openDialog.filteredIds[openDialog.selectedIndex];
+      if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
+        editor.setActiveWindow(id);
+      }
+      closeOpenDialog();
+      return;
+    }
+    if (e.event_type === "cancel") {
+      // Esc unmounted the panel — sync our own state.
+      openDialog = null;
+      openPanel = null;
+      editor.setEditorMode(null);
+      return;
     }
     return;
-  }
-  if (e.event_type === "cancel") {
-    // Host fires this when Esc unmounts the floating panel —
-    // clean up our own state to match.
-    form = null;
-    formPanel = null;
-    editor.setEditorMode(null);
   }
 });
 
-function killSessionById(id: number): void {
-  // Sentinel rows (-1 = `+ New`, -2 = `× Kill`) can't be killed.
+// Legacy kill helper retained for the `Conductor: Kill Selected`
+// command-palette command. In the widget-based picker (Phase 1)
+// the open dialog has no kill action — Phase 3-5 will replace
+// this with Stop / Archive / Delete. When invoked while the
+// open dialog is up, it targets that dialog's selection; when
+// invoked from the palette outside the dialog, it status-bars
+// with guidance.
+function killSelected(): void {
+  if (!openDialog) {
+    editor.setStatus(
+      "Conductor: open the session list (Ctrl+P → Conductor: Open) first",
+    );
+    return;
+  }
+  const ids = openDialog.filteredIds;
+  if (ids.length === 0) {
+    editor.setStatus("Conductor: no session selected");
+    return;
+  }
+  const id = ids[Math.max(0, Math.min(openDialog.selectedIndex, ids.length - 1))];
   if (id <= 0) {
     editor.setStatus("Conductor: select a session row first");
     return;
@@ -787,29 +926,6 @@ function killSessionById(id: number): void {
     editor.closeTerminal(s.terminalId);
   }
   editor.closeWindow(id);
-}
-
-function killSelected(): void {
-  if (promptSessionIds.length === 0) {
-    editor.setStatus("Conductor: open the session list first");
-    return;
-  }
-  const id = promptSessionIds[
-    Math.max(0, Math.min(promptSelectedIndex, promptSessionIds.length - 1))
-  ];
-  killSessionById(id);
-}
-
-// Called when the user activates the `× Kill highlighted` pseudo-row
-// from the open prompt. Targets the most recently highlighted real
-// session row (tracked in `lastHighlightedSessionId`) rather than the
-// currently selected one, which by definition is the pseudo-row itself.
-function killLastHighlighted(): void {
-  if (lastHighlightedSessionId === null) {
-    editor.setStatus("Conductor: arrow to a session row first");
-    return;
-  }
-  killSessionById(lastHighlightedSessionId);
 }
 
 // =============================================================================
@@ -846,15 +962,15 @@ editor.on("window_created", async (payload) => {
     }
     editor.setActiveWindow(id);
   }
-  refreshPromptIfOpen();
+  refreshOpenDialog();
 });
 
 editor.on("window_closed", () => {
-  refreshPromptIfOpen();
+  refreshOpenDialog();
 });
 
 editor.on("active_window_changed", () => {
-  refreshPromptIfOpen();
+  refreshOpenDialog();
 });
 
 // =============================================================================
@@ -882,7 +998,7 @@ editor.on("terminal_output", (payload) => {
       break;
     }
   }
-  refreshPromptIfOpen();
+  refreshOpenDialog();
 });
 
 editor.on("terminal_exit", (payload) => {
@@ -898,7 +1014,7 @@ editor.on("terminal_exit", (payload) => {
       break;
     }
   }
-  refreshPromptIfOpen();
+  refreshOpenDialog();
 });
 
 // =============================================================================

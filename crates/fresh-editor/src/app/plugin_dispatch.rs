@@ -3795,7 +3795,41 @@ impl Editor {
                         // event quiet).
                         self.handle_widget_text_key(panel_id, key);
                     }
-                    _ => {}
+                    _ => {
+                        // Picker-style nav: when the focused widget
+                        // doesn't have a meaningful Up/Down (single-
+                        // line Text, Button, Toggle, or no focus),
+                        // route the arrow to the first scrollable
+                        // widget in the panel. Lets a filter input
+                        // stay focused for typing while arrows
+                        // navigate the adjacent list.
+                        let scrollable = self
+                            .widget_registry
+                            .get(panel_id)
+                            .and_then(|p| find_scrollable_widget_key(&p.spec));
+                        if let Some(target_key) = scrollable {
+                            let target_kind = self.widget_registry.get(panel_id).and_then(|p| {
+                                crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
+                            });
+                            match target_kind {
+                                Some(fresh_core::api::WidgetSpec::List { .. }) => {
+                                    self.handle_widget_select_move_for_key(
+                                        panel_id,
+                                        &target_key,
+                                        delta,
+                                    );
+                                }
+                                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
+                                    self.handle_widget_tree_select_move_for_key(
+                                        panel_id,
+                                        &target_key,
+                                        delta,
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                 }
             }
             "PageUp" | "PageDown" => {
@@ -3857,10 +3891,31 @@ impl Editor {
                         // before dispatching through the smart-key
                         // router.
                         self.handle_widget_text_key(panel_id, "Enter");
+                    } else if let Some(target_key) = self
+                        .widget_registry
+                        .get(panel_id)
+                        .and_then(|p| find_scrollable_widget_key(&p.spec))
+                    {
+                        // Picker-style activate: a single-line filter
+                        // input paired with a List/Tree fires that
+                        // scrollable's activate event on Enter, so the
+                        // user can type-then-Enter without tabbing
+                        // focus to the list.
+                        let kind = self.widget_registry.get(panel_id).and_then(|p| {
+                            crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
+                        });
+                        match kind {
+                            Some(fresh_core::api::WidgetSpec::List { .. }) => {
+                                self.fire_list_activate(panel_id, &target_key);
+                            }
+                            Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
+                                self.fire_tree_activate(panel_id, &target_key);
+                            }
+                            _ => {}
+                        }
                     } else {
-                        // Single-line, form-like UX: Enter commits
-                        // the field and moves to the next tabbable
-                        // widget. Same intercept path applies.
+                        // Form-like UX: Enter commits the field and
+                        // moves to the next tabbable widget.
                         self.handle_widget_focus_advance(panel_id, 1);
                     }
                 }
@@ -4003,18 +4058,32 @@ impl Editor {
     }
 
     fn handle_widget_select_move(&mut self, panel_id: u64, delta: i32) {
-        // Move the focused List's selection by `delta`. Selection
-        // and scroll live in instance state (host-owned) — read
-        // from there if present, fall back to spec on first render.
+        let focus_key = match self.widget_registry.get(panel_id) {
+            Some(p) => p.focus_key.clone(),
+            None => return,
+        };
+        if focus_key.is_empty() {
+            return;
+        }
+        self.handle_widget_select_move_for_key(panel_id, &focus_key, delta);
+    }
+
+    /// Same as [`handle_widget_select_move`] but targets an explicit
+    /// `List` widget key instead of the panel's focused widget. Used
+    /// by the picker-style smart-key dispatch — `Up`/`Down` on a
+    /// focused filter input route to the first scrollable widget in
+    /// the panel without changing focus.
+    fn handle_widget_select_move_for_key(
+        &mut self,
+        panel_id: u64,
+        widget_key: &str,
+        delta: i32,
+    ) {
         let panel = match self.widget_registry.get(panel_id) {
             Some(p) => p,
             None => return,
         };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key);
+        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
         let (spec_sel, total, item_keys) = match widget {
             Some(fresh_core::api::WidgetSpec::List {
                 selected_index,
@@ -4027,8 +4096,7 @@ impl Editor {
         if total == 0 {
             return;
         }
-        // Prefer instance-state selected_index when present.
-        let cur_sel = match panel.instance_states.get(&focus_key) {
+        let cur_sel = match panel.instance_states.get(widget_key) {
             Some(crate::widgets::WidgetInstanceState::List { selected_index, .. }) => {
                 *selected_index
             }
@@ -4037,25 +4105,21 @@ impl Editor {
         let raw = if cur_sel < 0 { 0 } else { cur_sel + delta };
         let new_sel = raw.clamp(0, total - 1);
         let new_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
-        // Update instance state so subsequent reads (e.g. an Enter
-        // pressed before the plugin's spec update arrives) see the
-        // new selection.
         if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
-            let cur_scroll = match panel_mut.instance_states.get(&focus_key) {
+            let cur_scroll = match panel_mut.instance_states.get(widget_key) {
                 Some(crate::widgets::WidgetInstanceState::List { scroll_offset, .. }) => {
                     *scroll_offset
                 }
                 _ => 0,
             };
             panel_mut.instance_states.insert(
-                focus_key.clone(),
+                widget_key.to_string(),
                 crate::widgets::WidgetInstanceState::List {
                     scroll_offset: cur_scroll,
                     selected_index: new_sel,
                 },
             );
         }
-        // Re-render so the new selection's bg paints.
         self.rerender_widget_panel(panel_id);
         if self
             .plugin_manager
@@ -4067,7 +4131,7 @@ impl Editor {
                 "widget_event",
                 fresh_core::hooks::HookArgs::WidgetEvent {
                     panel_id,
-                    widget_key: focus_key,
+                    widget_key: widget_key.to_string(),
                     event_type: "select".into(),
                     payload: serde_json::json!({ "index": new_sel, "key": new_key }),
                 },
@@ -4080,15 +4144,28 @@ impl Editor {
     /// `nodes` index; we walk the visible-flat order to find the
     /// neighbour. Mirrors the List handler shape but tree-aware.
     fn handle_widget_tree_select_move(&mut self, panel_id: u64, delta: i32) {
+        let focus_key = match self.widget_registry.get(panel_id) {
+            Some(p) => p.focus_key.clone(),
+            None => return,
+        };
+        if focus_key.is_empty() {
+            return;
+        }
+        self.handle_widget_tree_select_move_for_key(panel_id, &focus_key, delta);
+    }
+
+    /// Tree counterpart of [`handle_widget_select_move_for_key`].
+    fn handle_widget_tree_select_move_for_key(
+        &mut self,
+        panel_id: u64,
+        widget_key: &str,
+        delta: i32,
+    ) {
         let panel = match self.widget_registry.get(panel_id) {
             Some(p) => p,
             None => return,
         };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key);
+        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
         let (spec_sel, nodes, item_keys) = match widget {
             Some(fresh_core::api::WidgetSpec::Tree {
                 selected_index,
@@ -4101,7 +4178,7 @@ impl Editor {
         if nodes.is_empty() {
             return;
         }
-        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(&focus_key) {
+        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
             Some(crate::widgets::WidgetInstanceState::Tree {
                 selected_index,
                 scroll_offset,
@@ -4109,17 +4186,11 @@ impl Editor {
             }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
             _ => (spec_sel, 0u32, std::collections::HashSet::<String>::new()),
         };
-        // Build the visible-index list using the same rule as the
-        // renderer: a node is visible iff every ancestor is expanded.
         let visible_indices = collect_visible_tree_indices(&nodes, &item_keys, &expanded);
         if visible_indices.is_empty() {
             return;
         }
-        // Find current selection's position in the visible list.
         let cur_pos = if cur_sel < 0 {
-            // No selection — Down picks the first visible node, Up
-            // picks the last. Match List semantics for "press Down
-            // when nothing selected".
             if delta > 0 {
                 -1
             } else {
@@ -4137,7 +4208,7 @@ impl Editor {
         let new_key = item_keys.get(new_abs).cloned().unwrap_or_default();
         if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
             panel_mut.instance_states.insert(
-                focus_key.clone(),
+                widget_key.to_string(),
                 crate::widgets::WidgetInstanceState::Tree {
                     scroll_offset: cur_scroll,
                     selected_index: new_abs as i32,
@@ -4156,7 +4227,7 @@ impl Editor {
                 "widget_event",
                 fresh_core::hooks::HookArgs::WidgetEvent {
                     panel_id,
-                    widget_key: focus_key,
+                    widget_key: widget_key.to_string(),
                     event_type: "select".into(),
                     payload: serde_json::json!({ "index": new_abs as i64, "key": new_key }),
                 },
