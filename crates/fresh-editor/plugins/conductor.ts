@@ -338,13 +338,21 @@ function buildOpenSpec(): WidgetSpec {
         label: selectedSession
           ? `[${selectedSession.id}] ${selectedSession.label}`
           : "Preview",
-        child: { kind: "raw", entries: buildPreviewEntries(selectedSession) },
+        child: col(
+          { kind: "raw", entries: buildPreviewEntries(selectedSession) },
+          spacer(0),
+          row(
+            flexSpacer(),
+            button("Stop", { intent: "danger", key: "stop" }),
+          ),
+        ),
       }),
     ),
     spacer(0),
     hintBar([
       { keys: "↑↓", label: "nav" },
       { keys: "Enter", label: "dive" },
+      { keys: "Tab", label: "focus" },
       { keys: "Esc", label: "close" },
     ]),
   );
@@ -398,6 +406,32 @@ function closeOpenDialog(): void {
   }
   openDialog = null;
   editor.setEditorMode(null);
+}
+
+// Stop every process the highlighted session owns. Sends
+// SIGTERM first via the host's `signalWindow` (which fans
+// out through the window's process-group tracker), then
+// follows up with SIGKILL after a short grace period so
+// ill-behaved agents that ignore SIGTERM still get reaped.
+// The session record stays put — Stop only kills processes,
+// it doesn't touch the worktree or the editor session.
+function stopSelectedSession(): void {
+  if (!openDialog) return;
+  const id = openDialog.filteredIds[openDialog.selectedIndex];
+  if (typeof id !== "number" || id <= 0) return;
+  if (id === 1) {
+    editor.setStatus("Conductor: cannot stop the base session");
+    return;
+  }
+  editor.signalWindow(id, "SIGTERM");
+  // SIGKILL fallback for agents that ignore SIGTERM. The
+  // host's signalWindow is idempotent on already-exited
+  // process groups, so the second call is safe whether or
+  // not the first one took.
+  setTimeout(() => {
+    editor.signalWindow(id, "SIGKILL");
+  }, 2000);
+  editor.setStatus(`Conductor: stop signal sent to session [${id}]`);
 }
 
 editor.defineMode(OPEN_MODE, [], true, true);
@@ -876,6 +910,10 @@ editor.on("widget_event", (e) => {
         editor.setActiveWindow(id);
       }
       closeOpenDialog();
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "stop") {
+      stopSelectedSession();
       return;
     }
     if (e.event_type === "cancel") {
