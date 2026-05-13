@@ -271,27 +271,20 @@ function buildPreviewEntries(
   }
   const activeId = editor.activeWindow();
   const isActive = s.id === activeId;
+  const stateText = isActive ? "ACT" : STATE_GLYPH[s.state].trim();
   return [
     styledRow([
-      { text: "Root:  ", style: { fg: "ui.menu_disabled_fg" } },
-      { text: s.root },
-    ]),
-    styledRow([
-      { text: "Age:   ", style: { fg: "ui.menu_disabled_fg" } },
-      { text: ageString(s.createdAt) },
-    ]),
-    styledRow([
-      { text: "State: ", style: { fg: "ui.menu_disabled_fg" } },
       {
-        text: isActive ? "ACT" : STATE_GLYPH[s.state].trim(),
+        text: stateText,
         style: isActive
           ? { fg: "ui.tab_active_fg", bold: true }
-          : undefined,
+          : { fg: "ui.menu_disabled_fg" },
       },
+      { text: "  " },
+      { text: ageString(s.createdAt), style: { fg: "ui.menu_disabled_fg" } },
     ]),
     styledRow([
-      { text: "Term:  ", style: { fg: "ui.menu_disabled_fg" } },
-      { text: s.terminalId !== null ? String(s.terminalId) : "—" },
+      { text: s.root, style: { fg: "ui.menu_disabled_fg" } },
     ]),
   ];
 }
@@ -299,17 +292,16 @@ function buildPreviewEntries(
 // Approximate number of session rows the picker's list pane
 // should show. Derived from the active buffer's viewport so the
 // picker's row(list, preview) fills the panel and the hint bar
-// naturally sits at the bottom. Conservative — leaves room for
-// header, filter input, footer, and the section borders.
+// sits flush at the panel's last row. Conservative — leaves
+// room for header, filter input, footer, and section borders.
 function openListVisibleRows(): number {
   const vp = editor.getViewport();
   const h = vp ? vp.height : 30;
   const panelH = Math.floor(h * 0.9);
-  // header (1) + spacer (1) + filter section (3) + spacer (1)
-  // + sessions section borders (2) + spacer (1) + footer (1)
-  // = 10 rows of chrome. Floor at 4 so a tiny terminal still
-  // shows something.
-  return Math.max(4, panelH - 10);
+  // header (1) + spacer (1) + filter section (3) + sessions
+  // section borders (2) + hint bar (1) = 8 rows of chrome.
+  // Floor at 4 so a tiny terminal still shows something.
+  return Math.max(4, panelH - 8);
 }
 
 // Compose the right-hand preview pane. Normally it shows info
@@ -375,6 +367,15 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   return labeledSection({
     label: s ? `[${s.id}] ${s.label}` : "Preview",
     child: col(
+      row(
+        flexSpacer(),
+        button("Stop", { key: "stop" }),
+        spacer(2),
+        button("Archive", { key: "archive" }),
+        spacer(2),
+        button("Delete", { intent: "danger", key: "delete" }),
+      ),
+      spacer(0),
       { kind: "raw", entries: buildPreviewEntries(s) },
       spacer(0),
       // Live window render. `windowId: 0` (no session selected)
@@ -385,15 +386,6 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
         rows: embedRows,
         key: "live-preview",
       }),
-      spacer(0),
-      row(
-        flexSpacer(),
-        button("Stop", { key: "stop" }),
-        spacer(2),
-        button("Archive", { key: "archive" }),
-        spacer(2),
-        button("Delete", { intent: "danger", key: "delete" }),
-      ),
     ),
   });
 }
@@ -463,7 +455,6 @@ function buildOpenSpec(): WidgetSpec {
       // 25%.
       buildPreviewPane(selectedSession),
     ),
-    spacer(0),
     row(
       flexSpacer(),
       hintBar([
@@ -539,9 +530,9 @@ function openControlRoom(): void {
     originalActiveSession: activeId,
     pendingConfirm: null,
     listVisibleRows,
-    // Mirror buildPreviewPane's old inline math: leave room
-    // for 4 info rows + 2 spacers + 1 action-row.
-    embedRows: Math.max(4, listVisibleRows - 7),
+    // Mirror buildPreviewPane's chrome: 1 button row + 1 spacer
+    // + 2 info rows + 1 spacer = 4 rows reserved above the embed.
+    embedRows: Math.max(4, listVisibleRows - 4),
   };
   openPanel = new FloatingWidgetPanel();
   // 90% × 90% of the terminal — the open dialog wants room for
