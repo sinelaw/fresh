@@ -410,13 +410,44 @@ function buildOpenSpec(): WidgetSpec {
       buildPreviewPane(selectedSession),
     ),
     spacer(0),
-    hintBar([
-      { keys: "↑↓", label: "nav" },
-      { keys: "Enter", label: "dive" },
-      { keys: "Tab", label: "focus" },
-      { keys: "Esc", label: "close" },
-    ]),
+    row(
+      flexSpacer(),
+      hintBar([
+        { keys: "↑↓", label: "nav" },
+        { keys: "Enter", label: "dive" },
+        { keys: "Tab", label: "focus" },
+        { keys: "Esc", label: "close" },
+      ]),
+      flexSpacer(),
+      syncIndicator(),
+    ),
   );
+}
+
+// Tiny status glyph rendered at the trailing edge of the
+// footer. `↻` while a push is in flight, `⤒` when the last
+// push failed (with the error in the tooltip — for now, just a
+// status-bar setStatus on focus), and an empty entry otherwise
+// so the layout stays put.
+function syncIndicator(): WidgetSpec {
+  let glyph = "";
+  let style: { fg?: string; italic?: boolean } | undefined;
+  switch (syncStatus) {
+    case "syncing":
+      glyph = " ↻ ";
+      style = { fg: "editor.whitespace_indicator_fg" };
+      break;
+    case "error":
+      glyph = " ⤒ ";
+      style = { fg: "ui.status_error_indicator_fg" };
+      break;
+    default:
+      glyph = "   ";
+  }
+  return {
+    kind: "raw",
+    entries: [styledRow([{ text: glyph, style }])],
+  };
 }
 
 function refreshOpenDialog(): void {
@@ -653,6 +684,207 @@ async function archiveSelectedSession(): Promise<void> {
   } else {
     editor.setStatus(`Conductor: archived [${id}] ${session.label}`);
   }
+  triggerSyncAsync(repoRoot);
+}
+
+// ---------------------------------------------------------------------
+// Cross-machine recovery (Phase 6)
+//
+// Every lifecycle action that mutates the local archive manifest also
+// fires an asynchronous push to `refs/heads/<user>/fresh-sessions` on
+// origin so the same sessions can be recovered on another machine.
+// The push runs in the background and never blocks the user-visible
+// action; failures get surfaced through `syncStatus` (and a small ⤒
+// glyph in the dialog footer when the error is fresh).
+//
+// The branch is orphan-style: a single root file `sessions.json` and
+// commits with the sessions snapshot. We maintain it through a
+// dedicated worktree at `<XDG>/conductor/.sync-workspace` so we don't
+// disturb the user's normal `git worktree` set.
+// ---------------------------------------------------------------------
+
+type SyncStatus = "idle" | "syncing" | "error";
+let syncStatus: SyncStatus = "idle";
+let syncError: string | null = null;
+
+function deriveSyncUser(): string {
+  // Priority order documented in
+  // docs/internal/conductor-open-dialog-and-lifecycle.md.
+  const envOverride = editor.getEnv("FRESH_SESSIONS_USER");
+  if (envOverride && envOverride.trim()) return envOverride.trim();
+  const localPart = (envEmailLocalPart() || "").trim();
+  if (localPart) return localPart;
+  const u = editor.getEnv("USER");
+  if (u && u.trim()) return u.trim();
+  return "fresh";
+}
+
+function envEmailLocalPart(): string | null {
+  // Best-effort sync read of git config user.email's local-part.
+  // Reading from env first (since spawnProcess is async) keeps
+  // deriveSyncUser synchronous; users with no env override will
+  // probably have `$USER` available as fallback.
+  const email = editor.getEnv("GIT_AUTHOR_EMAIL") ||
+    editor.getEnv("EMAIL");
+  if (!email) return null;
+  const at = email.indexOf("@");
+  return at > 0 ? email.slice(0, at) : null;
+}
+
+function syncWorkspacePath(): string {
+  return editor.pathJoin(editor.getDataDir(), "conductor", ".sync-workspace");
+}
+
+// Fire-and-forget sync. Never blocks the caller; updates
+// `syncStatus`/`syncError` and refreshes the dialog (if open)
+// so the footer indicator can reflect the result.
+function triggerSyncAsync(repoRoot: string): void {
+  void (async () => {
+    syncStatus = "syncing";
+    if (openPanel) refreshOpenDialog();
+    const result = await syncSessions(repoRoot);
+    if (result.ok) {
+      syncStatus = "idle";
+      syncError = null;
+    } else {
+      syncStatus = "error";
+      syncError = result.err ?? "unknown error";
+    }
+    if (openPanel) refreshOpenDialog();
+  })();
+}
+
+interface SyncResult {
+  ok: boolean;
+  err?: string;
+}
+
+async function syncSessions(repoRoot: string): Promise<SyncResult> {
+  const user = deriveSyncUser();
+  const branch = `${user}/fresh-sessions`;
+  const wt = syncWorkspacePath();
+
+  // Ensure the sync worktree exists and is on the right branch.
+  // First-time setup creates the worktree as an orphan branch
+  // with no parent commit (cleanest history; no leftover files
+  // from the original tree).
+  if (!editor.createDir(editor.pathDirname(wt))) {
+    return { ok: false, err: "createDir failed for sync workspace parent" };
+  }
+  const branchExists = await spawnCollect(
+    "git",
+    ["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+    repoRoot,
+  );
+  const wtExists = await spawnCollect(
+    "git",
+    ["-C", repoRoot, "worktree", "list", "--porcelain"],
+    repoRoot,
+  );
+  const wtAlreadyTracked = wtExists.exit_code === 0 &&
+    wtExists.stdout.includes(wt);
+
+  if (!wtAlreadyTracked) {
+    if (branchExists.exit_code === 0) {
+      const addRes = await spawnCollect(
+        "git",
+        ["-C", repoRoot, "worktree", "add", wt, branch],
+        repoRoot,
+      );
+      if (addRes.exit_code !== 0) {
+        return { ok: false, err: lastNonEmptyLine(addRes.stderr) };
+      }
+    } else {
+      // Create an orphan worktree by adding detached then
+      // switching to a new orphan branch.
+      const addRes = await spawnCollect(
+        "git",
+        ["-C", repoRoot, "worktree", "add", "--detach", wt, "HEAD"],
+        repoRoot,
+      );
+      if (addRes.exit_code !== 0) {
+        return { ok: false, err: lastNonEmptyLine(addRes.stderr) };
+      }
+      const orphanRes = await spawnCollect(
+        "git",
+        ["-C", wt, "checkout", "--orphan", branch],
+        wt,
+      );
+      if (orphanRes.exit_code !== 0) {
+        return { ok: false, err: lastNonEmptyLine(orphanRes.stderr) };
+      }
+      // Strip everything inherited from HEAD's tree so the
+      // orphan branch starts clean.
+      await spawnCollect("git", ["-C", wt, "rm", "-rf", "."], wt);
+    }
+  }
+
+  // Snapshot active + archived sessions into the JSON that
+  // lives at the root of the sync branch.
+  const snapshot = await buildSyncSnapshot(repoRoot);
+  const sessionsPath = editor.pathJoin(wt, "sessions.json");
+  if (!editor.writeFile(sessionsPath, JSON.stringify(snapshot, null, 2))) {
+    return { ok: false, err: "writeFile sessions.json failed" };
+  }
+
+  const addRes = await spawnCollect(
+    "git",
+    ["-C", wt, "add", "sessions.json"],
+    wt,
+  );
+  if (addRes.exit_code !== 0) {
+    return { ok: false, err: lastNonEmptyLine(addRes.stderr) };
+  }
+  // The commit may noop when nothing changed — git exits with
+  // 1 in that case, which we treat as success rather than an
+  // error.
+  const commitRes = await spawnCollect(
+    "git",
+    [
+      "-C",
+      wt,
+      "commit",
+      "--allow-empty-message",
+      "-m",
+      "Update sessions",
+    ],
+    wt,
+  );
+  if (commitRes.exit_code !== 0 && !commitRes.stdout.includes("nothing to commit")) {
+    // Permissive: stderr "nothing to commit" / "working tree clean"
+    // means there was nothing new to push. Skip the push and
+    // report success.
+    if (!commitRes.stderr.includes("nothing to commit")) {
+      // Other commit failures: report.
+      return { ok: false, err: lastNonEmptyLine(commitRes.stderr) };
+    }
+  }
+
+  const pushRes = await spawnCollect(
+    "git",
+    ["-C", wt, "push", "origin", branch],
+    wt,
+  );
+  if (pushRes.exit_code !== 0) {
+    return { ok: false, err: lastNonEmptyLine(pushRes.stderr) };
+  }
+  return { ok: true };
+}
+
+async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
+  const manifest = loadArchiveManifest(repoRoot);
+  return {
+    version: 1,
+    machine_id: editor.getEnv("HOSTNAME") || "unknown",
+    updated_at: new Date().toISOString(),
+    active: Array.from(conductorSessions.values()).map((s) => ({
+      label: s.label,
+      branch: s.label,
+      base_ref: "origin/master",
+      created_at: new Date(s.createdAt).toISOString(),
+    })),
+    archived: manifest.sessions,
+  };
 }
 
 // Delete flow: stop processes (SIGKILL), close the editor
@@ -725,6 +957,7 @@ async function deleteConfirmedSession(): Promise<void> {
 
   editor.setStatus(`Conductor: deleted [${id}] ${session.label}`);
   if (openPanel) openPanel.update(buildOpenSpec());
+  triggerSyncAsync(repoRoot);
 }
 
 editor.defineMode(OPEN_MODE, [], true, true);
