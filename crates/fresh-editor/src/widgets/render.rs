@@ -127,6 +127,34 @@ pub fn render_spec(
     }
 }
 
+/// Predict whether a `WidgetSpec` will render as a multi-line
+/// (Block) child of a Row, without doing the actual render. The
+/// Row's layout uses this up-front to decide whether a child
+/// should get its full `panel_width` (inline path) or a smaller
+/// per-column budget (horizontal-zip path).
+///
+/// Slightly conservative — a `Col` with one inline child is
+/// predicted inline (matches its actual one-line render); a `Row`
+/// containing any block descendant is predicted block (so nested
+/// rows participate in the zip correctly).
+fn predicts_block(spec: &WidgetSpec) -> bool {
+    match spec {
+        WidgetSpec::Col { children, .. } => {
+            if children.len() > 1 {
+                return true;
+            }
+            children.first().map(predicts_block).unwrap_or(false)
+        }
+        WidgetSpec::LabeledSection { .. } => true,
+        WidgetSpec::Tree { .. } => true,
+        WidgetSpec::List { .. } => true,
+        WidgetSpec::Text { rows, .. } => *rows > 1,
+        WidgetSpec::Raw { entries, .. } => entries.len() > 1,
+        WidgetSpec::Row { children, .. } => children.iter().any(predicts_block),
+        _ => false,
+    }
+}
+
 /// One position in a Row's two-pass layout. Used internally to
 /// defer flex-spacer sizing until after we know all the inline
 /// children's natural widths.
@@ -226,17 +254,40 @@ fn render_collected(
             //     slots; expand each flex spacer's text + shift
             //     subsequent overlays / hits accordingly.
             //
-            // Multi-line children (Raw with N>1, nested Col)
-            // flush the row accumulator and pass through unchanged
-            // — flex layout only spans inline-sized children.
+            // When ≥1 child is multi-line (a `Block`), the
+            // assembly switches to a per-line zip instead of
+            // the inline-collapse path — each block gets a
+            // column budget and the layout walks block lines
+            // left-to-right. See [the Phase 1b note in
+            // docs/internal/conductor-open-dialog-and-lifecycle.md]
+            // for the rationale.
+            //
+            // Width allocation for the zip path: blocks share
+            // `panel_width / block_count` evenly. Inline
+            // children render at full `panel_width` (they
+            // collapse to a single line so the value is just a
+            // soft cap). This is intentionally simple — a
+            // future `widthPct` field on Row children can
+            // refine the split if it ever matters.
+            let block_count = children.iter().filter(|c| predicts_block(c)).count();
+            let block_width = if block_count == 0 {
+                panel_width
+            } else {
+                ((panel_width as usize) / block_count).max(1) as u32
+            };
             let mut row_pieces: Vec<RowPiece> = Vec::new();
             for child in children {
                 if let WidgetSpec::Spacer { flex: true, .. } = child {
                     row_pieces.push(RowPiece::Flex);
                     continue;
                 }
+                let child_panel_width = if predicts_block(child) {
+                    block_width
+                } else {
+                    panel_width
+                };
                 let (child_entries, child_hits, child_focus) =
-                    render_collected(child, prev, next_state, focus_key, panel_width);
+                    render_collected(child, prev, next_state, focus_key, child_panel_width);
                 if child_entries.is_empty() {
                     debug_assert!(child_hits.is_empty(), "empty children produce no hits");
                     continue;
@@ -261,6 +312,15 @@ fn render_collected(
                     });
                 }
             }
+            // If any Block pieces survived classification, take
+            // the horizontal-zip path; otherwise fall through to
+            // the original inline-collapse assembly.
+            let has_blocks = row_pieces
+                .iter()
+                .any(|p| matches!(p, RowPiece::Block { .. }));
+            if has_blocks {
+                zip_row_blocks(row_pieces, block_width, panel_width, &mut entries, &mut hits, &mut focus_cursor);
+            } else {
 
             // Compute flex sizing.
             let inline_natural: usize = row_pieces
@@ -342,31 +402,17 @@ fn render_collected(
                             }
                         }
                     }
-                    RowPiece::Block {
-                        entries: block_entries,
-                        hits: child_hits,
-                        focus_cursor: child_focus,
-                    } => {
-                        if let Some(mut merged) = acc.take() {
-                            ensure_trailing_newline(&mut merged);
-                            entries.push(merged);
-                        }
-                        let row_offset = entries.len() as u32;
-                        for mut h in child_hits {
-                            h.buffer_row += row_offset;
-                            hits.push(h);
-                        }
-                        if let Some(mut fc) = child_focus {
-                            fc.buffer_row += row_offset;
-                            focus_cursor = Some(fc);
-                        }
-                        entries.extend(block_entries);
+                    RowPiece::Block { .. } => {
+                        // Unreachable in the inline-only path —
+                        // `has_blocks` was false here.
+                        debug_assert!(false, "block piece in inline-only Row path");
                     }
                 }
             }
             if let Some(mut merged) = acc {
                 ensure_trailing_newline(&mut merged);
                 entries.push(merged);
+            }
             }
         }
         WidgetSpec::Col { children, .. } => {
@@ -1990,6 +2036,183 @@ fn merge_inline(merged: &mut TextPropertyEntry, next: &mut TextPropertyEntry) {
     // an inline-row child has no meaningful semantics here; if a
     // plugin needs whole-line styling it should produce a Col with
     // the styled child as its sole element.
+}
+
+/// Pad / truncate `text` to exactly `cols` display columns, in
+/// place. Uses char count as the display-width approximation —
+/// good for ASCII; wide-char-aware width would need
+/// `unicode-width`, but no current caller relies on that.
+fn pad_or_truncate_cols(text: &mut String, cols: usize) {
+    let cur = text.chars().count();
+    if cur < cols {
+        for _ in 0..(cols - cur) {
+            text.push(' ');
+        }
+    } else if cur > cols {
+        let cutoff = text
+            .char_indices()
+            .nth(cols)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
+        text.truncate(cutoff);
+    }
+}
+
+/// Horizontal-zip pass for a Row that contains ≥1 multi-line
+/// (Block) child. Each block has already been rendered with its
+/// per-column budget (`block_width`); this helper walks the
+/// row's pieces left-to-right per visual row and stitches them
+/// into one merged line at a time.
+///
+/// Layout rules:
+///   * Inline pieces sit at row 0 and become `chars().count()`
+///     spaces on subsequent rows (so the right-hand block stays
+///     aligned with its column).
+///   * Block pieces contribute their `entries[row]` (or a blank
+///     row of `block_width` spaces past their height).
+///   * Flex pieces are intentionally a no-op in the block path —
+///     `row(block, flexSpacer(), block)` is a rare shape and we
+///     skip honouring flex here to keep the budget arithmetic
+///     simple. Plugins that need a fixed gap should use
+///     `spacer(n)` instead.
+///
+/// Hits and focus cursors get shifted by both the buffer-row
+/// offset (which output line we're on) and the per-piece
+/// byte-column offset (where in the merged text the piece
+/// starts).
+fn zip_row_blocks(
+    pieces: Vec<RowPiece>,
+    block_width: u32,
+    panel_width: u32,
+    out_entries: &mut Vec<TextPropertyEntry>,
+    out_hits: &mut Vec<HitArea>,
+    out_focus_cursor: &mut Option<FocusCursor>,
+) {
+    let starting_row = out_entries.len() as u32;
+    let block_w = block_width as usize;
+    let _ = panel_width;
+
+    // Compute the merged height = max(block.entries.len()).
+    let max_height = pieces
+        .iter()
+        .filter_map(|p| match p {
+            RowPiece::Block { entries, .. } => Some(entries.len()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    if max_height == 0 {
+        return;
+    }
+
+    for row_idx in 0..max_height {
+        let mut text = String::new();
+        let mut overlays: Vec<InlineOverlay> = Vec::new();
+        for piece in &pieces {
+            match piece {
+                RowPiece::Inline { entry, hits, focus_cursor } => {
+                    let inline_cols = entry.text.chars().count();
+                    let byte_shift = text.len();
+                    if row_idx == 0 {
+                        text.push_str(&entry.text);
+                        for overlay in &entry.inline_overlays {
+                            overlays.push(InlineOverlay {
+                                start: overlay.start + byte_shift,
+                                end: overlay.end + byte_shift,
+                                style: overlay.style.clone(),
+                                properties: overlay.properties.clone(),
+                                unit: overlay.unit,
+                            });
+                        }
+                        for h in hits {
+                            let mut h = h.clone();
+                            h.byte_start += byte_shift;
+                            h.byte_end += byte_shift;
+                            h.buffer_row = starting_row;
+                            out_hits.push(h);
+                        }
+                        if let Some(fc) = focus_cursor {
+                            *out_focus_cursor = Some(FocusCursor {
+                                buffer_row: starting_row,
+                                byte_in_row: fc.byte_in_row + byte_shift as u32,
+                            });
+                        }
+                    } else {
+                        for _ in 0..inline_cols {
+                            text.push(' ');
+                        }
+                    }
+                }
+                RowPiece::Flex => {
+                    // Skipped — see fn doc.
+                }
+                RowPiece::Block { entries, hits, focus_cursor } => {
+                    let byte_shift = text.len();
+                    if let Some(line) = entries.get(row_idx) {
+                        let mut line_text = line.text.clone();
+                        // Strip the entry's trailing newline so it
+                        // doesn't split our merged line.
+                        if line_text.ends_with('\n') {
+                            line_text.pop();
+                        }
+                        let original_byte_len = line_text.len();
+                        pad_or_truncate_cols(&mut line_text, block_w);
+                        text.push_str(&line_text);
+                        for overlay in &line.inline_overlays {
+                            // Overlays whose end exceeds the
+                            // truncated byte length get clamped to
+                            // the truncation point.
+                            let new_end = overlay.end.min(original_byte_len);
+                            if overlay.start >= original_byte_len {
+                                continue;
+                            }
+                            overlays.push(InlineOverlay {
+                                start: overlay.start + byte_shift,
+                                end: new_end + byte_shift,
+                                style: overlay.style.clone(),
+                                properties: overlay.properties.clone(),
+                                unit: overlay.unit,
+                            });
+                        }
+                        for h in hits {
+                            if h.buffer_row != row_idx as u32 {
+                                continue;
+                            }
+                            let mut h = h.clone();
+                            h.byte_start += byte_shift;
+                            h.byte_end += byte_shift;
+                            h.buffer_row = starting_row + row_idx as u32;
+                            out_hits.push(h);
+                        }
+                        if let Some(fc) = focus_cursor {
+                            if fc.buffer_row == row_idx as u32 {
+                                *out_focus_cursor = Some(FocusCursor {
+                                    buffer_row: starting_row + row_idx as u32,
+                                    byte_in_row: fc.byte_in_row + byte_shift as u32,
+                                });
+                            }
+                        }
+                    } else {
+                        // Past this block's height — emit a blank
+                        // column of `block_w` spaces.
+                        for _ in 0..block_w {
+                            text.push(' ');
+                        }
+                    }
+                }
+            }
+        }
+        text.push('\n');
+        out_entries.push(TextPropertyEntry {
+            text,
+            properties: Default::default(),
+            style: None,
+            inline_overlays: overlays,
+            segments: Vec::new(),
+            pad_to_chars: None,
+            truncate_to_chars: None,
+        });
+    }
 }
 
 #[cfg(test)]

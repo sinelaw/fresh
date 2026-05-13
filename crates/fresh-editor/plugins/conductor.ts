@@ -320,6 +320,9 @@ function buildOpenSpec(): WidgetSpec {
         key: "filter",
       }),
     }),
+    // Two-pane: sessions list | preview. Renderer's `row()`
+    // horizontally zips multi-line children so this composes
+    // the wireframed shape directly.
     row(
       labeledSection({
         label: `Sessions (${filtered.length})`,
@@ -331,7 +334,6 @@ function buildOpenSpec(): WidgetSpec {
           key: "sessions",
         }),
       }),
-      spacer(2),
       labeledSection({
         label: selectedSession
           ? `[${selectedSession.id}] ${selectedSession.label}`
