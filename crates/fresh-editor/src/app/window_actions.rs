@@ -51,6 +51,13 @@ impl crate::app::Editor {
     /// Caller is responsible for ensuring `root` is absolute. The
     /// `PluginCommand::CreateWindow` dispatcher rejects relative
     /// paths before reaching here.
+    ///
+    /// Seeds the new window with an empty scratch buffer + a
+    /// minimal split layout up front (same shape as the
+    /// first-dive seed path), so the window is renderable
+    /// immediately. Without this, never-dived windows have
+    /// `splits == None` and any cross-window render (e.g. the
+    /// Conductor preview pane's `WindowEmbed`) draws blank.
     pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
@@ -61,6 +68,20 @@ impl crate::app::Editor {
         session.terminal_height = self.terminal_height;
         let resolved_label = session.label.clone();
         self.windows.insert(id, session);
+
+        // Same seed shape that `set_active_window` builds on
+        // first dive — installed eagerly so the window is
+        // immediately renderable from any code path that walks
+        // the windows map (preview rendering, embedded session
+        // panes, etc.).
+        if let Some((buf, state, metadata, event_log, mgr, vs)) = self.build_fresh_layout_if_needed(id) {
+            if let Some(s) = self.windows.get_mut(&id) {
+                s.buffers.set_splits((mgr, vs));
+                s.buffers.insert(buf, state);
+                s.buffer_metadata.insert(buf, metadata);
+                s.event_logs.insert(buf, event_log);
+            }
+        }
 
         self.plugin_manager.read().unwrap().run_hook(
             "window_created",
