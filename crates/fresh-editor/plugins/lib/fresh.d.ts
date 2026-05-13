@@ -902,6 +902,30 @@ type WidgetSpec = {
 	* `field_width` pad. `0` = no cap. Ignored when `rows > 1`.
 	*/
 	maxVisibleChars: number;
+	/**
+	* Stretch the visible field to fill the available
+	* width of the enclosing container. Overrides
+	* `field_width` when set: the renderer computes
+	* `panel_width - label_overhead - bracket_overhead` as
+	* the effective visible width. Multi-line widgets
+	* already fill the panel width by default; this flag is
+	* most useful for single-line inputs inside a
+	* `LabeledSection` or a flexible row.
+	*/
+	fullWidth: boolean;
+	key?: string | null;
+} | {
+	"kind": "labeledSection";
+	/**
+	* Legend text printed in the top border. Empty = no
+	* legend (the top border becomes one unbroken line).
+	*/
+	label: string;
+	/**
+	* The single wrapped widget. Boxed because `WidgetSpec`
+	* is recursive.
+	*/
+	child: WidgetSpec;
 	key?: string | null;
 } | {
 	"kind": "raw";

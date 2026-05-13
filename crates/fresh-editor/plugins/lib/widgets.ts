@@ -324,6 +324,13 @@ export function text(
     /** Single-line soft cap on visible chars after the
      * `fieldWidth` pad. `0` = no cap. Ignored when `rows >= 2`. */
     maxVisibleChars?: number;
+    /** Stretch the visible field to fill the enclosing
+     * container's width. Overrides `fieldWidth` when set:
+     * the renderer sizes the bracketed region to
+     * `panelWidth - label_overhead - bracket_overhead`. Pair
+     * with `labeledSection(...)` to get a uniformly full-width
+     * fieldset look. */
+    fullWidth?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -337,6 +344,7 @@ export function text(
     rows: options.rows ?? 1,
     fieldWidth: options.fieldWidth ?? 0,
     maxVisibleChars: options.maxVisibleChars ?? 0,
+    fullWidth: options.fullWidth ?? false,
     key: options.key,
   };
 }
@@ -356,6 +364,7 @@ export function textArea(
     rows?: number;
     /** Visible column width; `0` = use panel width. */
     fieldWidth?: number;
+    fullWidth?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -380,6 +389,8 @@ export function textInput(
     maxVisibleChars?: number;
     /** Constant visible width inside the brackets. */
     fieldWidth?: number;
+    /** See `text({ fullWidth })`. */
+    fullWidth?: boolean;
     key?: string;
   },
 ): WidgetSpec {
@@ -392,8 +403,36 @@ export function textInput(
     rows: 1,
     fieldWidth: options?.fieldWidth,
     maxVisibleChars: options?.maxVisibleChars,
+    fullWidth: options?.fullWidth,
     key: options?.key,
   });
+}
+
+/** Group a single child widget inside a rounded, thin border
+ * with `label` printed as a top-left legend (HTML
+ * `<fieldset>` semantics). The host renders three rows:
+ *
+ *     ╭─ Label ──────────────────╮
+ *     │ <child rendered content> │
+ *     ╰──────────────────────────╯
+ *
+ * The section always spans the parent's available width. The
+ * child is rendered with the inner width (parent width minus
+ * 4 columns of border + padding), so child widgets that honour
+ * `fullWidth: true` size themselves to fill the inner area.
+ * Focus, hit areas and cursor positions bubble up from the
+ * child unchanged, shifted by the border offset. */
+export function labeledSection(options: {
+  label?: string;
+  child: WidgetSpec;
+  key?: string;
+}): WidgetSpec {
+  return {
+    kind: "labeledSection",
+    label: options.label ?? "",
+    child: options.child,
+    key: options.key,
+  };
 }
 
 // =============================================================================

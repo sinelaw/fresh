@@ -1458,6 +1458,50 @@ pub enum WidgetSpec {
         /// `field_width` pad. `0` = no cap. Ignored when `rows > 1`.
         #[serde(default)]
         max_visible_chars: u32,
+        /// Stretch the visible field to fill the available
+        /// width of the enclosing container. Overrides
+        /// `field_width` when set: the renderer computes
+        /// `panel_width - label_overhead - bracket_overhead` as
+        /// the effective visible width. Multi-line widgets
+        /// already fill the panel width by default; this flag is
+        /// most useful for single-line inputs inside a
+        /// `LabeledSection` or a flexible row.
+        #[serde(default)]
+        full_width: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Visual grouping container: renders a rounded thin border
+    /// around a single child widget, with `label` printed as a
+    /// top-left legend overlapping the border (HTML `<fieldset>`
+    /// semantics).
+    ///
+    /// Layout (border drawn with `╭─╮│╰─╯`):
+    /// ```text
+    /// ╭─ Label ──────────────────╮
+    /// │ <child rendered content> │
+    /// ╰──────────────────────────╯
+    /// ```
+    ///
+    /// Width: the section always occupies the full `panel_width`
+    /// passed down by its parent container. The child is rendered
+    /// with `panel_width - 4` (two border columns + two padding
+    /// columns) so widgets that honour `full_width` size
+    /// themselves to the inner area.
+    ///
+    /// The child can be any single `WidgetSpec` — typically a
+    /// `Text` input, but a `Toggle`/`Button`/nested `Col` also
+    /// works. Focus, hit areas and cursor positions bubble up
+    /// from the child unchanged, shifted by the section's border
+    /// offset (1 row down, 2 columns in).
+    LabeledSection {
+        /// Legend text printed in the top border. Empty = no
+        /// legend (the top border becomes one unbroken line).
+        #[serde(default)]
+        label: String,
+        /// The single wrapped widget. Boxed because `WidgetSpec`
+        /// is recursive.
+        child: Box<WidgetSpec>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

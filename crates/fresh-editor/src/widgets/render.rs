@@ -172,6 +172,9 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
                 collect_tabbable(c, out);
             }
         }
+        WidgetSpec::LabeledSection { child, .. } => {
+            collect_tabbable(child, out);
+        }
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
@@ -804,6 +807,7 @@ fn render_collected(
             rows,
             field_width,
             max_visible_chars,
+            full_width,
             key,
         } => {
             let is_focused = match key.as_deref() {
@@ -834,6 +838,32 @@ fn render_collected(
             // default = 1, but if it slips through (raw struct
             // construction in tests, etc.) treat it as single-line.
             let multiline = *rows > 1;
+            // When `full_width` is requested, override the
+            // plugin-supplied `field_width` with the slice of
+            // `panel_width` remaining after the label prefix,
+            // the two surrounding `[` / `]` brackets, and one
+            // trailing column reserved for the cursor-park space
+            // `render_text_input` appends when focused. Reserving
+            // unconditionally costs an unfocused field one
+            // trailing space but keeps the rendered width stable
+            // across the focus transition — without it the field
+            // would overflow the parent on focus. For multi-line
+            // we don't need the focus reservation but keep the
+            // same calculation for symmetry; `render_text_area`
+            // already fills the panel width by default.
+            let effective_field_width = if *full_width && !multiline {
+                let label_overhead = if label.is_empty() {
+                    0u32
+                } else {
+                    label.chars().count() as u32 + 1
+                };
+                panel_width
+                    .saturating_sub(label_overhead)
+                    .saturating_sub(3)
+                    .max(1)
+            } else {
+                *field_width
+            };
             let new_scroll;
             if multiline {
                 let rendered = render_text_area(
@@ -843,7 +873,7 @@ fn render_collected(
                     label,
                     placeholder.as_deref(),
                     *rows,
-                    *field_width,
+                    effective_field_width,
                     prev_scroll,
                     panel_width,
                 );
@@ -868,7 +898,7 @@ fn render_collected(
                     label,
                     placeholder.as_deref(),
                     *max_visible_chars,
-                    *field_width,
+                    effective_field_width,
                 );
                 new_scroll = 0;
                 if let Some(byte_in_row) = rendered.cursor_byte_in_entry {
@@ -899,6 +929,53 @@ fn render_collected(
                 );
             }
         }
+        WidgetSpec::LabeledSection { label, child, .. } => {
+            // Inner area: 1 column of border + 1 column of
+            // padding on each side ⇒ 4 columns of chrome.
+            let inner_width = panel_width.saturating_sub(4).max(1);
+            let (child_entries, child_hits, child_focus) =
+                render_collected(child, prev, next_state, focus_key, inner_width);
+
+            // Render the top border with the label embedded as a
+            // legend: `╭─ <label> ─...─╮`. When the label is empty,
+            // produce a plain `╭─...─╮` bar.
+            let total_cols = panel_width.max(2) as usize;
+            entries.push(render_section_top_border(label, total_cols));
+
+            // Render each child row wrapped with the side borders
+            // and one column of padding. Pad/truncate the child
+            // text to exactly `inner_width` so the right border
+            // lines up regardless of the child's natural width.
+            for mut child_entry in child_entries {
+                strip_trailing_newline(&mut child_entry);
+                let wrapped = wrap_in_side_border(child_entry, inner_width as usize);
+                let row_offset = entries.len() as u32;
+                // Shift hits/focus emitted by the child by 1 row
+                // (top border) and by the left-border prefix
+                // ("│ " — 4 bytes for the box-drawing char + 1
+                // for the space).
+                let _ = row_offset;
+                entries.push(wrapped);
+            }
+
+            // The child's hit areas were rendered with row 0 at
+            // the *first child line*; shift them by 1 (top
+            // border) and by the left-border byte prefix.
+            let prefix_bytes = LEFT_BORDER_PREFIX.len();
+            for mut h in child_hits {
+                h.buffer_row += 1;
+                h.byte_start += prefix_bytes;
+                h.byte_end += prefix_bytes;
+                hits.push(h);
+            }
+            if let Some(mut fc) = child_focus {
+                fc.buffer_row += 1;
+                fc.byte_in_row += prefix_bytes as u32;
+                focus_cursor = Some(fc);
+            }
+
+            entries.push(render_section_bottom_border(total_cols));
+        }
         WidgetSpec::Raw {
             entries: raw_entries,
             ..
@@ -920,6 +997,147 @@ fn render_collected(
         }
     }
     (entries, hits, focus_cursor)
+}
+
+// =========================================================================
+// LabeledSection helpers.
+// =========================================================================
+
+const LEFT_BORDER_PREFIX: &str = "│ ";
+const RIGHT_BORDER_SUFFIX: &str = " │";
+
+/// Build the top border row for a `LabeledSection`.
+///
+/// Output (with label "Session name", total_cols = 30):
+///
+/// ```text
+/// ╭─ Session name ─────────────╮
+/// ```
+///
+/// When `label` is empty the legend separators collapse and the
+/// border is one unbroken `─` run.
+fn render_section_top_border(label: &str, total_cols: usize) -> TextPropertyEntry {
+    // `╭`, `╮`, `─` each one display column but multiple bytes.
+    let mut text = String::new();
+    text.push('╭');
+    if label.is_empty() {
+        for _ in 0..total_cols.saturating_sub(2) {
+            text.push('─');
+        }
+    } else {
+        // `╭─ label ─...─╮`. 1 col for `╭`, 1 col for `─`,
+        // 1 col space, `label_cols`, 1 col space, then enough
+        // `─` to reach `total_cols - 1`, then `╮`.
+        let label_cols = label.chars().count();
+        let used = 1 + 1 + 1 + label_cols + 1; // ╭ ─ ` ` label ` `
+        text.push('─');
+        text.push(' ');
+        text.push_str(label);
+        text.push(' ');
+        let remaining = total_cols.saturating_sub(used + 1); // -1 for `╮`
+        for _ in 0..remaining {
+            text.push('─');
+        }
+    }
+    text.push('╮');
+    text.push('\n');
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: Vec::new(),
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+/// Build the bottom border row: `╰──...──╯` spanning `total_cols`
+/// display columns.
+fn render_section_bottom_border(total_cols: usize) -> TextPropertyEntry {
+    let mut text = String::new();
+    text.push('╰');
+    for _ in 0..total_cols.saturating_sub(2) {
+        text.push('─');
+    }
+    text.push('╯');
+    text.push('\n');
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: Vec::new(),
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+/// Wrap a single child row with `│ ... │` and pad / truncate the
+/// child text to fit exactly `inner_width` display columns.
+/// Inline overlays are byte-shifted by the left-prefix length so
+/// they keep aligning with the right characters.
+fn wrap_in_side_border(mut child: TextPropertyEntry, inner_width: usize) -> TextPropertyEntry {
+    let prefix_bytes = LEFT_BORDER_PREFIX.len();
+    // Pad / truncate `child.text` to `inner_width` display cols.
+    let cur_cols = child.text.chars().count();
+    if cur_cols < inner_width {
+        for _ in 0..(inner_width - cur_cols) {
+            child.text.push(' ');
+        }
+    } else if cur_cols > inner_width {
+        // Tail-truncate at the codepoint boundary corresponding
+        // to `inner_width` chars.
+        let indices: Vec<usize> = child.text.char_indices().map(|(i, _)| i).collect();
+        let byte_cutoff = indices
+            .get(inner_width)
+            .copied()
+            .unwrap_or(child.text.len());
+        child.text.truncate(byte_cutoff);
+        // Drop any overlay that would now reference past the
+        // truncation point; clamp the rest.
+        child.inline_overlays.retain_mut(|o| {
+            if o.start >= byte_cutoff {
+                return false;
+            }
+            if o.end > byte_cutoff {
+                o.end = byte_cutoff;
+            }
+            true
+        });
+    }
+
+    // Compose final text: `│ ` + child + ` │\n`.
+    let mut text = String::with_capacity(
+        LEFT_BORDER_PREFIX.len() + child.text.len() + RIGHT_BORDER_SUFFIX.len() + 1,
+    );
+    text.push_str(LEFT_BORDER_PREFIX);
+    text.push_str(&child.text);
+    text.push_str(RIGHT_BORDER_SUFFIX);
+    text.push('\n');
+
+    // Shift child overlays by the left-prefix byte count.
+    let overlays: Vec<InlineOverlay> = child
+        .inline_overlays
+        .into_iter()
+        .map(|o| InlineOverlay {
+            start: o.start + prefix_bytes,
+            end: o.end + prefix_bytes,
+            style: o.style,
+            properties: o.properties,
+            unit: o.unit,
+        })
+        .collect();
+
+    TextPropertyEntry {
+        text,
+        properties: child.properties,
+        style: child.style,
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
 }
 
 /// Render a HintBar into a single `TextPropertyEntry`.
@@ -2144,6 +2362,7 @@ mod tests {
                     rows: 1,
                     field_width: 0,
                     max_visible_chars: 0,
+                    full_width: false,
                     key: Some("ti".into()),
                 },
                 WidgetSpec::Toggle {
@@ -3276,6 +3495,7 @@ mod tests {
             rows: rows.max(2),
             field_width,
             max_visible_chars: 0,
+            full_width: false,
             key: key.map(|s| s.into()),
         }
     }
@@ -3355,6 +3575,7 @@ mod tests {
             rows: 2,
             field_width: 6,
             max_visible_chars: 0,
+            full_width: false,
             key: Some("ta".into()),
         };
         let prev = HashMap::new();
@@ -3451,5 +3672,136 @@ mod tests {
         let mut tabbable = Vec::new();
         collect_tabbable(&spec, &mut tabbable);
         assert_eq!(tabbable, vec!["toggle", "note"]);
+    }
+
+    // -------------------------------------------------------------
+    // LabeledSection
+    // -------------------------------------------------------------
+
+    fn make_text_input(
+        value: &str,
+        cursor_byte: i32,
+        focused: bool,
+        full_width: bool,
+        field_width: u32,
+        key: Option<&str>,
+    ) -> WidgetSpec {
+        WidgetSpec::Text {
+            value: value.into(),
+            cursor_byte,
+            focused,
+            label: String::new(),
+            placeholder: None,
+            rows: 1,
+            field_width,
+            max_visible_chars: 0,
+            full_width,
+            key: key.map(|s| s.into()),
+        }
+    }
+
+    #[test]
+    fn labeled_section_renders_three_rows_with_legend() {
+        let spec = WidgetSpec::LabeledSection {
+            label: "Name".into(),
+            child: Box::new(make_text_input("hi", -1, false, false, 4, Some("n"))),
+            key: None,
+        };
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "", 20);
+        // 3 lines: top border, content, bottom border.
+        assert_eq!(out.entries.len(), 3);
+        // Top border has legend.
+        assert!(out.entries[0].text.starts_with("╭─ Name "));
+        assert!(out.entries[0].text.ends_with("╮\n"));
+        // Content wrapped with side borders.
+        assert!(out.entries[1].text.starts_with("│ "));
+        assert!(out.entries[1].text.ends_with(" │\n"));
+        // Bottom border is a plain run.
+        assert!(out.entries[2].text.starts_with("╰"));
+        assert!(out.entries[2].text.ends_with("╯\n"));
+    }
+
+    #[test]
+    fn labeled_section_pads_child_to_inner_width() {
+        let spec = WidgetSpec::LabeledSection {
+            label: "".into(),
+            child: Box::new(make_text_input("hi", -1, false, false, 4, Some("n"))),
+            key: None,
+        };
+        let prev = HashMap::new();
+        // panel_width = 16 → inner_width = 12 → middle row is
+        // "│ " + 12 cols + " │".
+        let out = render_spec(&spec, &prev, "", 16);
+        let middle = &out.entries[1];
+        // Count display columns including the borders + spaces.
+        assert_eq!(middle.text.chars().count(), 16 + 1 /* \n */);
+    }
+
+    #[test]
+    fn labeled_section_text_full_width_fills_inner_area() {
+        // Inner width = 16 - 4 = 12. With no label on the input,
+        // 3 cols of overhead (brackets + focus park) →
+        // effective field_width = 9. The widget is the only
+        // tabbable so the renderer marks it focused, padding the
+        // inner region to field_width + 1 = 10 chars.
+        let spec = WidgetSpec::LabeledSection {
+            label: "".into(),
+            child: Box::new(make_text_input("ab", -1, false, true, 0, Some("n"))),
+            key: None,
+        };
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "", 16);
+        let middle = &out.entries[1];
+        // Middle row should be `│ [ab        ] │\n` — 17 chars
+        // total (16 visible cols + trailing newline). When the
+        // child fits exactly, the `]` is preserved.
+        assert_eq!(middle.text.chars().count(), 17, "actual: {:?}", middle.text);
+        assert!(
+            middle.text.contains("[ab        ]"),
+            "actual: {:?}",
+            middle.text
+        );
+    }
+
+    #[test]
+    fn labeled_section_propagates_focus_cursor_with_offsets() {
+        let spec = WidgetSpec::LabeledSection {
+            label: "".into(),
+            child: Box::new(make_text_input("abc", 3, true, false, 4, Some("n"))),
+            key: None,
+        };
+        let prev = HashMap::new();
+        let out = render_spec(&spec, &prev, "n", 20);
+        let fc = out.focus_cursor.expect("focused child publishes cursor");
+        // Child renders on the second row (top border = row 0).
+        assert_eq!(fc.buffer_row, 1);
+        // Cursor offset includes the left-prefix "│ " byte count
+        // plus the child's own offset (1 for the opening bracket
+        // + 3 for "abc"). "│" is 3 bytes in UTF-8 → prefix = 4.
+        let prefix_bytes = LEFT_BORDER_PREFIX.len() as u32;
+        assert_eq!(fc.byte_in_row, prefix_bytes + 1 + 3);
+    }
+
+    #[test]
+    fn labeled_section_includes_child_in_tabbable() {
+        let spec = WidgetSpec::Col {
+            children: vec![
+                WidgetSpec::LabeledSection {
+                    label: "Name".into(),
+                    child: Box::new(make_text_input("", -1, false, false, 0, Some("n"))),
+                    key: None,
+                },
+                WidgetSpec::LabeledSection {
+                    label: "Cmd".into(),
+                    child: Box::new(make_text_input("", -1, false, false, 0, Some("c"))),
+                    key: None,
+                },
+            ],
+            key: None,
+        };
+        let mut tabbable = Vec::new();
+        collect_tabbable(&spec, &mut tabbable);
+        assert_eq!(tabbable, vec!["n", "c"]);
     }
 }
