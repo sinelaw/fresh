@@ -426,7 +426,11 @@ function buildFormSpec(): WidgetSpec {
       child: text({
         value: form.cmd.value,
         cursorByte: form.cmd.cursor,
-        placeholder: "(plain shell)",
+        // Empty submission spawns a bare terminal — the host
+        // picks the shell with the same logic it uses for any
+        // other embedded terminal, so the plugin doesn't have
+        // to second-guess `$SHELL` resolution.
+        placeholder: "terminal",
         fullWidth: true,
         key: "cmd",
       }),
@@ -436,13 +440,10 @@ function buildFormSpec(): WidgetSpec {
       child: text({
         value: form.branch.value,
         cursorByte: form.branch.cursor,
-        // Show the resolved base ref (e.g. `(off origin/main)`)
-        // so the user sees exactly what an empty submission will
-        // fork off. While the probe is still running we show a
-        // detecting hint instead of guessing a name.
-        placeholder: form.defaultBranch
-          ? `(off ${form.defaultBranch})`
-          : "(detecting default branch…)",
+        // Show the literal base ref the empty submission will
+        // fork off (e.g. `origin/main`). While the probe runs
+        // we still print a hint so the field isn't blank.
+        placeholder: form.defaultBranch || "detecting default branch…",
         fullWidth: true,
         key: "branch",
       }),
@@ -499,6 +500,7 @@ function deriveProjectLabel(): string {
   if (parent && parent !== base) return `${parent}/${base}`;
   return base || cwd;
 }
+
 
 function renderForm(): void {
   if (!form || !formPanel) return;
