@@ -37,7 +37,11 @@ const KEY_FOCUSED_FG: &str = "ui.menu_active_fg";
 const KEY_FOCUSED_BG: &str = "ui.menu_active_bg";
 const KEY_DANGER_FG: &str = "ui.status_error_indicator_fg";
 const KEY_INPUT_BG: &str = "ui.prompt_bg";
-const KEY_PLACEHOLDER_FG: &str = "ui.menu_disabled_fg";
+// Placeholder text uses the whitespace-indicator key — a dimmer
+// grey than `ui.menu_disabled_fg` (themes ship ~RGB(70,70,70)
+// vs ~RGB(100,100,100) for disabled menu items), so hint copy
+// reads as background guidance rather than a half-active value.
+const KEY_PLACEHOLDER_FG: &str = "editor.whitespace_indicator_fg";
 // Section-legend tint. `ui.help_key_fg` is the same key the
 // hint-bar uses to highlight keys against panel bg, so we know
 // it's tuned for readability against the same surface a
@@ -2882,7 +2886,7 @@ mod tests {
             .find(|o| o.style.fg.as_ref().and_then(|c| c.as_theme_key()).is_some())
             .expect("placeholder fg overlay");
         let fg = placeholder_overlay.style.fg.as_ref().unwrap();
-        assert_eq!(fg.as_theme_key(), Some("ui.menu_disabled_fg"));
+        assert_eq!(fg.as_theme_key(), Some("editor.whitespace_indicator_fg"));
         assert!(placeholder_overlay.style.italic);
     }
 
@@ -3752,7 +3756,7 @@ mod tests {
             .iter()
             .find_map(|o| o.style.fg.as_ref())
             .and_then(|c| c.as_theme_key());
-        assert_eq!(fg, Some("ui.menu_disabled_fg"));
+        assert_eq!(fg, Some("editor.whitespace_indicator_fg"));
     }
 
     #[test]
