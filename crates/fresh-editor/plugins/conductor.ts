@@ -122,6 +122,10 @@ interface OpenDialogState {
   // so a future "Esc restores active" affordance has the
   // anchor it needs.
   originalActiveSession: number;
+  // When non-null, the preview pane swaps to a confirmation
+  // panel for the named action against the named session id.
+  // Cleared on Cancel or after the action completes.
+  pendingConfirm: { action: "delete"; sessionId: number } | null;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -283,6 +287,75 @@ function buildPreviewEntries(
   ];
 }
 
+// Compose the right-hand preview pane. Normally it shows info
+// + action buttons (Stop, Archive, Delete); when a destructive
+// action is pending confirmation it swaps to a "Confirm
+// <action>?" panel with [ Confirm <action> ] / [ Cancel ]
+// buttons. Cancel is default-focused for safety.
+function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
+  if (openDialog?.pendingConfirm && s && openDialog.pendingConfirm.sessionId === s.id) {
+    const action = openDialog.pendingConfirm.action;
+    if (action === "delete") {
+      return labeledSection({
+        label: "Confirm Delete",
+        child: col(
+          {
+            kind: "raw",
+            entries: [
+              styledRow([
+                {
+                  text: `Delete session [${s.id}] ${s.label}?`,
+                  style: { bold: true },
+                },
+              ]),
+              styledRow([{ text: "" }]),
+              styledRow([{ text: "This will:" }]),
+              styledRow([{ text: "  • stop all session processes" }]),
+              styledRow([{ text: "  • run `git worktree remove`" }]),
+              styledRow([{ text: "  • drop the session record" }]),
+              styledRow([{ text: "" }]),
+              styledRow([
+                {
+                  text: "Uncommitted changes will be lost.",
+                  style: {
+                    fg: "ui.status_error_indicator_fg",
+                    bold: true,
+                  },
+                },
+              ]),
+            ],
+          },
+          spacer(0),
+          row(
+            flexSpacer(),
+            button("Cancel", { key: "confirm-cancel" }),
+            spacer(2),
+            button("Confirm Delete", {
+              intent: "danger",
+              key: "confirm-delete",
+            }),
+          ),
+        ),
+      });
+    }
+  }
+  return labeledSection({
+    label: s ? `[${s.id}] ${s.label}` : "Preview",
+    child: col(
+      { kind: "raw", entries: buildPreviewEntries(s) },
+      spacer(0),
+      row(
+        flexSpacer(),
+        button("Stop", { key: "stop" }),
+        spacer(2),
+        button("Archive", { key: "archive" }),
+        spacer(2),
+        button("Delete", { intent: "danger", key: "delete" }),
+      ),
+    ),
+  });
+}
+
 function buildOpenSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
@@ -334,21 +407,7 @@ function buildOpenSpec(): WidgetSpec {
           key: "sessions",
         }),
       }),
-      labeledSection({
-        label: selectedSession
-          ? `[${selectedSession.id}] ${selectedSession.label}`
-          : "Preview",
-        child: col(
-          { kind: "raw", entries: buildPreviewEntries(selectedSession) },
-          spacer(0),
-          row(
-            flexSpacer(),
-            button("Stop", { key: "stop" }),
-            spacer(2),
-            button("Archive", { key: "archive" }),
-          ),
-        ),
-      }),
+      buildPreviewPane(selectedSession),
     ),
     spacer(0),
     hintBar([
@@ -392,6 +451,7 @@ function openControlRoom(): void {
     filteredIds: ids,
     selectedIndex: activeIdx >= 0 ? activeIdx : 0,
     originalActiveSession: activeId,
+    pendingConfirm: null,
   };
   openPanel = new FloatingWidgetPanel();
   openPanel.mount(buildOpenSpec(), { widthPct: 80, heightPct: 70 });
@@ -593,6 +653,78 @@ async function archiveSelectedSession(): Promise<void> {
   } else {
     editor.setStatus(`Conductor: archived [${id}] ${session.label}`);
   }
+}
+
+// Delete flow: stop processes (SIGKILL), close the editor
+// session, then `git worktree remove --force` to drop the
+// worktree from disk. If the session was archived (manifest
+// entry exists), the manifest entry is dropped too. No
+// recovery after this point.
+async function deleteConfirmedSession(): Promise<void> {
+  if (!openDialog || !openDialog.pendingConfirm) return;
+  const { sessionId: id } = openDialog.pendingConfirm;
+  openDialog.pendingConfirm = null;
+  const session = conductorSessions.get(id);
+  if (!session) {
+    if (openPanel) openPanel.update(buildOpenSpec());
+    return;
+  }
+  if (id === editor.activeWindow()) {
+    editor.setStatus(
+      "Conductor: dive elsewhere first, then delete this session",
+    );
+    if (openPanel) openPanel.update(buildOpenSpec());
+    return;
+  }
+
+  const cwd = editor.getCwd();
+  const top = await spawnCollect(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    cwd,
+  );
+  if (top.exit_code !== 0) {
+    editor.setStatus("Conductor: delete failed — not a git repository");
+    if (openPanel) openPanel.update(buildOpenSpec());
+    return;
+  }
+  const repoRoot = (top.stdout || "").trim();
+
+  editor.signalWindow(id, "SIGKILL");
+  editor.closeWindow(id);
+  await new Promise((r) => setTimeout(r, 250));
+
+  // `--force` because the worktree may have unstaged changes
+  // the user explicitly chose to discard via the confirm step.
+  const removeRes = await spawnCollect(
+    "git",
+    ["-C", repoRoot, "worktree", "remove", "--force", session.root],
+    repoRoot,
+  );
+  if (removeRes.exit_code !== 0) {
+    editor.setStatus(
+      `Conductor: worktree remove failed: ${
+        lastNonEmptyLine(removeRes.stderr) || "unknown error"
+      }`,
+    );
+    if (openPanel) openPanel.update(buildOpenSpec());
+    return;
+  }
+
+  // Drop the matching manifest entry too, in case the session
+  // was already archived (delete-from-archived is the natural
+  // way to drop dormant sessions).
+  const manifest = loadArchiveManifest(repoRoot);
+  const before = manifest.sessions.length;
+  manifest.sessions = manifest.sessions.filter(
+    (e) => e.label !== session.label,
+  );
+  if (manifest.sessions.length !== before) {
+    saveArchiveManifest(repoRoot, manifest);
+  }
+
+  editor.setStatus(`Conductor: deleted [${id}] ${session.label}`);
+  if (openPanel) openPanel.update(buildOpenSpec());
 }
 
 editor.defineMode(OPEN_MODE, [], true, true);
@@ -1079,6 +1211,23 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "archive") {
       void archiveSelectedSession();
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "delete") {
+      const id = openDialog.filteredIds[openDialog.selectedIndex];
+      if (typeof id === "number" && id > 0) {
+        openDialog.pendingConfirm = { action: "delete", sessionId: id };
+        openPanel.update(buildOpenSpec());
+      }
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "confirm-cancel") {
+      openDialog.pendingConfirm = null;
+      openPanel.update(buildOpenSpec());
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "confirm-delete") {
+      void deleteConfirmedSession();
       return;
     }
     if (e.event_type === "cancel") {
