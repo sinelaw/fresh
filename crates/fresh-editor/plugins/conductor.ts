@@ -343,7 +343,9 @@ function buildOpenSpec(): WidgetSpec {
           spacer(0),
           row(
             flexSpacer(),
-            button("Stop", { intent: "danger", key: "stop" }),
+            button("Stop", { key: "stop" }),
+            spacer(2),
+            button("Archive", { key: "archive" }),
           ),
         ),
       }),
@@ -432,6 +434,165 @@ function stopSelectedSession(): void {
     editor.signalWindow(id, "SIGKILL");
   }, 2000);
   editor.setStatus(`Conductor: stop signal sent to session [${id}]`);
+}
+
+// ---------------------------------------------------------------------
+// Archive manifest — `<XDG>/conductor/<repo-slug>/archived.json`.
+// Records sessions that have been archived (stopped + worktree moved
+// to `.archived/`). Used today by the Archive action; Unarchive and
+// "Show archived" surface in a follow-up phase.
+// ---------------------------------------------------------------------
+
+interface ArchivedSession {
+  label: string;
+  /** Current path of the moved worktree, under `.archived/`. */
+  root: string;
+  /** Path the worktree lived at before archiving. */
+  original_root: string;
+  /** Branch the worktree was on. */
+  branch: string;
+  /** ISO 8601 timestamp of when the session was archived. */
+  archived_at: string;
+}
+
+interface ArchiveManifest {
+  version: number;
+  sessions: ArchivedSession[];
+}
+
+function archiveManifestPath(repoRoot: string): string {
+  return editor.pathJoin(
+    editor.getDataDir(),
+    "conductor",
+    slugify(repoRoot),
+    "archived.json",
+  );
+}
+
+function loadArchiveManifest(repoRoot: string): ArchiveManifest {
+  const path = archiveManifestPath(repoRoot);
+  const raw = editor.readFile(path);
+  if (!raw) return { version: 1, sessions: [] };
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      parsed && typeof parsed === "object" &&
+      Array.isArray(parsed.sessions)
+    ) {
+      return parsed as ArchiveManifest;
+    }
+  } catch (_) {
+    // Fall through to fresh manifest — bad data shouldn't
+    // brick the dialog.
+  }
+  return { version: 1, sessions: [] };
+}
+
+function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
+  const path = archiveManifestPath(repoRoot);
+  const dir = editor.pathDirname(path);
+  if (!editor.createDir(dir)) return false;
+  return editor.writeFile(path, JSON.stringify(m, null, 2));
+}
+
+// Archive flow: stop all processes (SIGKILL — archive is a
+// "I'm done with this for now" action, no graceful teardown
+// needed since the worktree stays on disk), close the editor
+// session, move the worktree to the `.archived/` graveyard,
+// and append a manifest entry so a future Unarchive flow can
+// reverse it.
+async function archiveSelectedSession(): Promise<void> {
+  if (!openDialog) return;
+  const id = openDialog.filteredIds[openDialog.selectedIndex];
+  if (typeof id !== "number" || id <= 0) return;
+  if (id === 1) {
+    editor.setStatus("Conductor: cannot archive the base session");
+    return;
+  }
+  if (id === editor.activeWindow()) {
+    editor.setStatus(
+      "Conductor: dive elsewhere first, then archive this session",
+    );
+    return;
+  }
+  const session = conductorSessions.get(id);
+  if (!session) return;
+
+  // Resolve the repo root from cwd (the user is in the
+  // umbrella session's tree).
+  const cwd = editor.getCwd();
+  const top = await spawnCollect(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    cwd,
+  );
+  if (top.exit_code !== 0) {
+    editor.setStatus("Conductor: archive failed — not a git repository");
+    return;
+  }
+  const repoRoot = (top.stdout || "").trim();
+
+  // SIGKILL the session's process group so the pty children
+  // release any locks on the worktree, then close the editor
+  // session. closeWindow already kills the pty via the child
+  // killer; signaling first via the window-level pg tracker
+  // catches stray subprocesses outside the pty.
+  editor.signalWindow(id, "SIGKILL");
+  editor.closeWindow(id);
+
+  // Brief settle so the filesystem reflects the pty's exit
+  // before we move the worktree out from under it.
+  await new Promise((r) => setTimeout(r, 250));
+
+  // git worktree move keeps git's internal bookkeeping
+  // consistent (the new path stays registered as a worktree).
+  const archivedRoot = editor.pathJoin(
+    editor.getDataDir(),
+    "conductor",
+    slugify(repoRoot),
+    ".archived",
+    session.label,
+  );
+  const parent = editor.pathDirname(archivedRoot);
+  if (!editor.createDir(parent)) {
+    editor.setStatus(
+      `Conductor: archive failed — could not create ${parent}`,
+    );
+    return;
+  }
+  const moveRes = await spawnCollect(
+    "git",
+    ["-C", repoRoot, "worktree", "move", session.root, archivedRoot],
+    repoRoot,
+  );
+  if (moveRes.exit_code !== 0) {
+    editor.setStatus(
+      `Conductor: worktree move failed: ${
+        lastNonEmptyLine(moveRes.stderr) || "unknown error"
+      }`,
+    );
+    return;
+  }
+
+  // Append manifest entry. The branch info is best-effort:
+  // we assume Conductor's convention of branch==label (set in
+  // the new-session form) until a session knows its branch
+  // separately.
+  const manifest = loadArchiveManifest(repoRoot);
+  manifest.sessions.push({
+    label: session.label,
+    root: archivedRoot,
+    original_root: session.root,
+    branch: session.label,
+    archived_at: new Date().toISOString(),
+  });
+  if (!saveArchiveManifest(repoRoot, manifest)) {
+    editor.setStatus(
+      "Conductor: archived, but failed to write archived.json",
+    );
+  } else {
+    editor.setStatus(`Conductor: archived [${id}] ${session.label}`);
+  }
 }
 
 editor.defineMode(OPEN_MODE, [], true, true);
@@ -914,6 +1075,10 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "stop") {
       stopSelectedSession();
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "archive") {
+      void archiveSelectedSession();
       return;
     }
     if (e.event_type === "cancel") {
