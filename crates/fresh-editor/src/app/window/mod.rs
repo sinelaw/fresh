@@ -43,7 +43,7 @@ pub mod buffers;
 pub mod process_group;
 
 pub use buffers::WindowBuffers;
-pub use process_group::{ProcessGroups, Signaller, LocalSignaller, ProcessGroupEntry};
+pub use process_group::{LocalSignaller, ProcessGroupEntry, ProcessGroups, Signaller};
 
 use crate::app::types::{ChromeLayout, WindowLayoutCache};
 use crate::app::window_resources::WindowResources;

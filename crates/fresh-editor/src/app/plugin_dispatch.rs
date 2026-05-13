@@ -2803,9 +2803,7 @@ impl Editor {
                     .and_then(|h| h.pid());
                 if let Some(pid) = leader_pid {
                     let label = format!("terminal #{}", terminal_id.0);
-                    self.active_window_mut()
-                        .process_groups
-                        .register(pid, label);
+                    self.active_window_mut().process_groups.register(pid, label);
                 }
                 // Fix up backing path if the predicted ID didn't match
                 // the one the terminal manager handed out. Persistent
@@ -4111,12 +4109,7 @@ impl Editor {
     /// by the picker-style smart-key dispatch — `Up`/`Down` on a
     /// focused filter input route to the first scrollable widget in
     /// the panel without changing focus.
-    fn handle_widget_select_move_for_key(
-        &mut self,
-        panel_id: u64,
-        widget_key: &str,
-        delta: i32,
-    ) {
+    fn handle_widget_select_move_for_key(&mut self, panel_id: u64, widget_key: &str, delta: i32) {
         let panel = match self.widget_registry.get(panel_id) {
             Some(p) => p,
             None => return,
@@ -5290,10 +5283,7 @@ impl Editor {
     /// stop flow.
     fn handle_signal_window(&mut self, id: fresh_core::WindowId, signal: &str) {
         let Some(window) = self.windows.get_mut(&id) else {
-            tracing::warn!(
-                "Plugin SignalWindow targeted unknown window {:?}",
-                id
-            );
+            tracing::warn!("Plugin SignalWindow targeted unknown window {:?}", id);
             return;
         };
         let results = window.process_groups.signal_all(signal);

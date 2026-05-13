@@ -173,8 +173,7 @@ fn labeled_section_width_pct(spec: &WidgetSpec) -> Option<u32> {
     let WidgetSpec::LabeledSection { width_pct, .. } = spec else {
         return None;
     };
-    width_pct
-        .filter(|pct| (1..=100).contains(pct))
+    width_pct.filter(|pct| (1..=100).contains(pct))
 }
 
 fn predicts_block(spec: &WidgetSpec) -> bool {
@@ -348,10 +347,7 @@ fn render_collected(
             // For non-block children the value is unused; for
             // blocks it's the panel_width passed to that child's
             // render.
-            let mut per_child_width: Vec<u32> = children
-                .iter()
-                .map(|_| panel_width)
-                .collect();
+            let mut per_child_width: Vec<u32> = children.iter().map(|_| panel_width).collect();
             if block_count > 0 {
                 let mut explicit_total: u32 = 0;
                 let mut explicit_count: u32 = 0;
@@ -424,108 +420,107 @@ fn render_collected(
                     &mut embeds,
                 );
             } else {
+                // Compute flex sizing.
+                let inline_natural: usize = row_pieces
+                    .iter()
+                    .filter_map(|p| match p {
+                        RowPiece::Inline { entry, .. } => Some(entry.text.len()),
+                        _ => None,
+                    })
+                    .sum();
+                let flex_count = row_pieces
+                    .iter()
+                    .filter(|p| matches!(p, RowPiece::Flex))
+                    .count();
+                let flex_total = (panel_width as usize).saturating_sub(inline_natural);
+                // Distribute leftover evenly. With multiple flex slots,
+                // the leftover bytes spread as evenly as possible (any
+                // remainder lands in the first slot).
+                let (flex_each, flex_extra) = match flex_total.checked_div(flex_count) {
+                    Some(each) => (each, flex_total % flex_count),
+                    None => (0, 0),
+                };
 
-            // Compute flex sizing.
-            let inline_natural: usize = row_pieces
-                .iter()
-                .filter_map(|p| match p {
-                    RowPiece::Inline { entry, .. } => Some(entry.text.len()),
-                    _ => None,
-                })
-                .sum();
-            let flex_count = row_pieces
-                .iter()
-                .filter(|p| matches!(p, RowPiece::Flex))
-                .count();
-            let flex_total = (panel_width as usize).saturating_sub(inline_natural);
-            // Distribute leftover evenly. With multiple flex slots,
-            // the leftover bytes spread as evenly as possible (any
-            // remainder lands in the first slot).
-            let (flex_each, flex_extra) = match flex_total.checked_div(flex_count) {
-                Some(each) => (each, flex_total % flex_count),
-                None => (0, 0),
-            };
-
-            // Pass 2: assemble. Accumulate inline pieces (with
-            // collapsed flex spacers) into one entry; flush block
-            // pieces. Track byte-shift so child hits' offsets stay
-            // correct.
-            let mut acc: Option<TextPropertyEntry> = None;
-            let mut flex_seen = 0usize;
-            for piece in row_pieces {
-                match piece {
-                    RowPiece::Inline {
-                        mut entry,
-                        hits: child_hits,
-                        focus_cursor: child_focus,
-                        embeds: child_embeds,
-                    } => {
-                        let inline_shift = match acc.as_ref() {
-                            Some(e) => e.text.len(),
-                            None => 0,
-                        };
-                        for mut h in child_hits {
-                            h.byte_start += inline_shift;
-                            h.byte_end += inline_shift;
-                            hits.push(h);
-                        }
-                        if let Some(mut fc) = child_focus {
-                            // buffer_row stays 0 — caller shifts.
-                            fc.byte_in_row += inline_shift as u32;
-                            focus_cursor = Some(fc);
-                        }
-                        for mut emb in child_embeds {
-                            // Inline shift is in bytes; for ASCII
-                            // inline content this matches columns,
-                            // which is the only case that lands here
-                            // in practice (single-row embeds are
-                            // rare).
-                            emb.col_in_row += inline_shift as u32;
-                            embeds.push(emb);
-                        }
-                        match acc.as_mut() {
-                            Some(merged) => merge_inline(merged, &mut entry),
-                            None => acc = Some(entry),
-                        }
-                    }
-                    RowPiece::Flex => {
-                        // Materialize the flex spacer as N spaces.
-                        let n = flex_each + if flex_seen < flex_extra { 1 } else { 0 };
-                        flex_seen += 1;
-                        if n > 0 {
-                            let mut text = String::with_capacity(n);
-                            for _ in 0..n {
-                                text.push(' ');
-                            }
-                            let entry = TextPropertyEntry {
-                                text,
-                                properties: Default::default(),
-                                style: None,
-                                inline_overlays: Vec::new(),
-                                segments: Vec::new(),
-                                pad_to_chars: None,
-                                truncate_to_chars: None,
+                // Pass 2: assemble. Accumulate inline pieces (with
+                // collapsed flex spacers) into one entry; flush block
+                // pieces. Track byte-shift so child hits' offsets stay
+                // correct.
+                let mut acc: Option<TextPropertyEntry> = None;
+                let mut flex_seen = 0usize;
+                for piece in row_pieces {
+                    match piece {
+                        RowPiece::Inline {
+                            mut entry,
+                            hits: child_hits,
+                            focus_cursor: child_focus,
+                            embeds: child_embeds,
+                        } => {
+                            let inline_shift = match acc.as_ref() {
+                                Some(e) => e.text.len(),
+                                None => 0,
                             };
+                            for mut h in child_hits {
+                                h.byte_start += inline_shift;
+                                h.byte_end += inline_shift;
+                                hits.push(h);
+                            }
+                            if let Some(mut fc) = child_focus {
+                                // buffer_row stays 0 — caller shifts.
+                                fc.byte_in_row += inline_shift as u32;
+                                focus_cursor = Some(fc);
+                            }
+                            for mut emb in child_embeds {
+                                // Inline shift is in bytes; for ASCII
+                                // inline content this matches columns,
+                                // which is the only case that lands here
+                                // in practice (single-row embeds are
+                                // rare).
+                                emb.col_in_row += inline_shift as u32;
+                                embeds.push(emb);
+                            }
                             match acc.as_mut() {
-                                Some(merged) => {
-                                    let mut e = entry;
-                                    merge_inline(merged, &mut e);
-                                }
+                                Some(merged) => merge_inline(merged, &mut entry),
                                 None => acc = Some(entry),
                             }
                         }
-                    }
-                    RowPiece::Block { .. } => {
-                        // Unreachable in the inline-only path —
-                        // `has_blocks` was false here.
-                        debug_assert!(false, "block piece in inline-only Row path");
+                        RowPiece::Flex => {
+                            // Materialize the flex spacer as N spaces.
+                            let n = flex_each + if flex_seen < flex_extra { 1 } else { 0 };
+                            flex_seen += 1;
+                            if n > 0 {
+                                let mut text = String::with_capacity(n);
+                                for _ in 0..n {
+                                    text.push(' ');
+                                }
+                                let entry = TextPropertyEntry {
+                                    text,
+                                    properties: Default::default(),
+                                    style: None,
+                                    inline_overlays: Vec::new(),
+                                    segments: Vec::new(),
+                                    pad_to_chars: None,
+                                    truncate_to_chars: None,
+                                };
+                                match acc.as_mut() {
+                                    Some(merged) => {
+                                        let mut e = entry;
+                                        merge_inline(merged, &mut e);
+                                    }
+                                    None => acc = Some(entry),
+                                }
+                            }
+                        }
+                        RowPiece::Block { .. } => {
+                            // Unreachable in the inline-only path —
+                            // `has_blocks` was false here.
+                            debug_assert!(false, "block piece in inline-only Row path");
+                        }
                     }
                 }
-            }
-            if let Some(mut merged) = acc {
-                ensure_trailing_newline(&mut merged);
-                entries.push(merged);
-            }
+                if let Some(mut merged) = acc {
+                    ensure_trailing_newline(&mut merged);
+                    entries.push(merged);
+                }
             }
         }
         WidgetSpec::Col { children, .. } => {
@@ -2269,7 +2264,12 @@ fn zip_row_blocks(
         let mut overlays: Vec<InlineOverlay> = Vec::new();
         for piece in &pieces {
             match piece {
-                RowPiece::Inline { entry, hits, focus_cursor, embeds: inline_embeds } => {
+                RowPiece::Inline {
+                    entry,
+                    hits,
+                    focus_cursor,
+                    embeds: inline_embeds,
+                } => {
                     let inline_cols = entry.text.chars().count();
                     let byte_shift = text.len();
                     // Cumulative column width to the left of this
@@ -2318,7 +2318,13 @@ fn zip_row_blocks(
                 RowPiece::Flex => {
                     // Skipped — see fn doc.
                 }
-                RowPiece::Block { column_width, entries, hits, focus_cursor, embeds: block_embeds } => {
+                RowPiece::Block {
+                    column_width,
+                    entries,
+                    hits,
+                    focus_cursor,
+                    embeds: block_embeds,
+                } => {
                     let block_w = *column_width as usize;
                     let byte_shift = text.len();
                     // Cumulative column width to the left of this
@@ -2568,10 +2574,7 @@ mod tests {
             style.fg.as_ref().and_then(|c| c.as_theme_key()),
             Some("ui.help_key_fg"),
         );
-        assert!(
-            style.bg.is_none(),
-            "unfocused primary must not paint a bg"
-        );
+        assert!(style.bg.is_none(), "unfocused primary must not paint a bg");
     }
 
     #[test]

@@ -74,7 +74,9 @@ impl crate::app::Editor {
         // immediately renderable from any code path that walks
         // the windows map (preview rendering, embedded session
         // panes, etc.).
-        if let Some((buf, state, metadata, event_log, mgr, vs)) = self.build_fresh_layout_if_needed(id) {
+        if let Some((buf, state, metadata, event_log, mgr, vs)) =
+            self.build_fresh_layout_if_needed(id)
+        {
             if let Some(s) = self.windows.get_mut(&id) {
                 s.buffers.set_splits((mgr, vs));
                 s.buffers.insert(buf, state);

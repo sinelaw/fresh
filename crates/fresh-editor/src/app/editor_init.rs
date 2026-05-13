@@ -1223,6 +1223,29 @@ impl Editor {
         // Apply clipboard configuration
         editor.clipboard.apply_config(&editor.config.clipboard);
 
+        // Seed splits/buffers for every persisted inactive window so they
+        // render in preview surfaces (Conductor's WindowEmbed) before the
+        // user first dives in. Without this, restored windows have
+        // `splits == None` and paint blank in the preview pane.
+        let needs_seed: Vec<fresh_core::WindowId> = editor
+            .windows
+            .iter()
+            .filter(|(_, s)| s.buffers.splits().is_none())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in needs_seed {
+            if let Some((buf, state, metadata, event_log, mgr, vs)) =
+                editor.build_fresh_layout_if_needed(id)
+            {
+                if let Some(s) = editor.windows.get_mut(&id) {
+                    s.buffers.set_splits((mgr, vs));
+                    s.buffers.insert(buf, state);
+                    s.buffer_metadata.insert(buf, metadata);
+                    s.event_logs.insert(buf, event_log);
+                }
+            }
+        }
+
         #[cfg(feature = "plugins")]
         {
             editor.update_plugin_state_snapshot();

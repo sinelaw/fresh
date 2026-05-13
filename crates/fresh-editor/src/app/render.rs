@@ -3451,14 +3451,8 @@ impl Editor {
             // Clip the embed rect to the panel's inner area so a
             // partially-offscreen embed (tiny terminal) doesn't
             // paint into the frame border.
-            let max_w = inner
-                .x
-                .saturating_add(inner.width)
-                .saturating_sub(ex);
-            let max_h = inner
-                .y
-                .saturating_add(inner.height)
-                .saturating_sub(ey);
+            let max_w = inner.x.saturating_add(inner.width).saturating_sub(ex);
+            let max_h = inner.y.saturating_add(inner.height).saturating_sub(ey);
             let w = (emb.width_cols as u16).min(max_w);
             let h = (emb.height_rows as u16).min(max_h);
             if w == 0 || h == 0 {
