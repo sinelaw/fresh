@@ -127,6 +127,14 @@ interface OpenDialogState {
   // panel for the named action against the named session id.
   // Cleared on Cancel or after the action completes.
   pendingConfirm: { action: "delete"; sessionId: number } | null;
+  // Rows the embed reserves and rows the sessions list shows.
+  // Captured once at dialog-open from the editor's viewport so
+  // the layout stays constant across re-renders — recomputing
+  // mid-dialog would let the size jitter when the active
+  // window's viewport changes (e.g. terminal buffer's shorter
+  // height vs. a file buffer's).
+  listVisibleRows: number;
+  embedRows: number;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -358,10 +366,12 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   }
   // The embed reserves the bulk of the preview pane so the host
   // can paint the selected window's live UI (splits, terminals,
-  // syntax highlighting) underneath the action button row.
-  // Height matches the picker list's visibleRows so the two
-  // panes stay aligned vertically.
-  const embedRows = Math.max(4, openListVisibleRows() - 7);
+  // syntax highlighting) underneath the action button row. The
+  // row count is captured at dialog-open into `openDialog` and
+  // used verbatim across re-renders, so the preview pane stays
+  // a constant height regardless of which window's viewport the
+  // host happens to be reporting through `getViewport()`.
+  const embedRows = openDialog?.embedRows ?? 4;
   return labeledSection({
     label: s ? `[${s.id}] ${s.label}` : "Preview",
     child: col(
@@ -439,7 +449,7 @@ function buildOpenSpec(): WidgetSpec {
           items,
           itemKeys,
           selectedIndex: selIdx,
-          visibleRows: openListVisibleRows(),
+          visibleRows: openDialog.listVisibleRows,
           // Excluded from the Tab cycle — Up/Down on the
           // filter input forwards to this list via host
           // smart-keys, so Tab jumps straight to the action
@@ -521,12 +531,17 @@ function openControlRoom(): void {
   const activeId = editor.activeWindow();
   const ids = Array.from(conductorSessions.keys()).sort((a, b) => a - b);
   const activeIdx = ids.indexOf(activeId);
+  const listVisibleRows = openListVisibleRows();
   openDialog = {
     filter: { value: "", cursor: 0 },
     filteredIds: ids,
     selectedIndex: activeIdx >= 0 ? activeIdx : 0,
     originalActiveSession: activeId,
     pendingConfirm: null,
+    listVisibleRows,
+    // Mirror buildPreviewPane's old inline math: leave room
+    // for 4 info rows + 2 spacers + 1 action-row.
+    embedRows: Math.max(4, listVisibleRows - 7),
   };
   openPanel = new FloatingWidgetPanel();
   // 90% × 90% of the terminal — the open dialog wants room for
