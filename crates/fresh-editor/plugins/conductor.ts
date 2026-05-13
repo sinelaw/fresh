@@ -318,17 +318,16 @@ async function spawnCollect(
   return await editor.spawnProcess(command, args, cwd);
 }
 
-/// Resolve the origin's default branch as `"origin/<name>"`,
-/// refreshing the remote first so a moved HEAD on origin is
-/// picked up. Returns `"HEAD"` when there's no `origin` remote
-/// (purely-local repos) or the symbolic ref is missing — the
-/// caller treats that as the silent fallback.
+/// Resolve the origin's default branch as `"origin/<name>"` from
+/// the locally-cached symbolic-ref. Returns `"HEAD"` when there's
+/// no `origin` remote (purely-local repos) or the symbolic ref is
+/// missing — the caller treats that as the silent fallback.
+///
+/// Deliberately does NOT fetch: `refs/remotes/origin/HEAD` is set
+/// at clone time and only changes when the remote renames its
+/// default branch (rare). A network round-trip per dialog open
+/// is too high a cost for that case.
 async function detectDefaultBranch(repoRoot: string): Promise<string> {
-  // Refresh remote tracking. Failure (offline, no `origin`) is
-  // intentionally ignored: the local mirror, if any, is the
-  // best we can do, and the next call will surface the lack of
-  // a symbolic-ref.
-  await spawnCollect("git", ["-C", repoRoot, "fetch", "origin"], repoRoot);
   const res = await spawnCollect(
     "git",
     ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
