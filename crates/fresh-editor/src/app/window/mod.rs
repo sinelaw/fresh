@@ -1402,6 +1402,17 @@ impl Window {
                     view_state.cursors.primary_mut().move_to(position, false);
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
+                // Refresh the cached primary cursor line number so the status
+                // bar and any other consumer of `primary_cursor_line_number`
+                // reflect the new position. Without this, the cache stays
+                // pinned to its previous value (issue #1957).
+                let primary_pos = state
+                    .buffer
+                    .offset_to_position(position)
+                    .map(|p| p.line)
+                    .unwrap_or(0);
+                state.primary_cursor_line_number =
+                    crate::model::buffer::LineNumber::Absolute(primary_pos);
             });
     }
 

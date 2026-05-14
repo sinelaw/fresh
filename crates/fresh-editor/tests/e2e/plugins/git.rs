@@ -3058,3 +3058,66 @@ fn parse_ln(screen: &str) -> Option<usize> {
     let end = rest.find(',')?;
     rest[..end].trim().parse().ok()
 }
+
+/// Regression: activating Git Blame should land the cursor on the same line
+/// the user was on in the source buffer, not reset to the top of the doc.
+/// Issue #1957.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_jumps_to_source_cursor_line() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+
+    // Single-commit file with enough lines that "top" is clearly distinguishable
+    // from "middle". Cursor will be placed at line 15.
+    let mut content = String::new();
+    for i in 1..=30 {
+        content.push_str(&format!("Line {i}\n"));
+    }
+    repo.create_file("test.txt", &content);
+    repo.git_add(&["test.txt"]);
+    repo.git_commit("Initial commit");
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("test.txt");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 30"))
+        .unwrap();
+
+    // Move cursor from line 1 down to line 15.
+    for _ in 0..14 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.process_async_and_render().unwrap();
+
+    // Sanity: status bar should now report line 15 in the source buffer.
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(15))
+        .unwrap();
+
+    // Activate git blame.
+    trigger_git_blame(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("──"))
+        .unwrap();
+
+    // The cursor in the blame buffer should still be on line 15 — not reset
+    // to the top of the doc. We observe this via the status bar's "Ln N"
+    // indicator (rendered output, no model inspection).
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(15))
+        .unwrap();
+}
