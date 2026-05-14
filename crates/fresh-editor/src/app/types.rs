@@ -399,8 +399,15 @@ impl BufferMetadata {
         // Check for common library paths
         let path_str = path.to_string_lossy();
 
-        // Rust: .cargo directory (can be within project for vendor'd crates)
-        if path_str.contains("/.cargo/") || path_str.contains("\\.cargo\\") {
+        // Rust: cargo registry and git checkouts hold downloaded crate sources.
+        // Match only those subdirectories, not all of .cargo/, since the directory
+        // also holds user-editable files like config.toml, credentials.toml, and
+        // env (issue #1970).
+        if path_str.contains("/.cargo/registry/")
+            || path_str.contains("\\.cargo\\registry\\")
+            || path_str.contains("/.cargo/git/")
+            || path_str.contains("\\.cargo\\git\\")
+        {
             return true;
         }
 
@@ -1702,5 +1709,54 @@ mod uri_encoding_tests {
         assert!(!s.contains('}'), "}} should be encoded in {}", s);
         assert!(!s.contains('^'), "^ should be encoded in {}", s);
         assert!(!s.contains('`'), "` should be encoded in {}", s);
+    }
+}
+
+#[cfg(test)]
+mod is_library_path_tests {
+    use super::*;
+
+    fn check(path: &str) -> bool {
+        BufferMetadata::is_library_path(Path::new(path), Path::new("/working_dir"))
+    }
+
+    // Regression tests for issue #1970: .cargo/config.toml (and other user-editable
+    // entries directly under .cargo/) must not be treated as library files.
+    #[test]
+    fn cargo_config_toml_is_not_a_library_file() {
+        assert!(!check("/home/user/.cargo/config.toml"));
+        assert!(!check("/home/user/project/.cargo/config.toml"));
+    }
+
+    #[test]
+    fn cargo_credentials_and_env_are_not_library_files() {
+        assert!(!check("/home/user/.cargo/credentials.toml"));
+        assert!(!check("/home/user/.cargo/env"));
+    }
+
+    #[test]
+    fn cargo_registry_sources_are_library_files() {
+        assert!(check(
+            "/home/user/.cargo/registry/src/index.crates.io-1cd66030c949c28d/serde-1.0.0/src/lib.rs"
+        ));
+    }
+
+    #[test]
+    fn cargo_git_checkouts_are_library_files() {
+        assert!(check(
+            "/home/user/.cargo/git/checkouts/some-dep-abcdef/abcdef/src/lib.rs"
+        ));
+    }
+
+    #[test]
+    fn cargo_config_toml_is_not_a_library_file_windows() {
+        assert!(!check("C:\\Users\\user\\.cargo\\config.toml"));
+    }
+
+    #[test]
+    fn cargo_registry_sources_are_library_files_windows() {
+        assert!(check(
+            "C:\\Users\\user\\.cargo\\registry\\src\\index.crates.io-1cd66030c949c28d\\serde-1.0.0\\src\\lib.rs"
+        ));
     }
 }
