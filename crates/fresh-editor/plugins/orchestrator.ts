@@ -1437,7 +1437,37 @@ async function submitForm(): Promise<void> {
     renderForm();
     return;
   }
-  const repoRoot = (top.stdout || "").trim();
+  const currentToplevel = (top.stdout || "").trim();
+
+  // Resolve to the *main* worktree's root, not the current
+  // worktree. When the user runs `Orchestrator: New` from inside
+  // an existing orchestrator session (whose cwd is a linked
+  // worktree under `<XDG>/orchestrator/<slug>/<session>`), the
+  // current `--show-toplevel` is that worktree's root. Using it
+  // as the slug source would produce
+  // `<XDG>/orchestrator/<slug>/<slug-of-slug>/<session>` — paths
+  // that nest one level deeper each time the user creates a
+  // session from inside a session, eventually blowing past the
+  // filesystem's path-name limits (the WARN/ERROR logs about
+  // `File name too long (os error 36)`).
+  //
+  // `git rev-parse --path-format=absolute --git-common-dir`
+  // returns the absolute path of the shared `.git` directory —
+  // for the main worktree this is `<main>/.git`, for a linked
+  // worktree this is the *same* `<main>/.git`. The parent of
+  // that is the main worktree's root regardless of which worktree
+  // we're in. The fallback to `currentToplevel` is just defensive
+  // for unusual layouts (git versions older than 2.13 didn't
+  // support `--path-format=absolute`, but plugin runs under
+  // recent git so this is mostly belt-and-suspenders).
+  const gitCommon = await spawnCollect(
+    "git",
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    currentToplevel,
+  );
+  const repoRoot = gitCommon.exit_code === 0
+    ? editor.pathDirname((gitCommon.stdout || "").trim()) || currentToplevel
+    : currentToplevel;
 
   // Name resolution: explicit value wins. Otherwise auto-generate
   // by scanning `refs/heads/session-N` for the next free index —
