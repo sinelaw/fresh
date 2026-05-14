@@ -1136,21 +1136,14 @@ async function git_log_detail_open_file(): Promise<void> {
     properties: { type: "content", line: i + 1 },
   }));
 
-  // Compute the target byte offset synchronously from the lines we
-  // already have, and pass it as `initialCursorByte` so the host sets
-  // the cursor before the new buffer becomes active. This is the only
-  // race-free way to land the cursor at a specific spot in a freshly
-  // shown virtual buffer — a follow-up `setBufferCursor` after the
-  // buffer is already active would race against any user input the
-  // moment focus lands.
-  const targetLineIdx = Math.max(0, line - 1);
-  let initialCursorByte = 0;
-  for (let i = 0; i < targetLineIdx && i < lines.length; i++) {
-    initialCursorByte += lines[i].length + 1; // +1 for newline
-  }
-
   // `*<hash>:<path>*` matches the virtual-name convention the host uses
   // to detect syntax from the trailing filename's extension.
+  //
+  // Pass `initialCursorLine` (0-indexed) so the host lands the cursor on
+  // the target line before the buffer becomes active. Without this, a
+  // follow-up setBufferCursor would race against user input and could
+  // be silently clobbered by any keypress the moment focus lands on the
+  // new buffer.
   const name = `*${commit.shortHash}:${file}*`;
   const view = await editor.createVirtualBuffer({
     name,
@@ -1159,7 +1152,7 @@ async function git_log_detail_open_file(): Promise<void> {
     editingDisabled: true,
     showLineNumbers: true,
     entries,
-    initialCursorByte,
+    initialCursorLine: Math.max(0, line - 1),
   });
   if (view) {
     editor.setStatus(

@@ -5291,7 +5291,7 @@ impl JsEditorApi {
                 show_cursors: opts.show_cursors.unwrap_or(true),
                 editing_disabled: opts.editing_disabled.unwrap_or(false),
                 hidden_from_tabs: opts.hidden_from_tabs.unwrap_or(false),
-                initial_cursor_byte: opts.initial_cursor_byte.map(|b| b as usize),
+                initial_cursor_line: opts.initial_cursor_line,
                 request_id: Some(id),
             });
         Ok(id)
@@ -5398,6 +5398,7 @@ impl JsEditorApi {
                 show_cursors: opts.show_cursors.unwrap_or(true),
                 editing_disabled: opts.editing_disabled.unwrap_or(false),
                 line_wrap: opts.line_wrap,
+                initial_cursor_line: opts.initial_cursor_line,
                 request_id: Some(id),
             });
         Ok(id)

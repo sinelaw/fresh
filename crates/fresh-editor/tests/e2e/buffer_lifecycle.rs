@@ -790,7 +790,7 @@ fn test_next_buffer_skips_hidden_buffers() {
         show_cursors: true,
         editing_disabled: true,
         hidden_from_tabs: true, // <-- This makes it hidden
-        initial_cursor_byte: None,
+        initial_cursor_line: None,
         request_id: None,
     };
     harness

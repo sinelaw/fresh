@@ -1465,6 +1465,11 @@ type CreateVirtualBufferInExistingSplitOptions = {
 	* Initial content entries with optional properties
 	*/
 	entries?: Array<TextPropertyEntry>;
+	/**
+	* Initial cursor line (0-indexed); see `initialCursorLine` on
+	* `CreateVirtualBufferOptions`.
+	*/
+	initialCursorLine?: number;
 };
 type CreateVirtualBufferInSplitOptions = {
 	/**
@@ -1557,12 +1562,14 @@ type CreateVirtualBufferOptions = {
 	*/
 	entries?: Array<TextPropertyEntry>;
 	/**
-	* Initial cursor byte position. Set on the new buffer *before* it
-	* becomes the active buffer, so plugins that want to land the cursor
-	* at a specific spot don't have to chase a race against user input
-	* between "buffer becomes active" and a follow-up `setBufferCursor`.
+	* Initial cursor line (0-indexed). Applied to the new buffer *before*
+	* it becomes the active buffer, so plugins that want to land the
+	* cursor on a specific line don't have to chase a race against user
+	* input between "buffer becomes active" and a follow-up
+	* `setBufferCursor`. Using a line index keeps the UTF-8 byte math
+	* on the host side.
 	*/
-	initialCursorByte?: number;
+	initialCursorLine?: number;
 };
 type GrepMatch = {
 	/**

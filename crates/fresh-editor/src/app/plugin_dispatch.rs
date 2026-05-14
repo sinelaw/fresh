@@ -1058,7 +1058,7 @@ impl Editor {
                 show_cursors,
                 editing_disabled,
                 hidden_from_tabs,
-                initial_cursor_byte,
+                initial_cursor_line,
                 request_id,
             } => {
                 self.handle_create_virtual_buffer_with_content(
@@ -1070,7 +1070,7 @@ impl Editor {
                     show_cursors,
                     editing_disabled,
                     hidden_from_tabs,
-                    initial_cursor_byte,
+                    initial_cursor_line,
                     request_id,
                 );
             }
@@ -1123,6 +1123,7 @@ impl Editor {
                 show_cursors,
                 editing_disabled,
                 line_wrap,
+                initial_cursor_line,
                 request_id,
             } => {
                 self.handle_create_virtual_buffer_in_existing_split(
@@ -1135,6 +1136,7 @@ impl Editor {
                     show_cursors,
                     editing_disabled,
                     line_wrap,
+                    initial_cursor_line,
                     request_id,
                 );
             }
@@ -2808,7 +2810,7 @@ impl Editor {
         show_cursors: bool,
         editing_disabled: bool,
         hidden_from_tabs: bool,
-        initial_cursor_byte: Option<usize>,
+        initial_cursor_line: Option<u32>,
         request_id: Option<u64>,
     ) {
         // Hidden-from-tabs buffers (e.g. composite source panes) must NOT be
@@ -2858,13 +2860,47 @@ impl Editor {
         match self.set_virtual_buffer_content(buffer_id, entries) {
             Ok(()) => {
                 tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
-                // Apply an initial cursor position before switching to the
-                // buffer. Doing this here (rather than as a follow-up
-                // SetBufferCursor command from the plugin) means the cursor
-                // is in place the moment the buffer becomes active, so a
-                // user keypress between the plugin's await and its follow-up
-                // setBufferCursor can no longer race-overwrite that cursor.
-                if let Some(byte) = initial_cursor_byte {
+                // Switch to the new buffer to display it — but only when it's
+                // attached (a detached hidden buffer must not steal the view).
+                if !hidden_from_tabs {
+                    self.set_active_buffer(buffer_id);
+                    tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
+                }
+
+                // Apply an initial cursor position. We do this in the same
+                // command-processing tick as creation, so the cursor is in
+                // place by the time the editor next processes user input —
+                // a follow-up SetBufferCursor from the plugin would race
+                // against the user. The plugin passes a line index; we
+                // resolve it to a byte here using the buffer's own content
+                // so UTF-8-byte math never touches JS-side string-length
+                // semantics. Done AFTER `set_active_buffer` so the new
+                // buffer is actually mounted in a split when
+                // `set_buffer_cursor_in_splits` walks the split tree.
+                if let Some(line) = initial_cursor_line {
+                    let target_line = line as usize;
+                    let byte = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.buffers.get_mut(&buffer_id))
+                        .map(|s| {
+                            let total = s.buffer.len();
+                            let mut iter = s.buffer.line_iterator(0, 80);
+                            let mut target_byte = 0;
+                            for current_line in 0..=target_line {
+                                if let Some((line_start, _)) = iter.next_line() {
+                                    if current_line == target_line {
+                                        target_byte = line_start;
+                                        break;
+                                    }
+                                } else {
+                                    target_byte = total;
+                                    break;
+                                }
+                            }
+                            target_byte
+                        })
+                        .unwrap_or(0);
                     let splits: Vec<super::LeafId> = self
                         .windows
                         .get(&self.active_window)
@@ -2874,13 +2910,6 @@ impl Editor {
                         .splits_for_buffer(buffer_id);
                     self.active_window_mut()
                         .set_buffer_cursor_in_splits(buffer_id, byte, &splits);
-                }
-
-                // Switch to the new buffer to display it — but only when it's
-                // attached (a detached hidden buffer must not steal the view).
-                if !hidden_from_tabs {
-                    self.set_active_buffer(buffer_id);
-                    tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
                 }
 
                 // Send response if request_id is present
@@ -3128,6 +3157,7 @@ impl Editor {
         show_cursors: bool,
         editing_disabled: bool,
         line_wrap: Option<bool>,
+        initial_cursor_line: Option<u32>,
         request_id: Option<u64>,
     ) {
         // Create the virtual buffer
@@ -3149,6 +3179,10 @@ impl Editor {
             return;
         }
 
+        // Apply an initial cursor position before the buffer becomes the
+        // active buffer in the split. Same rationale as the equivalent
+        // path in `handle_create_virtual_buffer_with_content`: a follow-up
+        // SetBufferCursor from the plugin would race against user input.
         // Show the buffer in the target split. set_pane_buffer
         // covers the tree + SVS updates the old code did by hand.
         let leaf_id = LeafId(split_id);
@@ -3179,6 +3213,49 @@ impl Editor {
             if let Some(wrap) = line_wrap {
                 view_state.active_state_mut().viewport.line_wrap_enabled = wrap;
             }
+        }
+
+        // Apply an initial cursor position after the buffer is mounted in
+        // the target split. Done in the same command-processing tick as
+        // creation so the cursor is in place before the editor next
+        // processes user input — a follow-up SetBufferCursor from the
+        // plugin would race against the user. The plugin passes a line
+        // index; we resolve it to a byte here using the buffer's content
+        // so UTF-8-byte math never touches JS-side string-length
+        // semantics.
+        if let Some(line) = initial_cursor_line {
+            let target_line = line as usize;
+            let byte = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.buffers.get_mut(&buffer_id))
+                .map(|s| {
+                    let total = s.buffer.len();
+                    let mut iter = s.buffer.line_iterator(0, 80);
+                    let mut target_byte = 0;
+                    for current_line in 0..=target_line {
+                        if let Some((line_start, _)) = iter.next_line() {
+                            if current_line == target_line {
+                                target_byte = line_start;
+                                break;
+                            }
+                        } else {
+                            target_byte = total;
+                            break;
+                        }
+                    }
+                    target_byte
+                })
+                .unwrap_or(0);
+            let splits: Vec<LeafId> = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .splits_for_buffer(buffer_id);
+            self.active_window_mut()
+                .set_buffer_cursor_in_splits(buffer_id, byte, &splits);
         }
 
         tracing::info!(

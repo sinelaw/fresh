@@ -2963,11 +2963,14 @@ pub enum PluginCommand {
         editing_disabled: bool,
         /// Whether this buffer should be hidden from tabs (for composite source buffers)
         hidden_from_tabs: bool,
-        /// Optional initial cursor byte position. Applied before the new
-        /// buffer becomes the active buffer, so plugins can land the cursor
-        /// atomically with creation rather than chasing a race against user
-        /// input via a follow-up `SetBufferCursor`.
-        initial_cursor_byte: Option<usize>,
+        /// Optional initial cursor line (0-indexed). Applied before the
+        /// new buffer becomes the active buffer, so plugins can land the
+        /// cursor atomically with creation rather than chasing a race
+        /// against user input via a follow-up `SetBufferCursor`. The host
+        /// resolves the line to a byte position using the buffer content
+        /// it has just set, which keeps the UTF-8 byte math on the host
+        /// side.
+        initial_cursor_line: Option<u32>,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
@@ -3106,6 +3109,9 @@ pub enum PluginCommand {
         editing_disabled: bool,
         /// Whether line wrapping is enabled for this split (None = use global setting)
         line_wrap: Option<bool>,
+        /// Optional initial cursor line (0-indexed); see the matching
+        /// field on `CreateVirtualBufferWithContent`.
+        initial_cursor_line: Option<u32>,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
@@ -4371,13 +4377,17 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default)]
     #[ts(optional)]
     pub entries: Option<Vec<JsTextPropertyEntry>>,
-    /// Initial cursor byte position. Set on the new buffer *before* it
-    /// becomes the active buffer, so plugins that want to land the cursor
-    /// at a specific spot don't have to chase a race against user input
-    /// between "buffer becomes active" and a follow-up `setBufferCursor`.
-    #[serde(default, rename = "initialCursorByte")]
-    #[ts(optional, rename = "initialCursorByte")]
-    pub initial_cursor_byte: Option<u32>,
+    /// Initial cursor line (0-indexed). Applied to the new buffer *before*
+    /// it becomes the active buffer, so plugins that want to land the
+    /// cursor on a specific line don't have to chase a race against user
+    /// input between "buffer becomes active" and a follow-up
+    /// `setBufferCursor`. Using a line index (rather than a byte offset)
+    /// keeps the byte-math on the host side where the buffer content is
+    /// already in UTF-8 bytes, avoiding the UTF-16-vs-UTF-8 mismatch a
+    /// plugin would otherwise have to navigate.
+    #[serde(default, rename = "initialCursorLine")]
+    #[ts(optional, rename = "initialCursorLine")]
+    pub initial_cursor_line: Option<u32>,
 }
 
 /// Options for createVirtualBufferInSplit
@@ -4479,6 +4489,12 @@ pub struct CreateVirtualBufferInExistingSplitOptions {
     #[serde(default)]
     #[ts(optional)]
     pub entries: Option<Vec<JsTextPropertyEntry>>,
+    /// Initial cursor line (0-indexed). Applied to the new buffer *before*
+    /// it becomes the active buffer; see the matching field on
+    /// `CreateVirtualBufferOptions` for the rationale.
+    #[serde(default, rename = "initialCursorLine")]
+    #[ts(optional, rename = "initialCursorLine")]
+    pub initial_cursor_line: Option<u32>,
 }
 
 /// Options for createTerminal
@@ -5211,7 +5227,7 @@ impl PluginApi {
             show_cursors: true,
             editing_disabled: false,
             hidden_from_tabs: false,
-            initial_cursor_byte: None,
+            initial_cursor_line: None,
             request_id: None,
         })
     }

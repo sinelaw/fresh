@@ -1395,12 +1395,14 @@ impl Window {
     ) {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
+                let mut moved_any = false;
                 for leaf_id in splits {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
                     view_state.cursors.primary_mut().move_to(position, false);
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
+                    moved_any = true;
                 }
                 // Refresh the cached primary cursor line number so the status
                 // bar (and any other consumer of `primary_cursor_line_number`)
@@ -1408,13 +1410,18 @@ impl Window {
                 // this cache themselves; without doing the same here, a
                 // plugin-driven setBufferCursor would leave the cache pinned
                 // to its initial Absolute(0) — the user-visible "off-by-one"
-                // when opening blame from line 2 still shows "Ln 1".
-                let line = state
-                    .buffer
-                    .offset_to_position(position)
-                    .map(|p| p.line)
-                    .unwrap_or(0);
-                state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(line);
+                // when opening blame from line 2 still shows "Ln 1". Guard
+                // on `moved_any` so we don't desync the cache when no split
+                // was actually carrying the buffer's cursor.
+                if moved_any {
+                    let line = state
+                        .buffer
+                        .offset_to_position(position)
+                        .map(|p| p.line)
+                        .unwrap_or(0);
+                    state.primary_cursor_line_number =
+                        crate::model::buffer::LineNumber::Absolute(line);
+                }
             });
     }
 

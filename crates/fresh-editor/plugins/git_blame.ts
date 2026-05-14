@@ -502,6 +502,11 @@ async function show_git_blame() : Promise<void> {
 
   // Create virtual buffer with PURE file content (for syntax highlighting);
   // virtual-line headers are added after buffer creation.
+  // Pass `initialCursorLine` so the host lands the cursor on the same line
+  // the user was on in the source buffer before the new buffer becomes
+  // active — this is the only race-free way to set the cursor, and using a
+  // line index (rather than a byte offset) keeps the UTF-8 byte math on the
+  // host side, where the buffer content is already in UTF-8 bytes.
   const entries = buildContentEntries(fileContent, blocks);
 
   const result = await editor.createVirtualBufferInExistingSplit({
@@ -513,6 +518,7 @@ async function show_git_blame() : Promise<void> {
     showLineNumbers: true,  // We DO want line numbers (headers won't have them due to source_offset: null)
     showCursors: true,
     editingDisabled: true,
+    initialCursorLine: sourceCursorLine,
   });
 
   if (result === null) {
@@ -538,12 +544,8 @@ async function show_git_blame() : Promise<void> {
   // Add virtual lines for blame headers (persistent state model)
   addBlameHeaders(inst);
 
-  // Jump to the same (0-indexed) line the user was on in the source buffer,
-  // and centre it in the viewport. Column doesn't carry meaning in the blame
-  // view, so we land at the start of the line. setBufferCursor also runs
-  // ensure_cursor_visible.
-  const targetByte = getLineByteOffset(lineByteOffsets, fileContent.length, sourceCursorLine + 1);
-  editor.setBufferCursor(result.bufferId, targetByte);
+  // Centre the cursor's line in the viewport. The cursor itself was placed
+  // by the host via `initialCursorLine` (race-free, multi-byte-correct).
   if (splitId !== null) {
     editor.scrollToLineCenter(splitId, result.bufferId, sourceCursorLine);
   }
