@@ -513,6 +513,46 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
     format!("{}...", truncated)
 }
 
+/// Minimum column-width to reserve for the column number portion of the
+/// cursor indicator. Chosen so the bar stays stable across lines with up
+/// to 3-digit column numbers without showing leading padding for the
+/// common single-digit case (the text is suffix-padded, not number-padded).
+const CURSOR_COL_RESERVE: usize = 3;
+
+/// Format the cursor's `Ln X, Col Y` indicator so its rendered width is
+/// stable as the cursor moves. The numbers themselves are emitted with
+/// their natural width — preserving the format existing tests and screen-
+/// readers rely on — and trailing spaces are appended to reach a minimum
+/// width derived from the buffer's total line count and a fixed reserve
+/// for the column number. Fixes the status bar shifting reported in
+/// issue #1967.
+fn format_cursor_position(line: usize, col: usize, line_count: usize) -> String {
+    let text = format!("Ln {line}, Col {col}");
+    let line_digits = line_count.max(1).to_string().len();
+    // "Ln , Col " literals are 9 ASCII chars.
+    let min_width = 9 + line_digits + CURSOR_COL_RESERVE;
+    if text.len() < min_width {
+        format!("{text:<min_width$}")
+    } else {
+        text
+    }
+}
+
+/// Compact variant of `format_cursor_position`, used by
+/// `StatusBarElement::CursorCompact`. Renders as `line:col` with the same
+/// stable-width trailing-space strategy.
+fn format_cursor_position_compact(line: usize, col: usize, line_count: usize) -> String {
+    let text = format!("{line}:{col}");
+    let line_digits = line_count.max(1).to_string().len();
+    // ":" literal is 1 ASCII char.
+    let min_width = 1 + line_digits + CURSOR_COL_RESERVE;
+    if text.len() < min_width {
+        format!("{text:<min_width$}")
+    } else {
+        text
+    }
+}
+
 /// Renders the status bar and prompt/minibuffer
 pub struct StatusBarRenderer;
 
@@ -767,15 +807,15 @@ impl StatusBarRenderer {
                     return None;
                 }
                 let cursor = *ctx.cursors.primary();
-                let byte_offset_mode = ctx.state.buffer.line_count().is_none();
-                let text = if byte_offset_mode {
-                    format!("Byte {}", cursor.position)
-                } else {
+                let line_count = ctx.state.buffer.line_count();
+                let text = if let Some(lc) = line_count {
                     let cursor_iter = ctx.state.buffer.line_iterator(cursor.position, 80);
                     let line_start = cursor_iter.current_position();
                     let col = cursor.position.saturating_sub(line_start);
                     let line = ctx.state.primary_cursor_line_number.value();
-                    format!("Ln {}, Col {}", line + 1, col + 1)
+                    format_cursor_position(line + 1, col + 1, lc)
+                } else {
+                    format!("Byte {}", cursor.position)
                 };
                 Some(RenderedElement {
                     text,
@@ -787,15 +827,15 @@ impl StatusBarRenderer {
                     return None;
                 }
                 let cursor = *ctx.cursors.primary();
-                let byte_offset_mode = ctx.state.buffer.line_count().is_none();
-                let text = if byte_offset_mode {
-                    format!("{}", cursor.position)
-                } else {
+                let line_count = ctx.state.buffer.line_count();
+                let text = if let Some(lc) = line_count {
                     let cursor_iter = ctx.state.buffer.line_iterator(cursor.position, 80);
                     let line_start = cursor_iter.current_position();
                     let col = cursor.position.saturating_sub(line_start);
                     let line = ctx.state.primary_cursor_line_number.value();
-                    format!("{}:{}", line + 1, col + 1)
+                    format_cursor_position_compact(line + 1, col + 1, lc)
+                } else {
+                    format!("{}", cursor.position)
                 };
                 Some(RenderedElement {
                     text,
@@ -1991,5 +2031,102 @@ mod tests {
             RemoteIndicatorOverride::Disconnected { label: None }.state(),
             RemoteIndicatorState::Disconnected
         );
+    }
+
+    // Regression coverage for issue #1967 — the cursor indicator must keep
+    // a stable rendered width as the cursor moves so the bar doesn't
+    // shift. The helpers reserve the digit count of the buffer's total
+    // line count for the line number and `CURSOR_COL_RESERVE` for the
+    // column number, suffix-padding the text without altering the
+    // numbers themselves so existing screen assertions still see
+    // literals like "Ln 1, Col 1".
+
+    #[test]
+    fn test_cursor_position_widths_stable_across_cursor_movement() {
+        let line_count = 50;
+        // Movement across a 50-line file (two-digit line_count) should
+        // produce a constant rendered width regardless of cursor position.
+        let widths: Vec<usize> = [(1, 1), (5, 12), (12, 5), (50, 100), (1, 1)]
+            .into_iter()
+            .map(|(ln, col)| format_cursor_position(ln, col, line_count).len())
+            .collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "rendered widths drift across cursor movements: {widths:?}"
+        );
+    }
+
+    #[test]
+    fn test_cursor_position_preserves_natural_number_text() {
+        // The natural "Ln 1, Col 1" substring must remain intact so
+        // existing screen-content assertions (and screen readers) keep
+        // working. Padding is suffix-only.
+        let text = format_cursor_position(1, 1, 50);
+        assert!(
+            text.starts_with("Ln 1, Col 1"),
+            "expected text to start with natural numbers, got {text:?}"
+        );
+        assert!(
+            text.ends_with(' '),
+            "expected trailing padding, got {text:?}"
+        );
+    }
+
+    #[test]
+    fn test_cursor_position_no_padding_for_single_line_buffer() {
+        // For a single-line buffer the reserved line-digit width is 1,
+        // so a small column number still produces the canonical
+        // "Ln 1, Col 1" with reserve-only trailing padding.
+        let text = format_cursor_position(1, 1, 1);
+        // Min width = "Ln , Col ".len()(=9) + 1 (line_digits) + 3 (col reserve) = 13
+        assert_eq!(text.len(), 13);
+        assert!(text.starts_with("Ln 1, Col 1"));
+    }
+
+    #[test]
+    fn test_cursor_position_does_not_shrink_below_actual() {
+        // When the actual numbers exceed the reserve, the rendered text
+        // is returned unmodified (rare wide-line case).
+        let text = format_cursor_position(99, 99999, 50);
+        assert_eq!(text, "Ln 99, Col 99999");
+    }
+
+    #[test]
+    fn test_cursor_position_compact_widths_stable() {
+        let line_count = 50;
+        let widths: Vec<usize> = [(1, 1), (5, 12), (12, 5), (50, 100), (1, 1)]
+            .into_iter()
+            .map(|(ln, col)| format_cursor_position_compact(ln, col, line_count).len())
+            .collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "compact widths drift across cursor movements: {widths:?}"
+        );
+    }
+
+    #[test]
+    fn test_cursor_position_compact_preserves_natural_text() {
+        let text = format_cursor_position_compact(1, 1, 50);
+        assert!(
+            text.starts_with("1:1"),
+            "expected text to start with natural numbers, got {text:?}"
+        );
+    }
+
+    #[test]
+    fn test_cursor_position_scales_with_line_count() {
+        // Larger buffers reserve more line-digit width so that line
+        // numbers at the high end of the buffer don't widen the bar.
+        let short = format_cursor_position(1, 1, 9);
+        let long = format_cursor_position(1, 1, 10_000);
+        assert!(
+            long.len() > short.len(),
+            "wider buffers should reserve more width: {short:?} vs {long:?}"
+        );
+        // And the wide-buffer rendering should match what a top-of-file
+        // line number near the buffer's high end would render to.
+        let top = format_cursor_position(1, 1, 10_000);
+        let high = format_cursor_position(9_999, 999, 10_000);
+        assert_eq!(top.len(), high.len());
     }
 }

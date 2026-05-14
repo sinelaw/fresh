@@ -4,6 +4,7 @@
 //! control which elements appear (and don't appear) in the rendered status bar.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, StatusBarConfig, StatusBarElement};
 use std::fs;
 
@@ -151,6 +152,62 @@ fn test_compact_cursor_format() {
     assert!(
         !status.contains("Ln"),
         "Compact cursor should not show 'Ln'.\nStatus bar: {status}"
+    );
+}
+
+/// Regression test for issue #1967 — moving the cursor between lines of
+/// very different lengths must not shift the position of elements that
+/// follow `{cursor}` in the status bar. Reproduces the original symptom
+/// (the status bar was fidgety when the column number jumped between 1
+/// and 2+ digits) by anchoring a trailing always-present `{language}`
+/// element after `{cursor}` and asserting the language token stays in
+/// the same column before and after a cursor move.
+#[test]
+fn test_cursor_indicator_width_is_stable_across_cursor_movement() {
+    let config = config_with_status_bar(
+        vec![
+            StatusBarElement::Filename,
+            StatusBarElement::Cursor,
+            StatusBarElement::Language,
+        ],
+        vec![],
+    );
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(160, 30, config).unwrap();
+
+    // Two lines of very different lengths so moving Down + End jumps the
+    // column number from a single digit to three digits — the exact
+    // pattern that caused the bar to wiggle in #1967.
+    let dir = harness.project_dir().unwrap();
+    let file = dir.join("wiggly.txt");
+    let short = "ab\n";
+    let long = format!("{}\n", "x".repeat(150));
+    fs::write(&file, format!("{short}{long}")).unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    let status_before = harness.get_status_bar();
+    // Find the language token start as a stable anchor. The status bar
+    // uses " | " separators between left-side elements, so the last "|"
+    // sits just before the Language element. Its column position must
+    // stay fixed when only the Cursor element changes.
+    let lang_col_before = status_before
+        .rfind('|')
+        .unwrap_or_else(|| panic!("expected separator in status bar: {status_before:?}"));
+
+    // Move to line 2, then to the end of the (150-char) line.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let status_after = harness.get_status_bar();
+    let lang_col_after = status_after
+        .rfind('|')
+        .unwrap_or_else(|| panic!("expected separator in status bar: {status_after:?}"));
+
+    assert_eq!(
+        lang_col_before, lang_col_after,
+        "Element after `{{cursor}}` shifted when the cursor moved.\n  before: {status_before:?}\n  after:  {status_after:?}"
     );
 }
 
