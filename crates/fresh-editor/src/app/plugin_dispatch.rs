@@ -1229,10 +1229,13 @@ impl Editor {
                 focus,
                 persistent,
                 window_id,
+                command,
+                title,
                 request_id,
             } => {
                 self.handle_create_terminal(
-                    cwd, direction, ratio, focus, persistent, window_id, request_id,
+                    cwd, direction, ratio, focus, persistent, window_id, command, title,
+                    request_id,
                 );
             }
 
@@ -2719,6 +2722,8 @@ impl Editor {
         focus: Option<bool>,
         persistent: bool,
         target_session_id: Option<fresh_core::WindowId>,
+        command: Option<Vec<String>>,
+        title: Option<String>,
         request_id: u64,
     ) {
         // Resolve target window. Explicit `windowId` wins when the
@@ -2762,6 +2767,8 @@ impl Editor {
                 ratio,
                 focus.unwrap_or(true),
                 persistent,
+                command,
+                title.filter(|t| !t.is_empty()),
             )
         };
         match result {

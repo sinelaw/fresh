@@ -1948,11 +1948,24 @@ impl Editor {
             else {
                 continue;
             };
+            // Capture the file size *before* appending the visible
+            // screen so we can truncate back to it afterwards. The
+            // append makes the live screen visible in the previewed
+            // buffer; the truncate keeps the file from growing on
+            // every preview-render frame. Without this, opening the
+            // picker against a session with a few lines on screen
+            // grew the backing file by `screen_height` bytes per
+            // frame — visible to the user as the same banner
+            // repeating dozens of times when they later dived in.
+            let pre_append_size = self
+                .authority
+                .filesystem
+                .metadata(&backing_file)
+                .map(|m| m.size)
+                .unwrap_or(0);
             if let Some(handle) = preview_win.terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
-                    if let Ok(metadata) = self.authority.filesystem.metadata(&backing_file) {
-                        state.set_backing_file_history_end(metadata.size);
-                    }
+                    state.set_backing_file_history_end(pre_append_size);
                     if let Ok(mut file) = self
                         .authority
                         .filesystem
@@ -1997,6 +2010,34 @@ impl Editor {
                     // the same terminal (Bug 5).
                     state.margins.configure_for_line_numbers(false);
                 }
+            }
+            // Truncate the file back to its pre-append size so the
+            // next preview frame starts from the same baseline as
+            // this one. Without truncation the file grows by one
+            // visible-screen-worth of bytes on every render and the
+            // user sees the same banner repeated N times when they
+            // later dive into the session (Finding J).
+            //
+            // The in-memory `EditorState` keeps the appended view so
+            // the preview pane has something to paint — `SplitRenderer`
+            // below renders the buffer's state directly into the
+            // embed rect, and resetting state to match the truncated
+            // file would leave the preview blank for any
+            // hasn't-scrolled-yet terminal. The "live editor view
+            // when the user dives in" path uses `render_terminal_splits`
+            // which overlays the live PTY grid on top of the buffer,
+            // so the slightly-stale appended content the state
+            // carries is irrelevant there.
+            if let Err(e) = self
+                .authority
+                .filesystem
+                .set_file_length(&backing_file, pre_append_size)
+            {
+                tracing::error!(
+                    "preview: failed to truncate backing file {} back to {} bytes: {e}",
+                    backing_file.display(),
+                    pre_append_size,
+                );
             }
         }
 

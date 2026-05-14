@@ -2979,6 +2979,17 @@ pub enum PluginCommand {
         /// Falls back to active session if the id is unknown.
         #[serde(default)]
         window_id: Option<WindowId>,
+        /// Argv to spawn directly in the PTY in lieu of the host's
+        /// configured shell. See `CreateTerminalOptions::command` for
+        /// the full semantics — `None` keeps the shell-and-type
+        /// behaviour, `Some(argv)` runs `argv` as the PTY child.
+        #[serde(default)]
+        command: Option<Vec<String>>,
+        /// Tab title override. Defaults to `command[0]` (when
+        /// `command` is set) or `"Terminal N"` (when it isn't).
+        /// See `CreateTerminalOptions::title`.
+        #[serde(default)]
+        title: Option<String>,
         /// Callback ID for async response
         request_id: u64,
     },
@@ -3790,6 +3801,27 @@ pub struct CreateTerminalOptions {
     #[serde(default, rename = "windowId")]
     #[ts(optional, rename = "windowId")]
     pub window_id: Option<WindowId>,
+    /// Argv to spawn directly inside the PTY instead of the host's
+    /// configured shell. `None` (default) keeps the historical
+    /// behaviour: spawn the user's shell and let the caller type into
+    /// it via `sendTerminalInput`. `Some([cmd, ...args])` runs that
+    /// exact command as the PTY child — no shell middleman, so the
+    /// process exits cleanly when the agent does and the
+    /// terminal-buffer's `terminal_exit` plugin hook reflects the
+    /// agent's real exit status. Used by Orchestrator so a session
+    /// with agent `python3` is just python3 in the PTY rather than
+    /// bash-running-python3-as-a-subshell-command.
+    #[serde(default)]
+    #[ts(optional)]
+    pub command: Option<Vec<String>>,
+    /// Tab title for the terminal buffer. Defaults to `command[0]`
+    /// (when `command` is set) or `"Terminal N"` (the historical
+    /// auto-numbered title). If another terminal in the same window
+    /// already uses the requested title, the host appends `" (k)"`
+    /// to disambiguate. Empty string is treated the same as `None`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
 }
 
 /// Result of getTextPropertiesAtCursor - array of property objects

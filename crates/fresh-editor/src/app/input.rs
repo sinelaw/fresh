@@ -2642,6 +2642,14 @@ impl Editor {
             // New-Session form relies on this so Enter submits the
             // form regardless of which field is focused (matching the
             // dialog's `Enter: submit` hint).
+            //
+            // Important: only count bindings that are *explicitly* set
+            // for the mode (user / default / plugin defaults). The
+            // resolver's full `resolve()` falls back to Normal-context
+            // bindings for any mode, which would falsely report Enter
+            // as bound everywhere (Normal's Enter inserts a newline).
+            // We check the three context-scoped maps directly so the
+            // Normal-fallback path doesn't taint the precedence check.
             let mode_has_binding = self
                 .active_window()
                 .editor_mode
@@ -2650,11 +2658,8 @@ impl Editor {
                     let key_event = crossterm::event::KeyEvent::new(code, modifiers);
                     let mode_ctx =
                         crate::input::keybindings::KeyContext::Mode(mode_name.to_string());
-                    self.keybindings
-                        .read()
-                        .unwrap()
-                        .resolve(&key_event, mode_ctx)
-                        != crate::input::keybindings::Action::None
+                    let keybindings = self.keybindings.read().unwrap();
+                    keybindings.has_explicit_binding(&key_event, &mode_ctx)
                 })
                 .unwrap_or(false);
             if mode_has_binding {

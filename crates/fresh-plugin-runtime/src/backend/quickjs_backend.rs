@@ -5034,6 +5034,8 @@ impl JsEditorApi {
             focus: None,
             persistent: None,
             window_id: None,
+            command: None,
+            title: None,
         });
 
         // Track request_id → plugin_name for async resource tracking
@@ -5050,6 +5052,8 @@ impl JsEditorApi {
             // by passing `persistent: true` in the options if the plugin wants
             // the terminal to survive workspace save/restore.
             persistent: opts.persistent.unwrap_or(false),
+            command: opts.command,
+            title: opts.title,
             request_id: id,
         });
         Ok(id)

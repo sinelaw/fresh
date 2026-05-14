@@ -1053,6 +1053,46 @@ function lastNonEmptyLine(s: string): string {
   return lines.length ? lines[lines.length - 1].trim() : "";
 }
 
+/// Split the user's "Agent Command" string into an argv suitable for
+/// `editor.createTerminal({ command })`. Honours single- and
+/// double-quoted segments so `claude --append "hello world"` parses
+/// as three args rather than four. Backslash escaping is intentionally
+/// *not* supported — agent commands are short typed-in strings; if
+/// they need that level of escaping the user should write a wrapper
+/// shell script.
+///
+/// Returns `[]` for an empty or whitespace-only input.
+function splitAgentCmd(s: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      if (c === quote) {
+        quote = null;
+      } else {
+        cur += c;
+      }
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      continue;
+    }
+    if (c === " " || c === "\t") {
+      if (cur.length > 0) {
+        out.push(cur);
+        cur = "";
+      }
+      continue;
+    }
+    cur += c;
+  }
+  if (cur.length > 0) out.push(cur);
+  return out;
+}
+
 async function spawnCollect(
   command: string,
   args: string[],
@@ -1649,9 +1689,17 @@ editor.on("window_created", async (payload) => {
     // the dive isn't user-visible flicker, it's the desired
     // landing state.
     editor.setActiveWindow(id);
+    // When the user provided a non-empty agent command, spawn it as
+    // the PTY child directly (no shell middleman). Tab title reads
+    // the command name ("python3", "claude", ...) instead of the
+    // generic "*Terminal N*". When `cmd` is empty the host picks
+    // the user's shell as before.
+    const argv = splitAgentCmd(intent.cmd);
     const term = await editor.createTerminal({
       cwd: intent.root,
       focus: false,
+      command: argv.length > 0 ? argv : undefined,
+      title: argv.length > 0 ? argv[0] : undefined,
     });
     const tracked: AgentSession = {
       id,
@@ -1662,9 +1710,11 @@ editor.on("window_created", async (payload) => {
       createdAt: Date.now(),
     };
     orchestratorSessions.set(id, tracked);
-    if (intent.cmd) {
-      editor.sendTerminalInput(term.terminalId, intent.cmd + "\n");
-    }
+    // Legacy `sendTerminalInput` path is no longer needed when the
+    // command is spawned directly. Kept for the shell-only case
+    // would be `editor.sendTerminalInput(term.terminalId, "\n")` to
+    // wake up the prompt, but that's unnecessary — the shell prints
+    // its own prompt on startup.
   }
   refreshOpenDialog();
 });

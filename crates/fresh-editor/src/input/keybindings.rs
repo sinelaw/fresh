@@ -1887,6 +1887,33 @@ impl KeybindingResolver {
         None
     }
 
+    /// `true` iff this context has its own binding for `event` —
+    /// either user-customised, built-in default, or plugin-default
+    /// (from `defineMode`). Unlike [`resolve`], this does **not**
+    /// fall back to Global or Normal-context bindings; it's the
+    /// "did someone *explicitly* claim this key for this mode"
+    /// check used by `dispatch_floating_widget_key` to decide
+    /// whether to let mode dispatch override its smart-key defaults.
+    pub fn has_explicit_binding(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        let norm = normalize_key(event.code, event.modifiers);
+        if let Some(bindings) = self.bindings.get(context) {
+            if bindings.contains_key(&norm) {
+                return true;
+            }
+        }
+        if let Some(bindings) = self.default_bindings.get(context) {
+            if bindings.contains_key(&norm) {
+                return true;
+            }
+        }
+        if let Some(bindings) = self.plugin_defaults.get(context) {
+            if bindings.contains_key(&norm) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Resolve a key event to a UI action for terminal mode.
     /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
     /// Returns Action::None if the key doesn't map to a UI action.

@@ -79,6 +79,7 @@ impl Window {
         &mut self,
         cwd: Option<PathBuf>,
         persistent: bool,
+        command_override: Option<Vec<String>>,
     ) -> Option<TerminalId> {
         let (cols, rows) = self.get_terminal_dimensions();
 
@@ -121,7 +122,24 @@ impl Window {
         self.terminal_backing_files
             .insert(predicted_terminal_id, backing_path.clone());
 
-        let wrapper = self.resolved_terminal_wrapper();
+        // When the caller supplies an explicit argv, build a wrapper
+        // that runs it directly instead of the authority's shell. We
+        // keep `manages_cwd: false` so the PTY's cwd is honoured by
+        // the spawn (the authority's `manages_cwd` flag only applies
+        // when the wrapper itself re-roots cwd, like the docker /
+        // ssh paths). Empty argv falls back to the shell — there's
+        // nothing for the host to run.
+        let wrapper = match command_override {
+            Some(argv) if !argv.is_empty() => {
+                let (command, args) = argv.split_first().expect("non-empty argv");
+                crate::services::authority::TerminalWrapper {
+                    command: command.clone(),
+                    args: args.to_vec(),
+                    manages_cwd: false,
+                }
+            }
+            _ => self.resolved_terminal_wrapper(),
+        };
         match self.terminal_manager.spawn(
             cols,
             rows,
@@ -262,9 +280,26 @@ impl Window {
         ratio: Option<f32>,
         focus: bool,
         persistent: bool,
+        command: Option<Vec<String>>,
+        title: Option<String>,
     ) -> Result<(TerminalId, BufferId, Option<LeafId>), String> {
+        // Derive the auto-title from the command's executable name
+        // (basename of argv[0]). The host writes this into the
+        // terminal buffer's `BufferMetadata::name` so the tab reads
+        // e.g. "python3" instead of "*Terminal N*" when the plugin
+        // runs python3 directly. Explicit `title` overrides.
+        let auto_title = command.as_ref().and_then(|argv| {
+            argv.first().map(|cmd| {
+                std::path::Path::new(cmd)
+                    .file_name()
+                    .and_then(|os| os.to_str())
+                    .unwrap_or(cmd.as_str())
+                    .to_string()
+            })
+        });
+        let resolved_title = title.or(auto_title);
         let terminal_id = self
-            .spawn_terminal_session(cwd, persistent)
+            .spawn_terminal_session(cwd, persistent, command)
             .ok_or_else(|| "Failed to spawn terminal".to_string())?;
 
         // Register the leader pid with this window's process_groups
@@ -397,8 +432,57 @@ impl Window {
             }
         };
 
+        // Override the auto-generated `*Terminal N*` display name
+        // when the plugin requested an explicit title (or one was
+        // derived from `command[0]`). Disambiguates against other
+        // terminals in this window using a `name (k)` suffix so two
+        // simultaneous python3 sessions read as "python3" and
+        // "python3 (2)" instead of colliding.
+        if let Some(title) = resolved_title {
+            let final_name = self.disambiguate_terminal_title(&title, buffer_id);
+            if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                meta.display_name = final_name;
+            }
+        }
+
         self.resize_visible_terminals();
         Ok((terminal_id, buffer_id, created_split_id))
+    }
+
+    /// Pick the next free `name (k)` variant of `desired` for this
+    /// window's set of terminal buffers. `for_buffer` is the
+    /// freshly-created buffer being titled — its own metadata is
+    /// excluded from the scan so we don't collide with ourselves
+    /// when callers pre-set it.
+    ///
+    /// Returns `desired` verbatim when no collision exists, otherwise
+    /// `desired (2)`, `desired (3)`, … as needed.
+    fn disambiguate_terminal_title(&self, desired: &str, for_buffer: BufferId) -> String {
+        // Collect existing terminal-buffer display names that share
+        // the desired prefix. Only inspect buffers that are actually
+        // terminals — non-terminal buffers happen to use the same
+        // metadata map but their names don't collide semantically.
+        let used: std::collections::HashSet<&str> = self
+            .terminal_buffers
+            .keys()
+            .filter(|bid| **bid != for_buffer)
+            .filter_map(|bid| self.buffer_metadata.get(bid).map(|m| m.display_name.as_str()))
+            .collect();
+        if !used.contains(desired) {
+            return desired.to_string();
+        }
+        // Linear scan from k=2 upward. Two simultaneous duplicates is
+        // already rare; ten is unheard of, so the loop bound is fine.
+        for k in 2..=1024 {
+            let candidate = format!("{} ({})", desired, k);
+            if !used.contains(candidate.as_str()) {
+                return candidate;
+            }
+        }
+        // Fall back to `desired (∞)` if for some reason 1024 names
+        // are taken — still unique because the loop exhausted the
+        // numeric variants we considered. Practically unreachable.
+        format!("{} (n)", desired)
     }
 
     /// Open a new terminal in this window: spawn the PTY, create
@@ -413,7 +497,10 @@ impl Window {
     /// editor-active one. See `Editor::open_terminal` for the
     /// active-window wrapper that does both.
     pub fn open_terminal_in_window(&mut self) -> Option<(TerminalId, BufferId)> {
-        let terminal_id = self.spawn_terminal_session(None, true)?;
+        // `None` command override — `Open Terminal` always spawns the
+        // user's shell, never a one-off command. Plugin-driven
+        // terminals route through `create_plugin_terminal` instead.
+        let terminal_id = self.spawn_terminal_session(None, true, None)?;
         let split_id = self
             .buffers
             .splits()
@@ -499,8 +586,9 @@ impl Editor {
     /// be seeded with the terminal directly rather than with a
     /// placeholder buffer that would linger as a phantom tab).
     pub(crate) fn spawn_terminal_session(&mut self) -> Option<TerminalId> {
+        // No command override — see comment on `Window::open_terminal_in_window`.
         self.active_window_mut()
-            .spawn_terminal_session(None, true)
+            .spawn_terminal_session(None, true, None)
     }
 
     /// Open a new terminal in the active window's current split, fire
