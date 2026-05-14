@@ -3247,13 +3247,37 @@ impl Editor {
                     target_byte
                 })
                 .unwrap_or(0);
-            let splits: Vec<LeafId> = self
+            // `splits_for_buffer` only walks the main split tree, so a
+            // buffer mounted into an inner leaf of a grouped subtree
+            // (buffer-group panel) wouldn't be found and the cursor move
+            // would silently no-op. Mirror `handle_set_buffer_cursor` and
+            // include any matching inner leaves so the cursor lands
+            // regardless of where the buffer ended up.
+            let mut splits: Vec<LeafId> = self
                 .windows
                 .get(&self.active_window)
                 .and_then(|w| w.buffers.splits())
                 .map(|(mgr, _)| mgr)
                 .expect("active window must have a populated split layout")
                 .splits_for_buffer(buffer_id);
+            for node in self.active_window().grouped_subtrees.values() {
+                if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
+                    for inner_leaf in layout.leaf_split_ids() {
+                        if let Some(vs) = self
+                            .windows
+                            .get(&self.active_window)
+                            .and_then(|w| w.buffers.splits())
+                            .map(|(_, vs)| vs)
+                            .expect("active window must have a populated split layout")
+                            .get(&inner_leaf)
+                        {
+                            if vs.active_buffer == buffer_id && !splits.contains(&inner_leaf) {
+                                splits.push(inner_leaf);
+                            }
+                        }
+                    }
+                }
+            }
             self.active_window_mut()
                 .set_buffer_cursor_in_splits(buffer_id, byte, &splits);
         }

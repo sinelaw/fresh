@@ -3137,3 +3137,88 @@ fn test_git_blame_jumps_to_source_cursor_line() {
         );
     }
 }
+
+/// Regression: activating Git Blame after navigating with Ctrl-G in a large
+/// file with multi-byte characters before the target line must land the
+/// cursor on the same source line.
+///
+/// Models the user-visible scenario from #1957 follow-up: large file
+/// (>5000 lines), multi-byte glyphs scattered before the target line, and
+/// the cursor moved via the Goto Line prompt (Ctrl-G) rather than arrow
+/// keys. The earlier test_git_blame_jumps_to_source_cursor_line covers
+/// arrow-key motion in a 30-line file; this one exercises the host-side
+/// line→byte resolution and the cursor-mount path the user actually hit.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_jumps_to_cursor_line_with_multibyte_and_goto() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+
+    // 5500 lines, with multi-byte glyphs (`█`, `│`) sprinkled in the first
+    // 200 lines — same pattern as crates/fresh-editor/src/config.rs.
+    let mut content = String::with_capacity(120_000);
+    for i in 1..=5500 {
+        if i % 4 == 0 && i <= 200 {
+            content.push_str(&format!("Line {i} █ │\n"));
+        } else {
+            content.push_str(&format!("Line {i}\n"));
+        }
+    }
+    repo.create_file("big.txt", &content);
+    repo.git_add(&["big.txt"]);
+    repo.git_commit("Initial commit");
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("big.txt");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 5500"))
+        .unwrap();
+
+    // Ctrl-G, type 5000, Enter — the exact key sequence from the user's repro.
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("5000").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(5000))
+        .unwrap();
+
+    // Inline trigger_git_blame's body — we can't wait for the "──" block
+    // header glyph since this single-commit file collapses to one block
+    // whose header lives at line 1, far off the viewport scrolled to
+    // line 5000. Wait on the status bar's `*blame:` indicator instead.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Git Blame").unwrap();
+    harness.wait_for_screen_contains("Git Blame").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*blame:big.txt*"))
+        .unwrap();
+
+    // Status bar must report Ln 5000 in the blame view, not Ln 1.
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(5000))
+        .unwrap();
+}
