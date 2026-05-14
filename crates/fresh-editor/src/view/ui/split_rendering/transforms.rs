@@ -38,6 +38,14 @@ use std::collections::HashSet;
 ///      post-condition, that no row is ever emitted wider than
 ///      `eff_width`.
 ///
+/// Inter-word Space-overflow handling (issue #1363): when a `Space`
+/// token at the wrap boundary would push past `eff_width`, the wrap
+/// looks back for the most recent inter-word `Space` on the current
+/// row and (when the tokens after it fit on a fresh continuation row)
+/// moves them to the new row.  This keeps continuation rows starting
+/// with content rather than a stranded leading space, without letting
+/// any character drift past `eff_width`.
+///
 /// The grapheme-split + word-boundary algorithm in step 3/4 mirrors the
 /// standalone [`crate::primitives::visual_layout::wrap_str_to_width`]
 /// helper — used by the virtual-line path
@@ -48,6 +56,96 @@ use std::collections::HashSet;
 /// lines and source lines wrapping at the same boundaries even though
 /// the orchestration (token carry-over, hanging indent, tabs, ANSI) is
 /// only handled here.
+/// Result of [`back_up_to_prior_space`]: how to split the current row's
+/// tokens so the row ends just after the prior inter-word `Space` and
+/// the tail becomes the start of the continuation row.
+struct BackUpPlan {
+    /// Index into `wrapped` where the tail begins.  Tokens at
+    /// `[tail_start..]` move to the continuation row.
+    tail_start: usize,
+    /// Total visual width of the tail when placed at the start of a
+    /// fresh row (accounting for hanging indent and tab expansion
+    /// relative to the new starting column).  Used to advance
+    /// `current_line_width` after re-emitting the tail.
+    tail_width: usize,
+}
+
+/// Scan back through `wrapped` from the end of the current row to find
+/// the most recent `Space` token on this row.  Returns a [`BackUpPlan`]
+/// when a viable back-up point exists, i.e.:
+///   1. There's a `Space` before any `Break` / `Newline` (so we don't
+///      cross a row boundary), AND
+///   2. The Space isn't the row's first content token (backing up would
+///      otherwise leave the row empty), AND
+///   3. The tail tokens fit within `eff_width` columns when re-emitted
+///      at the start of a fresh continuation row (accounting for
+///      `line_indent`).
+///
+/// Returns `None` if no such point exists — the caller falls back to
+/// the old "emit Break, push current token on new row" behaviour.
+fn back_up_to_prior_space(
+    wrapped: &[ViewTokenWire],
+    line_indent: usize,
+    eff_width: usize,
+) -> Option<BackUpPlan> {
+    use crate::primitives::visual_layout;
+
+    // Walk back from the end until we find a `Space`.  Stop at
+    // `Break`/`Newline` — they bound the current row.
+    let mut space_idx: Option<usize> = None;
+    for (i, t) in wrapped.iter().enumerate().rev() {
+        match &t.kind {
+            ViewTokenWireKind::Break | ViewTokenWireKind::Newline => return None,
+            ViewTokenWireKind::Space => {
+                space_idx = Some(i);
+                break;
+            }
+            _ => continue,
+        }
+    }
+    let space_idx = space_idx?;
+
+    // Tail starts right after the Space.  If the tail is empty, there's
+    // nothing to move — the caller hit a Space-after-Space pattern and
+    // we have no word to back over.
+    let tail_start = space_idx + 1;
+    if tail_start >= wrapped.len() {
+        return None;
+    }
+
+    // Require at least one non-Space token BEFORE this Space, otherwise
+    // backing up would leave a row consisting solely of a Space.
+    if !wrapped[..space_idx]
+        .iter()
+        .any(|t| !matches!(t.kind, ViewTokenWireKind::Space))
+    {
+        return None;
+    }
+
+    // Compute the tail's visual width as it would appear on a fresh
+    // continuation row starting at column `line_indent`.  Tab widths
+    // depend on the starting column, so we re-derive them here.
+    let mut col = line_indent;
+    for t in &wrapped[tail_start..] {
+        match &t.kind {
+            ViewTokenWireKind::Text(s) => col += visual_layout::visual_width(s, col),
+            ViewTokenWireKind::Space => col += 1,
+            ViewTokenWireKind::BinaryByte(_) => col += 4,
+            // Break / Newline shouldn't appear inside a single row's
+            // post-Space tail; if they do, the back-up is unsafe.
+            _ => return None,
+        }
+    }
+    let tail_width = col.saturating_sub(line_indent);
+    if line_indent + tail_width > eff_width {
+        return None;
+    }
+    Some(BackUpPlan {
+        tail_start,
+        tail_width,
+    })
+}
+
 pub(crate) fn apply_wrapping_transform(
     tokens: Vec<ViewTokenWire>,
     content_width: usize,
@@ -451,12 +549,46 @@ pub(crate) fn apply_wrapping_transform(
 
                 let eff_width = effective_width(available_width, line_indent, on_continuation);
                 if current_line_width + 1 > eff_width {
-                    on_continuation = true;
-                    emit_break_with_indent(
-                        &mut wrapped,
-                        &mut current_line_width,
-                        &cached_indent_string,
-                    );
+                    // Space-overflow: emitting a Break here would
+                    // strand this Space as a leading space at the
+                    // start of the continuation row.  Try backing up
+                    // to before the most recent word on the current
+                    // row instead — that word moves to the
+                    // continuation row, and the row break lands at
+                    // the prior inter-word Space (which sits at a
+                    // column well within `eff_width`).  See issue
+                    // #1363.  Falls back to the old "Break, push
+                    // Space on new row" path when no back-up point
+                    // exists (single-word row from char-split, or
+                    // the Space is the row's first token).
+                    let back_up = back_up_to_prior_space(&wrapped, line_indent, eff_width);
+                    if let Some(BackUpPlan {
+                        tail_start,
+                        tail_width,
+                    }) = back_up
+                    {
+                        let tail: Vec<ViewTokenWire> = wrapped.drain(tail_start..).collect();
+                        on_continuation = true;
+                        emit_break_with_indent(
+                            &mut wrapped,
+                            &mut current_line_width,
+                            &cached_indent_string,
+                        );
+                        // Tail tokens are guaranteed to fit on a
+                        // fresh continuation row (we computed
+                        // `tail_width` against `eff_width`); push
+                        // them back and advance the column by the
+                        // precomputed width.
+                        wrapped.extend(tail);
+                        current_line_width += tail_width;
+                    } else {
+                        on_continuation = true;
+                        emit_break_with_indent(
+                            &mut wrapped,
+                            &mut current_line_width,
+                            &cached_indent_string,
+                        );
+                    }
                 }
                 wrapped.push(token);
                 current_line_width += 1;

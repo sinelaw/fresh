@@ -1814,6 +1814,144 @@ mod tests {
         }
     }
 
+    /// Helper for issue-1363 tests: tokenize a plain ASCII string into
+    /// `Text` / `Space` tokens the same way `build_base_tokens` would
+    /// (one `Space` per literal ' '; runs of non-space chars coalesce
+    /// into a single `Text`).
+    fn tokenize_for_wrap(text: &str) -> Vec<fresh_core::api::ViewTokenWire> {
+        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+        let mut tokens = Vec::new();
+        let mut buf = String::new();
+        let mut buf_start: Option<usize> = None;
+        for (i, ch) in text.char_indices() {
+            if ch == ' ' {
+                if !buf.is_empty() {
+                    tokens.push(ViewTokenWire {
+                        source_offset: buf_start,
+                        kind: ViewTokenWireKind::Text(std::mem::take(&mut buf)),
+                        style: None,
+                    });
+                    buf_start = None;
+                }
+                tokens.push(ViewTokenWire {
+                    source_offset: Some(i),
+                    kind: ViewTokenWireKind::Space,
+                    style: None,
+                });
+            } else {
+                if buf.is_empty() {
+                    buf_start = Some(i);
+                }
+                buf.push(ch);
+            }
+        }
+        if !buf.is_empty() {
+            tokens.push(ViewTokenWire {
+                source_offset: buf_start,
+                kind: ViewTokenWireKind::Text(buf),
+                style: None,
+            });
+        }
+        tokens
+    }
+
+    /// Materialise the row strings emitted by `apply_wrapping_transform`
+    /// by walking its token output and splitting on `Break`.
+    fn rows_from_wrapped(wrapped: &[fresh_core::api::ViewTokenWire]) -> Vec<String> {
+        use fresh_core::api::ViewTokenWireKind;
+        let mut rows: Vec<String> = vec![String::new()];
+        for tok in wrapped {
+            match &tok.kind {
+                ViewTokenWireKind::Text(s) => rows.last_mut().unwrap().push_str(s),
+                ViewTokenWireKind::Space => rows.last_mut().unwrap().push(' '),
+                ViewTokenWireKind::Newline => {}
+                ViewTokenWireKind::Break => rows.push(String::new()),
+                ViewTokenWireKind::BinaryByte(_) => {}
+            }
+        }
+        if rows.last().map(|r| r.is_empty()).unwrap_or(false) {
+            rows.pop();
+        }
+        rows
+    }
+
+    /// Issue #1363: wrap should not leak a leading space onto the
+    /// continuation row.  The fix moves the last word on the prior
+    /// row to the continuation row when a trailing Space would
+    /// otherwise overflow — `["AAAAA BBBBBB", " CCCC"]` becomes
+    /// `["AAAAA ", "BBBBBB CCCC"]`.
+    #[test]
+    fn issue_1363_no_leading_space_on_continuation_row() {
+        let tokens = tokenize_for_wrap("AAAAA BBBBBB CCCC");
+        let wrapped = apply_wrapping_transform(tokens, 12, 0, false);
+        let rows = rows_from_wrapped(&wrapped);
+        assert_eq!(rows.len(), 2, "expected 2 rows, got {:?}", rows);
+        for (i, row) in rows.iter().enumerate() {
+            assert!(
+                !row.starts_with(' '),
+                "row {i} {:?} starts with whitespace (issue #1363): rows = {:?}",
+                row,
+                rows,
+            );
+            assert!(
+                row.chars().count() <= 12,
+                "row {i} {:?} width {} exceeds eff_width 12 (issue #1363): no char may overflow",
+                row,
+                row.chars().count(),
+            );
+        }
+    }
+
+    /// Issue #1363: source content is preserved across the wrap —
+    /// concatenating the rows recovers the original text.  Guards
+    /// against the back-up logic dropping or duplicating tokens.
+    #[test]
+    fn issue_1363_back_up_preserves_content() {
+        let input = "AAAAA BBBBBB CCCC";
+        let tokens = tokenize_for_wrap(input);
+        let wrapped = apply_wrapping_transform(tokens, 12, 0, false);
+        let rows = rows_from_wrapped(&wrapped);
+        let reconstructed: String = rows.concat();
+        assert_eq!(reconstructed, input, "rows = {:?}", rows);
+    }
+
+    /// Issue #1363: when the row contains only one word (e.g. a
+    /// char-split chunk), there's no prior Space to back up to.  The
+    /// fix degrades gracefully to the old behaviour — the residual
+    /// leading-space case is accepted as out of scope.  The invariant
+    /// we DO maintain is that no row's visible content exceeds the
+    /// effective width.
+    #[test]
+    fn issue_1363_single_word_row_falls_back() {
+        use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+        let tokens = vec![
+            ViewTokenWire {
+                source_offset: Some(0),
+                kind: ViewTokenWireKind::Text("XXXXXXXX".to_string()),
+                style: None,
+            },
+            ViewTokenWire {
+                source_offset: Some(8),
+                kind: ViewTokenWireKind::Space,
+                style: None,
+            },
+            ViewTokenWire {
+                source_offset: Some(9),
+                kind: ViewTokenWireKind::Text("YYYY".to_string()),
+                style: None,
+            },
+        ];
+        let wrapped = apply_wrapping_transform(tokens, 8, 0, false);
+        let rows = rows_from_wrapped(&wrapped);
+        for row in &rows {
+            assert!(
+                row.chars().count() <= 8,
+                "row {:?} exceeds eff_width 8 in fallback case",
+                row,
+            );
+        }
+    }
+
     /// Test that normal-length lines are not affected by safety wrapping.
     #[test]
     fn test_apply_wrapping_transform_preserves_short_lines() {
