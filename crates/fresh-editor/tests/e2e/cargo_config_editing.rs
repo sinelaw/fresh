@@ -11,6 +11,7 @@ use tempfile::TempDir;
 
 /// `.cargo/config.toml` (project-level or global) should be editable.
 #[test]
+#[cfg(unix)]
 fn test_cargo_config_toml_is_editable() {
     let temp_dir = TempDir::new().unwrap();
     let cargo_dir = temp_dir.path().join(".cargo");
@@ -37,6 +38,7 @@ fn test_cargo_config_toml_is_editable() {
 
 /// Files under `.cargo/registry/` are downloaded crate sources and must stay read-only.
 #[test]
+#[cfg(unix)]
 fn test_cargo_registry_file_stays_readonly() {
     let temp_dir = TempDir::new().unwrap();
     let registry_dir = temp_dir
