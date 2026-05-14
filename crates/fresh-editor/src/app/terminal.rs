@@ -1069,6 +1069,82 @@ impl Window {
             .active_split();
         self.enter_terminal_scrollback_view(buffer_id, active_split);
     }
+
+    /// Render terminal content for terminal buffers in this window's
+    /// split areas. Overlays the live PTY grid (colors, attributes,
+    /// optional cursor) on top of the buffer's regular text content
+    /// inside `content_rect`.
+    ///
+    /// `cursor_visible_if_active` controls whether the cursor is
+    /// painted at all. The active-window render passes `true` so a
+    /// focused terminal in `terminal_mode` blinks normally; the
+    /// preview path passes `false` so the picker preview stays
+    /// read-only.
+    ///
+    /// Window-local in every respect — reads `terminal_buffers`,
+    /// `terminal_manager`, `terminal_mode`, `active_buffer()`, and
+    /// `resources.theme` from `self`. The caller picks the window
+    /// (active vs previewed); this method never reaches back to an
+    /// `Editor` or to any other window.
+    pub fn render_terminal_splits(
+        &self,
+        frame: &mut ratatui::Frame,
+        split_areas: &[(
+            crate::model::event::LeafId,
+            BufferId,
+            ratatui::layout::Rect,
+            ratatui::layout::Rect,
+            usize,
+            usize,
+        )],
+        cursor_visible_if_active: bool,
+    ) {
+        for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
+            split_areas
+        {
+            let Some(&terminal_id) = self.terminal_buffers.get(buffer_id) else {
+                continue;
+            };
+            // When the user's current tab is a terminal but they're
+            // *not* in terminal mode, the buffer is showing the
+            // synced scrollback view — defer to the normal text
+            // rendering so the user can scroll. The live grid only
+            // overlays when terminal mode is active, or when the
+            // tab isn't the active one (so a split's hidden tab
+            // still gets live updates).
+            let is_active = *buffer_id == self.active_buffer();
+            if is_active && !self.terminal_mode {
+                continue;
+            }
+            let Some(handle) = self.terminal_manager.get(terminal_id) else {
+                continue;
+            };
+            let Ok(state) = handle.state.lock() else {
+                continue;
+            };
+            let cursor_pos = state.cursor_position();
+            let cursor_visible = state.cursor_visible()
+                && is_active
+                && self.terminal_mode
+                && cursor_visible_if_active;
+            let (_, rows) = state.size();
+            let mut content = Vec::with_capacity(rows as usize);
+            for row in 0..rows {
+                content.push(state.get_line(row));
+            }
+            frame.render_widget(ratatui::widgets::Clear, *content_rect);
+            let theme = self.resources.theme.read().unwrap();
+            render::render_terminal_content(
+                &content,
+                cursor_pos,
+                cursor_visible,
+                *content_rect,
+                frame.buffer_mut(),
+                theme.terminal_fg,
+                theme.terminal_bg,
+            );
+        }
+    }
 }
 
 impl Editor {
@@ -1161,70 +1237,11 @@ impl Editor {
             })
     }
 
-    /// Render terminal content for all terminal buffers in split areas
-    ///
-    /// Renders all visible terminal buffers from their live terminal state.
-    /// This ensures terminals continue updating even when not focused, as long
-    /// as they remain visible in a split.
-    pub fn render_terminal_splits(
-        &self,
-        frame: &mut ratatui::Frame,
-        split_areas: &[(
-            crate::model::event::LeafId,
-            BufferId,
-            ratatui::layout::Rect,
-            ratatui::layout::Rect,
-            usize,
-            usize,
-        )],
-    ) {
-        for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            split_areas
-        {
-            // Only render terminal buffers - skip regular file buffers
-            if let Some(&terminal_id) = self.active_window().terminal_buffers.get(buffer_id) {
-                // Only render from live terminal state if in terminal mode OR if not the active buffer
-                // (when it's the active buffer but not in terminal mode, we're in read-only scrollback mode
-                // and should show the synced buffer content instead)
-                let is_active = *buffer_id == self.active_buffer();
-                if is_active && !self.active_window().terminal_mode {
-                    // Active buffer in read-only mode - let normal buffer rendering handle it
-                    continue;
-                }
-                // Get terminal content and cursor info
-                if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
-                    if let Ok(state) = handle.state.lock() {
-                        let cursor_pos = state.cursor_position();
-                        // Only show cursor for the active terminal in terminal mode
-                        let cursor_visible = state.cursor_visible()
-                            && is_active
-                            && self.active_window().terminal_mode;
-                        let (_, rows) = state.size();
-
-                        // Collect content
-                        let mut content = Vec::with_capacity(rows as usize);
-                        for row in 0..rows {
-                            content.push(state.get_line(row));
-                        }
-
-                        // Clear the content area first
-                        frame.render_widget(ratatui::widgets::Clear, *content_rect);
-
-                        // Render terminal content with theme colors
-                        render::render_terminal_content(
-                            &content,
-                            cursor_pos,
-                            cursor_visible,
-                            *content_rect,
-                            frame.buffer_mut(),
-                            self.theme.read().unwrap().terminal_fg,
-                            self.theme.read().unwrap().terminal_bg,
-                        );
-                    }
-                }
-            }
-        }
-    }
+    // `render_terminal_splits` moved to `impl Window`. Active-window
+    // callers reach it via `self.active_window().render_terminal_splits(...)`;
+    // the picker preview path reaches it via the previewed window
+    // directly, so the live PTY grid renders into the preview embed
+    // without going through the active-window state.
 }
 
 /// Terminal rendering utilities

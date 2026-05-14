@@ -854,8 +854,10 @@ impl Editor {
             __vp_win.previous_viewports.insert(split_id, vp);
         }
 
-        // Render terminal content on top of split content for terminal buffers
-        self.render_terminal_splits(frame, &split_areas);
+        // Render terminal content on top of split content for terminal buffers.
+        // Active-window path: cursor blinks normally when terminal_mode is on.
+        self.active_window()
+            .render_terminal_splits(frame, &split_areas, true);
 
         self.active_layout_mut().split_areas = split_areas;
         self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
@@ -1912,134 +1914,22 @@ impl Editor {
             return;
         };
 
-        // Terminal grid → buffer text sync, preview-safe variant.
-        // `sync_terminal_to_buffer` is the canonical sync but it
-        // also mutates `self.split_view_states[active_split]` —
-        // which during preview is the *active* (caller) session's
-        // view-state, not the previewed one. That corrupts the
-        // active session's viewport (cursor jumps past EOF, top
-        // line becomes blank). Here we do just the parts that are
-        // safe to run from a foreign session: append visible
-        // screen to backing file, then reload that one buffer.
-        let preview_buffers: Vec<fresh_core::BufferId> = self
-            .windows
-            .get(&sid)
-            .map(|s| s.buffers.ids())
-            .unwrap_or_default();
-        // Pre-refactor this loop looked at `self.active_window()`'s
-        // terminal_buffers / backing_files / terminal_manager.
-        // That happened to work back when orchestrator-spawned
-        // terminals leaked half their state onto the active window
-        // (Bug A); now that each terminal lives entirely on the
-        // window that owns it, the lookups have to target `sid`
-        // (the previewed window).
-        for bid in preview_buffers {
-            let preview_win = match self.windows.get(&sid) {
-                Some(w) => w,
-                None => break,
-            };
-            let Some(&terminal_id) = preview_win.terminal_buffers.get(&bid) else {
-                continue;
-            };
-            let Some(backing_file) = preview_win
-                .terminal_backing_files
-                .get(&terminal_id)
-                .cloned()
-            else {
-                continue;
-            };
-            // Capture the file size *before* appending the visible
-            // screen so we can truncate back to it afterwards. The
-            // append makes the live screen visible in the previewed
-            // buffer; the truncate keeps the file from growing on
-            // every preview-render frame. Without this, opening the
-            // picker against a session with a few lines on screen
-            // grew the backing file by `screen_height` bytes per
-            // frame — visible to the user as the same banner
-            // repeating dozens of times when they later dived in.
-            let pre_append_size = self
-                .authority
-                .filesystem
-                .metadata(&backing_file)
-                .map(|m| m.size)
-                .unwrap_or(0);
-            if let Some(handle) = preview_win.terminal_manager.get(terminal_id) {
-                if let Ok(mut state) = handle.state.lock() {
-                    state.set_backing_file_history_end(pre_append_size);
-                    if let Ok(mut file) = self
-                        .authority
-                        .filesystem
-                        .open_file_for_append(&backing_file)
-                    {
-                        use std::io::BufWriter;
-                        let mut writer = BufWriter::new(&mut *file);
-                        if let Err(e) = state.append_visible_screen(&mut writer) {
-                            tracing::error!(
-                                "preview: failed to append visible screen for terminal buffer {bid:?}: {e}"
-                            );
-                        }
-                    }
-                }
-            }
-            let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
-            if let Ok(new_state) = crate::state::EditorState::from_file_with_languages(
-                &backing_file,
-                self.terminal_width,
-                self.terminal_height,
-                large_file_threshold,
-                &self.grammar_registry,
-                &self.config.languages,
-                std::sync::Arc::clone(&self.authority.filesystem),
-            ) {
-                if let Some(state) = self
-                    .windows
-                    .get_mut(&sid)
-                    .map(|w| &mut w.buffers)
-                    .expect("preview window present")
-                    .get_mut(&bid)
-                {
-                    *state = new_state;
-                    state.buffer.set_modified(false);
-                    state.editing_disabled = true;
-                    // Terminal buffers must never show a line-number
-                    // gutter; reloading from the backing file lost
-                    // the margin configuration that
-                    // `Window::create_terminal_buffer_attached` set
-                    // at creation time. Re-apply it here so the
-                    // preview pane matches the live editor view of
-                    // the same terminal (Bug 5).
-                    state.margins.configure_for_line_numbers(false);
-                }
-            }
-            // Truncate the file back to its pre-append size so the
-            // next preview frame starts from the same baseline as
-            // this one. Without truncation the file grows by one
-            // visible-screen-worth of bytes on every render and the
-            // user sees the same banner repeated N times when they
-            // later dive into the session (Finding J).
-            //
-            // The in-memory `EditorState` keeps the appended view so
-            // the preview pane has something to paint — `SplitRenderer`
-            // below renders the buffer's state directly into the
-            // embed rect, and resetting state to match the truncated
-            // file would leave the preview blank for any
-            // hasn't-scrolled-yet terminal. The "live editor view
-            // when the user dives in" path uses `render_terminal_splits`
-            // which overlays the live PTY grid on top of the buffer,
-            // so the slightly-stale appended content the state
-            // carries is irrelevant there.
-            if let Err(e) = self
-                .authority
-                .filesystem
-                .set_file_length(&backing_file, pre_append_size)
-            {
-                tracing::error!(
-                    "preview: failed to truncate backing file {} back to {} bytes: {e}",
-                    backing_file.display(),
-                    pre_append_size,
-                );
-            }
-        }
+        // Terminal grid → buffer text "sync" was previously a
+        // multi-step append/reload/truncate dance that mutated the
+        // backing file on every preview-render frame just to make
+        // the live screen visible inside the embed. That worked
+        // around `render_terminal_splits` being hard-coded to the
+        // active window's `terminal_buffers` map — during preview
+        // the active window is the *caller's* session, so the
+        // overlay couldn't find the previewed terminal.
+        //
+        // `render_terminal_splits` is now an `impl Window` method,
+        // so the preview path can ask the previewed window
+        // directly. The overlay paints the live PTY grid (with
+        // colors, attributes, no cursor) on top of `SplitRenderer`'s
+        // text rendering for every terminal buffer in the embed —
+        // no file mutation, no reload, no truncate. The buffer's
+        // backing file stays untouched between frames.
 
         // Pull the previewed window's split stash and sub-fields
         // out under one `&mut Window` borrow. Multiple disjoint
@@ -2075,10 +1965,18 @@ impl Editor {
             crate::view::split::SplitNode,
         > = std::collections::HashMap::new();
 
+        let mut preview_split_areas: Vec<(
+            crate::model::event::LeafId,
+            fresh_core::BufferId,
+            ratatui::layout::Rect,
+            ratatui::layout::Rect,
+            usize,
+            usize,
+        )> = Vec::new();
         __win_for_preview
             .buffers
             .with_all_mut(|preview_buffers, mgr, view_states| {
-                let _ = crate::view::ui::SplitRenderer::render_content(
+                let result = crate::view::ui::SplitRenderer::render_content(
                     frame,
                     inner,
                     &*mgr,
@@ -2118,7 +2016,18 @@ impl Editor {
                     inner.width,
                     &mut scratch_pending_cursor,
                 );
+                preview_split_areas = result.0;
             });
+
+        // Overlay live PTY grids for terminal buffers in the
+        // previewed window's splits — paints colors, attributes,
+        // and the visible screen on top of `SplitRenderer`'s text
+        // rendering. `cursor_visible_if_active = false` keeps the
+        // preview read-only: no blinking cursor over a session
+        // the user isn't currently driving.
+        if let Some(win) = self.windows.get(&sid) {
+            win.render_terminal_splits(frame, &preview_split_areas, false);
+        }
     }
 
     fn prepare_overlay_preview(&mut self) {
