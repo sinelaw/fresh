@@ -29,6 +29,17 @@ pub struct Command {
     pub custom_contexts: Vec<String>,
     /// Source of the command (builtin or plugin)
     pub source: CommandSource,
+    /// When `true`, a key bound to this command bypasses terminal
+    /// keyboard capture: the action fires even while a terminal pane
+    /// owns the keyboard. Plugins set this via
+    /// `editor.registerCommand(..., { terminalBypass: true })` so
+    /// commands the user must always reach (orchestrator picker /
+    /// new-session form / panic-exit) aren't trapped by a focused
+    /// PTY. Built-in editor commands like `CommandPalette` rely on
+    /// `KeybindingResolver::is_terminal_ui_action` instead, so the
+    /// flag stays `false` for them and they still bypass the
+    /// existing way.
+    pub terminal_bypass: bool,
 }
 
 impl Command {
@@ -1374,6 +1385,10 @@ pub fn get_all_commands() -> Vec<Command> {
             contexts: def.contexts.to_vec(),
             custom_contexts: def.custom_contexts.iter().map(|s| s.to_string()).collect(),
             source: CommandSource::Builtin,
+            // Built-in commands use the legacy `is_terminal_ui_action`
+            // path; the plugin-driven `terminal_bypass` flag isn't
+            // wired into them.
+            terminal_bypass: false,
         })
         .collect()
 }

@@ -6,7 +6,7 @@
 use super::terminal_input::{should_enter_terminal_mode, TerminalModeInputHandler};
 use super::Editor;
 use crate::input::handler::{DeferredAction, InputContext, InputHandler, InputResult};
-use crate::input::keybindings::Action;
+use crate::input::keybindings::{Action, KeyContext};
 use crate::view::file_browser_input::FileBrowserInputHandler;
 use crate::view::query_replace_input::QueryReplaceConfirmInputHandler;
 use crate::view::ui::MenuInputHandler;
@@ -54,6 +54,36 @@ impl Editor {
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;
                 return None; // fall through to normal input dispatch
+            }
+            // Plugin commands flagged `terminalBypass: true` (via
+            // `editor.registerCommand(..., { terminalBypass: true })`)
+            // resolve to actions that must reach the editor even
+            // when a terminal pane owns the keyboard — that's how
+            // bound shortcuts to commands like `Orchestrator: Open`
+            // stay reachable from inside `top`/`htop`/a shell.
+            // Resolve the key against the regular (Normal) context;
+            // if it's a registered bypass action, dispatch it and
+            // return *before* the terminal handler claims the key.
+            // Builtin UI actions (CommandPalette, QuickOpen, …)
+            // still flow through `TerminalModeInputHandler`'s own
+            // `is_terminal_ui_action` allowlist below.
+            let bypass_action = {
+                let keybindings = self.keybindings.read().unwrap();
+                let action = keybindings.resolve(event, KeyContext::Normal);
+                if self
+                    .command_registry
+                    .read()
+                    .unwrap()
+                    .is_terminal_bypass_action(&action)
+                {
+                    Some(action)
+                } else {
+                    None
+                }
+            };
+            if let Some(action) = bypass_action {
+                let _ = self.handle_action(action);
+                return Some(InputResult::Consumed);
             }
             let mut ctx = InputContext::new();
             let keyboard_capture = self.active_window().keyboard_capture;

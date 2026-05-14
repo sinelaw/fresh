@@ -1936,21 +1936,31 @@ registerHandler("orchestrator_open", openControlRoom);
 registerHandler("orchestrator_new", startNewSession);
 registerHandler("orchestrator_kill", killSelected);
 
+// `terminalBypass: true` keeps these commands reachable from a
+// keyboard-focused terminal pane — a user with `Ctrl+O` bound to
+// `Orchestrator: Open` shouldn't need to first hit `Ctrl+Space` to
+// exit terminal mode to switch sessions. The bypass routes the
+// key past `TerminalModeInputHandler` (which would otherwise
+// forward it to the PTY child) and dispatches the action
+// directly.
 editor.registerCommand(
   "Orchestrator: Open",
   "Show all editor sessions in a floating selector",
   "orchestrator_open",
   null,
+  { terminalBypass: true },
 );
 editor.registerCommand(
   "Orchestrator: New Session",
   "Spawn a new editor session in a worktree",
   "orchestrator_new",
   null,
+  { terminalBypass: true },
 );
 editor.registerCommand(
   "Orchestrator: Kill Selected",
   "Close the session highlighted in the open Orchestrator prompt",
   "orchestrator_kill",
   null,
+  { terminalBypass: true },
 );

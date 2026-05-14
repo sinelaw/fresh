@@ -1985,6 +1985,7 @@ impl Editor {
             contexts: vec![], // Plugin commands available in all contexts by default
             custom_contexts: command.custom_contexts,
             source: CommandSource::Plugin(command.plugin_name),
+            terminal_bypass: command.terminal_bypass,
         };
 
         tracing::debug!(

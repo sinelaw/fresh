@@ -25,6 +25,16 @@ pub struct Command {
     pub plugin_name: String,
     /// Custom contexts required for this command (plugin-defined contexts like "vi-mode")
     pub custom_contexts: Vec<String>,
+    /// When `true`, a key bound to this command bypasses terminal
+    /// keyboard capture — the action fires instead of the keystroke
+    /// being forwarded to the PTY child. Use for commands the user
+    /// must always be able to reach (e.g. the orchestrator picker,
+    /// "switch to other session", a global panic-exit) so a focused
+    /// terminal pane doesn't trap them. Default `false` — keys
+    /// bound to non-bypassing commands still go to the PTY when
+    /// keyboard capture is on, matching the existing UX.
+    #[serde(default)]
+    pub terminal_bypass: bool,
 }
 
 /// A single suggestion item for autocomplete

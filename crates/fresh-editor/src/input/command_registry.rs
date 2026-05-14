@@ -43,6 +43,29 @@ impl CommandRegistry {
         self.builtin_commands = get_all_commands();
     }
 
+    /// `true` iff `action` matches a registered command that was
+    /// declared with `terminalBypass: true` (plugins) or already
+    /// bypasses via the built-in `is_terminal_ui_action` allowlist.
+    ///
+    /// Built-in actions (CommandPalette, QuickOpen, …) are intentionally
+    /// not flagged here — they bypass through
+    /// [`KeybindingResolver::is_terminal_ui_action`] which the
+    /// terminal input handler checks separately. This method is the
+    /// plugin-driven extension: any plugin command can opt in to the
+    /// same bypass-while-terminal-is-focused behaviour via the
+    /// `registerCommand({ terminalBypass: true })` option.
+    pub fn is_terminal_bypass_action(&self, action: &crate::input::keybindings::Action) -> bool {
+        use crate::input::keybindings::Action;
+        let Action::PluginAction(target) = action else {
+            return false;
+        };
+        let plugins = self.plugin_commands.read().unwrap();
+        plugins.iter().any(|cmd| {
+            cmd.terminal_bypass
+                && matches!(&cmd.action, Action::PluginAction(name) if name == target)
+        })
+    }
+
     /// Record that a command was used (for history/sorting)
     ///
     /// This moves the command to the front of the history list.
@@ -382,6 +405,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         };
 
         registry.register(custom_command.clone());
@@ -403,6 +427,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         };
 
         registry.register(custom_command);
@@ -423,6 +448,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         };
 
         let command2 = Command {
@@ -432,6 +458,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         };
 
         registry.register(command1);
@@ -455,6 +482,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         registry.register(Command {
@@ -464,6 +492,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         registry.register(Command {
@@ -473,6 +502,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         assert_eq!(registry.plugin_command_count(), 3);
@@ -500,6 +530,7 @@ mod tests {
             contexts: vec![KeyContext::Normal],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         let empty_contexts = std::collections::HashSet::new();
@@ -535,6 +566,7 @@ mod tests {
             contexts: vec![KeyContext::Normal],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         registry.register(Command {
@@ -544,6 +576,7 @@ mod tests {
             contexts: vec![KeyContext::Popup],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         // In normal context, "Popup Only" should be disabled
@@ -588,6 +621,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         registry.register(Command {
@@ -597,6 +631,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         let all = registry.get_all();
@@ -620,6 +655,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         // Should now find the custom version
@@ -723,6 +759,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         registry.register(Command {
@@ -732,6 +769,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Builtin,
+            terminal_bypass: false,
         });
 
         // Use one built-in command

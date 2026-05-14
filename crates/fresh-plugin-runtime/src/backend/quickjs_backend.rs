@@ -994,6 +994,8 @@ impl JsEditorApi {
         #[plugin_api(ts_type = "string | null")] context: rquickjs::function::Opt<
             rquickjs::Value<'js>,
         >,
+        #[plugin_api(ts_type = "{ terminalBypass?: boolean } | null")]
+        options: rquickjs::function::Opt<rquickjs::Value<'js>>,
     ) -> rquickjs::Result<bool> {
         // Use stored plugin name instead of global lookup
         let plugin_name = self.plugin_name.clone();
@@ -1052,6 +1054,21 @@ impl JsEditorApi {
             },
         );
 
+        // Extract `options.terminalBypass`. JS shape: `{ terminalBypass: true }`
+        // or omitted/null. Anything else is ignored — wrong shape stays at the
+        // safe default of `false`.
+        let terminal_bypass: bool = options
+            .0
+            .and_then(|v| {
+                if v.is_null() || v.is_undefined() {
+                    None
+                } else {
+                    v.into_object()
+                        .and_then(|obj| obj.get::<&str, bool>("terminalBypass").ok())
+                }
+            })
+            .unwrap_or(false);
+
         // Register with editor
         let command = Command {
             name: name.clone(),
@@ -1059,6 +1076,7 @@ impl JsEditorApi {
             action_name: handler_name,
             plugin_name,
             custom_contexts: context_str.into_iter().collect(),
+            terminal_bypass,
         };
 
         Ok(self

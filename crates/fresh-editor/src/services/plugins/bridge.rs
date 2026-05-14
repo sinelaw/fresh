@@ -75,6 +75,7 @@ impl PluginServiceBridge for EditorServiceBridge {
             contexts: vec![KeyContext::Global],
             custom_contexts: command.custom_contexts,
             source: CommandSource::Plugin(command.plugin_name),
+            terminal_bypass: command.terminal_bypass,
         };
         self.command_registry
             .read()
