@@ -927,6 +927,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             // visible byte that is >= the cursor byte on the same line — this keeps
             // the cursor visible for the one frame between cursor movement and the
             // plugin's conceal-refresh response.
+            //
+            // The fallback is gated by `is_on_cursor_line` so that lines below the
+            // cursor don't snap a phantom cursor onto themselves when the cursor's
+            // own line is offscreen (issue #1965: mouse-wheel scroll past the
+            // cursor drew a phantom cursor at the top of the new viewport).
             let mut nearest_fallback: Option<(u16, usize)> = None; // (screen_x, byte_distance)
             for (screen_x, source_offset) in line_view_map.iter().enumerate() {
                 if let Some(src) = source_offset {
@@ -937,7 +942,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                         have_cursor = true;
                     }
                     // Track nearest visible byte >= cursor position for fallback
-                    if !have_cursor && *src >= primary_cursor_position {
+                    if !have_cursor && is_on_cursor_line && *src >= primary_cursor_position {
                         let dist = *src - primary_cursor_position;
                         if nearest_fallback.is_none() || dist < nearest_fallback.unwrap().1 {
                             nearest_fallback = Some((screen_x as u16, dist));
