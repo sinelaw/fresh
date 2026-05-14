@@ -1261,6 +1261,21 @@ impl crate::app::window::Window {
                             buf_state,
                             &mut state.buffer,
                         );
+
+                        // Refresh the buffer's cached primary cursor line number.
+                        // The cursor-position fields above are written directly
+                        // (no MoveCursor event), so without this the cache stays
+                        // at EditorState::new's default `Absolute(0)`. Status bar
+                        // and plugin-side `getCursorLine` both read this cache —
+                        // a Git Blame invoked right after restore would see 0 and
+                        // land on Ln 1 even though the cursor is at line 5000.
+                        let line = state
+                            .buffer
+                            .offset_to_position(cursor_pos)
+                            .map(|p| p.line)
+                            .unwrap_or(0);
+                        state.primary_cursor_line_number =
+                            crate::model::buffer::LineNumber::Absolute(line);
                     }
 
                     // Restore per-buffer view mode and compose width
