@@ -4,7 +4,7 @@
 //! the command palette or File menu.
 
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::fs;
 use tempfile::TempDir;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -812,4 +812,182 @@ fn test_session_persistence_across_project_switches() {
         harness.render().unwrap();
         harness.assert_screen_contains("file_a.txt");
     }
+}
+
+/// Send two left-clicks at the same coordinates within the double-click window.
+fn double_click_at(harness: &mut EditorTestHarness, col: u16, row: u16) {
+    // Ensure we are outside any previous click's double-click window.
+    let window = std::time::Duration::from_millis(
+        harness
+            .config()
+            .editor
+            .double_click_time_ms
+            .saturating_mul(2),
+    );
+    harness.advance_time(window);
+    let send = |h: &mut EditorTestHarness, kind: MouseEventKind| {
+        h.send_mouse(MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+        .unwrap();
+    };
+    send(harness, MouseEventKind::Down(MouseButton::Left));
+    send(harness, MouseEventKind::Up(MouseButton::Left));
+    send(harness, MouseEventKind::Down(MouseButton::Left));
+    send(harness, MouseEventKind::Up(MouseButton::Left));
+    harness.render().unwrap();
+}
+
+/// Regression test for #1931: in Switch Project (folder-only) mode, double-clicking
+/// a directory in the file list should navigate INTO it, not immediately select it
+/// as the new project root.
+#[test]
+fn test_switch_project_double_click_navigates_into_folder() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    // Create a subdirectory with a unique marker file so we can tell when we
+    // have actually navigated INTO it.
+    let subdir = project_root.join("targetdir");
+    fs::create_dir(&subdir).unwrap();
+    fs::write(subdir.join("inside_marker.txt"), "marker").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    // Open Switch Project via command palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(">command"))
+        .expect("Command palette should appear");
+    harness.type_text("switch project").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the folder browser with the target directory listed.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Navigation:") && screen.contains("targetdir")
+        })
+        .expect("Folder browser should appear with target directory listed");
+
+    // Find the screen row containing the target directory and pick a click
+    // column inside the directory name.
+    let screen = harness.screen_to_string();
+    let (row_idx, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("targetdir"))
+        .expect("Should find row containing 'targetdir'");
+    let col = line
+        .find("targetdir")
+        .expect("targetdir must be on its row") as u16
+        + 1; // click on a character inside the name
+
+    double_click_at(&mut harness, col, row_idx as u16);
+
+    // Bug behavior (#1931): double-click on a folder in Switch Project mode
+    // immediately selects the folder as the new project root, which signals
+    // an editor restart. The fix should navigate into the folder instead.
+    assert!(
+        !harness.editor().should_restart(),
+        "Double-clicking a folder in Switch Project must not select it as project root"
+    );
+
+    // The folder browser should remain open after the navigation.
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains("Navigation:"),
+        "Folder browser should remain open after double-clicking into a folder; got screen:\n{}",
+        screen_after
+    );
+
+    // The contents of the target directory should now be visible.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("inside_marker.txt"))
+        .expect("Should see contents of the navigated-into directory after double-click");
+}
+
+/// Regression test for #1931: in Switch Project mode, double-clicking the ".."
+/// (parent) entry should navigate up to the parent directory, not select the
+/// parent as the new project root.
+#[test]
+fn test_switch_project_double_click_parent_navigates_up() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().to_path_buf();
+
+    // Create a parent/child structure. Start the editor inside the child so the
+    // ".." entry is meaningful, and place a unique marker in the parent.
+    let child = root.join("child");
+    fs::create_dir(&child).unwrap();
+    fs::write(root.join("parent_marker.txt"), "marker").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), child.clone())
+            .unwrap();
+
+    // Open Switch Project.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(">command"))
+        .expect("Command palette should appear");
+    harness.type_text("switch project").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Wait for the folder browser, including the ".." entry.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Navigation:") && screen.contains("..")
+        })
+        .expect("Folder browser should appear with parent entry");
+
+    // Locate the row with the ".." entry. We look for a row whose content
+    // contains a standalone ".." token to avoid matching status strings.
+    let screen = harness.screen_to_string();
+    let (row_idx, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| {
+            // Filter to lines that look like file-list rows (contain "..")
+            // and are not the path/status lines.
+            l.contains("..") && !l.contains("Navigation:") && !l.contains("Path:")
+        })
+        .expect("Should find row containing '..' entry");
+    let col = line.find("..").expect("'..' must be on its row") as u16 + 1;
+
+    double_click_at(&mut harness, col, row_idx as u16);
+
+    // Must not have selected the parent as the project root.
+    assert!(
+        !harness.editor().should_restart(),
+        "Double-clicking '..' in Switch Project must not select the parent as project root"
+    );
+
+    // Browser still open, now in the parent directory.
+    let screen_after = harness.screen_to_string();
+    assert!(
+        screen_after.contains("Navigation:"),
+        "Folder browser should remain open after navigating up; got screen:\n{}",
+        screen_after
+    );
+    harness
+        .wait_until(|h| h.screen_to_string().contains("parent_marker.txt"))
+        .expect("Should see parent directory contents after double-clicking '..'");
 }

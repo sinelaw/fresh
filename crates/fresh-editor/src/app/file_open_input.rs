@@ -800,6 +800,23 @@ impl Editor {
 
         // Double-click in file list opens/navigates
         if layout.is_in_list(x, y) {
+            // In Switch Project (folder-only) mode, double-clicking a directory
+            // entry should navigate INTO it like a file manager would, rather
+            // than immediately selecting it as the new project root. Selecting
+            // a project root remains available via Enter (or by typing a path)
+            // so keyboard users keep one-keypress confirmation.
+            if self.is_folder_open_mode() {
+                let selected_dir = self.active_window().file_open_state.as_ref().and_then(|s| {
+                    s.selected_index
+                        .and_then(|idx| s.entries.get(idx))
+                        .filter(|e| e.fs_entry.is_dir())
+                        .map(|e| e.fs_entry.path.clone())
+                });
+                if let Some(path) = selected_dir {
+                    self.file_open_navigate_to(path);
+                    return true;
+                }
+            }
             self.file_open_confirm();
             return true;
         }
