@@ -28,6 +28,7 @@ export default defineConfig({
         text: "Blog",
         link: "/blog/",
         items: [
+          { text: "The Architecture of Fresh", link: "/blog/fresh-pipeline/" },
           { text: "Fresh 0.3.0", link: "/blog/fresh-0.3.0/" },
           { text: "Fresh 0.2.18", link: "/blog/fresh-0.2.18/" },
           { text: "Fresh 0.2.9", link: "/blog/fresh-0.2.9/" },
