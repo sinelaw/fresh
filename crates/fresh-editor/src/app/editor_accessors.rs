@@ -248,6 +248,18 @@ impl Editor {
     /// editor mode, so that e.g. a search-replace panel isn't hijacked by
     /// a markdown-source or vi-mode global mode.
     pub fn effective_mode(&self) -> Option<&str> {
+        // When a floating widget panel is mounted, its plugin-defined
+        // mode (`editor.setEditorMode(...)`) takes precedence over the
+        // underlying buffer's virtual mode. Without this, opening the
+        // Orchestrator picker from a python3 terminal session would
+        // resolve mode-keybindings against `"terminal"` instead of
+        // `"orchestrator-open"`, so picker-specific shortcuts like
+        // `Alt+N` never reached their handlers.
+        if self.floating_widget_panel.is_some() {
+            if let Some(mode) = self.active_window().editor_mode.as_deref() {
+                return Some(mode);
+            }
+        }
         self.active_buffer_mode()
             .or(self.active_window().editor_mode.as_deref())
     }

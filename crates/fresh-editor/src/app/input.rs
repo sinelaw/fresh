@@ -439,6 +439,17 @@ impl Editor {
             && (self.global_popups.is_visible() || self.active_state().popups.is_visible())
         {
             KeyContext::Popup
+        } else if self.floating_widget_panel.is_some() {
+            // A modal floating panel (picker / new-session form /
+            // plugin overlay) is the keyboard owner. Resolve keys
+            // as Normal regardless of the underlying buffer's stale
+            // `key_context` (which can still be Terminal when the
+            // panel was opened from a python3 session). Without
+            // this, `should_check_mode_bindings = matches!(ctx,
+            // Normal)` skipped the mode-keybinding lookup for any
+            // Ctrl/Alt chord the plugin had bound on the panel's
+            // mode, e.g. `Alt+N` for "new session from the picker".
+            KeyContext::Normal
         } else if self
             .active_window()
             .is_composite_buffer(self.active_buffer())
