@@ -151,6 +151,8 @@ fn create_terminal_targets_inactive_session_via_session_id() {
             focus: None,
             persistent: false,
             window_id: Some(alpha),
+            command: None,
+            title: None,
             request_id: 9999,
         })
         .unwrap();

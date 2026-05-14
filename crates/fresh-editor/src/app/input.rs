@@ -2707,9 +2707,8 @@ impl Editor {
                     .as_ref()
                     .map(|mode_name| {
                         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
-                        let mode_ctx = crate::input::keybindings::KeyContext::Mode(
-                            mode_name.to_string(),
-                        );
+                        let mode_ctx =
+                            crate::input::keybindings::KeyContext::Mode(mode_name.to_string());
                         let keybindings = self.keybindings.read().unwrap();
                         keybindings.has_explicit_binding(&key_event, &mode_ctx)
                     })

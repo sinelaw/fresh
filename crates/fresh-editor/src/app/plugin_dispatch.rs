@@ -1234,8 +1234,7 @@ impl Editor {
                 request_id,
             } => {
                 self.handle_create_terminal(
-                    cwd, direction, ratio, focus, persistent, window_id, command, title,
-                    request_id,
+                    cwd, direction, ratio, focus, persistent, window_id, command, title, request_id,
                 );
             }
 

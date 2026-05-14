@@ -89,10 +89,7 @@ impl Window {
         self.terminal_manager.set_async_bridge(bridge);
 
         let working_dir = cwd.unwrap_or_else(|| self.root.clone());
-        let terminal_root = self
-            .resources
-            .dir_context
-            .terminal_dir_for(&working_dir);
+        let terminal_root = self.resources.dir_context.terminal_dir_for(&working_dir);
         if let Err(e) = self
             .resources
             .authority
@@ -155,8 +152,7 @@ impl Window {
                 // rename to the persistent (no-eph-suffix) form. This
                 // mirrors the pre-migration behaviour exactly.
                 if terminal_id != predicted_terminal_id {
-                    self.terminal_backing_files
-                        .remove(&predicted_terminal_id);
+                    self.terminal_backing_files.remove(&predicted_terminal_id);
                     let backing_path =
                         terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
                     self.terminal_backing_files
@@ -186,8 +182,7 @@ impl Window {
         split_id: LeafId,
     ) -> BufferId {
         let buffer_id = self.alloc_buffer_id();
-        let large_file_threshold =
-            self.resources.config.editor.large_file_threshold_bytes as usize;
+        let large_file_threshold = self.resources.config.editor.large_file_threshold_bytes as usize;
 
         // Rendered backing file for scrollback view (reuse if already
         // recorded by `spawn_terminal_session`).
@@ -304,11 +299,7 @@ impl Window {
 
         // Register the leader pid with this window's process_groups
         // so window-level signal operations reach the spawned group.
-        if let Some(pid) = self
-            .terminal_manager
-            .get(terminal_id)
-            .and_then(|h| h.pid())
-        {
+        if let Some(pid) = self.terminal_manager.get(terminal_id).and_then(|h| h.pid()) {
             let label = format!("terminal #{}", terminal_id.0);
             self.process_groups.register(pid, label);
         }
@@ -355,14 +346,8 @@ impl Window {
                             // is independent.
                             let _ = line_numbers;
                             let _ = highlight_current_line;
-                            view_state.apply_config_defaults(
-                                false,
-                                false,
-                                false,
-                                false,
-                                None,
-                                rulers,
-                            );
+                            view_state
+                                .apply_config_defaults(false, false, false, false, None, rulers);
                             // Terminal output is ANSI-sequenced and
                             // assumes a fixed column count; wrapping
                             // would mangle cursor positioning.
@@ -478,7 +463,11 @@ impl Window {
             .terminal_buffers
             .keys()
             .filter(|bid| **bid != for_buffer)
-            .filter_map(|bid| self.buffer_metadata.get(bid).map(|m| m.display_name.as_str()))
+            .filter_map(|bid| {
+                self.buffer_metadata
+                    .get(bid)
+                    .map(|m| m.display_name.as_str())
+            })
             .collect();
         if !used.contains(desired) {
             return desired.to_string();
@@ -532,8 +521,7 @@ impl Window {
     /// attaching to any split (used during session restore).
     pub fn create_terminal_buffer_detached(&mut self, terminal_id: TerminalId) -> BufferId {
         let buffer_id = self.alloc_buffer_id();
-        let large_file_threshold =
-            self.resources.config.editor.large_file_threshold_bytes as usize;
+        let large_file_threshold = self.resources.config.editor.large_file_threshold_bytes as usize;
 
         let backing_file = self
             .terminal_backing_files

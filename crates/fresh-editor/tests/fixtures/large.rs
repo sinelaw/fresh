@@ -6783,6 +6783,7 @@ impl Editor {
                 ratio,
                 focus,
                 request_id,
+                ..
             } => {
                 let (cols, rows) = self.get_terminal_dimensions();
 
