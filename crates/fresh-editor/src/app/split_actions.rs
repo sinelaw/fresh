@@ -250,6 +250,16 @@ impl Editor {
         // `terminal_mode` whenever the terminal isn't the active buffer.
         let previous_buffer = self.active_buffer();
 
+        // `next_split`/`prev_split` auto-unmaximize so the newly-active
+        // split is visible (issue #1961). Detect that here so terminal
+        // PTYs can be resized to match the restored layout.
+        let was_maximized = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.is_maximized())
+            .unwrap_or(false);
+
         if next {
             self.windows
                 .get_mut(&self.active_window)
@@ -262,6 +272,10 @@ impl Editor {
                 .and_then(|w| w.split_manager_mut())
                 .expect("active window must have a populated split layout")
                 .prev_split();
+        }
+
+        if was_maximized {
+            self.active_window_mut().resize_visible_terminals();
         }
 
         // Ensure the active tab is visible in the newly active split

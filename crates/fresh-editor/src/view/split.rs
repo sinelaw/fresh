@@ -1569,6 +1569,11 @@ impl SplitManager {
 
     /// Navigate to the next split (circular)
     pub fn next_split(&mut self) {
+        // Switching away from a maximized split would route focus to a
+        // hidden leaf — only the maximized split is rendered — making
+        // the cursor disappear (issue #1961). Restore the full layout
+        // first. Mirrors the auto-unmaximize in `close_split`.
+        self.maximized_split = None;
         let leaf_ids = self.root.leaf_split_ids();
         if let Some(pos) = leaf_ids.iter().position(|id| *id == self.active_split) {
             let next_pos = (pos + 1) % leaf_ids.len();
@@ -1578,6 +1583,8 @@ impl SplitManager {
 
     /// Navigate to the previous split (circular)
     pub fn prev_split(&mut self) {
+        // See `next_split` for why we clear the maximized state.
+        self.maximized_split = None;
         let leaf_ids = self.root.leaf_split_ids();
         if let Some(pos) = leaf_ids.iter().position(|id| *id == self.active_split) {
             let prev_pos = if pos == 0 { leaf_ids.len() } else { pos } - 1;
@@ -2105,6 +2112,66 @@ mod tests {
         assert_ne!(
             dock_leaf, active_before,
             "dock must be a new sibling of the root, not the previously-active leaf"
+        );
+    }
+
+    /// Regression test for issue #1961: navigating to the next split
+    /// while a split is maximized must unmaximize first, otherwise the
+    /// newly-active split is hidden behind the maximized split's
+    /// full-viewport rendering and the cursor "disappears".
+    #[test]
+    fn test_next_split_unmaximizes_when_maximized() {
+        let buffer_a = BufferId(0);
+        let buffer_b = BufferId(1);
+
+        let mut manager = SplitManager::new(buffer_a);
+        manager
+            .split_active(SplitDirection::Vertical, buffer_b, 0.5)
+            .expect("vertical split");
+        let first_active = manager.active_split();
+
+        manager.maximize_split().expect("maximize");
+        assert!(manager.is_maximized());
+
+        manager.next_split();
+
+        assert!(
+            !manager.is_maximized(),
+            "next_split must unmaximize so the newly-active split is visible"
+        );
+        assert_ne!(
+            manager.active_split(),
+            first_active,
+            "next_split must actually move to a different split"
+        );
+    }
+
+    /// Companion regression test for issue #1961 covering `prev_split`,
+    /// which shares the same hidden-split hazard as `next_split`.
+    #[test]
+    fn test_prev_split_unmaximizes_when_maximized() {
+        let buffer_a = BufferId(0);
+        let buffer_b = BufferId(1);
+
+        let mut manager = SplitManager::new(buffer_a);
+        manager
+            .split_active(SplitDirection::Vertical, buffer_b, 0.5)
+            .expect("vertical split");
+        let first_active = manager.active_split();
+
+        manager.maximize_split().expect("maximize");
+        assert!(manager.is_maximized());
+
+        manager.prev_split();
+
+        assert!(
+            !manager.is_maximized(),
+            "prev_split must unmaximize so the newly-active split is visible"
+        );
+        assert_ne!(
+            manager.active_split(),
+            first_active,
+            "prev_split must actually move to a different split"
         );
     }
 }
