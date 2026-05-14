@@ -865,6 +865,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
+            terminal_bypass: false,
         };
 
         let cmd_b = Command {
@@ -874,6 +875,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-b".to_string()),
+            terminal_bypass: false,
         };
 
         // First registration succeeds
@@ -901,6 +903,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
+            terminal_bypass: false,
         };
 
         let cmd2 = Command {
@@ -910,6 +913,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
+            terminal_bypass: false,
         };
 
         assert!(registry.try_register(cmd1).is_ok());
@@ -932,6 +936,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
+            terminal_bypass: false,
         };
 
         let cmd_b = Command {
@@ -941,6 +946,7 @@ mod tests {
             contexts: vec![],
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-b".to_string()),
+            terminal_bypass: false,
         };
 
         // Plugin A registers
