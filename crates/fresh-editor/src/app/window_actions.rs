@@ -154,6 +154,20 @@ impl crate::app::Editor {
                 active_id: id.0,
             },
         );
+
+        // Resize the newly-active window's visible terminal PTYs to
+        // match their dive-view split rects. Without this, a session
+        // that was just previewed in the orchestrator picker
+        // (`render_session_preview_into_rect` resizes PTYs to the
+        // embed rect — typically ~half the terminal's height) keeps
+        // drawing at that smaller size after the dive, leaving the
+        // bottom of the dive view blank until something else triggers
+        // a resize. Same applies for the inverse: dive away while a
+        // session has a small split, dive back when the window is
+        // bigger — the terminal needs the new dimensions.
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.resize_visible_terminals();
+        }
     }
 
     /// Build a fresh seed buffer + split layout for `id` if that
