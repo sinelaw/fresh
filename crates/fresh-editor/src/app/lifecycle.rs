@@ -267,6 +267,19 @@ impl Editor {
             window.resize(width, height);
         }
 
+        // Refresh the plugin-facing snapshot BEFORE firing the
+        // resize hook. Without this, the orchestrator's resize
+        // handler reads `editor.getViewport()` from a snapshot
+        // whose `viewport.height` still reflects the pre-resize
+        // size — the one-way ratchet in `buildOpenSpec` then sees
+        // `old > old` and skips the update, leaving the picker
+        // stuck small even after a terminal-grow event. (The
+        // ratchet itself is correct; the input it consumes was
+        // stale.) Updating the snapshot here lets plugins observe
+        // the new dimensions when they react to the hook.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+
         // Notify plugins of the resize so they can adjust layouts.
         self.plugin_manager.read().unwrap().run_hook(
             "resize",
