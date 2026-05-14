@@ -82,7 +82,9 @@ impl Editor {
                 }
             };
             if let Some(action) = bypass_action {
-                let _ = self.handle_action(action);
+                if let Err(e) = self.handle_action(action) {
+                    tracing::warn!("terminal-bypass action failed: {e}");
+                }
                 return Some(InputResult::Consumed);
             }
             let mut ctx = InputContext::new();
