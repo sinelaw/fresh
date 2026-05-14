@@ -83,7 +83,7 @@ fn start_server(config: Config) {
         .wait_until(|h| {
             let screen = h.screen_to_string();
             // Wait until we're no longer generating the diff stream
-            !screen.contains("Generating Review Diff Stream")
+            !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -176,7 +176,7 @@ fn start_server(config: Config) {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            !screen.contains("Generating Review Diff Stream")
+            !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -256,7 +256,7 @@ fn start_server(config: Config) {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            !screen.contains("Generating Review Diff Stream") && screen.contains("hunks")
+            !screen.contains("Generating Review") && screen.contains("hunks")
         })
         .unwrap();
 
@@ -1425,7 +1425,7 @@ pub fn new_function() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            !screen.contains("Generating Review Diff Stream")
+            !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -1511,7 +1511,7 @@ pub fn new_function() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            !screen.contains("Generating Review Diff Stream") && screen.contains("hunks")
+            !screen.contains("Generating Review") && screen.contains("hunks")
         })
         .unwrap();
 
@@ -1646,7 +1646,7 @@ fn start_server(config: Config) {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            !screen.contains("Generating Review Diff Stream")
+            !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -1759,7 +1759,7 @@ fn test_review_diff_shows_untracked_and_staged_new_files() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            !screen.contains("Generating Review Diff Stream")
+            !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -1866,7 +1866,7 @@ fn test_review_diff_only_new_files_no_modifications() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            !screen.contains("Generating Review Diff Stream")
+            !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -2072,7 +2072,7 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
             // The toolbar ("next hunk") renders before the stream body has
             // finished generating. Wait until the "Generating ..." status
             // is gone so tests see the actual diff content.
-            screen.contains("next hunk") && !screen.contains("Generating Review Diff Stream")
+            screen.contains("next hunk") && !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -2933,7 +2933,7 @@ fn start_server(config: Config) {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            !s.contains("Generating Review Diff Stream") && s.contains("DIFF_NEW_LINE")
+            !s.contains("Generating Review") && s.contains("DIFF_NEW_LINE")
         })
         .unwrap();
     harness.render().unwrap();
