@@ -415,6 +415,18 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
 
 function buildOpenSpec(): WidgetSpec {
   if (!openDialog) return col();
+  // Recompute the row-count knobs against the current viewport on
+  // every spec build, not just at open-time. The host's `resize`
+  // plugin hook isn't always reliable through tmux's SIGWINCH
+  // propagation, so we re-derive listVisibleRows / embedRows from
+  // `editor.getViewport()` here — every refresh (filter typing,
+  // session selection change, periodic poll, post-resize re-render)
+  // picks up the live viewport (Finding I).
+  const liveListVisibleRows = openListVisibleRows();
+  if (liveListVisibleRows !== openDialog.listVisibleRows) {
+    openDialog.listVisibleRows = liveListVisibleRows;
+    openDialog.embedRows = Math.max(3, liveListVisibleRows - 5);
+  }
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
   const items = filtered.map((id) => renderListItem(id, activeId));
