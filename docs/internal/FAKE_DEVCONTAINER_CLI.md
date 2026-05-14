@@ -243,6 +243,6 @@ prepends the fake bin dir before launching the editor under test.
   actually listens.
 
 These boundaries are documented in
-[`scripts/fake-devcontainer/README.md`](../../scripts/fake-devcontainer/README.md)
+`scripts/fake-devcontainer/README.md`
 so a future contributor doesn't mistake "all green under the fake" for
 "ships."

@@ -38,8 +38,7 @@ moving `impl` blocks into new directories — that's cosmetic. The job is:
    `impl` blocks on *that new struct*.
 4. **Replace the raw fields on the god struct with a single field per
    new sub-struct.** The god struct no longer holds
-   `macros: Vec<Macro>, macro_recording: bool, last_macro_register:
-   Option<char>, macro_playing: bool` — it holds `macros: MacroState`.
+   `macros: Vec<Macro>, macro_recording: bool, last_macro_register: Option<char>, macro_playing: bool` — it holds `macros: MacroState`.
    It is now a composition of ~25 owned subsystems, not a flat bag of
    ~67 fields.
 5. **Migrate each scattered `impl Editor` method** to `impl <SubStruct>`

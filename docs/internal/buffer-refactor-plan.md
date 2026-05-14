@@ -915,11 +915,10 @@ Two cases where this doesn't work and need extra care:
 - **Chunked load during read.** `get_text_range_mut` currently calls
   `ensure_chunk_loaded_at`, which mutates both `piece_tree` and
   `buffers` *and* reads `persistence.fs`. It can't be a
-  `Persistence::load_chunk(&mut self, piece_tree: &mut PieceTree,
-  buffers: &mut Vec<StringBuffer>)` because `fs` lives in `Persistence`
+  `Persistence::load_chunk(&mut self, piece_tree: &mut PieceTree, buffers: &mut Vec<StringBuffer>)` because `fs` lives in `Persistence`
   and the same method needs `&` access to it while mutating two
-  externals. Resolution: `fn load_chunk(fs: &dyn FileSystem,
-  piece_tree: &mut PieceTree, buffers: &mut Vec<StringBuffer>, ...)`
+  externals. Resolution:
+  `fn load_chunk(fs: &dyn FileSystem, piece_tree: &mut PieceTree, buffers: &mut Vec<StringBuffer>, ...)`
   as a free function in `persistence/load.rs` — take `fs` as a borrow
   off the caller's destructured `TextBuffer`.
 - **Consolidate after save.** `consolidate_after_save` both mutates
@@ -1282,8 +1281,8 @@ The current method reconstructs `buffers` and updates `saved_root`
 atomically. If the new `Persistence::promote_to_saved` is split across
 multiple calls or the ordering changes, a crash between calls could
 leave recovery in a torn state. **Mitigation:** keep the method atomic
-— it's one call from `save()` that takes `&mut PieceTree,
-&mut Vec<StringBuffer>` as arguments. Run
+— it's one call from `save()` that takes
+`&mut PieceTree, &mut Vec<StringBuffer>` as arguments. Run
 `tests/e2e/recovery.rs` and `tests/e2e/large_file_inplace_write_bug.rs`
 between every commit in Phase 4.
 

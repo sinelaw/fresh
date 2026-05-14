@@ -145,8 +145,8 @@ On review close (`q` or `stop_review_diff`), write
 ```
 
 When the picker opens, if the current branch has a watermark **and**
-the watermark differs from `HEAD`, render a `Since I last reviewed
-(N new)` row resolving to `<watermark>..HEAD`. If the watermark
+the watermark differs from `HEAD`, render a
+`Since I last reviewed (N new)` row resolving to `<watermark>..HEAD`. If the watermark
 equals `HEAD`, hide the row (nothing new to review).
 
 This is the unique-value-prop feature. Most reviewers come back to a

@@ -85,8 +85,8 @@ TypeScript and ships alongside the existing plugins in
 
 ### Process spawning (git)
 
-- `spawnProcess(command, args, cwd)` — used to run `git show
-  <ref>:<path>`, `git rev-parse --abbrev-ref HEAD`, `git ls-files`, etc.
+- `spawnProcess(command, args, cwd)` — used to run
+  `git show <ref>:<path>`, `git rev-parse --abbrev-ref HEAD`, `git ls-files`, etc.
   Same pattern as `git_gutter.ts`, `git_blame.ts`.
 
 ### Events
@@ -568,8 +568,8 @@ Each milestone is independently mergeable and leaves the editor in a
 working state.
 
 1. **Skeleton + `head` mode, gutter only.**
-   Plugin file, command registration, per-buffer state, `git show
-   HEAD:<path>` fetch, line diff, gutter glyphs. No virtual lines,
+   Plugin file, command registration, per-buffer state,
+   `git show HEAD:<path>` fetch, line diff, gutter glyphs. No virtual lines,
    no overlays. ~150 LOC, copies the structure of `git_gutter.ts`.
 2. **Virtual lines for old content.**
    Add `addVirtualLine` rendering for `removed` and `modified`

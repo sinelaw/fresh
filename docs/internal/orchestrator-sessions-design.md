@@ -1782,7 +1782,7 @@ editor-global mutations, and the top-level dispatcher.
 > intermixed with window mutation, or several of these at
 > once). In that case the inline-borrow pattern is acceptable
 > as a holding measure — but the comment at the site should
-> say "TODO: move to impl Window once <X> is threadable" so
+> say "TODO: move to impl Window once `<X>` is threadable" so
 > the debt is visible.
 >
 > When migrating an existing inline-borrow site to
@@ -1825,8 +1825,8 @@ on the active window via `Editor::active_layout()` /
 **Status: shipped.** The fields that today are `Option<…>`
 stashes (`splits_stash`, `file_explorer_stash`, `lsp_stash`,
 `panel_ids_stash`, `file_mod_times_stash`) become live
-`Window` fields (`splits` is `Option<(SplitManager,
-HashMap<LeafId, SplitViewState>)>` because layout allocation is
+`Window` fields
+(`splits` is `Option<(SplitManager, HashMap<LeafId, SplitViewState>)>` because layout allocation is
 deferred to first activation; the rest are direct).
 `set_active_window` is now a pointer write — the swap body is
 gone, replaced by seed-buffer/layout allocation on first dive
@@ -2257,7 +2257,7 @@ has shipped onto `Window` plus several beyond:
 - Foundation infrastructure: `WindowResources` bundle of editor-
   global Arc-shared services (config, grammar/theme/keybinding/
   command registries, fs_manager, authority, time_source,
-  dir_context), `BufferIdAllocator` (Arc<AtomicUsize> shared).
+  dir_context), `BufferIdAllocator` (`Arc<AtomicUsize>` shared).
   A speculative `WindowControlEvent` + `dispatch_to_active_window`
   pair was originally added for cross-window orchestration from
   `impl Window` handlers, but the migrations that shipped all use
