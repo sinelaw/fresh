@@ -495,6 +495,7 @@ function buildOpenSpec(): WidgetSpec {
       hintBar([
         { keys: "↑↓", label: "nav" },
         { keys: "Enter", label: "dive" },
+        { keys: "Alt+N", label: "new" },
         { keys: "Tab", label: "focus" },
         { keys: "Esc", label: "close" },
       ]),
@@ -1055,7 +1056,24 @@ async function deleteConfirmedSession(): Promise<void> {
   triggerSyncAsync(repoRoot);
 }
 
-editor.defineMode(OPEN_MODE, [], true, true);
+// `Alt+N` from inside the picker opens the new-session form — saves
+// the user the "Esc, Ctrl+P, type Orchestrator: New Session, Enter"
+// dance when they realise mid-picker that they want to spawn another
+// agent. All other keys (Up/Down/Enter/Tab/Esc/printable chars)
+// route through `dispatch_floating_widget_key`'s smart-key defaults
+// since OPEN_MODE doesn't claim them here.
+editor.defineMode(
+  OPEN_MODE,
+  [["M-n", "orchestrator_open_new_from_picker"]],
+  true,
+  true,
+);
+
+registerHandler("orchestrator_open_new_from_picker", () => {
+  if (!openDialog) return;
+  closeOpenDialog();
+  openForm();
+});
 
 // =============================================================================
 // New-session floating form

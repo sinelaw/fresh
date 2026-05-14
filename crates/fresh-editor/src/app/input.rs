@@ -2682,7 +2682,30 @@ impl Editor {
             // not leak keys to global bindings like Ctrl-P or
             // Alt-F. Plain (or Shift-only) chars feed printable
             // text into the focused TextInput.
+            //
+            // Exception: the active editor mode may have explicitly
+            // claimed the chord via `defineMode` (the Orchestrator
+            // picker binds `Alt+N` to its new-session shortcut, for
+            // example). Defer to that path so plugin-declared
+            // modal shortcuts work, mirroring the same precedence
+            // check the named-key branch above uses.
             if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                let mode_has_binding = self
+                    .active_window()
+                    .editor_mode
+                    .as_ref()
+                    .map(|mode_name| {
+                        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+                        let mode_ctx = crate::input::keybindings::KeyContext::Mode(
+                            mode_name.to_string(),
+                        );
+                        let keybindings = self.keybindings.read().unwrap();
+                        keybindings.has_explicit_binding(&key_event, &mode_ctx)
+                    })
+                    .unwrap_or(false);
+                if mode_has_binding {
+                    return false;
+                }
                 return true;
             }
             let ch = if modifiers.contains(KeyModifiers::SHIFT) {
