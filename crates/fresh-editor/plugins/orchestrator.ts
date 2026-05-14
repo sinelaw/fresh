@@ -555,7 +555,14 @@ function openControlRoom(): void {
     listVisibleRows,
     // Mirror buildPreviewPane's chrome: 1 button row + 1 spacer
     // + 2 info rows + 1 spacer = 4 rows reserved above the embed.
-    embedRows: Math.max(4, listVisibleRows - 4),
+    // Preview chrome above the embed: 1 button row + 1 spacer + 2
+    // info rows + 1 spacer = 5 rows. The labeledSection's top/bottom
+    // borders match the sessions list's, so subtracting just the
+    // chrome makes the preview pane's apparent height match the
+    // list pane's (`visible_rows + 2 borders`) exactly. Floored at
+    // 3 so a tiny terminal still leaves enough rows for the embed
+    // to paint something meaningful.
+    embedRows: Math.max(3, listVisibleRows - 5),
   };
   openPanel = new FloatingWidgetPanel();
   // 90% × 90% of the terminal — the open dialog wants room for
@@ -1741,7 +1748,7 @@ editor.on("resize", () => {
   if (openDialog && openPanel) {
     const listVisibleRows = openListVisibleRows();
     openDialog.listVisibleRows = listVisibleRows;
-    openDialog.embedRows = Math.max(4, listVisibleRows - 4);
+    openDialog.embedRows = Math.max(3, listVisibleRows - 5);
     refreshOpenDialog();
   }
 });
