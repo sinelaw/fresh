@@ -142,6 +142,12 @@ interface OpenDialogState {
   // height vs. a file buffer's).
   listVisibleRows: number;
   embedRows: number;
+  // Toggle between "compact preview" (default — buttons + live
+  // embed only, no info row) and "details" (state + path metadata
+  // row visible above the embed). Compact is the default because
+  // the embed is the part the user actually wants to see; the
+  // metadata row is rarely read and just eats embed height.
+  showDetails: boolean;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -363,14 +369,20 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       });
     }
   }
-  // The embed reserves the bulk of the preview pane so the host
-  // can paint the selected window's live UI (splits, terminals,
-  // syntax highlighting) underneath the action button row. The
-  // row count is captured at dialog-open into `openDialog` and
-  // used verbatim across re-renders, so the preview pane stays
-  // a constant height regardless of which window's viewport the
-  // host happens to be reporting through `getViewport()`.
-  const embedRows = openDialog?.embedRows ?? 4;
+  // Total embed area we can afford if no details row is shown:
+  // `listVisibleRows - 2` (button row + one spacer above the
+  // embed). When details ARE shown, two info rows + a spacer eat
+  // three more lines — `_DETAILS_CHROME_ROWS` accounts for that.
+  // Either way the preview pane's apparent height matches the
+  // sessions list pane's `visible_rows + 2 borders` for the
+  // wireframed dialog shape.
+  const totalEmbedBase = (openDialog?.listVisibleRows ?? 6) - 2;
+  const detailsOn = openDialog?.showDetails ?? false;
+  const _DETAILS_CHROME_ROWS = 3; // 2 info rows + 1 spacer
+  const embedRows = Math.max(
+    3,
+    totalEmbedBase - (detailsOn ? _DETAILS_CHROME_ROWS : 0),
+  );
   // Gate the action buttons on having a session to act on. When
   // the filter matches nothing (or no session is highlighted) the
   // preview pane shows just "No session selected" + an empty
@@ -389,27 +401,41 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       ),
     });
   }
+  // The "details" toggle: when off, the picker shows just the
+  // action buttons + the live embed (compact, max embed height).
+  // When on, the state/age/path metadata row appears above the
+  // embed and the embed shrinks to make room. Toggle button
+  // labels with the *target* state — pressing `[ Details ]`
+  // turns details on, pressing `[ Preview ]` turns them off
+  // (back to compact).
+  const detailsToggleLabel = detailsOn ? "Preview" : "Details";
+  const buttonRow = row(
+    flexSpacer(),
+    button(detailsToggleLabel, { key: "toggle-details" }),
+    spacer(2),
+    button("Stop", { key: "stop" }),
+    spacer(2),
+    button("Archive", { key: "archive" }),
+    spacer(2),
+    button("Delete", { intent: "danger", key: "delete" }),
+  );
+  const embedWidget = windowEmbed({
+    windowId: s.id,
+    rows: embedRows,
+    key: "live-preview",
+  });
+  const body = detailsOn
+    ? col(
+        buttonRow,
+        spacer(0),
+        { kind: "raw", entries: buildPreviewEntries(s) },
+        spacer(0),
+        embedWidget,
+      )
+    : col(buttonRow, spacer(0), embedWidget);
   return labeledSection({
     label: `[${s.id}] ${s.label}`,
-    child: col(
-      row(
-        flexSpacer(),
-        button("Stop", { key: "stop" }),
-        spacer(2),
-        button("Archive", { key: "archive" }),
-        spacer(2),
-        button("Delete", { intent: "danger", key: "delete" }),
-      ),
-      spacer(0),
-      { kind: "raw", entries: buildPreviewEntries(s) },
-      spacer(0),
-      // Live window render of the highlighted session's split tree.
-      windowEmbed({
-        windowId: s.id,
-        rows: embedRows,
-        key: "live-preview",
-      }),
-    ),
+    child: body,
   });
 }
 
@@ -581,6 +607,7 @@ function openControlRoom(): void {
     // 3 so a tiny terminal still leaves enough rows for the embed
     // to paint something meaningful.
     embedRows: Math.max(3, listVisibleRows - 5),
+    showDetails: false,
   };
   openPanel = new FloatingWidgetPanel();
   // 90% × 90% of the terminal — the open dialog wants room for
@@ -1696,6 +1723,11 @@ editor.on("widget_event", (e) => {
         editor.setActiveWindow(id);
       }
       closeOpenDialog();
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "toggle-details") {
+      openDialog.showDetails = !openDialog.showDetails;
+      refreshOpenDialog();
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "stop") {

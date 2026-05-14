@@ -2019,6 +2019,29 @@ impl Editor {
                 preview_split_areas = result.0;
             });
 
+        // Resize the previewed window's terminal PTYs to fit the
+        // preview embed before painting their grids. Without this,
+        // the PTY child (e.g. `top`, `htop`, `vim`, claude) keeps
+        // drawing at the dimensions it had when last active — often
+        // the full terminal height — so the preview embed only
+        // shows the top slice of a much taller frame. Resizing
+        // SIGWINCHes the PTY, which redraws at the new size, and
+        // the next render frame paints the correctly-sized grid.
+        // When the user dives into the session,
+        // `Window::resize_visible_terminals` will resize back up to
+        // the dive view's split rect.
+        if let Some(win) = self.windows.get_mut(&sid) {
+            for (_split_id, buffer_id, content_rect, _scrollbar_rect, _, _) in &preview_split_areas
+            {
+                if win.terminal_buffers.contains_key(buffer_id)
+                    && content_rect.width > 0
+                    && content_rect.height > 0
+                {
+                    win.resize_terminal(*buffer_id, content_rect.width, content_rect.height);
+                }
+            }
+        }
+
         // Overlay live PTY grids for terminal buffers in the
         // previewed window's splits — paints colors, attributes,
         // and the visible screen on top of `SplitRenderer`'s text
