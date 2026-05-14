@@ -25,112 +25,127 @@
 
 use super::window::Window;
 use super::{BufferId, BufferMetadata, Editor};
+use crate::model::event::LeafId;
 use crate::services::authority::TerminalWrapper;
 use crate::services::terminal::TerminalId;
 use crate::state::EditorState;
+use crate::view::split::SplitViewState;
 use rust_i18n::t;
+use std::path::PathBuf;
 
-impl Editor {
+impl Window {
     /// Resolve the terminal wrapper used to spawn a new integrated
-    /// terminal, applying the `terminal.shell` config override on top of
-    /// the authority's wrapper when appropriate.
+    /// terminal in this window, applying the `terminal.shell` config
+    /// override on top of the authority's wrapper when appropriate.
     ///
     /// See `TerminalWrapper::with_user_shell_override` for the override
-    /// rules; this is just the Editor-side wiring that supplies the
+    /// rules; this is just the per-window wiring that supplies the
     /// active config.
     pub(crate) fn resolved_terminal_wrapper(&self) -> TerminalWrapper {
-        self.authority
+        self.resources
+            .authority
             .terminal_wrapper
             .clone()
-            .with_user_shell_override(self.config.terminal.shell.as_ref())
+            .with_user_shell_override(self.resources.config.terminal.shell.as_ref())
     }
 
-    /// Spawn a new PTY-backed terminal session and record its
-    /// log/backing files. Returns the terminal id on success — does
-    /// **not** create a buffer or attach to any split. Callers are
-    /// responsible for the rest of the wiring (creating the terminal
-    /// buffer via `create_terminal_buffer_attached` /
-    /// `create_terminal_buffer_detached`, switching active buffer,
-    /// flipping terminal mode, etc.).
+    /// Get terminal dimensions appropriate for spawning a PTY in this
+    /// window. Derived from the window's cached screen size minus a
+    /// small constant for menu/status chrome.
+    pub(crate) fn get_terminal_dimensions(&self) -> (u16, u16) {
+        let cols = self.terminal_width.saturating_sub(2).max(40);
+        let rows = self.terminal_height.saturating_sub(4).max(10);
+        (cols, rows)
+    }
+
+    /// Spawn a new PTY-backed terminal session in this window and
+    /// record its log/backing files. Returns the terminal id on
+    /// success — does **not** create a buffer or attach to any
+    /// split. Callers are responsible for the rest of the wiring
+    /// (see `create_terminal_buffer_attached` /
+    /// `create_terminal_buffer_detached`).
     ///
-    /// Used by `open_terminal` (regular spawn into the active split)
-    /// and by `Action::OpenTerminalInDock` (which needs the buffer
-    /// id *before* it has a split to attach to, so the dock leaf can
-    /// be seeded with the terminal directly rather than with a
-    /// placeholder buffer that would linger as a phantom tab).
-    pub(crate) fn spawn_terminal_session(&mut self) -> Option<TerminalId> {
-        // Get the current split dimensions for the terminal size.
-        // For dock-creation callers the dock doesn't exist yet, so
-        // these dimensions are an initial guess — `resize_visible_terminals`
-        // (called after attach) will correct it once the dock split
-        // has actual rect dimensions.
+    /// `cwd` defaults to this window's `root` when None. `persistent`
+    /// controls whether the backing files use stable names
+    /// (`fresh-terminal-N.{log,txt}`) so workspace restore can find
+    /// them, or per-spawn ephemeral suffixes
+    /// (`fresh-terminal-eph-N-<ts>.{log,txt}`); non-persistent
+    /// terminals are also added to `ephemeral_terminals` so the
+    /// workspace serialiser skips them.
+    ///
+    /// On spawn failure the error is logged and a status message is
+    /// set on this window; the caller gets `None` back.
+    pub fn spawn_terminal_session(
+        &mut self,
+        cwd: Option<PathBuf>,
+        persistent: bool,
+    ) -> Option<TerminalId> {
         let (cols, rows) = self.get_terminal_dimensions();
 
-        // Set up async bridge for terminal manager if not already done.
-        // Use the window's per-window bridge (terminals are per-window),
-        // not the editor-global bridge — terminal output then arrives
-        // on the window's channel and is drained per-window.
-        let __window_bridge = self.active_window().bridge.clone();
-        self.active_window_mut()
-            .terminal_manager
-            .set_async_bridge(__window_bridge);
+        // Per-window async bridge — terminal output flows back through
+        // the window that owns the PTY.
+        let bridge = self.bridge.clone();
+        self.terminal_manager.set_async_bridge(bridge);
 
-        // Prepare persistent storage paths under the user's data directory
-        let terminal_root = self.dir_context.terminal_dir_for(&self.working_dir);
-        if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
+        let working_dir = cwd.unwrap_or_else(|| self.root.clone());
+        let terminal_root = self
+            .resources
+            .dir_context
+            .terminal_dir_for(&working_dir);
+        if let Err(e) = self
+            .resources
+            .authority
+            .filesystem
+            .create_dir_all(&terminal_root)
+        {
             tracing::warn!("Failed to create terminal directory: {}", e);
         }
-        // Precompute paths using the next terminal ID so we capture from the first byte
-        let predicted_terminal_id = self.active_window().terminal_manager.next_terminal_id();
-        let log_path =
-            terminal_root.join(format!("fresh-terminal-{}.log", predicted_terminal_id.0));
-        let backing_path =
-            terminal_root.join(format!("fresh-terminal-{}.txt", predicted_terminal_id.0));
-        // Stash backing path now so buffer creation can reuse it
-        self.active_window_mut()
-            .terminal_backing_files
-            .insert(predicted_terminal_id, backing_path);
 
-        // Spawn terminal with incremental scrollback streaming.
-        // Pre-extract everything self-borrowing before grabbing the
-        // mutable terminal_manager so the args don't conflict.
-        let backing_path_for_spawn = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.terminal_backing_files)
-            .expect("active window present")
-            .get(&predicted_terminal_id)
-            .cloned();
-        let working_dir_for_spawn = self.working_dir.clone();
-        let wrapper_for_spawn = self.resolved_terminal_wrapper();
-        match self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.terminal_manager)
-            .expect("active window present")
-            .spawn(
-                cols,
-                rows,
-                Some(working_dir_for_spawn),
-                Some(log_path.clone()),
-                backing_path_for_spawn,
-                wrapper_for_spawn,
-            ) {
+        // Precompute paths using the next terminal ID so we capture
+        // from the first byte. Ephemeral terminals get a per-spawn
+        // suffix so there is no possibility of picking up scrollback
+        // a previous run (with the same numeric terminal ID) wrote
+        // to the same path.
+        let predicted_terminal_id = self.terminal_manager.next_terminal_id();
+        let name_stem = if persistent {
+            format!("fresh-terminal-{}", predicted_terminal_id.0)
+        } else {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("fresh-terminal-eph-{}-{}", predicted_terminal_id.0, nanos)
+        };
+        let log_path = terminal_root.join(format!("{}.log", name_stem));
+        let backing_path = terminal_root.join(format!("{}.txt", name_stem));
+        self.terminal_backing_files
+            .insert(predicted_terminal_id, backing_path.clone());
+
+        let wrapper = self.resolved_terminal_wrapper();
+        match self.terminal_manager.spawn(
+            cols,
+            rows,
+            Some(working_dir),
+            Some(log_path.clone()),
+            Some(backing_path),
+            wrapper,
+        ) {
             Ok(terminal_id) => {
-                // Track log file path (use actual ID in case it differs)
-                self.active_window_mut()
-                    .terminal_log_files
-                    .insert(terminal_id, log_path.clone());
-                // If predicted differs, move backing path entry
+                self.terminal_log_files.insert(terminal_id, log_path);
+                // If the actual terminal id differs from the predicted
+                // one, move the backing-file entry to the real id and
+                // rename to the persistent (no-eph-suffix) form. This
+                // mirrors the pre-migration behaviour exactly.
                 if terminal_id != predicted_terminal_id {
-                    self.active_window_mut()
-                        .terminal_backing_files
+                    self.terminal_backing_files
                         .remove(&predicted_terminal_id);
                     let backing_path =
                         terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
-                    self.active_window_mut()
-                        .terminal_backing_files
+                    self.terminal_backing_files
                         .insert(terminal_id, backing_path);
+                }
+                if !persistent {
+                    self.ephemeral_terminals.insert(terminal_id);
                 }
                 Some(terminal_id)
             }
@@ -144,34 +159,376 @@ impl Editor {
         }
     }
 
-    /// Open a new terminal in the current split
+    /// Create a buffer for a terminal session in this window, attached
+    /// to the specified split. Mirrors the pre-migration body of
+    /// `Editor::create_terminal_buffer_attached`.
+    pub fn create_terminal_buffer_attached(
+        &mut self,
+        terminal_id: TerminalId,
+        split_id: LeafId,
+    ) -> BufferId {
+        let buffer_id = self.alloc_buffer_id();
+        let large_file_threshold =
+            self.resources.config.editor.large_file_threshold_bytes as usize;
+
+        // Rendered backing file for scrollback view (reuse if already
+        // recorded by `spawn_terminal_session`).
+        let backing_file = self
+            .terminal_backing_files
+            .get(&terminal_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let root = self.resources.dir_context.terminal_dir_for(&self.root);
+                if let Err(e) = self.resources.authority.filesystem.create_dir_all(&root) {
+                    tracing::warn!("Failed to create terminal directory: {}", e);
+                }
+                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+            });
+
+        // Ensure the file exists — but DON'T truncate if it already has
+        // content. The PTY read loop may have already started writing
+        // scrollback.
+        if !self.resources.authority.filesystem.exists(&backing_file) {
+            if let Err(e) = self
+                .resources
+                .authority
+                .filesystem
+                .write_file(&backing_file, &[])
+            {
+                tracing::warn!("Failed to create terminal backing file: {}", e);
+            }
+        }
+
+        self.terminal_backing_files
+            .insert(terminal_id, backing_file.clone());
+
+        let mut state = EditorState::new_with_path(
+            large_file_threshold,
+            std::sync::Arc::clone(&self.resources.authority.filesystem),
+            backing_file.clone(),
+        );
+        state.margins.configure_for_line_numbers(false);
+        self.buffers.insert(buffer_id, state);
+
+        // Virtual metadata so the tab shows "*Terminal N*" and LSP
+        // stays off.
+        let metadata = BufferMetadata::virtual_buffer(
+            format!("*Terminal {}*", terminal_id.0),
+            "terminal".into(),
+            false,
+        );
+        self.buffer_metadata.insert(buffer_id, metadata);
+        self.terminal_buffers.insert(buffer_id, terminal_id);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        if let Some(view_states) = self.split_view_states_mut() {
+            if let Some(view_state) = view_states.get_mut(&split_id) {
+                view_state.add_buffer(buffer_id);
+                // Terminal buffers should not wrap lines so escape
+                // sequences stay intact.
+                view_state.viewport.line_wrap_enabled = false;
+            }
+        }
+
+        buffer_id
+    }
+
+    /// Plugin-facing terminal creation in this window. Handles all
+    /// the variants the JS `editor.createTerminal` API exposes:
+    ///
+    /// - `direction = None`: attach the terminal as a new tab in the
+    ///   window's active split (or seed a fresh split layout rooted
+    ///   at the terminal if the window has never been activated and
+    ///   therefore has no layout yet).
+    /// - `direction = Some(dir)`: create a new horizontal/vertical
+    ///   split off the active split and place the terminal there.
+    ///   `ratio` controls the split's size (default 0.5). `focus`
+    ///   controls whether the new split becomes the window's active
+    ///   split.
+    ///
+    /// In all cases the leader pid is registered with the window's
+    /// `process_groups` tracker so cross-window signal operations
+    /// (Stop / Archive / Delete) can reach the spawned process group.
+    ///
+    /// Returns `(terminal_id, buffer_id, created_split_id)` on
+    /// success. `created_split_id` is `Some` when a split was created
+    /// (either explicitly via `direction = Some` or implicitly when
+    /// seeding a fresh layout in a never-activated window).
+    pub fn create_plugin_terminal(
+        &mut self,
+        cwd: Option<PathBuf>,
+        direction: Option<crate::model::event::SplitDirection>,
+        ratio: Option<f32>,
+        focus: bool,
+        persistent: bool,
+    ) -> Result<(TerminalId, BufferId, Option<LeafId>), String> {
+        let terminal_id = self
+            .spawn_terminal_session(cwd, persistent)
+            .ok_or_else(|| "Failed to spawn terminal".to_string())?;
+
+        // Register the leader pid with this window's process_groups
+        // so window-level signal operations reach the spawned group.
+        if let Some(pid) = self
+            .terminal_manager
+            .get(terminal_id)
+            .and_then(|h| h.pid())
+        {
+            let label = format!("terminal #{}", terminal_id.0);
+            self.process_groups.register(pid, label);
+        }
+
+        // Compute split-creation behaviour. The two cases (with /
+        // without direction) diverge in whether we attach to the
+        // active split as a new tab or create a fresh split off it.
+        // The "never-activated, no layout yet" case is handled in
+        // both branches by seeding a SplitManager rooted at the new
+        // terminal buffer.
+        let active_split = self.buffers.splits().map(|(mgr, _)| mgr.active_split());
+
+        let (buffer_id, created_split_id) = if let Some(split_dir) = direction {
+            let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+            match active_split {
+                Some(parent) => {
+                    let split_ratio = ratio.unwrap_or(0.5);
+                    let line_numbers = self.resources.config.editor.line_numbers;
+                    let highlight_current_line =
+                        self.resources.config.editor.highlight_current_line;
+                    let rulers = self.resources.config.editor.rulers.clone();
+                    let terminal_width = self.terminal_width;
+                    let terminal_height = self.terminal_height;
+                    let split_result = self
+                        .split_manager_mut()
+                        .expect("active split implies populated layout")
+                        .split_active(split_dir, buffer_id, split_ratio);
+                    match split_result {
+                        Ok(new_split_id) => {
+                            let mut view_state = SplitViewState::with_buffer(
+                                terminal_width,
+                                terminal_height,
+                                buffer_id,
+                            );
+                            view_state.apply_config_defaults(
+                                line_numbers,
+                                highlight_current_line,
+                                false,
+                                false,
+                                None,
+                                rulers,
+                            );
+                            // Terminal output is ANSI-sequenced and
+                            // assumes a fixed column count; wrapping
+                            // would mangle cursor positioning.
+                            view_state.viewport.line_wrap_enabled = false;
+                            self.split_view_states_mut()
+                                .expect("active split implies populated layout")
+                                .insert(new_split_id, view_state);
+                            if focus {
+                                self.split_manager_mut()
+                                    .expect("active split implies populated layout")
+                                    .set_active_split(new_split_id);
+                            }
+                            (buffer_id, Some(new_split_id))
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to create split for terminal: {e}; \
+                                 falling back to attaching to active split"
+                            );
+                            // Graceful fallback: attach to the active
+                            // split so the buffer isn't orphaned.
+                            if let Some(view_state) = self
+                                .split_view_states_mut()
+                                .and_then(|m| m.get_mut(&parent))
+                            {
+                                view_state.add_buffer(buffer_id);
+                                view_state.viewport.line_wrap_enabled = false;
+                            }
+                            self.set_active_buffer(buffer_id);
+                            (buffer_id, None)
+                        }
+                    }
+                }
+                None => {
+                    // Never-activated window with no layout — seed
+                    // one rooted at the terminal buffer. First dive
+                    // picks it up and the terminal is the active leaf.
+                    let manager = crate::view::split::SplitManager::new(buffer_id);
+                    let active_leaf = manager.active_split();
+                    let mut view_states = std::collections::HashMap::new();
+                    let mut vs = SplitViewState::with_buffer(
+                        self.terminal_width,
+                        self.terminal_height,
+                        buffer_id,
+                    );
+                    vs.viewport.line_wrap_enabled = false;
+                    view_states.insert(active_leaf, vs);
+                    self.buffers.set_splits((manager, view_states));
+                    (buffer_id, Some(active_leaf))
+                }
+            }
+        } else {
+            match active_split {
+                Some(split_id) => {
+                    let buffer_id = self.create_terminal_buffer_attached(terminal_id, split_id);
+                    // Switch tabs to the terminal. Window-side
+                    // mutation only — the editor-wide
+                    // `buffer_activated` hook is fired by the
+                    // Editor wrapper iff this window is the
+                    // editor-active one.
+                    self.set_active_buffer(buffer_id);
+                    (buffer_id, None)
+                }
+                None => {
+                    let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+                    let manager = crate::view::split::SplitManager::new(buffer_id);
+                    let active_leaf = manager.active_split();
+                    let mut view_states = std::collections::HashMap::new();
+                    let mut vs = SplitViewState::with_buffer(
+                        self.terminal_width,
+                        self.terminal_height,
+                        buffer_id,
+                    );
+                    vs.viewport.line_wrap_enabled = false;
+                    view_states.insert(active_leaf, vs);
+                    self.buffers.set_splits((manager, view_states));
+                    (buffer_id, Some(active_leaf))
+                }
+            }
+        };
+
+        self.resize_visible_terminals();
+        Ok((terminal_id, buffer_id, created_split_id))
+    }
+
+    /// Open a new terminal in this window: spawn the PTY, create
+    /// the buffer, attach to the active split, switch this window's
+    /// active buffer to it, enable terminal mode, and resize the PTY
+    /// to match the split's content area. Returns `(terminal_id,
+    /// buffer_id)` on success.
+    ///
+    /// Editor-wide effects (the `buffer_activated` plugin hook, the
+    /// status-bar exit-key message) are NOT fired here — that's the
+    /// caller's responsibility, gated on whether this window is the
+    /// editor-active one. See `Editor::open_terminal` for the
+    /// active-window wrapper that does both.
+    pub fn open_terminal_in_window(&mut self) -> Option<(TerminalId, BufferId)> {
+        let terminal_id = self.spawn_terminal_session(None, true)?;
+        let split_id = self
+            .buffers
+            .splits()
+            .map(|(mgr, _)| mgr.active_split())
+            .expect("window must have a populated split layout");
+        let buffer_id = self.create_terminal_buffer_attached(terminal_id, split_id);
+        // Window-side activation: per-window mutation only — the
+        // editor-wide plugin hook fires in the Editor wrapper.
+        self.set_active_buffer(buffer_id);
+        self.terminal_mode = true;
+        self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        self.resize_visible_terminals();
+        Some((terminal_id, buffer_id))
+    }
+
+    /// Create a buffer for a terminal session in this window without
+    /// attaching to any split (used during session restore).
+    pub fn create_terminal_buffer_detached(&mut self, terminal_id: TerminalId) -> BufferId {
+        let buffer_id = self.alloc_buffer_id();
+        let large_file_threshold =
+            self.resources.config.editor.large_file_threshold_bytes as usize;
+
+        let backing_file = self
+            .terminal_backing_files
+            .get(&terminal_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let root = self.resources.dir_context.terminal_dir_for(&self.root);
+                if let Err(e) = self.resources.authority.filesystem.create_dir_all(&root) {
+                    tracing::warn!("Failed to create terminal directory: {}", e);
+                }
+                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+            });
+
+        if !self.resources.authority.filesystem.exists(&backing_file) {
+            if let Err(e) = self
+                .resources
+                .authority
+                .filesystem
+                .write_file(&backing_file, &[])
+            {
+                tracing::warn!("Failed to create terminal backing file: {}", e);
+            }
+        }
+
+        let mut state = EditorState::new_with_path(
+            large_file_threshold,
+            std::sync::Arc::clone(&self.resources.authority.filesystem),
+            backing_file.clone(),
+        );
+        state.margins.configure_for_line_numbers(false);
+        self.buffers.insert(buffer_id, state);
+
+        let metadata = BufferMetadata::virtual_buffer(
+            format!("*Terminal {}*", terminal_id.0),
+            "terminal".into(),
+            false,
+        );
+        self.buffer_metadata.insert(buffer_id, metadata);
+        self.terminal_buffers.insert(buffer_id, terminal_id);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        buffer_id
+    }
+}
+
+impl Editor {
+    /// Editor-side thin wrapper. Delegates to the active window. New code
+    /// on `impl Window` should call `Window::resolved_terminal_wrapper`
+    /// directly.
+    pub(crate) fn resolved_terminal_wrapper(&self) -> TerminalWrapper {
+        self.active_window().resolved_terminal_wrapper()
+    }
+
+    /// Spawn a new PTY-backed terminal session in the active window
+    /// using its `root` as cwd. Editor-side thin wrapper; per-window
+    /// body lives in `Window::spawn_terminal_session`.
+    ///
+    /// Used by `open_terminal` (regular spawn into the active split)
+    /// and by `Action::OpenTerminalInDock` (which needs the buffer
+    /// id *before* it has a split to attach to, so the dock leaf can
+    /// be seeded with the terminal directly rather than with a
+    /// placeholder buffer that would linger as a phantom tab).
+    pub(crate) fn spawn_terminal_session(&mut self) -> Option<TerminalId> {
+        self.active_window_mut()
+            .spawn_terminal_session(None, true)
+    }
+
+    /// Open a new terminal in the active window's current split, fire
+    /// the editor-wide `buffer_activated` plugin hook, and post a
+    /// status-bar message with the terminal-mode exit key.
+    ///
+    /// Window-side body lives in `Window::open_terminal_in_window`;
+    /// this router adds only the cross-cutting effects that require
+    /// editor-level state (the plugin hook + status message).
     pub fn open_terminal(&mut self) {
-        let Some(terminal_id) = self.spawn_terminal_session() else {
+        let Some((terminal_id, buffer_id)) = self.active_window_mut().open_terminal_in_window()
+        else {
             return;
         };
 
-        // Create a buffer for this terminal, attached to the active split
-        let buffer_id = self.create_terminal_buffer_attached(
-            terminal_id,
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split(),
+        // Editor-wide: refresh the plugin-state snapshot so plugin
+        // hooks see the new active buffer, then fire `buffer_activated`.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+        #[cfg(feature = "plugins")]
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
         );
 
-        // Switch to the terminal buffer
-        self.set_active_buffer(buffer_id);
-
-        // Enable terminal mode
-        self.active_window_mut().terminal_mode = true;
-        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
-
-        // Resize terminal to match actual split content area
-        self.active_window_mut().resize_visible_terminals();
-
-        // Get the terminal escape keybinding dynamically
+        // Status bar with the terminal-mode exit key. Looked up here
+        // (not in Window) because the keybinding resolver is shared
+        // editor state read through the `Arc<RwLock<…>>`.
         let exit_key = self
             .keybindings
             .read()
@@ -191,149 +548,12 @@ impl Editor {
         );
     }
 
-    /// Create a buffer for a terminal session
-    pub(crate) fn create_terminal_buffer_attached(
-        &mut self,
-        terminal_id: TerminalId,
-        split_id: crate::model::event::LeafId,
-    ) -> BufferId {
-        let buffer_id = self.alloc_buffer_id();
-
-        // Get config values
-        let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
-
-        // Rendered backing file for scrollback view (reuse if already recorded)
-        let backing_file = self
-            .active_window()
-            .terminal_backing_files
-            .get(&terminal_id)
-            .cloned()
-            .unwrap_or_else(|| {
-                let root = self.dir_context.terminal_dir_for(&self.working_dir);
-                if let Err(e) = self.authority.filesystem.create_dir_all(&root) {
-                    tracing::warn!("Failed to create terminal directory: {}", e);
-                }
-                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
-            });
-
-        // Ensure the file exists - but DON'T truncate if it already has content
-        // The PTY read loop may have already started writing scrollback
-        if !self.authority.filesystem.exists(&backing_file) {
-            if let Err(e) = self.authority.filesystem.write_file(&backing_file, &[]) {
-                tracing::warn!("Failed to create terminal backing file: {}", e);
-            }
-        }
-
-        // Store the backing file path
-        self.active_window_mut()
-            .terminal_backing_files
-            .insert(terminal_id, backing_file.clone());
-
-        // Create editor state with the backing file
-        let mut state = EditorState::new_with_path(
-            large_file_threshold,
-            std::sync::Arc::clone(&self.authority.filesystem),
-            backing_file.clone(),
-        );
-        // Terminal buffers should never show line numbers
-        state.margins.configure_for_line_numbers(false);
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .insert(buffer_id, state);
-        // Use virtual metadata so the tab shows "*Terminal N*" and LSP stays off.
-        // The backing file is still tracked separately for syncing scrollback.
-        let metadata = BufferMetadata::virtual_buffer(
-            format!("*Terminal {}*", terminal_id.0),
-            "terminal".into(),
-            false,
-        );
-        self.active_window_mut()
-            .buffer_metadata
-            .insert(buffer_id, metadata);
-
-        // Map buffer to terminal
-        self.active_window_mut()
-            .terminal_buffers
-            .insert(buffer_id, terminal_id);
-
-        // Initialize event log for undo/redo
-        self.active_window_mut()
-            .event_logs
-            .insert(buffer_id, crate::model::event::EventLog::new());
-
-        // Set up split view state
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
-            view_state.add_buffer(buffer_id);
-            // Terminal buffers should not wrap lines so escape sequences stay intact
-            view_state.viewport.line_wrap_enabled = false;
-        }
-
-        buffer_id
-    }
-
-    /// Create a terminal buffer without attaching it to any split (used during session restore).
+    /// Editor-side thin wrapper. Delegates to the active window's
+    /// `Window::create_terminal_buffer_detached` (used during session
+    /// restore by `input.rs`).
     pub(crate) fn create_terminal_buffer_detached(&mut self, terminal_id: TerminalId) -> BufferId {
-        let buffer_id = self.alloc_buffer_id();
-
-        // Get config values
-        let large_file_threshold = self.config.editor.large_file_threshold_bytes as usize;
-
-        let backing_file = self
-            .active_window()
-            .terminal_backing_files
-            .get(&terminal_id)
-            .cloned()
-            .unwrap_or_else(|| {
-                let root = self.dir_context.terminal_dir_for(&self.working_dir);
-                if let Err(e) = self.authority.filesystem.create_dir_all(&root) {
-                    tracing::warn!("Failed to create terminal directory: {}", e);
-                }
-                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
-            });
-
-        // Create the file only if it doesn't exist (preserve existing scrollback for restore)
-        if !self.authority.filesystem.exists(&backing_file) {
-            if let Err(e) = self.authority.filesystem.write_file(&backing_file, &[]) {
-                tracing::warn!("Failed to create terminal backing file: {}", e);
-            }
-        }
-
-        // Create editor state with the backing file
-        let mut state = EditorState::new_with_path(
-            large_file_threshold,
-            std::sync::Arc::clone(&self.authority.filesystem),
-            backing_file.clone(),
-        );
-        state.margins.configure_for_line_numbers(false);
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .insert(buffer_id, state);
-        let metadata = BufferMetadata::virtual_buffer(
-            format!("*Terminal {}*", terminal_id.0),
-            "terminal".into(),
-            false,
-        );
         self.active_window_mut()
-            .buffer_metadata
-            .insert(buffer_id, metadata);
-        self.active_window_mut()
-            .terminal_buffers
-            .insert(buffer_id, terminal_id);
-        self.active_window_mut()
-            .event_logs
-            .insert(buffer_id, crate::model::event::EventLog::new());
-
-        buffer_id
+            .create_terminal_buffer_detached(terminal_id)
     }
 
     /// Close the current terminal (if viewing a terminal buffer)
@@ -396,15 +616,6 @@ impl Editor {
     // `is_terminal_in_alternate_screen` live on `impl Window` — they
     // only touch this window's `terminal_buffers` + `terminal_manager`.
     // Call them via `self.active_window()` / `self.active_window_mut()`.
-
-    /// Get terminal dimensions based on split size
-    pub(crate) fn get_terminal_dimensions(&self) -> (u16, u16) {
-        // Use the visible area of the current split
-        // Subtract 1 for status bar, tab bar, etc.
-        let cols = self.terminal_width.saturating_sub(2).max(40);
-        let rows = self.terminal_height.saturating_sub(4).max(10);
-        (cols, rows)
-    }
 
     /// Handle terminal input when in terminal mode
     pub fn handle_terminal_key(

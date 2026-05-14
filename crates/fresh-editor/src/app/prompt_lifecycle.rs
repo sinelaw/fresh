@@ -1077,11 +1077,11 @@ impl Editor {
         self.active_window_mut().prompt.as_mut()
     }
 
-    /// Set a status message to display in the status bar
+    /// Set a status message to display in the active window's status
+    /// bar. Editor-side thin wrapper; per-window body lives in
+    /// `Window::set_status_message`.
     pub fn set_status_message(&mut self, message: String) {
-        tracing::info!(target: "status", "{}", message);
-        self.active_window_mut().plugin_status_message = None;
-        self.active_window_mut().status_message = Some(message);
+        self.active_window_mut().set_status_message(message);
     }
 
     /// Get the current status message

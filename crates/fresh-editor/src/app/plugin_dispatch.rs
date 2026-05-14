@@ -2721,452 +2721,89 @@ impl Editor {
         target_session_id: Option<fresh_core::WindowId>,
         request_id: u64,
     ) {
-        // If the caller specified an inactive session, route the new
-        // terminal into that session's stashed split tree without
-        // diving. The active session's UI is undisturbed; on next
-        // dive into the target session, the terminal appears in its
-        // restored split layout. Orchestrator uses this so spawning an
-        // agent doesn't pull the user away from the base session.
-        let route_to_inactive = match target_session_id {
-            Some(id) if id != self.active_window && self.windows.contains_key(&id) => Some(id),
-            _ => None,
-        };
-        if let Some(target) = route_to_inactive {
-            self.handle_create_terminal_in_inactive_session(target, cwd, persistent, request_id);
-            return;
-        }
-        let (cols, rows) = self.get_terminal_dimensions();
+        // Resolve target window. Explicit `windowId` wins when the
+        // window exists; otherwise we operate on the active window.
+        // Both cases route through `Window::create_plugin_terminal`
+        // so spawning into an inactive session reuses the same code
+        // path — no separate migration helper, no half-state leaks
+        // between windows.
+        let target_id = target_session_id
+            .filter(|id| self.windows.contains_key(id))
+            .unwrap_or(self.active_window);
+        let is_active_target = target_id == self.active_window;
 
-        // Set up async bridge for terminal manager — per-window
-        // bridge so terminal output flows back through the window
-        // that owns the PTY.
-        let __window_bridge = self.active_window().bridge.clone();
-        self.active_window_mut()
-            .terminal_manager
-            .set_async_bridge(__window_bridge);
+        let cwd_buf = cwd.map(std::path::PathBuf::from);
+        let split_direction = direction.as_deref().map(|d| match d {
+            "horizontal" => crate::model::event::SplitDirection::Horizontal,
+            _ => crate::model::event::SplitDirection::Vertical,
+        });
 
-        // Determine working directory
-        let working_dir = cwd
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| self.working_dir.clone());
-
-        // Prepare persistent storage paths
-        let terminal_root = self.dir_context.terminal_dir_for(&working_dir);
-        if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
-            tracing::warn!("Failed to create terminal directory: {}", e);
-        }
-        let predicted_terminal_id = self.active_window().terminal_manager.next_terminal_id();
-        // Ephemeral terminals get a per-spawn suffix on their backing
-        // files so there is no possibility of picking up the scrollback
-        // that a previous run (with the same numeric terminal ID) wrote
-        // to `fresh-terminal-N.{txt,log}`. Persistent terminals keep
-        // the stable `fresh-terminal-N.*` name so workspace restore
-        // can still find them.
-        let name_stem = if persistent {
-            format!("fresh-terminal-{}", predicted_terminal_id.0)
+        // Capture the editor-active buffer before the spawn so we
+        // can detect whether `Window::create_plugin_terminal`'s
+        // per-window mutations also flipped the editor-active buffer
+        // (only possible when `is_active_target`). If it did, the
+        // `buffer_activated` plugin hook needs to fire here at the
+        // Editor level — the Window method only mutates per-window
+        // state.
+        let prev_active = if is_active_target {
+            Some(self.active_window().active_buffer())
         } else {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            format!("fresh-terminal-eph-{}-{}", predicted_terminal_id.0, nanos)
+            None
         };
-        let log_path = terminal_root.join(format!("{}.log", name_stem));
-        let backing_path = terminal_root.join(format!("{}.txt", name_stem));
-        self.active_window_mut()
-            .terminal_backing_files
-            .insert(predicted_terminal_id, backing_path);
-        let backing_path_for_spawn = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.terminal_backing_files)
-            .expect("active window present")
-            .get(&predicted_terminal_id)
-            .cloned();
-        let wrapper_for_spawn = self.resolved_terminal_wrapper();
 
-        match self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.terminal_manager)
-            .expect("active window present")
-            .spawn(
-                cols,
-                rows,
-                Some(working_dir),
-                Some(log_path.clone()),
-                backing_path_for_spawn,
-                wrapper_for_spawn,
-            ) {
-            Ok(terminal_id) => {
-                // Track log file path
-                self.active_window_mut()
-                    .terminal_log_files
-                    .insert(terminal_id, log_path.clone());
-                // Register the spawned pty session leader pid
-                // with the active window's process-group tracker
-                // so window-level signal operations (Stop /
-                // Archive / Delete) can reach it.
-                let leader_pid = self
-                    .active_window()
-                    .terminal_manager
-                    .get(terminal_id)
-                    .and_then(|h| h.pid());
-                if let Some(pid) = leader_pid {
-                    let label = format!("terminal #{}", terminal_id.0);
-                    self.active_window_mut().process_groups.register(pid, label);
-                }
-                // Fix up backing path if the predicted ID didn't match
-                // the one the terminal manager handed out. Persistent
-                // terminals re-derive the stable `fresh-terminal-N.txt`
-                // name so the workspace restore path can find them;
-                // ephemeral terminals just keep the already-spawned
-                // file (it has a nanos-unique name either way) and
-                // rebind the HashMap key to the real ID.
-                if terminal_id != predicted_terminal_id {
-                    let existing = self
-                        .active_window_mut()
-                        .terminal_backing_files
-                        .remove(&predicted_terminal_id);
-                    let fixed_backing = if persistent {
-                        terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
-                    } else {
-                        existing.unwrap_or_else(|| terminal_root.join(format!("{}.txt", name_stem)))
-                    };
-                    self.active_window_mut()
-                        .terminal_backing_files
-                        .insert(terminal_id, fixed_backing);
-                }
-                if !persistent {
-                    self.active_window_mut()
-                        .ephemeral_terminals
-                        .insert(terminal_id);
-                }
-
-                // Pick buffer-attachment strategy based on whether the
-                // plugin asked for its own split:
-                //
-                // - direction = Some: use `_detached` so the buffer
-                //   isn't also added as a tab to the user's active
-                //   split. The new split below owns it exclusively,
-                //   so when the user closes that split the terminal
-                //   disappears entirely instead of leaving a ghost
-                //   tab behind in the main split.
-                // - direction = None: use `_attached` — the plugin
-                //   is intentionally placing the terminal as a new
-                //   tab in the active split, which is the whole
-                //   point of the no-split branch.
-                let active_split = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                let buffer_id = if direction.is_some() {
-                    self.create_terminal_buffer_detached(terminal_id)
-                } else {
-                    self.create_terminal_buffer_attached(terminal_id, active_split)
-                };
-
-                let created_split_id = if let Some(dir_str) = direction.as_deref() {
-                    let split_dir = match dir_str {
-                        "horizontal" => crate::model::event::SplitDirection::Horizontal,
-                        _ => crate::model::event::SplitDirection::Vertical,
-                    };
-
-                    let split_ratio = ratio.unwrap_or(0.5);
-                    match self
-                        .split_manager_mut()
-                        .split_active(split_dir, buffer_id, split_ratio)
-                    {
-                        Ok(new_split_id) => {
-                            let mut view_state = SplitViewState::with_buffer(
-                                self.terminal_width,
-                                self.terminal_height,
-                                buffer_id,
-                            );
-                            view_state.apply_config_defaults(
-                                self.config.editor.line_numbers,
-                                self.config.editor.highlight_current_line,
-                                false,
-                                false,
-                                None,
-                                self.config.editor.rulers.clone(),
-                            );
-                            // Terminal output is ANSI-sequenced and
-                            // assumes a fixed column count; wrapping
-                            // would mangle cursor positioning.
-                            view_state.viewport.line_wrap_enabled = false;
-                            self.windows
-                                .get_mut(&self.active_window)
-                                .and_then(|w| w.split_view_states_mut())
-                                .expect("active window must have a populated split layout")
-                                .insert(new_split_id, view_state);
-
-                            if focus.unwrap_or(true) {
-                                self.windows
-                                    .get_mut(&self.active_window)
-                                    .and_then(|w| w.split_manager_mut())
-                                    .expect("active window must have a populated split layout")
-                                    .set_active_split(new_split_id);
-                            }
-
-                            tracing::info!(
-                                "Created {:?} split for terminal {:?} with buffer {:?}",
-                                split_dir,
-                                terminal_id,
-                                buffer_id
-                            );
-                            Some(new_split_id)
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to create split for terminal: {}; \
-                                         falling back to active split",
-                                e
-                            );
-                            // The buffer was created detached. Split
-                            // creation failed, so attach it to the
-                            // active split as a graceful fallback
-                            // rather than leaving an orphan buffer.
-                            if let Some(view_state) = self
-                                .windows
-                                .get_mut(&self.active_window)
-                                .and_then(|w| w.split_view_states_mut())
-                                .expect("active window must have a populated split layout")
-                                .get_mut(&active_split)
-                            {
-                                view_state.add_buffer(buffer_id);
-                                view_state.viewport.line_wrap_enabled = false;
-                            }
-                            self.set_active_buffer(buffer_id);
-                            None
-                        }
+        let result = {
+            let target = self
+                .windows
+                .get_mut(&target_id)
+                .expect("target window present (existence checked above)");
+            target.create_plugin_terminal(
+                cwd_buf,
+                split_direction,
+                ratio,
+                focus.unwrap_or(true),
+                persistent,
+            )
+        };
+        match result {
+            Ok((terminal_id, buffer_id, created_split_id)) => {
+                if is_active_target {
+                    let new_active = self.active_window().active_buffer();
+                    if prev_active != Some(new_active) {
+                        #[cfg(feature = "plugins")]
+                        self.update_plugin_state_snapshot();
+                        #[cfg(feature = "plugins")]
+                        self.plugin_manager.read().unwrap().run_hook(
+                            "buffer_activated",
+                            crate::services::plugins::hooks::HookArgs::BufferActivated {
+                                buffer_id: new_active,
+                            },
+                        );
                     }
-                } else {
-                    // No split — just switch to the terminal buffer in the active split
-                    self.set_active_buffer(buffer_id);
-                    None
-                };
-
-                // Resize terminal to match actual split content area
-                self.active_window_mut().resize_visible_terminals();
-
-                // Resolve the callback with TerminalResult
-                let result = fresh_core::api::TerminalResult {
+                }
+                let api_result = fresh_core::api::TerminalResult {
                     buffer_id: buffer_id.0 as u64,
                     terminal_id: terminal_id.0 as u64,
                     split_id: created_split_id.map(|s| s.0 .0 as u64),
                 };
                 self.plugin_manager.read().unwrap().resolve_callback(
                     fresh_core::api::JsCallbackId::from(request_id),
-                    serde_json::to_string(&result).unwrap_or_default(),
+                    serde_json::to_string(&api_result).unwrap_or_default(),
                 );
-
                 tracing::info!(
-                    "Plugin created terminal {:?} with buffer {:?}",
+                    "Plugin created terminal {:?} with buffer {:?} in window {:?}",
                     terminal_id,
-                    buffer_id
-                );
-            }
-            Err(e) => {
-                tracing::error!("Failed to create terminal for plugin: {}", e);
-                self.plugin_manager.read().unwrap().reject_callback(
-                    fresh_core::api::JsCallbackId::from(request_id),
-                    format!("Failed to create terminal: {}", e),
-                );
-            }
-        }
-    }
-    /// Spawn a terminal whose buffer attaches to an *inactive*
-    /// session. The user's active editor view is undisturbed. The
-    /// terminal lands as a new tab in the target session's stashed
-    /// split tree, ready to be revealed on next dive.
-    ///
-    /// This bypasses split-direction / ratio / focus options
-    /// because the target session isn't active — there's nothing
-    /// to focus, and laying out a split in a stashed tree without
-    /// known dimensions is fragile. The active-path handler still
-    /// honours all those options when target == active session
-    /// (or window_id is omitted).
-    fn handle_create_terminal_in_inactive_session(
-        &mut self,
-        target: fresh_core::WindowId,
-        cwd: Option<String>,
-        persistent: bool,
-        request_id: u64,
-    ) {
-        let (cols, rows) = self.get_terminal_dimensions();
-        let __bridge_clone = self.async_bridge.clone();
-        if let Some(bridge) = __bridge_clone {
-            self.active_window_mut()
-                .terminal_manager
-                .set_async_bridge(bridge);
-        }
-
-        // Default cwd to the *target session's* root, not the
-        // active session's, so plugins that omit `cwd` get the
-        // expected behaviour ("spawn this agent in its worktree").
-        let working_dir = cwd.map(std::path::PathBuf::from).unwrap_or_else(|| {
-            self.windows
-                .get(&target)
-                .map(|s| s.root.clone())
-                .unwrap_or_else(|| self.working_dir.clone())
-        });
-
-        let terminal_root = self.dir_context.terminal_dir_for(&working_dir);
-        if let Err(e) = self.authority.filesystem.create_dir_all(&terminal_root) {
-            tracing::warn!("Failed to create terminal directory: {}", e);
-        }
-        let predicted_terminal_id = self.active_window().terminal_manager.next_terminal_id();
-        let name_stem = if persistent {
-            format!("fresh-terminal-{}", predicted_terminal_id.0)
-        } else {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            format!("fresh-terminal-eph-{}-{}", predicted_terminal_id.0, nanos)
-        };
-        let log_path = terminal_root.join(format!("{}.log", name_stem));
-        let backing_path = terminal_root.join(format!("{}.txt", name_stem));
-        self.active_window_mut()
-            .terminal_backing_files
-            .insert(predicted_terminal_id, backing_path);
-        let backing_path_for_spawn = self
-            .active_window()
-            .terminal_backing_files
-            .get(&predicted_terminal_id)
-            .cloned();
-
-        let wrapper_for_spawn = self.resolved_terminal_wrapper();
-        let terminal_id = match self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.terminal_manager)
-            .expect("active window present")
-            .spawn(
-                cols,
-                rows,
-                Some(working_dir),
-                Some(log_path.clone()),
-                backing_path_for_spawn,
-                wrapper_for_spawn,
-            ) {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::error!("Failed to create terminal for inactive session: {}", e);
-                self.plugin_manager.read().unwrap().reject_callback(
-                    fresh_core::api::JsCallbackId::from(request_id),
-                    format!("Failed to create terminal: {}", e),
-                );
-                return;
-            }
-        };
-        self.active_window_mut()
-            .terminal_log_files
-            .insert(terminal_id, log_path.clone());
-        if terminal_id != predicted_terminal_id {
-            self.active_window_mut()
-                .terminal_backing_files
-                .remove(&predicted_terminal_id);
-            let backing_path = terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
-            self.active_window_mut()
-                .terminal_backing_files
-                .insert(terminal_id, backing_path);
-        }
-        if !persistent {
-            self.active_window_mut()
-                .ephemeral_terminals
-                .insert(terminal_id);
-        }
-
-        // Allocate a buffer for the terminal in editor-global
-        // storage but attach it to the *target* session's
-        // membership instead of the active session's.
-        let buffer_id = self.create_terminal_buffer_detached(terminal_id);
-        if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {
-            if let Some(s) = self.windows.get_mut(&target) {
-                s.buffers.insert(buffer_id, state);
-            }
-        }
-        // Register the spawned pty session leader pid with the
-        // *target* window's process-group tracker. The terminal
-        // logically belongs to that session, so window-level
-        // lifecycle ops (Stop / Archive / Delete) on the target
-        // need to reach this pid even though the terminal_manager
-        // lives on the active window.
-        let leader_pid = self
-            .active_window()
-            .terminal_manager
-            .get(terminal_id)
-            .and_then(|h| h.pid());
-        if let Some(pid) = leader_pid {
-            let label = format!("terminal #{}", terminal_id.0);
-            if let Some(target_window) = self.windows.get_mut(&target) {
-                target_window.process_groups.register(pid, label);
-            }
-        }
-
-        // Mutate the target session's stashed split tree to add
-        // the terminal as a new horizontal split off its current
-        // active leaf. If the session has no stash yet (never
-        // dived into), we seed one rooted at the terminal buffer.
-        let target_session = self.windows.get_mut(&target);
-        let new_split_id = if let Some(session) = target_session {
-            if let Some((mgr, view_states)) = session.buffers.splits_mut() {
-                let split_dir = crate::model::event::SplitDirection::Horizontal;
-                match mgr.split_active(split_dir, buffer_id, 0.5) {
-                    Ok(new_split_id) => {
-                        let mut view_state = SplitViewState::with_buffer(
-                            self.terminal_width,
-                            self.terminal_height,
-                            buffer_id,
-                        );
-                        view_state.viewport.line_wrap_enabled = false;
-                        view_states.insert(new_split_id, view_state);
-                        Some(new_split_id)
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to split target session's tree for terminal: {}; \
-                             buffer is attached to the session but not visible in any leaf",
-                            e
-                        );
-                        None
-                    }
-                }
-            } else {
-                // Never-activated session: seed its splits stash
-                // rooted at the terminal. First dive will pick up
-                // this layout and the terminal is the active leaf.
-                let manager = crate::view::split::SplitManager::new(buffer_id);
-                let active_leaf = manager.active_split();
-                let mut view_states = std::collections::HashMap::new();
-                let mut vs = SplitViewState::with_buffer(
-                    self.terminal_width,
-                    self.terminal_height,
                     buffer_id,
+                    target_id
                 );
-                vs.viewport.line_wrap_enabled = false;
-                view_states.insert(active_leaf, vs);
-                session.buffers.set_splits((manager, view_states));
-                Some(active_leaf.into())
             }
-        } else {
-            None
-        };
-
-        let result = fresh_core::api::TerminalResult {
-            buffer_id: buffer_id.0 as u64,
-            terminal_id: terminal_id.0 as u64,
-            split_id: new_split_id.map(|s| s.0 .0 as u64),
-        };
-        self.plugin_manager.read().unwrap().resolve_callback(
-            fresh_core::api::JsCallbackId::from(request_id),
-            serde_json::to_string(&result).unwrap(),
-        );
+            Err(e) => {
+                tracing::error!("Failed to create terminal for plugin: {e}");
+                self.plugin_manager.read().unwrap().reject_callback(
+                    fresh_core::api::JsCallbackId::from(request_id),
+                    format!("Failed to create terminal: {e}"),
+                );
+            }
+        }
     }
 
     // ==================== Extracted handlers for previously inline match arms ====================

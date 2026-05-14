@@ -1580,13 +1580,17 @@ editor.on("window_created", async (payload) => {
   ) {
     const intent = pendingNewSession;
     pendingNewSession = null;
-    // windowId attaches the terminal to the new session's split
-    // tree; we then dive so the user sees the shell/agent
-    // immediately — creating a session is a visit-now action.
+    // Dive into the new session FIRST so its terminal_manager is
+    // the editor-active one. Subsequent `createTerminal` /
+    // `sendTerminalInput` calls then resolve against the new
+    // session's window without needing a cross-window terminal
+    // lookup. Creating a session is a visit-now action anyway —
+    // the dive isn't user-visible flicker, it's the desired
+    // landing state.
+    editor.setActiveWindow(id);
     const term = await editor.createTerminal({
       cwd: intent.root,
       focus: false,
-      windowId: id,
     });
     const tracked: AgentSession = {
       id,
@@ -1600,7 +1604,6 @@ editor.on("window_created", async (payload) => {
     if (intent.cmd) {
       editor.sendTerminalInput(term.terminalId, intent.cmd + "\n");
     }
-    editor.setActiveWindow(id);
   }
   refreshOpenDialog();
 });
