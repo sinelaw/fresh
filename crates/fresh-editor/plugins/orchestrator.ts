@@ -415,15 +415,20 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
 
 function buildOpenSpec(): WidgetSpec {
   if (!openDialog) return col();
-  // Recompute the row-count knobs against the current viewport on
-  // every spec build, not just at open-time. The host's `resize`
-  // plugin hook isn't always reliable through tmux's SIGWINCH
-  // propagation, so we re-derive listVisibleRows / embedRows from
-  // `editor.getViewport()` here — every refresh (filter typing,
-  // session selection change, periodic poll, post-resize re-render)
-  // picks up the live viewport (Finding I).
+  // Re-derive row counts on every spec build as a fallback for the
+  // resize hook not always firing reliably through tmux's SIGWINCH
+  // propagation (Finding I). **One-way ratchet**: only adopt the
+  // new value when it's *larger* than the current one. The
+  // `editor.getViewport()` height shrinks while the picker is
+  // mounted (the floating panel covers part of the buffer area),
+  // and naively re-reading it on every refresh fed that shrink
+  // back into the dialog size — pressing Up/Down caused the
+  // picker to oscillate smaller on every keystroke. A real
+  // terminal-grow event still flows through because the new
+  // viewport height exceeds the cached value; a spurious shrink
+  // (because the panel itself is up) is ignored.
   const liveListVisibleRows = openListVisibleRows();
-  if (liveListVisibleRows !== openDialog.listVisibleRows) {
+  if (liveListVisibleRows > openDialog.listVisibleRows) {
     openDialog.listVisibleRows = liveListVisibleRows;
     openDialog.embedRows = Math.max(3, liveListVisibleRows - 5);
   }
@@ -1166,13 +1171,41 @@ async function detectDefaultBranch(repoRoot: string): Promise<string> {
   return "HEAD";
 }
 
-function nextAutoSessionName(): string {
+async function nextAutoSessionName(repoRoot: string): Promise<string> {
   // Persisted counter so consecutive empty submits produce
-  // session-1, session-2, … even across plugin reloads.
-  const counter = (editor.getGlobalState("orchestrator.session_counter") as
+  // session-1, session-2, … even across plugin reloads. But the
+  // counter alone isn't sufficient: a previous run may have left a
+  // branch / worktree behind (orchestrator's archive / external git
+  // delete / interrupted submit), so `session-${counter+1}` can
+  // collide and `git worktree add` would fail with the noisy
+  // "already used by worktree at …" message. Probe the local git
+  // refs once and increment past any reserved name before
+  // returning.
+  const counterBefore = (editor.getGlobalState("orchestrator.session_counter") as
     | number
     | undefined) ?? 0;
-  const next = counter + 1;
+  let next = counterBefore + 1;
+
+  // Collect existing branch names that look like `session-N` so we
+  // can skip past them. `git for-each-ref` is faster and tighter
+  // than parsing `git worktree list` output.
+  const refs = await spawnCollect(
+    "git",
+    ["-C", repoRoot, "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+    repoRoot,
+  );
+  const taken = new Set<number>();
+  if (refs.exit_code === 0) {
+    for (const line of (refs.stdout || "").split(/\r?\n/)) {
+      const m = /^session-(\d+)$/.exec(line.trim());
+      if (m) {
+        taken.add(parseInt(m[1], 10));
+      }
+    }
+  }
+  while (taken.has(next)) {
+    next += 1;
+  }
   editor.setGlobalState("orchestrator.session_counter", next);
   return `session-${next}`;
 }
@@ -1391,7 +1424,6 @@ async function submitForm(): Promise<void> {
   form.lastError = null;
   renderForm();
 
-  const sessionName = form.name.value.trim() || nextAutoSessionName();
   const cmd = form.cmd.value.trim();
   const branchInput = form.branch.value.trim();
 
@@ -1406,6 +1438,13 @@ async function submitForm(): Promise<void> {
     return;
   }
   const repoRoot = (top.stdout || "").trim();
+
+  // Name resolution: explicit value wins. Otherwise auto-generate
+  // by scanning `refs/heads/session-N` for the next free index —
+  // the counter alone can collide with branches a previous run
+  // left behind. Async because the probe spawns git; placed after
+  // `rev-parse` so we know we're in a git repo first.
+  const sessionName = form.name.value.trim() || (await nextAutoSessionName(repoRoot));
 
   const root = editor.pathJoin(
     editor.getDataDir(),

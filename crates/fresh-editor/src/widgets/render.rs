@@ -1461,8 +1461,8 @@ pub fn render_hint_bar(entries: &[HintEntry]) -> TextPropertyEntry {
 /// Layout: `[v] label` when checked, `[ ] label` when not. The check
 /// glyph is colored via `ui.tab_active_fg` when checked (no override
 /// when unchecked). When focused, the entire entry is given a focused
-/// fg/bg pair (`ui.menu_active_fg`/`ui.menu_active_bg`) plus bold —
-/// matching the Settings UI's selected-control affordance.
+/// fg/bg pair (`ui.popup_selection_fg`/`ui.popup_selection_bg`) plus
+/// bold — matching the prompt / palette's selected-row affordance.
 pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyEntry {
     let glyph = if checked { "[v]" } else { "[ ]" };
     let mut text = String::with_capacity(glyph.len() + 1 + label.len());
@@ -2648,16 +2648,22 @@ mod tests {
     }
 
     #[test]
-    fn button_focused_overrides_with_menu_active_keys() {
+    fn button_focused_overrides_with_popup_selection_keys() {
+        // Picker / palette / list / button focus now resolves through
+        // `ui.popup_selection_{fg,bg}` (white-on-blue) instead of
+        // `ui.menu_active_{fg,bg}` (white-on-rgb(60,60,60)) — the
+        // former has ~6× the perceptual contrast against the popup
+        // bg and is the same key the prompt already uses. See the
+        // `KEY_FOCUSED_FG/BG` const comment.
         let entry = render_button("OK", true, ButtonKind::Normal);
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
             style.fg.as_ref().and_then(|c| c.as_theme_key()),
-            Some("ui.menu_active_fg")
+            Some("ui.popup_selection_fg")
         );
         assert_eq!(
             style.bg.as_ref().and_then(|c| c.as_theme_key()),
-            Some("ui.menu_active_bg")
+            Some("ui.popup_selection_bg")
         );
         assert!(style.bold);
     }
@@ -3044,13 +3050,14 @@ mod tests {
         // Two overlays expected from the focused B: one for B's
         // glyph (none, since unchecked) — actually unchecked emits
         // no glyph overlay. So only the focused-style overlay.
-        // Find the focused overlay by its menu_active_bg key.
+        // Find the focused overlay by its popup_selection_bg key
+        // (white-on-blue; see KEY_FOCUSED_BG).
         let entry = &out.entries[0];
         let focused_overlay = entry
             .inline_overlays
             .iter()
             .find(|o| {
-                o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.menu_active_bg")
+                o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.popup_selection_bg")
             })
             .expect("focused overlay present on B");
         // B's text is "[ ] B", starting after "[ ] A".len()==5 + spacer 0 (no spacer here).
@@ -3092,7 +3099,14 @@ mod tests {
             key: None,
         };
         let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(entries.len(), 3);
+        // 3 real items + 7 blank padding rows to fill `visible_rows=10`.
+        // Padding ensures the labeledSection that wraps a List stays
+        // the height it advertises, so a sibling pane lands its
+        // bottom border on the matching row (orchestrator picker
+        // depends on this).
+        assert_eq!(entries.len(), 10);
+        // Real items still produce exactly one hit each; padded rows
+        // are intentionally not clickable.
         assert_eq!(hits.len(), 3);
         for (i, h) in hits.iter().enumerate() {
             assert_eq!(h.buffer_row, i as u32);
@@ -3122,7 +3136,7 @@ mod tests {
         let style = entries[1].style.as_ref().expect("selected row gets style");
         assert_eq!(
             style.bg.as_ref().and_then(|c| c.as_theme_key()),
-            Some("ui.menu_active_bg"),
+            Some("ui.popup_selection_bg"),
         );
         assert!(style.extend_to_line_end);
     }
@@ -3153,7 +3167,11 @@ mod tests {
             key: None,
         };
         let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(entries.len(), 3);
+        // HintBar (1 row) + List items (2) + padding rows (8) to fill
+        // `visible_rows=10` = 11 total entries.
+        assert_eq!(entries.len(), 11);
+        // Real list rows still produce one hit each; padding is not
+        // clickable.
         assert_eq!(hits.len(), 2);
         // List rows land at buffer_row 1 and 2 (after the HintBar).
         assert_eq!(hits[0].buffer_row, 1);
@@ -3311,7 +3329,11 @@ mod tests {
     fn list_does_not_scroll_when_total_smaller_than_visible() {
         let spec = make_list(-1, 10, 3, Some("L"));
         let (entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(entries.len(), 3, "all items fit");
+        // 3 items + 7 blank padding rows to fill `visible_rows=10`.
+        // The labeledSection wrapping a List keeps the height it
+        // advertises so a sibling pane (orchestrator picker's
+        // preview) can match.
+        assert_eq!(entries.len(), 10);
         let scroll = match state.get("L").unwrap() {
             WidgetInstanceState::List { scroll_offset, .. } => *scroll_offset,
             _ => unreachable!(),
@@ -3995,7 +4017,7 @@ mod tests {
         let style = entries[1].style.as_ref().expect("selected gets style");
         assert_eq!(
             style.bg.as_ref().and_then(|c| c.as_theme_key()),
-            Some("ui.menu_active_bg")
+            Some("ui.popup_selection_bg")
         );
         assert!(style.extend_to_line_end);
     }
