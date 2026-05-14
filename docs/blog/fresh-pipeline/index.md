@@ -5,7 +5,10 @@ outline: false
 
 # The Architecture of Fresh: Memory-Efficient from the Ground Up
 
-![Fresh loading a large file](./showcase.gif)
+<figure>
+  <img src="./showcase.gif" alt="Fresh opening a 400 MB file instantly" />
+  <figcaption><em>A 400 MB file being opened instantly.</em></figcaption>
+</figure>
 
 I'm tired of every modern tool taking GBs of ram liberally. Fresh - the text editor and IDE - was born of this frustration. I designed it from the ground up to be memory-efficient. Fresh is not a clone of any other text editor - it's a completely new implementation. I started from huge file support, but the design evolved as I added more of the features every text editor (or IDE) is expected to have. It turns out rendering text and allowing users to edit it - with all the extra features - is not so simple! This post walks through how the text rendering flow is built in Fresh.
 
