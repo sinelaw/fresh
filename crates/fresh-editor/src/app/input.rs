@@ -479,7 +479,10 @@ impl Editor {
             return Ok(());
         }
 
-        // Try terminal input dispatch first (handles terminal mode and re-entry)
+        // Try terminal input dispatch first (handles terminal mode and re-entry).
+        // Note: `dispatch_terminal_input` short-circuits to None when a floating
+        // widget panel is mounted, so picker / form keys reach the panel below
+        // instead of being forwarded to the PTY child of the underlying terminal.
         if self.dispatch_terminal_input(&key_event).is_some() {
             return Ok(());
         }

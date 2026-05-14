@@ -21,13 +21,20 @@ impl Editor {
     /// `None` if not in terminal mode or if a modal is active.
     pub fn dispatch_terminal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
         // Skip if we're in a prompt/popup (those need to handle keys normally)
+        // — including the floating widget panel (Orchestrator picker,
+        // new-session form, plugin overlays), which is the editor-wide
+        // modal owner of the keyboard while it's up. Without this skip,
+        // a terminal-buffer-active window with `terminal_mode=true` would
+        // route keys to the PTY child even when the user's keystrokes
+        // are meant for the picker on top of it.
         let in_modal = self.is_prompting()
             || self.global_popups.is_visible()
             || self.active_state().popups.is_visible()
             || self.menu_state.active_menu.is_some()
             || self.settings_state.as_ref().is_some_and(|s| s.visible)
             || self.calibration_wizard.is_some()
-            || self.keybinding_editor.is_some();
+            || self.keybinding_editor.is_some()
+            || self.floating_widget_panel.is_some();
 
         if in_modal {
             return None;

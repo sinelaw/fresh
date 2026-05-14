@@ -343,9 +343,21 @@ impl Window {
                                 terminal_height,
                                 buffer_id,
                             );
+                            // Terminal-dedicated splits never show
+                            // line numbers or current-line highlight
+                            // — the buffer is a PTY scrollback view,
+                            // not source code. (Pre-fix the config
+                            // default was applied, so a default-on
+                            // line-numbers user saw `1 │ Python …`
+                            // in every orchestrator agent split.)
+                            // Other splits in the window aren't
+                            // affected because each `SplitViewState`
+                            // is independent.
+                            let _ = line_numbers;
+                            let _ = highlight_current_line;
                             view_state.apply_config_defaults(
-                                line_numbers,
-                                highlight_current_line,
+                                false,
+                                false,
                                 false,
                                 false,
                                 None,
