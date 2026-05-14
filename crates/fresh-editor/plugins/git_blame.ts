@@ -297,25 +297,6 @@ function getLineByteOffset(
 }
 
 /**
- * Find the 0-indexed line containing the given byte position.
- * `offsets[i]` is the start byte of line i.
- */
-function lineForBytePos(offsets: number[], bytePos: number): number {
-  if (offsets.length === 0) return 0;
-  let lo = 0;
-  let hi = offsets.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (offsets[mid] <= bytePos) {
-      lo = mid;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return lo;
-}
-
-/**
  * Group blame lines into blocks by commit, with byte offset information.
  * Byte offsets are derived from the caller's line table / content length so
  * this stays free of any single global blame state.
@@ -494,11 +475,13 @@ async function show_git_blame() : Promise<void> {
 
   const splitId = editor.getActiveSplitId();
 
-  // Capture the source cursor byte position before opening blame, so we can
-  // jump to the same line in the blame view. The blame buffer mirrors the
-  // file content byte-for-byte (modulo unsaved edits), so the byte position
-  // maps to the same line index.
-  const sourceCursorPos = editor.getCursorPosition();
+  // Capture the source cursor's line number (0-indexed) before opening
+  // blame so we can land on the same line in the blame view. We use the
+  // line number rather than the byte position so the jump is robust to
+  // unsaved edits in the source buffer (its bytes can diverge from the
+  // on-disk file the blame view shows, but the line index is still the
+  // most semantically meaningful anchor).
+  const sourceCursorLine = editor.getCursorLine();
 
   // Fetch file content and blame data in parallel
   const [fileContent, blameLines] = await Promise.all([
@@ -555,19 +538,14 @@ async function show_git_blame() : Promise<void> {
   // Add virtual lines for blame headers (persistent state model)
   addBlameHeaders(inst);
 
-  // Jump to the same line the user was on in the source buffer. We don't
-  // have a direct byte→line API for the source buffer, but the blame buffer
-  // mirrors the on-disk file content; for an unmodified source (the common
-  // case for blame) its line offsets are the same, so we can map the source
-  // cursor's byte position to a line index via the blame buffer's offset
-  // table. Land the cursor at the start of that line — column doesn't carry
-  // meaning in the blame view. setBufferCursor also runs ensure_cursor_visible,
-  // then we centre the line in the viewport.
-  const targetLine = lineForBytePos(lineByteOffsets, sourceCursorPos);
-  const targetByte = getLineByteOffset(lineByteOffsets, fileContent.length, targetLine + 1);
+  // Jump to the same (0-indexed) line the user was on in the source buffer,
+  // and centre it in the viewport. Column doesn't carry meaning in the blame
+  // view, so we land at the start of the line. setBufferCursor also runs
+  // ensure_cursor_visible.
+  const targetByte = getLineByteOffset(lineByteOffsets, fileContent.length, sourceCursorLine + 1);
   editor.setBufferCursor(result.bufferId, targetByte);
   if (splitId !== null) {
-    editor.scrollToLineCenter(splitId, result.bufferId, targetLine);
+    editor.scrollToLineCenter(splitId, result.bufferId, sourceCursorLine);
   }
 
   editor.setStatus(editor.t("status.blame_ready", { count: String(blocks.length) }));

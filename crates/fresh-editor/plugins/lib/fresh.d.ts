@@ -1556,6 +1556,13 @@ type CreateVirtualBufferOptions = {
 	* Initial content entries with optional properties
 	*/
 	entries?: Array<TextPropertyEntry>;
+	/**
+	* Initial cursor byte position. Set on the new buffer *before* it
+	* becomes the active buffer, so plugins that want to land the cursor
+	* at a specific spot don't have to chase a race against user input
+	* between "buffer becomes active" and a follow-up `setBufferCursor`.
+	*/
+	initialCursorByte?: number;
 };
 type GrepMatch = {
 	/**

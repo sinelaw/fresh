@@ -1058,6 +1058,7 @@ impl Editor {
                 show_cursors,
                 editing_disabled,
                 hidden_from_tabs,
+                initial_cursor_byte,
                 request_id,
             } => {
                 self.handle_create_virtual_buffer_with_content(
@@ -1069,6 +1070,7 @@ impl Editor {
                     show_cursors,
                     editing_disabled,
                     hidden_from_tabs,
+                    initial_cursor_byte,
                     request_id,
                 );
             }
@@ -2806,6 +2808,7 @@ impl Editor {
         show_cursors: bool,
         editing_disabled: bool,
         hidden_from_tabs: bool,
+        initial_cursor_byte: Option<usize>,
         request_id: Option<u64>,
     ) {
         // Hidden-from-tabs buffers (e.g. composite source panes) must NOT be
@@ -2855,6 +2858,24 @@ impl Editor {
         match self.set_virtual_buffer_content(buffer_id, entries) {
             Ok(()) => {
                 tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
+                // Apply an initial cursor position before switching to the
+                // buffer. Doing this here (rather than as a follow-up
+                // SetBufferCursor command from the plugin) means the cursor
+                // is in place the moment the buffer becomes active, so a
+                // user keypress between the plugin's await and its follow-up
+                // setBufferCursor can no longer race-overwrite that cursor.
+                if let Some(byte) = initial_cursor_byte {
+                    let splits: Vec<super::LeafId> = self
+                        .windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.buffers.splits())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .splits_for_buffer(buffer_id);
+                    self.active_window_mut()
+                        .set_buffer_cursor_in_splits(buffer_id, byte, &splits);
+                }
+
                 // Switch to the new buffer to display it — but only when it's
                 // attached (a detached hidden buffer must not steal the view).
                 if !hidden_from_tabs {
@@ -5393,6 +5414,17 @@ impl Window {
                         line: line_of(primary_position),
                     });
 
+                    // Mirror the editor's cached primary cursor line number so
+                    // `getCursorLine()` returns a meaningful value without the
+                    // plugin runtime having to scan the buffer. Falls back to
+                    // 0 if the active buffer state isn't available.
+                    snapshot.primary_cursor_line = Some(
+                        buffers_mut
+                            .get(&active_buf_id)
+                            .map(|s| s.primary_cursor_line_number.value() as u32)
+                            .unwrap_or(0),
+                    );
+
                     snapshot.all_cursors = active_cursors
                         .iter()
                         .map(|(_, cursor)| CursorInfo {
@@ -5427,6 +5459,7 @@ impl Window {
                     });
                 } else {
                     snapshot.primary_cursor = None;
+                    snapshot.primary_cursor_line = None;
                     snapshot.all_cursors.clear();
                     snapshot.viewport = None;
                     snapshot.selected_text = None;

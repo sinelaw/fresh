@@ -1402,6 +1402,19 @@ impl Window {
                     view_state.cursors.primary_mut().move_to(position, false);
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
+                // Refresh the cached primary cursor line number so the status
+                // bar (and any other consumer of `primary_cursor_line_number`)
+                // reflects the new position. Other cursor-move paths update
+                // this cache themselves; without doing the same here, a
+                // plugin-driven setBufferCursor would leave the cache pinned
+                // to its initial Absolute(0) — the user-visible "off-by-one"
+                // when opening blame from line 2 still shows "Ln 1".
+                let line = state
+                    .buffer
+                    .offset_to_position(position)
+                    .map(|p| p.line)
+                    .unwrap_or(0);
+                state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(line);
             });
     }
 

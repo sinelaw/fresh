@@ -6163,6 +6163,7 @@ impl Editor {
                 show_cursors,
                 editing_disabled,
                 hidden_from_tabs,
+                initial_cursor_byte: _,
                 request_id,
             } => {
                 let buffer_id = self.create_virtual_buffer(name.clone(), mode.clone(), read_only);

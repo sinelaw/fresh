@@ -1054,6 +1054,13 @@ pub struct EditorStateSnapshot {
     pub buffer_saved_diffs: HashMap<BufferId, BufferSavedDiff>,
     /// Primary cursor position for the active buffer
     pub primary_cursor: Option<CursorInfo>,
+    /// Primary cursor's line number (0-indexed) for the active buffer.
+    /// Mirrors the editor's `primary_cursor_line_number` cache so plugins
+    /// can read "what line is the cursor on" without scanning the buffer.
+    /// `None` when there is no active view state (e.g. before the first
+    /// buffer is loaded).
+    #[serde(default)]
+    pub primary_cursor_line: Option<u32>,
     /// All cursor positions for the active buffer
     pub all_cursors: Vec<CursorInfo>,
     /// Viewport information for the active buffer
@@ -1243,6 +1250,7 @@ impl EditorStateSnapshot {
             buffers: HashMap::new(),
             buffer_saved_diffs: HashMap::new(),
             primary_cursor: None,
+            primary_cursor_line: None,
             all_cursors: Vec::new(),
             viewport: None,
             splits: Vec::new(),
@@ -2955,6 +2963,11 @@ pub enum PluginCommand {
         editing_disabled: bool,
         /// Whether this buffer should be hidden from tabs (for composite source buffers)
         hidden_from_tabs: bool,
+        /// Optional initial cursor byte position. Applied before the new
+        /// buffer becomes the active buffer, so plugins can land the cursor
+        /// atomically with creation rather than chasing a race against user
+        /// input via a follow-up `SetBufferCursor`.
+        initial_cursor_byte: Option<usize>,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
@@ -4358,6 +4371,13 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default)]
     #[ts(optional)]
     pub entries: Option<Vec<JsTextPropertyEntry>>,
+    /// Initial cursor byte position. Set on the new buffer *before* it
+    /// becomes the active buffer, so plugins that want to land the cursor
+    /// at a specific spot don't have to chase a race against user input
+    /// between "buffer becomes active" and a follow-up `setBufferCursor`.
+    #[serde(default, rename = "initialCursorByte")]
+    #[ts(optional, rename = "initialCursorByte")]
+    pub initial_cursor_byte: Option<u32>,
 }
 
 /// Options for createVirtualBufferInSplit
@@ -5191,6 +5211,7 @@ impl PluginApi {
             show_cursors: true,
             editing_disabled: false,
             hidden_from_tabs: false,
+            initial_cursor_byte: None,
             request_id: None,
         })
     }

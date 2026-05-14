@@ -3114,29 +3114,26 @@ fn test_git_blame_jumps_to_source_cursor_line() {
         .wait_until(|h| h.screen_to_string().contains("──"))
         .unwrap();
 
-    // The cursor in the blame buffer should land on the row that renders
-    // "Line 15" — i.e. the same line the user was on in the source buffer,
-    // not the top of the doc. We observe this via the rendered hardware
-    // cursor position (where the terminal will actually draw the caret)
-    // so the assertion is independent of the status-bar's cached line
-    // number. Poll manually because `wait_until` only exposes `&Self`.
-    let mut on_line_15 = false;
-    for _ in 0..200 {
-        let cursor = harness.render_observing_cursor().ok().flatten();
-        if let Some((_, row)) = cursor {
-            let screen = harness.screen_to_string();
-            let row_text = screen.lines().nth(row as usize).unwrap_or("");
-            if row_text.contains("Line 15") {
-                on_line_15 = true;
-                break;
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        harness.process_async_and_render().unwrap();
+    // The cursor in the blame view should land on the same line the user
+    // was on in the source buffer (line 15) — both visually (the cursor
+    // row renders "Line 15") and per the status bar's "Ln N" indicator.
+    // The status bar check is the strict assertion: before this fix it
+    // showed "Ln 1" regardless of the source line — the user-visible
+    // "off-by-one" (worst at source line 2, off by N-1 in general).
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(15))
+        .unwrap();
+    let cursor_row = harness
+        .render_observing_cursor()
+        .ok()
+        .flatten()
+        .map(|(_, row)| row);
+    if let Some(row) = cursor_row {
+        let screen = harness.screen_to_string();
+        let row_text = screen.lines().nth(row as usize).unwrap_or("");
+        assert!(
+            row_text.contains("Line 15"),
+            "cursor row {row} should render 'Line 15', got: {row_text:?}",
+        );
     }
-    assert!(
-        on_line_15,
-        "expected the blame view's cursor to land on the 'Line 15' row. Screen:\n{}",
-        harness.screen_to_string()
-    );
 }
