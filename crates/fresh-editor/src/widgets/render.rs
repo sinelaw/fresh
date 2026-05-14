@@ -1307,13 +1307,25 @@ fn wrap_in_side_border(mut child: TextPropertyEntry, inner_width: usize) -> Text
         }
     } else if cur_cols > inner_width {
         // Tail-truncate at the codepoint boundary corresponding
-        // to `inner_width` chars.
+        // to `inner_width` chars, then if there's room replace
+        // the final visible char with `…` so the cut is visible
+        // (mirrors `pad_or_truncate_cols`).
         let indices: Vec<usize> = child.text.char_indices().map(|(i, _)| i).collect();
         let byte_cutoff = indices
             .get(inner_width)
             .copied()
             .unwrap_or(child.text.len());
         child.text.truncate(byte_cutoff);
+        if inner_width >= 2 {
+            // Replace the last visible char with `…`. `pop()` walks
+            // codepoint boundaries so multi-byte tails are handled
+            // correctly. We then update `byte_cutoff` to the new
+            // string length so overlay clamping below uses the
+            // post-ellipsis boundary.
+            child.text.pop();
+            child.text.push('…');
+        }
+        let byte_cutoff = child.text.len();
         // Drop any overlay that would now reference past the
         // truncation point; clamp the rest.
         child.inline_overlays.retain_mut(|o| {
@@ -2197,6 +2209,12 @@ fn merge_inline(merged: &mut TextPropertyEntry, next: &mut TextPropertyEntry) {
 /// place. Uses char count as the display-width approximation —
 /// good for ASCII; wide-char-aware width would need
 /// `unicode-width`, but no current caller relies on that.
+///
+/// When truncating, the final visible column is replaced with `…`
+/// so the cut is visually distinguishable from a value that
+/// happens to be exactly `cols` long. Degenerate `cols == 0` and
+/// `cols == 1` (no room for the ellipsis itself) fall back to a
+/// plain cut.
 fn pad_or_truncate_cols(text: &mut String, cols: usize) {
     let cur = text.chars().count();
     if cur < cols {
@@ -2204,12 +2222,20 @@ fn pad_or_truncate_cols(text: &mut String, cols: usize) {
             text.push(' ');
         }
     } else if cur > cols {
+        // Cut to `cols` chars, then if we have room replace the
+        // last char with `…` so the truncation is visible.
         let cutoff = text
             .char_indices()
             .nth(cols)
             .map(|(i, _)| i)
             .unwrap_or(text.len());
         text.truncate(cutoff);
+        if cols >= 2 {
+            // Drop the last char and append the ellipsis. We pop a
+            // char (not a byte) so multi-byte tails stay intact.
+            text.pop();
+            text.push('…');
+        }
     }
 }
 

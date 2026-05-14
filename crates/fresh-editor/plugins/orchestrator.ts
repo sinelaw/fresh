@@ -97,6 +97,13 @@ interface NewSessionForm {
   // the exact base ref the worktree will fork off if they
   // leave the field blank.
   defaultBranch: string;
+  // Previously-submitted Agent Command (persisted across editor
+  // sessions via `orchestrator.last_cmd`). Rendered as the cmd
+  // field's *placeholder* — pre-filling the value would survive
+  // a failed submit and silently feed stale text into the next
+  // attempt; the placeholder gives the same memory aid without
+  // that hazard.
+  lastCmd: string;
 }
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
@@ -364,8 +371,21 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // a constant height regardless of which window's viewport the
   // host happens to be reporting through `getViewport()`.
   const embedRows = openDialog?.embedRows ?? 4;
+  // Gate the action buttons on having a session to act on. When
+  // the filter matches nothing (or no session is highlighted) the
+  // preview pane is just the "No session selected" raw entry —
+  // showing Stop/Archive/Delete in that state is misleading
+  // because they have nothing to operate on.
+  if (!s) {
+    return labeledSection({
+      label: "Preview",
+      child: col(
+        { kind: "raw", entries: buildPreviewEntries(s) },
+      ),
+    });
+  }
   return labeledSection({
-    label: s ? `[${s.id}] ${s.label}` : "Preview",
+    label: `[${s.id}] ${s.label}`,
     child: col(
       row(
         flexSpacer(),
@@ -378,11 +398,9 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       spacer(0),
       { kind: "raw", entries: buildPreviewEntries(s) },
       spacer(0),
-      // Live window render. `windowId: 0` (no session selected)
-      // is a no-op on the host side — the embed reserves the
-      // rows but no paint happens.
+      // Live window render of the highlighted session's split tree.
       windowEmbed({
-        windowId: s ? s.id : 0,
+        windowId: s.id,
         rows: embedRows,
         key: "live-preview",
       }),
@@ -1130,8 +1148,13 @@ function buildFormSpec(): WidgetSpec {
     ),
     spacer(0),
     // === Form body: three labeled, full-width inputs. ============
+    // Labels are plain — the `▸` glyph used to be baked into all
+    // three strings and stayed put regardless of focus, which was
+    // misleading. The input's own focused-bg styling (set by the
+    // host based on the panel's focus_key) is the authoritative
+    // focus cue.
     labeledSection({
-      label: "▸ Session Name",
+      label: "Session Name",
       child: text({
         value: form.name.value,
         cursorByte: form.name.cursor,
@@ -1141,21 +1164,24 @@ function buildFormSpec(): WidgetSpec {
       }),
     }),
     labeledSection({
-      label: "▸ Agent Command",
+      label: "Agent Command",
       child: text({
         value: form.cmd.value,
         cursorByte: form.cmd.cursor,
         // Empty submission spawns a bare terminal — the host
         // picks the shell with the same logic it uses for any
         // other embedded terminal, so the plugin doesn't have
-        // to second-guess `$SHELL` resolution.
-        placeholder: "terminal",
+        // to second-guess `$SHELL` resolution. If the user
+        // submitted a non-empty cmd in the previous run we
+        // surface it here as a hint (placeholder only — see
+        // `NewSessionForm.lastCmd`).
+        placeholder: form.lastCmd || "terminal",
         fullWidth: true,
         key: "cmd",
       }),
     }),
     labeledSection({
-      label: "▸ Branch",
+      label: "Branch",
       child: text({
         value: form.branch.value,
         cursorByte: form.branch.cursor,
@@ -1232,12 +1258,17 @@ function openForm(): void {
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
     name: { value: "", cursor: 0 },
-    cmd: { value: lastCmd, cursor: lastCmd.length },
+    // Empty value — `lastCmd` shows as the placeholder instead so
+    // an empty submit falls back to the host's default shell
+    // ("terminal") rather than silently re-running the previous
+    // agent. See `NewSessionForm.lastCmd`.
+    cmd: { value: "", cursor: 0 },
     branch: { value: "", cursor: 0 },
     submitting: false,
     lastError: null,
     projectLabel: deriveProjectLabel(),
     defaultBranch: "",
+    lastCmd,
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
@@ -1288,6 +1319,7 @@ async function submitForm(): Promise<void> {
     if (!form) return;
     form.submitting = false;
     form.lastError = lastNonEmptyLine(top.stderr) || "not a git repository";
+    editor.setStatus(`Orchestrator: ${form.lastError}`);
     renderForm();
     return;
   }
@@ -1304,6 +1336,7 @@ async function submitForm(): Promise<void> {
     if (!form) return;
     form.submitting = false;
     form.lastError = `mkdir failed: ${parent}`;
+    editor.setStatus(`Orchestrator: ${form.lastError}`);
     renderForm();
     return;
   }
@@ -1327,9 +1360,19 @@ async function submitForm(): Promise<void> {
     if (fallback.exit_code !== 0) {
       if (!form) return;
       form.submitting = false;
-      form.lastError = lastNonEmptyLine(addRes.stderr) ||
-        lastNonEmptyLine(fallback.stderr) ||
+      // Prefer the fallback's stderr: when both attempts fail, the
+      // `-b` branch's error is usually "branch already exists" (which
+      // is *why* we tried the fallback in the first place), and the
+      // fallback's error is the more progressed / informative one.
+      // Fall back to `addRes.stderr` only when the fallback didn't
+      // produce its own line.
+      form.lastError = lastNonEmptyLine(fallback.stderr) ||
+        lastNonEmptyLine(addRes.stderr) ||
         "git worktree add failed";
+      // Mirror to the status bar so the error survives if the user
+      // dismisses the dialog before reading it. `form.lastError`
+      // still drives the in-dialog "Error: …" row.
+      editor.setStatus(`Orchestrator: ${form.lastError}`);
       renderForm();
       return;
     }
@@ -1380,7 +1423,21 @@ registerHandler(
   "orchestrator_form_key_shift_tab",
   () => dispatchFormKey("Shift+Tab"),
 );
-registerHandler("orchestrator_form_key_enter", () => dispatchFormKey("Enter"));
+registerHandler("orchestrator_form_key_enter", () => {
+  // The hint bar promises "Enter submit". The host's default Text-
+  // widget behaviour for Enter inside a single-line input is "advance
+  // focus to next widget" (see plugin_dispatch.rs smart-key router),
+  // which made Enter a no-op on every form field and the user had to
+  // tab to the "Create Session" button to commit. Short-circuit at
+  // the plugin handler: when the form is open, Enter from anywhere
+  // submits — the dialog already routes Esc to cancel, so there's
+  // no ambiguity.
+  if (form) {
+    void submitForm();
+    return;
+  }
+  dispatchFormKey("Enter");
+});
 registerHandler("orchestrator_form_key_escape", () => {
   if (form) closeForm();
 });

@@ -1926,19 +1926,29 @@ impl Editor {
             .get(&sid)
             .map(|s| s.buffers.ids())
             .unwrap_or_default();
+        // Pre-refactor this loop looked at `self.active_window()`'s
+        // terminal_buffers / backing_files / terminal_manager.
+        // That happened to work back when orchestrator-spawned
+        // terminals leaked half their state onto the active window
+        // (Bug A); now that each terminal lives entirely on the
+        // window that owns it, the lookups have to target `sid`
+        // (the previewed window).
         for bid in preview_buffers {
-            let Some(&terminal_id) = self.active_window().terminal_buffers.get(&bid) else {
+            let preview_win = match self.windows.get(&sid) {
+                Some(w) => w,
+                None => break,
+            };
+            let Some(&terminal_id) = preview_win.terminal_buffers.get(&bid) else {
                 continue;
             };
-            let Some(backing_file) = self
-                .active_window()
+            let Some(backing_file) = preview_win
                 .terminal_backing_files
                 .get(&terminal_id)
                 .cloned()
             else {
                 continue;
             };
-            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
+            if let Some(handle) = preview_win.terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
                     if let Ok(metadata) = self.authority.filesystem.metadata(&backing_file) {
                         state.set_backing_file_history_end(metadata.size);
@@ -1978,6 +1988,14 @@ impl Editor {
                     *state = new_state;
                     state.buffer.set_modified(false);
                     state.editing_disabled = true;
+                    // Terminal buffers must never show a line-number
+                    // gutter; reloading from the backing file lost
+                    // the margin configuration that
+                    // `Window::create_terminal_buffer_attached` set
+                    // at creation time. Re-apply it here so the
+                    // preview pane matches the live editor view of
+                    // the same terminal (Bug 5).
+                    state.margins.configure_for_line_numbers(false);
                 }
             }
         }
