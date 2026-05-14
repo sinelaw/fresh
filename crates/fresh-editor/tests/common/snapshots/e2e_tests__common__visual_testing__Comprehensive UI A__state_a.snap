@@ -31,4 +31,4 @@ expression: "&screen_text"
 │                            │ 24 │                                                                 
 │                            │~                                                                     
 └────────────────────────────┘~                                                                     
- Local  | src/main.rs | Ln 6, Col 12 | E:1 | 3 cu...  LF  ASCII  Rust   LSP (off)   Palette: Ctrl+P
+ Local  | src/main.rs | Ln 6, Col 12   | E:1 | 3 ...  LF  ASCII  Rust   LSP (off)   Palette: Ctrl+P
