@@ -555,15 +555,18 @@ async function show_git_blame() : Promise<void> {
   // Add virtual lines for blame headers (persistent state model)
   addBlameHeaders(inst);
 
-  // Jump to the same byte position the user was on in the source buffer.
-  // The blame buffer mirrors the file content, so this lands on the same
-  // line. setBufferCursor also runs ensure_cursor_visible so the line is
-  // scrolled into view. Clamp to the blame buffer's content length to
-  // tolerate any unsaved edits in the source buffer.
-  const targetByte = Math.min(sourceCursorPos, fileContent.length);
+  // Jump to the same line the user was on in the source buffer. We don't
+  // have a direct byte→line API for the source buffer, but the blame buffer
+  // mirrors the on-disk file content; for an unmodified source (the common
+  // case for blame) its line offsets are the same, so we can map the source
+  // cursor's byte position to a line index via the blame buffer's offset
+  // table. Land the cursor at the start of that line — column doesn't carry
+  // meaning in the blame view. setBufferCursor also runs ensure_cursor_visible,
+  // then we centre the line in the viewport.
+  const targetLine = lineForBytePos(lineByteOffsets, sourceCursorPos);
+  const targetByte = getLineByteOffset(lineByteOffsets, fileContent.length, targetLine + 1);
   editor.setBufferCursor(result.bufferId, targetByte);
   if (splitId !== null) {
-    const targetLine = lineForBytePos(lineByteOffsets, targetByte);
     editor.scrollToLineCenter(splitId, result.bufferId, targetLine);
   }
 
