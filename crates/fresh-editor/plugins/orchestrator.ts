@@ -373,14 +373,19 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   const embedRows = openDialog?.embedRows ?? 4;
   // Gate the action buttons on having a session to act on. When
   // the filter matches nothing (or no session is highlighted) the
-  // preview pane is just the "No session selected" raw entry —
-  // showing Stop/Archive/Delete in that state is misleading
-  // because they have nothing to operate on.
+  // preview pane shows just "No session selected" + an empty
+  // embed reservation — showing Stop/Archive/Delete in that state
+  // is misleading because they have nothing to operate on. The
+  // empty `windowEmbed({windowId: 0})` is a no-op on the host
+  // side but keeps the preview pane the same height as the
+  // (padded) sessions list pane so the dialog doesn't shrink
+  // jarringly when the filter matches nothing.
   if (!s) {
     return labeledSection({
       label: "Preview",
       child: col(
         { kind: "raw", entries: buildPreviewEntries(s) },
+        windowEmbed({ windowId: 0, rows: embedRows, key: "live-preview" }),
       ),
     });
   }
@@ -1424,14 +1429,13 @@ registerHandler(
   () => dispatchFormKey("Shift+Tab"),
 );
 registerHandler("orchestrator_form_key_enter", () => {
-  // The hint bar promises "Enter submit". The host's default Text-
-  // widget behaviour for Enter inside a single-line input is "advance
-  // focus to next widget" (see plugin_dispatch.rs smart-key router),
-  // which made Enter a no-op on every form field and the user had to
-  // tab to the "Create Session" button to commit. Short-circuit at
-  // the plugin handler: when the form is open, Enter from anywhere
-  // submits — the dialog already routes Esc to cancel, so there's
-  // no ambiguity.
+  // The hint bar promises "Enter submit". The host's floating-panel
+  // input dispatcher (input.rs:`dispatch_floating_widget_key`)
+  // defers to plugin-defined mode bindings when present, so the
+  // smart-key router's "Enter = advance focus" default doesn't fire
+  // for the orchestrator-new-form mode — this handler does. From
+  // anywhere in the form, Enter submits; the form's existing
+  // `Esc → closeForm` keeps the cancel path unambiguous.
   if (form) {
     void submitForm();
     return;
@@ -1671,6 +1675,25 @@ editor.on("window_closed", () => {
 
 editor.on("active_window_changed", () => {
   refreshOpenDialog();
+});
+
+// Re-flow the open-picker on terminal resize. The dialog's
+// `listVisibleRows` / `embedRows` are captured at open-time
+// (orchestrator.ts:`openControlRoom`); without this subscription
+// they stay frozen at the pre-resize values and the live preview
+// embed gets clipped (or leaves blank space) when the user
+// resizes their tmux pane. The host also re-renders the panel
+// against the new screen width unconditionally (see
+// `Editor::resize` in `lifecycle.rs`); this handler just refreshes
+// the spec so the *plugin's* row-count knobs adopt the new
+// viewport at the same time.
+editor.on("resize", () => {
+  if (openDialog && openPanel) {
+    const listVisibleRows = openListVisibleRows();
+    openDialog.listVisibleRows = listVisibleRows;
+    openDialog.embedRows = Math.max(4, listVisibleRows - 4);
+    refreshOpenDialog();
+  }
 });
 
 // =============================================================================

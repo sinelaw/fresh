@@ -272,6 +272,18 @@ impl Editor {
             "resize",
             fresh_core::hooks::HookArgs::Resize { width, height },
         );
+
+        // If a floating widget panel is currently mounted (the
+        // Orchestrator picker, New-Session form, plugin overlays),
+        // its cached `entries` were laid out against the old screen
+        // width — re-render against the new one so column widths,
+        // side borders and embed rects all reflect the new
+        // dimensions (Bug 13). The hook above lets plugins update
+        // their spec; this rerender picks up either the updated
+        // spec or the existing spec at the new width.
+        if let Some(panel_id) = self.floating_widget_panel.as_ref().map(|f| f.panel_id) {
+            self.rerender_widget_panel(panel_id);
+        }
     }
 }
 

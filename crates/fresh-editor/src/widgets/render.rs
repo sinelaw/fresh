@@ -33,8 +33,18 @@ use std::collections::{HashMap, HashSet};
 // substitute the role→key mapping.
 const KEY_HELP_KEY_FG: &str = "ui.help_key_fg";
 const KEY_TOGGLE_ON_FG: &str = "ui.tab_active_fg";
-const KEY_FOCUSED_FG: &str = "ui.menu_active_fg";
-const KEY_FOCUSED_BG: &str = "ui.menu_active_bg";
+// Selection/focus highlight for widgets inside floating panels
+// (list rows, tree nodes, buttons). Originally pointed at
+// `ui.menu_active_{fg,bg}` which defaults to rgb(255,255,255) on
+// rgb(60,60,60) — a 30-unit gray-on-gray bump that quantizes flat
+// on 256-colour terminals and is hard to see on dark themes (the
+// surrounding panel bg is rgb(30,30,30)). `ui.popup_selection_{fg,bg}`
+// is the theme key designed for "selected item inside a popup
+// surface" — white on rgb(58,79,120) blue, ~6× the perceptual
+// contrast — and it's the same key the prompt/palette already uses
+// so the cue reads consistently across selection UIs.
+const KEY_FOCUSED_FG: &str = "ui.popup_selection_fg";
+const KEY_FOCUSED_BG: &str = "ui.popup_selection_bg";
 // `ui.status_error_indicator_fg` defaults to white (designed as
 // the text-on-red status badge), so using it as a standalone fg
 // renders invisible against the panel bg. The diagnostic.error_fg
@@ -700,9 +710,17 @@ fn render_collected(
 
             // Render the visible window, emitting one entry + one
             // hit area per visible item. Selected row gets the
-            // menu_active_bg + extend_to_line_end style. Hit-area
+            // popup_selection_bg + extend_to_line_end style. Hit-area
             // payload uses the *absolute* item index so the plugin
             // never needs to translate window-relative coordinates.
+            //
+            // After the real items we pad with blank entries up to
+            // `visible` rows so the List occupies the full height
+            // its `visible_rows` advertises (Bug 1). Without this
+            // padding, a list with 3 items inside a `visible_rows=20`
+            // labeledSection closes its bottom border 17 rows above
+            // where the sibling preview pane closes — the
+            // wireframed dialog shape called for matched heights.
             let start = scroll as usize;
             let end = ((scroll + visible) as usize).min(items.len());
             for (offset, item) in items[start..end].iter().enumerate() {
@@ -733,6 +751,23 @@ fn render_collected(
                     }),
                     event_type: "select",
                 });
+            }
+            // Pad to `visible` rows with blank entries. Hit areas
+            // intentionally not emitted for the padding — those rows
+            // aren't clickable items.
+            let rendered_items = (end - start) as u32;
+            for _ in rendered_items..visible {
+                let mut padding = TextPropertyEntry {
+                    text: String::new(),
+                    properties: Default::default(),
+                    style: None,
+                    inline_overlays: Vec::new(),
+                    segments: Vec::new(),
+                    pad_to_chars: None,
+                    truncate_to_chars: None,
+                };
+                ensure_trailing_newline(&mut padding);
+                entries.push(padding);
             }
         }
         WidgetSpec::Tree {

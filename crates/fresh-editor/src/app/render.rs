@@ -3423,7 +3423,32 @@ impl Editor {
                 None => return,
             };
         let theme = self.theme.read().unwrap().clone();
-        let overlay_rect = Self::centered_overlay_rect(area, width_pct, height_pct);
+        // Compute the requested rect from width%/height%, then
+        // shrink the height to fit the rendered content (Bug 7).
+        // Plugins call `mount({widthPct, heightPct})` mostly because
+        // they don't know how tall their content is up front; the
+        // requested height should act as a *max*, not a fixed
+        // canvas. Without this shrink, the new-session form's 10
+        // content rows leave ~20 blank rows under "Tab next  S-Tab
+        // prev  Enter submit  Esc cancel" inside a 90%-of-screen
+        // panel.
+        //
+        // Entries include every row the spec produces — including
+        // WindowEmbed reservations (each `windowEmbed({rows: N})`
+        // contributes N blank entries plus an EmbedRect that paints
+        // over them at draw time). So `entries.len() + 2` (top
+        // border + content + bottom border) is the natural fit.
+        let overlay_rect = {
+            let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
+            let needed_h = (entries.len() as u16).saturating_add(2);
+            let effective_h = needed_h.min(requested.height).max(3);
+            ratatui::layout::Rect {
+                x: requested.x,
+                y: area.y + (area.height.saturating_sub(effective_h)) / 2,
+                width: requested.width,
+                height: effective_h,
+            }
+        };
 
         crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
         frame.render_widget(Clear, overlay_rect);

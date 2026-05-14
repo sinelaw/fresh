@@ -2632,6 +2632,34 @@ impl Editor {
             _ => None,
         };
         if let Some(name) = key_name {
+            // Mode-binding precedence: if the active editor mode has a
+            // plugin-defined binding for this key, let it win instead
+            // of applying the floating panel's default smart-key
+            // behaviour. This is what `defineMode` exists for — a
+            // plugin saying "in MY mode, Enter does X" must be
+            // authoritative, not silently overridden by the host's
+            // generic "Enter = focus-advance" default. The orchestrator
+            // New-Session form relies on this so Enter submits the
+            // form regardless of which field is focused (matching the
+            // dialog's `Enter: submit` hint).
+            let mode_has_binding = self
+                .active_window()
+                .editor_mode
+                .as_ref()
+                .map(|mode_name| {
+                    let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+                    let mode_ctx =
+                        crate::input::keybindings::KeyContext::Mode(mode_name.to_string());
+                    self.keybindings
+                        .read()
+                        .unwrap()
+                        .resolve(&key_event, mode_ctx)
+                        != crate::input::keybindings::Action::None
+                })
+                .unwrap_or(false);
+            if mode_has_binding {
+                return false;
+            }
             self.handle_widget_command(
                 panel_id,
                 fresh_core::api::WidgetAction::Key {
