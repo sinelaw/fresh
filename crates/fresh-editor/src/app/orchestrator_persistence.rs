@@ -2,12 +2,21 @@
 //! plugin global state.
 //!
 //! On quit, `save_orchestrator_state` writes:
-//!   - `<working_dir>/.fresh/windows.json` — list of sessions
-//!     (id, label, root, per-session plugin_state) plus the
-//!     last-active session id and the next id to allocate so
-//!     id-based references on disk stay stable across restarts.
-//!   - `<working_dir>/.fresh/state/<plugin>.json` — one file per
-//!     plugin holding its `editor.setGlobalState(...)` map.
+//!   - `<data_dir>/orchestrator/<encoded_working_dir>/windows.json`
+//!     — list of sessions (id, label, root, per-session
+//!     plugin_state) plus the last-active session id and the
+//!     next id to allocate so id-based references on disk stay
+//!     stable across restarts.
+//!   - `<data_dir>/orchestrator/<encoded_working_dir>/state/<plugin>.json`
+//!     — one file per plugin holding its
+//!     `editor.setGlobalState(...)` map.
+//!
+//! The state lives under the platform data directory
+//! (`$XDG_DATA_HOME/fresh/` on Linux), keyed by the working
+//! directory using the same encoding as the `workspace` module.
+//! This mirrors how other per-project editor state is stored
+//! and keeps the user's working tree free of stray dotfiles
+//! (issue #1991).
 //!
 //! On startup, [`read_persisted_windows_env`] +
 //! [`read_persisted_plugin_state`] are called from
@@ -48,7 +57,7 @@ pub(crate) struct PersistedWindow {
     pub(crate) plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
-/// Top-level shape of `.fresh/windows.json`.
+/// Top-level shape of `windows.json`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct PersistedWindows {
     /// Last active session id at quit time. The loader makes
@@ -62,19 +71,20 @@ pub(crate) struct PersistedWindows {
     pub(crate) windows: Vec<PersistedWindow>,
 }
 
-/// Read `.fresh/windows.json` from `working_dir` and return the
-/// parsed envelope. Returns `None` when the file doesn't exist or
-/// fails to parse — those are not error cases at the editor level
-/// (a missing or corrupted file just means "no persisted state").
+/// Read `windows.json` for `working_dir` and return the parsed
+/// envelope. Returns `None` when the file doesn't exist or fails
+/// to parse — those are not error cases at the editor level (a
+/// missing or corrupted file just means "no persisted state").
 ///
 /// Pure file IO + JSON parse. Used by the editor factory to
 /// decide how to build the initial windows map before any `Editor`
 /// instance exists.
 pub(crate) fn read_persisted_windows_env(
     filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    data_dir: &Path,
     working_dir: &Path,
 ) -> Option<PersistedWindows> {
-    let windows_p = windows_path(working_dir);
+    let windows_p = windows_path(data_dir, working_dir);
     if !filesystem.exists(&windows_p) {
         return None;
     }
@@ -93,17 +103,18 @@ pub(crate) fn read_persisted_windows_env(
     }
 }
 
-/// Read every `.fresh/state/<plugin>.json` from `working_dir` into
-/// a flat `plugin → key → value` map. Skips files with unsafe
-/// names, non-JSON extensions, parse errors, and empty maps. Same
+/// Read every `state/<plugin>.json` for `working_dir` into a flat
+/// `plugin → key → value` map. Skips files with unsafe names,
+/// non-JSON extensions, parse errors, and empty maps. Same
 /// motivations as [`read_persisted_windows_env`] — used by the
 /// editor factory pre-construction.
 pub(crate) fn read_persisted_plugin_state(
     filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    data_dir: &Path,
     working_dir: &Path,
 ) -> HashMap<String, HashMap<String, serde_json::Value>> {
     let mut out: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
-    let state_dir = state_dir(working_dir);
+    let state_dir = state_dir(data_dir, working_dir);
     if !filesystem.exists(&state_dir) {
         return out;
     }
@@ -145,21 +156,32 @@ pub(crate) fn read_persisted_plugin_state(
     out
 }
 
-fn windows_path(working_dir: &Path) -> PathBuf {
-    working_dir.join(".fresh").join("windows.json")
+/// Per-working-dir orchestrator directory under the platform
+/// data dir. The working dir is encoded with the same scheme
+/// as `workspace::encode_path_for_filename`, so the per-project
+/// state lives at a stable, collision-free location regardless
+/// of where the user invokes the editor from. See issue #1991
+/// for why this is no longer rooted at `<working_dir>/.fresh`.
+fn orchestrator_dir(data_dir: &Path, working_dir: &Path) -> PathBuf {
+    let encoded = crate::workspace::encode_path_for_filename(working_dir);
+    data_dir.join("orchestrator").join(encoded)
 }
 
-fn state_dir(working_dir: &Path) -> PathBuf {
-    working_dir.join(".fresh").join("state")
+fn windows_path(data_dir: &Path, working_dir: &Path) -> PathBuf {
+    orchestrator_dir(data_dir, working_dir).join("windows.json")
 }
 
-fn plugin_state_path(working_dir: &Path, plugin: &str) -> PathBuf {
+fn state_dir(data_dir: &Path, working_dir: &Path) -> PathBuf {
+    orchestrator_dir(data_dir, working_dir).join("state")
+}
+
+fn plugin_state_path(data_dir: &Path, working_dir: &Path, plugin: &str) -> PathBuf {
     // Plugin names are short identifiers (`orchestrator`,
     // `live_grep`, …) so no escaping is needed for typical
     // input. Reject anything that would escape the state dir to
     // avoid `../`-style traversal in case a plugin picks a
     // pathological name.
-    state_dir(working_dir).join(format!("{plugin}.json"))
+    state_dir(data_dir, working_dir).join(format!("{plugin}.json"))
 }
 
 fn plugin_name_is_safe(name: &str) -> bool {
@@ -173,13 +195,13 @@ fn plugin_name_is_safe(name: &str) -> bool {
 impl Editor {
     /// Persist `sessions` + `plugin_global_state` to disk. Best-
     /// effort: filesystem errors are logged at WARN and swallowed
-    /// so a transient `.fresh/` permission glitch doesn't block
-    /// quit.
+    /// so a transient permission glitch doesn't block quit.
     pub fn save_orchestrator_state(&self) {
         let working_dir = self.working_dir().to_path_buf();
-        let fresh_dir = working_dir.join(".fresh");
-        if let Err(e) = self.authority.filesystem.create_dir_all(&fresh_dir) {
-            tracing::warn!("orchestrator persistence: failed to create {fresh_dir:?}: {e}");
+        let data_dir = self.dir_context.data_dir.clone();
+        let orchestrator_dir = orchestrator_dir(&data_dir, &working_dir);
+        if let Err(e) = self.authority.filesystem.create_dir_all(&orchestrator_dir) {
+            tracing::warn!("orchestrator persistence: failed to create {orchestrator_dir:?}: {e}");
             return;
         }
 
@@ -195,8 +217,8 @@ impl Editor {
             })
             .collect();
         // Stable on-disk order — `HashMap` iteration order would
-        // make the file diff differently every quit, which is
-        // ugly for users who keep `.fresh/` in version control.
+        // make the file diff differently every quit, producing
+        // noisy diffs for anyone inspecting the persisted state.
         windows.sort_by_key(|s| s.id);
         let envelope = PersistedWindows {
             active: self.active_window.0,
@@ -205,7 +227,7 @@ impl Editor {
         };
         match serde_json::to_vec_pretty(&envelope) {
             Ok(bytes) => {
-                let path = windows_path(&working_dir);
+                let path = windows_path(&data_dir, &working_dir);
                 if let Err(e) = self.authority.filesystem.write_file(&path, &bytes) {
                     tracing::warn!("orchestrator persistence: failed to write {path:?}: {e}");
                 }
@@ -218,7 +240,7 @@ impl Editor {
         // Plugin global state — one file per plugin so concurrent
         // editors writing different plugins don't clobber each
         // other (a future feature; today single-process).
-        let state_dir = state_dir(&working_dir);
+        let state_dir = state_dir(&data_dir, &working_dir);
         if !self.plugin_global_state.is_empty() {
             if let Err(e) = self.authority.filesystem.create_dir_all(&state_dir) {
                 tracing::warn!("orchestrator persistence: failed to create {state_dir:?}: {e}");
@@ -237,7 +259,7 @@ impl Editor {
             }
             match serde_json::to_vec_pretty(map) {
                 Ok(bytes) => {
-                    let path = plugin_state_path(&working_dir, plugin);
+                    let path = plugin_state_path(&data_dir, &working_dir, plugin);
                     if let Err(e) = self.authority.filesystem.write_file(&path, &bytes) {
                         tracing::warn!("orchestrator persistence: failed to write {path:?}: {e}");
                     }
@@ -249,5 +271,66 @@ impl Editor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths_live_under_data_dir_not_working_dir() {
+        // Regression test for issue #1991: orchestrator persistence
+        // must never write inside the user's working tree.
+        let data_dir = Path::new("/tmp/fresh-data");
+        let working_dir = Path::new("/home/user/project");
+
+        let wp = windows_path(data_dir, working_dir);
+        let sd = state_dir(data_dir, working_dir);
+        let psp = plugin_state_path(data_dir, working_dir, "orchestrator");
+
+        assert!(
+            wp.starts_with(data_dir),
+            "windows_path must live under data_dir, got {wp:?}"
+        );
+        assert!(
+            sd.starts_with(data_dir),
+            "state_dir must live under data_dir, got {sd:?}"
+        );
+        assert!(
+            psp.starts_with(data_dir),
+            "plugin_state_path must live under data_dir, got {psp:?}"
+        );
+
+        for p in [&wp, &sd, &psp] {
+            assert!(
+                !p.starts_with(working_dir),
+                "orchestrator path must not be inside the working tree: {p:?}"
+            );
+            for component in p.components() {
+                if let std::path::Component::Normal(c) = component {
+                    assert_ne!(
+                        c, ".fresh",
+                        "orchestrator path must not contain a `.fresh` component: {p:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn paths_are_keyed_by_working_dir() {
+        // Two distinct working dirs must map to two distinct
+        // orchestrator subtrees, otherwise different projects
+        // would clobber each other's state.
+        let data_dir = Path::new("/tmp/fresh-data");
+        let a = windows_path(data_dir, Path::new("/home/user/proj-a"));
+        let b = windows_path(data_dir, Path::new("/home/user/proj-b"));
+        assert_ne!(a, b);
+        // Same working dir must map to same path (idempotent
+        // encoding — relied on so a quit + restart sees the
+        // same file).
+        let a_again = windows_path(data_dir, Path::new("/home/user/proj-a"));
+        assert_eq!(a, a_again);
     }
 }

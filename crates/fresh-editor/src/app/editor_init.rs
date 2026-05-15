@@ -159,9 +159,10 @@ pub(super) struct EditorParts {
     pub(super) time_source: SharedTimeSource,
 
     // Persisted plugin global state (one map per plugin). Pulled from
-    // `.fresh/state/<plugin>.json` by the factory so plugins reading
-    // `getGlobalState(...)` on first tick see the previous run's
-    // values without a separate post-construction load step.
+    // `<data_dir>/orchestrator/<encoded>/state/<plugin>.json` by the
+    // factory so plugins reading `getGlobalState(...)` on first tick
+    // see the previous run's values without a separate
+    // post-construction load step.
     pub(super) plugin_global_state: HashMap<String, HashMap<String, serde_json::Value>>,
 
     /// Editor-wide event broadcaster, shared with every WindowResources.
@@ -541,23 +542,26 @@ impl Editor {
         let mut buffer_metadata: HashMap<BufferId, BufferMetadata> = HashMap::new();
         buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
-        // Read orchestrator persistence (`.fresh/windows.json` and
-        // `.fresh/state/*.json`) before the LSP and base-window
-        // construction below. Pulling persistence in here lets the
-        // factory build the right windows up front: previously this
-        // ran from `main.rs` after construction, so the freshly
-        // built single-base window had to be torn down and replaced
-        // with an inert shell — leaving the active window with
+        // Read orchestrator persistence (`windows.json` and
+        // `state/*.json` under `<data_dir>/orchestrator/<encoded>/`)
+        // before the LSP and base-window construction below.
+        // Pulling persistence in here lets the factory build the
+        // right windows up front: previously this ran from
+        // `main.rs` after construction, so the freshly built
+        // single-base window had to be torn down and replaced with
+        // an inert shell — leaving the active window with
         // `splits = None` until something re-seeded it. Now the
         // factory picks the persisted active id/root, attaches the
         // seed buffer + LSP to it directly, and the constructor
         // sees a well-formed windows map.
         let persisted_env = crate::app::orchestrator_persistence::read_persisted_windows_env(
             filesystem.as_ref(),
+            &dir_context.data_dir,
             &working_dir,
         );
         let plugin_global_state = crate::app::orchestrator_persistence::read_persisted_plugin_state(
             filesystem.as_ref(),
+            &dir_context.data_dir,
             &working_dir,
         );
 

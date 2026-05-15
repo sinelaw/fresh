@@ -3588,9 +3588,10 @@ fn real_main() -> AnyhowResult<()> {
 
         // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads
-        // `.fresh/windows.json` + `.fresh/state/*.json` and builds
-        // the initial windows map / `plugin_global_state` directly
-        // into the constructor's inputs. This used to happen here
+        // `windows.json` + `state/*.json` from under the platform
+        // data dir and builds the initial windows map /
+        // `plugin_global_state` directly into the constructor's
+        // inputs. This used to happen here
         // as a post-construction swap, which left the active window
         // in an inert-shell state until something re-seeded it (see
         // the panic at `effective_active_pair` when workspace
@@ -3988,8 +3989,9 @@ where
             }
 
             // Orchestrator cross-restart persistence: write
-            // `.fresh/sessions.json` and `.fresh/state/*.json`. Best-
-            // effort; failures are logged inside, never block quit.
+            // `windows.json` and `state/*.json` under the platform
+            // data dir (see `orchestrator_persistence`). Best-effort;
+            // failures are logged inside, never block quit.
             editor.save_orchestrator_state();
             break;
         }
