@@ -19,10 +19,9 @@ mod registry;
 mod render;
 
 pub use actions::{
-    append_tree_nodes_in_spec, apply_text_area_key, apply_text_char, apply_text_input_key,
-    apply_text_key, find_widget_by_key, set_list_items_in_spec, set_raw_entries_in_spec,
-    set_toggle_checked_in_spec, set_tree_checked_keys_in_spec, set_tree_nodes_in_spec,
-    tree_parent_index,
+    append_tree_nodes_in_spec, find_widget_by_key, set_list_items_in_spec,
+    set_raw_entries_in_spec, set_toggle_checked_in_spec, set_tree_checked_keys_in_spec,
+    set_tree_nodes_in_spec, tree_parent_index,
 };
 pub use registry::{HitArea, PanelId, WidgetInstanceState, WidgetPanelState, WidgetRegistry};
 pub use render::{render_spec, EmbedRect, FocusCursor, RenderOutput};
