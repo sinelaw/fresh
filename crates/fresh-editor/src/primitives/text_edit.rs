@@ -507,14 +507,22 @@ impl TextEdit {
         // Ignore newline in single-line mode
     }
 
-    /// Insert a string at cursor position
+    /// Insert a string at cursor position.
+    ///
+    /// In single-line mode, embedded `\n` are flattened to a space
+    /// (`' '`) — pasting `"foo\nbar"` into a single-line input
+    /// yields `"foo bar"`. Dropping the newline silently would
+    /// concatenate the words (`"foobar"`), which is the wrong
+    /// thing for the common "paste a CSV line into a search
+    /// field" workflow. The space preserves token boundaries and
+    /// matches what every other GUI text input does on paste.
     pub fn insert_str(&mut self, text: &str) {
         if self.has_selection() {
             self.delete_selection();
         }
         for c in text.chars() {
-            // In single-line mode, skip newlines
             if c == '\n' && !self.multiline {
+                self.insert_char(' ');
                 continue;
             }
             self.insert_char(c);
@@ -648,10 +656,13 @@ mod tests {
     }
 
     #[test]
-    fn test_single_line_ignores_newlines() {
+    fn test_single_line_flattens_newlines_to_spaces() {
+        // Pasting a multi-line string into a single-line input
+        // should flatten newlines to spaces, not concatenate
+        // (which would lose token boundaries).
         let mut edit = TextEdit::single_line();
         edit.insert_str("hello\nworld");
-        assert_eq!(edit.value(), "helloworld");
+        assert_eq!(edit.value(), "hello world");
         assert_eq!(edit.line_count(), 1);
     }
 

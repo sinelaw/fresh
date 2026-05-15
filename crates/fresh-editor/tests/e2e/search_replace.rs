@@ -1664,3 +1664,203 @@ fn test_search_replace_second_alt_enter_does_not_corrupt_files() {
         after_first, after_second
     );
 }
+
+// ============================================================================
+// Stage 1 unification: clipboard + selection ops on focused widget Text inputs
+// ============================================================================
+//
+// These tests cover the user-visible payoff of the
+// Settings + widget-framework unification: pasting, selecting,
+// copying, and cutting against the search_replace plugin's
+// inline Text inputs goes through the same `TextEdit` primitive
+// the Settings UI uses, so the keyboard shortcuts every other
+// text input supports now work inside the panel too. We
+// observe behavior only through rendered output, per the
+// `CONTRIBUTING.md` E2E rules.
+
+/// Helper: open search_replace, wait for the panel, return with
+/// the search field focused and empty.
+fn open_panel_with_focus_on_search(
+    project_root: &std::path::Path,
+) -> (EditorTestHarness, std::path::PathBuf) {
+    let start_file = project_root.join("alpha.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.to_path_buf(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    (harness, start_file)
+}
+
+/// Ctrl+V into an empty search field inserts the clipboard
+/// contents at the cursor — same as typing them.
+#[test]
+fn test_search_replace_paste_into_search_field() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("hello".to_string());
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Search field renders as `Search: [<value>...]`. Wait for
+    // the pasted value to show up.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[hello"))
+        .unwrap();
+}
+
+/// Pasting text that contains a newline into the (single-line)
+/// search field flattens the newline to a space rather than
+/// silently concatenating tokens. Validates the behavior the
+/// Stage 1 plan calls out explicitly.
+#[test]
+fn test_search_replace_paste_with_newline_flattened_to_space() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("foo\nbar".to_string());
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Newline must have become a single space — no
+            // "foobar" (concatenation) and no actual line break
+            // inside the field.
+            s.contains("[foo bar") && !s.contains("[foobar")
+        })
+        .unwrap();
+}
+
+/// Ctrl+A selects the whole search-field value; typing then
+/// replaces it. This is the "GUI text input" baseline most users
+/// expect.
+#[test]
+fn test_search_replace_select_all_then_type_replaces_value() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+
+    harness.type_text("abc").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[abc"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    // Typing now replaces the (fully-selected) value.
+    harness.type_text("xyz").unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Must show the new value; the old "abc" prefix must
+            // not be hanging around.
+            s.contains("[xyz") && !s.contains("abcxyz") && !s.contains("[abc")
+        })
+        .unwrap();
+}
+
+/// Shift+Right extends the selection char-by-char. Ctrl+C copies
+/// the selection; navigating to the end of the value and Ctrl+V
+/// duplicates the substring. Exercises three Stage 1 paths in
+/// one flow: selection extension, host-side widget copy, and
+/// host-side widget paste.
+#[test]
+fn test_search_replace_shift_right_copy_paste_duplicates_substring() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+
+    harness.type_text("abc").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[abc"))
+        .unwrap();
+
+    // Home → cursor at start. Shift+Right twice → selection
+    // covers "ab".
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    // Ctrl+C copies "ab".
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    // End → cursor past "abc". Ctrl+V pastes "ab" → "abcab".
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[abcab"))
+        .unwrap();
+}
+
+/// Shift+Right twice selects two chars; Backspace deletes the
+/// whole selection, not just one char. Regression test for the
+/// pre-unification behaviour where the widget framework had no
+/// selection so Backspace always removed one char.
+#[test]
+fn test_search_replace_shift_right_then_backspace_deletes_selection() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+
+    harness.type_text("abc").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[abc"))
+        .unwrap();
+
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    // Backspace on a 2-char selection should remove both, leaving "c".
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Field must read `[c` (with whatever padding the
+            // renderer adds) and the original `[abc` must be
+            // gone.
+            s.contains("[c") && !s.contains("[abc") && !s.contains("[ab ") && !s.contains("[ab]")
+        })
+        .unwrap();
+}
