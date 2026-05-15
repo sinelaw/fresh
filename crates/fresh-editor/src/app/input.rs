@@ -727,6 +727,65 @@ impl Editor {
                         }
                         _ => {}
                     }
+                    // Shift+arrow / Ctrl+Shift+arrow extend the
+                    // selection on the focused widget TextEdit, if
+                    // any. We route these directly here instead of
+                    // through the IPC `WidgetAction` path because
+                    // selection ops are host-internal — the plugin's
+                    // model only cares about the post-`change`
+                    // value, which still fires when the selection
+                    // is mutated by a subsequent edit.
+                    if modifiers.contains(KeyModifiers::SHIFT) {
+                        let buffer_id = self.active_buffer();
+                        if let Some(panel_id) = self.focused_text_widget_panel_for_buffer(buffer_id)
+                        {
+                            let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+                            let handled = match code {
+                                KeyCode::Left if ctrl => self
+                                    .with_focused_text_editor(panel_id, |e| {
+                                        e.move_word_left_selecting()
+                                    }),
+                                KeyCode::Right if ctrl => self
+                                    .with_focused_text_editor(panel_id, |e| {
+                                        e.move_word_right_selecting()
+                                    }),
+                                KeyCode::Left => self.with_focused_text_editor(panel_id, |e| {
+                                    e.move_left_selecting()
+                                }),
+                                KeyCode::Right => self.with_focused_text_editor(panel_id, |e| {
+                                    e.move_right_selecting()
+                                }),
+                                KeyCode::Up => self
+                                    .with_focused_text_editor(panel_id, |e| e.move_up_selecting()),
+                                KeyCode::Down => self.with_focused_text_editor(panel_id, |e| {
+                                    e.move_down_selecting()
+                                }),
+                                KeyCode::Home => self.with_focused_text_editor(panel_id, |e| {
+                                    e.move_home_selecting()
+                                }),
+                                KeyCode::End => self
+                                    .with_focused_text_editor(panel_id, |e| e.move_end_selecting()),
+                                _ => false,
+                            };
+                            // We always consume Shift+nav on a
+                            // focused widget Text — `handled=false`
+                            // means the move was a no-op (e.g.
+                            // already at the boundary), which is
+                            // still the correct shortcut behaviour.
+                            if matches!(
+                                code,
+                                KeyCode::Left
+                                    | KeyCode::Right
+                                    | KeyCode::Up
+                                    | KeyCode::Down
+                                    | KeyCode::Home
+                                    | KeyCode::End
+                            ) {
+                                let _ = handled;
+                                return Ok(());
+                            }
+                        }
+                    }
                     tracing::debug!("Blocking unbound key in text-input mode '{}'", mode_name);
                     return Ok(());
                 }

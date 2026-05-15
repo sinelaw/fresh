@@ -4596,7 +4596,7 @@ impl Editor {
     /// firing the `widget_event` "change" hook with the post-state.
     ///
     /// Returns true when the op ran *and* produced a visible change.
-    fn with_focused_text_editor<F>(&mut self, panel_id: u64, op: F) -> bool
+    pub(super) fn with_focused_text_editor<F>(&mut self, panel_id: u64, op: F) -> bool
     where
         F: FnOnce(&mut crate::primitives::text_edit::TextEdit),
     {
