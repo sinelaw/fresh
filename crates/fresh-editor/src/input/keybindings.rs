@@ -2789,6 +2789,36 @@ mod tests {
     }
 
     #[test]
+    fn test_format_action_word_end_actions_are_localized() {
+        // Regression test for #1878: `action.move_word_end` and
+        // `action.select_word_end` were referenced via `t!()` from
+        // `format_action` but missing from every locale file, so the
+        // Keyboard Shortcuts menu rendered the raw key as the description.
+        crate::i18n::set_locale("en");
+
+        let move_desc = KeybindingResolver::format_action(&Action::MoveWordEnd);
+        assert_ne!(
+            move_desc, "action.move_word_end",
+            "MoveWordEnd should resolve to a translated description"
+        );
+        let select_desc = KeybindingResolver::format_action(&Action::SelectWordEnd);
+        assert_ne!(
+            select_desc, "action.select_word_end",
+            "SelectWordEnd should resolve to a translated description"
+        );
+
+        // Vim aliases share the same translation keys.
+        assert_eq!(
+            KeybindingResolver::format_action(&Action::ViMoveWordEnd),
+            move_desc,
+        );
+        assert_eq!(
+            KeybindingResolver::format_action(&Action::ViSelectWordEnd),
+            select_desc,
+        );
+    }
+
+    #[test]
     fn test_qualify_and_unqualify_roundtrip_menu_open() {
         let mut args = HashMap::new();
         args.insert(
