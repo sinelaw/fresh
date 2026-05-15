@@ -898,26 +898,25 @@ fn test_switch_project_double_click_navigates_into_folder() {
 
     double_click_at(&mut harness, col, row_idx as u16);
 
-    // Bug behavior (#1931): double-click on a folder in Switch Project mode
-    // immediately selects the folder as the new project root, which signals
-    // an editor restart. The fix should navigate into the folder instead.
-    assert!(
-        !harness.editor().should_restart(),
-        "Double-clicking a folder in Switch Project must not select it as project root"
-    );
-
-    // The folder browser should remain open after the navigation.
-    let screen_after = harness.screen_to_string();
-    assert!(
-        screen_after.contains("Navigation:"),
-        "Folder browser should remain open after double-clicking into a folder; got screen:\n{}",
-        screen_after
-    );
-
-    // The contents of the target directory should now be visible.
+    // After the double-click, the post-condition that observably
+    // distinguishes "navigated into the folder" from "selected as new
+    // project root" is: the Switch Project browser is still open
+    // (so its "Navigation:" header is on screen) AND the target
+    // directory's marker file is now listed. The bug version closes
+    // the browser to commit the selection; with the fix, the
+    // browser stays open at the new path. We wait for both
+    // conditions in one semantic wait so the test settles to a
+    // stable state before observing — no model accessors, no bare
+    // snapshots, per CONTRIBUTING.md E2E rules.
     harness
-        .wait_until(|h| h.screen_to_string().contains("inside_marker.txt"))
-        .expect("Should see contents of the navigated-into directory after double-click");
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Navigation:") && screen.contains("inside_marker.txt")
+        })
+        .expect(
+            "Folder browser must remain open and show the target directory's contents \
+             after double-clicking into it",
+        );
 }
 
 /// Regression test for #1931: in Switch Project mode, double-clicking the ".."
@@ -974,20 +973,23 @@ fn test_switch_project_double_click_parent_navigates_up() {
 
     double_click_at(&mut harness, col, row_idx as u16);
 
-    // Must not have selected the parent as the project root.
-    assert!(
-        !harness.editor().should_restart(),
-        "Double-clicking '..' in Switch Project must not select the parent as project root"
-    );
-
-    // Browser still open, now in the parent directory.
-    let screen_after = harness.screen_to_string();
-    assert!(
-        screen_after.contains("Navigation:"),
-        "Folder browser should remain open after navigating up; got screen:\n{}",
-        screen_after
-    );
+    // After the double-click, the post-condition that observably
+    // distinguishes "navigated up" from "selected parent as new
+    // project root" is: the Switch Project browser is still open
+    // (so its "Navigation:" header is on screen) AND the parent
+    // directory's marker file is now listed. The bug version
+    // closes the browser to commit the selection; with the fix,
+    // the browser stays open at the new path. We wait for both
+    // conditions in one semantic wait so the test settles to a
+    // stable state before observing — no model accessors, no bare
+    // snapshots, per CONTRIBUTING.md E2E rules.
     harness
-        .wait_until(|h| h.screen_to_string().contains("parent_marker.txt"))
-        .expect("Should see parent directory contents after double-clicking '..'");
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("Navigation:") && screen.contains("parent_marker.txt")
+        })
+        .expect(
+            "Folder browser must remain open and show the parent directory's contents \
+             after double-clicking '..'",
+        );
 }
