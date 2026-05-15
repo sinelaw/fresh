@@ -1558,6 +1558,29 @@ impl Editor {
             });
     }
 
+    /// True iff no plugin actions are currently in-flight on the
+    /// plugin thread. Test harness helper — used by `send_key` to
+    /// know when async plugin work queued by the key has fully
+    /// settled before returning, so tests see synchronous-looking
+    /// behavior between sequential key presses (e.g. a mode-bound
+    /// `Home` followed by a synchronous-bypass `Shift+Right`).
+    /// Outside tests, the editor's main loop pumps these alongside
+    /// other async messages on every frame so there's nothing to
+    /// drain explicitly.
+    #[cfg(feature = "plugins")]
+    #[doc(hidden)]
+    pub fn pending_plugin_actions_is_empty(&self) -> bool {
+        self.pending_plugin_actions.is_empty()
+    }
+
+    /// Stub for builds without plugin support — there are no
+    /// plugin actions to track, so we're always "settled".
+    #[cfg(not(feature = "plugins"))]
+    #[doc(hidden)]
+    pub fn pending_plugin_actions_is_empty(&self) -> bool {
+        true
+    }
+
     /// Process pending LSP server restarts (with exponential backoff)
     pub(super) fn process_pending_lsp_restarts(&mut self) {
         let __active_id = self.active_window;
