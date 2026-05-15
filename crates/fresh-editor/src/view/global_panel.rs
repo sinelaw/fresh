@@ -15,27 +15,46 @@ pub struct GlobalPanel {
     pub rows: Vec<GlobalPanelRow>,
     /// Which screen edge this panel is anchored to.
     pub anchor: GlobalPanelAnchor,
+    /// Maximum width cap in terminal columns (left/right anchors).
+    pub max_width: Option<u16>,
+    /// Maximum height cap in terminal rows (top/bottom anchors).
+    pub max_height: Option<u16>,
 }
 
 impl GlobalPanel {
-    pub fn new(id: String, rows: Vec<GlobalPanelRow>, anchor: GlobalPanelAnchor) -> Self {
-        Self { id, rows, anchor }
+    pub fn new(
+        id: String,
+        rows: Vec<GlobalPanelRow>,
+        anchor: GlobalPanelAnchor,
+        max_width: Option<u16>,
+        max_height: Option<u16>,
+    ) -> Self {
+        Self { id, rows, anchor, max_width, max_height }
     }
 
-    /// Height of the panel including the border (1 top + 1 bottom).
+    /// Height of the panel including the border (1 top + 1 bottom), capped by max_height.
     pub fn total_height(&self) -> u16 {
-        (self.rows.len() as u16).saturating_add(2)
+        let natural = (self.rows.len() as u16).saturating_add(2);
+        match self.max_height {
+            Some(cap) => natural.min(cap),
+            None => natural,
+        }
     }
 
-    /// Width of the panel including the border (1 left + 1 right).
+    /// Width of the panel including the border (1 left + 1 right), capped by max_width.
     /// Used for left/right anchors.
     pub fn total_width(&self) -> u16 {
-        self.rows
+        let natural = self
+            .rows
             .iter()
             .map(|r| r.text.chars().count() as u16)
             .max()
             .unwrap_or(0)
-            .saturating_add(2)
+            .saturating_add(2);
+        match self.max_width {
+            Some(cap) => natural.min(cap),
+            None => natural,
+        }
     }
 
     /// Compute the area for this panel given the full frame area and the
@@ -82,20 +101,28 @@ impl GlobalPanel {
             }
             GlobalPanelAnchor::Left => {
                 let width = self.total_width().min(frame_area.width);
+                let height = match self.max_height {
+                    Some(cap) => content_height.min(cap),
+                    None => content_height,
+                };
                 Rect {
                     x: 0,
                     y: content_y,
                     width,
-                    height: content_height,
+                    height,
                 }
             }
             GlobalPanelAnchor::Right => {
                 let width = self.total_width().min(frame_area.width);
+                let height = match self.max_height {
+                    Some(cap) => content_height.min(cap),
+                    None => content_height,
+                };
                 Rect {
                     x: frame_area.width.saturating_sub(width),
                     y: content_y,
                     width,
-                    height: content_height,
+                    height,
                 }
             }
         }

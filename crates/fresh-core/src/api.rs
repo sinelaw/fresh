@@ -1950,6 +1950,12 @@ pub enum PluginCommand {
         /// Which screen edge the panel sticks to (default: bottom)
         #[serde(default)]
         anchor: GlobalPanelAnchor,
+        /// Maximum width in terminal columns (left/right anchors). No limit if absent.
+        #[serde(default)]
+        max_width: Option<u16>,
+        /// Maximum height in terminal rows (top/bottom anchors). No limit if absent.
+        #[serde(default)]
+        max_height: Option<u16>,
     },
 
     /// Update the rows of an existing global panel in place
@@ -2480,6 +2486,12 @@ pub struct GlobalPanelOptions {
     /// Which screen edge the panel sticks to (default: bottom)
     #[serde(default)]
     pub anchor: GlobalPanelAnchor,
+    /// Maximum width in terminal columns (left/right anchors). No limit if absent.
+    #[serde(default)]
+    pub max_width: Option<u16>,
+    /// Maximum height in terminal rows (top/bottom anchors). No limit if absent.
+    #[serde(default)]
+    pub max_height: Option<u16>,
 }
 
 /// Syntax highlight span for a buffer range

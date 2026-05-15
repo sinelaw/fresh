@@ -3695,6 +3695,8 @@ impl JsEditorApi {
                 id: opts.id,
                 rows: opts.rows,
                 anchor: opts.anchor,
+                max_width: opts.max_width,
+                max_height: opts.max_height,
             })
             .is_ok()
     }
