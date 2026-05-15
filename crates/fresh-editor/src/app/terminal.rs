@@ -1261,6 +1261,12 @@ pub mod render {
         default_fg: Color,
         default_bg: Color,
     ) {
+        // Fill the rendered area with the theme's terminal bg first so any
+        // cells past the PTY grid (e.g. transiently smaller than the rect
+        // mid-resize) show the theme background rather than leaking the
+        // host terminal's default bg. Issue #1890.
+        buf.set_style(area, Style::default().fg(default_fg).bg(default_bg));
+
         for (row_idx, row) in content.iter().enumerate() {
             if row_idx as u16 >= area.height {
                 break;
@@ -1310,6 +1316,47 @@ pub mod render {
                 }
 
                 buf.set_string(x, y, cell.c.to_string(), style);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::services::terminal::TerminalCell;
+
+        #[test]
+        fn cells_past_pty_grid_get_theme_bg() {
+            // PTY grid is 2x2, render area is 4x3 — the cells outside
+            // the grid must still carry the theme's terminal_bg so the
+            // nostalgia theme's blue fully covers the terminal pane
+            // (issue #1890).
+            let area = Rect::new(0, 0, 4, 3);
+            let mut buf = Buffer::empty(area);
+            let row = vec![TerminalCell::default(), TerminalCell::default()];
+            let content = vec![row.clone(), row];
+
+            let default_bg = Color::Rgb(0, 0, 170);
+            let default_fg = Color::Rgb(255, 255, 85);
+
+            render_terminal_content(
+                &content,
+                (0, 0),
+                false,
+                area,
+                &mut buf,
+                default_fg,
+                default_bg,
+            );
+
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    assert_eq!(
+                        buf[(x, y)].bg,
+                        default_bg,
+                        "cell ({x}, {y}) bg should be the theme terminal_bg",
+                    );
+                }
             }
         }
     }
