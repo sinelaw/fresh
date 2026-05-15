@@ -157,6 +157,15 @@ interface OpenDialogState {
   // the embed is the part the user actually wants to see; the
   // metadata row is rarely read and just eats embed height.
   showDetails: boolean;
+  // Sessions the user just archived/deleted. The async cleanup
+  // (kill processes, run `git worktree remove` / `move`) takes
+  // ~300 ms during which `editor.listWindows()` still returns the
+  // session, so reconcileSessions would re-surface it in the
+  // picker mid-flight. Stashing the id here lets `filterSessions`
+  // hide the row synchronously when the user clicks Confirm; the
+  // entry is cleared once the cleanup completes (or the dialog
+  // closes).
+  hiddenIds: Set<number>;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -230,7 +239,10 @@ function ageString(createdAt: number): string {
 // first. Empty needle returns the full list in numeric-id order.
 function filterSessions(needle: string): number[] {
   reconcileSessions();
-  const ids = Array.from(orchestratorSessions.keys()).sort((a, b) => a - b);
+  const hidden = openDialog?.hiddenIds ?? new Set<number>();
+  const ids = Array.from(orchestratorSessions.keys())
+    .filter((id) => !hidden.has(id))
+    .sort((a, b) => a - b);
   if (!needle) return ids;
   const n = needle.toLowerCase();
   type Scored = { id: number; score: number; len: number };
@@ -708,6 +720,7 @@ function openControlRoom(): void {
     // to paint something meaningful.
     embedRows: Math.max(3, listVisibleRows - 5),
     showDetails: false,
+    hiddenIds: new Set<number>(),
   };
   openPanel = new FloatingWidgetPanel();
   // 90% × 90% of the terminal — the open dialog wants room for
@@ -834,22 +847,46 @@ function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
 // session, move the worktree to the `.archived/` graveyard,
 // and append a manifest entry so a future Unarchive flow can
 // reverse it.
-async function archiveSelectedSession(): Promise<void> {
+async function archiveSelectedSession(explicitId?: number): Promise<void> {
   if (!openDialog) return;
-  const id = openDialog.filteredIds[openDialog.selectedIndex];
+  // Prefer the explicit id from the confirm path. Otherwise read
+  // the currently selected row — used by the legacy direct-call
+  // entry points. Once the row is hidden synchronously after
+  // confirm, `filteredIds[selectedIndex]` no longer points at the
+  // session being archived (it shifts to whatever is now under
+  // the cursor).
+  const id = typeof explicitId === "number"
+    ? explicitId
+    : openDialog.filteredIds[openDialog.selectedIndex];
+  // Unhide the row + refresh on any pre-close failure so the user
+  // sees the session reappear instead of vanishing silently — the
+  // archive flow's confirm handler synchronously hides via
+  // `hiddenIds.add(id)` before the async work starts. Anything
+  // that returns before `closeWindow` needs to undo that.
+  const cancelHide = () => {
+    if (openDialog && typeof id === "number") {
+      openDialog.hiddenIds.delete(id);
+      refreshOpenDialog();
+    }
+  };
   if (typeof id !== "number" || id <= 0) return;
   if (id === 1) {
     editor.setStatus("Orchestrator: cannot archive the base session");
+    cancelHide();
     return;
   }
   if (id === editor.activeWindow()) {
     editor.setStatus(
       "Orchestrator: dive elsewhere first, then archive this session",
     );
+    cancelHide();
     return;
   }
   const session = orchestratorSessions.get(id);
-  if (!session) return;
+  if (!session) {
+    cancelHide();
+    return;
+  }
 
   // Resolve the repo root from cwd (the user is in the
   // umbrella session's tree).
@@ -861,6 +898,7 @@ async function archiveSelectedSession(): Promise<void> {
   );
   if (top.exit_code !== 0) {
     editor.setStatus("Orchestrator: archive failed — not a git repository");
+    cancelHide();
     return;
   }
   const repoRoot = (top.stdout || "").trim();
@@ -1138,16 +1176,26 @@ async function deleteConfirmedSession(): Promise<void> {
   if (!openDialog || !openDialog.pendingConfirm) return;
   const { sessionId: id } = openDialog.pendingConfirm;
   openDialog.pendingConfirm = null;
+  // The confirm-delete handler synchronously hid the row via
+  // `hiddenIds.add(id)`. Any pre-closeWindow failure path needs to
+  // unhide so the user sees the row come back instead of vanishing
+  // silently.
+  const cancelHide = () => {
+    if (openDialog) {
+      openDialog.hiddenIds.delete(id);
+      refreshOpenDialog();
+    }
+  };
   const session = orchestratorSessions.get(id);
   if (!session) {
-    if (openPanel) openPanel.update(buildOpenSpec());
+    cancelHide();
     return;
   }
   if (id === editor.activeWindow()) {
     editor.setStatus(
       "Orchestrator: dive elsewhere first, then delete this session",
     );
-    if (openPanel) openPanel.update(buildOpenSpec());
+    cancelHide();
     return;
   }
 
@@ -1159,7 +1207,7 @@ async function deleteConfirmedSession(): Promise<void> {
   );
   if (top.exit_code !== 0) {
     editor.setStatus("Orchestrator: delete failed — not a git repository");
-    if (openPanel) openPanel.update(buildOpenSpec());
+    cancelHide();
     return;
   }
   const repoRoot = (top.stdout || "").trim();
@@ -1912,13 +1960,30 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "confirm-archive") {
+      const id = openDialog.filteredIds[openDialog.selectedIndex];
       openDialog.pendingConfirm = null;
-      void archiveSelectedSession();
-      if (openPanel) openPanel.update(buildOpenSpec());
+      // Hide the row synchronously so the user sees the session
+      // leave the list the moment they confirm. The async archive
+      // work (kill, git worktree move) takes a few hundred ms and
+      // re-surfacing the row mid-flight via reconcileSessions
+      // would look like the action didn't take.
+      if (typeof id === "number" && id > 0) {
+        openDialog.hiddenIds.add(id);
+      }
+      void archiveSelectedSession(id);
+      refreshOpenDialog();
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "confirm-delete") {
+      const id = openDialog.pendingConfirm?.sessionId;
+      // Hide synchronously — see comment on confirm-archive above.
+      // `deleteConfirmedSession` clears `pendingConfirm` itself, so
+      // we capture the id here before it goes away.
+      if (typeof id === "number" && id > 0) {
+        openDialog.hiddenIds.add(id);
+      }
       void deleteConfirmedSession();
+      refreshOpenDialog();
       return;
     }
     if (e.event_type === "cancel") {
