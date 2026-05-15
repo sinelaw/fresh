@@ -2835,11 +2835,11 @@ impl Editor {
                 // Highlight the separator with hover color
                 for (sid, dir, x, y, length) in &self.active_layout().separator_areas {
                     if sid == split_id && dir == direction {
-                        let hover_style = Style::default().fg(self
-                            .theme
-                            .read()
-                            .unwrap()
-                            .split_separator_hover_fg);
+                        let (hover_fg, editor_bg) = {
+                            let theme = self.theme.read().unwrap();
+                            (theme.split_separator_hover_fg, theme.editor_bg)
+                        };
+                        let hover_style = Style::default().fg(hover_fg).bg(editor_bg);
                         match dir {
                             SplitDirection::Horizontal => {
                                 let line_text = "─".repeat(*length as usize);
@@ -2916,8 +2916,11 @@ impl Editor {
             Some(HoverTarget::FileExplorerBorder) => {
                 // Highlight the file explorer border for resize
                 if let Some(explorer_area) = self.active_layout().file_explorer_area {
-                    let hover_style =
-                        Style::default().fg(self.theme.read().unwrap().split_separator_hover_fg);
+                    let (hover_fg, editor_bg) = {
+                        let theme = self.theme.read().unwrap();
+                        (theme.split_separator_hover_fg, theme.editor_bg)
+                    };
+                    let hover_style = Style::default().fg(hover_fg).bg(editor_bg);
                     let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
                     for row_offset in 0..explorer_area.height {
                         let paragraph = Paragraph::new(Span::styled("│", hover_style));

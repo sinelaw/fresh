@@ -418,7 +418,11 @@ pub(crate) fn render_composite_buffer(
 
             if show_separator && pane_idx < pane_count - 1 {
                 let sep_area = Rect::new(x_offset, content_y + view_row as u16, separator_width, 1);
-                let sep = Paragraph::new("│").style(Style::default().fg(theme.split_separator_fg));
+                let sep = Paragraph::new("│").style(
+                    Style::default()
+                        .fg(theme.split_separator_fg)
+                        .bg(theme.editor_bg),
+                );
                 frame.render_widget(sep, sep_area);
                 x_offset += separator_width;
             }

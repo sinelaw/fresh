@@ -287,19 +287,20 @@ pub(super) fn render_separator(
     length: u16,
     theme: &Theme,
 ) {
+    let style = Style::default()
+        .fg(theme.split_separator_fg)
+        .bg(theme.editor_bg);
     match direction {
         SplitDirection::Horizontal => {
             let line_area = Rect::new(x, y, length, 1);
             let line_text = "─".repeat(length as usize);
-            let paragraph =
-                Paragraph::new(line_text).style(Style::default().fg(theme.split_separator_fg));
+            let paragraph = Paragraph::new(line_text).style(style);
             frame.render_widget(paragraph, line_area);
         }
         SplitDirection::Vertical => {
             for offset in 0..length {
                 let cell_area = Rect::new(x, y + offset, 1, 1);
-                let paragraph =
-                    Paragraph::new("│").style(Style::default().fg(theme.split_separator_fg));
+                let paragraph = Paragraph::new("│").style(style);
                 frame.render_widget(paragraph, cell_area);
             }
         }
