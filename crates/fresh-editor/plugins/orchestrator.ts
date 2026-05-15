@@ -21,6 +21,7 @@ import {
   col,
   flexSpacer,
   FloatingWidgetPanel,
+  focusAdvance,
   hintBar,
   key as widgetKey,
   labeledSection,
@@ -99,11 +100,17 @@ interface NewSessionForm {
   defaultBranch: string;
   // Previously-submitted Agent Command (persisted across editor
   // sessions via `orchestrator.last_cmd`). Rendered as the cmd
-  // field's *placeholder* — pre-filling the value would survive
-  // a failed submit and silently feed stale text into the next
-  // attempt; the placeholder gives the same memory aid without
-  // that hazard.
+  // field's *placeholder*, and used as the actual command when
+  // the user leaves the field blank — submitting "" with a
+  // visible placeholder of "python3" was confusing because the
+  // host ignored the hint and spawned a bare shell. Now the
+  // placeholder is the command if the value is empty.
   lastCmd: string;
+  // True when this form was opened from the picker (Alt+N or
+  // the "+ New Session" button). On cancel (Esc / Cancel
+  // button) we re-open the picker so the user lands back where
+  // they were instead of being dropped into the bare editor.
+  fromPicker: boolean;
 }
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
@@ -133,7 +140,9 @@ interface OpenDialogState {
   // When non-null, the preview pane swaps to a confirmation
   // panel for the named action against the named session id.
   // Cleared on Cancel or after the action completes.
-  pendingConfirm: { action: "delete"; sessionId: number } | null;
+  pendingConfirm:
+    | { action: "stop" | "archive" | "delete"; sessionId: number }
+    | null;
   // Rows the embed reserves and rows the sessions list shows.
   // Captured once at dialog-open from the editor's viewport so
   // the layout stays constant across re-renders — recomputing
@@ -325,6 +334,75 @@ function openListVisibleRows(): number {
 function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   if (openDialog?.pendingConfirm && s && openDialog.pendingConfirm.sessionId === s.id) {
     const action = openDialog.pendingConfirm.action;
+    if (action === "stop") {
+      return labeledSection({
+        label: "Confirm Stop",
+        child: col(
+          {
+            kind: "raw",
+            entries: [
+              styledRow([
+                {
+                  text: `Stop session [${s.id}] ${s.label}?`,
+                  style: { bold: true },
+                },
+              ]),
+              styledRow([{ text: "" }]),
+              styledRow([{ text: "This will:" }]),
+              styledRow([{ text: "  • send SIGTERM to all session processes" }]),
+              styledRow([{ text: "  • SIGKILL after a short grace period" }]),
+              styledRow([{ text: "" }]),
+              styledRow([{ text: "The worktree and session record remain." }]),
+            ],
+          },
+          spacer(0),
+          row(
+            flexSpacer(),
+            button("Cancel", { key: "confirm-cancel" }),
+            spacer(2),
+            button("Confirm Stop", {
+              intent: "danger",
+              key: "confirm-stop",
+            }),
+          ),
+        ),
+      });
+    }
+    if (action === "archive") {
+      return labeledSection({
+        label: "Confirm Archive",
+        child: col(
+          {
+            kind: "raw",
+            entries: [
+              styledRow([
+                {
+                  text: `Archive session [${s.id}] ${s.label}?`,
+                  style: { bold: true },
+                },
+              ]),
+              styledRow([{ text: "" }]),
+              styledRow([{ text: "This will:" }]),
+              styledRow([{ text: "  • SIGKILL all session processes" }]),
+              styledRow([{ text: "  • close the editor session" }]),
+              styledRow([{ text: "  • move the worktree to .archived/" }]),
+              styledRow([{ text: "" }]),
+              styledRow([{ text: "Reversible via Unarchive." }]),
+            ],
+          },
+          spacer(0),
+          row(
+            flexSpacer(),
+            button("Cancel", { key: "confirm-cancel" }),
+            spacer(2),
+            button("Confirm Archive", {
+              intent: "danger",
+              key: "confirm-archive",
+            }),
+          ),
+        ),
+      });
+    }
     if (action === "delete") {
       return labeledSection({
         label: "Confirm Delete",
@@ -410,6 +488,8 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // (back to compact).
   const detailsToggleLabel = detailsOn ? "Preview" : "Details";
   const buttonRow = row(
+    button("Visit", { intent: "primary", key: "visit" }),
+    spacer(2),
     flexSpacer(),
     button(detailsToggleLabel, { key: "toggle-details" }),
     spacer(2),
@@ -470,6 +550,26 @@ function buildOpenSpec(): WidgetSpec {
     ? orchestratorSessions.get(selectedId)
     : undefined;
 
+  // The "New Session" button advertises Alt+N (or whatever the
+  // user re-bound `orchestrator_open_new_from_picker` to). The
+  // label reads the binding dynamically through the host's
+  // `getKeybindingLabel` so a re-bound key shows correctly, and
+  // the host's `format_keybinding` already renders Mac-native
+  // symbols (⌥, ⌘, …) when running on macOS — no plugin-side
+  // platform detection needed.
+  //
+  // The button is declared in the footer (last tabbable) on
+  // purpose: Visit lives in the preview pane and we want it as
+  // the *first* tabbable after the filter so default focus
+  // lands on it after the post-mount `focusAdvance(1)` in
+  // `openControlRoom`.
+  const newKey = editor.getKeybindingLabel(
+    "orchestrator_open_new_from_picker",
+    OPEN_MODE,
+  );
+  const newLabel = newKey
+    ? `+ New Session  ${newKey}`
+    : "+ New Session";
   return col(
     {
       kind: "raw",
@@ -522,11 +622,11 @@ function buildOpenSpec(): WidgetSpec {
       buildPreviewPane(selectedSession),
     ),
     row(
+      button(newLabel, { intent: "primary", key: "new-session" }),
       flexSpacer(),
       hintBar([
         { keys: "↑↓", label: "nav" },
         { keys: "Enter", label: "dive" },
-        { keys: "Alt+N", label: "new" },
         { keys: "Tab", label: "focus" },
         { keys: "Esc", label: "close" },
       ]),
@@ -618,6 +718,18 @@ function openControlRoom(): void {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
   editor.setEditorMode(OPEN_MODE);
+  // Default focus is the first tabbable (the filter input). The
+  // user-facing default we want is the Visit button so Enter
+  // commits the dive and ↑/↓ navigate the list — Visit is the
+  // second tabbable (filter, then visit, then the rest of the
+  // preview-pane buttons, then the footer's New Session). Fire
+  // a one-step focus advance immediately after mount so the
+  // user lands on Visit without typing anything. When no
+  // session is selected (empty list) Visit isn't rendered and
+  // the advance is a no-op (focus stays on filter).
+  if (openDialog.filteredIds.length > 0) {
+    openPanel.command(focusAdvance(1));
+  }
 }
 
 function closeOpenDialog(): void {
@@ -648,10 +760,12 @@ function stopSelectedSession(): void {
   // SIGKILL fallback for agents that ignore SIGTERM. The
   // host's signalWindow is idempotent on already-exited
   // process groups, so the second call is safe whether or
-  // not the first one took.
-  setTimeout(() => {
+  // not the first one took. QuickJS has no `setTimeout`;
+  // the host exposes `editor.delay(ms)` as the asynchronous
+  // sleep primitive, which we kick off but don't await.
+  void editor.delay(2000).then(() => {
     editor.signalWindow(id, "SIGKILL");
-  }, 2000);
+  });
   editor.setStatus(`Orchestrator: stop signal sent to session [${id}]`);
 }
 
@@ -761,7 +875,7 @@ async function archiveSelectedSession(): Promise<void> {
 
   // Brief settle so the filesystem reflects the pty's exit
   // before we move the worktree out from under it.
-  await new Promise((r) => setTimeout(r, 250));
+  await editor.delay(250);
 
   // git worktree move keeps git's internal bookkeeping
   // consistent (the new path stays registered as a worktree).
@@ -1052,7 +1166,7 @@ async function deleteConfirmedSession(): Promise<void> {
 
   editor.signalWindow(id, "SIGKILL");
   editor.closeWindow(id);
-  await new Promise((r) => setTimeout(r, 250));
+  await editor.delay(250);
 
   // `--force` because the worktree may have unstaged changes
   // the user explicitly chose to discard via the confirm step.
@@ -1104,7 +1218,7 @@ editor.defineMode(
 registerHandler("orchestrator_open_new_from_picker", () => {
   if (!openDialog) return;
   closeOpenDialog();
-  openForm();
+  openForm({ fromPicker: true });
 });
 
 // =============================================================================
@@ -1394,16 +1508,17 @@ function renderForm(): void {
   formPanel.update(buildFormSpec());
 }
 
-function openForm(): void {
+function openForm(options?: { fromPicker?: boolean }): void {
   pendingNewSession = null;
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
     name: { value: "", cursor: 0 },
-    // Empty value — `lastCmd` shows as the placeholder instead so
-    // an empty submit falls back to the host's default shell
-    // ("terminal") rather than silently re-running the previous
-    // agent. See `NewSessionForm.lastCmd`.
+    // Empty value — `lastCmd` shows as the placeholder. If the
+    // user submits an empty cmd, the placeholder is used as the
+    // actual command (see `submitForm`). This makes the
+    // placeholder a genuine "press Enter to re-use this" hint
+    // rather than a visual lie.
     cmd: { value: "", cursor: 0 },
     branch: { value: "", cursor: 0 },
     submitting: false,
@@ -1411,6 +1526,7 @@ function openForm(): void {
     projectLabel: deriveProjectLabel(),
     defaultBranch: "",
     lastCmd,
+    fromPicker: !!options?.fromPicker,
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
@@ -1445,13 +1561,30 @@ function closeForm(): void {
   editor.setEditorMode(null);
 }
 
+// Cancel path: tear down the form, and if it was reached via the
+// picker (Alt+N or "+ New Session" button), reopen the picker so
+// Esc behaves like a true "back" rather than dropping the user
+// into the bare editor.
+function cancelForm(): void {
+  const wasFromPicker = !!form?.fromPicker;
+  closeForm();
+  if (wasFromPicker) {
+    openControlRoom();
+  }
+}
+
 async function submitForm(): Promise<void> {
   if (!form || form.submitting) return;
   form.submitting = true;
   form.lastError = null;
   renderForm();
 
-  const cmd = form.cmd.value.trim();
+  // Honour the placeholder: when the user leaves Agent Command
+  // blank, fall back to `lastCmd` (the placeholder text). The
+  // placeholder is rendered as a hint — if the user accepts it by
+  // pressing Enter on an empty field, the dialog should actually
+  // run that command rather than silently spawning a bare shell.
+  const cmd = form.cmd.value.trim() || form.lastCmd.trim();
   const branchInput = form.branch.value.trim();
 
   const cwd = editor.getCwd();
@@ -1616,7 +1749,7 @@ registerHandler("orchestrator_form_key_enter", () => {
   dispatchFormKey("Enter");
 });
 registerHandler("orchestrator_form_key_escape", () => {
-  if (form) closeForm();
+  if (form) cancelForm();
 });
 registerHandler(
   "orchestrator_form_key_backspace",
@@ -1667,16 +1800,21 @@ editor.on("widget_event", (e) => {
       if (e.widget_key === "create") {
         void submitForm();
       } else if (e.widget_key === "cancel") {
-        closeForm();
+        cancelForm();
       }
       return;
     }
     if (e.event_type === "cancel") {
       // Host fires this when Esc unmounts the floating panel —
-      // clean up our own state to match.
+      // mirror our own state and (if reached from the picker)
+      // bounce back to the picker so Esc is "back", not "out".
+      const wasFromPicker = !!form?.fromPicker;
       form = null;
       formPanel = null;
       editor.setEditorMode(null);
+      if (wasFromPicker) {
+        openControlRoom();
+      }
       return;
     }
     return;
@@ -1717,12 +1855,20 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
-    if (e.event_type === "activate" && e.widget_key === "sessions") {
+    if (
+      e.event_type === "activate" &&
+      (e.widget_key === "sessions" || e.widget_key === "visit")
+    ) {
       const id = openDialog.filteredIds[openDialog.selectedIndex];
       if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
         editor.setActiveWindow(id);
       }
       closeOpenDialog();
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "new-session") {
+      closeOpenDialog();
+      openForm({ fromPicker: true });
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "toggle-details") {
@@ -1731,11 +1877,19 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "stop") {
-      stopSelectedSession();
+      const id = openDialog.filteredIds[openDialog.selectedIndex];
+      if (typeof id === "number" && id > 0) {
+        openDialog.pendingConfirm = { action: "stop", sessionId: id };
+        openPanel.update(buildOpenSpec());
+      }
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "archive") {
-      void archiveSelectedSession();
+      const id = openDialog.filteredIds[openDialog.selectedIndex];
+      if (typeof id === "number" && id > 0) {
+        openDialog.pendingConfirm = { action: "archive", sessionId: id };
+        openPanel.update(buildOpenSpec());
+      }
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "delete") {
@@ -1749,6 +1903,18 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "activate" && e.widget_key === "confirm-cancel") {
       openDialog.pendingConfirm = null;
       openPanel.update(buildOpenSpec());
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "confirm-stop") {
+      openDialog.pendingConfirm = null;
+      stopSelectedSession();
+      if (openPanel) openPanel.update(buildOpenSpec());
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "confirm-archive") {
+      openDialog.pendingConfirm = null;
+      void archiveSelectedSession();
+      if (openPanel) openPanel.update(buildOpenSpec());
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "confirm-delete") {

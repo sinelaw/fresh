@@ -1950,8 +1950,16 @@ impl Editor {
         // side-effect plumbing — matching design Primitive #1.
         // Bail if the session has no stash yet (never been
         // activated and never had a terminal / file routed in via
-        // createTerminal({windowId})).
-        let __win_for_preview = self.windows.get_mut(&sid).expect("preview window present");
+        // createTerminal({windowId})), or has been closed under us
+        // — e.g. an Orchestrator Archive / Delete completes between
+        // the floating panel's spec being rebuilt and the next
+        // render, so the embed's `windowId` momentarily points to
+        // a window the host already removed. Early-return rather
+        // than panic; the next plugin refresh re-emits the spec
+        // without the dead embed.
+        let Some(__win_for_preview) = self.windows.get_mut(&sid) else {
+            return;
+        };
         let __preview_metadata = &__win_for_preview.buffer_metadata;
         let __preview_event_logs = &mut __win_for_preview.event_logs;
         let __preview_composite_buffers = &mut __win_for_preview.composite_buffers;
