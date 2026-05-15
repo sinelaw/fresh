@@ -10,6 +10,20 @@
 
 use crate::primitives::word_navigation::{find_word_end_bytes, find_word_start_bytes};
 
+/// Compute the flat UTF-8 byte offset of `(row, col)` into the
+/// `\n`-joined view of `lines`. Used by both `flat_cursor_byte` and
+/// `selection_flat_range` so the two stay in lock-step.
+fn flat_offset(lines: &[String], row: usize, col: usize) -> usize {
+    let mut offset = 0;
+    for (i, line) in lines.iter().enumerate() {
+        if i == row {
+            return offset + col.min(line.len());
+        }
+        offset += line.len() + 1;
+    }
+    offset.saturating_sub(1)
+}
+
 /// Multiline text editing state
 #[derive(Debug, Clone)]
 pub struct TextEdit {
@@ -114,6 +128,57 @@ impl TextEdit {
     /// Get number of lines
     pub fn line_count(&self) -> usize {
         self.lines.len()
+    }
+
+    /// Flat UTF-8 byte offset of the cursor in `value()`. Each newline
+    /// separator between lines counts as one byte. Useful as a bridge
+    /// to renderers / IPC payloads that speak in linear byte offsets.
+    pub fn flat_cursor_byte(&self) -> usize {
+        let mut offset = 0;
+        for (i, line) in self.lines.iter().enumerate() {
+            if i == self.cursor_row {
+                return offset + self.cursor_col.min(line.len());
+            }
+            offset += line.len() + 1; // +1 for the joining '\n'
+        }
+        // cursor_row past the end: clamp to value length.
+        self.value().len()
+    }
+
+    /// Move the cursor to the position designated by a flat UTF-8 byte
+    /// offset into `value()`. Clears any active selection (matching the
+    /// other non-selecting cursor-move methods). Clamps to the value's
+    /// length and snaps to the nearest preceding char boundary.
+    pub fn set_cursor_from_flat(&mut self, byte: usize) {
+        self.clear_selection();
+        let total = self.value().len();
+        let mut remaining = byte.min(total);
+        for (i, line) in self.lines.iter().enumerate() {
+            if remaining <= line.len() {
+                let mut col = remaining;
+                while col > 0 && !line.is_char_boundary(col) {
+                    col -= 1;
+                }
+                self.cursor_row = i;
+                self.cursor_col = col;
+                return;
+            }
+            remaining -= line.len() + 1; // step past the line and its trailing '\n'
+        }
+        self.cursor_row = self.lines.len().saturating_sub(1);
+        self.cursor_col = self.lines.last().map(|l| l.len()).unwrap_or(0);
+    }
+
+    /// Selection range expressed as `(start_flat_byte, end_flat_byte)`
+    /// into `value()`. Returns `None` when there's no active selection.
+    /// Useful for renderers that overlay a background highlight on a
+    /// flat-string view of the value.
+    pub fn selection_flat_range(&self) -> Option<(usize, usize)> {
+        let ((sr, sc), (er, ec)) = self.selection_range()?;
+        Some((
+            flat_offset(&self.lines, sr, sc),
+            flat_offset(&self.lines, er, ec),
+        ))
     }
 
     // ========================================================================
@@ -661,6 +726,48 @@ mod tests {
         edit.select_all();
         edit.insert_str("goodbye");
         assert_eq!(edit.value(), "goodbye");
+    }
+
+    #[test]
+    fn test_flat_cursor_byte_round_trips_multiline() {
+        let mut edit = TextEdit::with_text("ab\ncde\nf");
+        // Cursor on line 1 col 2 (between 'd' and 'e').
+        edit.cursor_row = 1;
+        edit.cursor_col = 2;
+        let flat = edit.flat_cursor_byte();
+        // "ab\n" = 3 bytes, plus 2 into line 1 = 5.
+        assert_eq!(flat, 5);
+        // Round-trip: set from flat 5 should land at (1, 2).
+        let mut edit2 = TextEdit::with_text("ab\ncde\nf");
+        edit2.set_cursor_from_flat(5);
+        assert_eq!((edit2.cursor_row, edit2.cursor_col), (1, 2));
+    }
+
+    #[test]
+    fn test_set_cursor_from_flat_clamps_past_end() {
+        let mut edit = TextEdit::with_text("abc\nde");
+        edit.set_cursor_from_flat(999);
+        assert_eq!((edit.cursor_row, edit.cursor_col), (1, 2));
+    }
+
+    #[test]
+    fn test_set_cursor_from_flat_snaps_to_char_boundary() {
+        // "é" is 2 bytes. Flat offset 1 lands mid-multibyte — snap to 0.
+        let mut edit = TextEdit::single_line_with_text("é");
+        edit.set_cursor_from_flat(1);
+        assert_eq!(edit.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_selection_flat_range_spans_newline() {
+        let mut edit = TextEdit::with_text("ab\ncd");
+        edit.cursor_row = 0;
+        edit.cursor_col = 1;
+        edit.move_right_selecting(); // (0,2)
+        edit.move_right_selecting(); // (1,0) — crossed the newline
+        edit.move_right_selecting(); // (1,1)
+                                     // Anchor was at (0,1) → flat 1. Cursor at (1,1) → flat 4.
+        assert_eq!(edit.selection_flat_range(), Some((1, 4)));
     }
 
     #[test]
