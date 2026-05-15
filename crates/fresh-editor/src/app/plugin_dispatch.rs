@@ -3366,26 +3366,31 @@ impl Editor {
                 cursor_byte,
             } => {
                 // Value+cursor live in instance state for the unified
-                // Text widget. Preserve `scroll` across the mutation
-                // so multi-line viewport offsets don't snap on a
+                // Text widget. Preserve `scroll` and `multiline` from
+                // the previous editor across the mutation so
+                // multi-line viewport offsets don't snap on a
                 // plugin-driven update; the renderer re-clamps next
                 // render anyway.
                 if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-                    let cb = match cursor_byte {
-                        Some(c) if c >= 0 => (c as u32).min(value.len() as u32),
-                        _ => value.len() as u32,
+                    let (scroll, multiline) = match panel.instance_states.get(&widget_key) {
+                        Some(crate::widgets::WidgetInstanceState::Text { editor, scroll }) => {
+                            (*scroll, editor.multiline)
+                        }
+                        _ => (0u32, true),
                     };
-                    let scroll = match panel.instance_states.get(&widget_key) {
-                        Some(crate::widgets::WidgetInstanceState::Text { scroll, .. }) => *scroll,
-                        _ => 0,
+                    let mut editor = if multiline {
+                        crate::primitives::text_edit::TextEdit::with_text(&value)
+                    } else {
+                        crate::primitives::text_edit::TextEdit::single_line_with_text(&value)
                     };
+                    let target = match cursor_byte {
+                        Some(c) if c >= 0 => (c as usize).min(value.len()),
+                        _ => value.len(),
+                    };
+                    editor.set_cursor_from_flat(target);
                     panel.instance_states.insert(
                         widget_key,
-                        crate::widgets::WidgetInstanceState::Text {
-                            value,
-                            cursor_byte: cb,
-                            scroll,
-                        },
+                        crate::widgets::WidgetInstanceState::Text { editor, scroll },
                     );
                 }
             }
@@ -4492,17 +4497,14 @@ impl Editor {
             _ => return None,
         };
         // Instance state is authoritative once rendered.
-        if let Some(crate::widgets::WidgetInstanceState::Text {
-            value,
-            cursor_byte,
-            scroll,
-        }) = panel.instance_states.get(&focus_key)
+        if let Some(crate::widgets::WidgetInstanceState::Text { editor, scroll }) =
+            panel.instance_states.get(&focus_key)
         {
             return Some((
                 focus_key,
                 FocusedText {
-                    value: value.clone(),
-                    cursor: *cursor_byte as usize,
+                    value: editor.value(),
+                    cursor: editor.flat_cursor_byte(),
                     scroll: *scroll,
                     multiline,
                 },
@@ -4540,11 +4542,16 @@ impl Editor {
         new_cursor: usize,
     ) {
         if let Some(panel) = self.widget_registry.get_mut(panel_id) {
+            let mut editor = if prev.multiline {
+                crate::primitives::text_edit::TextEdit::with_text(&new_value)
+            } else {
+                crate::primitives::text_edit::TextEdit::single_line_with_text(&new_value)
+            };
+            editor.set_cursor_from_flat(new_cursor);
             panel.instance_states.insert(
                 focus_key.to_string(),
                 crate::widgets::WidgetInstanceState::Text {
-                    value: new_value.clone(),
-                    cursor_byte: new_cursor as u32,
+                    editor,
                     scroll: prev.scroll,
                 },
             );

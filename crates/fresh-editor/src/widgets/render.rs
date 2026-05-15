@@ -1015,27 +1015,45 @@ fn render_collected(
             // Host-owned value/cursor (+ scroll, multi-line only):
             // read instance state if it exists; else seed from spec
             // on first render. See WidgetInstanceState::Text doc.
-            let (effective_value, effective_cursor_byte, prev_scroll) = match key
+            //
+            // `rows == 0` shouldn't happen because of serde's
+            // default = 1, but if it slips through (raw struct
+            // construction in tests, etc.) treat it as single-line.
+            let multiline_spec = *rows > 1;
+            let mut effective_editor: crate::primitives::text_edit::TextEdit;
+            let prev_scroll: u32;
+            match key
                 .as_deref()
                 .filter(|k| !k.is_empty())
                 .and_then(|k| prev.get(k))
             {
-                Some(WidgetInstanceState::Text {
-                    value,
-                    cursor_byte,
-                    scroll,
-                }) => (value.clone(), *cursor_byte as i32, *scroll),
-                _ => (value.clone(), *cursor_byte, 0),
-            };
+                Some(WidgetInstanceState::Text { editor, scroll }) => {
+                    effective_editor = editor.clone();
+                    prev_scroll = *scroll;
+                }
+                _ => {
+                    effective_editor = if multiline_spec {
+                        crate::primitives::text_edit::TextEdit::with_text(value)
+                    } else {
+                        crate::primitives::text_edit::TextEdit::single_line_with_text(value)
+                    };
+                    let seed = if *cursor_byte < 0 {
+                        value.len()
+                    } else {
+                        (*cursor_byte as usize).min(value.len())
+                    };
+                    effective_editor.set_cursor_from_flat(seed);
+                    prev_scroll = 0;
+                }
+            }
+            let effective_value = effective_editor.value();
+            let effective_cursor_byte = effective_editor.flat_cursor_byte() as i32;
             let effective_cursor = if is_focused {
                 effective_cursor_byte
             } else {
                 -1
             };
-            // `rows == 0` shouldn't happen because of serde's
-            // default = 1, but if it slips through (raw struct
-            // construction in tests, etc.) treat it as single-line.
-            let multiline = *rows > 1;
+            let multiline = multiline_spec;
             // When `full_width` is requested, override the
             // plugin-supplied `field_width` with the slice of
             // `panel_width` remaining after the label prefix,
@@ -1110,19 +1128,16 @@ fn render_collected(
                 ensure_trailing_newline(&mut entry);
                 entries.push(entry);
             }
-            // Persist instance state for next render. Cursor clamps
-            // into `[0, value.len()]`; `scroll` carries the
-            // renderer's auto-clamped first-visible-row for
-            // multi-line, or `0` for single-line.
+            // Persist instance state for next render. `editor`
+            // already carries the canonical cursor (row/col +
+            // selection); `scroll` carries the renderer's
+            // auto-clamped first-visible-row for multi-line, or `0`
+            // for single-line.
             if let Some(k) = key.as_deref().filter(|k| !k.is_empty()) {
-                let cb = effective_cursor_byte
-                    .max(0)
-                    .min(effective_value.len() as i32) as u32;
                 next_state.insert(
                     k.to_string(),
                     WidgetInstanceState::Text {
-                        value: effective_value.clone(),
-                        cursor_byte: cb,
+                        editor: effective_editor.clone(),
                         scroll: new_scroll,
                     },
                 );
@@ -4221,11 +4236,9 @@ mod tests {
         let prev = HashMap::new();
         let out = render_spec(&spec, &prev, "ta", 80);
         match out.instance_states.get("ta") {
-            Some(WidgetInstanceState::Text {
-                value, cursor_byte, ..
-            }) => {
-                assert_eq!(value, "abc");
-                assert_eq!(*cursor_byte, 2);
+            Some(WidgetInstanceState::Text { editor, .. }) => {
+                assert_eq!(editor.value(), "abc");
+                assert_eq!(editor.flat_cursor_byte(), 2);
             }
             other => panic!("expected Text instance state, got {:?}", other),
         }
@@ -4237,14 +4250,9 @@ mod tests {
         // the renderer reads from instance state.
         let spec = make_text_area("old", 0, true, 2, 8, Some("ta"));
         let mut prev = HashMap::new();
-        prev.insert(
-            "ta".into(),
-            WidgetInstanceState::Text {
-                value: "new".into(),
-                cursor_byte: 3,
-                scroll: 0,
-            },
-        );
+        let mut editor = crate::primitives::text_edit::TextEdit::with_text("new");
+        editor.set_cursor_from_flat(3);
+        prev.insert("ta".into(), WidgetInstanceState::Text { editor, scroll: 0 });
         let out = render_spec(&spec, &prev, "ta", 80);
         // The first row should now read "new" (not "old").
         assert!(out.entries[0].text.starts_with("new"));

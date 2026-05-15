@@ -7,6 +7,7 @@
 //! rendered output goes into — the plugin still owns the virtual
 //! buffer and passes its `BufferId` at mount time.
 
+use crate::primitives::text_edit::TextEdit;
 use fresh_core::api::WidgetSpec;
 use fresh_core::BufferId;
 use std::collections::{HashMap, HashSet};
@@ -70,12 +71,13 @@ pub enum WidgetInstanceState {
         scroll_offset: u32,
         selected_index: i32,
     },
-    /// `Text` instance state: host-owned value + cursor byte
-    /// offset, plus a viewport scroll offset that's only meaningful
-    /// for multi-line (`rows > 1`) variants — the row index of the
-    /// first visible line. Single-line text widgets always render
-    /// from value byte 0 and rely on render-time head-truncate
-    /// scrolling, so they leave `scroll` at `0`.
+    /// `Text` instance state: host-owned `TextEdit` (value + cursor
+    /// row/col + selection anchor + multiline flag), plus a viewport
+    /// scroll offset that's only meaningful for multi-line
+    /// (`rows > 1`) variants — the row index of the first visible
+    /// line. Single-line text widgets always render from value
+    /// byte 0 and rely on render-time head-truncate scrolling, so
+    /// they leave `scroll` at `0`.
     ///
     /// Becomes authoritative once the widget mounts; the spec's
     /// `value` / `cursor_byte` are *initial-only* (used at first
@@ -84,11 +86,13 @@ pub enum WidgetInstanceState {
     /// can't race against multiple in-flight `WidgetCommand`
     /// mutations because the host doesn't read from the spec for
     /// value at all once instance state exists.
-    Text {
-        value: String,
-        cursor_byte: u32,
-        scroll: u32,
-    },
+    ///
+    /// Switching from a naive `(String, u32)` to `TextEdit` is what
+    /// gives the widget framework selection support, word
+    /// navigation, and clipboard ops "for free" — every keybinding
+    /// the legacy Settings UI accepted via `TextEdit` now applies
+    /// to widget-backed text inputs too.
+    Text { editor: TextEdit, scroll: u32 },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become
     /// authoritative after first render — the spec's
