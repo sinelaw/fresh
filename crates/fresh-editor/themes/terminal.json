@@ -61,6 +61,7 @@
     "popup_selection_bg": "Blue",
     "popup_selection_fg": "White",
     "popup_text_fg": "Default",
+    "text_input_selection_bg": "Blue",
     "suggestion_bg": "Default",
     "suggestion_selected_bg": "Blue",
     "help_bg": "Default",

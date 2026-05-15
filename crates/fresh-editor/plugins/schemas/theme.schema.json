@@ -208,6 +208,11 @@
           255
         ],
         "popup_text_fg": "White",
+        "text_input_selection_bg": [
+          58,
+          79,
+          120
+        ],
         "suggestion_bg": [
           30,
           30,
@@ -961,6 +966,15 @@
           "description": "Popup window text color",
           "$ref": "#/$defs/ColorDef",
           "default": "White"
+        },
+        "text_input_selection_bg": {
+          "description": "Selection background inside a widget Text input. Reads against prompt_bg, so it needs higher contrast against that tint than editor.selection_bg.",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            58,
+            79,
+            120
+          ]
         },
         "suggestion_bg": {
           "description": "Autocomplete suggestion background",

@@ -48,6 +48,7 @@
     "popup_bg": [0, 0, 170],
     "popup_selection_bg": [0, 170, 0],
     "popup_text_fg": [255, 255, 85],
+    "text_input_selection_bg": [0, 170, 0],
     "settings_selected_bg": [170, 0, 170],
     "settings_selected_fg": [255, 255, 255],
     "suggestion_bg": [0, 0, 170],

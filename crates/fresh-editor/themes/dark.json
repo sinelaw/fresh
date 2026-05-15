@@ -50,6 +50,7 @@
     "popup_bg": [30, 30, 30],
     "popup_selection_bg": [58, 79, 120],
     "popup_text_fg": "White",
+    "text_input_selection_bg": [58, 79, 120],
     "settings_selected_bg": [58, 79, 120],
     "settings_selected_fg": [255, 255, 255],
     "suggestion_bg": [30, 30, 30],

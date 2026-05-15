@@ -29,6 +29,7 @@
     "popup_selection_bg": [94, 129, 172],
     "popup_selection_fg": [236, 239, 244],
     "popup_text_fg": [216, 222, 233],
+    "text_input_selection_bg": [94, 129, 172],
     "menu_fg": [216, 222, 233],
     "menu_highlight_bg": [94, 129, 172],
     "menu_highlight_fg": [236, 239, 244],

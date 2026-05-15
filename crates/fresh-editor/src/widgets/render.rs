@@ -51,6 +51,12 @@ const KEY_FOCUSED_BG: &str = "ui.popup_selection_bg";
 // key is the canonical "red text" theme slot.
 const KEY_DANGER_FG: &str = "diagnostic.error_fg";
 const KEY_INPUT_BG: &str = "ui.prompt_bg";
+// Background tint for the selection span inside a widget Text
+// input. Distinct from the buffer's `ui.selection_bg` because
+// widget inputs sit on top of the `ui.prompt_bg` field-bg overlay
+// and the contrast needs to read against that tint, not the
+// editor surface.
+const KEY_TEXT_INPUT_SELECTION_BG: &str = "ui.text_input_selection_bg";
 // Placeholder text uses the whitespace-indicator key — a dimmer
 // grey than `ui.menu_disabled_fg` (themes ship ~RGB(70,70,70)
 // vs ~RGB(100,100,100) for disabled menu items), so hint copy
@@ -1080,11 +1086,20 @@ fn render_collected(
             } else {
                 *field_width
             };
+            // Selection overlay is only meaningful for the focused
+            // widget — passing `None` otherwise keeps the no-selection
+            // rendering paths unchanged.
+            let selection_for_render = if is_focused {
+                effective_editor.selection_flat_range()
+            } else {
+                None
+            };
             let new_scroll;
             if multiline {
                 let rendered = render_text_area(
                     &effective_value,
                     effective_cursor,
+                    selection_for_render,
                     is_focused,
                     label,
                     placeholder.as_deref(),
@@ -1110,6 +1125,7 @@ fn render_collected(
                 let rendered = render_text_input(
                     &effective_value,
                     effective_cursor,
+                    selection_for_render,
                     is_focused,
                     label,
                     placeholder.as_deref(),
@@ -1804,9 +1820,11 @@ pub struct RenderedTextInput {
 /// on the panel buffer. Result: the cursor is always visible
 /// regardless of theme contrast, blinks correctly, and matches
 /// every other text-input field in the editor.
+#[allow(clippy::too_many_arguments)]
 pub fn render_text_input(
     value: &str,
     cursor_byte: i32,
+    selection: Option<(usize, usize)>,
     focused: bool,
     label: &str,
     placeholder: Option<&str>,
@@ -1980,6 +1998,38 @@ pub fn render_text_input(
         });
     }
 
+    // Selection overlay: paint `ui.text_input_selection_bg` over the
+    // selected range. Only emitted when focused (matches the cursor
+    // visibility rule) and when no per-row truncation is in play —
+    // the head-truncated `…` path remaps cursor bytes via
+    // `cursor_in_inner`, but a similar remap for an arbitrary
+    // range is intricate enough that the v1 widget framework just
+    // skips the highlight when the inner is `…`-prefixed. Cursor
+    // still renders correctly there.
+    let inner_is_truncated = inner.starts_with('…');
+    if focused && !inner_is_truncated {
+        if let Some((sel_start, sel_end)) = selection {
+            // Clamp to the visible value bytes. `inner` may have
+            // trailing padding (spaces) when `field_width > 0` —
+            // selection never extends into the pad area.
+            let visible_value_len = value.len();
+            let s = sel_start.min(sel_end).min(visible_value_len);
+            let e = sel_start.max(sel_end).min(visible_value_len);
+            if e > s {
+                overlays.push(InlineOverlay {
+                    start: inner_byte_start + s,
+                    end: inner_byte_start + e,
+                    style: OverlayOptions {
+                        bg: Some(OverlayColorSpec::theme_key(KEY_TEXT_INPUT_SELECTION_BG)),
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+    }
+
     let cursor_byte_in_entry = if focused {
         cursor_in_inner.map(|c| inner_byte_start + c)
     } else {
@@ -2051,6 +2101,7 @@ pub struct RenderedTextArea {
 pub fn render_text_area(
     value: &str,
     cursor_byte: i32,
+    selection: Option<(usize, usize)>,
     focused: bool,
     label: &str,
     placeholder: Option<&str>,
@@ -2086,6 +2137,19 @@ pub fn render_text_area(
         (cursor_byte as usize).min(value.len())
     };
     let (cursor_line, cursor_col) = byte_to_line_col(value, raw_cursor_byte);
+
+    // Selection decomposed onto (line_start, byte_in_line) →
+    // (line_end, byte_in_line) so each visible row can emit its own
+    // background overlay. Only meaningful when focused; we trust the
+    // caller to pass `None` for unfocused renders.
+    let selection_lc: Option<((usize, usize), (usize, usize))> = selection.and_then(|(a, b)| {
+        let lo = a.min(b);
+        let hi = a.max(b);
+        if hi <= lo || hi > value.len() {
+            return None;
+        }
+        Some((byte_to_line_col(value, lo), byte_to_line_col(value, hi)))
+    });
 
     // Auto-clamp scroll: keep cursor's line in [scroll_row,
     // scroll_row + visible_rows). On first render, prev_scroll == 0.
@@ -2165,6 +2229,37 @@ pub fn render_text_area(
                 properties: Default::default(),
                 unit: OffsetUnit::Byte,
             });
+        }
+
+        // Selection overlay for this row, clamped to the row's text
+        // length. Rows are padded out to `target_width`; selection
+        // never paints into the trailing pad area.
+        if focused {
+            if let Some(((sl, sc), (el, ec))) = selection_lc {
+                if line_idx >= sl && line_idx <= el {
+                    let line_text_len = if line_idx < lines.len() {
+                        lines[line_idx].len()
+                    } else {
+                        0
+                    };
+                    let row_start = if line_idx == sl { sc } else { 0 };
+                    let row_end = if line_idx == el { ec } else { line_text_len };
+                    let s = row_start.min(line_text_len);
+                    let e = row_end.min(line_text_len);
+                    if e > s {
+                        overlays.push(InlineOverlay {
+                            start: s,
+                            end: e,
+                            style: OverlayOptions {
+                                bg: Some(OverlayColorSpec::theme_key(KEY_TEXT_INPUT_SELECTION_BG)),
+                                ..Default::default()
+                            },
+                            properties: Default::default(),
+                            unit: OffsetUnit::Byte,
+                        });
+                    }
+                }
+            }
         }
 
         // Drop the cursor on this row if it matches.
@@ -3372,24 +3467,86 @@ mod tests {
 
     #[test]
     fn text_input_renders_value_in_brackets() {
-        let entry = render_text_input("hello", -1, false, "", None, 0, 0, false).entry;
+        let entry = render_text_input("hello", -1, None, false, "", None, 0, 0, false).entry;
         assert_eq!(entry.text, "[hello]");
         assert!(entry.inline_overlays.is_empty());
     }
 
     #[test]
     fn text_input_with_label_prefixes_with_label_space() {
-        let entry = render_text_input("foo", -1, false, "Search:", None, 0, 0, false).entry;
+        let entry = render_text_input("foo", -1, None, false, "Search:", None, 0, 0, false).entry;
         assert_eq!(entry.text, "Search: [foo]");
     }
 
     #[test]
     fn text_input_focused_adds_input_bg_overlay() {
-        let entry = render_text_input("x", -1, true, "", None, 0, 0, false).entry;
+        let entry = render_text_input("x", -1, None, true, "", None, 0, 0, false).entry;
         // Focused → input-bg overlay (no cursor since cursor_byte < 0).
         assert_eq!(entry.inline_overlays.len(), 1);
         let bg = entry.inline_overlays[0].style.bg.as_ref().unwrap();
         assert_eq!(bg.as_theme_key(), Some("ui.prompt_bg"));
+    }
+
+    #[test]
+    fn text_input_focused_with_selection_adds_selection_bg_overlay() {
+        // Focused + selection range → input-bg overlay AND a
+        // selection-bg overlay scoped to the selected bytes.
+        let entry =
+            render_text_input("hello world", 5, Some((0, 5)), true, "", None, 0, 0, false).entry;
+        // First char is at byte 1 (after `[`); selection over
+        // bytes 0..5 of value → entry bytes 1..6.
+        let sel = entry
+            .inline_overlays
+            .iter()
+            .find(|o| {
+                o.style.bg.as_ref().and_then(|c| c.as_theme_key())
+                    == Some("ui.text_input_selection_bg")
+            })
+            .expect("selection overlay present");
+        assert_eq!(sel.start, 1);
+        assert_eq!(sel.end, 6);
+    }
+
+    #[test]
+    fn text_input_unfocused_skips_selection_overlay() {
+        // Selection only paints when focused — an inactive widget
+        // shows no highlight.
+        let entry =
+            render_text_input("hello", -1, Some((0, 5)), false, "", None, 0, 0, false).entry;
+        let has_sel_overlay = entry.inline_overlays.iter().any(|o| {
+            o.style.bg.as_ref().and_then(|c| c.as_theme_key()) == Some("ui.text_input_selection_bg")
+        });
+        assert!(!has_sel_overlay);
+    }
+
+    #[test]
+    fn text_area_focused_with_selection_emits_per_row_overlays() {
+        // Multi-line selection from line 0 col 2 to line 1 col 3.
+        // Each visible row gets its own selection overlay clamped
+        // to that row's content bytes.
+        let r = render_text_area("abcd\nefgh", 8, Some((2, 8)), true, "", None, 2, 0, 0, 80);
+        // Row 0 (line 0): selection from byte 2..4 (last 2 chars of "abcd").
+        // Row 1 (line 1): selection from byte 0..3 (first 3 chars of "efgh").
+        let row0 = &r.entries[0];
+        let row1 = &r.entries[1];
+        let sel0 = row0
+            .inline_overlays
+            .iter()
+            .find(|o| {
+                o.style.bg.as_ref().and_then(|c| c.as_theme_key())
+                    == Some("ui.text_input_selection_bg")
+            })
+            .expect("row 0 selection overlay");
+        assert_eq!((sel0.start, sel0.end), (2, 4));
+        let sel1 = row1
+            .inline_overlays
+            .iter()
+            .find(|o| {
+                o.style.bg.as_ref().and_then(|c| c.as_theme_key())
+                    == Some("ui.text_input_selection_bg")
+            })
+            .expect("row 1 selection overlay");
+        assert_eq!((sel1.start, sel1.end), (0, 3));
     }
 
     #[test]
@@ -3398,7 +3555,7 @@ mod tests {
         // *within entry.text*. text = "[abc ]" (focused → trailing
         // pad space). 'a' at byte 1, 'b' at 2, 'c' at 3 — so a
         // cursor at value-byte 1 lands at entry-byte 2.
-        let r = render_text_input("abc", 1, true, "", None, 0, 0, false);
+        let r = render_text_input("abc", 1, None, true, "", None, 0, 0, false);
         assert_eq!(r.cursor_byte_in_entry, Some(2));
     }
 
@@ -3409,7 +3566,7 @@ mod tests {
         // overlaps the closing bracket. text = "[ab ]" → cursor
         // at value-byte 2 lands at entry-byte 3 (the space), not
         // at byte 4 (the `]`).
-        let r = render_text_input("ab", 2, true, "", None, 0, 0, false);
+        let r = render_text_input("ab", 2, None, true, "", None, 0, 0, false);
         assert_eq!(r.entry.text, "[ab ]");
         assert_eq!(r.cursor_byte_in_entry, Some(3));
         assert_ne!(r.cursor_byte_in_entry, Some(4), "must not overlap ]");
@@ -3417,7 +3574,8 @@ mod tests {
 
     #[test]
     fn text_input_unfocused_empty_shows_placeholder_in_muted() {
-        let entry = render_text_input("", -1, false, "", Some("type here"), 0, 0, false).entry;
+        let entry =
+            render_text_input("", -1, None, false, "", Some("type here"), 0, 0, false).entry;
         assert_eq!(entry.text, "[type here]");
         // Placeholder gets a muted-fg italic overlay.
         let placeholder_overlay = entry
@@ -3435,7 +3593,7 @@ mod tests {
         // New behaviour: placeholder remains visible while focused
         // until the user types something. Cursor parks at byte 0
         // of the placeholder so the first keystroke replaces it.
-        let r = render_text_input("", -1, true, "", Some("type here"), 0, 0, false);
+        let r = render_text_input("", -1, None, true, "", Some("type here"), 0, 0, false);
         assert_eq!(r.entry.text, "[type here]");
         assert_eq!(r.cursor_byte_in_entry, Some(1));
     }
@@ -3444,7 +3602,7 @@ mod tests {
     fn text_input_field_width_pads_short_value_unfocused() {
         // field_width=10, unfocused, not full_width → inner is 10
         // chars (no extra cursor-park pad).
-        let r = render_text_input("hi", 2, false, "", None, 0, 10, false);
+        let r = render_text_input("hi", 2, None, false, "", None, 0, 10, false);
         assert_eq!(r.entry.text, "[hi        ]");
     }
 
@@ -3453,7 +3611,7 @@ mod tests {
         // field_width=10, focused, value fills exactly 10 → inner
         // is 11 chars (10 + 1 cursor-park space) so the cursor at
         // end-of-value never lands on `]`.
-        let r = render_text_input("0123456789", 10, true, "", None, 0, 10, false);
+        let r = render_text_input("0123456789", 10, None, true, "", None, 0, 10, false);
         assert_eq!(r.entry.text, "[0123456789 ]");
         // Cursor at byte 10 of value → byte 10 of inner → byte 11
         // of entry.text (after `[`). That's the cursor-park space,
@@ -3467,7 +3625,7 @@ mod tests {
         // full_width=true makes the inner reserve the cursor-park
         // space whether or not the input is focused, so the field
         // doesn't "jump" wider on focus.
-        let r = render_text_input("hi", -1, false, "", None, 0, 10, true);
+        let r = render_text_input("hi", -1, None, false, "", None, 0, 10, true);
         assert_eq!(r.entry.text, "[hi         ]"); // 10 + 1 trailing pad
     }
 
@@ -3478,6 +3636,7 @@ mod tests {
         let r = render_text_input(
             "0123456789abcdefghijklmnopqrst",
             30,
+            None,
             false,
             "",
             None,
@@ -3492,7 +3651,7 @@ mod tests {
     fn text_input_field_width_clamps_cursor_in_dropped_prefix() {
         // Long value, field_width=5, focused, cursor at byte 0 (in
         // dropped prefix) → clamped to right after the `…`.
-        let r = render_text_input("abcdefghij", 0, true, "", None, 0, 5, false);
+        let r = render_text_input("abcdefghij", 0, None, true, "", None, 0, 5, false);
         // Inner = `…fghij ` (1 ellipsis + 4 tail chars + 1 pad).
         // Cursor at "right after `…`" = byte 3 of inner (3 = `…`'s
         // UTF-8 byte length). entry.text has `[` before, so
@@ -3503,7 +3662,7 @@ mod tests {
     #[test]
     fn text_input_truncates_long_value_keeping_tail_visible() {
         let value: String = "0123456789abcdefghij".to_string();
-        let entry = render_text_input(&value, -1, false, "", None, 6, 0, false).entry;
+        let entry = render_text_input(&value, -1, None, false, "", None, 6, 0, false).entry;
         // Tail-truncated to "…fghij" (max=6, take=5 chars).
         assert_eq!(entry.text, "[…fghij]");
     }
@@ -4281,7 +4440,7 @@ mod tests {
         // focus would otherwise auto-focus the only tabbable
         // widget — see `text_area_publishes_focus_cursor_at_value_position`
         // for the focused path.
-        let r = render_text_area("", -1, false, "", Some("write here"), 2, 12, 0, 80);
+        let r = render_text_area("", -1, None, false, "", Some("write here"), 2, 12, 0, 80);
         assert!(r.entries[0].text.starts_with("write here"));
         // Placeholder uses the muted-fg overlay.
         let fg = r.entries[0]

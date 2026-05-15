@@ -704,6 +704,15 @@ pub struct UiColors {
     /// Popup selected item background
     #[serde(default = "default_popup_selection_bg")]
     pub popup_selection_bg: ColorDef,
+    /// Selection background inside a widget Text input. Reads
+    /// against `prompt_bg`, so it needs higher contrast against
+    /// that tint than `editor.selection_bg` (which targets the
+    /// editor surface). Defaults to the same `popup_selection_bg`
+    /// blue used everywhere "selected item inside a chrome
+    /// surface" is shown — same key the prompt selection uses, so
+    /// the cue reads consistently across selection UIs.
+    #[serde(default = "default_text_input_selection_bg")]
+    pub text_input_selection_bg: ColorDef,
     /// Popup selected item text color
     #[serde(default = "default_popup_selection_fg")]
     pub popup_selection_fg: ColorDef,
@@ -928,6 +937,12 @@ fn default_popup_bg() -> ColorDef {
     ColorDef::Rgb(30, 30, 30)
 }
 fn default_popup_selection_bg() -> ColorDef {
+    ColorDef::Rgb(58, 79, 120)
+}
+fn default_text_input_selection_bg() -> ColorDef {
+    // Match the popup-selection blue. Widget Text inputs sit on a
+    // `prompt_bg` field tint, so the selection needs the same
+    // "selected on chrome" contrast that popups + prompts use.
     ColorDef::Rgb(58, 79, 120)
 }
 fn default_popup_selection_fg() -> ColorDef {
@@ -1296,6 +1311,10 @@ pub struct Theme {
     pub popup_selection_bg: Color,
     pub popup_selection_fg: Color,
     pub popup_text_fg: Color,
+    /// Background for the selection span inside a widget Text
+    /// input. See the file-format field doc for why this isn't
+    /// just `editor.selection_bg`.
+    pub text_input_selection_bg: Color,
 
     pub suggestion_bg: Color,
     pub suggestion_selected_bg: Color,
@@ -1503,6 +1522,7 @@ impl From<ThemeFile> for Theme {
             popup_selection_bg: file.ui.popup_selection_bg.into(),
             popup_selection_fg: file.ui.popup_selection_fg.into(),
             popup_text_fg: file.ui.popup_text_fg.into(),
+            text_input_selection_bg: file.ui.text_input_selection_bg.into(),
             suggestion_bg: file.ui.suggestion_bg.into(),
             suggestion_selected_bg: file.ui.suggestion_selected_bg.into(),
             help_bg: file.ui.help_bg.into(),
@@ -1668,6 +1688,7 @@ impl From<Theme> for ThemeFile {
                 popup_selection_bg: theme.popup_selection_bg.into(),
                 popup_selection_fg: theme.popup_selection_fg.into(),
                 popup_text_fg: theme.popup_text_fg.into(),
+                text_input_selection_bg: theme.text_input_selection_bg.into(),
                 suggestion_bg: theme.suggestion_bg.into(),
                 suggestion_selected_bg: theme.suggestion_selected_bg.into(),
                 help_bg: theme.help_bg.into(),
@@ -1951,6 +1972,7 @@ impl Theme {
                 "popup_selection_bg" => Some(self.popup_selection_bg),
                 "popup_selection_fg" => Some(self.popup_selection_fg),
                 "popup_text_fg" => Some(self.popup_text_fg),
+                "text_input_selection_bg" => Some(self.text_input_selection_bg),
                 "menu_bg" => Some(self.menu_bg),
                 "menu_fg" => Some(self.menu_fg),
                 "menu_active_bg" => Some(self.menu_active_bg),
@@ -2065,6 +2087,7 @@ impl Theme {
                 "popup_selection_bg" => Some(&mut self.popup_selection_bg),
                 "popup_selection_fg" => Some(&mut self.popup_selection_fg),
                 "popup_text_fg" => Some(&mut self.popup_text_fg),
+                "text_input_selection_bg" => Some(&mut self.text_input_selection_bg),
                 "menu_bg" => Some(&mut self.menu_bg),
                 "menu_fg" => Some(&mut self.menu_fg),
                 "menu_active_bg" => Some(&mut self.menu_active_bg),
