@@ -1671,16 +1671,31 @@ fn test_search_replace_second_alt_enter_does_not_corrupt_files() {
 //
 // These tests cover the user-visible payoff of the
 // Settings + widget-framework unification: pasting, selecting,
-// copying, and cutting against the search_replace plugin's
-// inline Text inputs goes through the same `TextEdit` primitive
-// the Settings UI uses, so the keyboard shortcuts every other
-// text input supports now work inside the panel too. We
-// observe behavior only through rendered output, per the
-// `CONTRIBUTING.md` E2E rules.
+// copying, and cutting against a widget `Text` input goes through
+// the same `TextEdit` primitive the Settings UI uses, so the
+// keyboard shortcuts every other text input supports now work
+// inside the panel too. We observe behavior only through rendered
+// output, per the `CONTRIBUTING.md` E2E rules.
+//
+// All tests focus the **Replace** field (Tab once from the
+// default search-focused state). The Search and Replace fields
+// are *the same widget kind* — both `WidgetSpec::Text` mounted in
+// the same panel with the same focus / keymap / clipboard
+// routing — so they exercise identical Stage 1 code paths.
+// We use Replace because typing into Search triggers the
+// plugin's debounced async search worker (150 ms wall-clock
+// `editor.delay`), which raced with subsequent keystrokes on
+// slow CI runners and caused timeouts: `wait_until_stable`
+// polls every 50 ms and the screen *appears* stable during
+// the 150 ms debounce window, so stability passes before the
+// search fires. Replace has none of that async tail, so the
+// tests are deterministic regardless of runner speed.
 
-/// Helper: open search_replace, wait for the panel, return with
-/// the search field focused and empty.
-fn open_panel_with_focus_on_search(
+/// Helper: open search_replace, Tab to the Replace field, and
+/// return a harness where the user's next keystroke lands in
+/// that field. Verified by typing a sentinel char and observing
+/// it appear in the Replace brackets (not Search).
+fn open_panel_with_focus_on_replace(
     project_root: &std::path::Path,
 ) -> (EditorTestHarness, std::path::PathBuf) {
     let start_file = project_root.join("alpha.txt");
@@ -1698,17 +1713,36 @@ fn open_panel_with_focus_on_search(
     harness
         .wait_until(|h| h.screen_to_string().contains("Search:"))
         .unwrap();
+
+    // Tab from Search → Replace.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // The screen rendering doesn't show focus via plain ASCII
+    // (it's a background-color overlay that `screen_to_string`
+    // strips), so verify focus moved by typing a sentinel that
+    // lands in the Replace field, then clean it up. The Replace
+    // field renders as `Replace: [<value> ...]`.
+    harness.type_text("Z").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replace: [Z"))
+        .expect("Tab should have moved focus to the Replace field");
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replace: [ "))
+        .expect("Backspace should have cleared the sentinel");
+
     (harness, start_file)
 }
 
-/// Ctrl+V into an empty search field inserts the clipboard
+/// Ctrl+V into an empty widget Text field inserts the clipboard
 /// contents at the cursor — same as typing them.
 #[test]
-fn test_search_replace_paste_into_search_field() {
+fn test_widget_text_paste_inserts_clipboard() {
     init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
     create_test_files(&project_root);
-    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_replace(&project_root);
 
     harness
         .editor_mut()
@@ -1717,26 +1751,21 @@ fn test_search_replace_paste_into_search_field() {
         .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Search field renders as `Search: [<value>...]`. The plugin
-    // schedules a debounced async search after every value
-    // change, then re-renders with results — `wait_until_stable`
-    // ensures the screen has stopped changing before we observe,
-    // so subsequent test runs aren't racing the search worker.
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("[hello"))
+        .wait_until(|h| h.screen_to_string().contains("Replace: [hello"))
         .unwrap();
 }
 
-/// Pasting text that contains a newline into the (single-line)
-/// search field flattens the newline to a space rather than
+/// Pasting text that contains a newline into a single-line
+/// widget Text field flattens the newline to a space rather than
 /// silently concatenating tokens. Validates the behavior the
 /// Stage 1 plan calls out explicitly.
 #[test]
-fn test_search_replace_paste_with_newline_flattened_to_space() {
+fn test_widget_text_paste_with_newline_flattened_to_space() {
     init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
     create_test_files(&project_root);
-    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_replace(&project_root);
 
     harness
         .editor_mut()
@@ -1746,36 +1775,29 @@ fn test_search_replace_paste_with_newline_flattened_to_space() {
         .unwrap();
 
     harness
-        .wait_until_stable(|h| {
+        .wait_until(|h| {
             let s = h.screen_to_string();
             // Newline must have become a single space — no
             // "foobar" (concatenation) and no actual line break
             // inside the field.
-            s.contains("[foo bar") && !s.contains("[foobar")
+            s.contains("Replace: [foo bar") && !s.contains("Replace: [foobar")
         })
         .unwrap();
 }
 
-/// Ctrl+A selects the whole search-field value; typing then
+/// Ctrl+A selects the whole widget Text value; typing then
 /// replaces it. This is the "GUI text input" baseline most users
 /// expect.
 #[test]
-fn test_search_replace_select_all_then_type_replaces_value() {
+fn test_widget_text_select_all_then_type_replaces_value() {
     init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
     create_test_files(&project_root);
-    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_replace(&project_root);
 
     harness.type_text("abc").unwrap();
-    // `wait_until_stable` so the plugin's debounced async search +
-    // result re-renders settle before we send the next keystrokes.
-    // Without this, `wait_until` succeeds the moment "[abc"
-    // renders — but the search worker is still about to push
-    // result-update re-renders, which can interleave with the
-    // following `Ctrl+A` / `type_text` and clobber the editor's
-    // selection state.
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("[abc"))
+        .wait_until(|h| h.screen_to_string().contains("Replace: [abc"))
         .unwrap();
 
     harness
@@ -1785,11 +1807,13 @@ fn test_search_replace_select_all_then_type_replaces_value() {
     harness.type_text("xyz").unwrap();
 
     harness
-        .wait_until_stable(|h| {
+        .wait_until(|h| {
             let s = h.screen_to_string();
             // Must show the new value; the old "abc" prefix must
             // not be hanging around.
-            s.contains("[xyz") && !s.contains("abcxyz") && !s.contains("[abc")
+            s.contains("Replace: [xyz")
+                && !s.contains("Replace: [abcxyz")
+                && !s.contains("Replace: [abc")
         })
         .unwrap();
 }
@@ -1800,18 +1824,15 @@ fn test_search_replace_select_all_then_type_replaces_value() {
 /// one flow: selection extension, host-side widget copy, and
 /// host-side widget paste.
 #[test]
-fn test_search_replace_shift_right_copy_paste_duplicates_substring() {
+fn test_widget_text_shift_right_copy_paste_duplicates_substring() {
     init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
     create_test_files(&project_root);
-    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_replace(&project_root);
 
     harness.type_text("abc").unwrap();
-    // Settle the async search before navigating — see comment in
-    // `test_search_replace_select_all_then_type_replaces_value`
-    // for why a plain `wait_until` is racy here.
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("[abc"))
+        .wait_until(|h| h.screen_to_string().contains("Replace: [abc"))
         .unwrap();
 
     // Home → cursor at start. Shift+Right twice → selection
@@ -1834,7 +1855,7 @@ fn test_search_replace_shift_right_copy_paste_duplicates_substring() {
         .unwrap();
 
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("[abcab"))
+        .wait_until(|h| h.screen_to_string().contains("Replace: [abcab"))
         .unwrap();
 }
 
@@ -1843,20 +1864,15 @@ fn test_search_replace_shift_right_copy_paste_duplicates_substring() {
 /// pre-unification behaviour where the widget framework had no
 /// selection so Backspace always removed one char.
 #[test]
-fn test_search_replace_shift_right_then_backspace_deletes_selection() {
+fn test_widget_text_shift_right_then_backspace_deletes_selection() {
     init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
     create_test_files(&project_root);
-    let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_replace(&project_root);
 
     harness.type_text("abc").unwrap();
-    // Settle the async search before navigating — without this,
-    // an async result-update re-render can land between
-    // `Shift+Right` keystrokes and lose the selection state.
-    // (Observed as a Windows CI flake — slower runners give the
-    // search worker time to push a re-render mid-sequence.)
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("[abc"))
+        .wait_until(|h| h.screen_to_string().contains("Replace: [abc"))
         .unwrap();
 
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -1872,12 +1888,15 @@ fn test_search_replace_shift_right_then_backspace_deletes_selection() {
         .unwrap();
 
     harness
-        .wait_until_stable(|h| {
+        .wait_until(|h| {
             let s = h.screen_to_string();
-            // Field must read `[c` (with whatever padding the
-            // renderer adds) and the original `[abc` must be
+            // Field must read `Replace: [c` (with whatever padding
+            // the renderer adds) and the original `[abc` must be
             // gone.
-            s.contains("[c") && !s.contains("[abc") && !s.contains("[ab ") && !s.contains("[ab]")
+            s.contains("Replace: [c")
+                && !s.contains("Replace: [abc")
+                && !s.contains("Replace: [ab ")
+                && !s.contains("Replace: [ab]")
         })
         .unwrap();
 }
