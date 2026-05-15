@@ -18,7 +18,7 @@ pub use input::NumberInputEvent;
 pub use render::{render_number_input, render_number_input_aligned};
 
 use super::FocusState;
-use crate::view::ui::text_edit::TextEdit;
+use crate::primitives::text_edit::TextEdit;
 
 /// State for a number input control
 #[derive(Debug, Clone)]

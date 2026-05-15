@@ -27,6 +27,10 @@ pub mod text_property;
 pub mod line_iterator;
 pub mod word_navigation;
 
+// Reusable text-editing primitive shared by the legacy Settings UI
+// and the plugin widget framework.
+pub mod text_edit;
+
 // Modules using ratatui types (Color, Style, etc.) - available for both runtime and WASM
 // since ratatui core is WASM-compatible (only the crossterm backend is native-only)
 #[cfg(any(feature = "runtime", feature = "wasm"))]
