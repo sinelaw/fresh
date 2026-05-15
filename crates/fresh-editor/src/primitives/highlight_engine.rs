@@ -1338,6 +1338,30 @@ impl HighlightEngine {
         }
     }
 
+    /// Track a sequence of bulk edits in the cache.
+    ///
+    /// Each edit is `(pos, del_len, ins_len)`. The slice must be sorted in
+    /// descending position order — the same order `apply_bulk_edits` uses to
+    /// mutate the buffer — so positions remain valid as the buffer changes.
+    ///
+    /// This mirrors the `notify_*` + `invalidate_range` pattern used by
+    /// single-edit paths. It preserves the TextMate engine's checkpoints and
+    /// dirty-from anchor (so the next render uses the partial-update path
+    /// rather than a cold reparse from byte zero) and drops the tree-sitter
+    /// viewport cache only when an edit overlaps it.
+    pub fn notify_edits(&mut self, edits: &[(usize, usize, usize)]) {
+        for &(pos, del_len, ins_len) in edits {
+            if del_len > 0 {
+                self.notify_delete(pos, del_len);
+            }
+            if ins_len > 0 {
+                self.notify_insert(pos, ins_len);
+            }
+            let edit_end = pos + del_len.max(ins_len);
+            self.invalidate_range(pos..edit_end);
+        }
+    }
+
     /// Check if this engine has highlighting available
     pub fn has_highlighting(&self) -> bool {
         !matches!(self, Self::None)
@@ -1949,6 +1973,102 @@ mod tests {
         assert!(
             parsed < buf_len,
             "edit must not trigger a whole-file reparse (parsed {parsed}, file {buf_len})"
+        );
+    }
+
+    /// Bulk edits (multi-cursor typing, "select word + type letter" replace,
+    /// search-replace, etc.) must take the same partial-update path as single
+    /// edits. Regression for #1958: the previous code called `invalidate_all()`
+    /// after a bulk edit, wiping every checkpoint and forcing a cold reparse
+    /// from byte zero on the next keystroke.
+    #[test]
+    fn test_bulk_edit_uses_partial_update() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), None, &registry);
+
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!("fn f_{i}() {{ let x = {i}; }}\n"));
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        // Warm cache.
+        let _ = engine.highlight_viewport(&buffer, 0, 100, &theme, 10_000);
+        let bytes_before_edit = match &engine {
+            HighlightEngine::TextMate(h) => h.stats().bytes_parsed,
+            _ => panic!("expected TextMate engine for .rs"),
+        };
+        let buf_len = buffer.len();
+        assert!(
+            buf_len > 4000,
+            "test needs a buffer larger than the partial-update region"
+        );
+
+        // Simulate "select a word, type a letter" deep in the file: a single
+        // bulk edit that deletes 8 bytes and inserts 1 byte at the same
+        // position. This is exactly the user-facing scenario in #1958.
+        let edit_pos = buf_len / 2;
+        let edits = vec![(edit_pos, 8usize, 1usize)];
+        engine.notify_edits(&edits);
+
+        let _ = engine.highlight_viewport(&buffer, 0, 100, &theme, 10_000);
+        let bytes_after_edit = match &engine {
+            HighlightEngine::TextMate(h) => h.stats().bytes_parsed,
+            _ => unreachable!(),
+        };
+        let parsed = bytes_after_edit - bytes_before_edit;
+
+        assert!(
+            parsed < buf_len,
+            "bulk edit must not trigger a whole-file reparse \
+             (parsed {parsed}, file {buf_len})"
+        );
+    }
+
+    /// Bulk edits whose positions are all outside the cached viewport must
+    /// not invalidate the cache at all on the tree-sitter / `Highlighter`
+    /// path. (TextMate has a richer convergence model, but for both engines
+    /// the regression to guard against is: "any bulk edit, even a tiny one,
+    /// destroys the cache and forces a full reparse.")
+    #[test]
+    fn test_bulk_edit_outside_cache_keeps_textmate_partial_update() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("test.rs"), None, &registry);
+
+        let mut content = String::new();
+        for i in 0..400 {
+            content.push_str(&format!("fn f_{i}() {{ let x = {i}; }}\n"));
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        // Warm a viewport near the start.
+        let _ = engine.highlight_viewport(&buffer, 0, 200, &theme, 1_000);
+        let bytes_before = match &engine {
+            HighlightEngine::TextMate(h) => h.stats().bytes_parsed,
+            _ => panic!("expected TextMate engine for .rs"),
+        };
+
+        // Apply a bulk edit far past the warmed viewport.
+        let far_pos = buffer.len() - 100;
+        engine.notify_edits(&[(far_pos, 3, 1)]);
+
+        // Re-render the original viewport. The partial-update path must keep
+        // parsed bytes well below a whole-file reparse.
+        let _ = engine.highlight_viewport(&buffer, 0, 200, &theme, 1_000);
+        let bytes_after = match &engine {
+            HighlightEngine::TextMate(h) => h.stats().bytes_parsed,
+            _ => unreachable!(),
+        };
+        let parsed = bytes_after - bytes_before;
+        let buf_len = buffer.len();
+        assert!(
+            parsed < buf_len,
+            "bulk edit outside the viewport must not force a whole-file \
+             reparse (parsed {parsed}, file {buf_len})"
         );
     }
 

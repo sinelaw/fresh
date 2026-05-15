@@ -468,7 +468,11 @@ impl Editor {
             }
         }
 
-        // Invalidate highlighter
+        // Notify the highlighter of each edit so the cache can take the
+        // partial-update path on the next render. Throwing the whole cache
+        // away here (the previous behaviour) wiped every checkpoint as well,
+        // forcing a cold reparse from byte zero on the next keystroke — see
+        // https://github.com/sinelaw/fresh/issues/1958.
         self.windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
@@ -476,7 +480,7 @@ impl Editor {
             .get_mut(&active_buf)
             .unwrap()
             .highlighter
-            .invalidate_all();
+            .notify_edits(&edit_lengths);
 
         // Create BulkEdit event with both buffer snapshots
         let bulk_edit = Event::BulkEdit {
