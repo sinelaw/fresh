@@ -708,6 +708,25 @@ impl Editor {
                             return self.handle_action(Action::PluginAction(action_name));
                         }
                     }
+                    // Before blocking the key, resolve it against
+                    // the Normal context and forward if it's one of
+                    // the clipboard / select-all actions — those
+                    // legitimately belong to the focused widget
+                    // Text input, not the underlying buffer. Other
+                    // Ctrl-modified actions (e.g. Open / Save /
+                    // SplitVertical) stay blocked so they don't
+                    // hijack a focused search field.
+                    let normal_ctx = crate::input::keybindings::KeyContext::Normal;
+                    let resolved = {
+                        let keybindings = self.keybindings.read().unwrap();
+                        keybindings.resolve(&key_event, normal_ctx)
+                    };
+                    match resolved {
+                        Action::Paste | Action::Copy | Action::Cut | Action::SelectAll => {
+                            return self.handle_action(resolved);
+                        }
+                        _ => {}
+                    }
                     tracing::debug!("Blocking unbound key in text-input mode '{}'", mode_name);
                     return Ok(());
                 }
@@ -987,8 +1006,20 @@ impl Editor {
                     self.active_window_mut().file_explorer_copy();
                     return Ok(());
                 }
-                // Check if active buffer is a composite buffer
+                // A focused widget Text input on the active buffer
+                // wins over the underlying buffer's copy path. The
+                // widget's selection lives in its TextEdit; this
+                // bypasses `is_editing_disabled` because widget
+                // inputs are independent of the underlying virtual
+                // buffer's read-only-ness.
                 let buffer_id = self.active_buffer();
+                if let Some(panel_id) = self.focused_text_widget_panel_for_buffer(buffer_id) {
+                    if self.handle_widget_copy(panel_id) {
+                        self.set_status_message(t!("clipboard.copied").to_string());
+                        return Ok(());
+                    }
+                }
+                // Check if active buffer is a composite buffer
                 if self.active_window().is_composite_buffer(buffer_id) {
                     if let Some(_handled) = self.handle_composite_action(buffer_id, &Action::Copy) {
                         return Ok(());
@@ -1006,6 +1037,15 @@ impl Editor {
                     self.active_window_mut().file_explorer_cut();
                     return Ok(());
                 }
+                // Focused widget Text wins over the buffer cut path,
+                // and bypasses `is_editing_disabled` — widget inputs
+                // are independent of the underlying virtual buffer.
+                let buffer_id = self.active_buffer();
+                if let Some(panel_id) = self.focused_text_widget_panel_for_buffer(buffer_id) {
+                    if self.handle_widget_cut(panel_id) {
+                        return Ok(());
+                    }
+                }
                 if self.active_window().is_editing_disabled() {
                     self.set_status_message(t!("buffer.editing_disabled").to_string());
                     return Ok(());
@@ -1019,11 +1059,37 @@ impl Editor {
                     self.file_explorer_paste();
                     return Ok(());
                 }
+                // Focused widget Text wins over the buffer paste
+                // path, and bypasses `is_editing_disabled`. Line
+                // endings get normalised to LF before insertion
+                // (multi-line `TextEdit` stores plain `\n`;
+                // single-line strips them).
+                let buffer_id = self.active_buffer();
+                if let Some(panel_id) = self.focused_text_widget_panel_for_buffer(buffer_id) {
+                    if let Some(text) = self.clipboard.paste() {
+                        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                        self.handle_widget_insert_str(panel_id, &normalized);
+                        self.set_status_message(t!("clipboard.pasted").to_string());
+                    }
+                    return Ok(());
+                }
                 if self.active_window().is_editing_disabled() {
                     self.set_status_message(t!("buffer.editing_disabled").to_string());
                     return Ok(());
                 }
                 self.paste()
+            }
+            Action::SelectAll => {
+                // Focused widget Text wins over the buffer's
+                // select-all. SelectAll on the buffer is then
+                // handled by the default `apply_action_as_events`
+                // catch-all path below.
+                let buffer_id = self.active_buffer();
+                if let Some(panel_id) = self.focused_text_widget_panel_for_buffer(buffer_id) {
+                    self.handle_widget_select_all(panel_id);
+                    return Ok(());
+                }
+                self.apply_action_as_events(Action::SelectAll)?;
             }
             Action::YankWordForward => self.yank_word_forward(),
             Action::YankWordBackward => self.yank_word_backward(),

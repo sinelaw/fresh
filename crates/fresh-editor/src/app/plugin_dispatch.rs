@@ -4443,6 +4443,108 @@ impl Editor {
         }
     }
 
+    /// Walk every panel rendering into `buffer_id` and return the
+    /// first one whose currently-focused widget is a `Text`.
+    /// Returns `None` when no such panel exists (e.g. when the
+    /// buffer is a regular text buffer, or the panel has focus on
+    /// a `Button` / `List` / etc.).
+    ///
+    /// This is the universal hook the clipboard ops use to route
+    /// Paste / Copy / Cut / Select-All to a focused widget text
+    /// field instead of the underlying buffer. Same idea as the
+    /// existing Prompt and FileExplorer branches in the clipboard
+    /// path, generalised: any plugin-mounted Text widget that has
+    /// focus wins over the underlying buffer.
+    pub(super) fn focused_text_widget_panel_for_buffer(
+        &self,
+        buffer_id: crate::model::event::BufferId,
+    ) -> Option<u64> {
+        for panel_id in self.widget_registry.panels_for_buffer(buffer_id) {
+            let panel = self.widget_registry.get(panel_id)?;
+            if panel.focus_key.is_empty() {
+                continue;
+            }
+            let widget = crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key);
+            if matches!(widget, Some(fresh_core::api::WidgetSpec::Text { .. })) {
+                return Some(panel_id);
+            }
+        }
+        None
+    }
+
+    /// Read the currently-selected text from the focused `Text`
+    /// widget on the given panel, or `None` when nothing is
+    /// selected (no anchor, or anchor == cursor). Used by the
+    /// host-side Copy / Cut routing path.
+    pub(super) fn focused_widget_selected_text(&self, panel_id: u64) -> Option<String> {
+        let panel = self.widget_registry.get(panel_id)?;
+        if panel.focus_key.is_empty() {
+            return None;
+        }
+        match panel.instance_states.get(&panel.focus_key) {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
+                editor.selected_text()
+            }
+            _ => None,
+        }
+    }
+
+    /// Select-all in the focused widget Text. Returns true when
+    /// applied (focus was a Text widget). The op fires a `change`
+    /// event only if the selection range actually changed; an
+    /// already-fully-selected widget is a no-op.
+    pub(super) fn handle_widget_select_all(&mut self, panel_id: u64) -> bool {
+        // SelectAll moves the cursor to end-of-value and sets anchor
+        // at start — `with_focused_text_editor` will skip re-render
+        // when nothing changed, which is fine.
+        self.with_focused_text_editor(panel_id, |editor| editor.select_all())
+    }
+
+    /// Copy the focused widget Text's current selection to the
+    /// internal clipboard. Returns true when copy ran (even when
+    /// the selection was empty — the action is consumed either way
+    /// so it doesn't fall through to the buffer's copy path).
+    pub(super) fn handle_widget_copy(&mut self, panel_id: u64) -> bool {
+        if self.widget_registry.get(panel_id).is_none() {
+            return false;
+        }
+        if let Some(text) = self.focused_widget_selected_text(panel_id) {
+            self.clipboard.copy(text);
+        }
+        true
+    }
+
+    /// Cut the focused widget Text's current selection — copy then
+    /// delete. With no selection, this is a no-op consume.
+    pub(super) fn handle_widget_cut(&mut self, panel_id: u64) -> bool {
+        if self.widget_registry.get(panel_id).is_none() {
+            return false;
+        }
+        if let Some(text) = self.focused_widget_selected_text(panel_id) {
+            self.clipboard.copy(text);
+            self.with_focused_text_editor(panel_id, |editor| {
+                editor.delete_selection();
+            });
+        }
+        true
+    }
+
+    /// Insert `text` at the focused widget Text's cursor (replacing
+    /// any active selection). Used by the host-side Paste routing
+    /// path; `text` is already line-ending-normalised by the
+    /// caller (CRLF / CR → LF). `TextEdit::insert_str` strips
+    /// embedded newlines when the editor is single-line.
+    pub(super) fn handle_widget_insert_str(&mut self, panel_id: u64, text: &str) -> bool {
+        if self.widget_registry.get(panel_id).is_none() {
+            return false;
+        }
+        let owned = text.to_string();
+        self.with_focused_text_editor(panel_id, move |editor| {
+            editor.insert_str(&owned);
+        });
+        true
+    }
+
     /// Ensure `panel.instance_states[focus_key]` is a seeded
     /// `Text { editor, .. }` for the focused widget. If instance
     /// state already has the entry, no-op. If not, seeds from the
