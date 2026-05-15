@@ -1717,10 +1717,13 @@ fn test_search_replace_paste_into_search_field() {
         .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Search field renders as `Search: [<value>...]`. Wait for
-    // the pasted value to show up.
+    // Search field renders as `Search: [<value>...]`. The plugin
+    // schedules a debounced async search after every value
+    // change, then re-renders with results — `wait_until_stable`
+    // ensures the screen has stopped changing before we observe,
+    // so subsequent test runs aren't racing the search worker.
     harness
-        .wait_until(|h| h.screen_to_string().contains("[hello"))
+        .wait_until_stable(|h| h.screen_to_string().contains("[hello"))
         .unwrap();
 }
 
@@ -1743,7 +1746,7 @@ fn test_search_replace_paste_with_newline_flattened_to_space() {
         .unwrap();
 
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             // Newline must have become a single space — no
             // "foobar" (concatenation) and no actual line break
@@ -1764,19 +1767,25 @@ fn test_search_replace_select_all_then_type_replaces_value() {
     let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
 
     harness.type_text("abc").unwrap();
+    // `wait_until_stable` so the plugin's debounced async search +
+    // result re-renders settle before we send the next keystrokes.
+    // Without this, `wait_until` succeeds the moment "[abc"
+    // renders — but the search worker is still about to push
+    // result-update re-renders, which can interleave with the
+    // following `Ctrl+A` / `type_text` and clobber the editor's
+    // selection state.
     harness
-        .wait_until(|h| h.screen_to_string().contains("[abc"))
+        .wait_until_stable(|h| h.screen_to_string().contains("[abc"))
         .unwrap();
 
     harness
         .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
         .unwrap();
-    harness.render().unwrap();
     // Typing now replaces the (fully-selected) value.
     harness.type_text("xyz").unwrap();
 
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             // Must show the new value; the old "abc" prefix must
             // not be hanging around.
@@ -1798,8 +1807,11 @@ fn test_search_replace_shift_right_copy_paste_duplicates_substring() {
     let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
 
     harness.type_text("abc").unwrap();
+    // Settle the async search before navigating — see comment in
+    // `test_search_replace_select_all_then_type_replaces_value`
+    // for why a plain `wait_until` is racy here.
     harness
-        .wait_until(|h| h.screen_to_string().contains("[abc"))
+        .wait_until_stable(|h| h.screen_to_string().contains("[abc"))
         .unwrap();
 
     // Home → cursor at start. Shift+Right twice → selection
@@ -1822,7 +1834,7 @@ fn test_search_replace_shift_right_copy_paste_duplicates_substring() {
         .unwrap();
 
     harness
-        .wait_until(|h| h.screen_to_string().contains("[abcab"))
+        .wait_until_stable(|h| h.screen_to_string().contains("[abcab"))
         .unwrap();
 }
 
@@ -1838,8 +1850,13 @@ fn test_search_replace_shift_right_then_backspace_deletes_selection() {
     let (mut harness, _) = open_panel_with_focus_on_search(&project_root);
 
     harness.type_text("abc").unwrap();
+    // Settle the async search before navigating — without this,
+    // an async result-update re-render can land between
+    // `Shift+Right` keystrokes and lose the selection state.
+    // (Observed as a Windows CI flake — slower runners give the
+    // search worker time to push a re-render mid-sequence.)
     harness
-        .wait_until(|h| h.screen_to_string().contains("[abc"))
+        .wait_until_stable(|h| h.screen_to_string().contains("[abc"))
         .unwrap();
 
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -1855,7 +1872,7 @@ fn test_search_replace_shift_right_then_backspace_deletes_selection() {
         .unwrap();
 
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             // Field must read `[c` (with whatever padding the
             // renderer adds) and the original `[abc` must be
