@@ -21,7 +21,6 @@ import {
   col,
   flexSpacer,
   FloatingWidgetPanel,
-  focusAdvance,
   hintBar,
   key as widgetKey,
   labeledSection,
@@ -621,11 +620,10 @@ function buildOpenSpec(): WidgetSpec {
   // symbols (⌥, ⌘, …) when running on macOS — no plugin-side
   // platform detection needed.
   //
-  // The button is declared in the footer (last tabbable) on
-  // purpose: Visit lives in the preview pane and we want it as
-  // the *first* tabbable after the filter so default focus
-  // lands on it after the post-mount `focusAdvance(1)` in
-  // `openControlRoom`.
+  // The button is the *first* tabbable in the dialog (top of the
+  // sessions column, before the filter input) so default focus
+  // lands on it directly — Enter creates a new session without
+  // requiring the user to navigate first.
   const newKey = editor.getKeybindingLabel(
     "orchestrator_open_new_from_picker",
     OPEN_MODE,
@@ -690,11 +688,12 @@ function buildOpenSpec(): WidgetSpec {
       labeledSection({
         label: `Sessions (${filtered.length})`,
         widthPct: 25,
-        // Sessions column: filter, separator, new-session
-        // button, separator, list. Separators are long `─`
-        // strings that the renderer truncates to the column's
-        // inner width — no need to measure cells from the
-        // plugin side.
+        // Sessions column: new-session button, separator,
+        // filter, separator, list. The button is first so it
+        // gets initial focus (Enter immediately opens the new
+        // session form). Separators are long `─` strings that
+        // the renderer truncates to the column's inner width —
+        // no need to measure cells from the plugin side.
         child: col(
           row(
             button(newLabel, { intent: "primary", key: "new-session" }),
@@ -847,18 +846,10 @@ function openControlRoom(): void {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
   editor.setEditorMode(OPEN_MODE);
-  // Default focus is the first tabbable (the filter input). The
-  // user-facing default we want is the Visit button so Enter
-  // commits the dive and ↑/↓ navigate the list — Visit is the
-  // second tabbable (filter, then visit, then the rest of the
-  // preview-pane buttons, then the footer's New Session). Fire
-  // a one-step focus advance immediately after mount so the
-  // user lands on Visit without typing anything. When no
-  // session is selected (empty list) Visit isn't rendered and
-  // the advance is a no-op (focus stays on filter).
-  if (openDialog.filteredIds.length > 0) {
-    openPanel.command(focusAdvance(1));
-  }
+  // Default focus is the first tabbable — the "+ New Session"
+  // button at the top of the sessions column. Tab cycle:
+  // new-session → filter → list-implicit (via smart-keys) →
+  // preview-pane buttons.
 }
 
 function closeOpenDialog(): void {
