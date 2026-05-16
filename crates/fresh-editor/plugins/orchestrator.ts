@@ -111,7 +111,22 @@ interface NewSessionForm {
   // button) we re-open the picker so the user lands back where
   // they were instead of being dropped into the bare editor.
   fromPicker: boolean;
+  // Mirror of the host's currently-focused widget key. Updated
+  // by the Tab/Shift+Tab handlers below as they cycle through
+  // the form's tabbable order. The Enter handler reads this so
+  // a press on the Cancel button cancels instead of submitting
+  // (the host's smart-key Enter on a button would activate it,
+  // but the plugin's mode binding for Enter intercepts before
+  // smart-key dispatch runs — without this mirror, every Enter
+  // would always submit regardless of focus).
+  focusedKey: string;
 }
+
+// Tabbable order in the new-session form. Mirrors the spec
+// builder's declaration order in `buildFormSpec`. Used by the
+// Enter / Tab / Shift+Tab handlers to keep `form.focusedKey` in
+// sync with the host's focus tracking.
+const FORM_TABBABLE: readonly string[] = ["name", "cmd", "branch", "cancel", "create"];
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
 
@@ -169,6 +184,13 @@ interface OpenDialogState {
   // disappears from the list naturally once the editor's
   // `window_closed` hook fires `refreshOpenDialog`.
   inFlight: { action: "archive" | "delete"; sessionId: number } | null;
+  // Last user-visible error from a refused lifecycle action
+  // (e.g. "cannot archive the base session", "dive elsewhere
+  // first…"). Rendered as a banner row above the filter so it's
+  // hard to miss — the status bar at the bottom of the screen is
+  // too easy to skip over when the user's eyes are on the dialog.
+  // Cleared on the next nav / filter change.
+  lastError: string | null;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -618,6 +640,55 @@ function buildOpenSpec(): WidgetSpec {
   const newLabel = newKey
     ? `+ New Session  ${newKey}`
     : "+ New Session";
+  const inConfirm = openDialog.pendingConfirm !== null;
+  // Filter is replaced by a non-tabbable display row while a
+  // confirmation prompt is up — typing into the filter shouldn't
+  // change anything when the user's next decision is binary
+  // (Cancel / Confirm). Removing the text widget from the spec
+  // also takes it out of the tab cycle, so the post-confirm
+  // `focusAdvance(1)` lands directly on the Cancel button.
+  const filterSection: WidgetSpec = inConfirm
+    ? labeledSection({
+        label: "Filter",
+        child: {
+          kind: "raw",
+          entries: [
+            styledRow([
+              {
+                text: " (disabled while confirming)",
+                style: { fg: "ui.menu_disabled_fg", italic: true },
+              },
+            ]),
+          ],
+        },
+      })
+    : labeledSection({
+        label: "Filter",
+        child: text({
+          value: openDialog.filter.value,
+          cursorByte: openDialog.filter.cursor,
+          placeholder: "type to filter…",
+          fullWidth: true,
+          key: "filter",
+        }),
+      });
+  const errorBanner: WidgetSpec | null = openDialog.lastError
+    ? {
+        kind: "raw",
+        entries: [
+          styledRow([
+            {
+              text: "⚠ ",
+              style: { fg: "ui.status_error_indicator_fg", bold: true },
+            },
+            {
+              text: openDialog.lastError,
+              style: { fg: "ui.status_error_indicator_fg" },
+            },
+          ]),
+        ],
+      }
+    : null;
   return col(
     {
       kind: "raw",
@@ -630,17 +701,9 @@ function buildOpenSpec(): WidgetSpec {
         ]),
       ],
     },
+    ...(errorBanner ? [errorBanner] : []),
     spacer(0),
-    labeledSection({
-      label: "Filter",
-      child: text({
-        value: openDialog.filter.value,
-        cursorByte: openDialog.filter.cursor,
-        placeholder: "type to filter…",
-        fullWidth: true,
-        key: "filter",
-      }),
-    }),
+    filterSection,
     // Two-pane: sessions list | preview. Renderer's `row()`
     // horizontally zips multi-line children so this composes
     // the wireframed shape directly. Width split 25 / 75 —
@@ -710,6 +773,25 @@ function syncIndicator(): WidgetSpec {
   };
 }
 
+// Surface a lifecycle-action refusal in two places: the dialog
+// itself (a coloured banner above the filter, hard to miss while
+// the user's attention is on the dialog) and the status bar
+// (matches the long-standing convention and survives if the
+// dialog closes). Pass the bare reason — the picker prepends
+// "Orchestrator: " for the status bar.
+function setDialogError(msg: string): void {
+  if (openDialog) {
+    openDialog.lastError = msg;
+  }
+  editor.setStatus(`Orchestrator: ${msg}`);
+}
+
+function clearDialogError(): void {
+  if (openDialog?.lastError) {
+    openDialog.lastError = null;
+  }
+}
+
 function refreshOpenDialog(): void {
   if (!openPanel || !openDialog) return;
   openDialog.filteredIds = filterSessions(openDialog.filter.value);
@@ -757,6 +839,7 @@ function openControlRoom(): void {
     embedRows: Math.max(3, listVisibleRows - 5),
     showDetails: false,
     inFlight: null,
+    lastError: null,
   };
   openPanel = new FloatingWidgetPanel();
   // 90% × 90% of the terminal — the open dialog wants room for
@@ -802,7 +885,8 @@ function stopSelectedSession(): void {
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number" || id <= 0) return;
   if (id === 1) {
-    editor.setStatus("Orchestrator: cannot stop the base session");
+    setDialogError("cannot stop the base session");
+    refreshOpenDialog();
     return;
   }
   editor.signalWindow(id, "SIGTERM");
@@ -909,13 +993,13 @@ async function archiveSelectedSession(explicitId?: number): Promise<void> {
   };
   if (typeof id !== "number" || id <= 0) return;
   if (id === 1) {
-    editor.setStatus("Orchestrator: cannot archive the base session");
+    setDialogError("cannot archive the base session");
     clearInFlight();
     return;
   }
   if (id === editor.activeWindow()) {
-    editor.setStatus(
-      "Orchestrator: dive elsewhere first, then archive this session",
+    setDialogError(
+      "dive elsewhere first, then archive this session",
     );
     clearInFlight();
     return;
@@ -1234,8 +1318,8 @@ async function deleteConfirmedSession(): Promise<void> {
     return;
   }
   if (id === editor.activeWindow()) {
-    editor.setStatus(
-      "Orchestrator: dive elsewhere first, then delete this session",
+    setDialogError(
+      "dive elsewhere first, then delete this session",
     );
     clearInFlight();
     return;
@@ -1617,6 +1701,9 @@ function openForm(options?: { fromPicker?: boolean }): void {
     defaultBranch: "",
     lastCmd,
     fromPicker: !!options?.fromPicker,
+    // Host's render_spec picks the first tabbable when there's
+    // no previous focus — that's "name" in our declaration order.
+    focusedKey: FORM_TABBABLE[0],
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
@@ -1819,24 +1906,53 @@ function dispatchFormKey(name: string): void {
   formPanel.command(widgetKey(name));
 }
 
-registerHandler("orchestrator_form_key_tab", () => dispatchFormKey("Tab"));
+// Local mirror of focus advancement. The host still owns the
+// authoritative focus_key (and re-renders against it); this side
+// tracks it so the Enter handler can dispatch correctly without
+// querying the host.
+function advanceFormFocus(delta: number): void {
+  if (!form) return;
+  const idx = FORM_TABBABLE.indexOf(form.focusedKey);
+  const cur = idx < 0 ? 0 : idx;
+  const n = FORM_TABBABLE.length;
+  form.focusedKey = FORM_TABBABLE[(cur + delta + n) % n];
+}
+
+registerHandler("orchestrator_form_key_tab", () => {
+  advanceFormFocus(1);
+  dispatchFormKey("Tab");
+});
 registerHandler(
   "orchestrator_form_key_shift_tab",
-  () => dispatchFormKey("Shift+Tab"),
+  () => {
+    advanceFormFocus(-1);
+    dispatchFormKey("Shift+Tab");
+  },
 );
 registerHandler("orchestrator_form_key_enter", () => {
   // The hint bar promises "Enter submit". The host's floating-panel
   // input dispatcher (input.rs:`dispatch_floating_widget_key`)
   // defers to plugin-defined mode bindings when present, so the
-  // smart-key router's "Enter = advance focus" default doesn't fire
-  // for the orchestrator-new-form mode — this handler does. From
-  // anywhere in the form, Enter submits; the form's existing
-  // `Esc → closeForm` keeps the cancel path unambiguous.
-  if (form) {
-    void submitForm();
+  // smart-key router's "Enter = advance focus / activate" default
+  // doesn't fire for the orchestrator-new-form mode — this
+  // handler does.
+  //
+  // Dispatch:
+  //   - focus on `cancel` button → cancel (was a bug: every Enter
+  //     submitted, so pressing Enter on Cancel created a session)
+  //   - focus on `create` button → submit
+  //   - focus on a text field → submit (matches the "Enter submit"
+  //     hint; otherwise users would have to Tab to Create just to
+  //     fire it, defeating the hint)
+  if (!form) {
+    dispatchFormKey("Enter");
     return;
   }
-  dispatchFormKey("Enter");
+  if (form.focusedKey === "cancel") {
+    cancelForm();
+    return;
+  }
+  void submitForm();
 });
 registerHandler("orchestrator_form_key_escape", () => {
   if (form) cancelForm();
@@ -1861,6 +1977,32 @@ function orchestrator_mode_text_input(args: { text: string }): void {
   formPanel.command(textInputChar(args.text));
 }
 registerHandler("mode_text_input", orchestrator_mode_text_input);
+
+// Open the confirm panel for `action` against the currently
+// selected session, rebuild the spec, and ensure the Cancel
+// button gets default focus.
+//
+// Because `buildOpenSpec` replaces the filter input with a
+// non-keyed disabled label while `pendingConfirm` is set, the
+// filter is no longer in the tab cycle and Cancel ends up as the
+// first tabbable — the host's "first-tabbable wins when
+// `prev_focus_key` doesn't match any current widget" fallback
+// then lands focus on Cancel automatically. The previous focus
+// key was the Stop/Archive/Delete button (gone after the
+// rebuild), so the fallback fires.
+//
+// Why Cancel rather than Confirm: confirm prompts for destructive
+// actions should be biased toward the safe path. Enter
+// immediately activates whichever button is focused (host
+// smart-key dispatch), so landing on Cancel means a stray Enter
+// is a no-op rather than a worktree wipe.
+function enterConfirm(action: "stop" | "archive" | "delete"): void {
+  if (!openDialog || !openPanel) return;
+  const id = openDialog.filteredIds[openDialog.selectedIndex];
+  if (typeof id !== "number" || id <= 0) return;
+  openDialog.pendingConfirm = { action, sessionId: id };
+  openPanel.update(buildOpenSpec());
+}
 
 editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
@@ -1921,6 +2063,10 @@ editor.on("widget_event", (e) => {
       if (typeof value !== "string") return;
       openDialog.filter.value = value;
       if (typeof cursor === "number") openDialog.filter.cursor = cursor;
+      // Filter change implies the user has moved on from any
+      // previous error — clear the banner so it doesn't shadow
+      // the typing experience.
+      clearDialogError();
       // Preserve highlighted session across the filter narrowing
       // when possible — if the previously selected id is still in
       // the new filtered set, keep it; otherwise reset to 0.
@@ -1937,6 +2083,7 @@ editor.on("widget_event", (e) => {
       const idx = payload.index;
       if (typeof idx === "number") {
         openDialog.selectedIndex = idx;
+        clearDialogError();
         // Update preview pane.
         openPanel.update(buildOpenSpec());
         // Re-pin the list selection so the spec re-emit doesn't
@@ -1967,27 +2114,15 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "stop") {
-      const id = openDialog.filteredIds[openDialog.selectedIndex];
-      if (typeof id === "number" && id > 0) {
-        openDialog.pendingConfirm = { action: "stop", sessionId: id };
-        openPanel.update(buildOpenSpec());
-      }
+      enterConfirm("stop");
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "archive") {
-      const id = openDialog.filteredIds[openDialog.selectedIndex];
-      if (typeof id === "number" && id > 0) {
-        openDialog.pendingConfirm = { action: "archive", sessionId: id };
-        openPanel.update(buildOpenSpec());
-      }
+      enterConfirm("archive");
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "delete") {
-      const id = openDialog.filteredIds[openDialog.selectedIndex];
-      if (typeof id === "number" && id > 0) {
-        openDialog.pendingConfirm = { action: "delete", sessionId: id };
-        openPanel.update(buildOpenSpec());
-      }
+      enterConfirm("delete");
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "confirm-cancel") {
