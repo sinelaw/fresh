@@ -1476,9 +1476,26 @@ impl Editor {
             return false;
         }
 
-        let has_visual_commands = commands
-            .iter()
-            .any(|c| !matches!(c, fresh_core::api::PluginCommand::HookCompleted { .. }));
+        // Classify each command as visual (needs re-render) or not.
+        // `HookCompleted` is a pure ack. `SetStatusBarValue` is treated as
+        // visual only when the value actually differs from what's stored —
+        // many plugins (e.g. git_statusbar) re-publish the same value on
+        // every `render_start` hook, which would otherwise create a
+        // render → hook → ack → render feedback loop at ~13Hz forever.
+        let has_visual_commands = commands.iter().any(|c| match c {
+            fresh_core::api::PluginCommand::HookCompleted { .. } => false,
+            fresh_core::api::PluginCommand::SetStatusBarValue {
+                buffer_id,
+                key,
+                value,
+            } => {
+                self.current_status_bar_value(
+                    fresh_core::BufferId(*buffer_id as usize),
+                    key,
+                ) != Some(value.as_str())
+            }
+            _ => true,
+        });
 
         let cmd_names: Vec<String> = commands.iter().map(|c| c.debug_variant_name()).collect();
         tracing::trace!(

@@ -1252,6 +1252,21 @@ impl Editor {
         HashMap::new()
     }
 
+    /// Current value of a single status-bar token for the given buffer, if any.
+    /// Used by the plugin command dispatcher to detect no-op `SetStatusBarValue`
+    /// commands (i.e. plugins re-publishing an unchanged value on every render).
+    pub fn current_status_bar_value(&self, buffer_id: BufferId, key: &str) -> Option<&str> {
+        for window in self.windows.values() {
+            if let Some(values) = window.status_bar_values.get(&buffer_id) {
+                if let Some(v) = values.get(key) {
+                    return Some(v.as_str());
+                }
+                return None;
+            }
+        }
+        None
+    }
+
     /// Remove every registry entry and per-buffer value belonging to a plugin.
     /// Called when a plugin is unloaded.
     fn remove_plugin_status_bar_elements(&mut self, plugin_name: &str) {
