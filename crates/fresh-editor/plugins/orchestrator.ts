@@ -2305,13 +2305,6 @@ const FORM_MODE_BINDINGS: [string, string][] = [
   ["Right", "orchestrator_form_key_right"],
   ["Up", "orchestrator_form_key_up"],
   ["Down", "orchestrator_form_key_down"],
-  // Space → toggle the focused checkbox (the host's smart-key
-  // dispatch fires `widget_event { event_type: "toggle" }` for
-  // a focused Toggle widget). On a focused text input the host
-  // routes Space as a normal character insert, so binding it
-  // here doesn't interfere with typing spaces into Project
-  // Path / Agent Command / etc.
-  ["Space", "orchestrator_form_key_space"],
 ];
 
 editor.defineMode(NEW_SESSION_MODE, FORM_MODE_BINDINGS, true, true);
@@ -2344,7 +2337,6 @@ registerHandler("orchestrator_form_key_home", () => dispatchFormKey("Home"));
 registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
 registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
 registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
-registerHandler("orchestrator_form_key_space", () => dispatchFormKey("Space"));
 registerHandler("orchestrator_form_key_up", () => {
   const histField = focusToHistoryField(formFocusedKey());
   if (histField) {
@@ -2375,13 +2367,6 @@ registerHandler("orchestrator_form_key_down", () => {
 // custom mode keymap), so we intercept here instead.
 function orchestrator_mode_text_input(args: { text: string }): void {
   if (!form || !formPanel || !args?.text) return;
-  if (args.text === " ") {
-    const focused = formFocusedKey();
-    if (focused === "worktree" || focused === "cancel" || focused === "create") {
-      formPanel.command(widgetKey("Space"));
-      return;
-    }
-  }
   formPanel.command(textInputChar(args.text));
 }
 registerHandler("mode_text_input", orchestrator_mode_text_input);

@@ -2848,6 +2848,25 @@ impl Editor {
             } else {
                 c
             };
+            // Space is a special case on a focused Toggle / Button:
+            // the convention is "Space activates the focused
+            // control", not "insert a literal space". Route it
+            // through the smart-key dispatcher (which fires
+            // `widget_event { event_type: "toggle" }` on a Toggle,
+            // `activate` on a Button) instead of the text-input
+            // fast path. For a focused Text widget the smart-key
+            // dispatcher still inserts " " as a char, so typing
+            // spaces into Project Path / Agent Command keeps
+            // working.
+            if ch == ' ' {
+                self.handle_widget_command(
+                    panel_id,
+                    fresh_core::api::WidgetAction::Key {
+                        key: "Space".to_string(),
+                    },
+                );
+                return true;
+            }
             self.handle_widget_command(
                 panel_id,
                 fresh_core::api::WidgetAction::TextInputChar {
