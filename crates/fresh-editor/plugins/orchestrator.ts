@@ -30,6 +30,7 @@ import {
   styledRow,
   text,
   textInputChar,
+  toggle,
   windowEmbed,
   type WidgetSpec,
 } from "./lib/widgets.ts";
@@ -82,21 +83,49 @@ let pendingNewSession:
 // most recent submit failed (status bar would get clobbered —
 // see MEMORY.md).
 interface NewSessionForm {
+  // Project Path: the directory the session is rooted at. When
+  // `createWorktree` is true (default for git paths) this is
+  // the *base* repo for `git worktree add`. When false, this
+  // is the session root itself (no git interaction).
+  projectPath: { value: string; cursor: number };
   name: { value: string; cursor: number };
   cmd: { value: string; cursor: number };
   branch: { value: string; cursor: number };
+  // Whether to create a new git worktree under
+  // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
+  // session directly inside `projectPath` (false). Enabled
+  // only when the resolved `projectPath` is inside a git
+  // working tree (`projectPathIsGit === true`). Forced to
+  // false on non-git paths and the checkbox is disabled.
+  createWorktree: boolean;
   submitting: boolean;
   lastError: string | null;
-  // Display-only "my_org/project_name" rendered in the
-  // dialog's subtitle. Computed once at openForm time from the
-  // current cwd so we don't subprocess on every render.
-  projectLabel: string;
+  // Resolved canonical project root from the editor's cwd —
+  // surfaced as the Project Path placeholder. Empty while the
+  // async probe runs at `openForm` time.
+  defaultProjectPath: string;
+  // `true`: resolved Project Path is inside a git working
+  // tree (worktree checkbox enabled). `false`: non-git path
+  // (checkbox disabled, branch field inert). `null`: probe
+  // in flight (keep checkbox in its last-known state).
+  projectPathIsGit: boolean | null;
+  // Concrete session name the auto-generator would produce
+  // for the current Project Path (e.g. "session-3"). Surfaced
+  // as the Session Name placeholder so the user sees the
+  // exact name an empty submit would create. Empty while the
+  // refs probe runs.
+  defaultSessionName: string;
   // Resolved default branch (e.g. "origin/main"). Empty while
   // the async `git fetch + symbolic-ref` probe is in flight;
   // the branch input's placeholder reads this so the user sees
   // the exact base ref the worktree will fork off if they
   // leave the field blank.
   defaultBranch: string;
+  // True when the default branch fell through to bare `HEAD`
+  // because no `origin` is configured. Surfaced in the
+  // placeholder as `HEAD  (no origin configured)` so the user
+  // knows why.
+  defaultBranchIsHeadFallback: boolean;
   // Previously-submitted Agent Command (persisted across editor
   // sessions via `orchestrator.last_cmd`). Rendered as the cmd
   // field's *placeholder*, and used as the actual command when
@@ -110,6 +139,20 @@ interface NewSessionForm {
   // button) we re-open the picker so the user lands back where
   // they were instead of being dropped into the bare editor.
   fromPicker: boolean;
+  // Token incremented every time the user changes the Project
+  // Path field. Async probes (is-git, session-name, default-
+  // branch) capture the token at launch and bail on result if
+  // a newer token has been issued — prevents stale probes from
+  // overwriting fresh state on rapid typing.
+  probeToken: number;
+  // Per-field input-history cursor. -1 = "not in history"
+  // (showing the user's current draft). 0 = most recent, 1 =
+  // older, etc.
+  historyCursor: { project_path: number; name: number; cmd: number; branch: number };
+  // Saved draft text per field: when the user first presses Up
+  // we squirrel away whatever was in `value` so Down can
+  // restore it.
+  historyDraft: { project_path: string; name: string; cmd: string; branch: string };
 }
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
@@ -1393,6 +1436,160 @@ function slugify(p: string): string {
   return p.replace(/^[\\\/]+/, "").replace(/[\\\/]+/g, "_");
 }
 
+// =============================================================================
+// Input history (Up / Down) for the new-session form
+//
+// Per-field MRU lists keyed under `orchestrator.history.<field>` in
+// the editor's global plugin-state store (persisted across editor
+// restarts). Submit appends the resolved value to each field's
+// history; Up/Down on a focused input walks the list (saving the
+// user's in-progress draft on the first ↑ so ↓ can return to it).
+// Capped at 100 entries per field, MRU-trimmed.
+// =============================================================================
+
+type HistoryField = "project_path" | "name" | "cmd" | "branch";
+const HISTORY_FIELDS: HistoryField[] = ["project_path", "name", "cmd", "branch"];
+const HISTORY_CAP = 100;
+
+/// Plugin-side focus tracker for the new-session form. The host
+/// owns the actual focus key, but doesn't expose a "what's
+/// focused right now?" query to plugins, and doesn't fire focus-
+/// change events. So we mirror the cycle ourselves: openForm
+/// resets to the first tabbable, Tab / S-Tab advance / retreat,
+/// `change` events on a known widget snap focus to that widget
+/// (covers mouse clicks too).
+///
+/// The mirror is "best-effort" — it can drift if the host
+/// reorders focus in ways we don't intercept (e.g. an explicit
+/// `focusAdvance` action we issued ourselves), but for the
+/// keys this form actually binds it stays in sync.
+let formFocusCycle: string[] = [];
+let formFocusIndex = 0;
+
+function rebuildFormFocusCycle(): void {
+  if (!form) {
+    formFocusCycle = [];
+    formFocusIndex = 0;
+    return;
+  }
+  const worktreeEnabled = form.projectPathIsGit !== false;
+  const branchInert = !(worktreeEnabled && form.createWorktree);
+  const cycle: string[] = ["project_path"];
+  if (worktreeEnabled) cycle.push("worktree");
+  cycle.push("name", "cmd");
+  if (!branchInert) cycle.push("branch");
+  cycle.push("cancel", "create");
+  formFocusCycle = cycle;
+  if (formFocusIndex >= cycle.length) formFocusIndex = 0;
+}
+
+function formFocusedKey(): string {
+  return formFocusCycle[formFocusIndex] ?? "";
+}
+
+function advanceFormFocus(delta: 1 | -1): void {
+  if (formFocusCycle.length === 0) return;
+  formFocusIndex =
+    (formFocusIndex + delta + formFocusCycle.length) % formFocusCycle.length;
+}
+
+function snapFormFocusTo(key: string): void {
+  const idx = formFocusCycle.indexOf(key);
+  if (idx >= 0) formFocusIndex = idx;
+}
+
+function historyKey(field: HistoryField): string {
+  return `orchestrator.history.${field}`;
+}
+
+function readHistory(field: HistoryField): string[] {
+  const raw = editor.getGlobalState(historyKey(field));
+  if (Array.isArray(raw)) {
+    return raw.filter((v): v is string => typeof v === "string");
+  }
+  return [];
+}
+
+function writeHistory(field: HistoryField, items: string[]): void {
+  editor.setGlobalState(historyKey(field), items as unknown as object);
+}
+
+function appendHistory(field: HistoryField, value: string): void {
+  const v = (value || "").trim();
+  if (!v) return;
+  const prev = readHistory(field).filter((x) => x !== v);
+  prev.unshift(v);
+  if (prev.length > HISTORY_CAP) prev.length = HISTORY_CAP;
+  writeHistory(field, prev);
+}
+
+/// Map a focused widget key to its history field, or null if the
+/// key isn't a history-bearing input.
+function focusToHistoryField(focusKey: string): HistoryField | null {
+  return (HISTORY_FIELDS as readonly string[]).includes(focusKey)
+    ? (focusKey as HistoryField)
+    : null;
+}
+
+/// Walk the history of `field` by `delta` (-1 = older / ↑, +1 =
+/// newer / ↓). Updates the form's value, cursor, and history
+/// cursor in place. No-op when the history is empty (or when ↓
+/// is hit past the bottom of the stack).
+function walkHistory(field: HistoryField, delta: -1 | 1): void {
+  if (!form) return;
+  const history = readHistory(field);
+  if (history.length === 0) return;
+  const slot = formSlot(field);
+  if (!slot) return;
+
+  const curr = form.historyCursor[field];
+  let next = curr + delta; // -1 → 0 for first ↑
+
+  if (next < -1) {
+    // Already at the draft slot, ↓ does nothing more.
+    return;
+  }
+  if (next >= history.length) {
+    // Past the oldest entry — stay put.
+    return;
+  }
+
+  if (curr === -1 && delta === -1) {
+    // First ↑: save the in-progress draft so the user can ↓
+    // back to whatever they were typing.
+    form.historyDraft[field] = slot.value;
+  }
+
+  if (next === -1) {
+    // ↓ off the top of the stack → restore the saved draft.
+    slot.value = form.historyDraft[field];
+  } else {
+    slot.value = history[next];
+  }
+  slot.cursor = slot.value.length;
+  form.historyCursor[field] = next;
+
+  // Sync the rendered widget so cursor + value match (the host
+  // tracks text input state separately from the spec).
+  if (formPanel) {
+    formPanel.setValue(field, slot.value, slot.cursor);
+  }
+  // Re-probe defaults if the user just rolled history into the
+  // Project Path field.
+  if (field === "project_path") scheduleProjectPathReprobe();
+  renderForm();
+}
+
+function formSlot(field: HistoryField): { value: string; cursor: number } | null {
+  if (!form) return null;
+  switch (field) {
+    case "project_path": return form.projectPath;
+    case "name": return form.name;
+    case "cmd": return form.cmd;
+    case "branch": return form.branch;
+  }
+}
+
 function lastNonEmptyLine(s: string): string {
   const lines = (s || "").split(/\r?\n/).filter((l) => l.trim().length > 0);
   return lines.length ? lines[lines.length - 1].trim() : "";
@@ -1456,6 +1653,17 @@ async function spawnCollect(
 /// default branch (rare). A network round-trip per dialog open
 /// is too high a cost for that case.
 async function detectDefaultBranch(repoRoot: string): Promise<string> {
+  return (await detectDefaultBranchWithFallback(repoRoot)).ref;
+}
+
+/// Like `detectDefaultBranch` but also reports whether we had to
+/// fall back to bare `HEAD` because no `origin` is configured. The
+/// caller uses that to surface a context note in the placeholder
+/// ("HEAD  (no origin configured)") so the user isn't confused
+/// about why their repo's default isn't being detected.
+async function detectDefaultBranchWithFallback(
+  repoRoot: string,
+): Promise<{ ref: string; isHeadFallback: boolean }> {
   const res = await spawnCollect(
     "git",
     ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
@@ -1468,13 +1676,62 @@ async function detectDefaultBranch(repoRoot: string): Promise<string> {
       // e.g. "refs/remotes/origin/main" → "origin/main". This is
       // what the new worktree is forked off, so the user sees the
       // exact ref name they'd otherwise have to type by hand.
-      return trimmed.slice(prefix.length);
+      return { ref: trimmed.slice(prefix.length), isHeadFallback: false };
     }
   }
-  return "HEAD";
+  return { ref: "HEAD", isHeadFallback: true };
 }
 
-async function nextAutoSessionName(repoRoot: string): Promise<string> {
+/// Resolve a directory to the *main* worktree's root if it's
+/// inside a git working tree. Returns `null` for non-git paths
+/// so the caller can pick the no-git path explicitly.
+async function resolveCanonicalRepoRoot(
+  cwd: string,
+): Promise<string | null> {
+  const top = await spawnCollect(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    cwd,
+  );
+  if (top.exit_code !== 0) return null;
+  const toplevel = (top.stdout || "").trim();
+  if (!toplevel) return null;
+  // `--git-common-dir` returns the shared `.git` dir even when
+  // we're inside a linked worktree. `dirname(...)` gives the
+  // main worktree's root, which is what we want as the
+  // canonical project identifier.
+  const common = await spawnCollect(
+    "git",
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    toplevel,
+  );
+  if (common.exit_code === 0) {
+    const parent = editor.pathDirname((common.stdout || "").trim());
+    if (parent) return parent;
+  }
+  return toplevel;
+}
+
+/// Is `path` inside a git working tree? Returns `null` on any
+/// error so the caller can keep its UI in a "in-flight / unknown"
+/// state rather than flipping to a wrong answer.
+async function pathIsInsideGitWorkTree(
+  path: string,
+): Promise<boolean | null> {
+  if (!path) return null;
+  const res = await spawnCollect(
+    "git",
+    ["-C", path, "rev-parse", "--is-inside-work-tree"],
+    path,
+  );
+  if (res.exit_code !== 0) return false; // non-zero = not a repo
+  return (res.stdout || "").trim() === "true";
+}
+
+async function nextAutoSessionName(
+  repoRoot: string,
+  options?: { persist?: boolean },
+): Promise<string> {
   // Persisted counter so consecutive empty submits produce
   // session-1, session-2, … even across plugin reloads. But the
   // counter alone isn't sufficient: a previous run may have left a
@@ -1484,6 +1741,13 @@ async function nextAutoSessionName(repoRoot: string): Promise<string> {
   // "already used by worktree at …" message. Probe the local git
   // refs once and increment past any reserved name before
   // returning.
+  //
+  // `persist: false` (the default) computes the name without
+  // advancing the persisted counter — for placeholder previews
+  // that happen on every Project Path keystroke. The submit
+  // path passes `persist: true` so consecutive submissions
+  // increment normally.
+  const persist = options?.persist === true;
   const counterBefore = (editor.getGlobalState("orchestrator.session_counter") as
     | number
     | undefined) ?? 0;
@@ -1509,7 +1773,9 @@ async function nextAutoSessionName(repoRoot: string): Promise<string> {
   while (taken.has(next)) {
     next += 1;
   }
-  editor.setGlobalState("orchestrator.session_counter", next);
+  if (persist) {
+    editor.setGlobalState("orchestrator.session_counter", next);
+  }
   return `session-${next}`;
 }
 
@@ -1532,8 +1798,38 @@ const SUBTITLE_VALUE_STYLE = { fg: "ui.help_key_fg", bold: true } as const;
 
 function buildFormSpec(): WidgetSpec {
   if (!form) return col();
+
+  // Worktree-toggle enable state. The checkbox is disabled
+  // (rendered without a `key` so the host skips it in the tab
+  // cycle, and the label gets a `(disabled — non-git)` suffix)
+  // when the resolved Project Path is not inside a git working
+  // tree. `null` (probe in flight) keeps it in its last-known
+  // state — no flicker on rapid typing.
+  const worktreeEnabled = form.projectPathIsGit !== false;
+  const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
+  const worktreeSuffix = worktreeEnabled
+    ? ""
+    : "  (disabled — non-git)";
+  const branchInert = !effectiveCreateWorktree;
+
+  // Branch placeholder: surface origin/main, fall back to a
+  // contextual hint when no origin is configured, and become
+  // inert when worktree creation is off.
+  let branchPlaceholder: string;
+  if (branchInert) {
+    branchPlaceholder = worktreeEnabled
+      ? "shared worktree — N/A"
+      : "no git — N/A";
+  } else if (!form.defaultBranch) {
+    branchPlaceholder = "detecting default branch…";
+  } else if (form.defaultBranchIsHeadFallback) {
+    branchPlaceholder = "HEAD  (no origin configured)";
+  } else {
+    branchPlaceholder = form.defaultBranch;
+  }
+
   const children: WidgetSpec[] = [
-    // === Header: title flanked by separators, centered. ==========
+    // === Header: centered title (no stale `Review Synthesized`). =
     row(
       flexSpacer(),
       {
@@ -1542,30 +1838,41 @@ function buildFormSpec(): WidgetSpec {
           styledRow([
             { text: "ORCHESTRATOR", style: HEADER_KEYWORD_STYLE },
             { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: "New Session Dialog", style: HEADER_LABEL_STYLE },
-            { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: "Review Synthesized", style: HEADER_LABEL_STYLE },
-          ]),
-        ],
-      },
-      flexSpacer(),
-    ),
-    // === Subtitle: centered project identifier. ==================
-    row(
-      flexSpacer(),
-      {
-        kind: "raw",
-        entries: [
-          styledRow([
-            { text: "Project: ", style: SUBTITLE_LABEL_STYLE },
-            { text: form.projectLabel, style: SUBTITLE_VALUE_STYLE },
+            { text: "New Session", style: HEADER_LABEL_STYLE },
           ]),
         ],
       },
       flexSpacer(),
     ),
     spacer(0),
-    // === Form body: three labeled, full-width inputs. ============
+    // === Project Path: the new top-of-form field. ================
+    // Placeholder surfaces the resolved canonical repo root (or
+    // editor cwd for non-git launches). Empty submit uses the
+    // placeholder verbatim, so the user can land on a sensible
+    // default just by pressing Enter through the form.
+    labeledSection({
+      label: "Project Path",
+      child: text({
+        value: form.projectPath.value,
+        cursorByte: form.projectPath.cursor,
+        placeholder: form.defaultProjectPath || "detecting project root…",
+        fullWidth: true,
+        key: "project_path",
+      }),
+    }),
+    // === Worktree toggle. ========================================
+    // Enabled only when the Project Path resolves to a git work
+    // tree. Disabled (no `key`) on non-git paths so Tab skips it
+    // and Space is a no-op.
+    row(
+      toggle(
+        effectiveCreateWorktree,
+        `Create a new git worktree for this session${worktreeSuffix}`,
+        worktreeEnabled ? { key: "worktree" } : {},
+      ),
+      flexSpacer(),
+    ),
+    // === Form body: labeled, full-width inputs. ==================
     // Labels are plain — the `▸` glyph used to be baked into all
     // three strings and stayed put regardless of focus, which was
     // misleading. The input's own focused-bg styling (set by the
@@ -1576,7 +1883,11 @@ function buildFormSpec(): WidgetSpec {
       child: text({
         value: form.name.value,
         cursorByte: form.name.cursor,
-        placeholder: "(auto-generated)",
+        // Concrete default (e.g. "session-3") rather than the
+        // literal `(auto-generated)` — the user sees the exact
+        // name an empty submit would create. Empty while the
+        // ref probe runs.
+        placeholder: form.defaultSessionName || "auto-generating…",
         fullWidth: true,
         key: "name",
       }),
@@ -1603,12 +1914,12 @@ function buildFormSpec(): WidgetSpec {
       child: text({
         value: form.branch.value,
         cursorByte: form.branch.cursor,
-        // Show the literal base ref the empty submission will
-        // fork off (e.g. `origin/main`). While the probe runs
-        // we still print a hint so the field isn't blank.
-        placeholder: form.defaultBranch || "detecting default branch…",
+        placeholder: branchPlaceholder,
         fullWidth: true,
-        key: "branch",
+        // Drop the key when the branch field is inert so Tab
+        // skips it — there's no `git worktree add` to apply
+        // it to.
+        key: branchInert ? undefined : "branch",
       }),
     }),
   ];
@@ -1643,6 +1954,8 @@ function buildFormSpec(): WidgetSpec {
       hintBar([
         { keys: "Tab", label: "next" },
         { keys: "S-Tab", label: "prev" },
+        { keys: "↑↓", label: "history" },
+        { keys: "Space", label: "toggle" },
         { keys: "Enter", label: "advance / act" },
         { keys: "Esc", label: "cancel" },
       ]),
@@ -1667,6 +1980,12 @@ function deriveProjectLabel(): string {
 
 function renderForm(): void {
   if (!form || !formPanel) return;
+  // Keep the focus mirror in step with the spec's tabbable set
+  // (worktree may toggle disabled, branch may go inert) on every
+  // render, BEFORE we ship the spec — `rebuildFormFocusCycle`
+  // clamps the index if the previously focused entry has
+  // disappeared.
+  rebuildFormFocusCycle();
   formPanel.update(buildFormSpec());
 }
 
@@ -1675,6 +1994,7 @@ function openForm(options?: { fromPicker?: boolean }): void {
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
+    projectPath: { value: "", cursor: 0 },
     name: { value: "", cursor: 0 },
     // Empty value — `lastCmd` shows as the placeholder. If the
     // user submits an empty cmd, the placeholder is used as the
@@ -1683,35 +2003,110 @@ function openForm(options?: { fromPicker?: boolean }): void {
     // rather than a visual lie.
     cmd: { value: "", cursor: 0 },
     branch: { value: "", cursor: 0 },
+    // Default checkbox state is `true` (the historical behaviour
+    // of "always create a worktree"); the renderer demotes this
+    // to `false` automatically when the resolved Project Path is
+    // non-git.
+    createWorktree: true,
     submitting: false,
     lastError: null,
-    projectLabel: deriveProjectLabel(),
+    defaultProjectPath: "",
+    projectPathIsGit: null,
+    defaultSessionName: "",
     defaultBranch: "",
+    defaultBranchIsHeadFallback: false,
     lastCmd,
     fromPicker: !!options?.fromPicker,
+    probeToken: 0,
+    historyCursor: { project_path: -1, name: -1, cmd: -1, branch: -1 },
+    historyDraft: { project_path: "", name: "", cmd: "", branch: "" },
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
   editor.setEditorMode(NEW_SESSION_MODE);
+  // Mirror the host's focus cycle so Up/Down can route to the
+  // right field's history. Initial focus is on `project_path`
+  // (the first tabbable in `buildFormSpec`).
+  rebuildFormFocusCycle();
+  formFocusIndex = 0;
 
-  // Probe origin's default branch in the background and update
-  // the branch field's placeholder once we know it. The dialog
-  // is interactive immediately — the probe just refines the hint
-  // from "(detecting…)" to the concrete ref name.
-  void (async () => {
-    const cwd = editor.getCwd();
-    const top = await spawnCollect(
-      "git",
-      ["rev-parse", "--show-toplevel"],
-      cwd,
-    );
-    if (top.exit_code !== 0 || !form) return;
-    const repoRoot = (top.stdout || "").trim();
-    const branch = await detectDefaultBranch(repoRoot);
-    if (!form) return;
-    form.defaultBranch = branch;
-    renderForm();
-  })();
+  // Kick off the placeholder probes (canonical repo root,
+  // default branch, next session name) against the editor's
+  // cwd. Each probe is async and re-renders on completion.
+  void probeProjectPathDefaults();
+}
+
+/// Resolve placeholders for the Project Path / Session Name /
+/// Branch fields based on the *currently-effective* project
+/// path: the user-typed value if any, else the editor's cwd
+/// (the canonical-root probe runs against the latter). Re-runs
+/// on every Project Path keystroke (debounced via the caller).
+async function probeProjectPathDefaults(): Promise<void> {
+  if (!form) return;
+  const token = ++form.probeToken;
+  const typedPath = form.projectPath.value.trim();
+
+  // (1) Default Project Path: only meaningful when the user
+  //     hasn't typed anything. Resolve cwd → canonical root,
+  //     fall back to cwd verbatim for non-git launches.
+  if (!typedPath) {
+    const resolved = await resolveCanonicalRepoRoot(editor.getCwd());
+    if (!form || form.probeToken !== token) return;
+    form.defaultProjectPath = resolved || editor.getCwd();
+  } else {
+    // User typed a path: that IS the project, no canonical
+    // resolution needed. Defaults that depend on it (session
+    // name, default branch) still need to run against it below.
+    form.defaultProjectPath = typedPath;
+  }
+
+  // (2) Is-inside-work-tree probe drives the worktree checkbox.
+  const effectivePath = typedPath || form.defaultProjectPath;
+  const isGit = await pathIsInsideGitWorkTree(effectivePath);
+  if (!form || form.probeToken !== token) return;
+  form.projectPathIsGit = isGit;
+
+  // (3) Default branch + session name probes only make sense on
+  //     a git path. On non-git, leave both empty (the renderer
+  //     surfaces a "no git — N/A" branch placeholder, and the
+  //     session name still works against the counter alone).
+  if (isGit) {
+    const [{ ref, isHeadFallback }, sessionName] = await Promise.all([
+      detectDefaultBranchWithFallback(effectivePath),
+      nextAutoSessionName(effectivePath),
+    ]);
+    if (!form || form.probeToken !== token) return;
+    form.defaultBranch = ref;
+    form.defaultBranchIsHeadFallback = isHeadFallback;
+    form.defaultSessionName = sessionName;
+  } else {
+    // Non-git: still surface a numeric placeholder for Session
+    // Name so the user sees what an empty submit will produce.
+    // `nextAutoSessionName` falls back cleanly when the refs
+    // probe fails (no git → empty set → counter+1).
+    const sessionName = await nextAutoSessionName(effectivePath);
+    if (!form || form.probeToken !== token) return;
+    form.defaultBranch = "";
+    form.defaultBranchIsHeadFallback = false;
+    form.defaultSessionName = sessionName;
+  }
+  renderForm();
+}
+
+/// Schedule a debounced re-probe after the user changes the
+/// Project Path field. 200ms feels snappy without spawning a
+/// git subprocess on every keystroke. QuickJS has no
+/// `setTimeout` — `editor.delay(ms)` is the async-sleep
+/// primitive; the `probeToken` already enforces "only the
+/// latest scheduled probe wins" so back-to-back keystrokes
+/// collapse cleanly without an explicit timer handle.
+function scheduleProjectPathReprobe(): void {
+  if (!form) return;
+  const token = ++form.probeToken;
+  void editor.delay(200).then(() => {
+    if (!form || form.probeToken !== token) return;
+    void probeProjectPathDefaults();
+  });
 }
 
 function closeForm(): void {
@@ -1749,114 +2144,121 @@ async function submitForm(): Promise<void> {
   const cmd = form.cmd.value.trim() || form.lastCmd.trim();
   const branchInput = form.branch.value.trim();
 
-  const cwd = editor.getCwd();
-  const top = await spawnCollect("git", ["rev-parse", "--show-toplevel"], cwd);
-  if (top.exit_code !== 0) {
-    if (!form) return;
-    form.submitting = false;
-    form.lastError = lastNonEmptyLine(top.stderr) || "not a git repository";
-    editor.setStatus(`Orchestrator: ${form.lastError}`);
-    renderForm();
-    return;
-  }
-  const currentToplevel = (top.stdout || "").trim();
+  // Project Path: typed value wins; otherwise the resolved
+  // canonical-root placeholder (or, if that probe never
+  // completed, the editor cwd). The picked value drives the
+  // entire submission flow.
+  const projectPath = form.projectPath.value.trim() ||
+    form.defaultProjectPath ||
+    editor.getCwd();
 
-  // Resolve to the *main* worktree's root, not the current
-  // worktree. When the user runs `Orchestrator: New` from inside
-  // an existing orchestrator session (whose cwd is a linked
-  // worktree under `<XDG>/orchestrator/<slug>/<session>`), the
-  // current `--show-toplevel` is that worktree's root. Using it
-  // as the slug source would produce
-  // `<XDG>/orchestrator/<slug>/<slug-of-slug>/<session>` — paths
-  // that nest one level deeper each time the user creates a
-  // session from inside a session, eventually blowing past the
-  // filesystem's path-name limits (the WARN/ERROR logs about
-  // `File name too long (os error 36)`).
-  //
-  // `git rev-parse --path-format=absolute --git-common-dir`
-  // returns the absolute path of the shared `.git` directory —
-  // for the main worktree this is `<main>/.git`, for a linked
-  // worktree this is the *same* `<main>/.git`. The parent of
-  // that is the main worktree's root regardless of which worktree
-  // we're in. The fallback to `currentToplevel` is just defensive
-  // for unusual layouts (git versions older than 2.13 didn't
-  // support `--path-format=absolute`, but plugin runs under
-  // recent git so this is mostly belt-and-suspenders).
-  const gitCommon = await spawnCollect(
-    "git",
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    currentToplevel,
-  );
-  const repoRoot = gitCommon.exit_code === 0
-    ? editor.pathDirname((gitCommon.stdout || "").trim()) || currentToplevel
-    : currentToplevel;
+  // Re-probe is-git so we trust the latest filesystem state
+  // rather than a possibly-stale UI flag (race: user pressed
+  // Enter while the debounced probe was still in flight).
+  const isGit = await pathIsInsideGitWorkTree(projectPath);
+  if (!form) return;
+  const createWorktree = isGit === true && form.createWorktree;
 
-  // Name resolution: explicit value wins. Otherwise auto-generate
-  // by scanning `refs/heads/session-N` for the next free index —
-  // the counter alone can collide with branches a previous run
-  // left behind. Async because the probe spawns git; placed after
-  // `rev-parse` so we know we're in a git repo first.
-  const sessionName = form.name.value.trim() || (await nextAutoSessionName(repoRoot));
-
-  const root = editor.pathJoin(
-    editor.getDataDir(),
-    "orchestrator",
-    slugify(repoRoot),
-    sessionName,
-  );
-  const parent = editor.pathDirname(root);
-  if (!editor.createDir(parent)) {
-    if (!form) return;
-    form.submitting = false;
-    form.lastError = `mkdir failed: ${parent}`;
-    editor.setStatus(`Orchestrator: ${form.lastError}`);
-    renderForm();
-    return;
+  // Resolve the repo's main worktree root when we're in a
+  // worktree-create flow — same logic as before, but rooted at
+  // `projectPath` instead of cwd so the user can target a repo
+  // other than the one the editor was launched in.
+  let repoRoot = projectPath;
+  if (createWorktree) {
+    const canonical = await resolveCanonicalRepoRoot(projectPath);
+    if (canonical) repoRoot = canonical;
   }
 
-  const defaultBranch = await detectDefaultBranch(repoRoot);
-  const branchName = branchInput || sessionName;
-  // Try `-b <new>` first; if it fails because the branch already
-  // exists, fall back to checking out the existing branch into a
-  // new worktree.
-  let addRes = await spawnCollect(
-    "git",
-    ["-C", repoRoot, "worktree", "add", root, "-b", branchName, defaultBranch],
-    repoRoot,
-  );
-  if (addRes.exit_code !== 0) {
-    const fallback = await spawnCollect(
-      "git",
-      ["-C", repoRoot, "worktree", "add", root, branchName],
-      repoRoot,
-    );
-    if (fallback.exit_code !== 0) {
+  // Session name resolution: explicit value wins. Otherwise
+  // auto-generate by scanning `refs/heads/session-N` for the
+  // next free index (the same probe that filled the
+  // placeholder).
+  const sessionName = form.name.value.trim() ||
+    (await nextAutoSessionName(repoRoot, { persist: true }));
+  if (!form) return;
+
+  // Session root resolution:
+  // - createWorktree=true  → fresh worktree under
+  //   `<XDG>/orchestrator/<slug>/<session>/`.
+  // - createWorktree=false → run inside `projectPath` itself
+  //   (shared worktree / non-git path / multiple sessions on
+  //   the same root).
+  const root = createWorktree
+    ? editor.pathJoin(
+        editor.getDataDir(),
+        "orchestrator",
+        slugify(repoRoot),
+        sessionName,
+      )
+    : projectPath;
+
+  if (createWorktree) {
+    const parent = editor.pathDirname(root);
+    if (!editor.createDir(parent)) {
       if (!form) return;
       form.submitting = false;
-      // Prefer the fallback's stderr: when both attempts fail, the
-      // `-b` branch's error is usually "branch already exists" (which
-      // is *why* we tried the fallback in the first place), and the
-      // fallback's error is the more progressed / informative one.
-      // Fall back to `addRes.stderr` only when the fallback didn't
-      // produce its own line.
-      form.lastError = lastNonEmptyLine(fallback.stderr) ||
-        lastNonEmptyLine(addRes.stderr) ||
-        "git worktree add failed";
-      // Mirror to the status bar so the error survives if the user
-      // dismisses the dialog before reading it. `form.lastError`
-      // still drives the in-dialog "Error: …" row.
+      form.lastError = `mkdir failed: ${parent}`;
       editor.setStatus(`Orchestrator: ${form.lastError}`);
       renderForm();
       return;
     }
-    addRes = fallback;
+
+    const defaultBranch = await detectDefaultBranch(repoRoot);
+    const branchName = branchInput || sessionName;
+    // Try `-b <new>` first; if it fails because the branch
+    // already exists, fall back to checking out the existing
+    // branch into a new worktree.
+    let addRes = await spawnCollect(
+      "git",
+      ["-C", repoRoot, "worktree", "add", root, "-b", branchName, defaultBranch],
+      repoRoot,
+    );
+    if (addRes.exit_code !== 0) {
+      const fallback = await spawnCollect(
+        "git",
+        ["-C", repoRoot, "worktree", "add", root, branchName],
+        repoRoot,
+      );
+      if (fallback.exit_code !== 0) {
+        if (!form) return;
+        form.submitting = false;
+        // Prefer the fallback's stderr: when both attempts
+        // fail, the `-b` branch's error is usually "branch
+        // already exists" (which is *why* we tried the
+        // fallback), and the fallback's error is the more
+        // informative one.
+        form.lastError = lastNonEmptyLine(fallback.stderr) ||
+          lastNonEmptyLine(addRes.stderr) ||
+          "git worktree add failed";
+        editor.setStatus(`Orchestrator: ${form.lastError}`);
+        renderForm();
+        return;
+      }
+      addRes = fallback;
+    }
   }
 
   if (cmd) {
     editor.setGlobalState("orchestrator.last_cmd", cmd);
   }
 
-  pendingNewSession = { label: sessionName, branch: branchName, cmd, root };
+  // Branch / cmd values used for `pendingNewSession` — `branchName`
+  // only exists in the worktree-create flow above; for the
+  // shared-worktree / non-git case we report whatever's currently
+  // checked out (best-effort) so the new session record matches
+  // the situation on disk.
+  const reportedBranch = createWorktree
+    ? (branchInput || sessionName)
+    : "";
+
+  // Append the user-effective values to per-field input
+  // history so ↑/↓ can recall them on the next form open.
+  appendHistory("project_path", projectPath);
+  appendHistory("name", sessionName);
+  if (cmd) appendHistory("cmd", cmd);
+  if (createWorktree) appendHistory("branch", reportedBranch);
+
+  pendingNewSession = { label: sessionName, branch: reportedBranch, cmd, root };
   closeForm();
   editor.createWindow(root, sessionName);
 }
@@ -1890,6 +2292,13 @@ const FORM_MODE_BINDINGS: [string, string][] = [
   ["Right", "orchestrator_form_key_right"],
   ["Up", "orchestrator_form_key_up"],
   ["Down", "orchestrator_form_key_down"],
+  // Space → toggle the focused checkbox (the host's smart-key
+  // dispatch fires `widget_event { event_type: "toggle" }` for
+  // a focused Toggle widget). On a focused text input the host
+  // routes Space as a normal character insert, so binding it
+  // here doesn't interfere with typing spaces into Project
+  // Path / Agent Command / etc.
+  ["Space", "orchestrator_form_key_space"],
 ];
 
 editor.defineMode(NEW_SESSION_MODE, FORM_MODE_BINDINGS, true, true);
@@ -1899,10 +2308,16 @@ function dispatchFormKey(name: string): void {
   formPanel.command(widgetKey(name));
 }
 
-registerHandler("orchestrator_form_key_tab", () => dispatchFormKey("Tab"));
+registerHandler("orchestrator_form_key_tab", () => {
+  advanceFormFocus(1);
+  dispatchFormKey("Tab");
+});
 registerHandler(
   "orchestrator_form_key_shift_tab",
-  () => dispatchFormKey("Shift+Tab"),
+  () => {
+    advanceFormFocus(-1);
+    dispatchFormKey("Shift+Tab");
+  },
 );
 registerHandler("orchestrator_form_key_escape", () => {
   if (form) cancelForm();
@@ -1916,8 +2331,26 @@ registerHandler("orchestrator_form_key_home", () => dispatchFormKey("Home"));
 registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
 registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
 registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
-registerHandler("orchestrator_form_key_up", () => dispatchFormKey("Up"));
-registerHandler("orchestrator_form_key_down", () => dispatchFormKey("Down"));
+registerHandler("orchestrator_form_key_space", () => {
+  editor.setStatus(`[debug] space hit, focus=${formFocusedKey()}`);
+  dispatchFormKey("Space");
+});
+registerHandler("orchestrator_form_key_up", () => {
+  const histField = focusToHistoryField(formFocusedKey());
+  if (histField) {
+    walkHistory(histField, -1);
+  } else {
+    dispatchFormKey("Up");
+  }
+});
+registerHandler("orchestrator_form_key_down", () => {
+  const histField = focusToHistoryField(formFocusedKey());
+  if (histField) {
+    walkHistory(histField, 1);
+  } else {
+    dispatchFormKey("Down");
+  }
+});
 
 // Printable input arrives via the global `mode_text_input` action.
 // Other plugins may also register a `mode_text_input` handler;
@@ -1965,7 +2398,9 @@ editor.on("widget_event", (e) => {
       const value = payload.value;
       const cursor = payload.cursorByte;
       if (typeof value !== "string") return;
-      const slot = field === "name"
+      const slot = field === "project_path"
+        ? form.projectPath
+        : field === "name"
         ? form.name
         : field === "cmd"
         ? form.cmd
@@ -1975,7 +2410,29 @@ editor.on("widget_event", (e) => {
       if (slot) {
         slot.value = value;
         if (typeof cursor === "number") slot.cursor = cursor;
+        // Typing in any history-bearing field invalidates the
+        // history cursor — the user is composing a new draft.
+        const histField = focusToHistoryField(field);
+        if (histField) form.historyCursor[histField] = -1;
+        // Snap our focus mirror to wherever the change just
+        // landed — covers mouse-click focus changes (no Tab key
+        // for us to intercept).
+        snapFormFocusTo(field);
       }
+      if (field === "project_path") {
+        scheduleProjectPathReprobe();
+      }
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "worktree") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const checked = payload.checked;
+      if (typeof checked === "boolean") {
+        form.createWorktree = checked;
+      } else {
+        form.createWorktree = !form.createWorktree;
+      }
+      renderForm();
       return;
     }
     if (e.event_type === "activate") {
