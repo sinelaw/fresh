@@ -318,6 +318,68 @@ const CHECKPOINT_INTERVAL: usize = 256;
 /// pathological edits whose effect doesn't converge.
 const CONVERGENCE_BUDGET: usize = 64 * 1024;
 
+/// Byte position one past the end of the line that starts at `pos`.
+/// Accepts `\n` and `\r\n` terminators; returns `content_bytes.len()`
+/// when the buffer ends without a terminator (the streaming tail).
+fn find_line_end(content_bytes: &[u8], pos: usize) -> usize {
+    let mut line_end = pos;
+    while line_end < content_bytes.len() {
+        if content_bytes[line_end] == b'\n' {
+            line_end += 1;
+            break;
+        } else if content_bytes[line_end] == b'\r' {
+            if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
+                line_end += 2;
+            } else {
+                line_end += 1;
+            }
+            break;
+        }
+        line_end += 1;
+    }
+    line_end
+}
+
+/// UTF-8-decoded line ready to feed `state.parse_line`.
+struct PreparedLine {
+    /// What `parse_line` sees: line content always terminated by `\n`,
+    /// EXCEPT for the buffer's final partial line where no `\n` has
+    /// arrived yet (caller must not commit cache state past such a
+    /// line — see `extend_cache_forward`).
+    line_for_syntect: String,
+    /// Byte length of the line excluding `\r` / `\n` terminator.
+    line_content_len: usize,
+    /// Whether the original line ended with `\n` (true for every line
+    /// except the streaming tail).
+    ends_with_newline: bool,
+}
+
+/// Slice the line starting at `pos` from `content_bytes` and prepare
+/// it for `parse_line`. Returns `(line_end, line_byte_len, prepared)`:
+/// callers always advance by `line_byte_len` to `line_end`; `prepared`
+/// is `None` only when the line wasn't valid UTF-8 (skip & continue).
+fn prepare_line_at(content_bytes: &[u8], pos: usize) -> (usize, usize, Option<PreparedLine>) {
+    let line_end = find_line_end(content_bytes, pos);
+    let line_bytes = &content_bytes[pos..line_end];
+    let line_byte_len = line_bytes.len();
+    let prepared = std::str::from_utf8(line_bytes).ok().map(|line_str| {
+        let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
+        let ends_with_newline = line_str.ends_with('\n');
+        let is_streaming_tail = line_end == content_bytes.len() && !ends_with_newline;
+        let line_for_syntect = if is_streaming_tail {
+            line_content.to_string()
+        } else {
+            format!("{}\n", line_content)
+        };
+        PreparedLine {
+            line_for_syntect,
+            line_content_len: line_content.len(),
+            ends_with_newline,
+        }
+    });
+    (line_end, line_byte_len, prepared)
+}
+
 impl TextMateEngine {
     /// Create a new TextMate engine for the given syntax
     pub fn new(syntax_set: Arc<SyntaxSet>, syntax_index: usize) -> Self {
@@ -427,6 +489,82 @@ impl TextMateEngine {
                 cache.tail_state = None;
             }
         }
+    }
+
+    /// Create a checkpoint at `current_offset` carrying the supplied
+    /// parse state, unless one already exists within half an interval
+    /// (which would shadow it). Callers gate on
+    /// `bytes_since_checkpoint >= CHECKPOINT_INTERVAL` to control
+    /// spacing.
+    fn maybe_create_checkpoint(
+        &mut self,
+        current_offset: usize,
+        state: &syntect::parsing::ParseState,
+        current_scopes: &syntect::parsing::ScopeStack,
+    ) {
+        let nearby = self.checkpoint_markers.query_range(
+            current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
+            current_offset + CHECKPOINT_INTERVAL / 2,
+        );
+        if nearby.is_empty() {
+            let marker_id = self.checkpoint_markers.create(current_offset, true);
+            self.checkpoint_states
+                .insert(marker_id, (state.clone(), current_scopes.clone()));
+        }
+    }
+
+    /// Drive `state.parse_line(prepared.line_for_syntect)` and emit one
+    /// span per category-carrying byte range via `on_span(start, end,
+    /// category)`. Returns `false` when `parse_line` errored — caller
+    /// should advance past the line and continue (state may have been
+    /// mutated mid-parse but is left as-is, matching prior behaviour).
+    ///
+    /// Span emission is in two passes: the op iterator emits the
+    /// segment between consecutive ops with the scope-stack-active
+    /// category, and a trailing segment covers `[syntect_offset,
+    /// line_content_len)` when the final op didn't reach end-of-line.
+    fn parse_line_into_spans(
+        &mut self,
+        state: &mut syntect::parsing::ParseState,
+        current_scopes: &mut syntect::parsing::ScopeStack,
+        prepared: &PreparedLine,
+        current_offset: usize,
+        mut on_span: impl FnMut(usize, usize, HighlightCategory),
+    ) -> bool {
+        let ops = match state.parse_line(&prepared.line_for_syntect, &self.syntax_set) {
+            Ok(ops) => ops,
+            Err(_) => return false,
+        };
+
+        let line_content_len = prepared.line_content_len;
+        let mut syntect_offset = 0;
+
+        for (op_offset, op) in ops {
+            let clamped_op_offset = op_offset.min(line_content_len);
+            if clamped_op_offset > syntect_offset {
+                if let Some(category) = self.scope_stack_to_category(current_scopes) {
+                    on_span(
+                        current_offset + syntect_offset,
+                        current_offset + clamped_op_offset,
+                        category,
+                    );
+                }
+            }
+            syntect_offset = clamped_op_offset;
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = current_scopes.apply(&op);
+        }
+
+        if syntect_offset < line_content_len {
+            if let Some(category) = self.scope_stack_to_category(current_scopes) {
+                on_span(
+                    current_offset + syntect_offset,
+                    current_offset + line_content_len,
+                    category,
+                );
+            }
+        }
+        true
     }
 
     /// Highlight the visible viewport. Path selection is documented in the
@@ -626,77 +764,24 @@ impl TextMateEngine {
         while pos < content_bytes.len() {
             // Create checkpoints in new territory
             if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
-                let nearby = self.checkpoint_markers.query_range(
-                    current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
-                    current_offset + CHECKPOINT_INTERVAL / 2,
-                );
-                if nearby.is_empty() {
-                    let marker_id = self.checkpoint_markers.create(current_offset, true);
-                    self.checkpoint_states
-                        .insert(marker_id, (state.clone(), current_scopes.clone()));
-                }
+                self.maybe_create_checkpoint(current_offset, &state, &current_scopes);
                 bytes_since_checkpoint = 0;
             }
 
-            let line_start = pos;
-            let mut line_end = pos;
-            while line_end < content_bytes.len() {
-                if content_bytes[line_end] == b'\n' {
-                    line_end += 1;
-                    break;
-                } else if content_bytes[line_end] == b'\r' {
-                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
-                        line_end += 2;
-                    } else {
-                        line_end += 1;
-                    }
-                    break;
-                }
-                line_end += 1;
-            }
-
-            let line_bytes = &content_bytes[line_start..line_end];
-            let actual_line_byte_len = line_bytes.len();
-
-            let line_str = match std::str::from_utf8(line_bytes) {
-                Ok(s) => s,
-                Err(_) => {
-                    pos = line_end;
-                    current_offset += actual_line_byte_len;
-                    bytes_since_checkpoint += actual_line_byte_len;
-                    continue;
-                }
-            };
-
-            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
-            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
-                format!("{}\n", line_content)
-            } else {
-                line_content.to_string()
-            };
-
-            let ops = match state.parse_line(&line_for_syntect, &self.syntax_set) {
-                Ok(ops) => ops,
-                Err(_) => {
-                    pos = line_end;
-                    current_offset += actual_line_byte_len;
-                    bytes_since_checkpoint += actual_line_byte_len;
-                    continue;
-                }
-            };
-
+            let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
             // Collect spans for the dirty region
             let collect_spans =
-                current_offset + actual_line_byte_len > desired_parse_start.max(actual_start);
-            let mut syntect_offset = 0;
-            let line_content_len = line_content.len();
-
-            for (op_offset, op) in ops {
-                let clamped_op_offset = op_offset.min(line_content_len);
-                if collect_spans && clamped_op_offset > syntect_offset {
-                    if let Some(category) = self.scope_stack_to_category(&current_scopes) {
-                        let byte_start = current_offset + syntect_offset;
-                        let byte_end = current_offset + clamped_op_offset;
+                current_offset + line_byte_len > desired_parse_start.max(actual_start);
+            if let Some(prepared) = prepared {
+                let _ = self.parse_line_into_spans(
+                    &mut state,
+                    &mut current_scopes,
+                    &prepared,
+                    current_offset,
+                    |byte_start, byte_end, category| {
+                        if !collect_spans {
+                            return;
+                        }
                         let clamped_start = byte_start.max(actual_start);
                         if clamped_start < byte_end {
                             new_spans.push(CachedSpan {
@@ -704,30 +789,13 @@ impl TextMateEngine {
                                 category,
                             });
                         }
-                    }
-                }
-                syntect_offset = clamped_op_offset;
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = current_scopes.apply(&op);
-            }
-
-            if collect_spans && syntect_offset < line_content_len {
-                if let Some(category) = self.scope_stack_to_category(&current_scopes) {
-                    let byte_start = current_offset + syntect_offset;
-                    let byte_end = current_offset + line_content_len;
-                    let clamped_start = byte_start.max(actual_start);
-                    if clamped_start < byte_end {
-                        new_spans.push(CachedSpan {
-                            range: clamped_start..byte_end,
-                            category,
-                        });
-                    }
-                }
+                    },
+                );
             }
 
             pos = line_end;
-            current_offset += actual_line_byte_len;
-            bytes_since_checkpoint += actual_line_byte_len;
+            current_offset += line_byte_len;
+            bytes_since_checkpoint += line_byte_len;
 
             // Check convergence at checkpoint markers
             while marker_idx < markers_ahead.len() && markers_ahead[marker_idx].1 <= current_offset
@@ -853,106 +921,35 @@ impl TextMateEngine {
 
         while pos < content_bytes.len() {
             if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
-                let nearby = self.checkpoint_markers.query_range(
-                    current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
-                    current_offset + CHECKPOINT_INTERVAL / 2,
-                );
-                if nearby.is_empty() {
-                    let marker_id = self.checkpoint_markers.create(current_offset, true);
-                    self.checkpoint_states
-                        .insert(marker_id, (state.clone(), current_scopes.clone()));
-                }
+                self.maybe_create_checkpoint(current_offset, &state, &current_scopes);
                 bytes_since_checkpoint = 0;
             }
 
-            let line_start = pos;
-            let mut line_end = pos;
-            while line_end < content_bytes.len() {
-                if content_bytes[line_end] == b'\n' {
-                    line_end += 1;
-                    break;
-                } else if content_bytes[line_end] == b'\r' {
-                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
-                        line_end += 2;
-                    } else {
-                        line_end += 1;
-                    }
-                    break;
-                }
-                line_end += 1;
-            }
-
-            let line_bytes = &content_bytes[line_start..line_end];
-            let actual_line_byte_len = line_bytes.len();
-
-            let line_str = match std::str::from_utf8(line_bytes) {
-                Ok(s) => s,
-                Err(_) => {
-                    pos = line_end;
-                    current_offset += actual_line_byte_len;
-                    bytes_since_checkpoint += actual_line_byte_len;
-                    continue;
-                }
-            };
-
-            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
-            let line_ends_with_newline = line_str.ends_with('\n');
-            let line_for_syntect = if line_end < content_bytes.len() || line_ends_with_newline {
-                format!("{}\n", line_content)
-            } else {
-                line_content.to_string()
-            };
-
-            let ops = match state.parse_line(&line_for_syntect, &self.syntax_set) {
-                Ok(ops) => ops,
-                Err(_) => {
-                    pos = line_end;
-                    current_offset += actual_line_byte_len;
-                    bytes_since_checkpoint += actual_line_byte_len;
-                    continue;
-                }
-            };
-
-            let mut syntect_offset = 0;
-            let line_content_len = line_content.len();
-
-            for (op_offset, op) in ops {
-                let clamped_op_offset = op_offset.min(line_content_len);
-                if clamped_op_offset > syntect_offset {
-                    if let Some(category) = self.scope_stack_to_category(&current_scopes) {
-                        let byte_start = current_offset + syntect_offset;
-                        let byte_end = current_offset + clamped_op_offset;
-                        if byte_start < byte_end {
-                            new_spans.push(CachedSpan {
-                                range: byte_start..byte_end,
-                                category,
-                            });
-                        }
-                    }
-                }
-                syntect_offset = clamped_op_offset;
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = current_scopes.apply(&op);
-            }
-
-            if syntect_offset < line_content_len {
-                if let Some(category) = self.scope_stack_to_category(&current_scopes) {
-                    let byte_start = current_offset + syntect_offset;
-                    let byte_end = current_offset + line_content_len;
-                    if byte_start < byte_end {
+            let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
+            let mut newline_terminated = false;
+            if let Some(prepared) = prepared {
+                let parse_ok = self.parse_line_into_spans(
+                    &mut state,
+                    &mut current_scopes,
+                    &prepared,
+                    current_offset,
+                    |byte_start, byte_end, category| {
                         new_spans.push(CachedSpan {
                             range: byte_start..byte_end,
                             category,
                         });
-                    }
+                    },
+                );
+                if parse_ok {
+                    newline_terminated = prepared.ends_with_newline;
                 }
             }
 
             pos = line_end;
-            current_offset += actual_line_byte_len;
-            bytes_since_checkpoint += actual_line_byte_len;
+            current_offset += line_byte_len;
+            bytes_since_checkpoint += line_byte_len;
 
-            if line_ends_with_newline {
+            if newline_terminated {
                 safe_offset = current_offset;
                 safe_state = state.clone();
                 safe_scopes = current_scopes.clone();
@@ -1043,77 +1040,26 @@ impl TextMateEngine {
 
         while pos < content_bytes.len() {
             if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
-                let nearby = self.checkpoint_markers.query_range(
-                    current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
-                    current_offset + CHECKPOINT_INTERVAL / 2,
-                );
-                if nearby.is_empty() {
-                    let marker_id = self.checkpoint_markers.create(current_offset, true);
-                    self.checkpoint_states
-                        .insert(marker_id, (state.clone(), current_scopes.clone()));
-                }
+                self.maybe_create_checkpoint(current_offset, &state, &current_scopes);
                 bytes_since_checkpoint = 0;
             }
 
-            let line_start = pos;
-            let mut line_end = pos;
-
-            while line_end < content_bytes.len() {
-                if content_bytes[line_end] == b'\n' {
-                    line_end += 1;
-                    break;
-                } else if content_bytes[line_end] == b'\r' {
-                    if line_end + 1 < content_bytes.len() && content_bytes[line_end + 1] == b'\n' {
-                        line_end += 2;
-                    } else {
-                        line_end += 1;
-                    }
-                    break;
-                }
-                line_end += 1;
-            }
-
-            let line_bytes = &content_bytes[line_start..line_end];
-            let actual_line_byte_len = line_bytes.len();
-
-            let line_str = match std::str::from_utf8(line_bytes) {
-                Ok(s) => s,
-                Err(_) => {
-                    pos = line_end;
-                    current_offset += actual_line_byte_len;
-                    bytes_since_checkpoint += actual_line_byte_len;
-                    continue;
-                }
-            };
-
-            let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
-            let line_ends_with_newline = line_str.ends_with('\n');
-            let line_for_syntect = if line_end < content_bytes.len() || line_ends_with_newline {
-                format!("{}\n", line_content)
-            } else {
-                line_content.to_string()
-            };
-
-            let ops = match state.parse_line(&line_for_syntect, &self.syntax_set) {
-                Ok(ops) => ops,
-                Err(_) => {
-                    pos = line_end;
-                    current_offset += actual_line_byte_len;
-                    bytes_since_checkpoint += actual_line_byte_len;
-                    continue;
-                }
-            };
-
-            let collect_spans = current_offset + actual_line_byte_len > desired_parse_start;
-            let mut syntect_offset = 0;
-            let line_content_len = line_content.len();
-
-            for (op_offset, op) in ops {
-                let clamped_op_offset = op_offset.min(line_content_len);
-                if collect_spans && clamped_op_offset > syntect_offset {
-                    if let Some(category) = self.scope_stack_to_category(&current_scopes) {
-                        let byte_start = current_offset + syntect_offset;
-                        let byte_end = current_offset + clamped_op_offset;
+            let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
+            // Skip span collection for lines that ended before the viewport's
+            // desired_parse_start — we still need to drive `parse_line` for
+            // state continuity, but their spans wouldn't be returned anyway.
+            let collect_spans = current_offset + line_byte_len > desired_parse_start;
+            let mut newline_terminated = false;
+            if let Some(prepared) = prepared {
+                let parse_ok = self.parse_line_into_spans(
+                    &mut state,
+                    &mut current_scopes,
+                    &prepared,
+                    current_offset,
+                    |byte_start, byte_end, category| {
+                        if !collect_spans {
+                            return;
+                        }
                         let clamped_start = byte_start.max(desired_parse_start);
                         if clamped_start < byte_end {
                             spans.push(CachedSpan {
@@ -1121,44 +1067,30 @@ impl TextMateEngine {
                                 category,
                             });
                         }
-                    }
-                }
-                syntect_offset = clamped_op_offset;
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = current_scopes.apply(&op);
-            }
-
-            if collect_spans && syntect_offset < line_content_len {
-                if let Some(category) = self.scope_stack_to_category(&current_scopes) {
-                    let byte_start = current_offset + syntect_offset;
-                    let byte_end = current_offset + line_content_len;
-                    let clamped_start = byte_start.max(desired_parse_start);
-                    if clamped_start < byte_end {
-                        spans.push(CachedSpan {
-                            range: clamped_start..byte_end,
-                            category,
-                        });
-                    }
+                    },
+                );
+                if parse_ok {
+                    newline_terminated = prepared.ends_with_newline;
                 }
             }
 
             pos = line_end;
-            current_offset += actual_line_byte_len;
-            bytes_since_checkpoint += actual_line_byte_len;
+            current_offset += line_byte_len;
+            bytes_since_checkpoint += line_byte_len;
 
-            if line_ends_with_newline {
+            if newline_terminated {
                 safe_offset = current_offset;
                 safe_state = state.clone();
                 safe_scopes = current_scopes.clone();
             }
 
-            // Update checkpoint states as we pass them
+            // Update checkpoint states as we pass them. Done after the
+            // line is parsed (state now reflects end-of-line) so a
+            // checkpoint placed at the line's start position carries
+            // the state at that position, ready to feed the next line.
             let markers_here: Vec<(MarkerId, usize)> = self
                 .checkpoint_markers
-                .query_range(
-                    current_offset.saturating_sub(actual_line_byte_len),
-                    current_offset,
-                )
+                .query_range(current_offset.saturating_sub(line_byte_len), current_offset)
                 .into_iter()
                 .map(|(id, start, _)| (id, start))
                 .collect();
