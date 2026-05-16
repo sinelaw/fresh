@@ -1489,10 +1489,8 @@ impl Editor {
                 key,
                 value,
             } => {
-                self.current_status_bar_value(
-                    fresh_core::BufferId(*buffer_id as usize),
-                    key,
-                ) != Some(value.as_str())
+                self.current_status_bar_value(fresh_core::BufferId(*buffer_id as usize), key)
+                    != Some(value.as_str())
             }
             _ => true,
         });

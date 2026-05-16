@@ -5703,8 +5703,7 @@ impl QuickJsBackend {
         let async_resource_owners: AsyncResourceOwners =
             Arc::new(std::sync::Mutex::new(HashMap::new()));
         let search_handles: SearchHandleRegistry = Arc::new(std::sync::Mutex::new(HashMap::new()));
-        let event_handlers: EventHandlerRegistry =
-            Arc::new(RwLock::new(HashMap::new()));
+        let event_handlers: EventHandlerRegistry = Arc::new(RwLock::new(HashMap::new()));
         Self::with_state_responses_and_resources(
             state_snapshot,
             command_sender,
