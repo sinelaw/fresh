@@ -564,6 +564,19 @@ pub(crate) fn render_content(
             let effective_highlight_current_line =
                 view_prefs.highlight_current_line && state.show_cursors;
 
+            // Column rulers are a source-code editing aid; virtual buffers
+            // (dashboard, *Diagnostics*, grep results, ...) aren't code, so
+            // the config-driven rulers would just paint stripes over plugin
+            // chrome. Suppress them for any virtual buffer.
+            let is_virtual_buffer = buffer_metadata
+                .get(&buffer_id)
+                .is_some_and(|m| m.is_virtual());
+            let effective_rulers: &[usize] = if is_virtual_buffer {
+                &[]
+            } else {
+                &view_prefs.rulers
+            };
+
             let mut empty_folds = FoldManager::new();
             let folds = split_view_states
                 .as_deref_mut()
@@ -597,7 +610,7 @@ pub(crate) fn render_content(
                 use_terminal_bg,
                 session_mode,
                 software_cursor_only,
-                &view_prefs.rulers,
+                effective_rulers,
                 view_prefs.show_line_numbers,
                 effective_highlight_current_line,
                 diagnostics_inline_text,

@@ -157,6 +157,46 @@ fn test_no_rulers_by_default() {
     }
 }
 
+/// Regression: virtual buffers (Dashboard, *Diagnostics*, grep results, ...)
+/// must not paint the config-driven column rulers. They aren't source code,
+/// and the ruler stripes would otherwise overlay plugin chrome.
+#[test]
+fn test_no_rulers_on_virtual_buffer() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![10, 20];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    let dashboard_buffer = harness.editor_mut().active_window_mut().create_virtual_buffer(
+        "Dashboard".to_string(),
+        "dashboard".to_string(),
+        true,
+    );
+    harness
+        .editor_mut()
+        .set_virtual_buffer_content(
+            dashboard_buffer,
+            vec![fresh::primitives::text_property::TextPropertyEntry::text(
+                &"X".repeat(60),
+            )],
+        )
+        .unwrap();
+    harness.editor_mut().switch_buffer(dashboard_buffer);
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+
+    assert!(
+        !has_ruler_bg(&harness, gutter_width(&harness) + 10, row),
+        "Virtual buffer should not paint a ruler at column 10"
+    );
+    assert!(
+        !has_ruler_bg(&harness, gutter_width(&harness) + 20, row),
+        "Virtual buffer should not paint a ruler at column 20"
+    );
+}
+
 /// Test that ruler uses the theme's ruler_bg color.
 #[test]
 fn test_ruler_uses_theme_color() {
