@@ -379,11 +379,16 @@ impl Editor {
         );
 
         // Capture external files (files outside working_dir)
-        // These are stored as absolute paths since they can't be made relative
+        // These are stored as absolute paths since they can't be made relative.
+        // Skip plugin-managed transient surfaces (e.g. git_log's per-commit
+        // `<dataDir>/git-show/<sha>.diff` buffers opened via
+        // `openFileStreaming`) — they're flagged `hidden_from_tabs` and
+        // would otherwise reappear as garbage tabs on the next launch.
         let external_files: Vec<PathBuf> = self
             .active_window()
             .buffer_metadata
             .values()
+            .filter(|meta| !meta.hidden_from_tabs && !meta.is_virtual())
             .filter_map(|meta| meta.file_path())
             .filter(|abs_path| abs_path.strip_prefix(&self.working_dir).is_err())
             .cloned()
@@ -394,11 +399,13 @@ impl Editor {
 
         // Capture read-only file paths. Store relative when inside
         // working_dir (matches how open_tabs paths are stored), otherwise
-        // absolute — mirrors external_files.
+        // absolute — mirrors external_files. Same hidden/virtual filter
+        // applies for the same reason.
         let read_only_files: Vec<PathBuf> = self
             .active_window()
             .buffer_metadata
             .values()
+            .filter(|meta| !meta.hidden_from_tabs && !meta.is_virtual())
             .filter(|meta| meta.read_only)
             .filter_map(|meta| meta.file_path().cloned())
             .filter(|p| !p.as_os_str().is_empty())

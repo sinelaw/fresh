@@ -2353,3 +2353,94 @@ fn test_restore_flag_overrides_disabled_config() {
         harness.assert_screen_contains("workspace content");
     }
 }
+
+/// Regression test for the "garbage buffers after restart" bug:
+/// plugin-managed transient surfaces (file-backed buffers flagged
+/// `hidden_from_tabs` — e.g. git_log's per-commit `<dataDir>/git-show/<sha>.diff`
+/// buffers opened via `openFileStreaming`) must not be captured into the
+/// workspace's `external_files`, otherwise they reappear as garbage tabs
+/// after a quit-and-restart cycle. Regular external files opened by the
+/// user still round-trip normally.
+#[test]
+fn test_hidden_from_tabs_external_files_not_persisted() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    let external_dir = temp_dir.path().join("external");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::create_dir(&external_dir).unwrap();
+
+    let normal_external = external_dir.join("normal.txt");
+    let transient_external = external_dir.join("transient.diff");
+    std::fs::write(&normal_external, "user-opened external").unwrap();
+    std::fs::write(&transient_external, "plugin-managed transient").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Config::default(),
+        project_dir.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&normal_external).unwrap();
+    harness.open_file(&transient_external).unwrap();
+
+    // Mimic the post-open state `openFileStreaming` leaves a buffer in
+    // (see `plugin_dispatch.rs::handle_open_file_streaming`): flag the
+    // buffer as hidden + non-auto-reverting, and drop it from the
+    // split's tab list so it's not a visible tab.
+    let transient_id = harness.editor().active_buffer_id();
+    {
+        let win = harness.editor_mut().active_window_mut();
+        if let Some(meta) = win.buffer_metadata.get_mut(&transient_id) {
+            meta.hidden_from_tabs = true;
+            meta.auto_revert_enabled = false;
+        }
+        let active_split = win
+            .buffers
+            .splits()
+            .map(|(mgr, _)| mgr)
+            .expect("split layout present")
+            .active_split();
+        if let Some(vs) = win
+            .split_view_states_mut()
+            .expect("split view states present")
+            .get_mut(&active_split)
+        {
+            vs.open_buffers.retain(
+                |t| !matches!(t, fresh::view::split::TabTarget::Buffer(b) if *b == transient_id),
+            );
+        }
+    }
+
+    harness.editor_mut().save_workspace().unwrap();
+
+    // Inspect the on-disk workspace directly: only the normal external
+    // should land in `external_files`, never the hidden one. Likewise
+    // the open-tabs list must not reference the hidden buffer.
+    let workspace_path = get_workspace_path(&project_dir).unwrap();
+    let raw = std::fs::read_to_string(&workspace_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let externals = parsed["external_files"].as_array().unwrap();
+    let external_paths: Vec<&str> = externals.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        external_paths.iter().any(|p| p.ends_with("normal.txt")),
+        "normal external file must persist: {external_paths:?}",
+    );
+    assert!(
+        !external_paths.iter().any(|p| p.ends_with("transient.diff")),
+        "transient (hidden_from_tabs) external file must NOT persist: {external_paths:?}",
+    );
+    // open_tabs is the actual driver of tab restoration on next launch.
+    let split_states = parsed["split_states"].as_object().unwrap();
+    for (_id, st) in split_states {
+        let open_tabs = st["open_tabs"].as_array().unwrap();
+        for tab in open_tabs {
+            let serialized = tab.to_string();
+            assert!(
+                !serialized.contains("transient.diff"),
+                "transient file must NOT appear in open_tabs: {serialized}",
+            );
+        }
+    }
+}
