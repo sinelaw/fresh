@@ -456,6 +456,23 @@ type WindowInfo = {
 	* Absolute project root.
 	*/
 	root: string;
+	/**
+	* Project this session belongs to — the canonical repo
+	* root (or arbitrary directory) the user pointed the
+	* new-session form at. `null` for legacy sessions that
+	* predate the Project Path field. The Orchestrator Open
+	* dialog filters by this so the "this project's sessions"
+	* view is one keystroke away from the all-projects view.
+	*/
+	project_path?: string | null;
+	/**
+	* `true` when the session shares its working tree with
+	* other sessions (worktree-creation was off at session
+	* time, or the session lives in a non-git directory).
+	* Persistence-only field; defaults to `false` and isn't
+	* emitted when false.
+	*/
+	shared_worktree?: boolean;
 };
 type JsDiagnostic = {
 	/**

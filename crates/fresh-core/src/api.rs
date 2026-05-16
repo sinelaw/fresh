@@ -400,6 +400,27 @@ pub struct WindowInfo {
     /// Absolute project root.
     #[ts(type = "string")]
     pub root: PathBuf,
+    /// Project this session belongs to — the canonical repo
+    /// root (or arbitrary directory) the user pointed the
+    /// new-session form at. `null` for legacy sessions that
+    /// predate the Project Path field. The Orchestrator Open
+    /// dialog filters by this so the "this project's sessions"
+    /// view is one keystroke away from the all-projects view.
+    #[ts(type = "string | null")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub project_path: Option<PathBuf>,
+    /// `true` when the session shares its working tree with
+    /// other sessions (worktree-creation was off at session
+    /// time, or the session lives in a non-git directory).
+    /// Persistence-only field; defaults to `false` and isn't
+    /// emitted when false.
+    #[ts(type = "boolean")]
+    #[serde(skip_serializing_if = "is_false_field", default)]
+    pub shared_worktree: bool,
+}
+
+fn is_false_field(b: &bool) -> bool {
+    !b
 }
 
 /// Information about a buffer

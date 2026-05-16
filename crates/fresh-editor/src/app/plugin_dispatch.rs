@@ -148,10 +148,23 @@ impl Editor {
         let mut session_infos: Vec<fresh_core::api::WindowInfo> = self
             .windows
             .values()
-            .map(|s| fresh_core::api::WindowInfo {
-                id: s.id,
-                label: s.label.clone(),
-                root: s.root.clone(),
+            .map(|s| {
+                let slot = s.plugin_state.get("orchestrator");
+                let project_path = slot
+                    .and_then(|m| m.get("project_path"))
+                    .and_then(|v| v.as_str())
+                    .map(std::path::PathBuf::from);
+                let shared_worktree = slot
+                    .and_then(|m| m.get("shared_worktree"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                fresh_core::api::WindowInfo {
+                    id: s.id,
+                    label: s.label.clone(),
+                    root: s.root.clone(),
+                    project_path,
+                    shared_worktree,
+                }
             })
             .collect();
         session_infos.sort_by_key(|s| s.id.0);

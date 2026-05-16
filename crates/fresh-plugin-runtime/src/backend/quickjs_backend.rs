@@ -8651,11 +8651,15 @@ mod tests {
                     id: fresh_core::WindowId(1),
                     label: "main".into(),
                     root: std::path::PathBuf::from("/repo"),
+                    project_path: None,
+                    shared_worktree: false,
                 },
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(2),
                     label: "feat-auth".into(),
                     root: std::path::PathBuf::from("/wt/feat-auth"),
+                    project_path: None,
+                    shared_worktree: false,
                 },
             ];
             state.active_window_id = fresh_core::WindowId(2);

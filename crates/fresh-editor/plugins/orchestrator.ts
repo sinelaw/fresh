@@ -51,6 +51,15 @@ interface AgentSession {
   label: string;
   // Absolute filesystem root.
   root: string;
+  // Canonical project root this session belongs to (set at
+  // create time from the Project Path field). `null` for
+  // sessions created outside the new-session form (e.g. the
+  // editor's base session, or sessions from before the
+  // Project Path field shipped).
+  projectPath: string | null;
+  // `true` if the session was created with the worktree
+  // checkbox unchecked (shared worktree / non-git path).
+  sharedWorktree: boolean;
   // The terminal id Orchestrator spawned in this session, if any.
   terminalId: number | null;
   // Last parsed agent state. "active" is computed at render
@@ -72,7 +81,19 @@ const orchestratorSessions = new Map<number, AgentSession>();
 // the editor calls these "windows"; Orchestrator still presents
 // them as "sessions" in its UX.)
 let pendingNewSession:
-  | { label: string; branch: string; cmd: string; root: string }
+  | {
+      label: string;
+      branch: string;
+      cmd: string;
+      root: string;
+      // Recorded for `setWindowState` after `window_created`.
+      // `projectPath` is the canonical project root the user
+      // pointed the form at; `sharedWorktree` is `true` when the
+      // session shares its working tree (no dedicated `git
+      // worktree add`).
+      projectPath: string;
+      sharedWorktree: boolean;
+    }
   | null = null;
 
 // New-session form state. `null` ⇒ the floating form isn't
@@ -218,6 +239,19 @@ interface OpenDialogState {
   // too easy to skip over when the user's eyes are on the dialog.
   // Cleared on the next nav / filter change.
   lastError: string | null;
+  // When `false` (the default), the list shows only sessions
+  // whose `projectPath` matches `currentProject` (plus the
+  // base session). When `true`, every session is shown
+  // regardless of project, with the project path rendered
+  // alongside the label so cross-project rows are
+  // distinguishable. Toggle via Alt+P inside the dialog.
+  showAllProjects: boolean;
+  // Resolved canonical project root for the editor's cwd;
+  // probed once at openControlRoom time. Empty string for
+  // non-git launches (the path-comparison fallback in
+  // `filterSessions` then matches every session that has no
+  // recorded projectPath).
+  currentProject: string;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -238,6 +272,8 @@ function reconcileSessions(): void {
         id: s.id,
         label: s.label,
         root: s.root,
+        projectPath: s.project_path ?? null,
+        sharedWorktree: s.shared_worktree ?? false,
         terminalId: null,
         // The base session has no agent; everything else
         // defaults to "running" until a terminal_output /
@@ -248,6 +284,8 @@ function reconcileSessions(): void {
     } else {
       existing.label = s.label;
       existing.root = s.root;
+      if (s.project_path != null) existing.projectPath = s.project_path;
+      if (s.shared_worktree != null) existing.sharedWorktree = s.shared_worktree;
     }
   }
   for (const id of orchestratorSessions.keys()) {
@@ -289,9 +327,39 @@ function ageString(createdAt: number): string {
 // root path. Ordering: prefix-of-label hits beat substring hits,
 // then ties broken by label length so shorter matches surface
 // first. Empty needle returns the full list in numeric-id order.
-function filterSessions(needle: string): number[] {
+//
+// With `currentProjectOnly: true` (the default — see
+// `openDialog.showAllProjects`), only sessions whose
+// `projectPath` matches the editor's resolved project survive
+// the filter. The base session (id 1) is always included even
+// if its `projectPath` is missing, so a fresh launch never
+// shows an empty list.
+function filterSessions(
+  needle: string,
+  options?: { currentProjectOnly?: boolean; currentProject?: string },
+): number[] {
   reconcileSessions();
-  const ids = Array.from(orchestratorSessions.keys()).sort((a, b) => a - b);
+  const currentProjectOnly = options?.currentProjectOnly ?? true;
+  const currentProject = options?.currentProject ?? "";
+  const matchesProject = (s: AgentSession): boolean => {
+    if (!currentProjectOnly) return true;
+    if (s.id === 1) return true; // base session always visible
+    if (!currentProject) return true;
+    if (s.projectPath === currentProject) return true;
+    // Fall-back: legacy sessions without `projectPath` are
+    // shown in every project view rather than hidden — the
+    // alternative (drop them from the list entirely) would
+    // make pre-Phase 5 sessions inaccessible without an
+    // explicit toggle.
+    if (s.projectPath == null) return true;
+    return false;
+  };
+  const ids = Array.from(orchestratorSessions.keys())
+    .filter((id) => {
+      const s = orchestratorSessions.get(id);
+      return !!s && matchesProject(s);
+    })
+    .sort((a, b) => a - b);
   if (!needle) return ids;
   const n = needle.toLowerCase();
   type Scored = { id: number; score: number; len: number };
@@ -707,6 +775,14 @@ function buildOpenSpec(): WidgetSpec {
         ],
       }
     : null;
+  // Header scope indicator: surfaces the current project filter
+  // (or "all projects") so the user knows what set the list is
+  // drawing from before they start filtering on top.
+  const scopeText = openDialog.showAllProjects
+    ? "all projects"
+    : openDialog.currentProject
+    ? `project: ${openDialog.currentProject}`
+    : "current project";
   return col(
     {
       kind: "raw",
@@ -715,6 +791,10 @@ function buildOpenSpec(): WidgetSpec {
           {
             text: "ORCHESTRATOR :: Sessions",
             style: { fg: "ui.popup_border_fg", bold: true },
+          },
+          {
+            text: `  (${scopeText})`,
+            style: { fg: "editor.whitespace_indicator_fg", italic: true },
           },
         ]),
       ],
@@ -778,6 +858,10 @@ function buildOpenSpec(): WidgetSpec {
         { keys: "↑↓", label: "nav" },
         { keys: "Enter", label: "dive" },
         { keys: "Tab", label: "focus" },
+        {
+          keys: "Alt+P",
+          label: openDialog.showAllProjects ? "this project" : "all projects",
+        },
         { keys: "Esc", label: "close" },
       ]),
       flexSpacer(),
@@ -833,7 +917,10 @@ function clearDialogError(): void {
 
 function refreshOpenDialog(): void {
   if (!openPanel || !openDialog) return;
-  openDialog.filteredIds = filterSessions(openDialog.filter.value);
+  openDialog.filteredIds = filterSessions(openDialog.filter.value, {
+    currentProjectOnly: !openDialog.showAllProjects,
+    currentProject: openDialog.currentProject,
+  });
   // Clamp the selection into range so a fresh filter or a
   // session vanishing under us doesn't leave us pointing past
   // the end of the list.
@@ -856,13 +943,26 @@ function openControlRoom(): void {
   if (openPanel) return;
   reconcileSessions();
   const activeId = editor.activeWindow();
-  const ids = Array.from(orchestratorSessions.keys()).sort((a, b) => a - b);
-  const activeIdx = ids.indexOf(activeId);
   const listVisibleRows = openListVisibleRows();
+  // Resolve the editor's "current project" for the dialog's
+  // default scope. The right source is the ACTIVE window's
+  // `projectPath` — Window is the unit of project ownership in
+  // this editor (each Window has its own root, LSP, file
+  // explorer; switching active_window swaps all of that
+  // atomically). So when the user is currently diving in a
+  // session for project A and opens the picker, A's sessions
+  // should be the default view; if they then dive into a
+  // project-B session and reopen the picker, B becomes the
+  // default. Fall back to `root` for windows that pre-date
+  // the Project Path field, and to an empty string if even
+  // that isn't usable (the filter then matches every session
+  // with no recorded projectPath).
+  const activeSession = orchestratorSessions.get(activeId);
+  const currentProject = activeSession?.projectPath ?? activeSession?.root ?? "";
   openDialog = {
     filter: { value: "", cursor: 0 },
-    filteredIds: ids,
-    selectedIndex: activeIdx >= 0 ? activeIdx : 0,
+    filteredIds: [],
+    selectedIndex: 0,
     originalActiveSession: activeId,
     pendingConfirm: null,
     listVisibleRows,
@@ -879,7 +979,16 @@ function openControlRoom(): void {
     showDetails: false,
     inFlight: null,
     lastError: null,
+    showAllProjects: false,
+    currentProject,
   };
+  // Apply the initial filter (current-project view by default).
+  openDialog.filteredIds = filterSessions("", {
+    currentProjectOnly: !openDialog.showAllProjects,
+    currentProject,
+  });
+  const activeIdx = openDialog.filteredIds.indexOf(activeId);
+  openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
   openPanel = new FloatingWidgetPanel();
   // 90% × 90% of the terminal — the open dialog wants room for
   // a real session list + preview pane, unlike the new-session
@@ -1415,10 +1524,22 @@ async function deleteConfirmedSession(): Promise<void> {
 // since OPEN_MODE doesn't claim them here.
 editor.defineMode(
   OPEN_MODE,
-  [["M-n", "orchestrator_open_new_from_picker"]],
+  [
+    ["M-n", "orchestrator_open_new_from_picker"],
+    // `Alt+P` toggles "all projects" vs "this project only".
+    // The hint footer reflects the current state so users
+    // discover the toggle without RTFM.
+    ["M-p", "orchestrator_open_toggle_all_projects"],
+  ],
   true,
   true,
 );
+
+registerHandler("orchestrator_open_toggle_all_projects", () => {
+  if (!openDialog) return;
+  openDialog.showAllProjects = !openDialog.showAllProjects;
+  refreshOpenDialog();
+});
 
 registerHandler("orchestrator_open_new_from_picker", () => {
   if (!openDialog) return;
@@ -2271,7 +2392,14 @@ async function submitForm(): Promise<void> {
   if (cmd) appendHistory("cmd", cmd);
   if (createWorktree) appendHistory("branch", reportedBranch);
 
-  pendingNewSession = { label: sessionName, branch: reportedBranch, cmd, root };
+  pendingNewSession = {
+    label: sessionName,
+    branch: reportedBranch,
+    cmd,
+    root,
+    projectPath,
+    sharedWorktree: !createWorktree,
+  };
   closeForm();
   editor.createWindow(root, sessionName);
 }
@@ -2488,7 +2616,10 @@ editor.on("widget_event", (e) => {
       // when possible — if the previously selected id is still in
       // the new filtered set, keep it; otherwise reset to 0.
       const prevId = openDialog.filteredIds[openDialog.selectedIndex];
-      const next = filterSessions(value);
+      const next = filterSessions(value, {
+        currentProjectOnly: !openDialog.showAllProjects,
+        currentProject: openDialog.currentProject,
+      });
       openDialog.filteredIds = next;
       const nextIdx = prevId !== undefined ? next.indexOf(prevId) : -1;
       openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
@@ -2654,6 +2785,14 @@ editor.on("window_created", async (payload) => {
     // the dive isn't user-visible flicker, it's the desired
     // landing state.
     editor.setActiveWindow(id);
+    // Record the new session's project_path / shared_worktree
+    // into per-window plugin state — these survive editor
+    // restarts via `orchestrator_persistence.rs`, and feed the
+    // Open dialog's "this project" filter on the next launch.
+    // `setWindowState` writes to the active window, which we
+    // just set above.
+    editor.setWindowState("project_path", intent.projectPath);
+    editor.setWindowState("shared_worktree", intent.sharedWorktree);
     // When the user provided a non-empty agent command, spawn it as
     // the PTY child directly (no shell middleman). Tab title reads
     // the command name ("python3", "claude", ...) instead of the
