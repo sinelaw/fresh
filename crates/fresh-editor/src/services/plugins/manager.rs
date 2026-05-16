@@ -437,12 +437,34 @@ impl PluginManager {
     }
 
     /// Check if any handlers are registered for a hook.
+    ///
+    /// Blocking call (round-trips through the plugin thread). Suitable for
+    /// rare events (mouse clicks, command dispatch). For per-render gating
+    /// use `has_subscribers` instead — it reads a shared registry directly.
     pub fn has_hook_handlers(&self, hook_name: &str) -> bool {
         #[cfg(feature = "plugins")]
         {
             self.inner
                 .as_ref()
                 .map(|m| m.has_hook_handlers(hook_name))
+                .unwrap_or(false)
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = hook_name;
+            false
+        }
+    }
+
+    /// Non-blocking variant of `has_hook_handlers`. Reads the shared
+    /// `event_handlers` registry directly — safe to call on the hot
+    /// render path. Returns `false` when plugins are disabled.
+    pub fn has_subscribers(&self, hook_name: &str) -> bool {
+        #[cfg(feature = "plugins")]
+        {
+            self.inner
+                .as_ref()
+                .map(|m| m.has_subscribers(hook_name))
                 .unwrap_or(false)
         }
         #[cfg(not(feature = "plugins"))]

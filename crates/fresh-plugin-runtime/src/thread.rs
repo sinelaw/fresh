@@ -217,6 +217,12 @@ pub struct PluginThreadHandle {
     /// write directly into the same shared state the JS side drains via
     /// `_searchHandleTake`.
     search_handles: SearchHandleRegistry,
+
+    /// Shared registry of `event_handlers` so the editor thread can
+    /// cheaply ask "does any plugin subscribe to hook X?" before doing
+    /// expensive per-render work (e.g. building hook args). See
+    /// `EventHandlerRegistry` in `quickjs_backend.rs`.
+    event_handlers: crate::backend::quickjs_backend::EventHandlerRegistry,
 }
 
 impl PluginThreadHandle {
@@ -244,6 +250,13 @@ impl PluginThreadHandle {
         let search_handles: SearchHandleRegistry =
             Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let thread_search_handles = Arc::clone(&search_handles);
+
+        // Plugin event-handler registry, shared with the editor thread so
+        // the renderer can skip expensive hook arg building when no plugin
+        // subscribes.
+        let event_handlers: crate::backend::quickjs_backend::EventHandlerRegistry =
+            Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let thread_event_handlers = Arc::clone(&event_handlers);
 
         // Create channel for requests (unbounded allows sync send, async recv)
         let (request_sender, request_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -279,6 +292,7 @@ impl PluginThreadHandle {
                 services.clone(),
                 thread_async_resource_owners,
                 thread_search_handles,
+                thread_event_handlers,
             ) {
                 Ok(rt) => {
                     tracing::debug!("Plugin thread: QuickJS runtime created successfully");
@@ -317,12 +331,25 @@ impl PluginThreadHandle {
             command_receiver,
             async_resource_owners,
             search_handles,
+            event_handlers,
         })
     }
 
     /// Accessor for the streaming-search handle registry.
     pub fn search_handles_handle(&self) -> SearchHandleRegistry {
         Arc::clone(&self.search_handles)
+    }
+
+    /// Non-blocking check: does any loaded plugin subscribe to `hook_name`?
+    /// Used by the renderer to skip building expensive hook args (e.g.
+    /// the full tokenized viewport for `view_transform_request`) when
+    /// nothing would consume them. Reads from the shared
+    /// `event_handlers` registry directly — no channel round-trip.
+    pub fn has_subscribers(&self, hook_name: &str) -> bool {
+        self.event_handlers
+            .read()
+            .map(|h| h.get(hook_name).is_some_and(|v| !v.is_empty()))
+            .unwrap_or(false)
     }
 
     /// Check if the plugin thread is still alive

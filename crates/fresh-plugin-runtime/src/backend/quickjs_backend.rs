@@ -702,6 +702,15 @@ pub struct PluginTrackedState {
 /// Shared between QuickJsBackend (plugin thread) and PluginThreadHandle (main thread).
 pub type AsyncResourceOwners = Arc<std::sync::Mutex<HashMap<u64, String>>>;
 
+/// Plugin event handler registry shared between the plugin thread (which
+/// reads + mutates on `on` / `off` / `emit` / `cleanup_plugin`) and the
+/// editor thread (which only does cheap "does anyone listen?" lookups
+/// via `has_subscribers` to gate expensive per-render hook arg building).
+///
+/// Switched from `Rc<RefCell<...>>` to `Arc<RwLock<...>>` so the editor
+/// thread can read it lock-free in the uncontended case (read fast path).
+pub type EventHandlerRegistry = Arc<RwLock<HashMap<String, Vec<PluginHandler>>>>;
+
 #[derive(Debug, Clone)]
 pub struct PluginHandler {
     pub plugin_name: String,
@@ -766,7 +775,7 @@ pub struct JsEditorApi {
     #[qjs(skip_trace)]
     registered_actions: Rc<RefCell<HashMap<String, PluginHandler>>>,
     #[qjs(skip_trace)]
-    event_handlers: Rc<RefCell<HashMap<String, Vec<PluginHandler>>>>,
+    event_handlers: EventHandlerRegistry,
     #[qjs(skip_trace)]
     next_request_id: Rc<RefCell<u64>>,
     #[qjs(skip_trace)]
@@ -1756,7 +1765,8 @@ impl JsEditorApi {
             let _ = self.command_sender.send(PluginCommand::RefreshAllLines);
         }
         self.event_handlers
-            .borrow_mut()
+            .write()
+            .expect("event_handlers poisoned")
             .entry(event_name)
             .or_default()
             .push(PluginHandler {
@@ -1767,7 +1777,12 @@ impl JsEditorApi {
 
     /// Unsubscribe from an event
     pub fn off(&self, event_name: String, handler_name: String) {
-        if let Some(list) = self.event_handlers.borrow_mut().get_mut(&event_name) {
+        if let Some(list) = self
+            .event_handlers
+            .write()
+            .expect("event_handlers poisoned")
+            .get_mut(&event_name)
+        {
             list.retain(|h| h.handler_name != handler_name);
         }
     }
@@ -4349,7 +4364,8 @@ impl JsEditorApi {
     /// Get registered event handlers for an event
     pub fn get_handlers(&self, event_name: String) -> Vec<String> {
         self.event_handlers
-            .borrow()
+            .read()
+            .expect("event_handlers poisoned")
             .get(&event_name)
             .cloned()
             .unwrap_or_default()
@@ -5607,8 +5623,10 @@ pub struct QuickJsBackend {
     main_context: Context,
     /// Plugin-specific contexts: plugin_name -> Context
     plugin_contexts: Rc<RefCell<HashMap<String, Context>>>,
-    /// Event handlers: event_name -> list of PluginHandler
-    event_handlers: Rc<RefCell<HashMap<String, Vec<PluginHandler>>>>,
+    /// Event handlers: event_name -> list of PluginHandler.
+    /// Shared with the editor thread so it can cheaply check
+    /// "does anyone listen to this hook?" — see `EventHandlerRegistry`.
+    event_handlers: EventHandlerRegistry,
     /// Registered actions: action_name -> PluginHandler
     registered_actions: Rc<RefCell<HashMap<String, PluginHandler>>>,
     /// Editor state snapshot (read-only access)
@@ -5685,6 +5703,8 @@ impl QuickJsBackend {
         let async_resource_owners: AsyncResourceOwners =
             Arc::new(std::sync::Mutex::new(HashMap::new()));
         let search_handles: SearchHandleRegistry = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let event_handlers: EventHandlerRegistry =
+            Arc::new(RwLock::new(HashMap::new()));
         Self::with_state_responses_and_resources(
             state_snapshot,
             command_sender,
@@ -5692,6 +5712,7 @@ impl QuickJsBackend {
             services,
             async_resource_owners,
             search_handles,
+            event_handlers,
         )
     }
 
@@ -5704,6 +5725,7 @@ impl QuickJsBackend {
         services: Arc<dyn fresh_core::services::PluginServiceBridge>,
         async_resource_owners: AsyncResourceOwners,
         search_handles: SearchHandleRegistry,
+        event_handlers: EventHandlerRegistry,
     ) -> Result<Self> {
         tracing::debug!("QuickJsBackend::new: creating QuickJS runtime");
 
@@ -5741,7 +5763,6 @@ impl QuickJsBackend {
             .map_err(|e| anyhow!("Failed to create QuickJS context: {}", e))?;
 
         let plugin_contexts = Rc::new(RefCell::new(HashMap::new()));
-        let event_handlers = Rc::new(RefCell::new(HashMap::new()));
         let registered_actions = Rc::new(RefCell::new(HashMap::new()));
         let next_request_id = Rc::new(RefCell::new(1u64));
         let callback_contexts = Rc::new(RefCell::new(HashMap::new()));
@@ -5785,7 +5806,7 @@ impl QuickJsBackend {
     fn setup_context_api(&self, context: &Context, plugin_name: &str) -> Result<()> {
         let state_snapshot = Arc::clone(&self.state_snapshot);
         let command_sender = self.command_sender.clone();
-        let event_handlers = Rc::clone(&self.event_handlers);
+        let event_handlers = Arc::clone(&self.event_handlers);
         let registered_actions = Rc::clone(&self.registered_actions);
         let next_request_id = Rc::clone(&self.next_request_id);
         let registered_command_names = Rc::clone(&self.registered_command_names);
@@ -5806,7 +5827,7 @@ impl QuickJsBackend {
                 state_snapshot: Arc::clone(&state_snapshot),
                 command_sender: command_sender.clone(),
                 registered_actions: Rc::clone(&registered_actions),
-                event_handlers: Rc::clone(&event_handlers),
+                event_handlers: Arc::clone(&event_handlers),
                 next_request_id: Rc::clone(&next_request_id),
                 callback_contexts: Rc::clone(&self.callback_contexts),
                 services: self.services.clone(),
@@ -6300,8 +6321,18 @@ impl QuickJsBackend {
         self.plugin_contexts.borrow_mut().remove(plugin_name);
 
         // 2. Remove event handlers for this plugin
-        for handlers in self.event_handlers.borrow_mut().values_mut() {
-            handlers.retain(|h| h.plugin_name != plugin_name);
+        {
+            let mut handlers_map = self
+                .event_handlers
+                .write()
+                .expect("event_handlers poisoned");
+            for handlers in handlers_map.values_mut() {
+                handlers.retain(|h| h.plugin_name != plugin_name);
+            }
+            // Drop any keys whose lists are now empty so a future
+            // `has_subscribers(name)` check returns the right answer
+            // without scanning a stale empty Vec.
+            handlers_map.retain(|_, list| !list.is_empty());
         }
 
         // 3. Remove registered actions for this plugin
@@ -6486,7 +6517,12 @@ impl QuickJsBackend {
         self.services
             .set_js_execution_state(format!("hook '{}'", event_name));
 
-        let handlers = self.event_handlers.borrow().get(event_name).cloned();
+        let handlers = self
+            .event_handlers
+            .read()
+            .expect("event_handlers poisoned")
+            .get(event_name)
+            .cloned();
         if let Some(handler_pairs) = handlers {
             let plugin_contexts = self.plugin_contexts.borrow();
             for handler in &handler_pairs {
@@ -6506,7 +6542,8 @@ impl QuickJsBackend {
     /// Check if any handlers are registered for an event
     pub fn has_handlers(&self, event_name: &str) -> bool {
         self.event_handlers
-            .borrow()
+            .read()
+            .expect("event_handlers poisoned")
             .get(event_name)
             .map(|v| !v.is_empty())
             .unwrap_or(false)
@@ -6946,7 +6983,8 @@ mod tests {
         // Register a handler
         backend
             .event_handlers
-            .borrow_mut()
+            .write()
+            .unwrap()
             .entry("test_event".to_string())
             .or_default()
             .push(PluginHandler {

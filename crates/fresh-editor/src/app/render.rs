@@ -394,49 +394,62 @@ impl Editor {
                 let added = __win
                     .buffers
                     .with_buffer_and_view_states(buffer_id, |state, vs_map| {
-                        plugin_manager.read().unwrap().run_hook(
+                        // `render_start` has a tiny payload (just the
+                        // buffer id) — fire unconditionally so third-party
+                        // plugins listening for it still work.
+                        let pm_guard = plugin_manager.read().unwrap();
+                        pm_guard.run_hook(
                             "render_start",
                             crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id },
                         );
 
                         let visible_count = split_area.height as usize;
-                        let is_binary = state.buffer.is_binary();
-                        let line_ending = state.buffer.line_ending();
-                        let base_tokens =
-                            crate::view::ui::split_rendering::SplitRenderer::build_base_tokens_for_hook(
-                                &mut state.buffer,
-                                viewport_top_byte,
-                                estimated_line_length,
-                                visible_count,
-                                is_binary,
-                                line_ending,
-                            );
-                        let viewport_start = viewport_top_byte;
-                        let viewport_end = base_tokens
-                            .last()
-                            .and_then(|t| t.source_offset)
-                            .unwrap_or(viewport_start);
-                        let cursor_positions: Vec<usize> = vs_map
-                            .get(&split_id)
-                            .map(|vs| vs.cursors.iter().map(|(_, c)| c.position).collect())
-                            .unwrap_or_default();
-                        plugin_manager.read().unwrap().run_hook(
-                            "view_transform_request",
-                            crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
-                                buffer_id,
-                                split_id: split_id.into(),
-                                viewport_start,
-                                viewport_end,
-                                tokens: base_tokens,
-                                cursor_positions,
-                            },
-                        );
 
-                        // Plugin saw fresh base tokens; future
-                        // SubmitViewTransform from this request is valid.
-                        if let Some(vs) = vs_map.get_mut(&split_id) {
-                            vs.view_transform_stale = false;
+                        // `view_transform_request` carries the full
+                        // tokenized viewport in its args. Building those
+                        // tokens (`build_base_tokens_for_hook`) is the
+                        // expensive part — see #2009. Skip the whole
+                        // pipeline when no plugin subscribes.
+                        if pm_guard.has_subscribers("view_transform_request") {
+                            let is_binary = state.buffer.is_binary();
+                            let line_ending = state.buffer.line_ending();
+                            let base_tokens =
+                                crate::view::ui::split_rendering::SplitRenderer::build_base_tokens_for_hook(
+                                    &mut state.buffer,
+                                    viewport_top_byte,
+                                    estimated_line_length,
+                                    visible_count,
+                                    is_binary,
+                                    line_ending,
+                                );
+                            let viewport_start = viewport_top_byte;
+                            let viewport_end = base_tokens
+                                .last()
+                                .and_then(|t| t.source_offset)
+                                .unwrap_or(viewport_start);
+                            let cursor_positions: Vec<usize> = vs_map
+                                .get(&split_id)
+                                .map(|vs| vs.cursors.iter().map(|(_, c)| c.position).collect())
+                                .unwrap_or_default();
+                            pm_guard.run_hook(
+                                "view_transform_request",
+                                crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
+                                    buffer_id,
+                                    split_id: split_id.into(),
+                                    viewport_start,
+                                    viewport_end,
+                                    tokens: base_tokens,
+                                    cursor_positions,
+                                },
+                            );
+
+                            // Plugin saw fresh base tokens; future
+                            // SubmitViewTransform from this request is valid.
+                            if let Some(vs) = vs_map.get_mut(&split_id) {
+                                vs.view_transform_stale = false;
+                            }
                         }
+                        drop(pm_guard);
 
                         let top_byte = viewport_top_byte;
                         let seen_byte_ranges =
