@@ -392,7 +392,7 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
   }
   const isActive = id === activeId;
   const stateText = isActive ? "ACT " : STATE_GLYPH[s.state];
-  return styledRow([
+  const entries: { text: string; style?: Record<string, unknown> }[] = [
     { text: `[${id}] `, style: { fg: "ui.help_key_fg" } },
     {
       text: stateText,
@@ -401,7 +401,19 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
         : { fg: "ui.menu_disabled_fg" },
     },
     { text: `  ${s.label}` },
-  ]);
+  ];
+  // SHARED badge for the row when this session shares its
+  // worktree (with another session or with the project root
+  // directly). Mirrors the preview pane's badge so the
+  // shared-worktree status is visible at-a-glance from the
+  // list too.
+  if (s.sharedWorktree || countSiblingsAtRoot(s.root) > 1) {
+    entries.push({
+      text: " ⇄",
+      style: { fg: "ui.menu_disabled_fg" },
+    });
+  }
+  return styledRow(entries as Parameters<typeof styledRow>[0]);
 }
 
 // Preview-pane content for the currently selected session.
@@ -423,21 +435,61 @@ function buildPreviewEntries(
   const activeId = editor.activeWindow();
   const isActive = s.id === activeId;
   const stateText = isActive ? "ACT" : STATE_GLYPH[s.state].trim();
-  return [
-    styledRow([
-      {
-        text: stateText,
-        style: isActive
-          ? { fg: "ui.tab_active_fg", bold: true }
-          : { fg: "ui.menu_disabled_fg" },
-      },
+  // Count siblings sharing the same `root`. The set includes
+  // `s` itself; `> 1` means at least one other session lives at
+  // the same path (shared-worktree mode, or two sessions
+  // explicitly aimed at the same directory).
+  const sharedCount = countSiblingsAtRoot(s.root);
+  const headerEntries: { text: string; style?: Record<string, unknown> }[] = [
+    {
+      text: stateText,
+      style: isActive
+        ? { fg: "ui.tab_active_fg", bold: true }
+        : { fg: "ui.menu_disabled_fg" },
+    },
+    { text: "  " },
+    { text: ageString(s.createdAt), style: { fg: "ui.menu_disabled_fg" } },
+  ];
+  if (sharedCount > 1) {
+    headerEntries.push(
       { text: "  " },
-      { text: ageString(s.createdAt), style: { fg: "ui.menu_disabled_fg" } },
-    ]),
+      {
+        text: `SHARED ×${sharedCount}`,
+        style: { fg: "ui.status_error_indicator_fg", bold: true },
+      },
+    );
+  } else if (s.sharedWorktree) {
+    // Single-session shared-worktree mode (the user opted out of
+    // a dedicated worktree even though no second session is on
+    // this root yet). Still worth surfacing so the user knows
+    // why Archive / Delete refuse to run a `git worktree
+    // remove` here.
+    headerEntries.push(
+      { text: "  " },
+      {
+        text: "SHARED",
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      },
+    );
+  }
+  return [
+    styledRow(headerEntries as Parameters<typeof styledRow>[0]),
     styledRow([
       { text: s.root, style: { fg: "ui.menu_disabled_fg" } },
     ]),
   ];
+}
+
+/// Return the number of orchestrator sessions whose `root`
+/// equals `root`. Used to surface "SHARED ×N" in the preview
+/// pane and to refuse Archive / Delete on a shared root
+/// while another session still lives there.
+function countSiblingsAtRoot(root: string): number {
+  let n = 0;
+  for (const s of orchestratorSessions.values()) {
+    if (s.root === root) n += 1;
+  }
+  return n;
 }
 
 // Blank-row separator used inside the Sessions column between
@@ -2521,6 +2573,38 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
   if (!openDialog || !openPanel) return;
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number" || id <= 0) return;
+  // Refuse Archive / Delete on a shared root while other
+  // sessions still live there. Both actions either move
+  // (`git worktree move`) or remove (`git worktree remove`)
+  // the on-disk path — doing that under another running
+  // session would yank the rug out from under it. Stop is
+  // fine: it only signals THIS session's process group, no
+  // disk operation.
+  if (action === "archive" || action === "delete") {
+    const session = orchestratorSessions.get(id);
+    if (session) {
+      const siblings = countSiblingsAtRoot(session.root);
+      if (siblings > 1) {
+        setDialogError(
+          `cannot ${action} session [${id}] ${session.label} — ${siblings - 1} other session(s) share this worktree; close them first`,
+        );
+        refreshOpenDialog();
+        return;
+      }
+      if (session.sharedWorktree) {
+        // Single-session shared-worktree mode: there's no
+        // `git worktree` entry to remove for this session.
+        // Block both lifecycle actions so we don't run
+        // `git worktree remove` against a non-worktree path
+        // and rm-rf the user's actual project directory.
+        setDialogError(
+          `cannot ${action} session [${id}] ${session.label} — session shares its working tree with the project root; close it via the editor instead`,
+        );
+        refreshOpenDialog();
+        return;
+      }
+    }
+  }
   openDialog.pendingConfirm = { action, sessionId: id };
   openPanel.update(buildOpenSpec());
 }
