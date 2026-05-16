@@ -104,17 +104,12 @@ fn test_status_bar_shows_custom_branch_token() {
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
 
-    // Verify status bar contains expected elements
-    let status_bar = harness.get_status_bar();
-
-    // The branch token value comes from the plugin at runtime.
-    // With the plugin loaded, the status bar should show "Not in git"
-    // since we're not in a git repository.
-    assert!(
-        status_bar.contains("Not in git"),
-        "Status bar should contain 'Not in git' from plugin. Got: {}",
-        status_bar
-    );
+    // The branch token value is published asynchronously by the plugin
+    // (after_file_open → spawnProcess("git") → setStatusBarValue). Wait
+    // for it to land in the rendered status bar rather than snapshotting
+    // once and racing the round-trip.
+    harness
+        .wait_until(|h| h.get_status_bar().contains("Not in git"))
+        .unwrap();
 }
