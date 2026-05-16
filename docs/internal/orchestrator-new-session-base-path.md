@@ -40,6 +40,112 @@ one agent per branch) but fails the long tail:
 The goal is for users to be able to create sessions
 *regardless of current git state, or even using git at all*.
 
+## Audit of the current dialog (interactive, tmux capture)
+
+Live exploration of the existing New Session and Open dialogs
+(2026-05-16, against
+`crates/fresh-editor/plugins/orchestrator.ts` HEAD) surfaced a
+handful of pre-existing issues and one stale artefact that this
+redesign should fold in.
+
+### New Session dialog
+
+Current rendering (tmux capture, 130 cols, fresh git repo with
+no `origin`):
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│          ORCHESTRATOR :: New Session Dialog :: Review Synthesized          │
+│                           Project: tmp/fresh-demo                          │
+│                                                                            │
+│╭─ Session Name ───────────────────────────────────────────────────────────╮│
+││ [(auto-generated)                                                      ] ││
+│╰──────────────────────────────────────────────────────────────────────────╯│
+│╭─ Agent Command ──────────────────────────────────────────────────────────╮│
+││ [terminal                                                              ] ││
+│╰──────────────────────────────────────────────────────────────────────────╯│
+│╭─ Branch ─────────────────────────────────────────────────────────────────╮│
+││ [detecting default branch…                                             ] ││
+│╰──────────────────────────────────────────────────────────────────────────╯│
+│                                              [ Cancel ]  [ Create Session ]│
+│            Tab next  S-Tab prev  Enter advance / act  Esc cancel           │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Stale title segment — `Review Synthesized`.** The header
+   currently renders as
+   `ORCHESTRATOR :: New Session Dialog :: Review Synthesized`
+   (orchestrator.ts:1547). "Review Synthesized" reads as
+   leftover scratch text; it is not surfaced anywhere else and
+   has no documented meaning. **Drop it in Phase 1**, leaving
+   just `ORCHESTRATOR :: New Session`.
+2. **Placeholder style is washed out under focus.** Inactive
+   text inputs render their placeholder italic + dim gray
+   (`fg=#505050`, italic) — clear "this is a hint" cue.
+   Focused inputs paint a darker focus background and the
+   placeholder loses its dim style: `(auto-generated)` reads
+   like a literal value when Session Name is the default-
+   focused field. Fix: keep the placeholder's italic + dim
+   foreground over the focused background too (the brackets
+   stay normal-weight so the input outline is still visible).
+3. **Session Name placeholder is parenthesised
+   `(auto-generated)`; the others aren't.** Agent Command
+   shows `terminal`, Branch shows `HEAD` — both unwrapped.
+   The parentheses on Session Name visually compete with a
+   real value the user might type starting with `(`, and they
+   make the inconsistency more glaring. Drop the parentheses
+   and surface the concrete computed default (`session-3`, or
+   whatever `nextAutoSessionName` returns) as the placeholder.
+4. **Branch placeholder is `HEAD` when no `origin` is
+   configured.** Repos without an origin (local-only repos,
+   freshly `git init`-ed scratch dirs) fall through to `HEAD`
+   as the base ref. That's a fine *behaviour* but a confusing
+   *placeholder*: `HEAD` looks like a literal ref the user
+   might not want. Render as `HEAD  (no origin configured)`
+   in that case so the reason is visible.
+5. **Empty-input cursor is invisible.** With no value typed,
+   the focused input shows only the darker background — no
+   blinking caret or `▏` glyph inside the brackets. Combined
+   with point 2, an empty focused field with a non-dim
+   placeholder is indistinguishable from a typed value. Once
+   the placeholder is reliably italic + dim the eye can tell
+   the difference, but the design should still call for an
+   explicit cursor glyph at the input's insertion point.
+6. **Footer hint `Tab next  S-Tab prev  Enter advance / act
+   Esc cancel`** doesn't mention `↑↓ history` — once history
+   ships, the hint needs the extra entry.
+
+### Open dialog (already shipped)
+
+1. **Default focus is now the `+ New Session` button** — the
+   `focusAdvance(1)` removal in this branch took effect:
+   `[ + New Session  Alt+N ]` paints with the focused button
+   chrome (`fg=#ffffff` bold, `bg=#0064c8`) on first render.
+   Tab cycle reads new-session → filter → preview-pane
+   buttons.
+2. **Footer hint says `Enter dive` regardless of focus.** With
+   focus on the New Session button, `Enter` opens the new-
+   session form rather than diving into a session — the hint
+   should adapt (`Enter activate` when focus is on a button)
+   or at least add an `Alt+N new` entry so the alternative is
+   discoverable from the footer.
+3. **Filter input placeholder `type to filter…`** is italic +
+   dim — the convention this design wants the New Session
+   form to match.
+
+### Implications for this design
+
+- The "every default rendered as placeholder" claim in
+  [Default state](#default-state--defaults-shown-as-in-input-placeholder-text)
+  needs to spell out the focused-input case (placeholder
+  keeps italic + dim under focus).
+- Phase 1 picks up two small cleanups it didn't previously
+  enumerate: drop the `Review Synthesized` header segment,
+  and normalise the Session Name placeholder (no parens, show
+  the concrete computed default).
+- Phase 4 (input history) updates the form footer hint to
+  include `↑↓ history`.
+
 ## Wireframe
 
 ### Default state — defaults shown as in-input placeholder text
@@ -489,10 +595,20 @@ Project Path → Worktree Checkbox → Session Name → Agent Command
 
 ## Implementation phases
 
-### Phase 1 — Project Path field + drop subtitle
+### Phase 1 — Project Path field, header cleanup, placeholder normalisation
 
+Header / chrome cleanups (one-liners surfaced by the
+[Audit](#audit-of-the-current-dialog-interactive-tmux-capture)):
+
+- Drop the `:: Review Synthesized` segment from the dialog
+  title (orchestrator.ts:1547); render
+  `ORCHESTRATOR :: New Session` only.
 - Remove the `Project: <projectLabel>` subtitle row from
-  `buildFormSpec`.
+  `buildFormSpec`. The Project Path input below it is now the
+  authoritative project identifier.
+
+Project Path field:
+
 - Add the Project Path text input at the top of
   `buildFormSpec`, above the Session Name row. `value` is
   empty; the resolved default fills the `placeholder` (same
@@ -504,13 +620,34 @@ Project Path → Worktree Checkbox → Session Name → Agent Command
   `defaultProjectPath` field that the input's `placeholder`
   reads, so the probe completing live-updates the
   placeholder without touching `value`.
-- Extend Session Name the same way: keep `value` empty and
-  surface the auto-generated `session-N` name as the
-  placeholder (it already auto-generates on empty submit; the
-  visible placeholder is the new part). This needs a small
-  async probe at `openForm` time to scan `refs/heads/session-N`
-  in the resolved project path; debounce on every Project
-  Path change.
+
+Placeholder rendering (applies to every input):
+
+- Placeholder text keeps its italic + dim foreground
+  (`fg=ui.placeholder_fg`, italic) **even when the input has
+  focus**. The current text widget switches to a darker focus
+  background and loses the italic-dim styling for placeholder
+  text, which makes Session Name's `(auto-generated)` look
+  like a literal value on first paint. Fix in the
+  `text` widget renderer (or via a `placeholderStyle` field
+  on the widget) so the dim style survives focus.
+- Drop the parentheses around Session Name's placeholder.
+  Surface the concrete computed default (`session-3`, or
+  whatever `nextAutoSessionName` returns for the resolved
+  project path) instead of the literal string
+  `(auto-generated)`. Async-probe `refs/heads/session-N` at
+  `openForm` time, debouncing on every Project Path change.
+- When `defaultBranch` resolves to `HEAD` (no `origin`
+  configured), render the placeholder as
+  `HEAD  (no origin configured)` so the reason is visible
+  rather than looking like the user is being told to type
+  `HEAD`.
+- Add a visible insertion-point glyph (`▏` or terminal-native
+  caret) inside the focused empty input so the focused-empty
+  state isn't visually identical to a typed value.
+
+Submit:
+
 - `submitForm` substitutes each placeholder when its field is
   empty, then uses the resolved values for the rest of the
   existing flow.
@@ -568,6 +705,15 @@ Project Path → Worktree Checkbox → Session Name → Agent Command
 - Submit: dedupe-merge the resolved value into the field's
   history, cap at 100, write the file (best-effort, fire-and-
   forget).
+- Update the form's footer hint to include `↑↓ history`
+  (currently
+  `Tab next  S-Tab prev  Enter advance / act  Esc cancel`).
+- Open dialog footer (`↑↓ nav  Enter dive  Tab focus  Esc
+  close`): make the second entry context-sensitive so it
+  reads `Enter activate` when focus is on a button (today
+  `Enter` on the focused `+ New Session` button opens the
+  form, not a dive). At minimum, append `Alt+N new` so the
+  alternative is discoverable from the footer.
 
 ### Phase 5 — Global windows.json + migration
 
