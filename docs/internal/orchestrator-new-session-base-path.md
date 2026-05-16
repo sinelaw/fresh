@@ -109,19 +109,38 @@ Inputs stay stacked vertically full-width (not packed
 side-by-side) so long paths and commands have room to breathe
 without truncation or horizontal scrolling.
 
-### Non-git path — checkbox auto-cleared, branch row dimmed
+### Non-git path — worktree checkbox is *disabled*
 
-When the user types (or pastes) a path that isn't inside a git
-working tree, the dialog detects it asynchronously (via
-`git -C <path> rev-parse --is-inside-work-tree`) and:
+The worktree checkbox is **only enabled when the resolved
+Project Path is inside a git working tree** (main worktree
+*or* linked worktree). For non-git paths the checkbox is
+rendered disabled — `[·]` glyph, dim foreground, unfocusable
+(skipped by Tab), unresponsive to `Space` — with an inline
+hint explaining why. The user cannot toggle it on; submitting
+the form skips all worktree-related logic entirely.
 
-- Forces "Create a new git worktree" to **off** (the option
-  isn't meaningful — there's no repo to fork from).
-- Renders the checkbox as `[·]` with a dim foreground and the
-  hint text `non-git path — worktree creation unavailable`.
-- Renders the Branch row dim with the placeholder
-  `(no git — branch not applicable)` and skips it in the Tab
-  cycle.
+This is a hard rule rather than a soft default because
+`git worktree add` is meaningless against a non-repo: there's
+no ref to fork from, no `.git` directory to register the new
+worktree with, and no branch field to populate. Toggling the
+control on would only let the user reach a guaranteed-failure
+submission.
+
+Detection runs asynchronously on every Project Path change
+(debounced 200ms) via
+`git -C <path> rev-parse --is-inside-work-tree`. While the
+probe is in flight the checkbox stays at its last known state
+(prevents flicker on each keystroke); it transitions to its
+new enabled / disabled state when the probe resolves.
+
+Cascading effects when the checkbox is disabled (non-git
+path):
+
+- The Branch row is also rendered dim and skipped by Tab —
+  there's no ref to fork.
+- The shared-worktree warning shown on a git path doesn't
+  apply (the session simply runs at the path, like any
+  external directory).
 
 ```
 │ ╭─ Project Path ───────────────────────────────────────────────────╮ │
@@ -129,7 +148,7 @@ working tree, the dialog detects it asynchronously (via
 │ ╰──────────────────────────────────────────────────────────────────╯ │
 │   ↳ not a git working tree. ↑↓ for history.                          │
 │                                                                      │
-│ [·] Create a new git worktree for this session   (non-git path)      │
+│ [·] Create a new git worktree for this session   (disabled — non-git)│
 │                                                                      │
 │ ╭─ Branch ─────────────────────────────────────────────────────╮ dim │
 │ │ no git — N/A                                            ·dim·│     │  ← placeholder
@@ -168,7 +187,7 @@ than fighting a pre-filled default.
 | Field                | Value at open | Placeholder (the default that will be used on empty submit) |
 |----------------------|---------------|-------------------------------------------------------------|
 | Project Path         | `""`          | canonical repo root resolved from editor cwd (or cwd verbatim for non-git launches) |
-| Create worktree (cb) | `true` / `false` — not a text input; default tracks whether placeholder path resolves to a git work tree |
+| Create worktree (cb) | enabled iff Project Path resolves to a git working tree; default `true` when enabled, forced `false` (and unfocusable / un-toggleable) when disabled |
 | Session Name         | `""`          | next auto-generated name (`session-N` — computed from the resolved project path) |
 | Agent Command        | `""`          | `lastCmd` (previous run's command), or `terminal` if none   |
 | Branch               | `""`          | detected default branch (`origin/main` etc.); inert and `(no git — N/A)` when worktree=off or non-git path |
@@ -240,16 +259,23 @@ either way — the user hasn't typed anything).
 
 ### Worktree checkbox — interaction model
 
-- **Checked + git path** → today's behaviour:
-  `git worktree add <root> -b <branch> <project-path>` rooted at
+The checkbox's *enabled* state tracks the Project Path's git
+status (see [Non-git path — worktree checkbox is
+*disabled*](#non-git-path--worktree-checkbox-is-disabled)).
+Only when the checkbox is enabled can the user toggle it.
+
+- **Enabled + checked** (git path, default): today's
+  behaviour — `git worktree add <root> -b <branch>
+  <project-path>` rooted at
   `<XDG>/orchestrator/<slug-of-project-path>/<session-name>/`.
-- **Unchecked + git path** → session root is the **project path
-  itself**. No `git worktree add`. The session inherits whatever
-  branch the worktree is currently on. Branch field is inert.
-- **Checked + non-git path** → impossible (checkbox is forced
-  off and grayed).
-- **Unchecked + non-git path** → session root is the project
-  path. No git interaction at all. Branch field is inert.
+- **Enabled + unchecked** (git path, user opted out): session
+  root is the **project path itself**. No `git worktree add`.
+  The session inherits whatever branch the worktree is
+  currently on. Branch field is inert.
+- **Disabled** (non-git path): the checkbox is rendered `[·]`,
+  unfocusable, with the suffix `(disabled — non-git)`. Submit
+  treats it as unchecked: session root is the project path, no
+  git interaction, Branch field is inert.
 
 When the worktree is shared (unchecked + git path) the session
 record still goes into the normal persistence layer; it's just
@@ -389,14 +415,19 @@ a no-op once the v2 file exists.
    (canonical repo root or cwd) if empty.
 2. `editor.pathExists` the result. If missing, render
    `path does not exist` in the in-dialog error row and bail.
-3. Probe `git -C <path> rev-parse --is-inside-work-tree`.
-   - If yes and worktree-toggle is checked → existing path
-     (worktree-add) runs.
-   - If yes and worktree-toggle is unchecked → use the path
+3. Re-probe `git -C <path> rev-parse --is-inside-work-tree`
+   to confirm the worktree-checkbox state matches reality
+   (the live debounced probe might be in flight when the user
+   hits Enter):
+   - Path is git, checkbox enabled + checked → existing
+     worktree-add flow runs.
+   - Path is git, checkbox enabled + unchecked → use the path
      as-is for the session root; skip `git worktree add`;
      ignore Branch.
-   - If no, force worktree-toggle off (UI was already showing
-     this); use the path as-is.
+   - Path is non-git → checkbox is disabled by definition;
+     use the path as-is, no git interaction. If the probe at
+     submit time disagrees with the UI state (race), trust
+     the probe and proceed without git.
 4. Auto-generate session name if empty (existing logic, but
    the namespace it scans is now keyed on the resolved
    project path).
@@ -498,13 +529,28 @@ Project Path → Worktree Checkbox → Session Name → Agent Command
     skip the worktree-add subprocesses and the branch
     handling.
 
-### Phase 3 — Non-git path detection
+### Phase 3 — Non-git path detection + checkbox enable/disable
 
 - Async probe of `rev-parse --is-inside-work-tree` against
-  the typed path; debounce on every change to the Project
-  Path field (200ms).
-- Force-clear `createWorktree` and dim the Branch row when
-  the probe reports non-git.
+  the typed Project Path; debounce on every change (200ms).
+- Probe result drives a `projectPathIsGit: boolean | null`
+  on `NewSessionForm` (null = in flight).
+- When `projectPathIsGit === false`:
+  - Render the checkbox in disabled style (`[·]` glyph, dim
+    fg, suffix `(disabled — non-git)`).
+  - Drop the checkbox's `key` so the host's `collect_tabbable`
+    skips it — `Tab` advances straight to Session Name, and
+    `Space` on a non-focused widget is a no-op.
+  - Force `createWorktree` to `false` internally so submit
+    takes the no-worktree path regardless of any prior toggle
+    state.
+  - Dim the Branch row and drop its `key` for the same reason.
+- When `projectPathIsGit === true`: checkbox is enabled,
+  Branch row is interactive, both default-state.
+- When `projectPathIsGit === null` (probe in flight): freeze
+  the checkbox in its last-known state so keystrokes don't
+  cause flicker. Submit waits on the probe (with a short
+  timeout) before proceeding.
 
 ### Phase 4 — Input history (Up / Down)
 
