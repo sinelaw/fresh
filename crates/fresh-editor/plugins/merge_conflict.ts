@@ -100,6 +100,66 @@ const mergeState: MergeState = {
   resultContent: "",
 };
 
+// Caches for the buffer_activated / after_file_open detection path.
+// Without these, every tab switch re-spawns `git rev-parse` + `git ls-files`
+// even though their answers rarely change. The detection path is purely a
+// status-bar hint, so a stale answer for a few seconds is harmless.
+const inGitRepoCache: Map<string, boolean> = new Map();
+const detectionLastCheck: Map<string, number> = new Map();
+const DETECTION_TTL_MS = 30_000;
+const detectionInFlight: Map<string, Promise<void>> = new Map();
+
+async function isInGitRepo(fileDir: string): Promise<boolean> {
+  const cached = inGitRepoCache.get(fileDir);
+  if (cached !== undefined) return cached;
+  const gitCheck = await editor.spawnProcess(
+    "git",
+    ["rev-parse", "--is-inside-work-tree"],
+    fileDir,
+  );
+  const ok = gitCheck.exit_code === 0;
+  inGitRepoCache.set(fileDir, ok);
+  return ok;
+}
+
+async function detectMergeConflictFor(
+  path: string,
+  statusOnDetect: () => string,
+): Promise<void> {
+  if (mergeState.isActive) return;
+  if (!path) return;
+
+  const last = detectionLastCheck.get(path);
+  if (last !== undefined && Date.now() - last < DETECTION_TTL_MS) return;
+
+  // Coalesce concurrent callers for the same path onto one in-flight check
+  // (e.g. buffer_activated + after_file_open firing back-to-back).
+  const existing = detectionInFlight.get(path);
+  if (existing) return existing;
+
+  const fileDir = editor.pathDirname(path);
+  const promise = (async () => {
+    try {
+      if (!(await isInGitRepo(fileDir))) return;
+      const lsFiles = await editor.spawnProcess(
+        "git",
+        ["ls-files", "-u", path],
+        fileDir,
+      );
+      if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
+        editor.setStatus(statusOnDetect());
+      }
+      detectionLastCheck.set(path, Date.now());
+    } catch (_e) {
+      // Not in git repo or other error, ignore
+    } finally {
+      detectionInFlight.delete(path);
+    }
+  })();
+  detectionInFlight.set(path, promise);
+  return promise;
+}
+
 // =============================================================================
 // Color Definitions
 // =============================================================================
@@ -1712,50 +1772,18 @@ registerHandler("merge_show_help", merge_show_help);
 // =============================================================================
 
 editor.on("buffer_activated", async (data) => {
-  // Don't trigger if already in merge mode
-  if (mergeState.isActive) return;
-
-  // Don't trigger for virtual buffers
   const info = editor.getBufferInfo(data.buffer_id);
   if (!info || !info.path) return;
-
-  // Get the directory of the file for running git commands
-  const fileDir = editor.pathDirname(info.path);
-
-  // Check if we're in a git repo first
-  try {
-    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"], fileDir);
-    if (gitCheck.exit_code !== 0) return;
-
-    // Check for unmerged entries
-    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", info.path], fileDir);
-    if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
-      editor.setStatus(editor.t("status.detected"));
-    }
-  } catch (e) {
-    // Not in git repo or other error, ignore
-  }
+  await detectMergeConflictFor(info.path, () => editor.t("status.detected"));
 });
 editor.on("after_file_open", async (data) => {
-  // Don't trigger if already in merge mode
-  if (mergeState.isActive) return;
-
-  // Get the directory of the file for running git commands
-  const fileDir = editor.pathDirname(data.path);
-
-  // Check if we're in a git repo first
-  try {
-    const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"], fileDir);
-    if (gitCheck.exit_code !== 0) return;
-
-    // Check for unmerged entries
-    const lsFiles = await editor.spawnProcess("git", ["ls-files", "-u", data.path], fileDir);
-    if (lsFiles.exit_code === 0 && lsFiles.stdout.trim().length > 0) {
-      editor.setStatus(editor.t("status.detected_file", { path: data.path }));
-    }
-  } catch (e) {
-    // Not in git repo or other error, ignore
-  }
+  // File-open is a strong signal that state may have changed externally
+  // (e.g. user ran `git merge` then opened the conflicted file). Bypass the
+  // per-path TTL so the detection still runs.
+  detectionLastCheck.delete(data.path);
+  await detectMergeConflictFor(data.path, () =>
+    editor.t("status.detected_file", { path: data.path }),
+  );
 });
 
 // =============================================================================
