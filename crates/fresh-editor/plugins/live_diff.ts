@@ -1355,6 +1355,7 @@ function refreshGitReferences(): void {
 // =============================================================================
 
 editor.on("after_file_open", (args) => {
+  applyStartupConfigOnce();
   const state = ensureState(args.buffer_id);
   if (!state) return true;
   ensureHeadWatch().catch((e) => editor.error(`live-diff: ${e}`));
@@ -1379,6 +1380,7 @@ editor.on("focus_gained", () => {
 });
 
 editor.on("buffer_activated", (args) => {
+  applyStartupConfigOnce();
   const state = ensureState(args.buffer_id);
   if (!state) return true;
   // Indicators stick around across activations; only repaint if we never
@@ -1483,8 +1485,31 @@ editor.exportPluginApi("live-diff", {
 
 ensureHeadWatch().catch((e) => editor.error(`live-diff: ${e}`));
 
+// Honor `live_diff.enabled_on_startup` from user config: if the user has
+// opted in, force the global toggle on at the start of every session,
+// regardless of the persisted value. The user can still toggle off
+// mid-session via the command palette; the next startup re-enables it.
+//
+// The check is one-shot per session, gated by `startupConfigApplied`. It
+// runs lazily — on the first buffer event (open, activate) or the first
+// recompute — rather than at plugin load. `editor.getConfig()` reads
+// from a snapshot the editor refreshes between ticks, so it can return
+// `{}` if the plugin loads before the snapshot has been populated; the
+// lazy check guarantees we look after the editor has settled.
+let startupConfigApplied = false;
+function applyStartupConfigOnce(): void {
+  if (startupConfigApplied) return;
+  startupConfigApplied = true;
+  const config = editor.getConfig() as Record<string, unknown> | null;
+  const section = (config?.live_diff as Record<string, unknown> | undefined) ?? undefined;
+  if (section?.enabled_on_startup === true && !isGlobalEnabled()) {
+    setGlobalEnabled(true);
+  }
+}
+
 const initBid = editor.getActiveBufferId();
 if (initBid !== 0) {
+  applyStartupConfigOnce();
   const state = ensureState(initBid);
   if (state) {
     recompute(initBid).catch((e) => editor.error(`live-diff: ${e}`));

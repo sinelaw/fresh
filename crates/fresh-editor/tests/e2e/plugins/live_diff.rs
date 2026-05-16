@@ -74,6 +74,51 @@ fn enable_live_diff_globally(harness: &mut EditorTestHarness) {
 // Tests
 // =============================================================================
 
+/// `live_diff.enabled_on_startup = true` in the user config replaces the
+/// usual "open command palette, run Toggle (Global)" handshake — the
+/// plugin force-enables the global toggle on init, so a modified file
+/// shows diff decorations on first render with no user input. Regression
+/// guard for the `enabled_on_startup` config field added in
+/// fresh#1950.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_enabled_on_startup_config_renders_without_manual_toggle() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_live_diff_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // Same diff shape as the "added line" test below, but we never
+    // invoke `Live Diff: Toggle (Global)`. If the config wiring is
+    // broken the gutter stays empty and `wait_until` will block until
+    // the external test timeout fires.
+    repo.modify_file(
+        "src/utils.rs",
+        r#"// brand new top line added by the agent
+pub fn format_output(msg: &str) -> String {
+    format!("[INFO] {}", msg)
+}
+
+pub fn validate_config(config: &Config) -> bool {
+    config.port > 0 && !config.host.is_empty()
+}
+"#,
+    );
+
+    let mut config = Config::default();
+    config.live_diff.enabled_on_startup = true;
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, config, repo.path.clone()).unwrap();
+
+    open_file(&mut harness, &repo.path, "src/utils.rs");
+
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+}
+
 /// vs HEAD: an added line shows `+` in the gutter once the file is opened.
 /// Live-diff fetches `git show HEAD:<path>` and diffs against the on-disk
 /// content (which has one new line vs HEAD), so the new line should be
