@@ -80,29 +80,78 @@ fn test_compose_wrapped_paragraph_highlight_follows_cursor() {
 
     // Move into the paragraph (source line 3: 1=#, 2=blank, 3=paragraph) and
     // press End to land at the end of the *first* visual sub-row, then Down
-    // twice more to step through visual sub-rows so we end up on a later one.
-    // (Issue #1790: pressing End on a wrapped line lands on the current visual
-    // row's end, not the logical-line end.  To reach a wrapped sub-row we
-    // navigate visually with Down.)
+    // once more to step onto a wrapped sub-row.  (Issue #1790: pressing End
+    // on a wrapped line lands on the current visual row's end, not the
+    // logical-line end.  To reach a wrapped sub-row we navigate visually
+    // with Down.  One Down is enough: any non-first sub-row of the paragraph
+    // exercises the bug, and stepping further risks overshooting onto the
+    // blank line below when the paragraph wraps to only two visual rows.)
     harness
         .send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 2)
         .unwrap();
-    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
-    // Step down two visual rows to reach the third sub-row of the paragraph.
+    // Semantic wait: the cursor must land on the paragraph's first visual
+    // sub-row before we press End.  Anchor on the first paragraph words.
     harness
-        .send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 2)
-        .unwrap();
-
-    // Let the post-movement view settle.
-    let mut prev = String::new();
-    harness
-        .wait_until_stable(|h| {
-            let s = h.screen_to_string();
-            let stable = s == prev;
-            prev = s;
-            stable
+        .wait_until(|h| {
+            let Some((_x, y)) = h.vt100_cursor_position() else {
+                return false;
+            };
+            let screen = h.screen_to_string();
+            screen
+                .lines()
+                .nth(y as usize)
+                .is_some_and(|l| l.contains("piece tree"))
         })
         .unwrap();
+    let (_x_before_end, y_before_end) = harness.screen_cursor_position();
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    // Semantic wait: End advanced the cursor far to the right on the same
+    // visual row.  (We only require the column to be past the leftmost
+    // possible compose indent; the exact value depends on the wrap point.)
+    harness
+        .wait_until(|h| {
+            let Some((x, y)) = h.vt100_cursor_position() else {
+                return false;
+            };
+            y == y_before_end && x > 10
+        })
+        .unwrap();
+    let (x_after_end, _y) = harness.screen_cursor_position();
+
+    // Step down one visual row to reach the second (wrapped) sub-row.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Semantic wait: cursor advanced to the next visual row, and that row
+    // still belongs to the wrapped paragraph (not the blank line below or
+    // anywhere off-paragraph).  We assert paragraph membership by requiring
+    // the row to be non-blank, since every wrapped sub-row of the paragraph
+    // contains text whereas the line immediately below is empty.
+    harness
+        .wait_until(|h| {
+            let Some((_x, y)) = h.vt100_cursor_position() else {
+                return false;
+            };
+            if y <= y_before_end {
+                return false;
+            }
+            let screen = h.screen_to_string();
+            screen
+                .lines()
+                .nth(y as usize)
+                .is_some_and(|l| !l.trim().is_empty())
+        })
+        .unwrap();
+    // Sanity: End set us past the compose indent and Down preserved a
+    // similarly-deep column (clamped to the sub-row's end if shorter).
+    let (cursor_x_now, _y) = harness.screen_cursor_position();
+    assert!(
+        cursor_x_now > 0,
+        "After End+Down the cursor should sit inside the wrapped sub-row, \
+         not at column 0 (would mean we overshot onto a blank line). \
+         x_after_end={}, cursor_x={}",
+        x_after_end,
+        cursor_x_now,
+    );
 
     // Hardware cursor must be visible somewhere in the content area.
     let (cursor_x, cursor_y) = harness.screen_cursor_position();
