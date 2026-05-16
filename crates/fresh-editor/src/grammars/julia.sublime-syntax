@@ -28,13 +28,14 @@ contexts:
           scope: variable.interpolation.julia
         - match: '"'
           pop: true
-    - match: "'"
-      push:
-        - meta_scope: string.quoted.single.julia
-        - match: '\\.'
-          scope: constant.character.escape.julia
-        - match: "'"
-          pop: true
+    # Julia uses ' for two distinct purposes:
+    #   1. Character literals: 'a', '\n', '\xff', 'é', '\U0001F600'
+    #   2. The adjoint (conjugate-transpose) postfix operator: A', (A+B)'
+    # Match only well-formed character literals as an atomic span. Any other
+    # ' (notably the adjoint operator) is left alone so it can't push a
+    # string context and bleed into the rest of the file.
+    - match: "'(?:\\\\(?:x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|.)|[^'\\\\])'"
+      scope: constant.character.julia
     - match: '`[^`]*`'
       scope: string.other.command.julia
   keywords:

@@ -2304,6 +2304,113 @@ mod tests {
         assert_eq!(second_globs, 1, "globs must not duplicate");
     }
 
+    /// Julia: a single-quote after an identifier is the adjoint
+    /// (conjugate-transpose) postfix operator, not the start of a string. The
+    /// old grammar pushed a string context on every `'`, so `A'` swallowed
+    /// the rest of the file until the next quote — wrecking highlighting for
+    /// any subsequent keyword. Issue #1852.
+    #[test]
+    fn test_julia_adjoint_does_not_start_string() {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        let registry = GrammarRegistry::default();
+        let syntax_set = registry.syntax_set();
+        let syntax = registry
+            .find_syntax_by_name("Julia")
+            .expect("Julia grammar must be loaded");
+        let mut state = ParseState::new(syntax);
+        let mut scopes = ScopeStack::new();
+
+        // Adjoint operator followed by code on later lines.
+        let lines = ["x = A'\n", "function foo()\n", "end\n"];
+        let mut keyword_line_in_string = false;
+        let mut found_function_keyword = false;
+
+        for line in &lines {
+            let ops = state.parse_line(line, syntax_set).unwrap();
+            // Walk byte-by-byte, applying ops as we pass their offset.
+            let mut op_iter = ops.iter().peekable();
+            for (byte_idx, _) in line.char_indices() {
+                while let Some((offset, op)) = op_iter.peek() {
+                    if *offset <= byte_idx {
+                        scopes.apply(op).unwrap();
+                        op_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                let in_string = scopes
+                    .as_slice()
+                    .iter()
+                    .any(|s| s.build_string().starts_with("string."));
+                let is_function_kw = line[byte_idx..].starts_with("function");
+                if is_function_kw && in_string {
+                    keyword_line_in_string = true;
+                }
+                if is_function_kw && !in_string {
+                    found_function_keyword = true;
+                }
+            }
+            // Drain remaining ops at end of line.
+            for (_, op) in op_iter {
+                scopes.apply(op).unwrap();
+            }
+        }
+
+        assert!(
+            !keyword_line_in_string,
+            "the `function` keyword after an adjoint operator must not be inside a string scope"
+        );
+        assert!(
+            found_function_keyword,
+            "test harness must have reached the `function` keyword"
+        );
+    }
+
+    /// Julia: `'a'` is a valid character literal. The grammar must still
+    /// scope it as a constant/character so themes can color it. Issue #1852.
+    #[test]
+    fn test_julia_char_literal_is_recognized() {
+        use syntect::parsing::{ParseState, ScopeStack};
+
+        let registry = GrammarRegistry::default();
+        let syntax_set = registry.syntax_set();
+        let syntax = registry
+            .find_syntax_by_name("Julia")
+            .expect("Julia grammar must be loaded");
+        let mut state = ParseState::new(syntax);
+        let mut scopes = ScopeStack::new();
+
+        let line = "x = 'a'\n";
+        let ops = state.parse_line(line, syntax_set).unwrap();
+        let mut saw_constant_or_string_at_quote = false;
+        let mut op_iter = ops.iter().peekable();
+        for (byte_idx, _) in line.char_indices() {
+            while let Some((offset, op)) = op_iter.peek() {
+                if *offset <= byte_idx {
+                    scopes.apply(op).unwrap();
+                    op_iter.next();
+                } else {
+                    break;
+                }
+            }
+            if byte_idx == 5 {
+                // position of 'a' (the char)
+                let scoped = scopes.as_slice().iter().any(|s| {
+                    let str = s.build_string();
+                    str.starts_with("constant.") || str.starts_with("string.")
+                });
+                if scoped {
+                    saw_constant_or_string_at_quote = true;
+                }
+            }
+        }
+        assert!(
+            saw_constant_or_string_at_quote,
+            "char literal 'a' must receive a constant/string scope"
+        );
+    }
+
     /// `tree_sitter_for_syntect_name` handles the alias table + strict
     /// display-name match. The alias table catches syntect's verbose names;
     /// the strict match handles the common case.
