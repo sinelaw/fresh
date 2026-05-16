@@ -22,10 +22,10 @@ use fresh_core::api::{
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult,
+    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, ScreenSize,
     SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
-    ScreenSize, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
-    ViewportInfo, VirtualBufferResult, WindowInfo,
+    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
+    VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
