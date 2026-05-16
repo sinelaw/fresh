@@ -152,6 +152,12 @@ impl Editor {
         snapshot.clipboard = self.clipboard.get_internal().to_string();
         snapshot.working_dir = self.working_dir.clone();
 
+        // Total terminal dimensions (full screen, not the active
+        // split's viewport). Plugins read this via `getScreenSize()`
+        // to size floating overlays against the whole terminal.
+        snapshot.terminal_width = self.terminal_width;
+        snapshot.terminal_height = self.terminal_height;
+
         // Authority label tracks `Editor::authority` (the active
         // authority). It can't be sourced from `Window::resources.authority`
         // because `set_boot_authority` replaces `self.authority` by value

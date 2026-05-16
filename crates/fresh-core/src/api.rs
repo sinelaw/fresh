@@ -1059,6 +1059,25 @@ pub struct EditorStateSnapshot {
     #[serde(default)]
     #[ts(type = "any")]
     pub active_session_plugin_states: HashMap<String, HashMap<String, serde_json::Value>>,
+
+    /// Total terminal dimensions in cells. Refreshed on every
+    /// resize event. Plugins read this via `editor.getScreenSize()`
+    /// when they need to size floating overlays against the whole
+    /// terminal — `getViewport()` only reports the active split,
+    /// which is smaller than the screen whenever splits exist.
+    #[serde(default)]
+    pub terminal_width: u16,
+    #[serde(default)]
+    pub terminal_height: u16,
+}
+
+/// Total terminal size in cells. Returned by `editor.getScreenSize()`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct ScreenSize {
+    pub width: u16,
+    pub height: u16,
 }
 
 impl EditorStateSnapshot {
@@ -1092,6 +1111,8 @@ impl EditorStateSnapshot {
             keybinding_labels: HashMap::new(),
             plugin_global_states: HashMap::new(),
             active_session_plugin_states: HashMap::new(),
+            terminal_width: 0,
+            terminal_height: 0,
         }
     }
 }
@@ -4572,6 +4593,15 @@ impl PluginApi {
     pub fn get_viewport(&self) -> Option<ViewportInfo> {
         let snapshot = self.state_snapshot.read().unwrap();
         snapshot.viewport.clone()
+    }
+
+    /// Get total terminal dimensions.
+    pub fn get_screen_size(&self) -> ScreenSize {
+        let snapshot = self.state_snapshot.read().unwrap();
+        ScreenSize {
+            width: snapshot.terminal_width,
+            height: snapshot.terminal_height,
+        }
     }
 
     /// Get access to the state snapshot Arc (for internal use)

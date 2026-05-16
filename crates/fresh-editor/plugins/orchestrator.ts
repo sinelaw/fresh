@@ -331,13 +331,12 @@ function buildPreviewEntries(
 }
 
 // Approximate number of session rows the picker's list pane
-// should show. Derived from the active buffer's viewport so the
-// picker's row(list, preview) fills the panel and the hint bar
-// sits flush at the panel's last row. Conservative — leaves
-// room for header, filter input, footer, and section borders.
+// should show. Sized off the full terminal (not the active
+// buffer's viewport — that shrinks with vertical splits and made
+// the picker collapse to ~half its `heightPct: 90` budget).
 function openListVisibleRows(): number {
-  const vp = editor.getViewport();
-  const h = vp ? vp.height : 30;
+  const screen = editor.getScreenSize();
+  const h = screen.height > 0 ? screen.height : 30;
   const panelH = Math.floor(h * 0.9);
   // header (1) + spacer (1) + filter section (3) + sessions
   // section borders (2) + hint bar (1) = 8 rows of chrome.

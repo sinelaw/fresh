@@ -24,8 +24,8 @@ use fresh_core::api::{
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
     PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult,
     SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
-    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
-    VirtualBufferResult, WindowInfo,
+    ScreenSize, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind,
+    ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::FileExplorerDecoration;
@@ -50,6 +50,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "WindowInfo" => Some(WindowInfo::decl(&cfg)),
         "CursorInfo" => Some(CursorInfo::decl(&cfg)),
         "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
+        "ScreenSize" => Some(ScreenSize::decl(&cfg)),
         "KeyEventPayload" => Some(KeyEventPayload::decl(&cfg)),
         "SplitSnapshot" => Some(SplitSnapshot::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
@@ -233,6 +234,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "TsCompositeHunk",                // Used in createCompositeBuffer opts.hunks
     "TsCreateCompositeBufferOptions", // Options for createCompositeBuffer
     "ViewportInfo",                   // Used by plugins for viewport queries
+    "ScreenSize",                     // Used by editor.getScreenSize()
     "KeyEventPayload",                // Used by editor.getNextKey()
     "SplitSnapshot",                  // Used by editor.listSplits()
     "LayoutHints",                    // Used by plugins for view transforms
@@ -733,6 +735,7 @@ mod tests {
             "WindowInfo",
             "CursorInfo",
             "ViewportInfo",
+            "ScreenSize",
             "KeyEventPayload",
             "SplitSnapshot",
             "ActionSpec",
@@ -1140,6 +1143,7 @@ mod tests {
             "getAllCursors",
             "getAllCursorPositions",
             "getViewport",
+            "getScreenSize",
             "getCursorLine",
             "getLineStartPosition",
             "getLineEndPosition",

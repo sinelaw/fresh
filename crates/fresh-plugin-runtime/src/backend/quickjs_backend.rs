@@ -1313,6 +1313,27 @@ impl JsEditorApi {
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
+    /// Total terminal dimensions in cells. Unlike `getViewport()`
+    /// (which reports the active split, shrunk by any vertical
+    /// split layout), this reflects the full terminal — what a
+    /// floating overlay sized by `heightPct` actually gets.
+    #[plugin_api(ts_return = "ScreenSize")]
+    pub fn get_screen_size<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let size = if let Ok(s) = self.state_snapshot.read() {
+            fresh_core::api::ScreenSize {
+                width: s.terminal_width,
+                height: s.terminal_height,
+            }
+        } else {
+            fresh_core::api::ScreenSize {
+                width: 0,
+                height: 0,
+            }
+        };
+        rquickjs_serde::to_value(ctx, &size)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     /// List every split with its active buffer and viewport.
     ///
     /// Plugins that need to operate on every visible buffer
