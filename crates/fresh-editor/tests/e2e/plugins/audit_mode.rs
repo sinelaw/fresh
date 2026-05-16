@@ -4288,3 +4288,139 @@ fn test_review_branch_detail_pane_page_down_works() {
         })
         .unwrap();
 }
+
+/// Regression test for https://github.com/sinelaw/fresh/issues/1962.
+///
+/// When the detail panel of Review PR Branch is focused and the cursor
+/// sits on a line from the diff that has file context, pressing Enter
+/// should drill into that file at the selected commit's version (in a
+/// read-only virtual buffer). Before the fix, Enter on the detail panel
+/// was a no-op (it only "focused" the panel — which it already was).
+#[test]
+fn test_review_branch_detail_enter_opens_file_at_commit() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Base commit on the default branch so `master..HEAD` is non-empty
+    // once we branch off and add work.
+    repo.create_file("base.txt", "base\n");
+    repo.git_add_all();
+    repo.git_commit("base commit");
+    rename_head_branch(&repo, "master");
+
+    // Feature branch with a commit that modifies a file. The detail
+    // panel of Review PR Branch shows `git show --stat --patch` for the
+    // selected commit, so the diff lines carry `(file, line)` text
+    // properties that the new Enter-on-detail path reads.
+    run_git(&repo, &["checkout", "-b", "feature"]);
+    repo.create_file(
+        "notes.txt",
+        "line one\nline two\nline three\nline four\nline five\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("add notes.txt");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review PR Branch").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            h.editor().is_prompting() && s.contains("Base ref")
+        })
+        .unwrap();
+    // Accept the default (master).
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for the review-branch view to finish loading and the detail
+    // panel to populate (`git show` is async).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("add notes.txt"))
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("+line one"))
+        .unwrap();
+
+    // Tab into the detail panel so the next Enter targets the detail
+    // panel's drill-in path.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*detail* [RO]"))
+        .unwrap();
+
+    // The file-view buffer is active when the status bar shows the
+    // `*<hash>:notes.txt* [RO]` virtual-name. Walk the cursor down the
+    // detail panel, trying Enter each time until we land on a diff line
+    // that has `(file, line)` properties — non-diff rows surface
+    // "Move cursor to a diff line…" in the status bar instead of
+    // drilling in. Opening the file-view spawns `git show` so we poll
+    // briefly after each Enter for the async result.
+    let file_view_active = |h: &EditorTestHarness| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains(":notes.txt*") && l.contains("[RO]") && l.contains("Ln "))
+    };
+    for _ in 0..40 {
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        for _ in 0..20 {
+            harness.process_async_and_render().unwrap();
+            if file_view_active(&harness) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if file_view_active(&harness) {
+            break;
+        }
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+        harness.process_async_and_render().unwrap();
+    }
+    assert!(
+        file_view_active(&harness),
+        "Enter on a diff line in the review-branch detail panel should \
+         open the file at the selected commit. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // The file contents at this commit should be visible — including
+    // lines that don't appear in the unified diff (e.g. "line four").
+    // This proves we actually loaded the file's contents at the commit
+    // rather than just re-rendering the diff.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("line four"),
+        "File-view buffer should show the file's contents at the commit \
+         (expected 'line four'). Screen:\n{}",
+        screen
+    );
+
+    // q closes the file-view buffer cleanly (review-branch-file-view mode
+    // binds q to its own close handler so the user can drill back out).
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_until(|h| !file_view_active(h)).unwrap();
+}

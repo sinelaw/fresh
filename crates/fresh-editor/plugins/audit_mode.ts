@@ -4640,12 +4640,120 @@ async function review_branch_refresh(): Promise<void> {
 }
 registerHandler("review_branch_refresh", review_branch_refresh);
 
-/** Enter: focus the detail panel (so the user can scroll/click within it). */
+/** Is the detail panel the currently-focused buffer? */
+function isReviewBranchDetailFocused(): boolean {
+    return (
+        branchState.detailBufferId !== null &&
+        editor.getActiveBufferId() === branchState.detailBufferId
+    );
+}
+
+/** The currently-selected commit in the log panel, or null. */
+function selectedReviewBranchCommit(): GitCommit | null {
+    if (branchState.commits.length === 0) return null;
+    const i = Math.max(
+        0,
+        Math.min(branchState.selectedIndex, branchState.commits.length - 1),
+    );
+    return branchState.commits[i] ?? null;
+}
+
+/**
+ * Enter: on the log panel jumps focus into the detail panel; on the detail
+ * panel opens the file at the cursor position at the selected commit (if any).
+ */
 function review_branch_enter(): void {
     if (branchState.groupId === null) return;
+    if (isReviewBranchDetailFocused()) {
+        void review_branch_detail_open_file();
+        return;
+    }
     editor.focusBufferGroupPanel(branchState.groupId, "detail");
 }
 registerHandler("review_branch_enter", review_branch_enter);
+
+/**
+ * Open the file at the cursor's `(file, line)` text-properties at the
+ * currently-selected commit, in a read-only virtual buffer. Mirrors the
+ * git-log plugin's `git_log_detail_open_file` so users get the same
+ * drill-down from the review-branch detail panel.
+ */
+async function review_branch_detail_open_file(): Promise<void> {
+    if (branchState.detailBufferId === null) return;
+    const commit = selectedReviewBranchCommit();
+    if (!commit) return;
+
+    const props = editor.getTextPropertiesAtCursor(branchState.detailBufferId);
+    if (props.length === 0) {
+        editor.setStatus(editor.t("status.move_to_diff"));
+        return;
+    }
+    const file = props[0].file as string | undefined;
+    const line = (props[0].line as number | undefined) ?? 1;
+    if (!file) {
+        editor.setStatus(editor.t("status.move_to_diff_with_context"));
+        return;
+    }
+
+    editor.setStatus(
+        editor.t("status.file_loading", { file, hash: commit.shortHash }),
+    );
+    const result = await editor.spawnProcess("git", [
+        "show",
+        `${commit.hash}:${file}`,
+    ]);
+    if (result.exit_code !== 0) {
+        editor.setStatus(
+            editor.t("status.file_not_found", { file, hash: commit.shortHash }),
+        );
+        return;
+    }
+
+    const lines = result.stdout.split("\n");
+    const entries: TextPropertyEntry[] = lines.map((l, i) => ({
+        text: l + (i < lines.length - 1 ? "\n" : ""),
+        properties: { type: "content", line: i + 1 },
+    }));
+
+    // `*<hash>:<path>*` matches the virtual-name convention the host uses
+    // to detect syntax from the trailing filename's extension.
+    const name = `*${commit.shortHash}:${file}*`;
+    const view = await editor.createVirtualBuffer({
+        name,
+        mode: "review-branch-file-view",
+        readOnly: true,
+        editingDisabled: true,
+        showLineNumbers: true,
+        entries,
+    });
+    if (view) {
+        const byte = await editor.getLineStartPosition(Math.max(0, line - 1));
+        if (byte !== null) editor.setBufferCursor(view.bufferId, byte);
+        editor.setStatus(
+            editor.t("status.file_view_ready", {
+                file,
+                hash: commit.shortHash,
+                line: String(line),
+            }),
+        );
+    } else {
+        editor.setStatus(editor.t("status.failed_open_file", { file }));
+    }
+}
+registerHandler(
+    "review_branch_detail_open_file",
+    review_branch_detail_open_file,
+);
+
+/** Tab: toggle focus between the log and detail panels. */
+function review_branch_tab(): void {
+    if (branchState.groupId === null) return;
+    editor.focusBufferGroupPanel(
+        branchState.groupId,
+        isReviewBranchDetailFocused() ? "log" : "detail",
+    );
+}
+registerHandler("review_branch_tab", review_branch_tab);
 
 /** q/Escape: focus-back from detail, or close when already on log. */
 function review_branch_close_or_back(): void {
@@ -4683,9 +4791,11 @@ editor.defineMode(
         // from the Normal keymap via `inheritNormalBindings: true`.
         ["k", "move_up"],
         ["j", "move_down"],
-        // Enter: focus the right-hand detail panel.
+        // Enter: from the log, focus the detail panel; from the detail
+        // panel, open the file at the cursor at the selected commit.
         ["Return", "review_branch_enter"],
-        ["Tab", "review_branch_enter"],
+        // Tab: toggle focus between the log and detail panels.
+        ["Tab", "review_branch_tab"],
         ["r", "review_branch_refresh"],
         ["q", "review_branch_close_or_back"],
         ["Escape", "review_branch_close_or_back"],
@@ -4693,6 +4803,32 @@ editor.defineMode(
     true, // readOnly
     false, // allowTextInput — keeps plain letters from inserting into the RO buffer
     true, // inheritNormalBindings — PageUp/PageDown/arrows/Home/End come from Normal
+);
+
+/** Close the file-view virtual buffer opened from the review-branch detail panel. */
+function review_branch_file_view_close(): void {
+    const id = editor.getActiveBufferId();
+    if (id) editor.closeBuffer(id);
+}
+registerHandler("review_branch_file_view_close", review_branch_file_view_close);
+
+// Mode for the read-only "git show <hash>:<file>" buffer opened from the
+// review-branch detail panel. Mirrors git-log's `git-log-file-view`:
+// q/Escape close the view, j/k alias Up/Down, and all other Normal
+// bindings (arrows, PageUp/Down, Home/End, Ctrl+C copy) are inherited so
+// unbound keys don't fall through to edit actions and trip the
+// `editing_disabled` status message (see #566).
+editor.defineMode(
+    "review-branch-file-view",
+    [
+        ["k", "move_up"],
+        ["j", "move_down"],
+        ["q", "review_branch_file_view_close"],
+        ["Escape", "review_branch_file_view_close"],
+    ],
+    true, // read-only
+    false, // allow_text_input
+    true, // inherit Normal-context bindings for unbound keys
 );
 
 // Register Modes and Commands
