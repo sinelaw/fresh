@@ -42,11 +42,21 @@ The goal is for users to be able to create sessions
 
 ## Wireframe
 
-### Default state — project path pre-filled from the canonical repo root
+### Default state — defaults shown as in-input placeholder text
 
 The "Project: <label>" subtitle is gone: the Project Path field
 itself is the project identifier now, so a static label above
 it would just duplicate (or worse, drift from) the input.
+
+**Every default value is rendered as placeholder text inside
+its input box** (dim foreground, replaced as soon as the user
+types). The input's actual `value` starts empty in every
+field; submitting an empty field substitutes the placeholder's
+resolved value. This is the same pattern Agent Command and
+Branch already use today; Phase 1 just extends it uniformly to
+the new Project Path and Session Name rows. The hint lines
+under each input ("↑↓ for history", inert-state notes) live
+*outside* the box so they don't compete with the placeholder.
 
 All four text inputs (Project Path, Session Name, Agent
 Command, Branch) carry **value history**: Up / Down on a
@@ -61,7 +71,7 @@ so it follows the user across projects.
 ╭─ ORCHESTRATOR :: New Session Dialog :: Review Synthesized ───────────╮
 │                                                                      │
 │ ╭─ Project Path ───────────────────────────────────────────────────╮ │
-│ │ [/home/noam/repos/fresh                                         ]│ │
+│ │ [/home/noam/repos/fresh                                  ]·dim·  │ │
 │ ╰──────────────────────────────────────────────────────────────────╯ │
 │   ↳ canonical repo root (worktree-resolved). ↑↓ for history.         │
 │                                                                      │
@@ -71,15 +81,15 @@ so it follows the user across projects.
 │         multiple sessions)                                           │
 │                                                                      │
 │ ╭─ Session Name ───────────────────────────────────────────────────╮ │
-│ │ [                                                  ] (auto-gen) │ │
+│ │ [session-3                                               ]·dim·  │ │
 │ ╰──────────────────────────────────────────────────────────────────╯ │
 │                                                                      │
 │ ╭─ Agent Command ──────────────────────────────────────────────────╮ │
-│ │ [                                                  ] (claude)   │ │
+│ │ [claude                                                  ]·dim·  │ │
 │ ╰──────────────────────────────────────────────────────────────────╯ │
 │                                                                      │
 │ ╭─ Branch ─────────────────────────────────────────────────────────╮ │
-│ │ [                                                  ] (origin/m…)│ │
+│ │ [origin/main                                             ]·dim·  │ │
 │ ╰──────────────────────────────────────────────────────────────────╯ │
 │   ↳ ignored when "Create a new git worktree" is unchecked            │
 │                                                                      │
@@ -88,6 +98,12 @@ so it follows the user across projects.
 │  Tab next · S-Tab prev · ↑↓ history · Space toggle · Enter act · Esc │
 ╰──────────────────────────────────────────────────────────────────────╯
 ```
+
+`·dim·` marks placeholder rendering: the text inside the
+brackets is the resolved default, drawn with the
+`ui.placeholder_fg` style so it's visibly weaker than typed
+input. Once the user types, the placeholder vanishes and the
+typed value takes over in normal foreground.
 
 Inputs stay stacked vertically full-width (not packed
 side-by-side) so long paths and commands have room to breathe
@@ -109,14 +125,14 @@ working tree, the dialog detects it asynchronously (via
 
 ```
 │ ╭─ Project Path ───────────────────────────────────────────────────╮ │
-│ │ [/home/noam/notes                                               ]│ │
+│ │ /home/noam/notes                                                 │ │  ← typed value
 │ ╰──────────────────────────────────────────────────────────────────╯ │
 │   ↳ not a git working tree. ↑↓ for history.                          │
 │                                                                      │
 │ [·] Create a new git worktree for this session   (non-git path)      │
 │                                                                      │
 │ ╭─ Branch ─────────────────────────────────────────────────────╮ dim │
-│ │                                       (no git — N/A)        │     │
+│ │ no git — N/A                                            ·dim·│     │  ← placeholder
 │ ╰──────────────────────────────────────────────────────────────╯     │
 ```
 
@@ -142,13 +158,20 @@ a ref.
 
 ## Field semantics
 
-| Field                | Default                                       | When empty submits as |
-|----------------------|-----------------------------------------------|-----------------------|
-| Project Path         | canonical repo root resolved from editor cwd  | the placeholder default (canonical repo root) |
-| Create worktree (cb) | checked iff path resolves to a git work tree  | (boolean — no empty)  |
-| Session Name         | empty                                         | auto-generated (`session-N`) |
-| Agent Command        | empty (placeholder = `lastCmd` or `terminal`) | the placeholder       |
-| Branch               | empty (placeholder = detected default branch) | the placeholder (only valid when worktree=on) |
+Every text input starts with **empty `value` + a placeholder
+showing the resolved default**. Submitting an empty field uses
+the placeholder's value verbatim. This keeps the form's bracket
+content honest (what you see typed is what you submitted) and
+makes ↑↓ history navigation start from a clean slate rather
+than fighting a pre-filled default.
+
+| Field                | Value at open | Placeholder (the default that will be used on empty submit) |
+|----------------------|---------------|-------------------------------------------------------------|
+| Project Path         | `""`          | canonical repo root resolved from editor cwd (or cwd verbatim for non-git launches) |
+| Create worktree (cb) | `true` / `false` — not a text input; default tracks whether placeholder path resolves to a git work tree |
+| Session Name         | `""`          | next auto-generated name (`session-N` — computed from the resolved project path) |
+| Agent Command        | `""`          | `lastCmd` (previous run's command), or `terminal` if none   |
+| Branch               | `""`          | detected default branch (`origin/main` etc.); inert and `(no git — N/A)` when worktree=off or non-git path |
 
 ### Input history (Up / Down)
 
@@ -212,7 +235,8 @@ editor's cwd in this order:
 The probe runs at `openForm` time, asynchronously, the same way
 the current default-branch probe does. While it's in flight the
 input renders the cwd as the placeholder; the resolved value
-replaces it on completion if the field is still empty.
+replaces the placeholder on completion (the `value` stays empty
+either way — the user hasn't typed anything).
 
 ### Worktree checkbox — interaction model
 
@@ -439,14 +463,26 @@ Project Path → Worktree Checkbox → Session Name → Agent Command
 - Remove the `Project: <projectLabel>` subtitle row from
   `buildFormSpec`.
 - Add the Project Path text input at the top of
-  `buildFormSpec`, above the Session Name row.
+  `buildFormSpec`, above the Session Name row. `value` is
+  empty; the resolved default fills the `placeholder` (same
+  pattern as the existing Agent Command field).
 - Wire the placeholder probe (canonical repo root via
   `git rev-parse --path-format=absolute --git-common-dir`,
   with cwd fallback) into `openForm` alongside the existing
-  `defaultBranch` probe.
-- `submitForm` substitutes the placeholder when the field is
-  empty, then uses the resolved value as `repoRoot` for the
-  rest of the existing flow.
+  `defaultBranch` probe. The probe writes to a
+  `defaultProjectPath` field that the input's `placeholder`
+  reads, so the probe completing live-updates the
+  placeholder without touching `value`.
+- Extend Session Name the same way: keep `value` empty and
+  surface the auto-generated `session-N` name as the
+  placeholder (it already auto-generates on empty submit; the
+  visible placeholder is the new part). This needs a small
+  async probe at `openForm` time to scan `refs/heads/session-N`
+  in the resolved project path; debounce on every Project
+  Path change.
+- `submitForm` substitutes each placeholder when its field is
+  empty, then uses the resolved values for the rest of the
+  existing flow.
 
 ### Phase 2 — Worktree checkbox
 
