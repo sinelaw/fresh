@@ -1382,8 +1382,8 @@ fn test_settings_file_explorer_width_shows_percent_suffix() {
     // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
     // Compact Directories, Custom Ignore Patterns, Follow Active Buffer,
     // Preview Tabs, Respect Gitignore, Show Gitignored, Show Hidden,
-    // Side, Width.
-    for _ in 0..9 {
+    // Side, Tree Indicator Collapsed, Tree Indicator Expanded, Width.
+    for _ in 0..11 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
@@ -1431,8 +1431,8 @@ fn test_settings_file_explorer_width_applies_live() {
     // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
     // Compact Directories, Custom Ignore Patterns, Follow Active Buffer,
     // Preview Tabs, Respect Gitignore, Show Gitignored, Show Hidden,
-    // Side, Width.
-    for _ in 0..9 {
+    // Side, Tree Indicator Collapsed, Tree Indicator Expanded, Width.
+    for _ in 0..11 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();

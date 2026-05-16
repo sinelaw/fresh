@@ -1550,6 +1550,22 @@ pub struct FileExplorerConfig {
     /// Default: true
     #[serde(default = "default_true")]
     pub compact_directories: bool,
+
+    /// Symbol shown next to a collapsed (closed) directory in the file
+    /// explorer tree. A short string (single character recommended).
+    /// A trailing space is added automatically during rendering; the
+    /// renderer pads narrower indicators so collapsed/expanded rows align.
+    /// Default: ">"
+    #[serde(default = "default_tree_indicator_collapsed")]
+    pub tree_indicator_collapsed: String,
+
+    /// Symbol shown next to an expanded (open) directory in the file
+    /// explorer tree. A short string (single character recommended).
+    /// A trailing space is added automatically during rendering; the
+    /// renderer pads narrower indicators so collapsed/expanded rows align.
+    /// Default: "▼"
+    #[serde(default = "default_tree_indicator_expanded")]
+    pub tree_indicator_expanded: String,
 }
 
 /// Width configuration for the file explorer.
@@ -1708,6 +1724,14 @@ fn default_explorer_width() -> ExplorerWidth {
 
 fn default_explorer_side() -> FileExplorerSide {
     FileExplorerSide::default()
+}
+
+fn default_tree_indicator_collapsed() -> String {
+    ">".to_string()
+}
+
+fn default_tree_indicator_expanded() -> String {
+    "▼".to_string()
 }
 
 /// Public default used by the workspace state deserializer.
@@ -1908,6 +1932,8 @@ impl Default for FileExplorerConfig {
             auto_open_on_last_buffer_close: true,
             follow_active_buffer: false,
             compact_directories: true,
+            tree_indicator_collapsed: default_tree_indicator_collapsed(),
+            tree_indicator_expanded: default_tree_indicator_expanded(),
         }
     }
 }
@@ -6585,6 +6611,35 @@ mod tests {
     fn test_file_explorer_width_default_is_percent_30() {
         let cfg = FileExplorerConfig::default();
         assert_eq!(cfg.width, ExplorerWidth::Percent(30));
+    }
+
+    #[test]
+    fn test_tree_indicators_defaults_preserve_current_glyphs() {
+        // Defaults must match the historically rendered symbols so the
+        // baseline file-explorer appearance is unchanged when no config
+        // override is set.
+        let cfg = FileExplorerConfig::default();
+        assert_eq!(cfg.tree_indicator_collapsed, ">");
+        assert_eq!(cfg.tree_indicator_expanded, "▼");
+    }
+
+    #[test]
+    fn test_tree_indicators_can_be_overridden_from_json() {
+        let cfg: FileExplorerConfig = serde_json::from_str(
+            r#"{"tree_indicator_collapsed": "▸", "tree_indicator_expanded": "▾"}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.tree_indicator_collapsed, "▸");
+        assert_eq!(cfg.tree_indicator_expanded, "▾");
+    }
+
+    #[test]
+    fn test_tree_indicators_partial_override_keeps_default_for_unset() {
+        let cfg: FileExplorerConfig =
+            serde_json::from_str(r#"{"tree_indicator_collapsed": "+"}"#).unwrap();
+        assert_eq!(cfg.tree_indicator_collapsed, "+");
+        // Expanded was not set; should fall back to default.
+        assert_eq!(cfg.tree_indicator_expanded, "▼");
     }
 
     // --- Wire format acceptance ---------------------------------------

@@ -337,6 +337,8 @@ impl Editor {
                     close_button_hovered,
                     remote_connection.as_deref(),
                     cut_paths,
+                    &self.config.file_explorer.tree_indicator_collapsed,
+                    &self.config.file_explorer.tree_indicator_expanded,
                 );
             }
             // Note: if file_explorer is None but sync_in_progress is true,

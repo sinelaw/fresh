@@ -3824,3 +3824,64 @@ fn explorer_tree_contains(harness: &EditorTestHarness, name: &str) -> bool {
         .lines()
         .any(|line| line.contains(name) && line.contains('│'))
 }
+
+/// Custom tree indicators (issue #1940) — the collapsed/expanded glyphs
+/// rendered next to directories must come from
+/// `file_explorer.tree_indicator_collapsed/expanded` config, falling back
+/// to the historical `>` / `▼` when unset. We verify by rendering the
+/// explorer with a directory at the root, then asserting on screen text.
+#[test]
+fn test_file_explorer_custom_tree_indicators() {
+    let mut config = Config::default();
+    // Use single ASCII chars so the assertion is robust against unicode
+    // width quirks in the test backend.
+    config.file_explorer.tree_indicator_collapsed = "+".to_string();
+    config.file_explorer.tree_indicator_expanded = "-".to_string();
+    // Make the explorer wide enough to comfortably render `+ subdir`.
+    config.file_explorer.width = fresh::config::ExplorerWidth::Columns(30);
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    // Two sibling subdirs so the root never reduces to a single child
+    // (some auto-expand heuristics short-circuit on degenerate trees).
+    fs::create_dir(project_root.join("subdir")).unwrap();
+    fs::write(project_root.join("subdir/inner.txt"), "x").unwrap();
+    fs::create_dir(project_root.join("other")).unwrap();
+    fs::write(project_root.join("other/y.txt"), "y").unwrap();
+
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    // The root may or may not be auto-expanded depending on harness
+    // state. If `subdir` isn't visible yet, expand by sending Right.
+    if !harness.screen_to_string().contains("subdir") {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("subdir"))
+            .unwrap();
+    }
+
+    // Locate the line that contains "subdir" and confirm the configured
+    // collapsed indicator ("+") precedes the name on that row.
+    let screen = harness.screen_to_string();
+    let subdir_line = screen
+        .lines()
+        .find(|l| l.contains("subdir"))
+        .unwrap_or_else(|| panic!("subdir not found in:\n{screen}"));
+    assert!(
+        subdir_line.contains("+ subdir"),
+        "expected '+ subdir' on the row for the collapsed directory.\n\
+         Got line: {subdir_line:?}\nFull screen:\n{screen}"
+    );
+    // Default expanded glyph "▼" must not appear when overridden.
+    assert!(
+        !subdir_line.contains('▼'),
+        "default expanded glyph leaked through when collapsed.\nLine: {subdir_line:?}"
+    );
+}

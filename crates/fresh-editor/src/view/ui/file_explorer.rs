@@ -44,6 +44,8 @@ impl FileExplorerRenderer {
         close_button_hovered: bool,
         remote_connection: Option<&str>,
         cut_paths: &[PathBuf],
+        tree_indicator_collapsed: &str,
+        tree_indicator_expanded: &str,
     ) {
         let search_active = view.is_search_active();
 
@@ -97,6 +99,8 @@ impl FileExplorerRenderer {
                     content_width,
                     fuzzy_match.as_ref(),
                     cut_paths,
+                    tree_indicator_collapsed,
+                    tree_indicator_expanded,
                 )
             })
             .collect();
@@ -233,6 +237,8 @@ impl FileExplorerRenderer {
         content_width: usize,
         fuzzy_match: Option<&FuzzyMatch>,
         cut_paths: &[PathBuf],
+        tree_indicator_collapsed: &str,
+        tree_indicator_expanded: &str,
     ) -> ListItem<'static> {
         let node = view.tree().get_node(node_id).expect("Node should exist");
 
@@ -248,10 +254,19 @@ impl FileExplorerRenderer {
             .filter_map(|id| view.tree().get_node(id).map(|n| n.entry.name.clone()))
             .collect();
 
+        // Width reserved for the indicator column. Computed from the
+        // configured collapsed/expanded indicators (plus a trailing space)
+        // so files and dirs line up regardless of glyph width. The
+        // built-in loading ("⟳ ") and error ("! ") states are 2 cols
+        // wide and so is the default; we still take the max so a wider
+        // user glyph doesn't truncate them.
+        let collapsed_w = str_width(tree_indicator_collapsed);
+        let expanded_w = str_width(tree_indicator_expanded);
+        let indicator_width = collapsed_w.max(expanded_w).max(1) + 1;
+
         // Calculate the left side width for padding calculation
         let indent_width = indent * 2;
-        let indicator_width = 2; // "▼ " or "  "
-                                 // Chain prefix contributes each name plus a "/" separator.
+        // Chain prefix contributes each name plus a "/" separator.
         let chain_prefix_width: usize = chain_prefix_names.iter().map(|s| str_width(s) + 1).sum();
         let name_width = str_width(&node.entry.name);
         let left_side_width = indent_width + indicator_width + chain_prefix_width + name_width;
@@ -263,22 +278,26 @@ impl FileExplorerRenderer {
 
         // Tree expansion indicator (only for directories)
         if node.is_dir() {
-            let indicator = if node.is_expanded() {
-                "▼ "
+            let (indicator, glyph_width) = if node.is_expanded() {
+                (format!("{} ", tree_indicator_expanded), expanded_w + 1)
             } else if node.is_collapsed() {
-                "> "
+                (format!("{} ", tree_indicator_collapsed), collapsed_w + 1)
             } else if node.is_loading() {
-                "⟳ "
+                ("⟳ ".to_string(), 2)
             } else {
-                "! "
+                ("! ".to_string(), 2)
             };
             spans.push(Span::styled(
                 indicator,
                 Style::default().fg(theme.diagnostic_warning_fg),
             ));
+            let pad = indicator_width.saturating_sub(glyph_width);
+            if pad > 0 {
+                spans.push(Span::raw(" ".repeat(pad)));
+            }
         } else {
-            // For files, add spacing to align with directory names
-            spans.push(Span::raw("  "));
+            // For files, pad to align with directory names
+            spans.push(Span::raw(" ".repeat(indicator_width)));
         }
 
         // Name styling using theme colors

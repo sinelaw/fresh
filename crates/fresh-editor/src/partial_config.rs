@@ -348,6 +348,8 @@ pub struct PartialFileExplorerConfig {
     pub auto_open_on_last_buffer_close: Option<bool>,
     pub follow_active_buffer: Option<bool>,
     pub compact_directories: Option<bool>,
+    pub tree_indicator_collapsed: Option<String>,
+    pub tree_indicator_expanded: Option<String>,
 }
 
 impl Merge for PartialFileExplorerConfig {
@@ -366,6 +368,10 @@ impl Merge for PartialFileExplorerConfig {
             .merge_from(&other.follow_active_buffer);
         self.compact_directories
             .merge_from(&other.compact_directories);
+        self.tree_indicator_collapsed
+            .merge_from(&other.tree_indicator_collapsed);
+        self.tree_indicator_expanded
+            .merge_from(&other.tree_indicator_expanded);
     }
 }
 
@@ -774,6 +780,8 @@ impl From<&FileExplorerConfig> for PartialFileExplorerConfig {
             auto_open_on_last_buffer_close: Some(cfg.auto_open_on_last_buffer_close),
             follow_active_buffer: Some(cfg.follow_active_buffer),
             compact_directories: Some(cfg.compact_directories),
+            tree_indicator_collapsed: Some(cfg.tree_indicator_collapsed.clone()),
+            tree_indicator_expanded: Some(cfg.tree_indicator_expanded.clone()),
         }
     }
 }
@@ -799,6 +807,12 @@ impl PartialFileExplorerConfig {
             compact_directories: self
                 .compact_directories
                 .unwrap_or(defaults.compact_directories),
+            tree_indicator_collapsed: self
+                .tree_indicator_collapsed
+                .unwrap_or_else(|| defaults.tree_indicator_collapsed.clone()),
+            tree_indicator_expanded: self
+                .tree_indicator_expanded
+                .unwrap_or_else(|| defaults.tree_indicator_expanded.clone()),
         }
     }
 }
