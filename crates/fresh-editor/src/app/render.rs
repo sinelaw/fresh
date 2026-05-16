@@ -3514,6 +3514,17 @@ impl Editor {
             if cx < inner.x + inner.width && cy < inner.y + inner.height {
                 frame.set_cursor_position((cx, cy));
             }
+        } else {
+            // No focused text input — the underlying editor's
+            // `set_cursor_position` (called earlier in this frame)
+            // would otherwise leave a hardware caret blinking
+            // inside the dimmed buffer behind the panel. Park the
+            // cursor on the floating panel's bottom-right corner
+            // so it's hidden under the panel chrome instead of
+            // bleeding through.
+            let cx = inner.x + inner.width.saturating_sub(1);
+            let cy = inner.y + inner.height.saturating_sub(1);
+            frame.set_cursor_position((cx, cy));
         }
 
         if let Some(fwp) = self.floating_widget_panel.as_mut() {
@@ -3622,17 +3633,40 @@ fn paint_text_property_entry(
             continue;
         }
         let slice = text[a..b].to_string();
+        // Merge (don't replace) overlapping overlays so a later
+        // overlay can override individual properties (bg, fg,
+        // italic, …) without wiping the earlier overlay's other
+        // properties. The text-input renderer relies on this:
+        // the placeholder overlay sets fg + italic, then the
+        // focused overlay sets bg only — without per-property
+        // merge the focused-bg overlay would also clear the
+        // placeholder's italic-dim styling, making placeholder
+        // text indistinguishable from a typed value under focus.
         let mut style = base_style;
         for o in &normalized.inline_overlays {
             let os = o.start.min(text.len());
             let oe = o.end.min(text.len());
             if a >= os && b <= oe && oe > os {
-                style = Editor::resolve_overlay_style(&o.style, theme).bg(
-                    Editor::resolve_overlay_style(&o.style, theme)
-                        .bg
-                        .unwrap_or(base_bg),
-                );
+                let resolved = Editor::resolve_overlay_style(&o.style, theme);
+                if let Some(fg) = resolved.fg {
+                    style = style.fg(fg);
+                }
+                if let Some(bg) = resolved.bg {
+                    style = style.bg(bg);
+                }
+                // Ratatui `Style` carries add/sub modifier sets;
+                // OR the additions in so subsequent overlays can
+                // add italic / bold / etc. on top of the prior
+                // overlay's modifiers.
+                style = style.add_modifier(resolved.add_modifier);
+                style = style.remove_modifier(resolved.sub_modifier);
             }
+        }
+        // Ensure a bg is set: ratatui will paint the slot with
+        // the terminal's default bg otherwise, which doesn't
+        // match the surrounding panel chrome.
+        if style.bg.is_none() {
+            style = style.bg(base_bg);
         }
         spans.push(Span::styled(slice, style));
     }

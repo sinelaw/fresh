@@ -1807,9 +1807,6 @@ function buildFormSpec(): WidgetSpec {
   // state — no flicker on rapid typing.
   const worktreeEnabled = form.projectPathIsGit !== false;
   const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
-  const worktreeSuffix = worktreeEnabled
-    ? ""
-    : "  (disabled — non-git)";
   const branchInert = !effectiveCreateWorktree;
 
   // Branch placeholder: surface origin/main, fall back to a
@@ -1862,16 +1859,32 @@ function buildFormSpec(): WidgetSpec {
     }),
     // === Worktree toggle. ========================================
     // Enabled only when the Project Path resolves to a git work
-    // tree. Disabled (no `key`) on non-git paths so Tab skips it
-    // and Space is a no-op.
-    row(
-      toggle(
-        effectiveCreateWorktree,
-        `Create a new git worktree for this session${worktreeSuffix}`,
-        worktreeEnabled ? { key: "worktree" } : {},
-      ),
-      flexSpacer(),
-    ),
+    // tree. When disabled, render with a dim-fg `raw` row using
+    // the same `[ ] / [v]` glyph (so the user still recognises
+    // it as a checkbox) and append a `(disabled — non-git)`
+    // suffix. The raw row has no `key`, so it stays out of the
+    // Tab cycle and Space-to-toggle has nothing to land on.
+    worktreeEnabled
+      ? toggle(
+          effectiveCreateWorktree,
+          "Create a new git worktree for this session",
+          { key: "worktree" },
+        )
+      : {
+          kind: "raw",
+          entries: [
+            styledRow([
+              {
+                text: "[ ] Create a new git worktree for this session",
+                style: { fg: "editor.whitespace_indicator_fg" },
+              },
+              {
+                text: "  (disabled — non-git)",
+                style: { fg: "editor.whitespace_indicator_fg", italic: true },
+              },
+            ]),
+          ],
+        },
     // === Form body: labeled, full-width inputs. ==================
     // Labels are plain — the `▸` glyph used to be baked into all
     // three strings and stayed put regardless of focus, which was
@@ -2331,10 +2344,7 @@ registerHandler("orchestrator_form_key_home", () => dispatchFormKey("Home"));
 registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
 registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
 registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
-registerHandler("orchestrator_form_key_space", () => {
-  editor.setStatus(`[debug] space hit, focus=${formFocusedKey()}`);
-  dispatchFormKey("Space");
-});
+registerHandler("orchestrator_form_key_space", () => dispatchFormKey("Space"));
 registerHandler("orchestrator_form_key_up", () => {
   const histField = focusToHistoryField(formFocusedKey());
   if (histField) {
@@ -2355,8 +2365,23 @@ registerHandler("orchestrator_form_key_down", () => {
 // Printable input arrives via the global `mode_text_input` action.
 // Other plugins may also register a `mode_text_input` handler;
 // guard on `form` so this handler is a no-op outside the form.
+//
+// Special-case: a space character on a focused Toggle / Button
+// is "activate this control", not "insert a literal space into
+// the value". The host's smart-key dispatch already does this
+// for `widgetCommand({kind: "key", name: "Space"})`, but the
+// mode binding for "Space" is shadowed by the global text-input
+// path (printable chars route to `mode_text_input` ahead of the
+// custom mode keymap), so we intercept here instead.
 function orchestrator_mode_text_input(args: { text: string }): void {
   if (!form || !formPanel || !args?.text) return;
+  if (args.text === " ") {
+    const focused = formFocusedKey();
+    if (focused === "worktree" || focused === "cancel" || focused === "create") {
+      formPanel.command(widgetKey("Space"));
+      return;
+    }
+  }
   formPanel.command(textInputChar(args.text));
 }
 registerHandler("mode_text_input", orchestrator_mode_text_input);
