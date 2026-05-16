@@ -103,10 +103,23 @@ pub fn render_event_debug(frame: &mut Frame, area: Rect, debug: &EventDebug, the
             };
 
             let prefix = if i == 0 { "> " } else { "  " };
-            history_lines.push(Line::from(vec![
+            let label_style = Style::default().fg(theme.line_number_fg);
+            let mut spans = vec![
                 Span::styled(prefix, style),
+                Span::styled("Raw: ", label_style),
                 Span::styled(&recorded.description, style),
-            ]));
+            ];
+            // The form keybinding lookup actually matches against. Shown only
+            // when normalization changes the key (e.g. raw Alt+F → Alt+Shift+F).
+            if let Some(normalized) = &recorded.normalized {
+                spans.push(Span::styled("    (Normalized: ", label_style));
+                spans.push(Span::styled(
+                    normalized,
+                    Style::default().fg(theme.diagnostic_hint_fg),
+                ));
+                spans.push(Span::styled(")", label_style));
+            }
+            history_lines.push(Line::from(spans));
         }
     }
 

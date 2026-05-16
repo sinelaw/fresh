@@ -4,7 +4,9 @@ use super::helpers::{format_chord_keys, key_code_to_config_name, modifiers_to_co
 use super::types::*;
 use crate::config::{Config, Keybinding};
 use crate::input::command_registry::CommandRegistry;
-use crate::input::keybindings::{format_keybinding, Action, KeyContext, KeybindingResolver};
+use crate::input::keybindings::{
+    format_keybinding, normalize_key, Action, KeyContext, KeybindingResolver,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
@@ -742,9 +744,13 @@ impl KeybindingEditor {
 
     /// Record a search key
     pub fn record_search_key(&mut self, event: &KeyEvent) {
-        self.search_key_code = Some(event.code);
-        self.search_modifiers = event.modifiers;
-        self.search_key_display = format_keybinding(&event.code, &event.modifiers);
+        // Normalize so search-by-key behaves consistently with binding lookup
+        // (in particular: uppercase letters without an explicit SHIFT modifier
+        // are folded to lowercase + SHIFT).
+        let (norm_code, norm_mods) = normalize_key(event.code, event.modifiers);
+        self.search_key_code = Some(norm_code);
+        self.search_modifiers = norm_mods;
+        self.search_key_display = format_keybinding(&norm_code, &norm_mods);
         self.apply_filters();
     }
 
@@ -1267,6 +1273,29 @@ mod tests {
                 .iter()
                 .any(|a| a == "switch_keybinding_map"),
             "bare `switch_keybinding_map` must not appear"
+        );
+    }
+
+    #[test]
+    fn record_search_key_normalizes_uppercase_letter_to_shift() {
+        // Regression for https://github.com/sinelaw/fresh/issues/1899
+        // Many terminals don't report SHIFT when sending an uppercase letter
+        // — they encode the case in the character itself. `record_search_key`
+        // (used by the key-search ":record" mode) must still capture this as
+        // "Shift+letter" so it can find bindings stored that way.
+        let mut editor = make_editor(&[]);
+        // Simulate the typical terminal event: Char('P') with no SHIFT modifier.
+        let event = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::empty());
+        editor.record_search_key(&event);
+        assert_eq!(
+            editor.search_key_code,
+            Some(KeyCode::Char('p')),
+            "uppercase letter should be folded to lowercase for lookup"
+        );
+        assert!(
+            editor.search_modifiers.contains(KeyModifiers::SHIFT),
+            "uppercase letter should imply SHIFT (got modifiers={:?})",
+            editor.search_modifiers
         );
     }
 

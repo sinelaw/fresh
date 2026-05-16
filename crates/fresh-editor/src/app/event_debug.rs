@@ -13,14 +13,30 @@ const MAX_HISTORY: usize = 10;
 pub struct RecordedEvent {
     /// The raw key event
     pub event: KeyEvent,
-    /// Human-readable description
+    /// Human-readable description of the raw event
     pub description: String,
+    /// Human-readable description of the key *after* `normalize_key` — i.e.
+    /// the form keybinding lookup actually matches against. `None` when
+    /// normalization leaves the event unchanged (no extra line to show).
+    pub normalized: Option<String>,
 }
 
 impl RecordedEvent {
     fn new(event: KeyEvent) -> Self {
         let description = format_key_event(&event);
-        Self { event, description }
+        let (norm_code, norm_mods) =
+            crate::input::keybindings::normalize_key(event.code, event.modifiers);
+        let normalized = if norm_code == event.code && norm_mods == event.modifiers {
+            None
+        } else {
+            let norm_event = KeyEvent::new(norm_code, norm_mods);
+            Some(format_key_event(&norm_event))
+        };
+        Self {
+            event,
+            description,
+            normalized,
+        }
     }
 }
 

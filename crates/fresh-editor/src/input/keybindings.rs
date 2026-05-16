@@ -11,12 +11,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///   strip the redundant SHIFT so bindings defined as "BackTab" match.
 /// - Shift+Backspace has no distinct semantics from plain Backspace — strip
 ///   the redundant SHIFT so bindings defined as "Backspace" match both.
-/// - Uppercase letters may arrive as `Char('P')` + SHIFT (real Shift press)
-///   or `Char('A')` without SHIFT (CapsLock on, kitty keyboard protocol).
-///   In both cases, lowercase the character and preserve the existing
-///   modifiers. This ensures CapsLock+Ctrl+A matches the `Ctrl+A` binding,
-///   while Shift+P still matches the `Shift+P` binding.
-fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+/// - Uppercase letters may arrive as `Char('P')` + SHIFT (real Shift press
+///   with kitty keyboard protocol), `Char('P')` without SHIFT (typical
+///   terminal — the case carries the shift information, including with ALT:
+///   Alt+Shift+F arrives as `Char('F')` + ALT), or `Char('A')` with only
+///   CONTROL (CapsLock+Ctrl+A in some terminals). Lowercase the character and
+///   infer SHIFT so that a binding defined as `Shift+P` / `Alt+Shift+F`
+///   matches whether or not the terminal reports the modifier. The one
+///   exception is CONTROL: an uppercase letter with Ctrl is ambiguous between
+///   CapsLock+Ctrl+letter and Shift+Ctrl+letter, and treating it as the
+///   former preserves the long-standing intent that CapsLock+Ctrl+A still
+///   triggers the `Ctrl+A` binding — so don't infer SHIFT when CONTROL is set.
+pub(crate) fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
     if code == KeyCode::BackTab {
         return (code, modifiers.difference(KeyModifiers::SHIFT));
     }
@@ -25,7 +31,12 @@ fn normalize_key(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifie
     }
     if let KeyCode::Char(c) = code {
         if c.is_ascii_uppercase() {
-            return (KeyCode::Char(c.to_ascii_lowercase()), modifiers);
+            let new_modifiers = if modifiers.contains(KeyModifiers::CONTROL) {
+                modifiers
+            } else {
+                modifiers | KeyModifiers::SHIFT
+            };
+            return (KeyCode::Char(c.to_ascii_lowercase()), new_modifiers);
         }
     }
     (code, modifiers)
@@ -3147,6 +3158,143 @@ mod tests {
             resolver.resolve(&shift_backspace, KeyContext::FileExplorer),
             Action::FileExplorerSearchBackspace,
             "Shift+Backspace should resolve to FileExplorerSearchBackspace (same as Backspace) in FileExplorer context"
+        );
+    }
+
+    #[test]
+    fn test_shift_letter_binding_works_without_terminal_shift_modifier() {
+        // Regression test for https://github.com/sinelaw/fresh/issues/1899
+        // Most terminals don't report the SHIFT modifier when sending an
+        // uppercase letter — the case carries the shift information instead.
+        // A binding defined as `Shift+P` (key=p, modifiers=[shift]) must
+        // still trigger when the terminal sends `Char('P')` with no modifiers.
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "p".to_string(),
+            modifiers: vec!["shift".to_string()],
+            keys: Vec::new(),
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        // Case 1: kitty keyboard protocol — explicit SHIFT modifier alongside uppercase.
+        let kitty_upper_shift = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT);
+        assert_eq!(
+            resolver.resolve(&kitty_upper_shift, KeyContext::Normal),
+            Action::Save,
+            "Char('P')+SHIFT should match Shift+P binding"
+        );
+
+        // Case 2: kitty protocol with lowercased char (caps lock or some terminals).
+        let kitty_lower_shift = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::SHIFT);
+        assert_eq!(
+            resolver.resolve(&kitty_lower_shift, KeyContext::Normal),
+            Action::Save,
+            "Char('p')+SHIFT should match Shift+P binding"
+        );
+
+        // Case 3: typical terminal without kitty protocol — uppercase only, no modifier.
+        // This is the case that failed before the fix.
+        let plain_upper = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&plain_upper, KeyContext::Normal),
+            Action::Save,
+            "Char('P') with no modifier should match Shift+P binding \
+             (typical terminal behavior — case alone carries shift)"
+        );
+    }
+
+    #[test]
+    fn test_alt_shift_letter_binding_matches_across_terminal_encodings() {
+        // Alt+Shift+F is encoded differently by different terminals: some send
+        // `Char('F')` + ALT (no SHIFT bit — the case carries the shift), others
+        // send `Char('F')` + ALT + SHIFT. Both must match an `Alt+Shift+F`
+        // binding, and both must stay distinct from a plain `Alt+F` (Alt+f).
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "f".to_string(),
+            modifiers: vec!["alt".to_string(), "shift".to_string()],
+            keys: Vec::new(),
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        // Encoding A: uppercase + ALT, terminal omits the SHIFT bit.
+        let no_shift_bit = KeyEvent::new(KeyCode::Char('F'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&no_shift_bit, KeyContext::Normal),
+            Action::Save,
+            "Char('F')+ALT (no SHIFT bit) should match Alt+Shift+F"
+        );
+
+        // Encoding B: uppercase + ALT + SHIFT, terminal reports the SHIFT bit.
+        let with_shift_bit =
+            KeyEvent::new(KeyCode::Char('F'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(
+            resolver.resolve(&with_shift_bit, KeyContext::Normal),
+            Action::Save,
+            "Char('F')+ALT+SHIFT should match Alt+Shift+F"
+        );
+
+        // Plain Alt+f (no shift) must NOT match the Alt+Shift+F binding.
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_ne!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::Save,
+            "Alt+f (lowercase, no shift) must stay distinct from Alt+Shift+F"
+        );
+    }
+
+    #[test]
+    fn test_capslock_ctrl_letter_still_matches_ctrl_letter_binding() {
+        // The fix above must not regress the long-standing behavior where
+        // CapsLock+Ctrl+A is treated equivalently to Ctrl+A. When the
+        // character arrives uppercase with another modifier (CONTROL), we
+        // don't infer SHIFT — that case is ambiguous and the existing intent
+        // is to fold caps lock away.
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Ctrl+A (lowercase, real key press).
+        let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        let action_ctrl_a = resolver.resolve(&ctrl_a, KeyContext::Normal);
+
+        // CapsLock+Ctrl+A (uppercase from caps, CONTROL modifier only).
+        let caps_ctrl_a = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::CONTROL);
+        let action_caps_ctrl_a = resolver.resolve(&caps_ctrl_a, KeyContext::Normal);
+
+        assert_eq!(
+            action_ctrl_a, action_caps_ctrl_a,
+            "CapsLock+Ctrl+A must resolve to the same action as Ctrl+A"
+        );
+    }
+
+    #[test]
+    fn test_uppercase_without_binding_falls_through_to_insert_char() {
+        // When there's no binding for a Shift+letter, an uppercase letter must
+        // still be inserted as text. The fix to normalize uppercase → SHIFT
+        // for lookup must not interfere with the InsertChar fallback (which
+        // uses the original event, not the normalized one).
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        // 'Z' has no Shift+z binding in the default config.
+        let upper_z_no_mod = KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&upper_z_no_mod, KeyContext::Normal),
+            Action::InsertChar('Z'),
+            "Char('Z') with no modifier should still be inserted as 'Z'"
+        );
+
+        let upper_z_shift = KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::SHIFT);
+        assert_eq!(
+            resolver.resolve(&upper_z_shift, KeyContext::Normal),
+            Action::InsertChar('Z'),
+            "Char('Z')+SHIFT should still be inserted as 'Z'"
         );
     }
 

@@ -6,7 +6,7 @@ use crate::app::keybinding_editor::{
     BindingSource, ContextFilter, DeleteResult, DisplayRow, EditMode, KeybindingEditor, SearchMode,
     SourceFilter,
 };
-use crate::input::keybindings::{format_keybinding, KeybindingResolver};
+use crate::input::keybindings::{format_keybinding, normalize_key, KeybindingResolver};
 use crate::view::dimming::apply_dimming;
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors};
@@ -1444,11 +1444,16 @@ fn handle_edit_dialog_input(
         match event.code {
             KeyCode::Modifier(_) => {} // ignore bare modifier presses
             _ => {
-                dialog.key_code = Some(event.code);
-                dialog.modifiers = event.modifiers;
-                dialog.key_display = format_keybinding(&event.code, &event.modifiers);
-                dialog.conflicts =
-                    editor.find_conflicts(event.code, event.modifiers, &dialog.context);
+                // Normalize the event so terminals that don't report SHIFT for
+                // uppercase letters still produce a "Shift+letter" binding (e.g.
+                // Shift+P stored as `key=p, modifiers=[shift]` rather than just
+                // `key=p`). This mirrors the lookup-time normalization so the
+                // recorded binding will match at runtime.
+                let (norm_code, norm_mods) = normalize_key(event.code, event.modifiers);
+                dialog.key_code = Some(norm_code);
+                dialog.modifiers = norm_mods;
+                dialog.key_display = format_keybinding(&norm_code, &norm_mods);
+                dialog.conflicts = editor.find_conflicts(norm_code, norm_mods, &dialog.context);
                 dialog.capturing_special = false;
             }
         }
@@ -1720,6 +1725,10 @@ fn handle_confirm_input(editor: &mut KeybindingEditor, event: &KeyEvent) -> Keyb
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::keybinding_editor::EditBindingState;
+    use crate::config::Config;
+    use crate::input::buffer_mode::ModeRegistry;
+    use crate::input::command_registry::CommandRegistry;
 
     /// The modal must stay fully inside the area it is handed and be
     /// horizontally centred within it. Regression test for the
@@ -1771,5 +1780,74 @@ mod tests {
         );
         assert!(modal.x + modal.width <= area.width);
         assert!(modal.y + modal.height <= area.height);
+    }
+
+    fn make_editor() -> KeybindingEditor {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+        let mode_registry = ModeRegistry::new();
+        let cmd_registry = CommandRegistry::new();
+        let menu_names: Vec<String> = ["File", "Edit", "View"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        KeybindingEditor::new(
+            &config,
+            &resolver,
+            &mode_registry,
+            &cmd_registry,
+            String::from("/tmp/fresh-config.toml"),
+            &menu_names,
+        )
+    }
+
+    /// Drive the add-binding dialog through one "capture key" flow and
+    /// return the resulting (key_code, modifiers).
+    fn capture_in_add_dialog(event: KeyEvent) -> (Option<KeyCode>, KeyModifiers) {
+        let mut editor = make_editor();
+        editor.edit_dialog = Some(EditBindingState::new_add());
+        // Enter the "press a key" capture mode by sending Enter on the key
+        // field, then send the simulated event.
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle_keybinding_editor_input(&mut editor, &enter);
+        handle_keybinding_editor_input(&mut editor, &event);
+        let dialog = editor.edit_dialog.as_ref().expect("dialog still open");
+        (dialog.key_code, dialog.modifiers)
+    }
+
+    #[test]
+    fn add_dialog_records_shift_when_terminal_omits_shift_modifier() {
+        // Regression for https://github.com/sinelaw/fresh/issues/1899
+        // When a non-kitty terminal sends Char('P') with no modifier (the
+        // typical case for Shift+P), the add-binding dialog must still
+        // capture this as a "Shift+P" binding rather than just "p".
+        let plain_upper = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::empty());
+        let (code, mods) = capture_in_add_dialog(plain_upper);
+        assert_eq!(code, Some(KeyCode::Char('p')));
+        assert!(
+            mods.contains(KeyModifiers::SHIFT),
+            "Shift+P (sent as plain 'P') must capture SHIFT (got modifiers={:?})",
+            mods
+        );
+    }
+
+    #[test]
+    fn add_dialog_records_shift_when_terminal_includes_shift_modifier() {
+        // The fix must not regress the kitty-protocol path either.
+        let kitty_shift = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT);
+        let (code, mods) = capture_in_add_dialog(kitty_shift);
+        assert_eq!(code, Some(KeyCode::Char('p')));
+        assert!(mods.contains(KeyModifiers::SHIFT));
+    }
+
+    #[test]
+    fn add_dialog_preserves_ctrl_when_capturing_upper_letter() {
+        // CapsLock+Ctrl+A — uppercase letter with CONTROL modifier — should
+        // record as plain Ctrl+A (no inferred SHIFT) so the long-standing
+        // caps-lock-tolerant lookup keeps working.
+        let caps_ctrl_a = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::CONTROL);
+        let (code, mods) = capture_in_add_dialog(caps_ctrl_a);
+        assert_eq!(code, Some(KeyCode::Char('a')));
+        assert_eq!(mods, KeyModifiers::CONTROL);
     }
 }
