@@ -330,6 +330,12 @@ function buildPreviewEntries(
   ];
 }
 
+// Blank-row separator used inside the Sessions column between
+// the filter, the new-session button, and the list.
+function sessionsSeparator(): WidgetSpec {
+  return spacer(0);
+}
+
 // Approximate number of session rows the picker's list pane
 // should show. Sized off the full terminal (not the active
 // buffer's viewport — that shrinks with vertical splits and made
@@ -338,10 +344,12 @@ function openListVisibleRows(): number {
   const screen = editor.getScreenSize();
   const h = screen.height > 0 ? screen.height : 30;
   const panelH = Math.floor(h * 0.9);
-  // header (1) + spacer (1) + filter section (3) + sessions
-  // section borders (2) + hint bar (1) = 8 rows of chrome.
-  // Floor at 4 so a tiny terminal still shows something.
-  return Math.max(4, panelH - 8);
+  // panel borders (2) + header (1) + spacer (1) + sessions
+  // section borders (2) + filter row (1) + separator (1) +
+  // new-session button row (1) + separator (1) + footer (1) =
+  // 11 rows of chrome. Floor at 4 so a tiny terminal still
+  // shows something.
+  return Math.max(4, panelH - 11);
 }
 
 // Compose the right-hand preview pane. Normally it shows info
@@ -501,14 +509,15 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       });
     }
   }
-  // Total embed area we can afford if no details row is shown:
-  // `listVisibleRows - 2` (button row + one spacer above the
-  // embed). When details ARE shown, two info rows + a spacer eat
-  // three more lines — `_DETAILS_CHROME_ROWS` accounts for that.
-  // Either way the preview pane's apparent height matches the
-  // sessions list pane's `visible_rows + 2 borders` for the
-  // wireframed dialog shape.
-  const totalEmbedBase = (openDialog?.listVisibleRows ?? 6) - 2;
+  // Match the sessions column's content height so the two panes'
+  // bottom borders land on the same row. Sessions column inside
+  // its borders = filter (1) + separator (1) + new-session button
+  // (1) + separator (1) + list (listVisibleRows) = listVisibleRows
+  // + 4. Preview inside its borders = button row (1) + spacer (1)
+  // + embedRows, so embedRows must equal listVisibleRows + 2.
+  // When details ARE shown, two info rows + a spacer eat three
+  // more lines — `_DETAILS_CHROME_ROWS` accounts for that.
+  const totalEmbedBase = (openDialog?.listVisibleRows ?? 6) + 2;
   const detailsOn = openDialog?.showDetails ?? false;
   const _DETAILS_CHROME_ROWS = 3; // 2 info rows + 1 spacer
   const embedRows = Math.max(
@@ -633,15 +642,12 @@ function buildOpenSpec(): WidgetSpec {
   // Keeping the visual chrome (instead of swapping it for a
   // "(disabled)" label) means the dialog doesn't reflow under
   // the user's eyes when the confirm view opens / closes.
-  const filterSection = labeledSection({
-    label: "Filter",
-    child: text({
-      value: openDialog.filter.value,
-      cursorByte: openDialog.filter.cursor,
-      placeholder: "type to filter…",
-      fullWidth: true,
-      key: inConfirm ? undefined : "filter",
-    }),
+  const filterInput = text({
+    value: openDialog.filter.value,
+    cursorByte: openDialog.filter.cursor,
+    placeholder: "type to filter…",
+    fullWidth: true,
+    key: inConfirm ? undefined : "filter",
   });
   const errorBanner: WidgetSpec | null = openDialog.lastError
     ? {
@@ -674,7 +680,6 @@ function buildOpenSpec(): WidgetSpec {
     },
     ...(errorBanner ? [errorBanner] : []),
     spacer(0),
-    filterSection,
     // Two-pane: sessions list | preview. Renderer's `row()`
     // horizontally zips multi-line children so this composes
     // the wireframed shape directly. Width split 25 / 75 —
@@ -685,26 +690,40 @@ function buildOpenSpec(): WidgetSpec {
       labeledSection({
         label: `Sessions (${filtered.length})`,
         widthPct: 25,
-        child: list({
-          items,
-          itemKeys,
-          selectedIndex: selIdx,
-          visibleRows: openDialog.listVisibleRows,
-          // Excluded from the Tab cycle — Up/Down on the
-          // filter input forwards to this list via host
-          // smart-keys, so Tab jumps straight to the action
-          // buttons instead of stopping here.
-          focusable: false,
-          // Drop the `key` while a confirmation prompt is up so
-          // `find_scrollable_widget_key` (`plugin_dispatch.rs`)
-          // can't find this list — Up/Down on the focused Cancel
-          // button would otherwise forward to the list and let
-          // the user move the selection off the session being
-          // confirmed (which would break the confirm view because
-          // it only renders when the selected row matches
-          // `pendingConfirm.sessionId`).
-          key: inConfirm ? undefined : "sessions",
-        }),
+        // Sessions column: filter, separator, new-session
+        // button, separator, list. Separators are long `─`
+        // strings that the renderer truncates to the column's
+        // inner width — no need to measure cells from the
+        // plugin side.
+        child: col(
+          row(
+            button(newLabel, { intent: "primary", key: "new-session" }),
+            flexSpacer(),
+          ),
+          sessionsSeparator(),
+          filterInput,
+          sessionsSeparator(),
+          list({
+            items,
+            itemKeys,
+            selectedIndex: selIdx,
+            visibleRows: openDialog.listVisibleRows,
+            // Excluded from the Tab cycle — Up/Down on the
+            // filter input forwards to this list via host
+            // smart-keys, so Tab jumps straight to the action
+            // buttons instead of stopping here.
+            focusable: false,
+            // Drop the `key` while a confirmation prompt is up so
+            // `find_scrollable_widget_key` (`plugin_dispatch.rs`)
+            // can't find this list — Up/Down on the focused Cancel
+            // button would otherwise forward to the list and let
+            // the user move the selection off the session being
+            // confirmed (which would break the confirm view because
+            // it only renders when the selected row matches
+            // `pendingConfirm.sessionId`).
+            key: inConfirm ? undefined : "sessions",
+          }),
+        ),
       }),
       // Preview pane has no explicit width — picks up the
       // remaining 75% by default since the sessions list took
@@ -712,7 +731,6 @@ function buildOpenSpec(): WidgetSpec {
       buildPreviewPane(selectedSession),
     ),
     row(
-      button(newLabel, { intent: "primary", key: "new-session" }),
       flexSpacer(),
       hintBar([
         { keys: "↑↓", label: "nav" },
