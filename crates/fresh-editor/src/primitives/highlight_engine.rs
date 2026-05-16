@@ -431,6 +431,19 @@ impl TextMateEngine {
 
     /// Highlight the visible viewport. Path selection is documented in the
     /// module-level docs ("TextMate cache design").
+    /// Test-only: inspect the cache commit point (range.end) and
+    /// whether tail_state is populated. The cache must commit at a
+    /// newline boundary — anything past that risks streaming
+    /// forward-extension picking up where partial-line state poisoned
+    /// the parser, see `test_partial_trailing_line_not_committed_to_cache`.
+    #[cfg(test)]
+    pub fn cache_commit_for_test(&self) -> (usize, bool) {
+        match &self.cache {
+            Some(c) => (c.range.end, c.tail_state.is_some()),
+            None => (0, false),
+        }
+    }
+
     pub fn highlight_viewport(
         &mut self,
         buffer: &Buffer,
@@ -825,6 +838,18 @@ impl TextMateEngine {
         let mut pos = 0;
         let mut current_offset = extension_start;
         let mut bytes_since_checkpoint: usize = 0;
+        // Snapshot of the last newline-aligned cache commit point. We never
+        // commit parse state for a partial trailing line: with a streaming
+        // grammar like syntect's `Diff` (line-anchored `^\+.*` etc.) the
+        // state at end-of-input has already popped `markup.inserted`, so
+        // resuming from there parses the rest of the same line in
+        // `source.diff` with no scope — bytes of the line streamed in
+        // later get default editor bg, producing the dark-bar artifact
+        // inside `+` lines. Re-parsing the trailing partial line on every
+        // refresh costs at most one extra `parse_line` and is correct.
+        let mut safe_offset = extension_start;
+        let mut safe_state = state.clone();
+        let mut safe_scopes = current_scopes.clone();
 
         while pos < content_bytes.len() {
             if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
@@ -871,7 +896,8 @@ impl TextMateEngine {
             };
 
             let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
-            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
+            let line_ends_with_newline = line_str.ends_with('\n');
+            let line_for_syntect = if line_end < content_bytes.len() || line_ends_with_newline {
                 format!("{}\n", line_content)
             } else {
                 line_content.to_string()
@@ -925,23 +951,50 @@ impl TextMateEngine {
             pos = line_end;
             current_offset += actual_line_byte_len;
             bytes_since_checkpoint += actual_line_byte_len;
+
+            if line_ends_with_newline {
+                safe_offset = current_offset;
+                safe_state = state.clone();
+                safe_scopes = current_scopes.clone();
+            }
         }
 
         self.stats.bytes_parsed += parse_end - extension_start;
 
         Self::merge_adjacent_spans(&mut new_spans);
 
+        // Split spans into safe (fully before the trailing partial line,
+        // cacheable) and unsafe (overlap the partial line, render-only).
+        // Unsafe spans are returned in this pass so the partial line is
+        // still highlighted, but won't be cached — they'll be recomputed
+        // on the next refresh once more bytes (and a newline) stream in.
+        let (safe_spans, unsafe_spans): (Vec<_>, Vec<_>) = new_spans
+            .into_iter()
+            .partition(|s| s.range.end <= safe_offset);
+
         let cache = self
             .cache
             .as_mut()
             .expect("extend_cache_forward: cache must still exist");
-        cache.spans.extend(new_spans);
+        cache.spans.extend(safe_spans);
         Self::merge_adjacent_spans(&mut cache.spans);
-        cache.range.end = parse_end;
-        cache.tail_state = Some((state, current_scopes));
+        cache.range.end = safe_offset;
+        cache.tail_state = Some((safe_state, safe_scopes));
         self.last_buffer_len = buf_len;
 
-        self.filter_cached_spans(viewport_start, viewport_end, theme)
+        let mut result = self.filter_cached_spans(viewport_start, viewport_end, theme);
+        result.extend(
+            unsafe_spans
+                .into_iter()
+                .filter(|s| s.range.start < viewport_end && s.range.end > viewport_start)
+                .map(|s| HighlightSpan {
+                    range: s.range,
+                    color: highlight_color(s.category, theme),
+                    bg: highlight_bg(s.category, theme),
+                    category: Some(s.category),
+                }),
+        );
+        result
     }
 
     /// Full re-parse from desired_parse_start to parse_end. Used on cold start
@@ -979,6 +1032,14 @@ impl TextMateEngine {
         let mut pos = 0;
         let mut current_offset = actual_start;
         let mut bytes_since_checkpoint: usize = 0;
+        // See `extend_cache_forward` for rationale: never commit cache
+        // state past the last newline. `safe_offset` ends up == parse_end
+        // for buffers that end on `\n` (no behaviour change), and at the
+        // start of the trailing partial line otherwise so the next
+        // refresh re-parses it from scratch.
+        let mut safe_offset = actual_start;
+        let mut safe_state = state.clone();
+        let mut safe_scopes = current_scopes.clone();
 
         while pos < content_bytes.len() {
             if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
@@ -1026,7 +1087,8 @@ impl TextMateEngine {
             };
 
             let line_content = line_str.trim_end_matches(&['\r', '\n'][..]);
-            let line_for_syntect = if line_end < content_bytes.len() || line_str.ends_with('\n') {
+            let line_ends_with_newline = line_str.ends_with('\n');
+            let line_for_syntect = if line_end < content_bytes.len() || line_ends_with_newline {
                 format!("{}\n", line_content)
             } else {
                 line_content.to_string()
@@ -1084,6 +1146,12 @@ impl TextMateEngine {
             current_offset += actual_line_byte_len;
             bytes_since_checkpoint += actual_line_byte_len;
 
+            if line_ends_with_newline {
+                safe_offset = current_offset;
+                safe_state = state.clone();
+                safe_scopes = current_scopes.clone();
+            }
+
             // Update checkpoint states as we pass them
             let markers_here: Vec<(MarkerId, usize)> = self
                 .checkpoint_markers
@@ -1104,10 +1172,22 @@ impl TextMateEngine {
 
         Self::merge_adjacent_spans(&mut spans);
 
+        // Cache only the prefix up to the last newline. Spans straddling
+        // or past the trailing partial line are returned for THIS render
+        // pass (so the partial line is highlighted now), but excluded
+        // from the cache — the next refresh re-parses them from
+        // `safe_state` once more bytes have streamed in.
+        let cache_range_end = safe_offset.max(desired_parse_start);
+        let cached_spans: Vec<CachedSpan> = spans
+            .iter()
+            .filter(|s| s.range.end <= cache_range_end)
+            .cloned()
+            .collect();
+
         self.cache = Some(TextMateCache {
-            range: desired_parse_start..parse_end,
-            spans: spans.clone(),
-            tail_state: Some((state, current_scopes)),
+            range: desired_parse_start..cache_range_end,
+            spans: cached_spans,
+            tail_state: Some((safe_state, safe_scopes)),
         });
         self.last_buffer_len = buffer.len();
 
@@ -1744,6 +1824,102 @@ mod tests {
             );
         } else {
             panic!("Expected TextMate engine for .java file");
+        }
+    }
+
+    /// When a buffer is parsed with no trailing newline (the streaming
+    /// case for `git show` output between writes), the engine must not
+    /// commit cache tail state at the end of the partial trailing line.
+    /// With syntect's `Diff` grammar (line-anchored `^\+.*` etc.), the
+    /// state at end-of-input has popped `markup.inserted`, so any
+    /// follow-up parse from there would see the rest of the line as a
+    /// new line in `source.diff` and emit no scope — losing the bg
+    /// inside otherwise-green `+` lines.
+    ///
+    /// This test pins the boundary the cache commits at: after parsing
+    /// a buffer ending mid-line, `cache.range.end` must be the last
+    /// newline (or `desired_parse_start` if no newline was seen), not
+    /// the end of the partial line.
+    #[test]
+    fn test_partial_trailing_line_not_committed_to_cache() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // A complete `+` line followed by a partial `+` line (no \n).
+        let content = "+complete\n+partial";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+
+        if let HighlightEngine::TextMate(ref mut tm) = engine {
+            let _ = tm.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+            let (cache_end, has_tail) = tm.cache_commit_for_test();
+            assert_eq!(
+                cache_end,
+                "+complete\n".len(),
+                "cache should commit at the last newline, not into the partial \
+                 trailing line — committing past the newline causes streaming \
+                 forward-extension to parse the line's continuation in the wrong \
+                 grammar context, losing the diff bg."
+            );
+            assert!(has_tail, "tail state should be saved at the safe boundary");
+        }
+    }
+
+    /// Reproduce: artifacts inside `+` lines whose content contains
+    /// JS template literals — `\`...\`` with `${}` interpolation.
+    /// The whole `+` line should be one contiguous Inserted span
+    /// carrying `theme.diff_add_bg`, with no bg-less holes mid-line.
+    #[test]
+    fn test_diff_inserted_line_is_fully_covered() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        let content =
+            "diff --git a/file.ts b/file.ts\n\
+             index aaa..bbb 100644\n\
+             --- a/file.ts\n\
+             +++ b/file.ts\n\
+             @@ -1,3 +1,5 @@\n\
+             +${seen[g.subtree] > 1 ? `**Seen ${seen[g.subtree]}× — likely cross-subtree type seam.**` : \"\"}\n\
+             +              const k = `${b.fn}::${(b.what || \"\").slice(0, 80)}`;\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+
+        if let HighlightEngine::TextMate(ref mut tm) = engine {
+            let spans = tm.highlight_viewport(&buffer, 0, content.len(), &theme, 0);
+
+            let bytes = content.as_bytes();
+            let mut line_start = 0;
+            while line_start < bytes.len() {
+                let mut line_end = line_start;
+                while line_end < bytes.len() && bytes[line_end] != b'\n' {
+                    line_end += 1;
+                }
+                if bytes[line_start] == b'+' && !content[line_start..line_end].starts_with("+++")
+                {
+                    for byte_pos in line_start..line_end {
+                        let span = spans
+                            .iter()
+                            .find(|s| s.range.start <= byte_pos && s.range.end > byte_pos);
+                        let bg = span.and_then(|s| s.bg);
+                        assert_eq!(
+                            bg,
+                            Some(theme.diff_add_bg),
+                            "byte {} (`{}`) of `+` line starting at {} should carry diff_add_bg; \
+                             got span={:?}",
+                            byte_pos,
+                            content[byte_pos..byte_pos + 1].escape_debug(),
+                            line_start,
+                            span,
+                        );
+                    }
+                }
+                line_start = line_end + 1;
+            }
+        } else {
+            panic!("Expected TextMate engine for .diff file");
         }
     }
 
