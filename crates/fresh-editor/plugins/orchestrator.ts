@@ -626,37 +626,24 @@ function buildOpenSpec(): WidgetSpec {
     ? `+ New Session  ${newKey}`
     : "+ New Session";
   const inConfirm = openDialog.pendingConfirm !== null;
-  // Filter is replaced by a non-tabbable display row while a
-  // confirmation prompt is up — typing into the filter shouldn't
-  // change anything when the user's next decision is binary
-  // (Cancel / Confirm). Removing the text widget from the spec
-  // also takes it out of the tab cycle, so the post-confirm
-  // `focusAdvance(1)` lands directly on the Cancel button.
-  const filterSection: WidgetSpec = inConfirm
-    ? labeledSection({
-        label: "Filter",
-        child: {
-          kind: "raw",
-          entries: [
-            styledRow([
-              {
-                text: " (disabled while confirming)",
-                style: { fg: "ui.menu_disabled_fg", italic: true },
-              },
-            ]),
-          ],
-        },
-      })
-    : labeledSection({
-        label: "Filter",
-        child: text({
-          value: openDialog.filter.value,
-          cursorByte: openDialog.filter.cursor,
-          placeholder: "type to filter…",
-          fullWidth: true,
-          key: "filter",
-        }),
-      });
+  // While a confirmation prompt is up the filter is rendered
+  // without a `key`. The host's `collect_tabbable` only adds
+  // widgets that carry a non-empty key, so a keyless text widget
+  // is unreachable by Tab and doesn't receive `mode_text_input`
+  // — the bracketed input still paints normally, just inert.
+  // Keeping the visual chrome (instead of swapping it for a
+  // "(disabled)" label) means the dialog doesn't reflow under
+  // the user's eyes when the confirm view opens / closes.
+  const filterSection = labeledSection({
+    label: "Filter",
+    child: text({
+      value: openDialog.filter.value,
+      cursorByte: openDialog.filter.cursor,
+      placeholder: "type to filter…",
+      fullWidth: true,
+      key: inConfirm ? undefined : "filter",
+    }),
+  });
   const errorBanner: WidgetSpec | null = openDialog.lastError
     ? {
         kind: "raw",
