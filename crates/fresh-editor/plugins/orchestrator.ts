@@ -111,22 +111,7 @@ interface NewSessionForm {
   // button) we re-open the picker so the user lands back where
   // they were instead of being dropped into the bare editor.
   fromPicker: boolean;
-  // Mirror of the host's currently-focused widget key. Updated
-  // by the Tab/Shift+Tab handlers below as they cycle through
-  // the form's tabbable order. The Enter handler reads this so
-  // a press on the Cancel button cancels instead of submitting
-  // (the host's smart-key Enter on a button would activate it,
-  // but the plugin's mode binding for Enter intercepts before
-  // smart-key dispatch runs — without this mirror, every Enter
-  // would always submit regardless of focus).
-  focusedKey: string;
 }
-
-// Tabbable order in the new-session form. Mirrors the spec
-// builder's declaration order in `buildFormSpec`. Used by the
-// Enter / Tab / Shift+Tab handlers to keep `form.focusedKey` in
-// sync with the host's focus tracking.
-const FORM_TABBABLE: readonly string[] = ["name", "cmd", "branch", "cancel", "create"];
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
 
@@ -724,7 +709,15 @@ function buildOpenSpec(): WidgetSpec {
           // smart-keys, so Tab jumps straight to the action
           // buttons instead of stopping here.
           focusable: false,
-          key: "sessions",
+          // Drop the `key` while a confirmation prompt is up so
+          // `find_scrollable_widget_key` (`plugin_dispatch.rs`)
+          // can't find this list — Up/Down on the focused Cancel
+          // button would otherwise forward to the list and let
+          // the user move the selection off the session being
+          // confirmed (which would break the confirm view because
+          // it only renders when the selected row matches
+          // `pendingConfirm.sessionId`).
+          key: inConfirm ? undefined : "sessions",
         }),
       }),
       // Preview pane has no explicit width — picks up the
@@ -1655,7 +1648,7 @@ function buildFormSpec(): WidgetSpec {
       hintBar([
         { keys: "Tab", label: "next" },
         { keys: "S-Tab", label: "prev" },
-        { keys: "Enter", label: "submit" },
+        { keys: "Enter", label: "advance / act" },
         { keys: "Esc", label: "cancel" },
       ]),
       flexSpacer(),
@@ -1701,9 +1694,6 @@ function openForm(options?: { fromPicker?: boolean }): void {
     defaultBranch: "",
     lastCmd,
     fromPicker: !!options?.fromPicker,
-    // Host's render_spec picks the first tabbable when there's
-    // no previous focus — that's "name" in our declaration order.
-    focusedKey: FORM_TABBABLE[0],
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
@@ -1884,10 +1874,18 @@ function startNewSession(): void {
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`
 // handles printable input outside this list.
+// Enter is intentionally NOT bound here: we want the host's
+// floating-widget smart-key dispatch to handle it natively. That
+// gives Enter-on-button → activate (so Cancel cancels and Create
+// Session submits via their respective `widget_event` "activate"
+// branches), and Enter-on-text-input → focus advance (next
+// field). Adding Enter to this list previously caused a regression
+// where pressing Enter on the focused Cancel button submitted
+// the form, because the plugin's handler always called
+// `submitForm` regardless of which widget the host had focused.
 const FORM_MODE_BINDINGS: [string, string][] = [
   ["Tab", "orchestrator_form_key_tab"],
   ["S-Tab", "orchestrator_form_key_shift_tab"],
-  ["Return", "orchestrator_form_key_enter"],
   ["Escape", "orchestrator_form_key_escape"],
   ["Backspace", "orchestrator_form_key_backspace"],
   ["Delete", "orchestrator_form_key_delete"],
@@ -1906,54 +1904,11 @@ function dispatchFormKey(name: string): void {
   formPanel.command(widgetKey(name));
 }
 
-// Local mirror of focus advancement. The host still owns the
-// authoritative focus_key (and re-renders against it); this side
-// tracks it so the Enter handler can dispatch correctly without
-// querying the host.
-function advanceFormFocus(delta: number): void {
-  if (!form) return;
-  const idx = FORM_TABBABLE.indexOf(form.focusedKey);
-  const cur = idx < 0 ? 0 : idx;
-  const n = FORM_TABBABLE.length;
-  form.focusedKey = FORM_TABBABLE[(cur + delta + n) % n];
-}
-
-registerHandler("orchestrator_form_key_tab", () => {
-  advanceFormFocus(1);
-  dispatchFormKey("Tab");
-});
+registerHandler("orchestrator_form_key_tab", () => dispatchFormKey("Tab"));
 registerHandler(
   "orchestrator_form_key_shift_tab",
-  () => {
-    advanceFormFocus(-1);
-    dispatchFormKey("Shift+Tab");
-  },
+  () => dispatchFormKey("Shift+Tab"),
 );
-registerHandler("orchestrator_form_key_enter", () => {
-  // The hint bar promises "Enter submit". The host's floating-panel
-  // input dispatcher (input.rs:`dispatch_floating_widget_key`)
-  // defers to plugin-defined mode bindings when present, so the
-  // smart-key router's "Enter = advance focus / activate" default
-  // doesn't fire for the orchestrator-new-form mode — this
-  // handler does.
-  //
-  // Dispatch:
-  //   - focus on `cancel` button → cancel (was a bug: every Enter
-  //     submitted, so pressing Enter on Cancel created a session)
-  //   - focus on `create` button → submit
-  //   - focus on a text field → submit (matches the "Enter submit"
-  //     hint; otherwise users would have to Tab to Create just to
-  //     fire it, defeating the hint)
-  if (!form) {
-    dispatchFormKey("Enter");
-    return;
-  }
-  if (form.focusedKey === "cancel") {
-    cancelForm();
-    return;
-  }
-  void submitForm();
-});
 registerHandler("orchestrator_form_key_escape", () => {
   if (form) cancelForm();
 });
