@@ -167,11 +167,10 @@ fn test_no_rulers_on_virtual_buffer() {
 
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
 
-    let dashboard_buffer = harness.editor_mut().active_window_mut().create_virtual_buffer(
-        "Dashboard".to_string(),
-        "dashboard".to_string(),
-        true,
-    );
+    let dashboard_buffer = harness
+        .editor_mut()
+        .active_window_mut()
+        .create_virtual_buffer("Dashboard".to_string(), "dashboard".to_string(), true);
     harness
         .editor_mut()
         .set_virtual_buffer_content(
