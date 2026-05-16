@@ -1897,8 +1897,7 @@ mod tests {
                 while line_end < bytes.len() && bytes[line_end] != b'\n' {
                     line_end += 1;
                 }
-                if bytes[line_start] == b'+' && !content[line_start..line_end].starts_with("+++")
-                {
+                if bytes[line_start] == b'+' && !content[line_start..line_end].starts_with("+++") {
                     for byte_pos in line_start..line_end {
                         let span = spans
                             .iter()
