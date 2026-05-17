@@ -1864,6 +1864,13 @@ pub enum WidgetMutation {
         widget_key: String,
         entries: Vec<crate::text_property::TextPropertyEntry>,
     },
+    /// Set the panel's focused widget to `widget_key`. Passing a key
+    /// that isn't a tabbable in the current spec is harmless — the
+    /// next render clamps focus to the first tabbable, same as for an
+    /// empty key. Use this to land initial focus on a specific widget
+    /// after mount, or to snap focus back to a "home" widget after a
+    /// navigation event.
+    SetFocusKey { widget_key: String },
 }
 
 /// Plugin command - allows plugins to send commands to the editor

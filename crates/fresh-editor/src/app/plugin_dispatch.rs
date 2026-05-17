@@ -3699,6 +3699,13 @@ impl Editor {
                     crate::widgets::set_raw_entries_in_spec(&mut panel.spec, &widget_key, entries);
                 }
             }
+            WidgetMutation::SetFocusKey { widget_key } => {
+                // Panel-level focus lives in the registry, not the
+                // spec. The renderer reads it on the next paint and
+                // re-clamps to the first tabbable if the key isn't a
+                // current tabbable, so an unknown key is a safe no-op.
+                self.widget_registry.set_focus_key(panel_id, widget_key);
+            }
         }
 
         // Re-render with the mutated state. `rerender_widget_panel`

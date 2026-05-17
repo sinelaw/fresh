@@ -1075,6 +1075,9 @@ type WidgetMutation = {
 	"kind": "setRawEntries";
 	widgetKey: string;
 	entries: Array<TextPropertyEntry>;
+} | {
+	"kind": "setFocusKey";
+	widgetKey: string;
 };
 type SearchTakeResult = {
 	/**

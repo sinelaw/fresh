@@ -1066,11 +1066,15 @@ function openControlRoom(): void {
   if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
+  // Visit is the dialog's primary action — land focus there on
+  // mount so Enter immediately opens the selected session. The
+  // tabbable order is unchanged (new-session → filter → preview-
+  // pane buttons); we just override the default-first-tabbable
+  // selection. The host clamps to the first tabbable when "visit"
+  // isn't in the spec (empty filter result, no session), which is
+  // safe — there's nothing to act on then anyway.
+  openPanel.setFocusKey("visit");
   editor.setEditorMode(OPEN_MODE);
-  // Default focus is the first tabbable — the "+ New Session"
-  // button at the top of the sessions column. Tab cycle:
-  // new-session → filter → list-implicit (via smart-keys) →
-  // preview-pane buttons.
 }
 
 function closeOpenDialog(): void {
@@ -3083,6 +3087,14 @@ editor.on("widget_event", (e) => {
         // Re-pin the list selection so the spec re-emit doesn't
         // snap it back to 0.
         openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+        // Up/Down on a focused action button (Stop / Archive /
+        // Delete / Details / +New Session) routes to the sessions
+        // list via the host's smart-key dispatch but leaves focus
+        // on the button. Snap focus back to Visit so the user can
+        // press Enter to open the newly-highlighted session — the
+        // dialog's whole reason for being. Idempotent when focus
+        // is already on Visit.
+        openPanel.setFocusKey("visit");
       }
       return;
     }

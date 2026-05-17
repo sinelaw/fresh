@@ -673,6 +673,13 @@ export class WidgetPanel {
   setRawEntries(widgetKey: string, entries: TextPropertyEntry[]): boolean {
     return this.mutate({ kind: "setRawEntries", widgetKey, entries });
   }
+
+  /** Set the panel's focused widget by key. Passing a key that isn't
+   * a current tabbable is harmless — the next render clamps focus to
+   * the first tabbable. */
+  setFocusKey(widgetKey: string): boolean {
+    return this.mutate({ kind: "setFocusKey", widgetKey });
+  }
 }
 
 // =============================================================================
@@ -784,6 +791,13 @@ export class FloatingWidgetPanel {
 
   setCheckedKeys(widgetKey: string, checked: boolean, keys: string[]): boolean {
     return this.mutate({ kind: "setCheckedKeys", widgetKey, checked, keys });
+  }
+
+  /** Set the panel's focused widget by key. Passing a key that isn't
+   * a current tabbable is harmless — the next render clamps focus to
+   * the first tabbable. */
+  setFocusKey(widgetKey: string): boolean {
+    return this.mutate({ kind: "setFocusKey", widgetKey });
   }
 }
 
