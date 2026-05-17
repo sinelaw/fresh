@@ -2037,6 +2037,12 @@ function buildFormSpec(): WidgetSpec {
     // editor cwd for non-git launches). Empty submit uses the
     // placeholder verbatim, so the user can land on a sensible
     // default just by pressing Enter through the form.
+    // The completion popup hangs off the bottom of this Text
+    // widget — host-rendered chrome, no separate widget. The
+    // plugin pushes candidates via `formPanel.setCompletions`
+    // and reacts to the `completion_accept` event when the user
+    // hits Tab; the labeledSection wrapper extends its side
+    // borders down through the popup automatically.
     labeledSection({
       label: "Project Path",
       child: text({
@@ -2047,7 +2053,6 @@ function buildFormSpec(): WidgetSpec {
         key: "project_path",
       }),
     }),
-    ...maybeCompletionList("project_path"),
     // === Worktree toggle. ========================================
     // Enabled only when the Project Path resolves to a git work
     // tree. When disabled, render with a dim-fg `raw` row using
@@ -2126,7 +2131,6 @@ function buildFormSpec(): WidgetSpec {
         key: branchInert ? undefined : "branch",
       }),
     }),
-    ...maybeCompletionList("branch"),
   ];
   if (form.lastError) {
     children.push(spacer(0));
@@ -2369,14 +2373,13 @@ function setCompletionItems(
   form.completion.field = field;
   form.completion.items = items.slice(0, COMPLETION_MAX_ITEMS);
   form.completion.selectedIndex = 0;
-  // The list widget's `selectedIndex` from spec is initial-only
-  // after first render. Snap the host's instance state to 0 too
-  // so a refresh that shrinks / regrows the list always starts
-  // selection at the top of the new candidate set.
+  // Push the candidate list to the host's Text-widget instance
+  // state. The host repaints the popup chrome (dim separator,
+  // side borders, selected-row highlight) on its own — the
+  // plugin doesn't need to drive a re-render.
   if (formPanel) {
-    formPanel.setSelectedIndex("completion", 0);
+    formPanel.setCompletions(field, form.completion.items);
   }
-  renderForm();
 }
 
 function closeCompletion(): void {
@@ -2384,11 +2387,18 @@ function closeCompletion(): void {
   if (form.completion.field === null && form.completion.items.length === 0) {
     return;
   }
+  const prevField = form.completion.field;
   form.completion.field = null;
   form.completion.items = [];
   form.completion.selectedIndex = 0;
   form.completion.token += 1; // invalidate any in-flight fetch
-  renderForm();
+  // Mirror the close in host instance state so its popup goes
+  // away in the same frame. Without this the host would keep
+  // painting the candidate list until the next spec push
+  // happened to land for this widget.
+  if (formPanel && prevField) {
+    formPanel.setCompletions(prevField, []);
+  }
 }
 
 /// Split typed Project Path into (parent, basename), list
@@ -2487,104 +2497,33 @@ async function fetchBranchCompletions(typed: string): Promise<string[]> {
   return filtered;
 }
 
-/// Apply the highlighted completion to its field, dismiss the
-/// dropdown, and (for Project Path) re-probe defaults. Accepts
-/// the currently selected item; if the list is empty it's a
-/// no-op. For directories (path ends with `/`), the field stays
-/// open so the user can keep typing or `Tab` again to descend.
-function acceptCompletion(): boolean {
-  if (!form) return false;
-  const c = form.completion;
-  if (c.field === null || c.items.length === 0) return false;
-  const item = c.items[c.selectedIndex];
-  if (!item) return false;
-  const slot = c.field === "project_path" ? form.projectPath : form.branch;
+/// Apply the user-accepted completion candidate to its field.
+/// Fired in response to the host's `completion_accept` event
+/// (Tab on a Text-with-open-completions): the host has already
+/// figured out which row was selected — we just write it into
+/// the form model and update the field's value. For Project
+/// Path accepts that end in `/` (directory descent) we re-
+/// fetch the candidate list for the new path so the user can
+/// keep Tab-ing into deeper subdirs without first typing
+/// anything; the host preserves the open popup across the
+/// fetch, so it just refreshes in place.
+function applyAcceptedCompletion(
+  field: "project_path" | "branch",
+  item: string,
+): void {
+  if (!form) return;
+  const slot = field === "project_path" ? form.projectPath : form.branch;
   slot.value = item;
   slot.cursor = item.length;
-  if (formPanel) formPanel.setValue(c.field, slot.value, slot.cursor);
-  if (c.field === "project_path") {
-    // Re-trigger the is-git probe + default-branch / session-
-    // name placeholder probes for the new path. Also re-fetch
-    // path completions in case the user accepted a directory
-    // and wants to keep descending — they get a fresh list of
-    // children right away.
+  if (formPanel) formPanel.setValue(field, slot.value, slot.cursor);
+  if (field === "project_path") {
     scheduleProjectPathReprobe();
     if (item.endsWith("/")) {
       scheduleCompletionRefresh("project_path");
-      return true;
+      return;
     }
   }
   closeCompletion();
-  return true;
-}
-
-/// Build a `list` widget for the named field's completion
-/// dropdown. Returns an empty array when the dropdown shouldn't
-/// render — either no candidates fetched yet, the field isn't
-/// the one we're completing, or the input doesn't have focus
-/// (no point showing completions for an input the user isn't
-/// editing). Returned as an array so the caller can spread it
-/// into `children` for the conditional render.
-///
-/// The list is keyless (`focusable: false`, no `key`), so it
-/// stays out of the Tab cycle — it's a "suggestion strip"
-/// scoped to its input. Up/Down on the input route here via the
-/// `walkCompletion` helper instead of plain widget focus moves.
-function maybeCompletionList(field: "project_path" | "branch"): WidgetSpec[] {
-  if (!form) return [];
-  if (form.completion.field !== field) return [];
-  if (form.completion.items.length === 0) return [];
-  if (formFocusedKey() !== field) return [];
-  const sel = form.completion.selectedIndex;
-  // Render each row with an explicit selection highlight via
-  // styled segments — the floating-panel painter clobbers
-  // entry-level `style.bg` with the suggestion bg, so the
-  // List widget's own selected-row style doesn't carry colour
-  // through. A `segments` row turns into an inline overlay on
-  // the full text, which the painter's per-property merge
-  // honours.
-  const items = form.completion.items.map((s, i) => {
-    const isSelected = i === sel;
-    return styledRow([
-      {
-        text: s,
-        style: isSelected
-          ? {
-              fg: "ui.popup_selection_fg",
-              bg: "ui.popup_selection_bg",
-              bold: true,
-            }
-          : undefined,
-      },
-    ]);
-  });
-  return [
-    overlay(
-      // Wrap the list in an empty-labelled section so the dropdown
-      // gets the same `╭─...─╮ ... ╰─...─╯` chrome as the rest of
-      // the form. Without it the rows paint as bare text overlaid
-      // on whatever's underneath (the Worktree toggle / Session
-      // Name row), which reads as a rendering bug rather than a
-      // popup.
-      labeledSection({
-        label: "",
-        child: list({
-          items,
-          selectedIndex: sel,
-          visibleRows: Math.min(COMPLETION_VISIBLE_ROWS, items.length),
-          // Not in the Tab cycle (Up/Down on the focused INPUT
-          // walks the list via the smart-key handler). Keyed so
-          // mouse-click `select` events and `setSelectedIndex`
-          // mutations land on this list; the host's picker-Enter
-          // wiring used to route Enter here too, but the form's
-          // explicit Enter binding (see FORM_MODE_BINDINGS)
-          // intercepts that — Tab is the only accept path.
-          focusable: false,
-          key: "completion",
-        }),
-      }),
-    ),
-  ];
 }
 
 function closeForm(): void {
@@ -2788,36 +2727,33 @@ function dispatchFormKey(name: string): void {
   formPanel.command(widgetKey(name));
 }
 
+// Tab / Enter / Up / Down / Escape are all routed straight to
+// the host's smart-key dispatch via `dispatchFormKey`. The host
+// owns the completion popup state (instance state on the Text
+// widget), so when the popup is open it short-circuits these
+// keys to popup-specific behaviour (accept, dismiss, move
+// selection) and falls through to the widget's default key
+// handling otherwise. The plugin just reacts to the events the
+// host emits — `completion_accept` and `completion_dismiss`,
+// handled in the `widget_event` dispatch below.
 registerHandler("orchestrator_form_key_tab", () => {
-  // If the completion dropdown is showing for the focused
-  // input, Tab accepts the highlighted suggestion instead of
-  // advancing focus — matches the convention users expect from
-  // shell / IDE completion popups.
   if (completionVisibleForFocused()) {
-    acceptCompletion();
+    // Host fires completion_accept; plugin's widget_event
+    // handler applies the value. No focus advance.
+    dispatchFormKey("Tab");
     return;
   }
   advanceFormFocus(1);
   dispatchFormKey("Tab");
 });
 registerHandler("orchestrator_form_key_enter", () => {
-  // When the completion dropdown is open, drop it *without*
-  // accepting the highlighted item — Enter is "proceed with
-  // what's typed", not "accept the suggestion" (Tab does the
-  // latter). The host's picker-style Enter wiring otherwise
-  // overwrites the field with the highlighted entry the moment
-  // the user presses Enter on a partially-typed path.
-  //
-  // Render-then-dispatch ordering: `closeCompletion()` enqueues
-  // an `updateFloatingWidget` over the same command channel the
-  // subsequent `dispatchFormKey("Enter")` uses, so the host
-  // applies the spec update (list removed) before resolving the
-  // Enter dispatch. With no scrollable sibling left, the
-  // smart-key router falls through to its non-picker branches:
-  // focus-advance on a Text widget, activate on a Button.
-  if (completionVisibleForFocused()) {
-    closeCompletion();
-  }
+  // When the popup is open, the host's smart-key fires
+  // `completion_dismiss` (plugin syncs local state via that
+  // event) without firing the form's picker-Enter or focus
+  // advance — Enter is "dismiss the popup, stay focused on
+  // the text input". When the popup is closed, Enter falls
+  // through to the host's normal Text-widget Enter (picker
+  // activate or focus advance).
   dispatchFormKey("Enter");
 });
 registerHandler(
@@ -2833,11 +2769,12 @@ registerHandler(
   },
 );
 registerHandler("orchestrator_form_key_escape", () => {
-  // Esc closes the completion dropdown first; only when there's
-  // no dropdown does it cancel the dialog. Matches how popup-
-  // based UIs (browsers, shells) layer dismissal.
+  // When the popup is open, the host dismisses on Escape and
+  // emits `completion_dismiss`; the plugin's local state
+  // resync happens in the widget_event handler. Only when
+  // the popup is already closed does Escape cancel the form.
   if (completionVisibleForFocused()) {
-    closeCompletion();
+    dispatchFormKey("Escape");
     return;
   }
   if (form) cancelForm();
@@ -2852,12 +2789,12 @@ registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
 registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
 registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
 registerHandler("orchestrator_form_key_up", () => {
-  // Completion-list-aware navigation: when the dropdown is
-  // open for the focused input, ↑↓ navigates the list
-  // (overrides history). Otherwise ↑↓ walks history for
-  // history-bearing inputs; otherwise pass through.
+  // When the completion popup is open the host short-circuits
+  // Up/Down to its own selection navigation — dispatch
+  // straight through. Otherwise walk history for the history-
+  // bearing inputs; otherwise pass through.
   if (completionVisibleForFocused()) {
-    walkCompletion(-1);
+    dispatchFormKey("Up");
     return;
   }
   const histField = focusToHistoryField(formFocusedKey());
@@ -2869,7 +2806,7 @@ registerHandler("orchestrator_form_key_up", () => {
 });
 registerHandler("orchestrator_form_key_down", () => {
   if (completionVisibleForFocused()) {
-    walkCompletion(1);
+    dispatchFormKey("Down");
     return;
   }
   const histField = focusToHistoryField(formFocusedKey());
@@ -2880,31 +2817,20 @@ registerHandler("orchestrator_form_key_down", () => {
   }
 });
 
-/// Is the completion dropdown showing for the currently focused
-/// input? Returns false when there are no items, when the
-/// dropdown is for a different field, or when focus is on a
-/// non-input.
+/// Is the completion popup open for the currently focused
+/// input? Tracked plugin-side because the plugin still needs
+/// to know in order to gate history-walk (Up/Down on an empty-
+/// popup history-bearing input walks the history list, not
+/// the popup). The host's instance state is authoritative for
+/// the popup itself; the plugin mirrors the open/closed bit
+/// here by populating `form.completion.items` from
+/// `setCompletionItems` and clearing it from
+/// `closeCompletion` / on the `completion_dismiss` event.
 function completionVisibleForFocused(): boolean {
   if (!form) return false;
   const c = form.completion;
   if (c.field === null || c.items.length === 0) return false;
   return formFocusedKey() === c.field;
-}
-
-function walkCompletion(delta: -1 | 1): void {
-  if (!form) return;
-  const c = form.completion;
-  if (c.items.length === 0) return;
-  c.selectedIndex =
-    (c.selectedIndex + delta + c.items.length) % c.items.length;
-  // The List widget treats `selectedIndex` from the spec as
-  // initial-only after the first render — subsequent updates
-  // read instance state. Mutate the host's state directly so
-  // the selection highlight follows our cursor.
-  if (formPanel) {
-    formPanel.setSelectedIndex("completion", c.selectedIndex);
-  }
-  renderForm();
 }
 
 // Printable input arrives via the global `mode_text_input` action.
@@ -3031,31 +2957,31 @@ editor.on("widget_event", (e) => {
       renderForm();
       return;
     }
-    if (e.event_type === "activate") {
-      if (e.widget_key === "completion") {
-        // Enter on a focused Project Path / Branch input with
-        // an active dropdown lands here via the host's
-        // single-line-Text-+-sibling-list picker wiring.
-        acceptCompletion();
-        return;
+    if (e.event_type === "completion_accept") {
+      // Host fires this on Tab against a Text widget with an
+      // open completion popup. The payload carries the
+      // candidate that was highlighted.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const value = payload.value;
+      if (typeof value !== "string") return;
+      if (e.widget_key === "project_path" || e.widget_key === "branch") {
+        applyAcceptedCompletion(e.widget_key, value);
       }
+      return;
+    }
+    if (e.event_type === "completion_dismiss") {
+      // Host fires this on Enter / Esc against a Text widget
+      // with an open popup. Sync plugin-side state so the
+      // history-walk gate (Up/Down on an empty-popup history-
+      // bearing field) reads `false` again.
+      closeCompletion();
+      return;
+    }
+    if (e.event_type === "activate") {
       if (e.widget_key === "create") {
         void submitForm();
       } else if (e.widget_key === "cancel") {
         cancelForm();
-      }
-      return;
-    }
-    if (e.event_type === "select" && e.widget_key === "completion") {
-      // Mouse click on a completion row: update our mirror
-      // and accept immediately (treating the click like a
-      // tap-to-pick rather than a tap-to-highlight). The
-      // host's select event carries the selected `index`.
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const idx = payload.index;
-      if (typeof idx === "number" && form.completion.items[idx]) {
-        form.completion.selectedIndex = idx;
-        acceptCompletion();
       }
       return;
     }

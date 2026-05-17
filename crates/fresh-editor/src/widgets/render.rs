@@ -76,6 +76,19 @@ const KEY_PLACEHOLDER_FG: &str = "editor.whitespace_indicator_fg";
 // it's tuned for readability against the same surface a
 // LabeledSection sits on.
 const KEY_SECTION_LABEL_FG: &str = "ui.help_key_fg";
+// Dim separator that replaces the input's bottom border when the
+// completion popup is open. `ui.menu_disabled_fg` is the closest
+// "muted chrome" key already shipped by every theme (gray-ish in
+// dark themes, light gray in light themes) so the separator reads
+// as a recessed transition between the active input and the
+// candidate list rather than as a hard divider.
+const KEY_COMPLETION_DIM_FG: &str = "ui.menu_disabled_fg";
+// Selected completion row foreground/background. Same keys the
+// popup-driven selection highlight uses everywhere else (host
+// prompt suggestions, action-popup menu), so themes that
+// re-skin one re-skin the other.
+const KEY_COMPLETION_SEL_FG: &str = "ui.popup_selection_fg";
+const KEY_COMPLETION_SEL_BG: &str = "ui.popup_selection_bg";
 
 /// Where the host should place the buffer's hardware cursor — the
 /// terminal's blinking caret — when a `TextInput` is focused. Built
@@ -1114,8 +1127,11 @@ fn render_collected(
             field_width,
             max_visible_chars,
             full_width,
+            completions,
             key,
         } => {
+            let _ = completions; // pulled from instance state below
+
             let is_focused = match key.as_deref() {
                 Some(k) if !k.is_empty() => k == focus_key,
                 _ => *focused,
@@ -1130,14 +1146,28 @@ fn render_collected(
             let multiline_spec = *rows > 1;
             let mut effective_editor: crate::primitives::text_edit::TextEdit;
             let prev_scroll: u32;
+            // Completions + selected index ride along on the
+            // Text widget's instance state — neither comes from
+            // the spec (plugins push via `SetCompletions`), so we
+            // carry them across renders verbatim and clamp the
+            // index to the current list size below.
+            let mut prev_completions: Vec<String> = Vec::new();
+            let mut prev_completion_idx: usize = 0;
             match key
                 .as_deref()
                 .filter(|k| !k.is_empty())
                 .and_then(|k| prev.get(k))
             {
-                Some(WidgetInstanceState::Text { editor, scroll }) => {
+                Some(WidgetInstanceState::Text {
+                    editor,
+                    scroll,
+                    completions,
+                    completion_selected_index,
+                }) => {
                     effective_editor = editor.clone();
                     prev_scroll = *scroll;
+                    prev_completions = completions.clone();
+                    prev_completion_idx = *completion_selected_index;
                 }
                 _ => {
                     effective_editor = if multiline_spec {
@@ -1153,6 +1183,14 @@ fn render_collected(
                     effective_editor.set_cursor_from_flat(seed);
                     prev_scroll = 0;
                 }
+            }
+            // Clamp once per render so a list that shrank
+            // host-side (or arrived empty) doesn't keep a stale
+            // out-of-bounds index alive.
+            if !prev_completions.is_empty() {
+                prev_completion_idx = prev_completion_idx.min(prev_completions.len() - 1);
+            } else {
+                prev_completion_idx = 0;
             }
             let effective_value = effective_editor.value();
             let effective_cursor_byte = effective_editor.flat_cursor_byte() as i32;
@@ -1251,12 +1289,45 @@ fn render_collected(
             // selection); `scroll` carries the renderer's
             // auto-clamped first-visible-row for multi-line, or `0`
             // for single-line.
+            //
+            // Emit the completion popup *after* the input row but
+            // *before* persisting state. The popup rides on the
+            // wrapping `LabeledSection`'s side borders: each row
+            // we push here gets `│ ... │` chrome added by the
+            // section, so the side borders naturally extend down
+            // through the candidates and the section's own
+            // `╰─...─╯` bottom border closes the unified block.
+            // See `render_completion_dim_separator` /
+            // `render_completion_item` for the chrome and the
+            // alignment rule (item text starts at the same column
+            // as the input value's first character).
+            if !prev_completions.is_empty() {
+                // `panel_width` here is whatever the enclosing
+                // container (typically a `LabeledSection`) handed
+                // us — i.e. the inner area width, before that
+                // container wraps each row with its own
+                // `│ ... │` chrome. The popup rows we emit get
+                // padded by the container to exactly this width,
+                // so the section's right border lines up with the
+                // input row's.
+                let row_cols = panel_width as usize;
+                entries.push(render_completion_dim_separator(row_cols));
+                for (i, item) in prev_completions.iter().enumerate() {
+                    entries.push(render_completion_item(
+                        item,
+                        i == prev_completion_idx,
+                        row_cols,
+                    ));
+                }
+            }
             if let Some(k) = key.as_deref().filter(|k| !k.is_empty()) {
                 next_state.insert(
                     k.to_string(),
                     WidgetInstanceState::Text {
                         editor: effective_editor.clone(),
                         scroll: new_scroll,
+                        completions: prev_completions,
+                        completion_selected_index: prev_completion_idx,
                     },
                 );
             }
@@ -1480,6 +1551,72 @@ fn render_section_bottom_border(total_cols: usize) -> TextPropertyEntry {
         inline_overlays: Vec::new(),
         segments: Vec::new(),
         pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+/// Dim `┄`-dashed row that takes the place of the input's normal
+/// `╰─...─╯` bottom border when the completion popup is open.
+/// `total_cols` is the width of the row *before* the wrapping
+/// `LabeledSection` adds its own `│ ... │` chrome — we fill the
+/// whole inner width with `┄` so the dashed line runs flush to
+/// the side borders, reading as a transition between the input
+/// and the candidate list rather than a chunky divider.
+fn render_completion_dim_separator(total_cols: usize) -> TextPropertyEntry {
+    let mut text = String::with_capacity(total_cols * 3 + 1);
+    for _ in 0..total_cols.max(1) {
+        text.push('┄');
+    }
+    text.push('\n');
+    let style = OverlayOptions {
+        fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
+        ..Default::default()
+    };
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: Some(style),
+        inline_overlays: Vec::new(),
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+/// One completion-candidate row. Renders as a single leading
+/// space followed by the candidate text, padded / truncated by
+/// the wrapping `LabeledSection` to `total_cols`. The leading
+/// space places the candidate's first character at the same
+/// column as the input value's first character (right after the
+/// input's `[` bracket), which is what the user expects from a
+/// "below the input, aligned with what you typed" popup.
+///
+/// `selected` rows paint with the standard popup-selection
+/// fg/bg theme keys + `extend_to_line_end` so the highlight
+/// runs all the way to the right side border instead of
+/// stopping at the end of the candidate text.
+fn render_completion_item(item: &str, selected: bool, total_cols: usize) -> TextPropertyEntry {
+    let mut text = String::with_capacity(item.len() + 2);
+    text.push(' ');
+    text.push_str(item);
+    text.push('\n');
+    let style = if selected {
+        Some(OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_FG)),
+            bg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
+            extend_to_line_end: true,
+            ..Default::default()
+        })
+    } else {
+        None
+    };
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style,
+        inline_overlays: Vec::new(),
+        segments: Vec::new(),
+        pad_to_chars: Some(total_cols as u32),
         truncate_to_chars: None,
     }
 }

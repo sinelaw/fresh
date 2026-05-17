@@ -95,26 +95,19 @@ fn project_path_field_value(screen: &str) -> String {
     );
 }
 
-/// True when the rendered screen contains the top border of a
-/// labeledSection chrome box nested inside the panel frame:
-/// `│╭───...───╮│`. The `│ ... │` is the outer panel's frame and
-/// `╭─...─╮` is the labeledSection's own top border — the popup's
-/// "wrapped" rendering. Used to distinguish the fixed bordered
-/// popup from the old bare-overlay rendering (where the
-/// completion items appeared as `│ /path/to/foo │` with no
-/// enclosing `╭─...─╮ / ╰─...─╯` chrome).
-///
-/// `contains` rather than `starts_with` because each screen row
-/// begins with editor placeholder columns (`~ `, gutter) that
-/// `trim()` doesn't strip.
-fn screen_has_dropdown_top_border(screen: &str) -> bool {
+/// True when the rendered screen contains a dim `┄┄┄...┄┄┄`
+/// separator row — the host-rendered popup's replacement for
+/// the input field's normal `╰─...─╯` bottom border. Its
+/// presence is the load-bearing visual cue that input + popup
+/// are part of one unified box: above the separator is the
+/// active input, below it (and inside the labeled section's
+/// side borders) are the candidate rows.
+fn screen_has_completion_dim_separator(screen: &str) -> bool {
     screen.lines().any(|l| {
-        if let Some(start) = l.find("│╭") {
-            let rest = &l[start + "│╭".len()..];
-            if let Some(end) = rest.find("╮│") {
-                let inner = &rest[..end];
-                return inner.chars().all(|c| c == '─') && inner.chars().count() >= 4;
-            }
+        if let Some(start) = l.find('┄') {
+            let rest = &l[start..];
+            let run: String = rest.chars().take_while(|c| *c == '┄').collect();
+            return run.chars().count() >= 8;
         }
         false
     })
@@ -139,11 +132,13 @@ fn type_alpha_prefix_and_wait(
     prefix
 }
 
-/// The completion list must render inside a `╭─...─╮ ... ╰─...─╯`
-/// chrome box — not as bare overlay rows painted directly on top
-/// of the form fields beneath it.
+/// The host-rendered popup integrates with the wrapping
+/// labeled-section chrome: the input field's normal bottom
+/// border becomes a dim `┄┄┄...┄┄┄` separator (cueing that the
+/// box has extended downward), and the side borders continue
+/// past the input through the candidate rows.
 #[test]
-fn completion_dropdown_renders_with_border() {
+fn completion_popup_renders_with_dim_separator() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
     harness.tick_and_render().unwrap();
@@ -154,9 +149,9 @@ fn completion_dropdown_renders_with_border() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen_has_dropdown_top_border(&screen),
-        "completion dropdown must render with a `╭─...─╮` top border. \
-         Screen:\n{}",
+        screen_has_completion_dim_separator(&screen),
+        "completion popup must render with a dim `┄┄┄...┄┄┄` separator \
+         between input and candidates. Screen:\n{}",
         screen,
     );
 }

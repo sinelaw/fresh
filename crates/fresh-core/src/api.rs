@@ -1568,6 +1568,31 @@ pub enum WidgetSpec {
         /// `LabeledSection` or a flexible row.
         #[serde(default)]
         full_width: bool,
+        /// Optional completion candidates. When non-empty AND
+        /// `label` is non-empty (the chrome trigger), the
+        /// renderer paints a popup directly under the input,
+        /// inside a unified box: the input's normal `╰─...─╯`
+        /// bottom border becomes a dimmed `┄` separator, the
+        /// labeled section's side borders extend down through
+        /// the candidate rows, and a single `╰─...─╯` bottom
+        /// closes the whole block. Candidates render left-
+        /// aligned with the input's text (the position right
+        /// after `[`), with the host-managed selected index
+        /// highlighted.
+        ///
+        /// Smart-key dispatch on a focused Text-with-completions:
+        /// Up/Down moves selection (host-internal, no event),
+        /// Tab fires `completion_accept` with the selected
+        /// candidate, Enter / Escape fire `completion_dismiss`
+        /// (the dispatcher's normal "Enter focus-advance / Esc
+        /// close panel" only runs once the popup is closed).
+        ///
+        /// Plugins push candidates in response to the text
+        /// widget's `change` event via
+        /// `WidgetMutation::SetCompletions`. An empty `items`
+        /// closes the popup.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        completions: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -1817,6 +1842,16 @@ pub enum WidgetMutation {
         value: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cursor_byte: Option<i32>,
+    },
+    /// Set a `Text` widget's completion candidates (instance
+    /// state). Empty `items` closes the popup; non-empty opens
+    /// it and resets the selection to index 0. Plugins call
+    /// this from their `change` event handler after computing
+    /// candidates against the new value — same flow as
+    /// `setPromptSuggestions` for the legacy prompt UI.
+    SetCompletions {
+        widget_key: String,
+        items: Vec<String>,
     },
     /// Set a `Toggle`'s checked state. Mutates the Toggle's
     /// `checked` field in the spec.

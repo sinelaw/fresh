@@ -3564,12 +3564,28 @@ impl Editor {
                 // plugin-driven update; the renderer re-clamps next
                 // render anyway.
                 if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-                    let (scroll, multiline) = match panel.instance_states.get(&widget_key) {
-                        Some(crate::widgets::WidgetInstanceState::Text { editor, scroll }) => {
-                            (*scroll, editor.multiline)
-                        }
-                        _ => (0u32, true),
-                    };
+                    // Preserve `scroll` + `multiline` so plugin-
+                    // driven SetValue doesn't snap the viewport,
+                    // and preserve `completions` /
+                    // `completion_selected_index` so the popup
+                    // (if open) doesn't disappear on a value
+                    // mutation that happens to land while the
+                    // user is mid-keystroke.
+                    let (scroll, multiline, completions, sel_idx) =
+                        match panel.instance_states.get(&widget_key) {
+                            Some(crate::widgets::WidgetInstanceState::Text {
+                                editor,
+                                scroll,
+                                completions,
+                                completion_selected_index,
+                            }) => (
+                                *scroll,
+                                editor.multiline,
+                                completions.clone(),
+                                *completion_selected_index,
+                            ),
+                            _ => (0u32, true, Vec::new(), 0usize),
+                        };
                     let mut editor = if multiline {
                         crate::primitives::text_edit::TextEdit::with_text(&value)
                     } else {
@@ -3582,7 +3598,12 @@ impl Editor {
                     editor.set_cursor_from_flat(target);
                     panel.instance_states.insert(
                         widget_key,
-                        crate::widgets::WidgetInstanceState::Text { editor, scroll },
+                        crate::widgets::WidgetInstanceState::Text {
+                            editor,
+                            scroll,
+                            completions,
+                            completion_selected_index: sel_idx,
+                        },
                     );
                 }
             }
@@ -3617,6 +3638,27 @@ impl Editor {
                             selected_index: index,
                         },
                     );
+                }
+            }
+            WidgetMutation::SetCompletions { widget_key, items } => {
+                // Update completion popup state on a Text widget.
+                // Non-empty `items` opens the popup and resets the
+                // host-managed selection to the top candidate;
+                // empty closes it. The instance state has to
+                // exist first (a SetCompletions arriving before
+                // any render is dropped on the floor — Text
+                // instance state is seeded on first render of
+                // the spec).
+                if let Some(panel) = self.widget_registry.get_mut(panel_id) {
+                    if let Some(crate::widgets::WidgetInstanceState::Text {
+                        completions,
+                        completion_selected_index,
+                        ..
+                    }) = panel.instance_states.get_mut(&widget_key)
+                    {
+                        *completions = items;
+                        *completion_selected_index = 0;
+                    }
                 }
             }
             WidgetMutation::SetItems {
@@ -3756,6 +3798,38 @@ impl Editor {
         } else {
             crate::widgets::find_widget_by_key(&panel.spec, &focus_key)
         };
+        // Completion-popup short-circuit: when the focused Text
+        // widget has an open completion popup, intercept Tab /
+        // Up / Down / Enter / Esc so they drive the popup instead
+        // of falling through to the widget's default key
+        // behaviour. Tab fires `completion_accept`, Enter/Esc
+        // dismiss, Up/Down move the host-managed selection. Any
+        // other key (printable, Backspace, etc.) still goes to
+        // the text editor, which lets the user keep typing to
+        // refine the candidate list.
+        let completions_open = matches!(key, "Tab" | "Up" | "Down" | "Enter" | "Escape")
+            && self.focused_text_completions_open(panel_id);
+        if completions_open {
+            match key {
+                "Tab" => {
+                    self.fire_completion_accept(panel_id);
+                    return;
+                }
+                "Up" => {
+                    self.move_focused_text_completion_index(panel_id, -1);
+                    return;
+                }
+                "Down" => {
+                    self.move_focused_text_completion_index(panel_id, 1);
+                    return;
+                }
+                "Enter" | "Escape" => {
+                    self.dismiss_focused_text_completions(panel_id);
+                    return;
+                }
+                _ => {}
+            }
+        }
         match key {
             "Tab" => self.handle_widget_focus_advance(panel_id, 1),
             "Shift+Tab" => self.handle_widget_focus_advance(panel_id, -1),
@@ -4000,6 +4074,159 @@ impl Editor {
     /// selection (or spec selection on first render). The plugin's
     /// activate handler does the actual user-visible thing — open
     /// the matched file, expand/collapse a tree node, etc.
+    /// True when the focused widget on `panel_id` is a Text input
+    /// whose host-managed completion popup is currently open
+    /// (instance state has at least one candidate). Lets the
+    /// smart-key dispatcher route Tab/Enter/Up/Down/Esc to the
+    /// popup-specific paths before falling through to the
+    /// widget's default key behaviour.
+    fn focused_text_completions_open(&self, panel_id: u64) -> bool {
+        let panel = match self.widget_registry.get(panel_id) {
+            Some(p) => p,
+            None => return false,
+        };
+        if panel.focus_key.is_empty() {
+            return false;
+        }
+        matches!(
+            panel.instance_states.get(&panel.focus_key),
+            Some(crate::widgets::WidgetInstanceState::Text { completions, .. })
+                if !completions.is_empty()
+        )
+    }
+
+    /// Move the selected-index cursor of the focused Text widget's
+    /// completion popup by `delta` (Up = -1, Down = +1). Wraps at
+    /// the ends so the user can cycle through candidates without
+    /// hitting a wall — same convention as `List`'s selection
+    /// wrap. No-op when the focused widget isn't a Text-with-
+    /// open-completions.
+    fn move_focused_text_completion_index(&mut self, panel_id: u64, delta: i32) {
+        let panel = match self.widget_registry.get_mut(panel_id) {
+            Some(p) => p,
+            None => return,
+        };
+        let focus_key = panel.focus_key.clone();
+        if focus_key.is_empty() {
+            return;
+        }
+        if let Some(crate::widgets::WidgetInstanceState::Text {
+            completions,
+            completion_selected_index,
+            ..
+        }) = panel.instance_states.get_mut(&focus_key)
+        {
+            if completions.is_empty() {
+                return;
+            }
+            let n = completions.len() as i32;
+            let cur = *completion_selected_index as i32;
+            let next = ((cur + delta) % n + n) % n;
+            *completion_selected_index = next as usize;
+        }
+    }
+
+    /// Clear the focused Text widget's completion popup (close it)
+    /// and fire a `completion_dismiss` event so the plugin can
+    /// sync its own state (e.g. invalidate any in-flight fetch
+    /// token, so a late-arriving result doesn't re-open the
+    /// popup the user just closed). Used by Enter and Escape on
+    /// a Text-with-open-completions.
+    fn dismiss_focused_text_completions(&mut self, panel_id: u64) {
+        let focus_key = {
+            let panel = match self.widget_registry.get_mut(panel_id) {
+                Some(p) => p,
+                None => return,
+            };
+            let focus_key = panel.focus_key.clone();
+            if focus_key.is_empty() {
+                return;
+            }
+            if let Some(crate::widgets::WidgetInstanceState::Text {
+                completions,
+                completion_selected_index,
+                ..
+            }) = panel.instance_states.get_mut(&focus_key)
+            {
+                if completions.is_empty() {
+                    return;
+                }
+                completions.clear();
+                *completion_selected_index = 0;
+            } else {
+                return;
+            }
+            focus_key
+        };
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                fresh_core::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key: focus_key,
+                    event_type: "completion_dismiss".into(),
+                    payload: serde_json::json!({}),
+                },
+            );
+        }
+    }
+
+    /// Fire `completion_accept` on the focused Text widget's
+    /// currently-selected candidate. Used by Tab on a Text-with-
+    /// open-completions — the plugin's handler is expected to
+    /// apply the accepted value to the field (typically via
+    /// `WidgetMutation::SetValue`). The host does NOT close the
+    /// popup automatically: directory-descent style flows (the
+    /// orchestrator's Project Path acceptance of `/foo/` re-
+    /// fetches children for the new path) want the popup to
+    /// stay alive so the user can keep Tab-ing. Plugins that
+    /// want a one-shot accept close the popup themselves with
+    /// `setCompletions(key, [])`.
+    fn fire_completion_accept(&mut self, panel_id: u64) {
+        let (focus_key, value) = {
+            let panel = match self.widget_registry.get(panel_id) {
+                Some(p) => p,
+                None => return,
+            };
+            let focus_key = panel.focus_key.clone();
+            if focus_key.is_empty() {
+                return;
+            }
+            match panel.instance_states.get(&focus_key) {
+                Some(crate::widgets::WidgetInstanceState::Text {
+                    completions,
+                    completion_selected_index,
+                    ..
+                }) if !completions.is_empty() => {
+                    let idx = (*completion_selected_index).min(completions.len() - 1);
+                    (focus_key, completions[idx].clone())
+                }
+                _ => return,
+            }
+        };
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                fresh_core::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key: focus_key,
+                    event_type: "completion_accept".into(),
+                    payload: serde_json::json!({ "value": value }),
+                },
+            );
+        }
+    }
+
     fn fire_list_activate(&mut self, panel_id: u64, focus_key: &str) {
         let panel = match self.widget_registry.get(panel_id) {
             Some(p) => p,
@@ -4817,7 +5044,12 @@ impl Editor {
         editor.set_cursor_from_flat(seed);
         panel.instance_states.insert(
             focus_key.to_string(),
-            crate::widgets::WidgetInstanceState::Text { editor, scroll: 0 },
+            crate::widgets::WidgetInstanceState::Text {
+                editor,
+                scroll: 0,
+                completions: Vec::new(),
+                completion_selected_index: 0,
+            },
         );
         true
     }

@@ -92,7 +92,23 @@ pub enum WidgetInstanceState {
     /// navigation, and clipboard ops "for free" — every keybinding
     /// the legacy Settings UI accepted via `TextEdit` now applies
     /// to widget-backed text inputs too.
-    Text { editor: TextEdit, scroll: u32 },
+    Text {
+        editor: TextEdit,
+        scroll: u32,
+        /// Completion popup candidates the plugin most recently
+        /// pushed via `WidgetMutation::SetCompletions`. Empty =
+        /// popup closed. The list is stored host-side rather
+        /// than read from each `WidgetSpec` so the host can
+        /// keep painting the popup across renders that don't
+        /// re-push it, and so `Up`/`Down` selection survives a
+        /// spec refresh.
+        completions: Vec<String>,
+        /// Host-managed selection cursor into `completions`.
+        /// Reset to 0 every time `SetCompletions` runs with a
+        /// non-empty list; clamped on every render in case the
+        /// list shrank.
+        completion_selected_index: usize,
+    },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become
     /// authoritative after first render — the spec's

@@ -347,6 +347,13 @@ export function text(
      * with `labeledSection(...)` to get a uniformly full-width
      * fieldset look. */
     fullWidth?: boolean;
+    /** Initial completion candidates. Use the
+     * `setCompletions(widgetKey, items)` mutation for live
+     * updates — the spec field seeds the host's instance state
+     * on first render only. Empty = no popup. See
+     * `WidgetSpec::Text.completions` (Rust) for the rendering
+     * + keyboard semantics. */
+    completions?: string[];
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -361,6 +368,7 @@ export function text(
     fieldWidth: options.fieldWidth ?? 0,
     maxVisibleChars: options.maxVisibleChars ?? 0,
     fullWidth: options.fullWidth ?? false,
+    completions: options.completions ?? [],
     key: options.key,
   };
 }
@@ -625,6 +633,15 @@ export class WidgetPanel {
     return this.mutate({ kind: "setSelectedIndex", widgetKey, index });
   }
 
+  /** Update a Text widget's completion popup candidates. Empty
+   * `items` closes the popup; non-empty opens it and resets the
+   * host-managed selection to index 0. The host repaints the
+   * popup on its own; the plugin doesn't need to follow up with
+   * an `update(spec)` call. */
+  setCompletions(widgetKey: string, items: string[]): boolean {
+    return this.mutate({ kind: "setCompletions", widgetKey, items });
+  }
+
   /** Replace a `List`'s items + parallel `itemKeys`. */
   setItems(
     widgetKey: string,
@@ -783,6 +800,13 @@ export class FloatingWidgetPanel {
 
   setSelectedIndex(widgetKey: string, index: number): boolean {
     return this.mutate({ kind: "setSelectedIndex", widgetKey, index });
+  }
+
+  /** Update a Text widget's completion popup candidates. Empty
+   * `items` closes the popup; non-empty opens it and resets the
+   * host-managed selection to index 0. */
+  setCompletions(widgetKey: string, items: string[]): boolean {
+    return this.mutate({ kind: "setCompletions", widgetKey, items });
   }
 
   setItems(
