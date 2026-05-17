@@ -40,6 +40,7 @@ pub mod live_diff;
 pub mod load_from_buffer;
 pub mod lsp_find_references;
 pub mod markdown_source;
+pub mod orchestrator_open_cross_project;
 pub mod package_manager;
 pub mod plugin;
 pub mod plugin_keybinding_execution;
