@@ -176,10 +176,7 @@ fn tab_accepts_highlighted_completion() {
     let typed = type_alpha_prefix_and_wait(&mut harness, &workspace);
 
     // Precondition: typed text intact before Tab.
-    assert_eq!(
-        project_path_field_value(&harness.screen_to_string()),
-        typed,
-    );
+    assert_eq!(project_path_field_value(&harness.screen_to_string()), typed,);
 
     // First item (`alpha_dir/`, sorted before `alpha_two/`) is
     // highlighted by default — setCompletionItems resets
