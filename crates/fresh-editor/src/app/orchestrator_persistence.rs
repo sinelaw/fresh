@@ -165,6 +165,50 @@ pub(crate) fn read_persisted_windows_env(
     }
 }
 
+/// Pick which persisted window the active-window slot should be
+/// restored to at boot time, scoped to the editor's launch cwd.
+///
+/// The persisted `env.active` is cross-project: it names the last
+/// window the user touched anywhere, not necessarily one rooted at
+/// the cwd. Honoring it blindly when the user re-launches inside a
+/// different project leaves the active window pointed at an
+/// unrelated tree — "Open Terminal" spawns a shell in the other
+/// project, the LSP starts under the wrong root. So we re-pick:
+///
+///   1. If `env.active`'s window belongs to `cwd`, keep it.
+///   2. Else, pick any persisted window that belongs to `cwd`.
+///   3. Else, `None` — caller falls back to a fresh window at cwd.
+///
+/// A window "belongs to" `cwd` when its `project_path` (preferred
+/// for orchestrator sessions, which always carry one) or its
+/// `root` (legacy / non-orchestrator windows) equals `cwd` after
+/// canonicalization.
+pub(crate) fn pick_active_window_for_cwd<'a>(
+    env: Option<&'a PersistedWindows>,
+    cwd: &Path,
+) -> Option<&'a PersistedWindow> {
+    let env = env?;
+    if let Some(w) = env
+        .windows
+        .iter()
+        .find(|w| w.id == env.active && window_matches_cwd(w, cwd))
+    {
+        return Some(w);
+    }
+    env.windows.iter().find(|w| window_matches_cwd(w, cwd))
+}
+
+fn window_matches_cwd(w: &PersistedWindow, cwd: &Path) -> bool {
+    let candidate = w.project_path.as_deref().unwrap_or(&w.root);
+    paths_equal(candidate, cwd)
+}
+
+fn paths_equal(a: &Path, b: &Path) -> bool {
+    let ca = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let cb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    ca == cb
+}
+
 /// Scan `<data>/orchestrator/*/windows.json` for legacy v1
 /// per-cwd files. Fold every session into one v2 envelope, with
 /// `project_path` derived by reverse-decoding the slug
@@ -697,6 +741,87 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn make_window(id: u64, root: &str, project_path: Option<&str>) -> PersistedWindow {
+        PersistedWindow {
+            id,
+            label: String::new(),
+            root: PathBuf::from(root),
+            project_path: project_path.map(PathBuf::from),
+            shared_worktree: false,
+            plugin_state: HashMap::new(),
+        }
+    }
+
+    fn env_with(active: u64, windows: Vec<PersistedWindow>) -> PersistedWindows {
+        PersistedWindows {
+            version: CURRENT_VERSION,
+            active,
+            next_id: windows.iter().map(|w| w.id).max().unwrap_or(0) + 1,
+            windows,
+        }
+    }
+
+    #[test]
+    fn pick_active_falls_through_when_persisted_active_belongs_to_another_project() {
+        // Regression for issue #2026: launching fresh in /repoA must
+        // not activate a persisted window rooted at /repoB just
+        // because it was the last window the user touched anywhere.
+        let env = env_with(
+            2,
+            vec![
+                make_window(1, "/repoA", Some("/repoA")),
+                make_window(2, "/repoB", Some("/repoB")),
+            ],
+        );
+        let cwd = Path::new("/repoA");
+        let picked = pick_active_window_for_cwd(Some(&env), cwd).expect("should pick a window");
+        assert_eq!(
+            picked.id, 1,
+            "must pick the /repoA-rooted window, not env.active=2"
+        );
+    }
+
+    #[test]
+    fn pick_active_keeps_env_active_when_it_matches_cwd() {
+        let env = env_with(
+            2,
+            vec![
+                make_window(1, "/repoA", Some("/repoA")),
+                make_window(2, "/repoA", Some("/repoA")),
+            ],
+        );
+        let picked =
+            pick_active_window_for_cwd(Some(&env), Path::new("/repoA")).expect("matching window");
+        assert_eq!(picked.id, 2, "env.active wins when it matches");
+    }
+
+    #[test]
+    fn pick_active_returns_none_when_no_window_matches_cwd() {
+        let env = env_with(
+            1,
+            vec![
+                make_window(1, "/repoA", Some("/repoA")),
+                make_window(2, "/repoB", Some("/repoB")),
+            ],
+        );
+        assert!(pick_active_window_for_cwd(Some(&env), Path::new("/repoC")).is_none());
+    }
+
+    #[test]
+    fn pick_active_falls_back_to_root_when_project_path_missing() {
+        // Legacy v1-migrated entries may lack project_path; match on root.
+        let env = env_with(
+            2,
+            vec![
+                make_window(1, "/repoA", None),
+                make_window(2, "/repoB", None),
+            ],
+        );
+        let picked =
+            pick_active_window_for_cwd(Some(&env), Path::new("/repoA")).expect("matching window");
+        assert_eq!(picked.id, 1);
     }
 
     #[test]

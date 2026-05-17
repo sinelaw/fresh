@@ -565,19 +565,21 @@ impl Editor {
             &working_dir,
         );
 
-        // Determine the active window's id and root. If persistence
-        // names an active window present in its set, use that id +
-        // root so the LSP we spawn below targets the project the
-        // user was actually working in. Otherwise fall back to the
-        // boot-time defaults (id 1, process cwd).
-        let (active_window_id, active_window_root) = persisted_env
-            .as_ref()
-            .and_then(|env| {
-                env.windows
-                    .iter()
-                    .find(|w| w.id == env.active)
-                    .map(|w| (fresh_core::WindowId(env.active), w.root.clone()))
-            })
+        // Determine the active window's id and root. Persisted
+        // `env.active` is *cross-project* — it just names the last
+        // session the user touched anywhere. Honoring it blindly
+        // when the user re-launches inside a different project
+        // strands the editor with an LSP and Open-Terminal default
+        // pointed at the wrong tree (see issue #2026). Prefer a
+        // persisted window that actually belongs to `working_dir`,
+        // and fall back to the boot-time defaults (id 1, process
+        // cwd) when no persisted window matches.
+        let (active_window_id, active_window_root) =
+            crate::app::orchestrator_persistence::pick_active_window_for_cwd(
+                persisted_env.as_ref(),
+                &working_dir,
+            )
+            .map(|w| (fresh_core::WindowId(w.id), w.root.clone()))
             .unwrap_or((fresh_core::WindowId(1), working_dir.clone()));
 
         // Initialize LSP manager with active window's root.

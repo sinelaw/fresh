@@ -77,3 +77,81 @@ fn save_orchestrator_state_does_not_create_dotfresh_in_working_dir() {
         "expected orchestrator state at {expected_windows_file:?}"
     );
 }
+
+/// Regression for issue #2026: persisted `active` is cross-project,
+/// so launching fresh in project A must NOT activate a persisted
+/// window rooted in project B just because B was the last window the
+/// user touched anywhere. Before the fix, the user's "Open Terminal"
+/// would default to project B's tree from inside project A.
+#[test]
+fn startup_in_project_a_ignores_persisted_active_in_project_b() {
+    let project_a = TempDir::new().unwrap();
+    let project_b = TempDir::new().unwrap();
+    let data_root = TempDir::new().unwrap();
+
+    // macOS tempdirs are symlinks; canonicalise so the editor's
+    // active_window.root (which it sees after its own resolution
+    // pass) compares cleanly against our expected path.
+    let project_a_canon = project_a.path().canonicalize().unwrap();
+    let project_b_canon = project_b.path().canonicalize().unwrap();
+
+    // Seed windows.json with two persisted sessions and an `active`
+    // pointing at project B.
+    let orch_dir = data_root.path().join("data").join("orchestrator");
+    std::fs::create_dir_all(&orch_dir).unwrap();
+    let persisted = serde_json::json!({
+        "version": 2,
+        "active": 2,
+        "next_id": 3,
+        "windows": [
+            {
+                "id": 1,
+                "label": "",
+                "root": project_a_canon,
+                "project_path": project_a_canon,
+            },
+            {
+                "id": 2,
+                "label": "",
+                "root": project_b_canon,
+                "project_path": project_b_canon,
+            }
+        ]
+    });
+    std::fs::write(
+        orch_dir.join("windows.json"),
+        serde_json::to_vec_pretty(&persisted).unwrap(),
+    )
+    .unwrap();
+
+    let dir_context = DirectoryContext::for_testing(data_root.path());
+    let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
+        Arc::new(StdFileSystem);
+
+    let config = Config {
+        check_for_updates: false,
+        ..Config::default()
+    };
+
+    let editor = fresh::app::Editor::for_test(
+        config,
+        80,
+        24,
+        Some(project_a_canon.clone()),
+        dir_context.clone(),
+        fresh::view::color_support::ColorCapability::TrueColor,
+        filesystem,
+        None,
+        None,
+        false,
+        false,
+    )
+    .unwrap();
+
+    let active_root = editor.active_window().root.clone();
+    assert_eq!(
+        active_root, project_a_canon,
+        "active window root must be the launch cwd (project A), not the persisted \
+         cross-project `active` pointing at project B; got {active_root:?}"
+    );
+}
