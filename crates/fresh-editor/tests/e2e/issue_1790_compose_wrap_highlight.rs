@@ -129,31 +129,32 @@ fn test_compose_wrapped_paragraph_highlight_follows_cursor() {
         last_para_row, cursor_x, cursor_y,
     );
 
-    // Wait for the highlight pipeline to settle at the cursor cell.  The
-    // editor may apply current-line-bg in a follow-on tick after the click,
-    // and `screen_to_string`-based stability misses bg-only changes (it
-    // only inspects symbols).  This per-cell bg-stability check is the
-    // tightest semantic anchor for "highlight has caught up to cursor".
-    let mut prev_bg: Option<Option<ratatui::style::Color>> = None;
-    harness
-        .wait_until(|h| {
-            let cur_bg = h
-                .get_cell_style(cursor_x, cursor_y)
-                .map(|s| s.bg)
-                .unwrap_or(None);
-            let stable = prev_bg == Some(cur_bg);
-            prev_bg = Some(cur_bg);
-            stable
-        })
-        .unwrap();
-
     // Default dark theme `current_line_bg` (matches existing tests in
     // rendering.rs).
     let current_line_bg = Color::Rgb(40, 40, 40);
 
-    // The cell directly under the hardware cursor must have current_line_bg.
-    // Before the fix this assertion failed: the cursor's wrapped sub-row was
-    // rendered with the default editor bg.
+    // Wait for the highlight pipeline to actually paint `current_line_bg`
+    // at the cursor cell.  A bare "bg has stopped changing" wait isn't
+    // sufficient — under heavy CI load the markdown_compose plugin (which
+    // reacts to `cursor_moved` on a separate thread) can be delayed past
+    // `mouse_click`'s 200 ms `drain_async_work` cap, leaving the cell
+    // stably at the *default* editor bg while the highlight is still in
+    // flight, after which the final assertion would fast-fail.  Anchoring
+    // on the expected colour makes the wait the bug-detection point: with
+    // the #1790 fix it resolves the moment the highlight lands; without
+    // the fix it never resolves and nextest times out the test (still a
+    // fail signal, just deferred from an assertion to a timeout).
+    harness
+        .wait_until(|h| {
+            h.get_cell_style(cursor_x, cursor_y)
+                .map(|s| s.bg)
+                .unwrap_or(None)
+                == Some(current_line_bg)
+        })
+        .unwrap();
+
+    // Re-read the style for the diagnostic in the (vanishingly unlikely)
+    // case the cell mutates between wait and assert.
     let style_at_cursor = harness
         .get_cell_style(cursor_x, cursor_y)
         .expect("cell at cursor position should exist");
