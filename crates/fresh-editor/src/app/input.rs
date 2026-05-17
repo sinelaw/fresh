@@ -2726,6 +2726,29 @@ impl Editor {
         };
         let key_name: Option<&str> = match code {
             KeyCode::Esc => {
+                // Mode-binding precedence: a plugin's `defineMode`
+                // entry for Escape wins over the default
+                // "Esc closes the modal" behaviour. Mirrors the
+                // same has_explicit_binding check the named-key
+                // and Ctrl/Alt-char branches below already run.
+                // Lets a plugin claim Esc for a nested
+                // dismiss-the-dropdown gesture before the
+                // outermost cancel fires.
+                let mode_has_binding = self
+                    .active_window()
+                    .editor_mode
+                    .as_ref()
+                    .map(|mode_name| {
+                        let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+                        let mode_ctx =
+                            crate::input::keybindings::KeyContext::Mode(mode_name.to_string());
+                        let keybindings = self.keybindings.read().unwrap();
+                        keybindings.has_explicit_binding(&key_event, &mode_ctx)
+                    })
+                    .unwrap_or(false);
+                if mode_has_binding {
+                    return false;
+                }
                 let widget_key = self
                     .widget_registry
                     .get(panel_id)

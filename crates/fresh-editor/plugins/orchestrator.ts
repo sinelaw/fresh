@@ -174,6 +174,22 @@ interface NewSessionForm {
   // we squirrel away whatever was in `value` so Down can
   // restore it.
   historyDraft: { project_path: string; name: string; cmd: string; branch: string };
+  // Inline-dropdown completion state. `field` names which input
+  // the suggestion list belongs to; the list is only rendered
+  // while that input is focused. `items` is the post-filter set
+  // (already in display order); `selectedIndex` is the
+  // highlighted row. `anchor` is the value the user had typed
+  // when the candidates were last fetched — used to ignore
+  // stale async results that land after the user keeps typing.
+  // `token` mirrors the project-path probe pattern: every fresh
+  // fetch bumps it; results bail if they're not the latest.
+  completion: {
+    field: "project_path" | "branch" | null;
+    items: string[];
+    selectedIndex: number;
+    anchor: string;
+    token: number;
+  };
 }
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
@@ -2030,6 +2046,7 @@ function buildFormSpec(): WidgetSpec {
         key: "project_path",
       }),
     }),
+    ...maybeCompletionList("project_path"),
     // === Worktree toggle. ========================================
     // Enabled only when the Project Path resolves to a git work
     // tree. When disabled, render with a dim-fg `raw` row using
@@ -2108,6 +2125,7 @@ function buildFormSpec(): WidgetSpec {
         key: branchInert ? undefined : "branch",
       }),
     }),
+    ...maybeCompletionList("branch"),
   ];
   if (form.lastError) {
     children.push(spacer(0));
@@ -2206,6 +2224,7 @@ function openForm(options?: { fromPicker?: boolean }): void {
     probeToken: 0,
     historyCursor: { project_path: -1, name: -1, cmd: -1, branch: -1 },
     historyDraft: { project_path: "", name: "", cmd: "", branch: "" },
+    completion: { field: null, items: [], selectedIndex: 0, anchor: "", token: 0 },
   };
   formPanel = new FloatingWidgetPanel();
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
@@ -2293,6 +2312,232 @@ function scheduleProjectPathReprobe(): void {
     if (!form || form.probeToken !== token) return;
     void probeProjectPathDefaults();
   });
+}
+
+// =============================================================================
+// Inline-dropdown completion (Phase 7)
+//
+// For Project Path and Branch we render a `list` below the input
+// when the candidate set is non-empty. Candidates are fetched
+// asynchronously (filesystem read for paths, git for branches);
+// the `completion.token` makes only the freshest fetch's result
+// land — same pattern as the project-path is-git probe.
+// =============================================================================
+
+const COMPLETION_VISIBLE_ROWS = 6;
+const COMPLETION_MAX_ITEMS = 50;
+
+/// Fire a fresh fetch of completion candidates for the named
+/// field. Stale fetches (older `token`) discard their results
+/// on completion. Caller is responsible for re-rendering once
+/// the fetch lands — `setCompletionItems` does that.
+function scheduleCompletionRefresh(
+  field: "project_path" | "branch",
+): void {
+  if (!form) return;
+  const anchor = form[field === "project_path" ? "projectPath" : "branch"].value;
+  const token = ++form.completion.token;
+  form.completion.field = field;
+  form.completion.anchor = anchor;
+  // Debounce: same 150ms feel as a snappy file picker. Don't
+  // collapse with the project-path probe (which runs at 200ms)
+  // because the completion list is interactive — every extra
+  // tick of latency reads as "the editor isn't keeping up".
+  void editor.delay(150).then(async () => {
+    if (!form || form.completion.token !== token) return;
+    const items = field === "project_path"
+      ? await fetchPathCompletions(anchor)
+      : await fetchBranchCompletions(anchor);
+    if (!form || form.completion.token !== token) return;
+    setCompletionItems(field, items);
+  });
+}
+
+function setCompletionItems(
+  field: "project_path" | "branch",
+  items: string[],
+): void {
+  if (!form) return;
+  form.completion.field = field;
+  form.completion.items = items.slice(0, COMPLETION_MAX_ITEMS);
+  form.completion.selectedIndex = 0;
+  renderForm();
+}
+
+function closeCompletion(): void {
+  if (!form) return;
+  if (form.completion.field === null && form.completion.items.length === 0) {
+    return;
+  }
+  form.completion.field = null;
+  form.completion.items = [];
+  form.completion.selectedIndex = 0;
+  form.completion.token += 1; // invalidate any in-flight fetch
+  renderForm();
+}
+
+/// Split typed Project Path into (parent, basename), list
+/// `parent` via the host's `readDir`, and filter to entries
+/// whose name starts with `basename`. Directories get a
+/// trailing `/` so the user sees the type and Tab keeps
+/// descending. Empty input lists the user's home directory's
+/// top-level entries as a starting point.
+async function fetchPathCompletions(typed: string): Promise<string[]> {
+  // Heuristic for "where to list". `parent` is everything up
+  // to and including the last `/`; `basename` is the unfinished
+  // tail we filter on. `/foo/ba` → parent `/foo/`, basename
+  // `ba`. `bar` (no slash) → parent `.`, basename `bar`. `/`
+  // → parent `/`, basename `""`.
+  const slashIdx = typed.lastIndexOf("/");
+  let parent: string;
+  let basename: string;
+  if (slashIdx < 0) {
+    parent = typed ? "." : editor.getCwd();
+    basename = typed;
+  } else if (slashIdx === 0) {
+    parent = "/";
+    basename = typed.slice(1);
+  } else {
+    parent = typed.slice(0, slashIdx);
+    basename = typed.slice(slashIdx + 1);
+  }
+  const entries = editor.readDir(parent);
+  const matches = entries
+    .filter((e) => !basename || e.name.startsWith(basename))
+    .filter((e) => !e.name.startsWith(".") || basename.startsWith(".")); // hide dotfiles unless asked
+  matches.sort((a, b) => {
+    // Dirs before files; then alphabetical.
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  // Render each item as the full path so accepting it
+  // overwrites the input cleanly (no string-stitching at
+  // accept time).
+  const prefix = parent.endsWith("/") ? parent : `${parent}/`;
+  return matches.map((e) => `${prefix}${e.name}${e.is_dir ? "/" : ""}`);
+}
+
+/// List the project's local + remote branches and tags via
+/// `git for-each-ref` (one subprocess instead of three). Filter
+/// by substring of the typed value — branch names commonly
+/// carry slash-separated prefixes (`feat/`, `release/`) that
+/// the user often doesn't type first.
+async function fetchBranchCompletions(typed: string): Promise<string[]> {
+  if (!form) return [];
+  const projectPath = form.projectPath.value.trim() || form.defaultProjectPath;
+  if (!projectPath) return [];
+  if (form.projectPathIsGit === false) return [];
+  const res = await spawnCollect(
+    "git",
+    [
+      "-C",
+      projectPath,
+      "for-each-ref",
+      "--format=%(refname:short)",
+      "refs/heads/",
+      "refs/remotes/",
+      "refs/tags/",
+    ],
+    projectPath,
+  );
+  if (res.exit_code !== 0) return [];
+  const lines = (res.stdout || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && l !== "origin/HEAD");
+  const needle = typed.toLowerCase();
+  const matches = needle
+    ? lines.filter((l) => l.toLowerCase().includes(needle))
+    : lines;
+  // Dedup the common `origin/<branch>` vs `<branch>` pair when
+  // the local copy exists. Prefer the local short name; drop the
+  // origin alias unless the user explicitly typed `origin`.
+  const local = new Set(matches.filter((l) => !l.includes("/")));
+  const wantsOrigin = needle.startsWith("origin/");
+  const filtered = matches.filter((l) => {
+    if (!wantsOrigin && l.startsWith("origin/")) {
+      const bare = l.slice("origin/".length);
+      if (local.has(bare)) return false;
+    }
+    return true;
+  });
+  // Stable order: exact-match-first, then prefix-match, then
+  // substring; ties broken by length so shorter names surface.
+  filtered.sort((a, b) => {
+    const ascore = a.toLowerCase() === needle ? 0 : a.toLowerCase().startsWith(needle) ? 1 : 2;
+    const bscore = b.toLowerCase() === needle ? 0 : b.toLowerCase().startsWith(needle) ? 1 : 2;
+    if (ascore !== bscore) return ascore - bscore;
+    return a.length - b.length || a.localeCompare(b);
+  });
+  return filtered;
+}
+
+/// Apply the highlighted completion to its field, dismiss the
+/// dropdown, and (for Project Path) re-probe defaults. Accepts
+/// the currently selected item; if the list is empty it's a
+/// no-op. For directories (path ends with `/`), the field stays
+/// open so the user can keep typing or `Tab` again to descend.
+function acceptCompletion(): boolean {
+  if (!form) return false;
+  const c = form.completion;
+  if (c.field === null || c.items.length === 0) return false;
+  const item = c.items[c.selectedIndex];
+  if (!item) return false;
+  const slot = c.field === "project_path" ? form.projectPath : form.branch;
+  slot.value = item;
+  slot.cursor = item.length;
+  if (formPanel) formPanel.setValue(c.field, slot.value, slot.cursor);
+  if (c.field === "project_path") {
+    // Re-trigger the is-git probe + default-branch / session-
+    // name placeholder probes for the new path. Also re-fetch
+    // path completions in case the user accepted a directory
+    // and wants to keep descending — they get a fresh list of
+    // children right away.
+    scheduleProjectPathReprobe();
+    if (item.endsWith("/")) {
+      scheduleCompletionRefresh("project_path");
+      return true;
+    }
+  }
+  closeCompletion();
+  return true;
+}
+
+/// Build a `list` widget for the named field's completion
+/// dropdown. Returns an empty array when the dropdown shouldn't
+/// render — either no candidates fetched yet, the field isn't
+/// the one we're completing, or the input doesn't have focus
+/// (no point showing completions for an input the user isn't
+/// editing). Returned as an array so the caller can spread it
+/// into `children` for the conditional render.
+///
+/// The list is keyless (`focusable: false`, no `key`), so it
+/// stays out of the Tab cycle — it's a "suggestion strip"
+/// scoped to its input. Up/Down on the input route here via the
+/// `walkCompletion` helper instead of plain widget focus moves.
+function maybeCompletionList(field: "project_path" | "branch"): WidgetSpec[] {
+  if (!form) return [];
+  if (form.completion.field !== field) return [];
+  if (form.completion.items.length === 0) return [];
+  if (formFocusedKey() !== field) return [];
+  const items = form.completion.items.map((s) =>
+    styledRow([{ text: s }]),
+  );
+  return [
+    list({
+      items,
+      selectedIndex: form.completion.selectedIndex,
+      visibleRows: Math.min(COMPLETION_VISIBLE_ROWS, items.length),
+      // Not in the Tab cycle (Up/Down on the focused INPUT
+      // walks the list via the smart-key handler) but keyed
+      // so the host's single-line-Text-+-sibling-list "picker
+      // Enter" wiring routes Enter on the focused input into
+      // an activate event on this list — which the form's
+      // widget_event handler turns into `acceptCompletion()`.
+      focusable: false,
+      key: "completion",
+    }),
+  ];
 }
 
 function closeForm(): void {
@@ -2495,17 +2740,37 @@ function dispatchFormKey(name: string): void {
 }
 
 registerHandler("orchestrator_form_key_tab", () => {
+  // If the completion dropdown is showing for the focused
+  // input, Tab accepts the highlighted suggestion instead of
+  // advancing focus — matches the convention users expect from
+  // shell / IDE completion popups.
+  if (completionVisibleForFocused()) {
+    acceptCompletion();
+    return;
+  }
   advanceFormFocus(1);
   dispatchFormKey("Tab");
 });
 registerHandler(
   "orchestrator_form_key_shift_tab",
   () => {
+    // Shift+Tab doesn't accept — it always reverses focus.
+    // (The convention is that S-Tab is the "go back" gesture;
+    // overloading it to accept-then-go-back is more confusing
+    // than useful.)
+    closeCompletion();
     advanceFormFocus(-1);
     dispatchFormKey("Shift+Tab");
   },
 );
 registerHandler("orchestrator_form_key_escape", () => {
+  // Esc closes the completion dropdown first; only when there's
+  // no dropdown does it cancel the dialog. Matches how popup-
+  // based UIs (browsers, shells) layer dismissal.
+  if (completionVisibleForFocused()) {
+    closeCompletion();
+    return;
+  }
   if (form) cancelForm();
 });
 registerHandler(
@@ -2518,6 +2783,14 @@ registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
 registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
 registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
 registerHandler("orchestrator_form_key_up", () => {
+  // Completion-list-aware navigation: when the dropdown is
+  // open for the focused input, ↑↓ navigates the list
+  // (overrides history). Otherwise ↑↓ walks history for
+  // history-bearing inputs; otherwise pass through.
+  if (completionVisibleForFocused()) {
+    walkCompletion(-1);
+    return;
+  }
   const histField = focusToHistoryField(formFocusedKey());
   if (histField) {
     walkHistory(histField, -1);
@@ -2526,6 +2799,10 @@ registerHandler("orchestrator_form_key_up", () => {
   }
 });
 registerHandler("orchestrator_form_key_down", () => {
+  if (completionVisibleForFocused()) {
+    walkCompletion(1);
+    return;
+  }
   const histField = focusToHistoryField(formFocusedKey());
   if (histField) {
     walkHistory(histField, 1);
@@ -2533,6 +2810,26 @@ registerHandler("orchestrator_form_key_down", () => {
     dispatchFormKey("Down");
   }
 });
+
+/// Is the completion dropdown showing for the currently focused
+/// input? Returns false when there are no items, when the
+/// dropdown is for a different field, or when focus is on a
+/// non-input.
+function completionVisibleForFocused(): boolean {
+  if (!form) return false;
+  const c = form.completion;
+  if (c.field === null || c.items.length === 0) return false;
+  return formFocusedKey() === c.field;
+}
+
+function walkCompletion(delta: -1 | 1): void {
+  if (!form) return;
+  const c = form.completion;
+  if (c.items.length === 0) return;
+  c.selectedIndex =
+    (c.selectedIndex + delta + c.items.length) % c.items.length;
+  renderForm();
+}
 
 // Printable input arrives via the global `mode_text_input` action.
 // Other plugins may also register a `mode_text_input` handler;
@@ -2643,6 +2940,13 @@ editor.on("widget_event", (e) => {
       }
       if (field === "project_path") {
         scheduleProjectPathReprobe();
+        scheduleCompletionRefresh("project_path");
+      } else if (field === "branch") {
+        scheduleCompletionRefresh("branch");
+      } else {
+        // Any other field's change implicitly closes the
+        // dropdown (the user moved on).
+        closeCompletion();
       }
       return;
     }
@@ -2658,10 +2962,30 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate") {
+      if (e.widget_key === "completion") {
+        // Enter on a focused Project Path / Branch input with
+        // an active dropdown lands here via the host's
+        // single-line-Text-+-sibling-list picker wiring.
+        acceptCompletion();
+        return;
+      }
       if (e.widget_key === "create") {
         void submitForm();
       } else if (e.widget_key === "cancel") {
         cancelForm();
+      }
+      return;
+    }
+    if (e.event_type === "select" && e.widget_key === "completion") {
+      // Mouse click on a completion row: update our mirror
+      // and accept immediately (treating the click like a
+      // tap-to-pick rather than a tap-to-highlight). The
+      // host's select event carries the selected `index`.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const idx = payload.index;
+      if (typeof idx === "number" && form.completion.items[idx]) {
+        form.completion.selectedIndex = idx;
+        acceptCompletion();
       }
       return;
     }
