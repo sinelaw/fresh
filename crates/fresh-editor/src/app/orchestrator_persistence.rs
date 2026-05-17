@@ -463,9 +463,7 @@ fn migrate_legacy_plugin_state(
     }
     let target_state_dir = global_state_dir(data_dir);
     if let Err(e) = filesystem.create_dir_all(&target_state_dir) {
-        tracing::warn!(
-            "orchestrator migration: failed to create {target_state_dir:?}: {e}"
-        );
+        tracing::warn!("orchestrator migration: failed to create {target_state_dir:?}: {e}");
         return;
     }
     for (plugin, map) in &merged {
@@ -473,9 +471,7 @@ fn migrate_legacy_plugin_state(
         let bytes = match serde_json::to_vec_pretty(map) {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!(
-                    "orchestrator migration: failed to serialise plugin {plugin}: {e}"
-                );
+                tracing::warn!("orchestrator migration: failed to serialise plugin {plugin}: {e}");
                 continue;
             }
         };
@@ -526,8 +522,7 @@ impl Editor {
                 None
             }
         };
-        let our_ids: std::collections::HashSet<u64> =
-            self.windows.keys().map(|id| id.0).collect();
+        let our_ids: std::collections::HashSet<u64> = self.windows.keys().map(|id| id.0).collect();
 
         // Our process's sessions, snapshotted from runtime state.
         let mut windows: Vec<PersistedWindow> = self
@@ -621,9 +616,7 @@ impl Editor {
                     let path = global_plugin_state_path(&data_dir, plugin);
                     let tmp = path.with_extension("json.tmp");
                     if let Err(e) = self.authority.filesystem.write_file(&tmp, &bytes) {
-                        tracing::warn!(
-                            "orchestrator persistence: failed to write {tmp:?}: {e}"
-                        );
+                        tracing::warn!("orchestrator persistence: failed to write {tmp:?}: {e}");
                         continue;
                     }
                     if let Err(e) = self.authority.filesystem.rename(&tmp, &path) {
