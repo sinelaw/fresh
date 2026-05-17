@@ -785,6 +785,21 @@ impl Workspace {
         Ok(Some(workspace))
     }
 
+    /// `true` when this workspace snapshot doesn't reference any
+    /// real buffer content — every split's open_tabs is empty, and
+    /// there are no terminals, no unnamed buffers, and no external
+    /// files. Virtual buffers (Dashboard, plugin scratch buffers)
+    /// are stripped during serialisation, so a Dashboard-only quit
+    /// produces a snapshot that looks identical to a truly empty
+    /// one. Used by `save_workspace` to refuse to clobber a real
+    /// on-disk workspace with such a snapshot.
+    pub fn has_no_real_content(&self) -> bool {
+        self.terminals.is_empty()
+            && self.external_files.is_empty()
+            && self.unnamed_buffers.is_empty()
+            && self.split_states.values().all(|s| s.open_tabs.is_empty())
+    }
+
     /// Save workspace to file using atomic write (temp file + rename)
     ///
     /// This ensures the workspace file is never left in a corrupted state:

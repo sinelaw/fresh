@@ -501,12 +501,49 @@ impl Editor {
 
         let workspace = self.capture_workspace();
 
+        // Refuse to overwrite a non-empty on-disk workspace with an
+        // all-virtual snapshot. When the only live buffers are virtual
+        // (Dashboard, plugin scratch buffers), the serializer strips
+        // them and produces an empty workspace; before this guard,
+        // quitting from a Dashboard-only tab silently wiped the user's
+        // saved file list (see issue #2027). Genuinely-empty quits
+        // (no buffers at all) still pass through and clear the file.
+        if workspace.has_no_real_content() && self.has_any_virtual_buffer() {
+            let on_disk = if let Some(ref session_name) = self.session_name {
+                Workspace::load_session(session_name, &self.working_dir)
+                    .ok()
+                    .flatten()
+            } else {
+                Workspace::load(&self.working_dir).ok().flatten()
+            };
+            if let Some(existing) = on_disk {
+                if !existing.has_no_real_content() {
+                    tracing::info!(
+                        "Skipping workspace save: only virtual buffers are open, \
+                         on-disk workspace already has real content"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         // For named sessions, save to session-scoped workspace file
         if let Some(ref session_name) = self.session_name {
             workspace.save_session(session_name)
         } else {
             workspace.save()
         }
+    }
+
+    /// True when the active window has any virtual buffer (Dashboard,
+    /// plugin scratch buffers, etc.) — used by `save_workspace` to
+    /// detect the Dashboard-only-quit case where the serializer
+    /// produces an empty snapshot.
+    fn has_any_virtual_buffer(&self) -> bool {
+        self.active_window()
+            .buffer_metadata
+            .values()
+            .any(|m| matches!(m.kind, crate::app::types::BufferKind::Virtual { .. }))
     }
 
     /// Save global file states for all open file buffers
