@@ -2284,7 +2284,14 @@ function openForm(options?: { fromPicker?: boolean }): void {
     completion: { field: null, items: [], selectedIndex: 0, anchor: "", token: 0 },
   };
   formPanel = new FloatingWidgetPanel();
-  formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 50 });
+  // Width 60 / height 90: the host shrinks the panel to its actual
+  // content height when content is shorter than the requested cap,
+  // so a generous height ceiling doesn't waste space on tall
+  // terminals (the form usually renders ~20 rows). The previous
+  // 50% cap was a fixed canvas in disguise — on a 24-row terminal
+  // it left the dialog 12 rows tall, clipping the Branch input,
+  // the Cancel / Create Session buttons, and the hint bar.
+  formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 90 });
   editor.setEditorMode(NEW_SESSION_MODE);
   // Mirror the host's focus cycle so Up/Down can route to the
   // right field's history. Initial focus is on `project_path`
