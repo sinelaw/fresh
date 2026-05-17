@@ -5066,6 +5066,19 @@ impl Editor {
         }
         self.floating_widget_panel = None;
         let _ = self.widget_registry.unmount(panel_id);
+        // Restore the active window's visible terminal PTYs to their
+        // dive-view split rects. The orchestrator picker's preview
+        // pane shrinks PTYs to the embed size on every frame while
+        // it's up (see `render_session_preview_into_rect`); when the
+        // picker closes onto the *same* session the user was
+        // previewing, `set_active_window` short-circuits because the
+        // active pointer didn't move, and the shrink-down never gets
+        // undone — top / vim / etc. keep drawing at the embed's ~15
+        // rows. Resizing here on every panel unmount restores the
+        // full dive-view dimensions; for panels that didn't preview
+        // anything (the new-session form, plugin overlays) this is a
+        // cheap no-op because the PTY sizes already match.
+        self.active_window_mut().resize_visible_terminals();
         tracing::debug!("Unmounted floating widget panel {}", panel_id);
     }
 

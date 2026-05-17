@@ -408,6 +408,7 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
     return styledRow([{ text: `[${id}] (unknown)` }]);
   }
   const isActive = id === activeId;
+  const isBase = id === 1;
   const stateText = isActive ? "ACT " : STATE_GLYPH[s.state];
   const entries: { text: string; style?: Record<string, unknown> }[] = [
     { text: `[${id}] `, style: { fg: "ui.help_key_fg" } },
@@ -419,6 +420,17 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
     },
     { text: `  ${s.label}` },
   ];
+  // BASE badge: the base session is the editor process itself —
+  // archive / delete would close the editor (and possibly destroy
+  // the user's current worktree), so the host refuses both. The
+  // badge makes that special status visible up-front instead of
+  // surfacing as "Archive disabled, why?" after a Tab.
+  if (isBase) {
+    entries.push({
+      text: " BASE",
+      style: { fg: "ui.help_key_fg", bold: true },
+    });
+  }
   // SHARED badge for the row when this session shares its
   // worktree (with another session or with the project root
   // directly). Mirrors the preview pane's badge so the
@@ -451,6 +463,7 @@ function buildPreviewEntries(
   }
   const activeId = editor.activeWindow();
   const isActive = s.id === activeId;
+  const isBase = s.id === 1;
   const stateText = isActive ? "ACT" : STATE_GLYPH[s.state].trim();
   // Count siblings sharing the same `root`. The set includes
   // `s` itself; `> 1` means at least one other session lives at
@@ -467,6 +480,20 @@ function buildPreviewEntries(
     { text: "  " },
     { text: ageString(s.createdAt), style: { fg: "ui.menu_disabled_fg" } },
   ];
+  if (isBase) {
+    // BASE badge in the preview — the long-form counterpart to
+    // the list-row badge, with an inline explanation so the user
+    // doesn't have to wonder why Stop / Archive / Delete are
+    // greyed out.
+    headerEntries.push(
+      { text: "  " },
+      {
+        text: "BASE",
+        style: { fg: "ui.help_key_fg", bold: true },
+      },
+      { text: " — editor session", style: { fg: "ui.menu_disabled_fg", italic: true } },
+    );
+  }
   if (sharedCount > 1) {
     headerEntries.push(
       { text: "  " },
@@ -778,8 +805,16 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
         embedWidget,
       )
     : col(buttonRow, spacer(0), embedWidget);
+  // Surface BASE in the preview section label so it's always visible
+  // (the list-row badge gets truncated at 25% column width). The
+  // base session is the editor process itself — closing or moving
+  // its worktree would close the editor / break the user's current
+  // tree, so Stop / Archive / Delete refuse against it.
+  const sectionLabel = isBase
+    ? `[${s.id}] ${s.label}  BASE — editor session`
+    : `[${s.id}] ${s.label}`;
   return labeledSection({
-    label: `[${s.id}] ${s.label}`,
+    label: sectionLabel,
     child: body,
   });
 }
