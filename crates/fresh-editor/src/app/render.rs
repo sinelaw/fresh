@@ -3401,7 +3401,7 @@ impl Editor {
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
-        let (width_pct, height_pct, entries, focus_cursor, embeds) =
+        let (width_pct, height_pct, entries, focus_cursor, embeds, overlays) =
             match self.floating_widget_panel.as_ref() {
                 Some(fwp) => (
                     fwp.width_pct,
@@ -3409,6 +3409,7 @@ impl Editor {
                     fwp.entries.clone(),
                     fwp.focus_cursor,
                     fwp.embeds.clone(),
+                    fwp.overlays.clone(),
                 ),
                 None => return,
             };
@@ -3501,6 +3502,38 @@ impl Editor {
             self.render_session_preview_into_rect(frame, rect, &theme);
         }
         self.preview_window_id = saved_preview;
+
+        // Paint overlay rows AFTER the main entries + embeds. Each
+        // overlay row sits on top of whatever's at its
+        // `buffer_row` (the row it would have occupied if it
+        // weren't floating). Used for dropdown completions
+        // anchored to a text input — the completion list rows
+        // overpaint the form's static rows beneath without
+        // shifting them on every show / hide.
+        //
+        // Clear the row first so the underlying entry's text
+        // doesn't bleed past the overlay's content width.
+        // `Paragraph` only paints cells it has content for; a
+        // bare `Clear` resets the row to the panel background
+        // (the `Block` here just supplies the bg style — no
+        // borders).
+        let panel_bg = theme.popup_bg;
+        let panel_bg_style = ratatui::style::Style::default().bg(panel_bg);
+        for o in &overlays {
+            let row_y = inner.y.saturating_add(o.buffer_row as u16);
+            if row_y >= inner.y.saturating_add(inner.height) {
+                continue;
+            }
+            let row_rect = ratatui::layout::Rect {
+                x: inner.x,
+                y: row_y,
+                width: inner.width,
+                height: 1,
+            };
+            frame.render_widget(Clear, row_rect);
+            frame.render_widget(Block::default().style(panel_bg_style), row_rect);
+            paint_text_property_entry(frame, &o.entry, inner.x, row_y, inner.width, &theme);
+        }
 
         if let Some(fc) = focus_cursor {
             let cx = inner.x.saturating_add(byte_to_screen_col(

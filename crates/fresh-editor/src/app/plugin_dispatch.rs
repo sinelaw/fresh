@@ -3502,6 +3502,7 @@ impl Editor {
         let focus_cursor = out_pieces.focus_cursor;
         let entries = out_pieces.entries;
         let embeds = out_pieces.embeds;
+        let overlays = out_pieces.overlays;
         if self
             .widget_registry
             .update_side_effects(
@@ -3522,6 +3523,7 @@ impl Editor {
                     fwp.entries = entries;
                     fwp.focus_cursor = focus_cursor;
                     fwp.embeds = embeds;
+                    fwp.overlays = overlays;
                 }
             }
             return;
@@ -4950,6 +4952,7 @@ impl Editor {
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),
+            overlays: Vec::new(),
             last_inner_rect: None,
         });
         let prev = std::collections::HashMap::new();
@@ -4959,6 +4962,7 @@ impl Editor {
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;
+        let overlays = out.overlays;
         self.widget_registry.mount(
             panel_id,
             FLOATING_PANEL_BUFFER_ID,
@@ -4972,6 +4976,7 @@ impl Editor {
             fwp.entries = entries;
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
+            fwp.overlays = overlays;
         }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
@@ -5007,6 +5012,7 @@ impl Editor {
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;
+        let overlays = out.overlays;
         if self
             .widget_registry
             .update(
@@ -5029,6 +5035,7 @@ impl Editor {
             fwp.entries = entries;
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
+            fwp.overlays = overlays;
         }
     }
 

@@ -939,6 +939,13 @@ pub(crate) struct FloatingWidgetState {
     /// scoped to each rect — giving us a live render of the
     /// referenced editor window inside the floating overlay.
     pub embeds: Vec<crate::widgets::EmbedRect>,
+    /// Rows produced by `WidgetSpec::Overlay` children. Painted
+    /// AFTER `entries` and `embeds`, on top of whatever's at
+    /// each `buffer_row`. Used for dropdown completions /
+    /// transient popups that should appear next to a focused
+    /// widget without reflowing the rest of the panel when
+    /// they show or hide.
+    pub overlays: Vec<crate::widgets::OverlayRow>,
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,

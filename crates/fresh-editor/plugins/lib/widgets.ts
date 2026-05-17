@@ -472,6 +472,30 @@ export function labeledSection(options: {
   };
 }
 
+/** Float `child` over the rest of the layout instead of consuming
+ * vertical space. Place inside a `Col` at the position where you
+ * want the overlay to anchor — at paint time the child renders
+ * at that row but DOES NOT push the rows below it down. Used for
+ * dropdown completions, tooltips, hover popups — anything that
+ * should appear next to a focused widget without reflowing the
+ * panel each time it shows or hides.
+ *
+ * Hit-testing: overlays paint on top, so clicks inside the
+ * overlay's region go to the overlay (not what's underneath).
+ * Tab cycle: the child IS walked for tabbable keys — give it a
+ * `key` if you want focus to reach it, or leave it keyless to
+ * keep it out of the cycle (the typical popup case). */
+export function overlay(
+  child: WidgetSpec,
+  options?: { key?: string },
+): WidgetSpec {
+  return {
+    kind: "overlay",
+    child,
+    key: options?.key,
+  };
+}
+
 // =============================================================================
 // HintEntry parsing — for the legacy `Tab:section  Esc:close` format
 // shipped in existing plugin i18n bundles.

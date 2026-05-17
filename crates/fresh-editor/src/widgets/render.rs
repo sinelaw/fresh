@@ -120,6 +120,25 @@ pub struct RenderOutput {
     /// rendered panel's inner area) the host should paint that
     /// window into after laying down the regular entries.
     pub embeds: Vec<EmbedRect>,
+    /// Rows produced by `WidgetSpec::Overlay` children. Each
+    /// row carries its anchor `buffer_row` (relative to the
+    /// rendered panel's inner area) and is painted by the host
+    /// AFTER the main `entries`, on top of whatever is at that
+    /// row. Used for dropdown completions, tooltips, hover
+    /// popups — anything that should appear next to a focused
+    /// widget without reflowing the rest of the layout when it
+    /// shows or hides.
+    pub overlays: Vec<OverlayRow>,
+}
+
+/// One row produced by an `Overlay` widget. `buffer_row` is the
+/// 0-based row inside the panel's inner area where the entry
+/// should be painted; the host's paint pass writes overlay rows
+/// after the main entries so they sit on top.
+#[derive(Debug, Clone)]
+pub struct OverlayRow {
+    pub buffer_row: u32,
+    pub entry: TextPropertyEntry,
 }
 
 /// A rectangle reserved by a `WindowEmbed` widget. All
@@ -165,7 +184,7 @@ pub fn render_spec(
     };
 
     let mut next_state = HashMap::new();
-    let (entries, hits, focus_cursor, embeds) =
+    let (entries, hits, focus_cursor, embeds, overlays) =
         render_collected(spec, prev, &mut next_state, &focus_key, panel_width);
     RenderOutput {
         entries,
@@ -175,6 +194,7 @@ pub fn render_spec(
         tabbable,
         focus_cursor,
         embeds,
+        overlays,
     }
 }
 
@@ -328,6 +348,7 @@ fn render_collected(
     Vec<HitArea>,
     Option<FocusCursor>,
     Vec<EmbedRect>,
+    Vec<OverlayRow>,
 ) {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut hits: Vec<HitArea> = Vec::new();
@@ -335,6 +356,7 @@ fn render_collected(
     // position bubbles up through containers as a single Option.
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
+    let mut overlays: Vec<OverlayRow> = Vec::new();
     match spec {
         WidgetSpec::Row { children, .. } => {
             // Two-pass layout for Row:
@@ -400,8 +422,13 @@ fn render_collected(
                     continue;
                 }
                 let child_panel_width = per_child_width[idx];
-                let (child_entries, child_hits, child_focus, child_embeds) =
+                let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
                     render_collected(child, prev, next_state, focus_key, child_panel_width);
+                // Rows can host overlays in principle (e.g. a
+                // tooltip on a button); forward them up without
+                // a row-offset adjustment — Row pieces all sit
+                // on the same buffer-row as the merged row.
+                overlays.extend(child_overlays);
                 if child_entries.is_empty() {
                     debug_assert!(child_hits.is_empty(), "empty children produce no hits");
                     continue;
@@ -550,9 +577,56 @@ fn render_collected(
         }
         WidgetSpec::Col { children, .. } => {
             for child in children {
-                let (child_entries, child_hits, child_focus, child_embeds) =
+                // Overlay children DO NOT contribute vertical
+                // space to the col. Render them, but stash the
+                // produced entries as overlays anchored at the
+                // current `entries.len()` (the row they would
+                // have occupied) — they get painted on top
+                // afterwards without pushing the rest of the
+                // col downward.
+                let is_overlay = matches!(child, WidgetSpec::Overlay { .. });
+                let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
                     render_collected(child, prev, next_state, focus_key, panel_width);
                 let row_offset = entries.len() as u32;
+                if is_overlay {
+                    // Promote the overlay child's regular
+                    // entries to overlay rows anchored at the
+                    // current col cursor (`row_offset`). Hits
+                    // for those entries are shifted to the same
+                    // anchor row so click-to-pick targets the
+                    // painted row.
+                    for (i, e) in child_entries.into_iter().enumerate() {
+                        overlays.push(OverlayRow {
+                            buffer_row: row_offset + i as u32,
+                            entry: e,
+                        });
+                    }
+                    for mut h in child_hits {
+                        h.buffer_row += row_offset;
+                        hits.push(h);
+                    }
+                    // Focus cursor inside an overlay (rare but
+                    // legal) anchors at the same row; without
+                    // this shift Up/Down + cursor placement
+                    // would land on the col's "natural" row.
+                    if let Some(mut fc) = child_focus {
+                        fc.buffer_row += row_offset;
+                        focus_cursor = Some(fc);
+                    }
+                    // Forward nested overlays without further
+                    // adjustment (already anchored).
+                    overlays.extend(child_overlays);
+                    // Embeds inside an overlay don't make sense
+                    // today (a window-embed below a popup would
+                    // be confusing) — propagate at the same
+                    // anchor row so behaviour is well-defined
+                    // if someone tries it.
+                    for mut emb in child_embeds {
+                        emb.buffer_row += row_offset;
+                        embeds.push(emb);
+                    }
+                    continue;
+                }
                 for mut h in child_hits {
                     h.buffer_row += row_offset;
                     hits.push(h);
@@ -565,6 +639,10 @@ fn render_collected(
                     emb.buffer_row += row_offset;
                     embeds.push(emb);
                 }
+                overlays.extend(child_overlays.into_iter().map(|mut o| {
+                    o.buffer_row += row_offset;
+                    o
+                }));
                 entries.extend(child_entries);
             }
         }
@@ -1172,8 +1250,12 @@ fn render_collected(
             // Inner area: 1 column of border + 1 column of
             // padding on each side ⇒ 4 columns of chrome.
             let inner_width = panel_width.saturating_sub(4).max(1);
-            let (child_entries, child_hits, child_focus, child_embeds) =
+            let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
                 render_collected(child, prev, next_state, focus_key, inner_width);
+            // Overlays bubble through the section unchanged —
+            // the section's chrome doesn't shift them and the
+            // anchor row is already relative to the inner area.
+            overlays.extend(child_overlays);
 
             // Render the top border with the label embedded as a
             // legend: `╭─ <label> ─...─╮`. When the label is empty,
@@ -1276,8 +1358,27 @@ fn render_collected(
                 entries.push(e);
             }
         }
+        WidgetSpec::Overlay { child, .. } => {
+            // Renders the child normally; the parent (`Col`)
+            // is what decides to promote the resulting entries
+            // into the overlay set instead of consuming
+            // vertical space. Outside of a `Col`, an Overlay
+            // behaves like a transparent wrapper — entries
+            // flow through unchanged. This keeps the
+            // Overlay-as-root case (no enclosing Col) sane:
+            // it just renders inline.
+            let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
+                render_collected(child, prev, next_state, focus_key, panel_width);
+            entries.extend(child_entries);
+            hits.extend(child_hits);
+            if focus_cursor.is_none() {
+                focus_cursor = child_focus;
+            }
+            embeds.extend(child_embeds);
+            overlays.extend(child_overlays);
+        }
     }
-    (entries, hits, focus_cursor, embeds)
+    (entries, hits, focus_cursor, embeds, overlays)
 }
 
 // =========================================================================

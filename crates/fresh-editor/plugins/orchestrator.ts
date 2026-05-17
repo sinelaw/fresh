@@ -26,6 +26,7 @@ import {
   labeledSection,
   list,
   row,
+  overlay,
   spacer,
   styledRow,
   text,
@@ -2524,19 +2525,22 @@ function maybeCompletionList(field: "project_path" | "branch"): WidgetSpec[] {
     styledRow([{ text: s }]),
   );
   return [
-    list({
-      items,
-      selectedIndex: form.completion.selectedIndex,
-      visibleRows: Math.min(COMPLETION_VISIBLE_ROWS, items.length),
-      // Not in the Tab cycle (Up/Down on the focused INPUT
-      // walks the list via the smart-key handler) but keyed
-      // so the host's single-line-Text-+-sibling-list "picker
-      // Enter" wiring routes Enter on the focused input into
-      // an activate event on this list — which the form's
-      // widget_event handler turns into `acceptCompletion()`.
-      focusable: false,
-      key: "completion",
-    }),
+    overlay(
+      list({
+        items,
+        selectedIndex: form.completion.selectedIndex,
+        visibleRows: Math.min(COMPLETION_VISIBLE_ROWS, items.length),
+        // Not in the Tab cycle (Up/Down on the focused INPUT
+        // walks the list via the smart-key handler) but keyed
+        // so the host's single-line-Text-+-sibling-list
+        // "picker Enter" wiring routes Enter on the focused
+        // input into an activate event on this list — which
+        // the form's widget_event handler turns into
+        // `acceptCompletion()`.
+        focusable: false,
+        key: "completion",
+      }),
+    ),
   ];
 }
 

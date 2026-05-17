@@ -1643,6 +1643,29 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// Float `child` over the rest of the layout instead of
+    /// consuming vertical space. Placed inside a `Col`, the
+    /// overlay anchors at the row it would have occupied if it
+    /// were a regular child — but the rows below it DO NOT
+    /// shift down. At paint time the overlay is drawn last,
+    /// over whatever's beneath it, like a tooltip / popup.
+    ///
+    /// Use case: dropdown completions, hover popups, transient
+    /// hints that should appear right next to the focused
+    /// widget without reflowing the rest of the panel each
+    /// time they show / hide.
+    ///
+    /// Hit testing: overlays paint on top, so clicks inside an
+    /// overlay's region go to the overlay (not whatever's
+    /// underneath). Tab cycle: the host's `collect_tabbable`
+    /// walks into the overlay's child like any other widget;
+    /// give the child a `key` if you want it focusable, or
+    /// leave it keyless to keep it out of the cycle.
+    Overlay {
+        child: Box<WidgetSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
 }
 
 impl WidgetSpec {
@@ -1664,7 +1687,9 @@ impl WidgetSpec {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
                 Box::new(children.iter())
             }
-            WidgetSpec::LabeledSection { child, .. } => Box::new(std::iter::once(child.as_ref())),
+            WidgetSpec::LabeledSection { child, .. } | WidgetSpec::Overlay { child, .. } => {
+                Box::new(std::iter::once(child.as_ref()))
+            }
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -1678,7 +1703,9 @@ impl WidgetSpec {
             WidgetSpec::Row { children, .. } | WidgetSpec::Col { children, .. } => {
                 Box::new(children.iter_mut())
             }
-            WidgetSpec::LabeledSection { child, .. } => Box::new(std::iter::once(child.as_mut())),
+            WidgetSpec::LabeledSection { child, .. } | WidgetSpec::Overlay { child, .. } => {
+                Box::new(std::iter::once(child.as_mut()))
+            }
             _ => Box::new(std::iter::empty()),
         }
     }
