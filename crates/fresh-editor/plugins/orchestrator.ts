@@ -2362,6 +2362,13 @@ function setCompletionItems(
   form.completion.field = field;
   form.completion.items = items.slice(0, COMPLETION_MAX_ITEMS);
   form.completion.selectedIndex = 0;
+  // The list widget's `selectedIndex` from spec is initial-only
+  // after first render. Snap the host's instance state to 0 too
+  // so a refresh that shrinks / regrows the list always starts
+  // selection at the top of the new candidate set.
+  if (formPanel) {
+    formPanel.setSelectedIndex("completion", 0);
+  }
   renderForm();
 }
 
@@ -2521,14 +2528,34 @@ function maybeCompletionList(field: "project_path" | "branch"): WidgetSpec[] {
   if (form.completion.field !== field) return [];
   if (form.completion.items.length === 0) return [];
   if (formFocusedKey() !== field) return [];
-  const items = form.completion.items.map((s) =>
-    styledRow([{ text: s }]),
-  );
+  const sel = form.completion.selectedIndex;
+  // Render each row with an explicit selection highlight via
+  // styled segments — the floating-panel painter clobbers
+  // entry-level `style.bg` with the suggestion bg, so the
+  // List widget's own selected-row style doesn't carry colour
+  // through. A `segments` row turns into an inline overlay on
+  // the full text, which the painter's per-property merge
+  // honours.
+  const items = form.completion.items.map((s, i) => {
+    const isSelected = i === sel;
+    return styledRow([
+      {
+        text: s,
+        style: isSelected
+          ? {
+              fg: "ui.popup_selection_fg",
+              bg: "ui.popup_selection_bg",
+              bold: true,
+            }
+          : undefined,
+      },
+    ]);
+  });
   return [
     overlay(
       list({
         items,
-        selectedIndex: form.completion.selectedIndex,
+        selectedIndex: sel,
         visibleRows: Math.min(COMPLETION_VISIBLE_ROWS, items.length),
         // Not in the Tab cycle (Up/Down on the focused INPUT
         // walks the list via the smart-key handler) but keyed
@@ -2832,6 +2859,13 @@ function walkCompletion(delta: -1 | 1): void {
   if (c.items.length === 0) return;
   c.selectedIndex =
     (c.selectedIndex + delta + c.items.length) % c.items.length;
+  // The List widget treats `selectedIndex` from the spec as
+  // initial-only after the first render — subsequent updates
+  // read instance state. Mutate the host's state directly so
+  // the selection highlight follows our cursor.
+  if (formPanel) {
+    formPanel.setSelectedIndex("completion", c.selectedIndex);
+  }
   renderForm();
 }
 
