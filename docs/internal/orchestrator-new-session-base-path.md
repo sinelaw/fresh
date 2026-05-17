@@ -745,6 +745,94 @@ Submit:
   Delete refuse with a "remove the other sessions on this
   root first" error.
 
+### Phase 7 — Dropdown completion for Project Path + Branch
+
+Two text fields in the form benefit from suggestion-driven
+typing:
+
+- **Project Path** — completing partial paths against the
+  filesystem. The base session form spends most of its time
+  letting the user pick *some* directory they already have,
+  so completion is the single biggest typing-cost reducer.
+- **Branch** — completing partial branch names against the
+  repo's local + remote branches and tags (`git branch -a` +
+  `git tag`). Same argument: the user knows the prefix of the
+  branch they want, not its full name.
+
+#### Alternatives considered
+
+| # | Approach                                            | Pros                                                                                  | Cons                                                                                                                                  |
+|---|-----------------------------------------------------|---------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| A | In-form inline dropdown (`list` widget below input) | Reuses existing `list` widget; pure plugin-side change; matches form's visual style.  | Focus-cycle plumbing: dropdown isn't a tabbable cycle entry, it's "completions for the focused input". Up/Down has to disambiguate history vs. completion. |
+| B | Separate floating popup adjacent to the field      | Visually isolated; easy to dismiss.                                                   | Z-ordering + cross-panel focus management; two FloatingWidgetPanels alive at once; more state.                                        |
+| C | Built-in `suggestions: string[]` on the text widget renderer | Host-side dropdown rendering; reusable by every plugin; centralised key handling.  | Big host change to the widget renderer + key dispatcher; needs a generic "where do completions come from" hook the plugin still has to populate.   |
+| D | Reuse the LSP autocomplete pipeline                 | Battle-tested popup + filter + selection logic.                                       | Tightly coupled to editor buffers / language servers; orchestrator's form inputs aren't buffers. Wrong abstraction.                   |
+
+**Chosen: A.** Smallest blast radius (the whole feature lives
+in the orchestrator plugin), reuses the `list` widget that
+already styles correctly inside floating panels, and the
+filesystem-listing + git-spawn helpers it needs are already
+exposed (`editor.readDir`, `spawnCollect`).
+
+If a second plugin wants the same affordance later we
+*promote* it to C — at that point we know enough about the
+shapes (anchor handling, async fetch, ordering) to design a
+generic widget API rather than guessing.
+
+#### Behaviour
+
+- **Trigger**: every text-input change on `project_path` or
+  `branch`. Debounced via the same `editor.delay`-based token
+  scheme the Project Path is-git probe already uses.
+- **Project Path candidate source**: split typed value into
+  `(parent, basename)`; `editor.readDir(parent || ".")` then
+  filter to entries whose name starts with `basename`
+  (case-sensitive — paths are case-sensitive on the kernels
+  we ship on; deferring case-insensitive prefix matching
+  until a user asks).
+  - Both files and directories are returned. Directories get
+    a trailing `/` so the user can see the type at a glance
+    and accepting a directory leaves the cursor primed to
+    keep descending.
+- **Branch candidate source**: `git -C <project> for-each-ref
+  --format=%(refname:short) refs/heads/ refs/remotes/
+  refs/tags/`. Filter by substring (not prefix-only — branch
+  names commonly carry prefixes like `feat/` that the user
+  wouldn't type first). De-dup `origin/main` vs `main` so the
+  list isn't doubled.
+- **Rendering**: when the completion list is non-empty AND
+  the input has focus, render a `list({ visibleRows: 6 })`
+  immediately below the labeled section. Items use
+  `ui.menu_active_bg` for the selection, `ui.popup_text_fg`
+  for body — matches the existing palette popup convention.
+- **Keys** (only when the dropdown is showing):
+  - `↑` / `↓` — move selection inside the list. **Overrides
+    history navigation** for the duration the dropdown is
+    visible. (Up/Down on a focused input with NO active
+    completions still walks history, unchanged.)
+  - `Tab` / `Enter` — accept the highlighted item, replace
+    the input's value, dismiss the dropdown. For Project
+    Path, accepting a directory appends `/` and re-triggers
+    the probe — the user can keep typing or `Tab` again to
+    descend.
+  - `Esc` — close the dropdown without changing the input.
+    The dialog itself stays open (`Esc`-closes-dialog only
+    fires when the dropdown is already closed).
+  - Any printable / Backspace — refilter; dropdown follows
+    the new prefix.
+
+#### Out of scope (this phase)
+
+- Fuzzy matching. The list is purely prefix / substring; the
+  fuzzy ranker isn't worth the import for the typical 5-20
+  entries we render.
+- Completion in the Session Name field. Session names are
+  freeform user-chosen strings; no candidate source exists.
+- Multi-line preview (file size, last-modified) inside the
+  dropdown. The orchestrator picker's preview pane already
+  fills that role for *selected* sessions; the new-session
+  dialog doesn't need it for prospective ones.
+
 ## Open questions
 
 - **Where does a non-git session's data live on disk?** Two
