@@ -89,6 +89,13 @@ const KEY_COMPLETION_DIM_FG: &str = "ui.menu_disabled_fg";
 // re-skin one re-skin the other.
 const KEY_COMPLETION_SEL_FG: &str = "ui.popup_selection_fg";
 const KEY_COMPLETION_SEL_BG: &str = "ui.popup_selection_bg";
+// Border chrome the popup paints around its own rows (the
+// `│ ... │` sides extending below the input + the `╰─...─╯`
+// closing border). Distinct theme key from the wrapping
+// labeled section's default (unstyled) chrome so the popup
+// reads as its own surface — matches the user's "use a theme
+// key for the popup border" expectation.
+const KEY_COMPLETION_BORDER_FG: &str = "ui.popup_border_fg";
 
 /// Where the host should place the buffer's hardware cursor — the
 /// terminal's blinking caret — when a `TextInput` is focused. Built
@@ -1656,28 +1663,43 @@ fn render_completion_dim_separator_overlay(total_cols: usize) -> TextPropertyEnt
     }
     text.push('│');
     text.push('\n');
-    // Sides paint in `popup_border_fg` (the labeled section's
-    // own border colour); the dashed run paints in the dim
-    // foreground so it reads as a recessed transition rather
-    // than chrome.
-    let border_bytes = "│".len();
+    // Side `│` chars paint in the popup's border theme key
+    // (`ui.popup_border_fg`) so the popup chrome reads as
+    // distinct from the wrapping labeled section's default
+    // border (per the "use a theme key for the popup border"
+    // requirement). The dashed run between them paints in the
+    // dim foreground so it reads as a recessed transition
+    // rather than chrome.
+    let left_border_bytes = "│".len();
     let dash_bytes = "┄".len() * inner;
+    let right_border_start = left_border_bytes + dash_bytes;
+    let right_border_end = right_border_start + "│".len();
     let inline_overlays = vec![
         InlineOverlay {
             start: 0,
-            end: border_bytes,
+            end: left_border_bytes,
             style: OverlayOptions {
-                fg: None, // inherit popup border colour from the renderer's default border style
+                fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_BORDER_FG)),
                 ..Default::default()
             },
             properties: Default::default(),
             unit: OffsetUnit::Byte,
         },
         InlineOverlay {
-            start: border_bytes,
-            end: border_bytes + dash_bytes,
+            start: left_border_bytes,
+            end: left_border_bytes + dash_bytes,
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        },
+        InlineOverlay {
+            start: right_border_start,
+            end: right_border_end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_BORDER_FG)),
                 ..Default::default()
             },
             properties: Default::default(),
@@ -1709,10 +1731,18 @@ fn render_completion_bottom_border(total_cols: usize) -> TextPropertyEntry {
     }
     text.push('╯');
     text.push('\n');
+    // The whole row is chrome; stamp the popup-border theme key
+    // at the entry level so every glyph paints in the same
+    // colour (no hard-coded RGB or ratatui `Color` value
+    // anywhere in the popup rendering — every fg/bg goes
+    // through a `ui.*` theme key).
     TextPropertyEntry {
         text,
         properties: Default::default(),
-        style: None,
+        style: Some(OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_BORDER_FG)),
+            ..Default::default()
+        }),
         inline_overlays: Vec::new(),
         segments: Vec::new(),
         pad_to_chars: None,
@@ -1748,9 +1778,16 @@ fn render_completion_item_overlay(
     text.push('\n');
     // Shift the body's inline overlays right by one byte
     // (the leading `│`) so the scrollbar tint still lands on
-    // the right cell.
+    // the right cell. Then add two more inline overlays for
+    // the side `│` chars themselves so they paint in the
+    // popup-border theme key — same key the dim separator and
+    // bottom border use, so the popup chrome reads as a
+    // single themed surface.
     let left_border_bytes = "│".len();
-    let inline_overlays = body_entry
+    let body_no_nl_bytes = body_no_nl.len();
+    let right_border_start = left_border_bytes + body_no_nl_bytes;
+    let right_border_end = right_border_start + "│".len();
+    let mut inline_overlays: Vec<InlineOverlay> = body_entry
         .inline_overlays
         .into_iter()
         .map(|mut io| {
@@ -1759,6 +1796,26 @@ fn render_completion_item_overlay(
             io
         })
         .collect();
+    inline_overlays.push(InlineOverlay {
+        start: 0,
+        end: left_border_bytes,
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_BORDER_FG)),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+    inline_overlays.push(InlineOverlay {
+        start: right_border_start,
+        end: right_border_end,
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_BORDER_FG)),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
     TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -3693,6 +3750,8 @@ mod tests {
                     field_width: 0,
                     max_visible_chars: 0,
                     full_width: false,
+                    completions: Vec::new(),
+                    completions_visible_rows: 0,
                     key: Some("ti".into()),
                 },
                 WidgetSpec::Toggle {
@@ -4936,6 +4995,8 @@ mod tests {
             field_width,
             max_visible_chars: 0,
             full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
             key: key.map(|s| s.into()),
         }
     }
@@ -5016,6 +5077,8 @@ mod tests {
             field_width: 6,
             max_visible_chars: 0,
             full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
             key: Some("ta".into()),
         };
         let prev = HashMap::new();
@@ -5048,7 +5111,16 @@ mod tests {
         let mut prev = HashMap::new();
         let mut editor = crate::primitives::text_edit::TextEdit::with_text("new");
         editor.set_cursor_from_flat(3);
-        prev.insert("ta".into(), WidgetInstanceState::Text { editor, scroll: 0 });
+        prev.insert(
+            "ta".into(),
+            WidgetInstanceState::Text {
+                editor,
+                scroll: 0,
+                completions: Vec::new(),
+                completion_selected_index: 0,
+                completion_scroll_offset: 0,
+            },
+        );
         let out = render_spec(&spec, &prev, "ta", 80);
         // The first row should now read "new" (not "old").
         assert!(out.entries[0].text.starts_with("new"));
@@ -5129,6 +5201,8 @@ mod tests {
             field_width,
             max_visible_chars: 0,
             full_width,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
             key: key.map(|s| s.into()),
         }
     }

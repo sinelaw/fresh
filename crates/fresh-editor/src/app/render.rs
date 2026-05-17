@@ -3652,7 +3652,19 @@ fn paint_text_property_entry(
 
     let base_bg = theme.suggestion_bg;
     let base_style = if let Some(opts) = normalized.style.as_ref() {
-        Editor::resolve_overlay_style(opts, theme).bg(base_bg)
+        // Resolve the entry's row-level style, then fill in the
+        // suggestion_bg only when the style didn't supply one
+        // of its own. Without this guard, calling `.bg(base_bg)`
+        // unconditionally would wipe out a row-level
+        // `popup_selection_bg` (the highlight on the completion
+        // popup's selected candidate) — `Style::bg` is a
+        // replacement, not a merge.
+        let resolved = Editor::resolve_overlay_style(opts, theme);
+        if resolved.bg.is_none() {
+            resolved.bg(base_bg)
+        } else {
+            resolved
+        }
     } else {
         Style::default().bg(base_bg)
     };

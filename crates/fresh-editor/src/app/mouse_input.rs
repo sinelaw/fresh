@@ -354,6 +354,11 @@ impl Editor {
             // file browser consumed the scroll
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
+        } else if self.handle_floating_widget_panel_wheel(col, row, delta) {
+            // The floating widget panel (orchestrator New Session,
+            // ...) absorbed the wheel — its Text-widget
+            // completion popup uses this to scroll its candidate
+            // list when the user mouse-wheels over the popup.
         } else if self
             .active_window()
             .split_at_position(col, row)
@@ -3357,6 +3362,31 @@ impl Editor {
     /// Hit-test a click against the floating widget panel. Clicks
     /// inside the panel's inner rect resolve to a widget row/byte
     /// and fire `widget_event` via the same path
+    /// Forward a vertical-wheel scroll to the active floating
+    /// widget panel — same plumbing the orchestrator's
+    /// embedded-widget panels use, but the floating panel
+    /// doesn't show up in `split_at_position` so it needs its
+    /// own dispatch entry point. Returns `true` when the panel
+    /// is active AND the mouse is inside its inner rect (so the
+    /// caller knows the wheel was consumed and shouldn't fall
+    /// through to buffer scrolling).
+    fn handle_floating_widget_panel_wheel(&mut self, col: u16, row: u16, delta: i32) -> bool {
+        let inner = match self.floating_widget_panel.as_ref() {
+            Some(fwp) => match fwp.last_inner_rect {
+                Some(rect) => rect,
+                None => return false,
+            },
+            None => return false,
+        };
+        if col < inner.x || col >= inner.x + inner.width {
+            return false;
+        }
+        if row < inner.y || row >= inner.y + inner.height {
+            return false;
+        }
+        self.handle_widget_panel_wheel(super::FLOATING_PANEL_BUFFER_ID, delta)
+    }
+
     /// `handle_editor_click` uses; clicks outside the rect are
     /// swallowed without dismissing the panel.
     fn handle_floating_widget_click(&mut self, col: u16, row: u16) {

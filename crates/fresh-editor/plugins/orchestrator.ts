@@ -2351,18 +2351,65 @@ function scheduleCompletionRefresh(
   const token = ++form.completion.token;
   form.completion.field = field;
   form.completion.anchor = anchor;
-  // Debounce: same 150ms feel as a snappy file picker. Don't
-  // collapse with the project-path probe (which runs at 200ms)
-  // because the completion list is interactive — every extra
-  // tick of latency reads as "the editor isn't keeping up".
+  // Path completion reads from `editor.readDir`, which is a
+  // synchronous host call (no IPC waiting). Run it inline so
+  // Tab pressed immediately after the last keystroke picks
+  // from the up-to-date candidate list rather than a stale
+  // one — the user reported that with the debounce in place,
+  // typing "repo" + Tab would accept the *previous* prefix's
+  // top match (e.g. "Desktop") because the popup hadn't
+  // refreshed yet.
+  if (field === "project_path") {
+    const items = computePathCompletions(anchor);
+    if (!form || form.completion.token !== token) return;
+    setCompletionItems(field, items);
+    return;
+  }
+  // Branch completion shells out to `git for-each-ref` — that
+  // *is* async, so a sync flush isn't possible. Keep the
+  // 150ms debounce so we coalesce rapid typing into a single
+  // subprocess invocation; Tab during the gap accepts the
+  // last known list, which is the same behaviour `bash`'s
+  // tab completion exhibits while a long-running compspec is
+  // catching up.
   void editor.delay(150).then(async () => {
     if (!form || form.completion.token !== token) return;
-    const items = field === "project_path"
-      ? await fetchPathCompletions(anchor)
-      : await fetchBranchCompletions(anchor);
+    const items = await fetchBranchCompletions(anchor);
     if (!form || form.completion.token !== token) return;
     setCompletionItems(field, items);
   });
+}
+
+/// Synchronous variant of `fetchPathCompletions` — same logic,
+/// but doesn't go through a `Promise` so it can run inline from
+/// the `change` event handler. `fetchPathCompletions` keeps the
+/// async signature for the legacy debounce path (in case the
+/// fetcher ever grows an async step), but delegates here so the
+/// two paths can't drift.
+function computePathCompletions(typed: string): string[] {
+  const slashIdx = typed.lastIndexOf("/");
+  let parent: string;
+  let basename: string;
+  if (slashIdx < 0) {
+    parent = typed ? "." : editor.getCwd();
+    basename = typed;
+  } else if (slashIdx === 0) {
+    parent = "/";
+    basename = typed.slice(1);
+  } else {
+    parent = typed.slice(0, slashIdx);
+    basename = typed.slice(slashIdx + 1);
+  }
+  const entries = editor.readDir(parent);
+  const matches = entries
+    .filter((e) => !basename || e.name.startsWith(basename))
+    .filter((e) => !e.name.startsWith(".") || basename.startsWith("."));
+  matches.sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  const prefix = parent.endsWith("/") ? parent : `${parent}/`;
+  return matches.map((e) => `${prefix}${e.name}${e.is_dir ? "/" : ""}`);
 }
 
 function setCompletionItems(
@@ -2412,34 +2459,10 @@ async function fetchPathCompletions(typed: string): Promise<string[]> {
   // to and including the last `/`; `basename` is the unfinished
   // tail we filter on. `/foo/ba` → parent `/foo/`, basename
   // `ba`. `bar` (no slash) → parent `.`, basename `bar`. `/`
-  // → parent `/`, basename `""`.
-  const slashIdx = typed.lastIndexOf("/");
-  let parent: string;
-  let basename: string;
-  if (slashIdx < 0) {
-    parent = typed ? "." : editor.getCwd();
-    basename = typed;
-  } else if (slashIdx === 0) {
-    parent = "/";
-    basename = typed.slice(1);
-  } else {
-    parent = typed.slice(0, slashIdx);
-    basename = typed.slice(slashIdx + 1);
-  }
-  const entries = editor.readDir(parent);
-  const matches = entries
-    .filter((e) => !basename || e.name.startsWith(basename))
-    .filter((e) => !e.name.startsWith(".") || basename.startsWith(".")); // hide dotfiles unless asked
-  matches.sort((a, b) => {
-    // Dirs before files; then alphabetical.
-    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-  // Render each item as the full path so accepting it
-  // overwrites the input cleanly (no string-stitching at
-  // accept time).
-  const prefix = parent.endsWith("/") ? parent : `${parent}/`;
-  return matches.map((e) => `${prefix}${e.name}${e.is_dir ? "/" : ""}`);
+  // → parent `/`, basename `""`. Delegates to the sync
+  // `computePathCompletions` so the two paths can't drift —
+  // see `scheduleCompletionRefresh` for the sync use case.
+  return computePathCompletions(typed);
 }
 
 /// List the project's local + remote branches and tags via

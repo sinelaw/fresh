@@ -4112,11 +4112,15 @@ impl Editor {
     }
 
     /// Move the selected-index cursor of the focused Text widget's
-    /// completion popup by `delta` (Up = -1, Down = +1). Wraps at
-    /// the ends so the user can cycle through candidates without
-    /// hitting a wall — same convention as `List`'s selection
-    /// wrap. No-op when the focused widget isn't a Text-with-
-    /// open-completions.
+    /// completion popup by `delta` (Up = -1, Down = +1). Clamps
+    /// at the ends rather than wrapping — Down past the last
+    /// candidate stays on the last candidate, Up past the first
+    /// stays on the first. Wraparound on a popup-style picker
+    /// reads as "I scrolled past the bottom and now I'm at the
+    /// top" which is jarring when the user is actively comparing
+    /// items they expect to be in monotonic positions. No-op
+    /// when the focused widget isn't a Text-with-open-
+    /// completions.
     fn move_focused_text_completion_index(&mut self, panel_id: u64, delta: i32) {
         let panel = match self.widget_registry.get_mut(panel_id) {
             Some(p) => p,
@@ -4135,9 +4139,9 @@ impl Editor {
             if completions.is_empty() {
                 return;
             }
-            let n = completions.len() as i32;
+            let max = (completions.len() - 1) as i32;
             let cur = *completion_selected_index as i32;
-            let next = ((cur + delta) % n + n) % n;
+            let next = (cur + delta).clamp(0, max);
             *completion_selected_index = next as usize;
         }
     }
