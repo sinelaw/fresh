@@ -888,7 +888,16 @@ function buildOpenSpec(): WidgetSpec {
         // no need to measure cells from the plugin side.
         child: col(
           row(
-            button(newLabel, { intent: "primary", key: "new-session" }),
+            button(newLabel, {
+              intent: "primary",
+              // Drop the key while a confirm prompt is up so the
+              // button is non-tabbable and click-inert — same
+              // pattern the filter input uses. Otherwise it stays
+              // the first tabbable in the panel and the confirm
+              // view's "first-tabbable wins" focus fallback lands
+              // here instead of on Cancel.
+              key: inConfirm ? undefined : "new-session",
+            }),
             flexSpacer(),
           ),
           sessionsSeparator(),
@@ -1174,6 +1183,27 @@ function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
   return editor.writeFile(path, JSON.stringify(m, null, 2));
 }
 
+// Pick a session id to make active so that `excludeId` can be
+// closed. `close_window` refuses to close the active window, so
+// archive/delete of the currently-active session needs to switch
+// away first. Prefers a session already visible in the open
+// dialog's current filter (keeps the user in roughly the same
+// project context they were browsing), falls back to the base
+// session — which always exists and can't itself be archived /
+// deleted, so this is guaranteed to return a valid target.
+function pickNextActiveSession(excludeId: number): number {
+  if (openDialog) {
+    const inFilter = openDialog.filteredIds.find(
+      (sid) => sid !== excludeId && sid > 0,
+    );
+    if (typeof inFilter === "number") return inFilter;
+  }
+  for (const sid of orchestratorSessions.keys()) {
+    if (sid !== excludeId && sid > 0) return sid;
+  }
+  return 1;
+}
+
 // Archive flow: stop all processes (SIGKILL — archive is a
 // "I'm done with this for now" action, no graceful teardown
 // needed since the worktree stays on disk), close the editor
@@ -1210,12 +1240,13 @@ async function archiveSelectedSession(explicitId?: number): Promise<void> {
     clearInFlight();
     return;
   }
+  // close_window refuses to close the active window; swap to a
+  // different session first. The pick prefers something already
+  // in the dialog's current filter, falls back to the base
+  // session — both always exist (base is undeletable, and we'd
+  // have nothing to archive without at least one session).
   if (id === editor.activeWindow()) {
-    setDialogError(
-      "dive elsewhere first, then archive this session",
-    );
-    clearInFlight();
-    return;
+    editor.setActiveWindow(pickNextActiveSession(id));
   }
   const session = orchestratorSessions.get(id);
   if (!session) {
@@ -1530,12 +1561,10 @@ async function deleteConfirmedSession(): Promise<void> {
     clearInFlight();
     return;
   }
+  // Same auto-switch as archive — close_window refuses to close
+  // the active window, so swap to a different session first.
   if (id === editor.activeWindow()) {
-    setDialogError(
-      "dive elsewhere first, then delete this session",
-    );
-    clearInFlight();
-    return;
+    editor.setActiveWindow(pickNextActiveSession(id));
   }
 
   const cwd = editor.getCwd();
@@ -2894,20 +2923,13 @@ registerHandler("mode_text_input", orchestrator_mode_text_input);
 // selected session, rebuild the spec, and ensure the Cancel
 // button gets default focus.
 //
-// Because `buildOpenSpec` replaces the filter input with a
-// non-keyed disabled label while `pendingConfirm` is set, the
-// filter is no longer in the tab cycle and Cancel ends up as the
-// first tabbable — the host's "first-tabbable wins when
-// `prev_focus_key` doesn't match any current widget" fallback
-// then lands focus on Cancel automatically. The previous focus
-// key was the Stop/Archive/Delete button (gone after the
-// rebuild), so the fallback fires.
-//
-// Why Cancel rather than Confirm: confirm prompts for destructive
-// actions should be biased toward the safe path. Enter
-// immediately activates whichever button is focused (host
-// smart-key dispatch), so landing on Cancel means a stray Enter
-// is a no-op rather than a worktree wipe.
+// `buildOpenSpec` drops the `key` from the filter input and the
+// `+ New Session` button while `pendingConfirm` is set, so they
+// fall out of the Tab cycle. Cancel still isn't the first
+// tabbable in raw declaration order, though — `setFocusKey`
+// pins it explicitly so a stray Enter on mount is a no-op
+// rather than a worktree wipe (confirm prompts for destructive
+// actions should be biased toward the safe path).
 function enterConfirm(action: "stop" | "archive" | "delete"): void {
   if (!openDialog || !openPanel) return;
   const id = openDialog.filteredIds[openDialog.selectedIndex];
@@ -2946,6 +2968,7 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
   }
   openDialog.pendingConfirm = { action, sessionId: id };
   openPanel.update(buildOpenSpec());
+  openPanel.setFocusKey("confirm-cancel");
 }
 
 editor.on("widget_event", (e) => {
