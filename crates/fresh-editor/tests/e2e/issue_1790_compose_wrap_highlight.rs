@@ -78,103 +78,82 @@ fn test_compose_wrapped_paragraph_highlight_follows_cursor() {
         })
         .unwrap();
 
-    // Move into the paragraph (source line 3: 1=#, 2=blank, 3=paragraph) and
-    // press End to land at the end of the *first* visual sub-row, then Down
-    // once more to step onto a wrapped sub-row.  (Issue #1790: pressing End
-    // on a wrapped line lands on the current visual row's end, not the
-    // logical-line end.  To reach a wrapped sub-row we navigate visually
-    // with Down.  One Down is enough: any non-first sub-row of the paragraph
-    // exercises the bug, and stepping further risks overshooting onto the
-    // blank line below when the paragraph wraps to only two visual rows.)
-    harness
-        .send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 2)
-        .unwrap();
-    // Semantic wait: the cursor must land on the paragraph's first visual
-    // sub-row before we press End.  Anchor on the first paragraph words.
+    // Move into the paragraph and onto a wrapped sub-row.  Counting Down /
+    // End keypresses to land on the wrapped portion is fragile in compose
+    // mode (visual layout is plugin-driven and can shift between runs), so
+    // instead navigate by mouse to the row that contains "longer." — by
+    // construction that's the *last* visual sub-row of the wrapped paragraph
+    // and therefore a wrapped (non-first) sub-row, which is exactly what
+    // issue #1790 covers.  Locate it from the same rendered screen the
+    // assertion will read, click on a column that holds real text, and wait
+    // semantically for the cursor to land on that row before asserting.
+    let screen_pre = harness.screen_to_string();
+    let first_para_row = screen_pre
+        .lines()
+        .position(|l| l.contains("piece tree"))
+        .expect("paragraph start should be visible") as u16;
+    let last_para_row = screen_pre
+        .lines()
+        .position(|l| l.contains("longer."))
+        .expect("paragraph end should be visible") as u16;
+    assert!(
+        last_para_row > first_para_row,
+        "Expected the paragraph to wrap (start row {} should be above end row {})",
+        first_para_row,
+        last_para_row
+    );
+    // Click on a column known to hold paragraph text on the last sub-row.
+    // "longer." sits near the start of the last sub-row, so column equal to
+    // its offset on that row is a safe click target.
+    let last_line = screen_pre
+        .lines()
+        .nth(last_para_row as usize)
+        .expect("last paragraph row must be readable");
+    let click_col = last_line
+        .find("longer")
+        .expect("'longer' substring must be locatable on the last sub-row")
+        as u16;
+    harness.mouse_click(click_col, last_para_row).unwrap();
+
+    // Semantic wait: the hardware cursor lands on the clicked row, and the
+    // cell at the cursor position has been re-styled by the renderer
+    // (i.e. the highlight pipeline has caught up to the cursor move).  We
+    // verify the latter by waiting until two consecutive ticks report the
+    // same bg at the cursor position — this is a true per-cell stability
+    // check rather than a screen-symbol equality, so it doesn't miss
+    // highlight-only updates (which `screen_to_string` filters out).
     harness
         .wait_until(|h| {
             let Some((_x, y)) = h.vt100_cursor_position() else {
                 return false;
             };
-            let screen = h.screen_to_string();
-            screen
-                .lines()
-                .nth(y as usize)
-                .is_some_and(|l| l.contains("piece tree"))
+            y == last_para_row
         })
         .unwrap();
-    let (_x_before_end, y_before_end) = harness.screen_cursor_position();
-
-    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
-    // Semantic wait: End advanced the cursor far to the right on the same
-    // visual row.  (We only require the column to be past the leftmost
-    // possible compose indent; the exact value depends on the wrap point.)
+    let mut prev_bg: Option<Option<ratatui::style::Color>> = None;
     harness
         .wait_until(|h| {
             let Some((x, y)) = h.vt100_cursor_position() else {
                 return false;
             };
-            y == y_before_end && x > 10
-        })
-        .unwrap();
-    let (x_after_end, _y) = harness.screen_cursor_position();
-
-    // Step down one visual row to reach the second (wrapped) sub-row.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    // Semantic wait: cursor advanced to the next visual row, and that row
-    // still belongs to the wrapped paragraph (not the blank line below or
-    // anywhere off-paragraph).  We assert paragraph membership by requiring
-    // the row to be non-blank, since every wrapped sub-row of the paragraph
-    // contains text whereas the line immediately below is empty.
-    harness
-        .wait_until(|h| {
-            let Some((_x, y)) = h.vt100_cursor_position() else {
-                return false;
-            };
-            if y <= y_before_end {
+            if y != last_para_row {
                 return false;
             }
-            let screen = h.screen_to_string();
-            screen
-                .lines()
-                .nth(y as usize)
-                .is_some_and(|l| !l.trim().is_empty())
+            let cur_bg = h.get_cell_style(x, y).map(|s| s.bg).unwrap_or(None);
+            let stable = prev_bg == Some(cur_bg);
+            prev_bg = Some(cur_bg);
+            stable
         })
         .unwrap();
-    // Sanity: End set us past the compose indent and Down preserved a
-    // similarly-deep column (clamped to the sub-row's end if shorter).
-    let (cursor_x_now, _y) = harness.screen_cursor_position();
-    assert!(
-        cursor_x_now > 0,
-        "After End+Down the cursor should sit inside the wrapped sub-row, \
-         not at column 0 (would mean we overshot onto a blank line). \
-         x_after_end={}, cursor_x={}",
-        x_after_end,
-        cursor_x_now,
-    );
 
-    // Hardware cursor must be visible somewhere in the content area.
+    // Read the hardware cursor position now that the highlight pipeline
+    // has settled.  Must sit on `last_para_row` (the wrapped sub-row we
+    // clicked into) — the wait above guarantees that.
     let (cursor_x, cursor_y) = harness.screen_cursor_position();
-    assert!(
-        cursor_y > 0,
-        "Hardware cursor should land inside the content area, got y={}",
-        cursor_y
-    );
-
-    // Sanity: the wrapped paragraph must actually span multiple visual rows
-    // — otherwise this test isn't exercising the bug.  We check that "longer."
-    // (the last word) is on a different row from "piece tree" (start of the
-    // paragraph).
-    let screen = harness.screen_to_string();
-    let row_of =
-        |needle: &str| -> Option<usize> { screen.lines().position(|l| l.contains(needle)) };
-    let first_row = row_of("piece tree").expect("paragraph start should be visible");
-    let last_row = row_of("longer.").expect("paragraph end should be visible");
-    assert!(
-        last_row > first_row,
-        "Expected the paragraph to wrap (start row {} should be above end row {})",
-        first_row,
-        last_row
+    assert_eq!(
+        cursor_y, last_para_row,
+        "Cursor should be on the wrapped sub-row we clicked ({}), not {}",
+        last_para_row, cursor_y,
     );
 
     // Default dark theme `current_line_bg` (matches existing tests in
