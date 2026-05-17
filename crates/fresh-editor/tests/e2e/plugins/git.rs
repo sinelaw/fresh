@@ -1448,43 +1448,46 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
         .wait_until(|h| h.screen_to_string().contains("+    println!(\"second\");"))
         .unwrap();
 
-    // Focus the detail panel (Tab from log) and land on a diff line.
+    // Focus the detail panel and land on a `file`-bearing diff line.
     //
-    // Detail-buffer line layout for a single-file two-commit show with
-    // `--stat --patch` (the `---` after the commit message is a stat
-    // separator emitted by git, not a diff header):
+    // Originally this used `Tab` (a plugin handler that calls
+    // `editor.focusBufferGroupPanel`) followed by 10× `Down` and a
+    // `wait_until("Ln 11, Col 1")`.  Two problems:
     //
-    //   Ln 1   <short>  <subject>      (detail-title;       no `file` prop)
-    //   Ln 2   commit <hash>           (detail-commit-line; no `file` prop)
-    //   Ln 3   Author: …               (detail-meta;        no `file` prop)
-    //   Ln 4   Date:   …               (detail-meta;        no `file` prop)
-    //   Ln 5   <blank>
-    //   Ln 6       <commit message>
-    //   Ln 7   ---                     (git stat separator)
-    //   Ln 8    src/main.rs | 2 +-     (stat)
-    //   Ln 9    1 file changed, …      (stat)
-    //   Ln 10  <blank>
-    //   Ln 11  diff --git a/…  b/…     (detail-diff-header; HAS `file`)
-    //   Ln 12  index …                 (detail-diff-header; no `file`)
-    //   Ln 13  --- a/src/main.rs       (detail-diff-header; no `file`)
-    //   Ln 14  +++ b/src/main.rs       (detail-diff-header; HAS `file`)
-    //   Ln 15  @@ -1,3 +1,3 @@         (detail-hunk-header; HAS `file`)
-    //   Ln 16   fn main() {            (detail-context;     HAS `file`)
+    //   1. Under heavy CI load, `drain_async_work`'s 200 ms cap can be
+    //      exceeded by the plugin thread that handles `Tab`.  The Downs
+    //      are then dispatched while focus is still on the log panel
+    //      (which only has two commits worth of lines), the detail
+    //      cursor never reaches the target line, and the wait hangs
+    //      until the nextest 180 s timeout.
     //
-    // Ln 11 is the first content-bearing diff line; Lns 12–13 lack the
-    // `file` property and would silently trigger the move-to-diff-with-context
-    // fallback in the plugin. So the test must land *exactly* on Ln 11 (and
-    // later Ln 16) before pressing Enter.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    for _ in 0..10 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    // Semantic anchor: the focused-panel chrome prints `Ln N, Col M`, so
-    // wait for the cursor to actually land at Ln 11 before Enter rather
-    // than relying on the move pipeline being fully drained per-keypress.
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 11, Col 1"))
-        .unwrap();
+    //   2. The detail-buffer line numbering encoded in the old comment
+    //      (Ln 11 == "diff --git", Ln 16 == " fn main() {") is fragile:
+    //      it shifts whenever the plugin's detail-header changes (e.g.
+    //      a title row is added/removed), and a hardcoded line-number
+    //      wait silently turns that drift into a timeout instead of a
+    //      clean assertion failure.
+    //
+    // Clicking directly on the rendered "diff --git" row both focuses
+    // the panel and positions the cursor on a `file`-bearing line in a
+    // single synchronous editor action — no plugin round-trip, and no
+    // dependency on the detail buffer's exact line numbering.  The
+    // detail panel is the *right* split, so the click column must be
+    // where the substring actually appears in the rendered row (past
+    // the panel divider): clicking at column 0 lands in the log panel
+    // and leaves the detail focus untouched.
+    //
+    // The `--stat --patch` output exposes several lines with `file`
+    // set (`diff --git …`, `+++ b/…`, `@@ -…`, ` fn main() {`); the
+    // assertion below only cares that Enter on such a line opens a
+    // file-view, so any one of them is a valid landing target.
+    let screen_before_click1 = harness.screen_to_string();
+    let (diff_row, diff_col) = screen_before_click1
+        .lines()
+        .enumerate()
+        .find_map(|(y, l)| l.find("diff --git").map(|x| (y as u16, x as u16)))
+        .expect("detail panel should show a diff header before the click");
+    harness.mouse_click(diff_col, diff_row).unwrap();
     // First Enter: open file-view of src/main.rs @ HEAD.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -1506,7 +1509,7 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
         let s = harness.screen_to_string();
         assert!(
             !s.contains("Move cursor to a diff line with file context"),
-            "BUG: first Enter at Ln 11 fell back to move-cursor status:\n{s}",
+            "BUG: first Enter on the `diff --git` line fell back to move-cursor status:\n{s}",
         );
     }
 
@@ -1518,16 +1521,17 @@ fn test_git_log_open_file_works_after_closing_previous_file_view() {
         .wait_until(|h| h.screen_to_string().contains("+    println!(\"second\");"))
         .unwrap();
 
-    // Nudge the detail cursor down to Ln 16 (` fn main() {`, a context
-    // diff line that has `file` set) and press Enter again. Before the
-    // fix the second Enter reported "Move cursor to a diff line with
-    // file context".
-    for _ in 0..5 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 16, Col 1"))
-        .unwrap();
+    // Click on the ` fn main() {` context line (also `file`-bearing) and
+    // press Enter again.  Before the fix the second Enter reported
+    // "Move cursor to a diff line with file context".  Same right-panel
+    // column dance as the first click.
+    let screen_before_click2 = harness.screen_to_string();
+    let (fn_row, fn_col) = screen_before_click2
+        .lines()
+        .enumerate()
+        .find_map(|(y, l)| l.find(" fn main() {").map(|x| (y as u16, x as u16)))
+        .expect("detail panel should show ` fn main() {` (context line) before the click");
+    harness.mouse_click(fn_col, fn_row).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
