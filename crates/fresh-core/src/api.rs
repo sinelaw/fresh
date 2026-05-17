@@ -1593,6 +1593,14 @@ pub enum WidgetSpec {
         /// closes the popup.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         completions: Vec<String>,
+        /// How many candidate rows the popup paints at once
+        /// when it opens. Excess candidates stay reachable
+        /// via Up/Down (host auto-scrolls to keep selection
+        /// in view) or the mouse wheel; a thumb glyph paints
+        /// in the right edge of the popup whenever there's
+        /// more to scroll. `0` (default) falls back to `5`.
+        #[serde(default)]
+        completions_visible_rows: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

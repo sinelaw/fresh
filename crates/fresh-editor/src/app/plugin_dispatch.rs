@@ -3571,20 +3571,22 @@ impl Editor {
                     // (if open) doesn't disappear on a value
                     // mutation that happens to land while the
                     // user is mid-keystroke.
-                    let (scroll, multiline, completions, sel_idx) =
+                    let (scroll, multiline, completions, sel_idx, scroll_off) =
                         match panel.instance_states.get(&widget_key) {
                             Some(crate::widgets::WidgetInstanceState::Text {
                                 editor,
                                 scroll,
                                 completions,
                                 completion_selected_index,
+                                completion_scroll_offset,
                             }) => (
                                 *scroll,
                                 editor.multiline,
                                 completions.clone(),
                                 *completion_selected_index,
+                                *completion_scroll_offset,
                             ),
-                            _ => (0u32, true, Vec::new(), 0usize),
+                            _ => (0u32, true, Vec::new(), 0usize, 0u32),
                         };
                     let mut editor = if multiline {
                         crate::primitives::text_edit::TextEdit::with_text(&value)
@@ -3603,6 +3605,7 @@ impl Editor {
                             scroll,
                             completions,
                             completion_selected_index: sel_idx,
+                            completion_scroll_offset: scroll_off,
                         },
                     );
                 }
@@ -3653,11 +3656,13 @@ impl Editor {
                     if let Some(crate::widgets::WidgetInstanceState::Text {
                         completions,
                         completion_selected_index,
+                        completion_scroll_offset,
                         ..
                     }) = panel.instance_states.get_mut(&widget_key)
                     {
                         *completions = items;
                         *completion_selected_index = 0;
+                        *completion_scroll_offset = 0;
                     }
                 }
             }
@@ -3813,18 +3818,29 @@ impl Editor {
             match key {
                 "Tab" => {
                     self.fire_completion_accept(panel_id);
+                    // The plugin's accept handler typically calls
+                    // setValue + (maybe) setCompletions — those
+                    // mutations re-render on their own, so we
+                    // don't force a render here.
                     return;
                 }
                 "Up" => {
                     self.move_focused_text_completion_index(panel_id, -1);
+                    // Selection moved host-side; force a repaint
+                    // so the highlight + scroll-into-view shift
+                    // is visible without waiting for the next
+                    // unrelated mutation.
+                    self.rerender_widget_panel(panel_id);
                     return;
                 }
                 "Down" => {
                     self.move_focused_text_completion_index(panel_id, 1);
+                    self.rerender_widget_panel(panel_id);
                     return;
                 }
                 "Enter" | "Escape" => {
                     self.dismiss_focused_text_completions(panel_id);
+                    self.rerender_widget_panel(panel_id);
                     return;
                 }
                 _ => {}
@@ -4462,6 +4478,16 @@ impl Editor {
         let panels = self.widget_registry.panels_for_buffer(buffer_id);
         let mut consumed = false;
         for panel_id in panels {
+            // First chance: a focused Text widget with an open
+            // completion popup absorbs the wheel — scrolling the
+            // candidate list when the popup is what the user is
+            // pointing at takes priority over scrolling a
+            // sibling List/Tree elsewhere on the panel.
+            if self.focused_text_completions_open(panel_id) {
+                self.scroll_focused_text_completions(panel_id, delta);
+                consumed = true;
+                continue;
+            }
             let spec = match self.widget_registry.get(panel_id) {
                 Some(p) => p.spec.clone(),
                 None => continue,
@@ -4483,6 +4509,53 @@ impl Editor {
             }
         }
         consumed
+    }
+
+    /// Shift the focused Text widget's completion popup scroll
+    /// offset by `delta` rows. The renderer reads the visible-
+    /// rows cap from the Text spec; we approximate it here as
+    /// "5 if zero / unset" to mirror the renderer's default —
+    /// the cap matters for clamping the max scroll so the
+    /// thumb doesn't drift past the end.
+    fn scroll_focused_text_completions(&mut self, panel_id: u64, delta: i32) {
+        let panel = match self.widget_registry.get(panel_id) {
+            Some(p) => p,
+            None => return,
+        };
+        let focus_key = panel.focus_key.clone();
+        if focus_key.is_empty() {
+            return;
+        }
+        let spec_visible_rows = match crate::widgets::find_widget_by_key(&panel.spec, &focus_key) {
+            Some(fresh_core::api::WidgetSpec::Text {
+                completions_visible_rows,
+                ..
+            }) => *completions_visible_rows,
+            _ => 0,
+        };
+        let visible = if spec_visible_rows == 0 {
+            5u32
+        } else {
+            spec_visible_rows
+        };
+        let panel = match self.widget_registry.get_mut(panel_id) {
+            Some(p) => p,
+            None => return,
+        };
+        if let Some(crate::widgets::WidgetInstanceState::Text {
+            completions,
+            completion_scroll_offset,
+            ..
+        }) = panel.instance_states.get_mut(&focus_key)
+        {
+            if completions.is_empty() {
+                return;
+            }
+            let total = completions.len() as u32;
+            let max_scroll = total.saturating_sub(visible.min(total));
+            let next = (*completion_scroll_offset as i32 + delta).clamp(0, max_scroll as i32);
+            *completion_scroll_offset = next as u32;
+        }
     }
 
     /// Shift a Tree's `scroll_offset` by `delta` rows. If the
@@ -5049,6 +5122,7 @@ impl Editor {
                 scroll: 0,
                 completions: Vec::new(),
                 completion_selected_index: 0,
+                completion_scroll_offset: 0,
             },
         );
         true

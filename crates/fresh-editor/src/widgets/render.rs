@@ -1128,9 +1128,20 @@ fn render_collected(
             max_visible_chars,
             full_width,
             completions,
+            completions_visible_rows,
             key,
         } => {
             let _ = completions; // pulled from instance state below
+                                 // Default popup height: 5 visible rows. Plugins
+                                 // override per-widget by setting
+                                 // `completions_visible_rows`; 0 falls back to the
+                                 // default so the orchestrator's existing `text({...})`
+                                 // calls Just Work without opting in.
+            let effective_visible_rows = if *completions_visible_rows == 0 {
+                5u32
+            } else {
+                *completions_visible_rows
+            };
 
             let is_focused = match key.as_deref() {
                 Some(k) if !k.is_empty() => k == focus_key,
@@ -1153,6 +1164,7 @@ fn render_collected(
             // index to the current list size below.
             let mut prev_completions: Vec<String> = Vec::new();
             let mut prev_completion_idx: usize = 0;
+            let mut prev_completion_scroll: u32 = 0;
             match key
                 .as_deref()
                 .filter(|k| !k.is_empty())
@@ -1163,11 +1175,13 @@ fn render_collected(
                     scroll,
                     completions,
                     completion_selected_index,
+                    completion_scroll_offset,
                 }) => {
                     effective_editor = editor.clone();
                     prev_scroll = *scroll;
                     prev_completions = completions.clone();
                     prev_completion_idx = *completion_selected_index;
+                    prev_completion_scroll = *completion_scroll_offset;
                 }
                 _ => {
                     effective_editor = if multiline_spec {
@@ -1290,35 +1304,95 @@ fn render_collected(
             // auto-clamped first-visible-row for multi-line, or `0`
             // for single-line.
             //
-            // Emit the completion popup *after* the input row but
-            // *before* persisting state. The popup rides on the
-            // wrapping `LabeledSection`'s side borders: each row
-            // we push here gets `│ ... │` chrome added by the
-            // section, so the side borders naturally extend down
-            // through the candidates and the section's own
-            // `╰─...─╯` bottom border closes the unified block.
-            // See `render_completion_dim_separator` /
-            // `render_completion_item` for the chrome and the
-            // alignment rule (item text starts at the same column
-            // as the input value's first character).
+            // Emit the completion popup as *overlay rows* rather
+            // than regular entries so it floats — the rest of the
+            // form below the input keeps its layout position and
+            // the popup paints on top. The overlay anchors are
+            // chosen so the dim separator lands on top of the
+            // wrapping `LabeledSection`'s bottom border (visually
+            // replacing it), and the side borders + bottom
+            // border that follow paint over whatever sits below
+            // the section. See `render_completion_*` helpers for
+            // the chrome detail.
             if !prev_completions.is_empty() {
-                // `panel_width` here is whatever the enclosing
-                // container (typically a `LabeledSection`) handed
-                // us — i.e. the inner area width, before that
-                // container wraps each row with its own
-                // `│ ... │` chrome. The popup rows we emit get
-                // padded by the container to exactly this width,
-                // so the section's right border lines up with the
-                // input row's.
-                let row_cols = panel_width as usize;
-                entries.push(render_completion_dim_separator(row_cols));
-                for (i, item) in prev_completions.iter().enumerate() {
-                    entries.push(render_completion_item(
-                        item,
-                        i == prev_completion_idx,
-                        row_cols,
-                    ));
+                // `panel_width` here is the inner-area width the
+                // wrapping `LabeledSection` handed us (it has
+                // already subtracted its own 4 columns of chrome
+                // — `│ ` on the left + ` │` on the right). The
+                // overlay rows need to paint into the full panel
+                // width (including those `│ ... │` columns), so
+                // we widen by 4 here so the side borders the
+                // popup paints line up with the section's.
+                let popup_inner = panel_width as usize;
+                let popup_total = popup_inner.saturating_add(4); // re-add section chrome
+                let total = prev_completions.len() as u32;
+                let visible = effective_visible_rows.max(1).min(total);
+                // Auto-scroll: keep the selected row inside the
+                // visible window. Up/Down only ever moves the
+                // selection by ±1 (with wraparound), so a one-
+                // step adjustment is enough — unless the wrap
+                // landed at the other end of the list, in which
+                // case we still snap correctly because we clamp
+                // by computing `selected + 1 - visible` for the
+                // "scrolled past top" case.
+                let sel = prev_completion_idx as u32;
+                let mut scroll = prev_completion_scroll;
+                if sel < scroll {
+                    scroll = sel;
                 }
+                if sel >= scroll + visible {
+                    scroll = sel + 1 - visible;
+                }
+                let max_scroll = total.saturating_sub(visible);
+                if scroll > max_scroll {
+                    scroll = max_scroll;
+                }
+                prev_completion_scroll = scroll;
+
+                // Overlay anchors:
+                //   anchor 0 = the text widget's own row (input)
+                //   anchor 1 = labeledSection's bottom border row
+                //              (the dim separator paints here,
+                //              replacing the section's `╰─...─╯`
+                //              visually)
+                //   anchor 2..N+1 = item rows
+                //   anchor N+2 = popup's own bottom border
+                //              `╰─...─╯` (a `LabeledSection`
+                //              passes child overlays through
+                //              unchanged, see widgets/render.rs
+                //              `LabeledSection` branch).
+                let mut anchor: u32 = 1;
+                overlays.push(OverlayRow {
+                    buffer_row: anchor,
+                    entry: render_completion_dim_separator_overlay(popup_total),
+                });
+                anchor += 1;
+                let needs_scrollbar = total > visible;
+                let end = (scroll + visible).min(total) as usize;
+                for (visible_row, i) in (scroll as usize..end).enumerate() {
+                    let item = &prev_completions[i];
+                    let thumb = if needs_scrollbar {
+                        completion_scrollbar_glyph(visible_row as u32, visible, scroll, total)
+                    } else {
+                        None
+                    };
+                    overlays.push(OverlayRow {
+                        buffer_row: anchor,
+                        entry: render_completion_item_overlay(
+                            item,
+                            i == prev_completion_idx,
+                            popup_total,
+                            thumb,
+                        ),
+                    });
+                    anchor += 1;
+                }
+                overlays.push(OverlayRow {
+                    buffer_row: anchor,
+                    entry: render_completion_bottom_border(popup_total),
+                });
+            } else {
+                prev_completion_scroll = 0;
             }
             if let Some(k) = key.as_deref().filter(|k| !k.is_empty()) {
                 next_state.insert(
@@ -1328,6 +1402,7 @@ fn render_collected(
                         scroll: new_scroll,
                         completions: prev_completions,
                         completion_selected_index: prev_completion_idx,
+                        completion_scroll_offset: prev_completion_scroll,
                     },
                 );
             }
@@ -1338,10 +1413,19 @@ fn render_collected(
             let inner_width = panel_width.saturating_sub(4).max(1);
             let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
                 render_collected(child, prev, next_state, focus_key, inner_width);
-            // Overlays bubble through the section unchanged —
-            // the section's chrome doesn't shift them and the
-            // anchor row is already relative to the inner area.
-            overlays.extend(child_overlays);
+            // Shift child overlays by 1 to account for the top
+            // border row this section emits — the child authored
+            // its anchors relative to its own row 0 (e.g. anchor 1
+            // = "one row below me"), so an unshifted forward
+            // would land them one row earlier than intended. The
+            // Text widget's completion-popup overlays rely on
+            // this: anchor 1 lands on the section's bottom
+            // border row (replacing it visually with the dim
+            // separator), anchor 2+ lands below the section.
+            overlays.extend(child_overlays.into_iter().map(|mut o| {
+                o.buffer_row += 1;
+                o
+            }));
 
             // Render the top border with the label embedded as a
             // legend: `╭─ <label> ─...─╮`. When the label is empty,
@@ -1555,28 +1639,131 @@ fn render_section_bottom_border(total_cols: usize) -> TextPropertyEntry {
     }
 }
 
-/// Dim `┄`-dashed row that takes the place of the input's normal
-/// `╰─...─╯` bottom border when the completion popup is open.
-/// `total_cols` is the width of the row *before* the wrapping
-/// `LabeledSection` adds its own `│ ... │` chrome — we fill the
-/// whole inner width with `┄` so the dashed line runs flush to
-/// the side borders, reading as a transition between the input
-/// and the candidate list rather than a chunky divider.
-fn render_completion_dim_separator(total_cols: usize) -> TextPropertyEntry {
-    let mut text = String::with_capacity(total_cols * 3 + 1);
-    for _ in 0..total_cols.max(1) {
+/// Dim-separator overlay row for the completion popup. Unlike
+/// `render_completion_dim_separator` (which targets a child of
+/// a `LabeledSection` and lets the section wrap the row with
+/// `│ ... │`), this one paints into the FULL panel width
+/// directly and supplies its own `│ ... │` chrome — overlay
+/// rows skip the wrapping section's per-row wrap and land on
+/// the parent col's row directly. `total_cols` is the section's
+/// outer width.
+fn render_completion_dim_separator_overlay(total_cols: usize) -> TextPropertyEntry {
+    let inner = total_cols.saturating_sub(2).max(1);
+    let mut text = String::with_capacity(total_cols * 4 + 2);
+    text.push('│');
+    for _ in 0..inner {
         text.push('┄');
     }
+    text.push('│');
     text.push('\n');
-    let style = OverlayOptions {
-        fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
-        ..Default::default()
-    };
+    // Sides paint in `popup_border_fg` (the labeled section's
+    // own border colour); the dashed run paints in the dim
+    // foreground so it reads as a recessed transition rather
+    // than chrome.
+    let border_bytes = "│".len();
+    let dash_bytes = "┄".len() * inner;
+    let inline_overlays = vec![
+        InlineOverlay {
+            start: 0,
+            end: border_bytes,
+            style: OverlayOptions {
+                fg: None, // inherit popup border colour from the renderer's default border style
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        },
+        InlineOverlay {
+            start: border_bytes,
+            end: border_bytes + dash_bytes,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        },
+    ];
     TextPropertyEntry {
         text,
         properties: Default::default(),
-        style: Some(style),
+        style: None,
+        inline_overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+/// Completion-popup bottom border overlay row: `│╰─...─╯│`
+/// shape — wait no, the bottom-border row is exactly
+/// `╰─...─╯` (the side `│ ... │` columns become the corner
+/// glyphs at the very bottom of the popup). Paints at the row
+/// right after the last visible candidate, closing the
+/// unified box.
+fn render_completion_bottom_border(total_cols: usize) -> TextPropertyEntry {
+    let mut text = String::with_capacity(total_cols * 4 + 2);
+    text.push('╰');
+    for _ in 0..total_cols.saturating_sub(2).max(1) {
+        text.push('─');
+    }
+    text.push('╯');
+    text.push('\n');
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
         inline_overlays: Vec::new(),
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+/// Overlay variant of `render_completion_item`. Same body
+/// (leading space + candidate text + optional scrollbar glyph
+/// + trailing pad), but wrapped with the popup's own
+/// `│ ... │` chrome since overlay rows paint at the panel
+/// width directly without going through a `LabeledSection`'s
+/// row wrapper.
+fn render_completion_item_overlay(
+    item: &str,
+    selected: bool,
+    total_cols: usize,
+    scrollbar: Option<char>,
+) -> TextPropertyEntry {
+    let inner = total_cols.saturating_sub(2).max(1);
+    // Reuse the inline-row builder for the body — same layout
+    // rules (1 leading space, item text, pad-to-(inner-1),
+    // scrollbar in the last column).
+    let body_entry = render_completion_item(item, selected, inner, scrollbar);
+    // Build the wrapped text: `│` + body content + `│`. We
+    // strip the body's trailing newline first so the borders
+    // sit on the same line.
+    let mut text = String::with_capacity(body_entry.text.len() + 8);
+    text.push('│');
+    let body_no_nl = body_entry.text.trim_end_matches('\n');
+    text.push_str(body_no_nl);
+    text.push('│');
+    text.push('\n');
+    // Shift the body's inline overlays right by one byte
+    // (the leading `│`) so the scrollbar tint still lands on
+    // the right cell.
+    let left_border_bytes = "│".len();
+    let inline_overlays = body_entry
+        .inline_overlays
+        .into_iter()
+        .map(|mut io| {
+            io.start += left_border_bytes;
+            io.end += left_border_bytes;
+            io
+        })
+        .collect();
+    TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: body_entry.style,
+        inline_overlays,
         segments: Vec::new(),
         pad_to_chars: None,
         truncate_to_chars: None,
@@ -1595,12 +1782,58 @@ fn render_completion_dim_separator(total_cols: usize) -> TextPropertyEntry {
 /// fg/bg theme keys + `extend_to_line_end` so the highlight
 /// runs all the way to the right side border instead of
 /// stopping at the end of the candidate text.
-fn render_completion_item(item: &str, selected: bool, total_cols: usize) -> TextPropertyEntry {
-    let mut text = String::with_capacity(item.len() + 2);
+///
+/// `scrollbar` is `Some(glyph)` when the popup is scrollable
+/// AND this row owns a scrollbar character (thumb or track).
+/// The glyph paints at the right edge of the row, just inside
+/// the wrapping section's `│` border, so the scrollbar lives
+/// in the popup's chrome rather than crowding the candidate
+/// text. `None` rows leave the column blank — either because
+/// the popup fits without scrolling or because every row gets
+/// `None` when there's nothing to indicate.
+fn render_completion_item(
+    item: &str,
+    selected: bool,
+    total_cols: usize,
+    scrollbar: Option<char>,
+) -> TextPropertyEntry {
+    // Build the row up to `total_cols - 1` so the scrollbar (or
+    // a trailing space when there isn't one) lands at exactly
+    // `total_cols - 1`. The wrapping section pads/truncates the
+    // resulting row to `total_cols`, but we want the scrollbar
+    // glyph to keep its position regardless of how long the
+    // candidate text is, so we hand-pad rather than relying on
+    // entry-level `pad_to_chars`.
+    let text_budget = total_cols.saturating_sub(1).saturating_sub(1); // leading space + scrollbar col
+    let item_chars: Vec<char> = item.chars().collect();
+    let (visible_item, truncated): (String, bool) = if item_chars.len() <= text_budget {
+        (item.to_string(), false)
+    } else {
+        // Tail-truncate with `…` so the prefix the user typed
+        // stays anchored at the left, which is the common case
+        // for path / branch completions (the divergent part is
+        // at the end).
+        let keep = text_budget.saturating_sub(1);
+        let head: String = item_chars.iter().take(keep).collect();
+        (format!("{}…", head), true)
+    };
+    let _ = truncated;
+    let scrollbar_ch = scrollbar.unwrap_or(' ');
+    let mut text = String::with_capacity(total_cols * 4 + 2);
     text.push(' ');
-    text.push_str(item);
+    text.push_str(&visible_item);
+    // Pad with spaces between the candidate text and the
+    // scrollbar column so all rows have the scrollbar glyph in
+    // the same column regardless of candidate length.
+    let used_cols = 1 + visible_item.chars().count();
+    let pad_cols = total_cols.saturating_sub(used_cols).saturating_sub(1);
+    for _ in 0..pad_cols {
+        text.push(' ');
+    }
+    text.push(scrollbar_ch);
     text.push('\n');
-    let style = if selected {
+
+    let body_style = if selected {
         Some(OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_FG)),
             bg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
@@ -1610,14 +1843,78 @@ fn render_completion_item(item: &str, selected: bool, total_cols: usize) -> Text
     } else {
         None
     };
+    // Scrollbar glyph paints in `popup_border_fg` so it reads as
+    // chrome rather than as part of the candidate text. We do
+    // this as an inline overlay over the last visible cell so
+    // the selection highlight on selected rows doesn't repaint
+    // the scrollbar in white-on-blue.
+    let mut inline_overlays: Vec<InlineOverlay> = Vec::new();
+    if scrollbar.is_some() {
+        let total_bytes = text.trim_end_matches('\n').len();
+        let scrollbar_byte_len = scrollbar_ch.len_utf8();
+        let start = total_bytes - scrollbar_byte_len;
+        let end = total_bytes;
+        inline_overlays.push(InlineOverlay {
+            start,
+            end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+
     TextPropertyEntry {
         text,
         properties: Default::default(),
-        style,
-        inline_overlays: Vec::new(),
+        style: body_style,
+        inline_overlays,
         segments: Vec::new(),
-        pad_to_chars: Some(total_cols as u32),
+        pad_to_chars: None,
         truncate_to_chars: None,
+    }
+}
+
+/// Compute the scrollbar glyph for the given visible row
+/// position. Returns `Some(...)` for rows that overlap the
+/// thumb's vertical extent (rendered as a solid `█`); `None`
+/// otherwise (rendered as a blank track cell so the candidate
+/// row still aligns with the scrollbar column).
+///
+/// The thumb size is proportional to `visible / total` and
+/// snaps to at least one row. The thumb's top row is
+/// `floor(scroll / total * visible)` — first row of the
+/// visible window when scrolled to the top, last row when
+/// scrolled to the bottom.
+fn completion_scrollbar_glyph(
+    visible_row: u32,
+    visible: u32,
+    scroll: u32,
+    total: u32,
+) -> Option<char> {
+    if total <= visible || visible == 0 {
+        return None;
+    }
+    // Thumb size: at least 1 row, otherwise proportional. Float
+    // math is fine — `total` and `visible` are tiny (popup
+    // height capped to a handful of rows).
+    let thumb_size = ((visible as f32 * visible as f32) / total as f32).round() as u32;
+    let thumb_size = thumb_size.max(1).min(visible);
+    let max_scroll = total - visible;
+    let thumb_top = if max_scroll == 0 {
+        0
+    } else {
+        // `(scroll / max_scroll) * (visible - thumb_size)` —
+        // 0 when at the top, `visible - thumb_size` when at the
+        // bottom.
+        ((scroll as f32 / max_scroll as f32) * (visible - thumb_size) as f32).round() as u32
+    };
+    if visible_row >= thumb_top && visible_row < thumb_top + thumb_size {
+        Some('█')
+    } else {
+        None
     }
 }
 

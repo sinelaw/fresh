@@ -108,6 +108,11 @@ pub enum WidgetInstanceState {
         /// non-empty list; clamped on every render in case the
         /// list shrank.
         completion_selected_index: usize,
+        /// Index of the first candidate row currently painted.
+        /// Up/Down adjusts this implicitly (the renderer auto-
+        /// scrolls to keep selection in view); the mouse wheel
+        /// scrolls it directly without moving the selection.
+        completion_scroll_offset: u32,
     },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become
