@@ -4122,7 +4122,13 @@ impl Editor {
     /// when the focused widget isn't a Text-with-open-
     /// completions.
     fn move_focused_text_completion_index(&mut self, panel_id: u64, delta: i32) {
-        let panel = match self.widget_registry.get_mut(panel_id) {
+        // First read the spec's visible-rows cap so we can pull
+        // scroll back into view if the new selection lands above
+        // the current scroll offset. (The renderer only does
+        // forward-pull — it would otherwise fight the mouse-
+        // wheel handler which deliberately diverges scroll from
+        // selection.)
+        let panel = match self.widget_registry.get(panel_id) {
             Some(p) => p,
             None => return,
         };
@@ -4130,9 +4136,26 @@ impl Editor {
         if focus_key.is_empty() {
             return;
         }
+        let spec_visible_rows = match crate::widgets::find_widget_by_key(&panel.spec, &focus_key) {
+            Some(fresh_core::api::WidgetSpec::Text {
+                completions_visible_rows,
+                ..
+            }) => *completions_visible_rows,
+            _ => 0,
+        };
+        let visible = if spec_visible_rows == 0 {
+            5u32
+        } else {
+            spec_visible_rows
+        };
+        let panel = match self.widget_registry.get_mut(panel_id) {
+            Some(p) => p,
+            None => return,
+        };
         if let Some(crate::widgets::WidgetInstanceState::Text {
             completions,
             completion_selected_index,
+            completion_scroll_offset,
             ..
         }) = panel.instance_states.get_mut(&focus_key)
         {
@@ -4143,6 +4166,16 @@ impl Editor {
             let cur = *completion_selected_index as i32;
             let next = (cur + delta).clamp(0, max);
             *completion_selected_index = next as usize;
+            // Keyboard-driven selection move: if the new
+            // selection sits above the current scroll window,
+            // pull the scroll back so the selection stays
+            // visible. Forward-pull is handled by the renderer.
+            let next_u = next as u32;
+            if next_u < *completion_scroll_offset {
+                *completion_scroll_offset = next_u;
+            } else if next_u >= *completion_scroll_offset + visible {
+                *completion_scroll_offset = next_u + 1 - visible;
+            }
         }
     }
 
@@ -4489,6 +4522,15 @@ impl Editor {
             // sibling List/Tree elsewhere on the panel.
             if self.focused_text_completions_open(panel_id) {
                 self.scroll_focused_text_completions(panel_id, delta);
+                // The renderer reads `completion_scroll_offset`
+                // out of the Text widget's instance state on
+                // each paint, so flushing a rerender here is
+                // what actually puts the new scroll on screen
+                // — without this, the cached overlay rows on
+                // the floating panel stay pinned to the old
+                // offset until the user's next keystroke
+                // happens to re-render for some other reason.
+                self.rerender_widget_panel(panel_id);
                 consumed = true;
                 continue;
             }

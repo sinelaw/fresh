@@ -1334,19 +1334,21 @@ fn render_collected(
                 let popup_total = popup_inner.saturating_add(4); // re-add section chrome
                 let total = prev_completions.len() as u32;
                 let visible = effective_visible_rows.max(1).min(total);
-                // Auto-scroll: keep the selected row inside the
-                // visible window. Up/Down only ever moves the
-                // selection by ±1 (with wraparound), so a one-
-                // step adjustment is enough — unless the wrap
-                // landed at the other end of the list, in which
-                // case we still snap correctly because we clamp
-                // by computing `selected + 1 - visible` for the
-                // "scrolled past top" case.
+                // Forward-only auto-scroll: when the selection
+                // walks past the bottom of the visible window
+                // (Down past the last visible row), pull the
+                // scroll forward to keep selection in view. We
+                // deliberately do NOT pull the scroll *back* if
+                // the selection is above the window — the
+                // mouse-wheel scroll handler explicitly diverges
+                // scroll from selection (the user is scrolling
+                // the view, not the selection), and a back-pull
+                // here would undo the wheel's scroll on the very
+                // next render. The keyboard Up handler updates
+                // scroll itself when needed, so it doesn't rely
+                // on a back-pull from the renderer either.
                 let sel = prev_completion_idx as u32;
                 let mut scroll = prev_completion_scroll;
-                if sel < scroll {
-                    scroll = sel;
-                }
                 if sel >= scroll + visible {
                     scroll = sel + 1 - visible;
                 }

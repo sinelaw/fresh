@@ -366,3 +366,58 @@ fn completion_popup_renders_scrollbar_when_overflowing() {
         screen,
     );
 }
+
+/// Mouse wheel over the popup scrolls its candidate list — same
+/// behaviour the user gets from Down arrow, except the selected
+/// index stays put (it's a scroll, not a selection move). Goes
+/// directly through `Editor::handle_mouse` since SGR mouse
+/// escape sequences sent via `tmux send-keys` get filtered by
+/// tmux's pane-input pipeline and never reach crossterm, so
+/// interactive tmux verification isn't possible without a real
+/// mouse device.
+#[test]
+fn completion_popup_scrolls_with_mouse_wheel() {
+    let (_temp, workspace, _names) = set_up_workspace_many_alphas();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    type_many_alphas_prefix_and_wait(&mut harness, &workspace);
+
+    // Sanity: bottom candidate is off-screen before scrolling.
+    assert!(
+        !harness.screen_to_string().contains("alpha_09/"),
+        "precondition: `alpha_09/` must be off-screen before scrolling",
+    );
+
+    // Locate a row owned by the popup so the wheel lands on its
+    // hit-test target. `alpha_00/` is the top candidate row when
+    // the popup just opened; find its on-screen row and scroll
+    // there. Column is irrelevant for the host's wheel routing
+    // (it only checks `last_inner_rect` containment), but pick
+    // a column inside the panel for realism.
+    let (col, row) = harness
+        .find_text_on_screen("alpha_00/")
+        .expect("`alpha_00/` should be visible before scrolling");
+    let _ = col;
+
+    // Each ScrollDown event ticks the popup's host-side scroll
+    // by 3 (the editor's default wheel step). 5 events is enough
+    // to reach the end of the 10-row list regardless of which
+    // direction the step is clamped from.
+    for _ in 0..5 {
+        harness.mouse_scroll_down(80, row).unwrap();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("alpha_09/"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("alpha_00/"),
+        "after scrolling down with the mouse wheel, `alpha_00/` should fall off \
+         the top of the visible window. Screen:\n{}",
+        screen,
+    );
+}
