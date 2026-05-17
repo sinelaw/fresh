@@ -159,7 +159,7 @@ pub(super) struct EditorParts {
     pub(super) time_source: SharedTimeSource,
 
     // Persisted plugin global state (one map per plugin). Pulled from
-    // `<data_dir>/orchestrator/<encoded>/state/<plugin>.json` by the
+    // `<data_dir>/orchestrator/state/<plugin>.json` by the
     // factory so plugins reading `getGlobalState(...)` on first tick
     // see the previous run's values without a separate
     // post-construction load step.
@@ -543,7 +543,7 @@ impl Editor {
         buffer_metadata.insert(buffer_id, BufferMetadata::new());
 
         // Read orchestrator persistence (`windows.json` and
-        // `state/*.json` under `<data_dir>/orchestrator/<encoded>/`)
+        // `state/*.json` under `<data_dir>/orchestrator/`)
         // before the LSP and base-window construction below.
         // Pulling persistence in here lets the factory build the
         // right windows up front: previously this ran from

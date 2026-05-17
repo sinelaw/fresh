@@ -5,9 +5,12 @@
 //! directory in the user's working tree even for sessions that never
 //! touched any orchestrator feature.
 //!
-//! Post-fix, orchestrator state lives under
-//! `<data_dir>/orchestrator/<encoded_working_dir>/`, mirroring how
-//! other per-project editor state is stored.
+//! Post-fix, orchestrator state lives under the platform data dir.
+//! Schema v2 (Phase 5) moved the file from a per-cwd subdirectory to
+//! a single global `<data_dir>/orchestrator/windows.json`; the
+//! "don't pollute the working tree" invariant the original test
+//! protected still holds, and the file's expected location has been
+//! updated accordingly.
 
 mod common;
 
@@ -63,16 +66,11 @@ fn save_orchestrator_state_does_not_create_dotfresh_in_working_dir() {
     );
 
     // And the corresponding orchestrator state must have landed
-    // under the platform data dir instead.
-    let canonical_project = project_dir
-        .path()
-        .canonicalize()
-        .unwrap_or_else(|_| project_dir.path().to_path_buf());
-    let encoded = fresh::workspace::encode_path_for_filename(&canonical_project);
+    // under the platform data dir instead. v2 stores everything in
+    // one global file regardless of `working_dir`.
     let expected_windows_file = dir_context
         .data_dir
         .join("orchestrator")
-        .join(&encoded)
         .join("windows.json");
     assert!(
         expected_windows_file.exists(),
