@@ -115,46 +115,37 @@ fn test_compose_wrapped_paragraph_highlight_follows_cursor() {
         as u16;
     harness.mouse_click(click_col, last_para_row).unwrap();
 
-    // Semantic wait: the hardware cursor lands on the clicked row, and the
-    // cell at the cursor position has been re-styled by the renderer
-    // (i.e. the highlight pipeline has caught up to the cursor move).  We
-    // verify the latter by waiting until two consecutive ticks report the
-    // same bg at the cursor position — this is a true per-cell stability
-    // check rather than a screen-symbol equality, so it doesn't miss
-    // highlight-only updates (which `screen_to_string` filters out).
-    harness
-        .wait_until(|h| {
-            let Some((_x, y)) = h.vt100_cursor_position() else {
-                return false;
-            };
-            y == last_para_row
-        })
-        .unwrap();
+    // `mouse_click` calls `drain_async_work` + `render` before returning, so
+    // the editor has already processed the click and re-rendered by the
+    // time we read the cursor here.  Capture the hardware cursor position
+    // through ratatui's TestBackend (the vt100-based variant is *not* fed
+    // by the standard render path used in `tick_and_render`, so it would
+    // read stale state).
+    let (cursor_x, cursor_y) = harness.screen_cursor_position();
+    assert_eq!(
+        cursor_y, last_para_row,
+        "mouse_click should have moved the cursor onto the clicked row \
+         (clicked y={}, cursor at ({}, {}))",
+        last_para_row, cursor_x, cursor_y,
+    );
+
+    // Wait for the highlight pipeline to settle at the cursor cell.  The
+    // editor may apply current-line-bg in a follow-on tick after the click,
+    // and `screen_to_string`-based stability misses bg-only changes (it
+    // only inspects symbols).  This per-cell bg-stability check is the
+    // tightest semantic anchor for "highlight has caught up to cursor".
     let mut prev_bg: Option<Option<ratatui::style::Color>> = None;
     harness
         .wait_until(|h| {
-            let Some((x, y)) = h.vt100_cursor_position() else {
-                return false;
-            };
-            if y != last_para_row {
-                return false;
-            }
-            let cur_bg = h.get_cell_style(x, y).map(|s| s.bg).unwrap_or(None);
+            let cur_bg = h
+                .get_cell_style(cursor_x, cursor_y)
+                .map(|s| s.bg)
+                .unwrap_or(None);
             let stable = prev_bg == Some(cur_bg);
             prev_bg = Some(cur_bg);
             stable
         })
         .unwrap();
-
-    // Read the hardware cursor position now that the highlight pipeline
-    // has settled.  Must sit on `last_para_row` (the wrapped sub-row we
-    // clicked into) — the wait above guarantees that.
-    let (cursor_x, cursor_y) = harness.screen_cursor_position();
-    assert_eq!(
-        cursor_y, last_para_row,
-        "Cursor should be on the wrapped sub-row we clicked ({}), not {}",
-        last_para_row, cursor_y,
-    );
 
     // Default dark theme `current_line_bg` (matches existing tests in
     // rendering.rs).
