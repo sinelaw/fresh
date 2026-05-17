@@ -2157,7 +2157,7 @@ function buildFormSpec(): WidgetSpec {
     row(
       flexSpacer(),
       hintBar([
-        { keys: "Tab", label: "next" },
+        { keys: "Tab", label: "next / accept" },
         { keys: "S-Tab", label: "prev" },
         { keys: "↑↓", label: "history" },
         { keys: "Space", label: "toggle" },
@@ -2560,19 +2560,28 @@ function maybeCompletionList(field: "project_path" | "branch"): WidgetSpec[] {
   });
   return [
     overlay(
-      list({
-        items,
-        selectedIndex: sel,
-        visibleRows: Math.min(COMPLETION_VISIBLE_ROWS, items.length),
-        // Not in the Tab cycle (Up/Down on the focused INPUT
-        // walks the list via the smart-key handler) but keyed
-        // so the host's single-line-Text-+-sibling-list
-        // "picker Enter" wiring routes Enter on the focused
-        // input into an activate event on this list — which
-        // the form's widget_event handler turns into
-        // `acceptCompletion()`.
-        focusable: false,
-        key: "completion",
+      // Wrap the list in an empty-labelled section so the dropdown
+      // gets the same `╭─...─╮ ... ╰─...─╯` chrome as the rest of
+      // the form. Without it the rows paint as bare text overlaid
+      // on whatever's underneath (the Worktree toggle / Session
+      // Name row), which reads as a rendering bug rather than a
+      // popup.
+      labeledSection({
+        label: "",
+        child: list({
+          items,
+          selectedIndex: sel,
+          visibleRows: Math.min(COMPLETION_VISIBLE_ROWS, items.length),
+          // Not in the Tab cycle (Up/Down on the focused INPUT
+          // walks the list via the smart-key handler). Keyed so
+          // mouse-click `select` events and `setSelectedIndex`
+          // mutations land on this list; the host's picker-Enter
+          // wiring used to route Enter here too, but the form's
+          // explicit Enter binding (see FORM_MODE_BINDINGS)
+          // intercepts that — Tab is the only accept path.
+          focusable: false,
+          key: "completion",
+        }),
       }),
     ),
   ];
@@ -2747,18 +2756,20 @@ function startNewSession(): void {
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`
 // handles printable input outside this list.
-// Enter is intentionally NOT bound here: we want the host's
-// floating-widget smart-key dispatch to handle it natively. That
-// gives Enter-on-button → activate (so Cancel cancels and Create
-// Session submits via their respective `widget_event` "activate"
-// branches), and Enter-on-text-input → focus advance (next
-// field). Adding Enter to this list previously caused a regression
-// where pressing Enter on the focused Cancel button submitted
-// the form, because the plugin's handler always called
-// `submitForm` regardless of which widget the host had focused.
+// Enter is bound to a thin shim that closes the completion
+// dropdown without accepting (Tab is the only accept path —
+// matches bash / fish / readline path-completion conventions),
+// then forwards Enter to the host's smart-key dispatch so the
+// normal behaviour applies: Enter-on-button → activate (Cancel
+// cancels, Create Session submits via their `widget_event`
+// "activate" branches), Enter-on-text-input → focus advance.
+// Without the shim, the host's picker-style Enter wiring would
+// fire the sibling completion list's activate event and silently
+// overwrite the typed text with the highlighted suggestion.
 const FORM_MODE_BINDINGS: [string, string][] = [
   ["Tab", "orchestrator_form_key_tab"],
   ["S-Tab", "orchestrator_form_key_shift_tab"],
+  ["Enter", "orchestrator_form_key_enter"],
   ["Escape", "orchestrator_form_key_escape"],
   ["Backspace", "orchestrator_form_key_backspace"],
   ["Delete", "orchestrator_form_key_delete"],
@@ -2788,6 +2799,26 @@ registerHandler("orchestrator_form_key_tab", () => {
   }
   advanceFormFocus(1);
   dispatchFormKey("Tab");
+});
+registerHandler("orchestrator_form_key_enter", () => {
+  // When the completion dropdown is open, drop it *without*
+  // accepting the highlighted item — Enter is "proceed with
+  // what's typed", not "accept the suggestion" (Tab does the
+  // latter). The host's picker-style Enter wiring otherwise
+  // overwrites the field with the highlighted entry the moment
+  // the user presses Enter on a partially-typed path.
+  //
+  // Render-then-dispatch ordering: `closeCompletion()` enqueues
+  // an `updateFloatingWidget` over the same command channel the
+  // subsequent `dispatchFormKey("Enter")` uses, so the host
+  // applies the spec update (list removed) before resolving the
+  // Enter dispatch. With no scrollable sibling left, the
+  // smart-key router falls through to its non-picker branches:
+  // focus-advance on a Text widget, activate on a Button.
+  if (completionVisibleForFocused()) {
+    closeCompletion();
+  }
+  dispatchFormKey("Enter");
 });
 registerHandler(
   "orchestrator_form_key_shift_tab",
