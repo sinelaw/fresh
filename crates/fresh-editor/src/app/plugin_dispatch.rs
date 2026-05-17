@@ -3964,6 +3964,13 @@ impl Editor {
         }
         let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key);
         let (event_type, payload) = match widget {
+            // Disabled buttons don't fire activate. The renderer
+            // already excludes them from the tab cycle and skips
+            // their hit area, so the only way `focus_key` could
+            // still point at a disabled button is a stale focus
+            // from before the disable transition — drop the event
+            // in that race.
+            Some(fresh_core::api::WidgetSpec::Button { disabled: true, .. }) => return,
             Some(fresh_core::api::WidgetSpec::Button { .. }) => ("activate", serde_json::json!({})),
             Some(fresh_core::api::WidgetSpec::Toggle { checked, .. }) => {
                 ("toggle", serde_json::json!({ "checked": !checked }))

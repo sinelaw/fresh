@@ -729,17 +729,40 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // turns details on, pressing `[ Preview ]` turns them off
   // (back to compact).
   const detailsToggleLabel = detailsOn ? "Preview" : "Details";
+  // Per-action availability. The row always renders all four
+  // buttons (no layout shift between selections), but each is
+  // marked disabled when its action would be refused against the
+  // current selection. Disabled buttons show in `ui.menu_disabled_fg`,
+  // drop out of the Tab cycle, and reject clicks — matching the
+  // same conditions that `stopSelectedSession`, `enterConfirm`,
+  // and the lifecycle handlers already check internally.
+  //
+  //  * Stop: refused on the base session (id 1).
+  //  * Archive / Delete: also refused on the base session, plus
+  //    when this session shares its worktree with the project
+  //    root (no `git worktree` entry to remove) or shares a root
+  //    with other live sessions (would yank disk out from
+  //    under them).
+  const isBase = s.id === 1;
+  const siblings = countSiblingsAtRoot(s.root);
+  const sharesRoot = siblings > 1 || s.sharedWorktree;
+  const stopDisabled = isBase;
+  const lifecycleDisabled = isBase || sharesRoot;
   const buttonRow = row(
     button("Visit", { intent: "primary", key: "visit" }),
     spacer(2),
     flexSpacer(),
     button(detailsToggleLabel, { key: "toggle-details" }),
     spacer(2),
-    button("Stop", { key: "stop" }),
+    button("Stop", { key: "stop", disabled: stopDisabled }),
     spacer(2),
-    button("Archive", { key: "archive" }),
+    button("Archive", { key: "archive", disabled: lifecycleDisabled }),
     spacer(2),
-    button("Delete", { intent: "danger", key: "delete" }),
+    button("Delete", {
+      intent: "danger",
+      key: "delete",
+      disabled: lifecycleDisabled,
+    }),
   );
   const embedWidget = windowEmbed({
     windowId: s.id,

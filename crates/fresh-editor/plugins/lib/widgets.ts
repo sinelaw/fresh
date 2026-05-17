@@ -142,13 +142,20 @@ export function toggle(
 
 /** Action button, rendered as `[ Label ]`. `intent` controls visual
  * emphasis: `"normal"` (default) → no override, `"primary"` → bold,
- * `"danger"` → error theme key. */
+ * `"danger"` → error theme key.
+ *
+ * `disabled: true` paints the button with `ui.menu_disabled_fg`,
+ * drops it from the Tab cycle, and makes clicks no-ops — for actions
+ * that aren't currently available against the surrounding state.
+ * The button still occupies its layout cell, so flipping `disabled`
+ * doesn't reshuffle the surrounding row. */
 export function button(
   label: string,
   options?: {
     focused?: boolean;
     intent?: ButtonKind;
     key?: string;
+    disabled?: boolean;
   },
 ): WidgetSpec {
   return {
@@ -157,6 +164,7 @@ export function button(
     focused: options?.focused ?? false,
     intent: options?.intent ?? "normal",
     key: options?.key,
+    disabled: options?.disabled ?? false,
   };
 }
 

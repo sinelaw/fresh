@@ -865,6 +865,15 @@ type WidgetSpec = {
 	focused: boolean;
 	intent: ButtonKind;
 	key?: string | null;
+	/**
+	* When true, the button renders in a muted style, is dropped
+	* from the Tab cycle, and clicks on it are ignored. Use for
+	* actions that aren't currently available against the
+	* surrounding state (e.g. "Archive" on the base session). The
+	* button still occupies its layout cell so the surrounding
+	* row doesn't reshuffle when the disabled flag flips.
+	*/
+	disabled: boolean;
 } | {
 	"kind": "spacer";
 	cols: number;

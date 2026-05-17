@@ -304,8 +304,14 @@ fn ensure_trailing_newline(entry: &mut TextPropertyEntry) {
 /// `Raw`, `Spacer`, `HintBar` skip.
 fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
     match spec {
+        WidgetSpec::Button {
+            key: Some(k),
+            disabled,
+            ..
+        } if !k.is_empty() && !*disabled => {
+            out.push(k.clone());
+        }
         WidgetSpec::Toggle { key: Some(k), .. }
-        | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if !k.is_empty() =>
@@ -692,22 +698,31 @@ fn render_collected(
             focused,
             intent,
             key,
+            disabled,
         } => {
             let is_focused = match key.as_deref() {
-                Some(k) if !k.is_empty() => k == focus_key,
-                _ => *focused,
+                Some(k) if !k.is_empty() && !*disabled => k == focus_key,
+                _ => !*disabled && *focused,
             };
-            let mut entry = render_button(label, is_focused, *intent);
-            let byte_end = entry.text.len();
-            hits.push(HitArea {
-                widget_key: key.clone().unwrap_or_default(),
-                widget_kind: "button",
-                buffer_row: 0,
-                byte_start: 0,
-                byte_end,
-                payload: json!({}),
-                event_type: "activate",
-            });
+            let mut entry = render_button(label, is_focused, *intent, *disabled);
+            // Disabled buttons skip the hit area entirely — clicks on
+            // them are no-ops, matching the non-tabbable behavior in
+            // `collect_tabbable`. Without this, a stray click would
+            // still focus + activate a button whose handler is
+            // already gated by the same disabled condition the
+            // plugin computed.
+            if !*disabled {
+                let byte_end = entry.text.len();
+                hits.push(HitArea {
+                    widget_key: key.clone().unwrap_or_default(),
+                    widget_kind: "button",
+                    buffer_row: 0,
+                    byte_start: 0,
+                    byte_end,
+                    payload: json!({}),
+                    event_type: "activate",
+                });
+            }
             ensure_trailing_newline(&mut entry);
             entries.push(entry);
         }
@@ -1667,31 +1682,50 @@ pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyE
 /// * `Primary` — bold; focused → fg/bg flip.
 /// * `Danger`  — red fg (theme `ui.status_error_indicator_fg`);
 ///   focused → bold.
-pub fn render_button(label: &str, focused: bool, kind: ButtonKind) -> TextPropertyEntry {
+pub fn render_button(
+    label: &str,
+    focused: bool,
+    kind: ButtonKind,
+    disabled: bool,
+) -> TextPropertyEntry {
     let text = format!("[ {} ]", label);
     let mut overlays = Vec::new();
 
-    let base_style = match kind {
-        ButtonKind::Normal => OverlayOptions::default(),
-        // Primary marks the affirmative action with a bold,
-        // strong fg drawn directly on the surrounding surface —
-        // no opinionated bg. Focus is the only state that paints
-        // a backing color (handled below).
-        ButtonKind::Primary => OverlayOptions {
-            fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
-            bold: true,
+    // Disabled overrides intent: a "Delete" button that isn't
+    // available should not still scream red — the muted-grey of
+    // `ui.menu_disabled_fg` is the canonical "this control is
+    // present but inert" cue across the editor. Focus is also
+    // forced off (the caller already gates focus on `!disabled`,
+    // but bake it in here so a stale `focused: true` from the spec
+    // can't paint the focused bg over a disabled button).
+    let base_style = if disabled {
+        OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key("ui.menu_disabled_fg")),
             ..Default::default()
-        },
-        // Danger gets the error fg, bold, on the surrounding
-        // surface — same fg-only treatment as Primary.
-        ButtonKind::Danger => OverlayOptions {
-            fg: Some(OverlayColorSpec::theme_key(KEY_DANGER_FG)),
-            bold: true,
-            ..Default::default()
-        },
+        }
+    } else {
+        match kind {
+            ButtonKind::Normal => OverlayOptions::default(),
+            // Primary marks the affirmative action with a bold,
+            // strong fg drawn directly on the surrounding surface —
+            // no opinionated bg. Focus is the only state that paints
+            // a backing color (handled below).
+            ButtonKind::Primary => OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
+                bold: true,
+                ..Default::default()
+            },
+            // Danger gets the error fg, bold, on the surrounding
+            // surface — same fg-only treatment as Primary.
+            ButtonKind::Danger => OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_DANGER_FG)),
+                bold: true,
+                ..Default::default()
+            },
+        }
     };
 
-    let style = if focused {
+    let style = if focused && !disabled {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
             bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
@@ -2837,7 +2871,7 @@ mod tests {
 
     #[test]
     fn button_normal_unfocused_has_no_overlay() {
-        let entry = render_button("Replace All", false, ButtonKind::Normal);
+        let entry = render_button("Replace All", false, ButtonKind::Normal, false);
         assert_eq!(entry.text, "[ Replace All ]");
         assert!(entry.inline_overlays.is_empty());
     }
@@ -2848,7 +2882,7 @@ mod tests {
         // on the surrounding surface. Only the focused state
         // paints a backing colour — verified in
         // `button_focused_overrides_with_menu_active_keys`.
-        let entry = render_button("Submit", false, ButtonKind::Primary);
+        let entry = render_button("Submit", false, ButtonKind::Primary, false);
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
         assert!(style.bold);
@@ -2861,7 +2895,7 @@ mod tests {
 
     #[test]
     fn button_danger_uses_error_theme_key() {
-        let entry = render_button("Delete", false, ButtonKind::Danger);
+        let entry = render_button("Delete", false, ButtonKind::Danger, false);
         assert_eq!(entry.inline_overlays.len(), 1);
         let fg = entry.inline_overlays[0].style.fg.as_ref().unwrap();
         assert_eq!(fg.as_theme_key(), Some("diagnostic.error_fg"));
@@ -2876,7 +2910,7 @@ mod tests {
         // former has ~6× the perceptual contrast against the popup
         // bg and is the same key the prompt already uses. See the
         // `KEY_FOCUSED_FG/BG` const comment.
-        let entry = render_button("OK", true, ButtonKind::Normal);
+        let entry = render_button("OK", true, ButtonKind::Normal, false);
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
             style.fg.as_ref().and_then(|c| c.as_theme_key()),
@@ -2909,6 +2943,7 @@ mod tests {
                     focused: false,
                     intent: ButtonKind::Normal,
                     key: None,
+                    disabled: false,
                 },
             ],
             key: None,
@@ -2976,6 +3011,7 @@ mod tests {
                     focused: false,
                     intent: ButtonKind::Normal,
                     key: None,
+                    disabled: false,
                 },
             ],
             key: None,
@@ -3046,6 +3082,7 @@ mod tests {
             focused: false,
             intent: ButtonKind::Primary,
             key: Some("replace".into()),
+            disabled: false,
         };
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 1);
@@ -3055,6 +3092,57 @@ mod tests {
         assert_eq!(h.event_type, "activate");
         assert_eq!(h.byte_end, "[ Replace All ]".len());
         assert_eq!(h.payload, json!({}));
+    }
+
+    #[test]
+    fn disabled_button_omits_hit_area_and_skips_tabbable() {
+        let spec = WidgetSpec::Row {
+            children: vec![
+                WidgetSpec::Button {
+                    label: "Archive".into(),
+                    focused: false,
+                    intent: ButtonKind::Normal,
+                    key: Some("archive".into()),
+                    disabled: true,
+                },
+                WidgetSpec::Button {
+                    label: "Cancel".into(),
+                    focused: false,
+                    intent: ButtonKind::Normal,
+                    key: Some("cancel".into()),
+                    disabled: false,
+                },
+            ],
+            key: None,
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 30);
+        assert_eq!(
+            out.hits.iter().filter(|h| h.widget_kind == "button").count(),
+            1,
+            "disabled button should not emit a hit area"
+        );
+        assert_eq!(
+            out.tabbable,
+            vec!["cancel".to_string()],
+            "disabled button must drop out of the Tab cycle"
+        );
+    }
+
+    #[test]
+    fn disabled_button_uses_menu_disabled_fg_overlay() {
+        let entry = render_button("Archive", false, ButtonKind::Danger, true);
+        assert_eq!(entry.inline_overlays.len(), 1);
+        let style = &entry.inline_overlays[0].style;
+        assert_eq!(
+            style.fg.as_ref().and_then(|c| c.as_theme_key()),
+            Some("ui.menu_disabled_fg"),
+            "disabled overrides Danger fg with the muted theme key"
+        );
+        assert!(
+            !style.bold,
+            "disabled buttons drop the intent's bold emphasis"
+        );
+        assert!(style.bg.is_none(), "disabled buttons paint no bg");
     }
 
     #[test]
@@ -3153,6 +3241,7 @@ mod tests {
                             focused: false,
                             intent: ButtonKind::Normal,
                             key: Some("b".into()),
+                            disabled: false,
                         },
                     ],
                     key: None,

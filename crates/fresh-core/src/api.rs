@@ -1355,6 +1355,14 @@ pub enum WidgetSpec {
         intent: ButtonKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
+        /// When true, the button renders in a muted style, is dropped
+        /// from the Tab cycle, and clicks on it are ignored. Use for
+        /// actions that aren't currently available against the
+        /// surrounding state (e.g. "Archive" on the base session). The
+        /// button still occupies its layout cell so the surrounding
+        /// row doesn't reshuffle when the disabled flag flips.
+        #[serde(default)]
+        disabled: bool,
     },
     /// Horizontal whitespace eater. In a `Row`, produces `cols`
     /// spaces (or fills remaining width if `flex: true`); in a
