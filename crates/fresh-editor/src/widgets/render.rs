@@ -32,7 +32,16 @@ use std::collections::{HashMap, HashSet};
 // "role-based" theming (§7 of the design doc) has one place to
 // substitute the role→key mapping.
 const KEY_HELP_KEY_FG: &str = "ui.help_key_fg";
-const KEY_TOGGLE_ON_FG: &str = "ui.tab_active_fg";
+// Foreground of a checked Toggle's `[v]` glyph. `ui.help_key_fg`
+// is the "keyboard-key / highlight on a popup body" theme key —
+// every shipped theme picks a colour that contrasts with
+// `ui.popup_bg`. The previous choice (`ui.tab_active_fg`) was
+// designed to contrast with `tab_active_bg`, not the popup body;
+// in `high-contrast` both ended up black so the `[v]` glyph
+// vanished on every unfocused toggle. `help_key_fg` keeps the
+// emphasis intent (a bright accent colour) while reliably
+// surviving the popup background.
+const KEY_TOGGLE_ON_FG: &str = "ui.help_key_fg";
 // Selection/focus highlight for widgets inside floating panels
 // (list rows, tree nodes, buttons). Originally pointed at
 // `ui.menu_active_{fg,bg}` which defaults to rgb(255,255,255) on
@@ -1490,10 +1499,11 @@ pub fn render_hint_bar(entries: &[HintEntry]) -> TextPropertyEntry {
 /// Render a `Toggle` to a single `TextPropertyEntry`.
 ///
 /// Layout: `[v] label` when checked, `[ ] label` when not. The check
-/// glyph is colored via `ui.tab_active_fg` when checked (no override
-/// when unchecked). When focused, the entire entry is given a focused
-/// fg/bg pair (`ui.popup_selection_fg`/`ui.popup_selection_bg`) plus
-/// bold — matching the prompt / palette's selected-row affordance.
+/// glyph is colored via `ui.help_key_fg` when checked (a popup-bg-
+/// safe highlight key; no override when unchecked). When focused,
+/// the entire entry is given a focused fg/bg pair
+/// (`ui.popup_selection_fg`/`ui.popup_selection_bg`) plus bold —
+/// matching the prompt / palette's selected-row affordance.
 pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyEntry {
     let glyph = if checked { "[v]" } else { "[ ]" };
     let mut text = String::with_capacity(glyph.len() + 1 + label.len());
