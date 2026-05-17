@@ -45,6 +45,32 @@ fn set_up_workspace() -> (tempfile::TempDir, PathBuf) {
     (temp, workspace)
 }
 
+/// Workspace variant for the "popup with > visible_rows
+/// candidates" scenario. Creates 10 `alpha_NN` subdirs so the
+/// default-5 popup needs to scroll. Returns workspace path +
+/// the sorted candidate-name list so callers can spot-check
+/// which entries are visible / hidden in any given scroll
+/// position.
+fn set_up_workspace_many_alphas() -> (tempfile::TempDir, PathBuf, Vec<String>) {
+    fresh::i18n::set_locale("en");
+
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().canonicalize().unwrap();
+
+    let mut names: Vec<String> = (0..10).map(|i| format!("alpha_{:02}", i)).collect();
+    for n in &names {
+        fs::create_dir(workspace.join(n)).unwrap();
+    }
+    names.sort();
+
+    let plugins_dir = workspace.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+
+    (temp, workspace, names)
+}
+
 fn wait_for_new_session_command(harness: &mut EditorTestHarness) {
     harness
         .wait_until(|h| {
@@ -217,5 +243,126 @@ fn enter_keeps_typed_text_when_completion_open() {
         "Enter must leave the typed text intact (not accept the highlighted suggestion). \
          Screen:\n{}",
         harness.screen_to_string(),
+    );
+}
+
+/// Type the `<workspace>/alpha_` prefix into Project Path and
+/// wait until the popup has surfaced at least the first
+/// candidate (`alpha_00/`). With 10 candidates the popup spans
+/// `total - visible = 5` extra rows that the user must scroll
+/// to reach.
+fn type_many_alphas_prefix_and_wait(harness: &mut EditorTestHarness, workspace: &std::path::Path) {
+    let prefix = format!("{}/alpha_", workspace.display());
+    harness.type_text(&prefix).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("alpha_00/"))
+        .unwrap();
+}
+
+/// With more candidates than the default visible-rows cap, the
+/// popup paints exactly `5` rows + scrollbar — never the whole
+/// list. The first batch of `alpha_NN/` directories sits in the
+/// window; the tail ones (`alpha_07/` … `alpha_09/`) are
+/// off-screen until the user scrolls. This pins the host's
+/// fixed visible-rows behaviour against accidental "render all
+/// candidates" regressions.
+#[test]
+fn completion_popup_caps_at_visible_rows() {
+    let (_temp, workspace, names) = set_up_workspace_many_alphas();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    type_many_alphas_prefix_and_wait(&mut harness, &workspace);
+
+    let screen = harness.screen_to_string();
+    let visible: Vec<&String> = names
+        .iter()
+        .filter(|n| screen.contains(&format!("{}/", n)))
+        .collect();
+    assert_eq!(
+        visible.len(),
+        5,
+        "default `completions_visible_rows = 5` should cap the painted candidates to 5; \
+         saw {} on screen ({:?}).\nScreen:\n{}",
+        visible.len(),
+        visible,
+        screen,
+    );
+    // The first five (`alpha_00` … `alpha_04`) should be the
+    // ones in view since the host starts the scroll at 0.
+    for n in names.iter().take(5) {
+        assert!(
+            screen.contains(&format!("{}/", n)),
+            "candidate `{}/` should be in the initial window. Screen:\n{}",
+            n,
+            screen,
+        );
+    }
+}
+
+/// Pressing Down past the bottom of the visible window scrolls
+/// the candidate list — earlier candidates fall out the top,
+/// later ones (`alpha_07/`, `alpha_08/`, `alpha_09/`) come into
+/// view. Verifies the host's auto-scroll-to-keep-selection-in-
+/// view path.
+#[test]
+fn completion_popup_scrolls_with_down_arrow() {
+    let (_temp, workspace, _names) = set_up_workspace_many_alphas();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    type_many_alphas_prefix_and_wait(&mut harness, &workspace);
+
+    // Sanity: tail candidate is off-screen before any Down.
+    assert!(
+        !harness.screen_to_string().contains("alpha_09/"),
+        "precondition: `alpha_09/` must be off-screen before scrolling",
+    );
+
+    // Press Down enough times to walk selection to the last
+    // candidate. Auto-scroll should snap the window so
+    // `alpha_09/` is visible at the bottom.
+    for _ in 0..9 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("alpha_09/"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("alpha_00/"),
+        "after scrolling to the bottom, the first candidate `alpha_00/` should fall \
+         off the top of the window. Screen:\n{}",
+        screen,
+    );
+}
+
+/// When the candidate count exceeds the visible-rows cap, the
+/// popup paints a scrollbar in the right edge — at minimum, a
+/// solid block (`█`) glyph appears somewhere inside the popup
+/// area. Pinning this prevents a future "the host stopped
+/// drawing the scrollbar" regression that would silently make
+/// the popup feel un-scrollable.
+#[test]
+fn completion_popup_renders_scrollbar_when_overflowing() {
+    let (_temp, workspace, _names) = set_up_workspace_many_alphas();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    type_many_alphas_prefix_and_wait(&mut harness, &workspace);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('█'),
+        "scrollbar thumb glyph `█` should paint when the popup has more \
+         candidates than fit visible rows. Screen:\n{}",
+        screen,
     );
 }
