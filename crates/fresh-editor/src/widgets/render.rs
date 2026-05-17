@@ -3117,7 +3117,10 @@ mod tests {
         };
         let out = render_spec(&spec, &HashMap::new(), "", 30);
         assert_eq!(
-            out.hits.iter().filter(|h| h.widget_kind == "button").count(),
+            out.hits
+                .iter()
+                .filter(|h| h.widget_kind == "button")
+                .count(),
             1,
             "disabled button should not emit a hit area"
         );
