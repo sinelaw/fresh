@@ -1,5 +1,13 @@
 # Release Notes
 
+## Unreleased
+
+### Bug Fixes
+
+* **Stale "active window" leaks across projects**: Launching `fresh` in project A no longer activates a persisted orchestrator window rooted in project B just because B was the last window touched anywhere. The active-window picker now scopes to the launch cwd, so "Open Terminal" and the LSP target the project the user is actually in.
+
+* **Workspace clobbered when only the Dashboard was open**: Quitting from a Dashboard-only tab no longer wipes the saved open-file list. The serializer strips virtual buffers (Dashboard, plugin scratch buffers); the workspace save path now refuses to overwrite a real on-disk workspace with the resulting all-virtual snapshot.
+
 ## 0.3.6
 
 This version includes a major internal refactoring to support multiple windows in a single Fresh process. The work will be used to add a multi-window orchestrator in a future version.
