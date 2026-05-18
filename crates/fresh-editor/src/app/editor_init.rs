@@ -745,6 +745,20 @@ impl Editor {
             // "prompt")` gets null even though Alt+P is bound, and
             // ends up hardcoding the key in its UI.
             populate_builtin_keybinding_labels(&mut snapshot, &keybindings);
+            // Seed the snapshot's `config` view with the resolved
+            // initial config so plugins reading
+            // `editor.getPluginConfig()` (and the lower-level
+            // `defineConfigX` snapshot-lookups) see user-set values
+            // on their very first call. Without this seed the
+            // synchronous test path runs plugin scripts BEFORE the
+            // first `update_plugin_state_snapshot` tick, so a
+            // preset `plugins.<name>.settings.<field>` is invisible
+            // to the plugin until much later — defeating any
+            // "react to user config at startup" pattern (e.g.
+            // vi_mode's `autoStart`).
+            if let Ok(json) = serde_json::to_value(&config) {
+                snapshot.config = std::sync::Arc::new(json);
+            }
         }
 
         // Load TypeScript plugins from multiple directories:

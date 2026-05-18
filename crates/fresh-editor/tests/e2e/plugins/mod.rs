@@ -52,4 +52,5 @@ pub mod tab_actions;
 pub mod terminal_hooks;
 pub mod theme_editor;
 pub mod unified_keybindings;
+pub mod vi_mode_autostart;
 pub mod watch_path;
