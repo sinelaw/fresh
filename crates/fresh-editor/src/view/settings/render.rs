@@ -3794,13 +3794,37 @@ fn render_entry_dialog_inner(
     // buttons (no field selected).
     let helper_y = button_y.saturating_sub(1);
     if !dialog.focus_on_buttons && helper_y > inner.y {
-        if let Some(desc) = dialog
-            .current_item()
-            .and_then(|it| it.description.as_deref())
-            .filter(|d| !d.is_empty())
-        {
+        // F4: when the user is sitting on a TextList's pending
+        // `[+] Add new` row (slot focused via `focused_item.is_none()`),
+        // override the field description with a caption that names the
+        // current state. Before this, the [+] row silently absorbed
+        // keystrokes with no UI feedback — typing felt like it might or
+        // might not be saved. The caption tells the user exactly what
+        // Enter / Esc will do here.
+        let pending_list_caption = dialog.current_item().and_then(|it| {
+            if let SettingControl::TextList(state) = &it.control {
+                if state.focused_item.is_none() {
+                    return Some(if state.new_item_text.is_empty() {
+                        "New item — start typing, or ↓/Tab to leave"
+                    } else {
+                        "Editing new item — Enter to add, Esc to cancel"
+                    });
+                }
+            }
+            None
+        });
+
+        let text: Option<String> = pending_list_caption.map(String::from).or_else(|| {
+            dialog
+                .current_item()
+                .and_then(|it| it.description.as_deref())
+                .filter(|d| !d.is_empty())
+                .map(String::from)
+        });
+
+        if let Some(text) = text {
             let max_width = dialog_area.width.saturating_sub(4) as usize;
-            let truncated: String = desc.chars().take(max_width).collect();
+            let truncated: String = text.chars().take(max_width).collect();
             let helper_style = Style::default()
                 .fg(theme.line_number_fg)
                 .add_modifier(Modifier::ITALIC);

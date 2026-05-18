@@ -1703,9 +1703,13 @@ impl SettingsState {
 
     /// Save a Map entry dialog
     fn save_map_entry_dialog_inner(&mut self) {
-        let Some(dialog) = self.entry_dialog_stack.pop() else {
+        let Some(mut dialog) = self.entry_dialog_stack.pop() else {
             return;
         };
+        // Treat any draft text in a TextList's `[+] Add new` slot as
+        // committed (F21). Otherwise typing an item and hitting Ctrl+S
+        // without a separate Enter silently dropped the text.
+        dialog.commit_pending_list_drafts();
 
         // Get key from the dialog's key field (may have been edited)
         let key = dialog.get_key();
@@ -1757,9 +1761,11 @@ impl SettingsState {
 
     /// Save an ObjectArray item dialog
     fn save_array_item_dialog_inner(&mut self) {
-        let Some(dialog) = self.entry_dialog_stack.pop() else {
+        let Some(mut dialog) = self.entry_dialog_stack.pop() else {
             return;
         };
+        // Commit any pending TextList draft (F21).
+        dialog.commit_pending_list_drafts();
 
         let value = dialog.to_value();
         let array_path = dialog.map_path.clone();

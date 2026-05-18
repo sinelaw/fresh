@@ -324,6 +324,24 @@ impl EntryDialogState {
     }
 
     /// Convert dialog state back to JSON value (excludes the __key__ item)
+    /// Auto-commit any draft text sitting in a TextList's trailing
+    /// `[+] Add new` slot. Without this, saving a dialog while the user
+    /// has typed (but not pressed Enter or ↓) into the new-item row
+    /// silently drops that text — the diverging commit semantics
+    /// between text fields ("typed value is just there") and list rows
+    /// ("typing isn't enough — you must commit") was the F21 surprise.
+    /// Run this from every save path so the saved value matches what
+    /// the user sees on screen.
+    pub fn commit_pending_list_drafts(&mut self) {
+        for item in &mut self.items {
+            if let SettingControl::TextList(state) = &mut item.control {
+                if !state.new_item_text.is_empty() {
+                    state.add_item();
+                }
+            }
+        }
+    }
+
     pub fn to_value(&self) -> Value {
         // For single-value dialogs (non-Object schemas like ObjectArray),
         // return the control's value directly instead of wrapping in an Object.
