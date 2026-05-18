@@ -53,6 +53,12 @@ fn test_theme_loading_from_config_light() {
     assert_eq!(theme.editor_fg, Color::Rgb(0, 0, 0));
     assert_eq!(theme.tab_active_fg, Color::Rgb(40, 40, 40));
     assert_eq!(theme.tab_active_bg, Color::Rgb(255, 255, 255));
+
+    // Regression guard for issue #2033: `syntax.variable` must visibly
+    // differentiate from black body text on the white editor background.
+    // The pre-fix value `[0, 16, 128]` reads as near-black; the replacement
+    // is a more saturated teal that actually stands out as a syntax color.
+    assert_eq!(theme.syntax_variable, Color::Rgb(0, 90, 140));
 }
 
 #[test]
