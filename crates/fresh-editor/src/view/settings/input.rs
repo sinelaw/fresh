@@ -25,6 +25,13 @@ enum ControlAction {
 
 impl InputHandler for SettingsState {
     fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
+        // Entry-dialog "Delete X?" prompt takes priority over both
+        // the discard prompt and the entry dialog — it's the topmost
+        // overlay.
+        if self.showing_entry_delete_confirm {
+            return self.handle_entry_delete_confirm_input(event);
+        }
+
         // Entry-dialog "Discard changes?" prompt takes priority over
         // the entry dialog itself — it's stacked on top.
         if self.showing_entry_discard_confirm {
@@ -397,7 +404,7 @@ impl SettingsState {
                 if let Some(action) = button_action {
                     match action {
                         ButtonAction::Save => self.save_entry_dialog(),
-                        ButtonAction::Delete => self.delete_entry_dialog(),
+                        ButtonAction::Delete => self.request_entry_delete_confirm(),
                         ButtonAction::Cancel => self.close_entry_dialog(),
                     }
                 } else if event.modifiers.contains(KeyModifiers::CONTROL) {
@@ -631,6 +638,40 @@ impl SettingsState {
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 self.showing_entry_discard_confirm = false;
                 self.close_entry_dialog();
+            }
+            _ => {}
+        }
+        InputResult::Consumed
+    }
+
+    /// Handle input when the entry-dialog delete-confirm prompt is up.
+    /// Buttons: 0 = Cancel (default), 1 = Delete.
+    fn handle_entry_delete_confirm_input(&mut self, event: &KeyEvent) -> InputResult {
+        match event.code {
+            KeyCode::Left | KeyCode::BackTab => {
+                if self.entry_delete_confirm_selection > 0 {
+                    self.entry_delete_confirm_selection -= 1;
+                }
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                if self.entry_delete_confirm_selection < 1 {
+                    self.entry_delete_confirm_selection += 1;
+                }
+            }
+            KeyCode::Enter => {
+                match self.entry_delete_confirm_selection {
+                    0 => {
+                        self.showing_entry_delete_confirm = false;
+                    }
+                    1 => {
+                        self.showing_entry_delete_confirm = false;
+                        self.delete_entry_dialog();
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Esc => {
+                self.showing_entry_delete_confirm = false;
             }
             _ => {}
         }

@@ -878,7 +878,7 @@ impl Editor {
         match (btn, has_delete) {
             (0, _) => state.save_entry_dialog(),
             (1, _) => state.close_entry_dialog(),
-            (2, true) => state.delete_entry_dialog(),
+            (2, true) => state.request_entry_delete_confirm(),
             _ => state.close_entry_dialog(),
         }
         Ok(true)

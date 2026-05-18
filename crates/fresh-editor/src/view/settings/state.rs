@@ -98,6 +98,15 @@ pub struct SettingsState {
     /// Selection in the entry-discard prompt: 0 = Keep editing,
     /// 1 = Discard.
     pub entry_discard_confirm_selection: usize,
+    /// Whether the "Delete <name>?" prompt is showing over the
+    /// currently-open entry dialog. Set when the user activates
+    /// the Delete button; deletion only fires once they confirm.
+    pub showing_entry_delete_confirm: bool,
+    /// Selection in the entry-delete prompt: 0 = Cancel (safe
+    /// default), 1 = Delete.
+    pub entry_delete_confirm_selection: usize,
+    /// Key being deleted, displayed in the confirm prompt.
+    pub entry_delete_target_name: String,
     /// Whether the help overlay is showing
     pub showing_help: bool,
     /// Scrollable panel for settings items
@@ -225,6 +234,9 @@ impl SettingsState {
             reset_dialog_hover: None,
             showing_entry_discard_confirm: false,
             entry_discard_confirm_selection: 0,
+            showing_entry_delete_confirm: false,
+            entry_delete_confirm_selection: 0,
+            entry_delete_target_name: String::new(),
             showing_help: false,
             scroll_panel: ScrollablePanel::new(),
             sub_focus: None,
@@ -1797,6 +1809,20 @@ impl SettingsState {
     }
 
     /// Delete the entry from the map and close the dialog
+    /// Pop the "Delete <name>?" confirmation prompt. The actual
+    /// delete only fires once the user confirms via the prompt.
+    /// Cancel (selection 0) is the safe default, so a misplaced
+    /// Tab+Enter on the Delete button no longer destroys data.
+    pub fn request_entry_delete_confirm(&mut self) {
+        let name = self
+            .entry_dialog()
+            .map(|d| d.entry_key.clone())
+            .unwrap_or_default();
+        self.entry_delete_target_name = name;
+        self.entry_delete_confirm_selection = 0;
+        self.showing_entry_delete_confirm = true;
+    }
+
     pub fn delete_entry_dialog(&mut self) {
         // Check if this is a nested dialog BEFORE popping
         let is_nested = self.entry_dialog_stack.len() > 1;
