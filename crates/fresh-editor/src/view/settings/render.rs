@@ -1683,24 +1683,61 @@ fn render_text_list_partial(
             is_add_focused && (state.pending_active || !state.new_item_text.is_empty());
 
         if show_input_box {
-            // Show input field with new_item_text
+            // Show input field. When empty (just-activated input), drop
+            // a muted "type new item" placeholder INSIDE the box so the
+            // empty bracket pair clearly reads as "this is an editable
+            // input", not a generic empty cell.
             let inner_width = actual_field_width.saturating_sub(2) as usize;
-            let visible: String = state.new_item_text.chars().take(inner_width).collect();
-            let padded = format!("{:width$}", visible, width = inner_width);
+            let (visible_text, text_style) = if state.new_item_text.is_empty() {
+                let placeholder = "type new item";
+                let truncated: String = placeholder.chars().take(inner_width).collect();
+                (
+                    truncated,
+                    Style::default()
+                        .fg(colors.disabled)
+                        .add_modifier(ratatui::style::Modifier::ITALIC),
+                )
+            } else {
+                let visible: String = state.new_item_text.chars().take(inner_width).collect();
+                (visible, Style::default().fg(colors.text))
+            };
+            let padded = format!("{:width$}", visible_text, width = inner_width);
 
+            // Dimmed inline hint to the right of the input — so Enter /
+            // Esc semantics are visible next to the row itself instead
+            // of only on the bottom helper bar.
+            let hint = "  Enter:add  Esc:cancel";
             let line = Line::from(vec![
                 Span::raw(" ".repeat(indent as usize)),
-                Span::styled("[", Style::default().fg(colors.focused)),
-                Span::styled(padded, Style::default().fg(colors.text)),
-                Span::styled("]", Style::default().fg(colors.focused)),
+                Span::styled(
+                    "[",
+                    Style::default()
+                        .fg(colors.focused)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ),
+                Span::styled(padded, text_style),
+                Span::styled(
+                    "]",
+                    Style::default()
+                        .fg(colors.focused)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled("[+]", Style::default().fg(colors.add_button)),
+                Span::styled(
+                    hint,
+                    Style::default()
+                        .fg(colors.disabled)
+                        .add_modifier(ratatui::style::Modifier::ITALIC),
+                ),
             ]);
             let row_area = Rect::new(area.x, y, area.width, 1);
             frame.render_widget(Paragraph::new(line), row_area);
 
-            // Render cursor
-            if state.cursor <= inner_width {
+            // Render cursor. Skip when showing the placeholder (empty
+            // buffer) — the cursor block would otherwise eat the first
+            // letter of "type new item" and confuse the placeholder.
+            if !state.new_item_text.is_empty() && state.cursor <= inner_width {
                 let cursor_x = area.x + indent + 1 + state.cursor as u16;
                 let cursor_char = state.new_item_text.chars().nth(state.cursor).unwrap_or(' ');
                 let cursor_area = Rect::new(cursor_x, y, 1, 1);
@@ -1722,16 +1759,27 @@ fn render_text_list_partial(
             // Show static "[+] Add new" label. When the trailing slot
             // has focus but isn't yet in input mode, mark the label as
             // focused (use the same focused fg the other focused rows
-            // use) so the user sees "I'm here, press Enter to add".
+            // use) AND append a dimmed inline hint so the user sees
+            // exactly what Enter will do — without having to look at
+            // the bottom helper bar.
             let label_fg = if is_add_focused {
                 colors.focused_fg
             } else {
                 colors.add_button
             };
-            let add_line = Line::from(vec![
+            let mut spans = vec![
                 Span::raw(" ".repeat(indent as usize)),
                 Span::styled("[+] Add new", Style::default().fg(label_fg)),
-            ]);
+            ];
+            if is_add_focused {
+                spans.push(Span::styled(
+                    "  press Enter (or type) to add a new item",
+                    Style::default()
+                        .fg(colors.disabled)
+                        .add_modifier(ratatui::style::Modifier::ITALIC),
+                ));
+            }
+            let add_line = Line::from(spans);
             let row_area = Rect::new(area.x, y, area.width, 1);
             frame.render_widget(Paragraph::new(add_line), row_area);
 
