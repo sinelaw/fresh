@@ -1804,11 +1804,15 @@ impl Editor {
                                     // Ensure keyed state exists for this buffer
                                     view_state.ensure_buffer_state(buffer_id);
                                     if terminal_buffers.values().any(|&tid| tid == buffer_id) {
-                                        view_state
+                                        let buf_state = view_state
                                             .buffer_state_mut(buffer_id)
-                                            .unwrap()
-                                            .viewport
-                                            .line_wrap_enabled = false;
+                                            .unwrap();
+                                        buf_state.viewport.line_wrap_enabled = false;
+                                        // Match the freshly-spawned terminal path: no
+                                        // gutter / current-line highlight when this
+                                        // tab gets entered after workspace restore.
+                                        buf_state.show_line_numbers = false;
+                                        buf_state.highlight_current_line = false;
                                     }
                                 }
                             }
@@ -1817,10 +1821,13 @@ impl Editor {
                                     if !view_state.has_buffer(buffer_id) {
                                         view_state.add_buffer(buffer_id);
                                     }
-                                    view_state
-                                        .ensure_buffer_state(buffer_id)
-                                        .viewport
-                                        .line_wrap_enabled = false;
+                                    let buf_state = view_state.ensure_buffer_state(buffer_id);
+                                    buf_state.viewport.line_wrap_enabled = false;
+                                    // Match the freshly-spawned terminal path: no
+                                    // gutter / current-line highlight when this
+                                    // tab gets entered after workspace restore.
+                                    buf_state.show_line_numbers = false;
+                                    buf_state.highlight_current_line = false;
                                 }
                             }
                             SerializedTabRef::Unnamed(recovery_id) => {

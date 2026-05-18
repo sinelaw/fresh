@@ -1314,6 +1314,18 @@ impl Window {
                 for vs in vs_map.values_mut() {
                     if vs.has_buffer(buffer_id) {
                         vs.cursors.primary_mut().position = total;
+                        // Disable gutter + current-line highlight for the
+                        // terminal buffer's per-buffer view state so that
+                        // exiting terminal mode on a restored terminal
+                        // doesn't flash a line-number column. The render
+                        // path overwrites the buffer's margin config from
+                        // this flag every frame, so the buffer-level
+                        // `configure_for_line_numbers(false)` below isn't
+                        // enough on its own.
+                        let buf_state = vs.ensure_buffer_state(buffer_id);
+                        buf_state.show_line_numbers = false;
+                        buf_state.highlight_current_line = false;
+                        buf_state.viewport.line_wrap_enabled = false;
                     }
                 }
                 state.buffer.set_modified(false);
