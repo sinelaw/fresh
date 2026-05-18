@@ -1676,8 +1676,13 @@ fn render_text_list_partial(
     if y < area.y + area.height && content_row >= skip_rows {
         // Check if we're focused on the add-new input (focused_item is None and focused)
         let is_add_focused = state.focused_item.is_none() && state.focus == FocusState::Focused;
+        // Only show the bracketed input box once the user has explicitly
+        // started adding an item — keep `[+] Add new` visible on plain
+        // focus so the row doesn't look like it disappeared.
+        let show_input_box =
+            is_add_focused && (state.pending_active || !state.new_item_text.is_empty());
 
-        if is_add_focused {
+        if show_input_box {
             // Show input field with new_item_text
             let inner_width = actual_field_width.saturating_sub(2) as usize;
             let visible: String = state.new_item_text.chars().take(inner_width).collect();
@@ -1714,10 +1719,18 @@ fn render_text_list_partial(
                 index: None,
             });
         } else {
-            // Show static "[+] Add new" label
+            // Show static "[+] Add new" label. When the trailing slot
+            // has focus but isn't yet in input mode, mark the label as
+            // focused (use the same focused fg the other focused rows
+            // use) so the user sees "I'm here, press Enter to add".
+            let label_fg = if is_add_focused {
+                colors.focused_fg
+            } else {
+                colors.add_button
+            };
             let add_line = Line::from(vec![
                 Span::raw(" ".repeat(indent as usize)),
-                Span::styled("[+] Add new", Style::default().fg(colors.add_button)),
+                Span::styled("[+] Add new", Style::default().fg(label_fg)),
             ]);
             let row_area = Rect::new(area.x, y, area.width, 1);
             frame.render_widget(Paragraph::new(add_line), row_area);
@@ -3804,8 +3817,10 @@ fn render_entry_dialog_inner(
         let pending_list_caption = dialog.current_item().and_then(|it| {
             if let SettingControl::TextList(state) = &it.control {
                 if state.focused_item.is_none() {
-                    return Some(if state.new_item_text.is_empty() {
-                        "New item — start typing, or ↓/Tab to leave"
+                    return Some(if !state.pending_active && state.new_item_text.is_empty() {
+                        "Press Enter (or type) to add a new item; ↓/Tab to leave"
+                    } else if state.new_item_text.is_empty() {
+                        "Type the new item — Enter to add, Esc to cancel"
                     } else {
                         "Editing new item — Enter to add, Esc to cancel"
                     });

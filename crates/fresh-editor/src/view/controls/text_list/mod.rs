@@ -42,6 +42,15 @@ pub struct TextListState {
     pub focus: FocusState,
     /// Whether items should be treated as integers (for IntegerArray settings)
     pub is_integer: bool,
+    /// When focused on the trailing add-new slot (focused_item is None),
+    /// this is `true` once the user explicitly enters input mode
+    /// (Enter on the slot, or starts typing). Until then, the row stays
+    /// rendered as `[+] Add new` instead of jumping to an empty
+    /// `[       ] [+]` input the moment focus arrives — which was
+    /// indistinguishable from a committed row and made the [+] row
+    /// look like it had "disappeared". Reset on commit / Esc / when
+    /// focus leaves the trailing slot.
+    pub pending_active: bool,
 }
 
 impl TextListState {
@@ -55,6 +64,7 @@ impl TextListState {
             label: label.into(),
             focus: FocusState::Normal,
             is_integer: false,
+            pending_active: false,
         }
     }
 
@@ -88,6 +98,31 @@ impl TextListState {
         }
         self.items.push(std::mem::take(&mut self.new_item_text));
         self.cursor = 0;
+        // Successful commit: collapse back to `[+] Add new` so the
+        // user knows the typed text was accepted. They can press
+        // Enter again (or just type) to add another.
+        self.pending_active = false;
+    }
+
+    /// Mark the trailing add-new slot as "in input mode" — i.e. the
+    /// user has explicitly chosen to start typing a new item. Called
+    /// from the dialog's start_editing flow (Enter on the [+] row) so
+    /// the visible state machine flips to the bracketed input box.
+    pub fn activate_pending(&mut self) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.focused_item = None;
+        self.cursor = self.new_item_text.len();
+        self.pending_active = true;
+    }
+
+    /// Discard whatever is in the add-new slot and collapse back to
+    /// `[+] Add new`. Used for Esc inside the slot.
+    pub fn cancel_pending(&mut self) {
+        self.new_item_text.clear();
+        self.cursor = 0;
+        self.pending_active = false;
     }
 
     /// Insert a string at the cursor position
@@ -105,6 +140,7 @@ impl TextListState {
         } else if self.cursor <= self.new_item_text.len() {
             self.new_item_text.insert_str(self.cursor, s);
             self.cursor += s.len();
+            self.pending_active = true;
         }
     }
 
@@ -130,6 +166,10 @@ impl TextListState {
         if index < self.items.len() {
             self.focused_item = Some(index);
             self.cursor = self.items[index].len();
+            // Leaving the trailing slot — make sure the next time we
+            // come back we start from `[+] Add new` again rather than
+            // an empty input box.
+            self.pending_active = false;
         }
     }
 
@@ -137,6 +177,9 @@ impl TextListState {
     pub fn focus_new_item(&mut self) {
         self.focused_item = None;
         self.cursor = self.new_item_text.len();
+        // Arriving on the trailing slot just lands on `[+] Add new`;
+        // input mode is opened explicitly by Enter or typing.
+        self.pending_active = false;
     }
 
     /// Insert a character in the focused field
@@ -152,6 +195,10 @@ impl TextListState {
             None => {
                 self.new_item_text.insert(self.cursor, c);
                 self.cursor += 1;
+                // Typing into the trailing slot implies the user
+                // wants to add an item — flip the row from
+                // `[+] Add new` to the bracketed input.
+                self.pending_active = true;
             }
             _ => {}
         }
@@ -242,6 +289,8 @@ impl TextListState {
             None if !self.items.is_empty() => {
                 self.focused_item = Some(self.items.len() - 1);
                 self.cursor = self.items.last().map(|s| s.len()).unwrap_or(0);
+                // Leaving the trailing slot.
+                self.pending_active = false;
             }
             None => {}
         }
@@ -257,6 +306,7 @@ impl TextListState {
             Some(_) => {
                 self.focused_item = None;
                 self.cursor = self.new_item_text.len();
+                self.pending_active = false;
             }
             None => {}
         }

@@ -883,8 +883,14 @@ impl EntryDialogState {
                     self.editing_text = true;
                 }
                 SettingControl::TextList(state) => {
-                    // Focus on the new item input by default
-                    state.focus_new_item();
+                    // If focused on a committed item, leave focus there
+                    // and just flip into edit mode. Otherwise (focus on
+                    // the trailing `[+] Add new` slot), explicitly
+                    // activate input mode so the row morphs from
+                    // `[+] Add new` into the bracketed input box.
+                    if state.focused_item.is_none() {
+                        state.activate_pending();
+                    }
                     self.editing_text = true;
                 }
                 SettingControl::Number(state) => {
@@ -909,13 +915,13 @@ impl EntryDialogState {
                 SettingControl::Number(state) => state.cancel_editing(),
                 SettingControl::Text(state) => state.editing = false,
                 // Cancelling on a pending list row (the trailing
-                // [+] add-new slot) discards whatever the user typed.
-                // Without this, Esc was a silent no-op that left the
-                // draft text dangling until the user committed or
-                // cleared it manually.
+                // [+] add-new slot) discards whatever the user typed
+                // and collapses the row back to `[+] Add new`. Without
+                // this, Esc was a silent no-op that left the draft
+                // text dangling until the user committed or cleared it
+                // manually.
                 SettingControl::TextList(state) if state.focused_item.is_none() => {
-                    state.new_item_text.clear();
-                    state.cursor = 0;
+                    state.cancel_pending();
                 }
                 // If the user opened a JSON field but didn't type
                 // anything (or deleted everything), put the `null`
