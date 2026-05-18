@@ -1104,16 +1104,21 @@ impl Window {
             state.margins.configure_for_line_numbers(false);
         }
 
-        // Refresh line-wrap state for the scroll-back view. We deliberately
-        // do not call `ensure_cursor_visible` here: the viewport top is
-        // already pinned to `anchor_byte` above, and ensure-visible would
-        // re-scroll to put the cursor at the viewport's bottom row,
-        // undoing the alignment.
+        // Refresh line-wrap state for the scroll-back view and arm the
+        // skip_ensure_visible flag so the next render does *not* run
+        // `Viewport::ensure_visible` against the cursor we just pinned.
+        // Without this the renderer would notice that the cursor sits
+        // on the viewport's top row, treat that as "above the scroll
+        // margin", and scroll `top_byte` up by `scroll_offset` lines —
+        // pulling pre-existing scrollback above the appended visible
+        // screen and undoing the anchor. The flag is consumed
+        // (cleared) by the first navigation / scroll action, so normal
+        // scrolling still works after that.
         if let Some((mgr, view_states)) = self.buffers.splits_mut() {
             let active_split = mgr.active_split();
             if let Some(view_state) = view_states.get_mut(&active_split) {
                 view_state.viewport.line_wrap_enabled = false;
-                view_state.viewport.clear_skip_ensure_visible();
+                view_state.viewport.set_skip_ensure_visible();
             }
         }
     }
