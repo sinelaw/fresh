@@ -59,6 +59,26 @@ pub(super) struct CharStyleOutput {
     pub region: &'static str,
 }
 
+/// Theme keys whose fg override is meant to *fix a same-colour fg/bg
+/// collision*, not to repaint every cell of a row.
+///
+/// Live-diff paints `editor.diff_*_bg` across whole changed lines and
+/// asks themes to supply a contrasting fg via `editor.diff_*_fg`. The
+/// override exists because ANSI-palette themes use the same named
+/// colour for `syntax.string`/`syntax.keyword`/`syntax.type` and the
+/// corresponding `diff_*_bg`, which would render the colliding tokens
+/// invisible. For every other token on the same line the syntax fg is
+/// already distinguishable from the diff bg and replacing it with the
+/// override would collapse all highlighting on the line to one flat
+/// colour. Limiting the override to actual collisions keeps syntax
+/// highlighting on diff lines intact (see #2034).
+fn is_collision_only_fg_key(key: &str) -> bool {
+    matches!(
+        key,
+        "editor.diff_add_fg" | "editor.diff_remove_fg" | "editor.diff_modify_fg"
+    )
+}
+
 /// Compute the style for a character by layering:
 /// token -> ANSI -> syntax -> semantic -> overlays -> selection -> cursor.
 /// Also tracks which theme keys produced the final fg/bg colors.
@@ -205,11 +225,9 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                 bg_theme,
             } => {
                 let mut themed_style = *fallback_style;
-                if let Some(fg_key) = fg_theme {
-                    if let Some(color) = ctx.theme.resolve_theme_key(fg_key) {
-                        themed_style = themed_style.fg(color);
-                    }
-                }
+                // Resolve bg first so the fg-collision check below
+                // can compare against the *new* bg this overlay
+                // would paint.
                 if let Some(bg_key) = bg_theme {
                     if let Some(color) = ctx.theme.resolve_theme_key(bg_key) {
                         themed_style = themed_style.bg(color);
@@ -217,6 +235,27 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
                     let m = ctx.theme.modifier_for_bg_key(bg_key);
                     if !m.is_empty() {
                         themed_style = themed_style.add_modifier(m);
+                    }
+                }
+                if let Some(fg_key) = fg_theme {
+                    if let Some(color) = ctx.theme.resolve_theme_key(fg_key) {
+                        // `editor.diff_*_fg` are opt-in collision-fix
+                        // overrides — themes only set them to fix the
+                        // case where a syntax fg renders identically
+                        // to the diff bg (e.g. ANSI Green-on-Green).
+                        // Apply the override only where it actually
+                        // resolves a same-colour fg/bg pair so
+                        // syntax highlighting survives on every other
+                        // cell of the changed line.
+                        let apply = if is_collision_only_fg_key(fg_key) {
+                            let new_bg = themed_style.bg.or(style.bg);
+                            matches!((style.fg, new_bg), (Some(fg), Some(bg)) if fg == bg)
+                        } else {
+                            true
+                        };
+                        if apply {
+                            themed_style = themed_style.fg(color);
+                        }
                     }
                 }
                 style = style.patch(themed_style);
@@ -268,5 +307,171 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         fg_theme_key,
         bg_theme_key,
         region,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::marker::MarkerList;
+    use crate::view::overlay::Overlay;
+    use crate::view::theme::{Theme, THEME_TERMINAL};
+    use ratatui::style::Color;
+
+    fn diff_add_overlay(marker_list: &mut MarkerList) -> Overlay {
+        Overlay::new(
+            marker_list,
+            0..10,
+            OverlayFace::ThemedStyle {
+                fallback_style: Style::default(),
+                fg_theme: Some("editor.diff_add_fg".to_string()),
+                bg_theme: Some("editor.diff_add_bg".to_string()),
+            },
+        )
+    }
+
+    fn other_themed_overlay(marker_list: &mut MarkerList) -> Overlay {
+        // search.match_fg / search.match_bg — not in the collision-only set.
+        Overlay::new(
+            marker_list,
+            0..10,
+            OverlayFace::ThemedStyle {
+                fallback_style: Style::default(),
+                fg_theme: Some("search.match_fg".to_string()),
+                bg_theme: Some("search.match_bg".to_string()),
+            },
+        )
+    }
+
+    fn run(theme: &Theme, overlay: &Overlay, existing_fg: Option<Color>) -> CharStyleOutput {
+        let highlight_color = existing_fg;
+        let overlays: Vec<&Overlay> = vec![overlay];
+        compute_char_style(&CharStyleContext {
+            byte_pos: Some(0),
+            token_style: None,
+            ansi_style: Style::default(),
+            is_cursor: false,
+            is_selected: false,
+            theme,
+            highlight_color,
+            highlight_theme_key: None,
+            highlight_bg: None,
+            highlight_bg_theme_key: None,
+            semantic_token_color: None,
+            active_overlays: &overlays,
+            primary_cursor_position: 0,
+            is_active: true,
+            skip_primary_cursor_reverse: true,
+            is_cursor_line_highlighted: false,
+            current_line_bg: theme.current_line_bg,
+        })
+    }
+
+    #[test]
+    fn diff_add_fg_preserves_non_colliding_syntax_color() {
+        // Regression for #2034: terminal theme defines
+        // `editor.diff_add_fg = Black`, but a Red keyword on a Green
+        // diff-add bg should stay Red (no collision).
+        let theme = Theme::load_builtin(THEME_TERMINAL).expect("terminal theme");
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let overlay = diff_add_overlay(&mut marker_list);
+
+        let out = run(&theme, &overlay, Some(Color::Red));
+
+        assert_eq!(out.style.bg, Some(Color::Green));
+        assert_eq!(
+            out.style.fg,
+            Some(Color::Red),
+            "non-colliding syntax fg must be preserved (got {:?})",
+            out.style.fg,
+        );
+    }
+
+    #[test]
+    fn diff_add_fg_applies_on_same_colour_collision() {
+        // `syntax.string = Green` on `diff_add_bg = Green` is the
+        // exact case `editor.diff_add_fg` was added to fix: ANSI
+        // green-on-green is invisible. The override fires here.
+        let theme = Theme::load_builtin(THEME_TERMINAL).expect("terminal theme");
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let overlay = diff_add_overlay(&mut marker_list);
+
+        let out = run(&theme, &overlay, Some(Color::Green));
+
+        assert_eq!(out.style.bg, Some(Color::Green));
+        assert_eq!(
+            out.style.fg,
+            Some(Color::Black),
+            "fg on fg/bg collision must use the diff_add_fg override (got {:?})",
+            out.style.fg,
+        );
+    }
+
+    #[test]
+    fn diff_modify_fg_applies_on_yellow_yellow_collision() {
+        // syntax.type = Yellow vs diff_modify_bg = Yellow → collision.
+        let theme = Theme::load_builtin(THEME_TERMINAL).expect("terminal theme");
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let overlay = Overlay::new(
+            &mut marker_list,
+            0..10,
+            OverlayFace::ThemedStyle {
+                fallback_style: Style::default(),
+                fg_theme: Some("editor.diff_modify_fg".to_string()),
+                bg_theme: Some("editor.diff_modify_bg".to_string()),
+            },
+        );
+
+        let out = run(&theme, &overlay, Some(Color::Yellow));
+
+        assert_eq!(out.style.bg, Some(Color::Yellow));
+        assert_eq!(out.style.fg, Some(Color::Black));
+    }
+
+    #[test]
+    fn non_diff_themed_overlay_keeps_always_apply_semantics() {
+        // search.match_fg/bg is NOT collision-only: the user expects
+        // the match style to fully repaint matched cells regardless
+        // of underlying syntax. Verify the new collision-aware
+        // logic only narrows the diff_*_fg keys.
+        let theme = Theme::load_builtin(THEME_TERMINAL).expect("terminal theme");
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let overlay = other_themed_overlay(&mut marker_list);
+
+        let out = run(&theme, &overlay, Some(Color::Blue));
+
+        assert_eq!(out.style.bg, Some(Color::Yellow)); // search.match_bg
+        assert_eq!(
+            out.style.fg,
+            Some(Color::Black),
+            "search.match_fg must still override syntax fg (got {:?})",
+            out.style.fg,
+        );
+    }
+
+    #[test]
+    fn diff_add_fg_applied_when_no_syntax_color_collides() {
+        // When the cell has no syntax highlight, fg falls back to
+        // `editor.fg`. For the terminal theme that's `Color::Reset`,
+        // which is not equal to `Color::Green` — so the override is
+        // *not* applied. The terminal renders default fg on Green;
+        // this is the same trade-off the prior fix accepted in the
+        // "no syntax fg" case (and matches the issue's preferred
+        // direction of preserving terminal-native rendering).
+        let theme = Theme::load_builtin(THEME_TERMINAL).expect("terminal theme");
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let overlay = diff_add_overlay(&mut marker_list);
+
+        // No highlight_color → fg starts as theme.editor_fg
+        // (Color::Reset for the terminal theme).
+        let out = run(&theme, &overlay, None);
+
+        assert_eq!(out.style.bg, Some(Color::Green));
+        assert_eq!(out.style.fg, Some(Color::Reset));
     }
 }
