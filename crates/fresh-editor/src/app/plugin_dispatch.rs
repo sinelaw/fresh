@@ -4036,8 +4036,46 @@ impl Editor {
         let n = panel.tabbable.len() as i32;
         let new_idx = ((cur_idx + delta) % n + n) % n;
         let new_key = panel.tabbable[new_idx as usize].clone();
-        self.widget_registry.set_focus_key(panel_id, new_key);
+        self.set_panel_focus_and_notify(panel_id, new_key);
         self.rerender_widget_panel(panel_id);
+    }
+
+    /// Update the panel's focused widget AND fire a
+    /// `widget_event { event_type: "focus" }` so plugins can
+    /// react. Used by every host-driven focus move — key-driven
+    /// Tab / Shift-Tab / Enter focus-advance, click-driven
+    /// focus moves, etc. — so plugins never have to predict the
+    /// host's focus rules to keep a local mirror in sync.
+    ///
+    /// No-op when the key isn't actually changing (avoids
+    /// spurious events on every render that touches focus).
+    pub(crate) fn set_panel_focus_and_notify(&mut self, panel_id: u64, new_key: String) {
+        let old_key = self
+            .widget_registry
+            .focus_key(panel_id)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if old_key == new_key {
+            return;
+        }
+        self.widget_registry
+            .set_focus_key(panel_id, new_key.clone());
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                fresh_core::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key: new_key,
+                    event_type: "focus".to_string(),
+                    payload: serde_json::json!({ "previous": old_key }),
+                },
+            );
+        }
     }
 
     fn handle_widget_activate(&mut self, panel_id: u64) {

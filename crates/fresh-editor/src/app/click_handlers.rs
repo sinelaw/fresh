@@ -228,11 +228,13 @@ impl Editor {
                 // moved; subsequent Tab cycling starts from the
                 // clicked widget.
                 if !hit.widget_key.is_empty() {
-                    if let Some(panel) = self.widget_registry.get(panel_id) {
-                        if panel.tabbable.iter().any(|k| k == &hit.widget_key) {
-                            self.widget_registry
-                                .set_focus_key(panel_id, hit.widget_key.clone());
-                        }
+                    let is_tabbable = self
+                        .widget_registry
+                        .get(panel_id)
+                        .map(|p| p.tabbable.iter().any(|k| k == &hit.widget_key))
+                        .unwrap_or(false);
+                    if is_tabbable {
+                        self.set_panel_focus_and_notify(panel_id, hit.widget_key.clone());
                     }
                     // Re-render so the focus styling updates without
                     // waiting for the plugin to re-emit the spec.

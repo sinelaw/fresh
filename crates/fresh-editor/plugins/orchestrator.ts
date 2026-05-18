@@ -2774,20 +2774,13 @@ registerHandler("orchestrator_form_key_enter", () => {
   // `completion_dismiss` (plugin syncs local state via that
   // event) without firing the form's picker-Enter or focus
   // advance — Enter is "dismiss the popup, stay focused on
-  // the text input". When the popup is closed, Enter on a
-  // single-line Text widget advances focus to the next
-  // tabbable; on a Button/Toggle it activates. The plugin's
-  // local focus mirror must advance in lockstep with the
-  // host on the focus-advance branch so that the next Up/Down
-  // walks the *new* field's history (not the previous text
-  // input's). Without this, focus appears to move (cursor
-  // gone, next field highlighted) while the plugin still
-  // thinks it's on the previous text input — pressing Down
-  // then walks that text input's history and silently
-  // rewrites its value.
-  if (!completionVisibleForFocused() && focusToHistoryField(formFocusedKey())) {
-    advanceFormFocus(1);
-  }
+  // the text input". When the popup is closed, Enter falls
+  // through to the host's normal Text-widget Enter (picker
+  // activate or focus advance). On a focus advance, the host
+  // fires a `widget_event { event_type: "focus" }` and the
+  // plugin snaps `formFocusIndex` from that authoritative
+  // signal — see the `focus` branch in the widget_event
+  // handler below.
   dispatchFormKey("Enter");
 });
 registerHandler(
@@ -2941,6 +2934,18 @@ editor.on("widget_event", (e) => {
   // New-session form
   // ---------------------------------------------------------------------
   if (form && formPanel && e.panel_id === formPanel.id()) {
+    if (e.event_type === "focus") {
+      // Host fires this whenever the panel's focused widget
+      // changes — key-driven (Tab / Shift-Tab / Enter focus-
+      // advance), click-driven, or any other host-side focus
+      // mutation. The plugin keeps a local `formFocusIndex`
+      // mirror so handlers like Up/Down can look up the right
+      // history field without first asking the host; we snap
+      // that mirror from the authoritative signal here so the
+      // plugin never has to predict host-side focus rules.
+      snapFormFocusTo(e.widget_key);
+      return;
+    }
     if (e.event_type === "change") {
       const field = e.widget_key;
       const payload = (e.payload ?? {}) as Record<string, unknown>;

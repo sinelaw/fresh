@@ -3434,8 +3434,7 @@ impl Editor {
                 .map(|p| p.tabbable.iter().any(|k| k == &hit_key))
                 .unwrap_or(false);
             if tabbable {
-                self.widget_registry
-                    .set_focus_key(panel_id, hit_key.clone());
+                self.set_panel_focus_and_notify(panel_id, hit_key.clone());
             }
             self.rerender_widget_panel(panel_id);
         }
