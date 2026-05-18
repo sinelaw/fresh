@@ -1663,6 +1663,10 @@
             "null"
           ],
           "readOnly": true
+        },
+        "settings": {
+          "description": "Plugin-specific settings. The shape is defined by each plugin's\n`<plugin_name>.schema.json` sidecar file; the host stores the value as\nuntyped JSON so a malformed plugin schema can't poison the rest of the\nconfig. Plugins read this via `editor.getPluginConfig()` and the\nSettings UI renders it as a sub-category under \"Plugin Settings\".",
+          "readOnly": true
         }
       },
       "x-display-field": "/enabled"

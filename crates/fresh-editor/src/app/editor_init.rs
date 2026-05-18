@@ -165,6 +165,9 @@ pub(super) struct EditorParts {
     // post-construction load step.
     pub(super) plugin_global_state: HashMap<String, HashMap<String, serde_json::Value>>,
 
+    /// Per-plugin config schemas discovered from `<plugin>.schema.json` sidecars.
+    pub(super) plugin_schemas: HashMap<String, serde_json::Value>,
+
     /// Editor-wide event broadcaster, shared with every WindowResources.
     pub(super) event_broadcaster: crate::model::control_event::EventBroadcaster,
 }
@@ -244,6 +247,7 @@ impl Editor {
             background_process_handles: HashMap::new(),
             host_process_handles: HashMap::new(),
             status_bar_token_registry: Mutex::new(HashMap::new()),
+            plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             event_broadcaster: parts.event_broadcaster,
             #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
@@ -747,6 +751,10 @@ impl Editor {
         //    when embed-plugins feature is enabled)
         // 3. User plugins directory (~/.config/fresh/plugins)
         // 4. Package manager installed plugins (~/.config/fresh/plugins/packages/*)
+        // Plugin schemas populated lazily by plugins calling
+        // `editor.definePluginConfig(...)` at load time. See
+        // `handle_register_plugin_config_schema`.
+        let plugin_schemas: HashMap<String, serde_json::Value> = HashMap::new();
         if plugin_manager.read().unwrap().is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
@@ -1219,6 +1227,7 @@ impl Editor {
             update_checker,
             time_source: time_source.clone(),
             plugin_global_state,
+            plugin_schemas,
             event_broadcaster: event_broadcaster.clone(),
         };
 
@@ -1541,6 +1550,80 @@ impl Editor {
                 self.set_status_message(format!("setSetting({path}): {e}"));
             }
         }
+    }
+
+    /// Append a single config field to a plugin's accumulated schema and
+    /// pre-populate its default value. Each `defineConfigX(...)` call
+    /// from the plugin's TS code fires one of these.
+    ///
+    /// On first call for a plugin we synthesise a fresh
+    /// `{"type": "object", "properties": {}}` schema and grow it as more
+    /// fields arrive. Re-registering the same `field_name` overwrites
+    /// the previous definition (which is what we want on plugin
+    /// reload — plugins re-run their `defineConfigX` calls).
+    pub fn handle_add_plugin_config_field(
+        &mut self,
+        plugin_name: String,
+        field_name: String,
+        field_schema: serde_json::Value,
+    ) {
+        tracing::trace!(
+            "Registering plugin config field: {}.{}",
+            plugin_name, field_name
+        );
+        // Merge the new field into the existing accumulated schema (or a
+        // fresh one) and run the same strict validation as a bulk-register.
+        let updated_schema = {
+            let schemas = self.plugin_schemas.read().ok();
+            let existing = schemas.as_ref().and_then(|m| m.get(&plugin_name)).cloned();
+            let mut schema = existing.unwrap_or_else(|| {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                })
+            });
+            if let Some(props) = schema
+                .as_object_mut()
+                .and_then(|o| o.get_mut("properties"))
+                .and_then(|p| p.as_object_mut())
+            {
+                props.insert(field_name.clone(), field_schema.clone());
+            }
+            schema
+        };
+
+        if let Err(msg) = crate::plugin_schemas::validate_plugin_schema(&updated_schema) {
+            // Field passed JS-side validation but somehow broke the full
+            // schema — log and skip so we don't poison the registry.
+            self.set_status_message(format!(
+                "defineConfig({}.{}): {}",
+                plugin_name, field_name, msg
+            ));
+            return;
+        }
+
+        // Pre-populate the default for THIS field only.
+        if let Some(default) = field_schema.get("default").cloned() {
+            let cfg = std::sync::Arc::make_mut(&mut self.config);
+            let entry = cfg.plugins.entry(plugin_name.clone()).or_default();
+            let settings_obj = match &mut entry.settings {
+                serde_json::Value::Object(_) => &mut entry.settings,
+                slot => {
+                    *slot = serde_json::Value::Object(Default::default());
+                    slot
+                }
+            };
+            if let serde_json::Value::Object(map) = settings_obj {
+                map.entry(field_name.clone()).or_insert(default);
+            }
+        }
+
+        if let Ok(mut schemas) = self.plugin_schemas.write() {
+            schemas.insert(plugin_name, updated_schema);
+        }
+
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
     }
 
     /// Apply the result of one async startup-batch directory load.

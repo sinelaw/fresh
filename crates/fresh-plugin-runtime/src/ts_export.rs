@@ -389,6 +389,33 @@ interface EditorAPI {
 }
 
 /**
+ * Typed overload of `editor.defineConfigEnum`. The macro-generated
+ * signature can't express `<E extends string>` propagating from the
+ * `values` array into the return type, so it's declared here. Use
+ * `as const` on the `values` array to get a literal-union return:
+ *
+ * ```ts
+ * const mode = editor.defineConfigEnum("mode", {
+ *   values: ["normal", "insert"] as const,
+ *   default: "normal",
+ * });
+ * mode; // typed as "normal" | "insert"
+ * ```
+ *
+ * Typed overload of `editor.getPluginConfig`. Plugins that declared
+ * their fields via `defineConfigX` can pass the shape type explicitly:
+ * `editor.getPluginConfig<{ autoEnable: boolean; ... }>()`. Without
+ * the generic, falls back to `unknown`.
+ */
+interface EditorAPI {
+  defineConfigEnum<E extends string>(
+    name: string,
+    options: { values: readonly E[]; default: NoInfer<E>; description?: string },
+  ): E;
+  getPluginConfig<T = unknown>(): T;
+}
+
+/**
  * Maps every hook event name to its payload type.
  *
  * Payloads match the flat JSON produced by `hook_args_to_json` on the Rust
@@ -1182,6 +1209,15 @@ mod tests {
             "getTempDir",
             "getConfig",
             "getUserConfig",
+            "getPluginConfig",
+            "defineConfigBoolean",
+            "defineConfigInteger",
+            "defineConfigNumber",
+            "defineConfigString",
+            // `defineConfigEnum` is hand-written in the d.ts trailer
+            // (generic <E> propagates `values` into the return), so it's
+            // NOT in the macro-generated EditorAPI interface.
+            "defineConfigStringArray",
             "reloadConfig",
             "reloadThemes",
             "reloadAndApplyTheme",

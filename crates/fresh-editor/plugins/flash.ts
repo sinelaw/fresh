@@ -33,7 +33,24 @@ const VTEXT_PREFIX = "flash-";
 // the closest jump targets get the most comfortable keys.  All
 // lowercase: case-sensitive matching keeps the label letter from also
 // being a valid pattern continuation, which matters for the skip rule.
-const LABEL_POOL = "asdfghjklqwertyuiopzxcvbnm";
+editor.defineConfigString("labelPool", {
+  default: "asdfghjklqwertyuiopzxcvbnm",
+  description: "Characters used as jump labels, in comfort order. Labels are assigned to matches by distance from the cursor, so leftmost characters here land on the nearest matches.",
+});
+editor.defineConfigBoolean("skipRule", {
+  default: true,
+  description: "Skip a label character if it is also the next character after a match — prevents ambiguity between extending the search pattern and jumping.",
+});
+
+function flashSettings(): { labelPool: string; skipRule: boolean } {
+  const cfg = (editor.getPluginConfig() ?? {}) as { labelPool?: string; skipRule?: boolean };
+  return {
+    labelPool: cfg.labelPool && cfg.labelPool.length > 0
+      ? cfg.labelPool
+      : "asdfghjklqwertyuiopzxcvbnm",
+    skipRule: cfg.skipRule ?? true,
+  };
+}
 
 interface Match {
   /** Byte offset where the match starts in its buffer. */
@@ -334,9 +351,10 @@ function assignLabels(
   prevLabelByKey: Map<string, string>,
 ): Match[] {
   if (matches.length === 0) return matches;
-  const skip = buildSkipSet(matches, views, emptyPattern);
+  const { labelPool, skipRule } = flashSettings();
+  const skip = skipRule ? buildSkipSet(matches, views, emptyPattern) : new Set<string>();
   const remaining = new Set<string>();
-  for (const c of LABEL_POOL) if (!skip.has(c)) remaining.add(c);
+  for (const c of labelPool) if (!skip.has(c)) remaining.add(c);
 
   const sorted = sortMatches(matches, startSplitId, startCursor);
 
@@ -353,7 +371,7 @@ function assignLabels(
   // matches in distance order.  Iterate the pool in its native
   // (comfort-ranked) order so home-row letters go to nearest matches.
   const orderedRemaining: string[] = [];
-  for (const c of LABEL_POOL) if (remaining.has(c)) orderedRemaining.push(c);
+  for (const c of labelPool) if (remaining.has(c)) orderedRemaining.push(c);
   let next = 0;
   for (const m of sorted) {
     if (m.label) continue;

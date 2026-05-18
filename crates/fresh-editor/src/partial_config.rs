@@ -455,12 +455,36 @@ pub struct PartialPluginConfig {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<std::path::PathBuf>,
+    /// Plugin-specific settings, shape defined by the plugin's schema sidecar.
+    /// Object values from lower layers are deep-merged on a key-by-key basis;
+    /// non-object values are replaced wholesale (matching how the layered
+    /// config docs describe "lists are replaced, objects are deep-merged").
+    #[serde(skip_serializing_if = "serde_json::Value::is_null", default)]
+    pub settings: serde_json::Value,
+}
+
+fn merge_json_values(target: &mut serde_json::Value, other: &serde_json::Value) {
+    match (target, other) {
+        (serde_json::Value::Object(t_map), serde_json::Value::Object(o_map)) => {
+            for (k, v) in o_map {
+                match t_map.get_mut(k) {
+                    Some(existing) => merge_json_values(existing, v),
+                    None => {
+                        t_map.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        (t @ serde_json::Value::Null, o) if !o.is_null() => *t = o.clone(),
+        _ => {}
+    }
 }
 
 impl Merge for PartialPluginConfig {
     fn merge_from(&mut self, other: &Self) {
         self.enabled.merge_from(&other.enabled);
         self.path.merge_from(&other.path);
+        merge_json_values(&mut self.settings, &other.settings);
     }
 }
 
@@ -915,15 +939,21 @@ impl From<&PluginConfig> for PartialPluginConfig {
         Self {
             enabled: Some(cfg.enabled),
             path: cfg.path.clone(),
+            settings: cfg.settings.clone(),
         }
     }
 }
 
 impl PartialPluginConfig {
     pub fn resolve(self, defaults: &PluginConfig) -> PluginConfig {
+        let mut settings = self.settings;
+        if settings.is_null() {
+            settings = defaults.settings.clone();
+        }
         PluginConfig {
             enabled: self.enabled.unwrap_or(defaults.enabled),
             path: self.path.or_else(|| defaults.path.clone()),
+            settings,
         }
     }
 }
@@ -1051,13 +1081,21 @@ impl From<&crate::config::Config> for PartialConfig {
                 let non_default_plugins: HashMap<String, PartialPluginConfig> = cfg
                     .plugins
                     .iter()
-                    .filter(|(_, v)| v.enabled != default_plugin.enabled)
+                    .filter(|(_, v)| {
+                        let settings_changed = match &v.settings {
+                            serde_json::Value::Null => false,
+                            serde_json::Value::Object(o) => !o.is_empty(),
+                            _ => true,
+                        };
+                        v.enabled != default_plugin.enabled || settings_changed
+                    })
                     .map(|(k, v)| {
                         (
                             k.clone(),
                             PartialPluginConfig {
                                 enabled: Some(v.enabled),
                                 path: None, // Don't save path - it's auto-discovered
+                                settings: v.settings.clone(),
                             },
                         )
                     })
@@ -1557,6 +1595,7 @@ mod tests {
             PluginConfig {
                 enabled: true, // Default value
                 path: Some(std::path::PathBuf::from("/path/to/plugin.ts")),
+                settings: serde_json::Value::Null,
             },
         );
 
@@ -1578,6 +1617,7 @@ mod tests {
             PluginConfig {
                 enabled: true,
                 path: Some(std::path::PathBuf::from("/path/to/enabled.ts")),
+                settings: serde_json::Value::Null,
             },
         );
         config.plugins.insert(
@@ -1585,6 +1625,7 @@ mod tests {
             PluginConfig {
                 enabled: false, // Not default!
                 path: Some(std::path::PathBuf::from("/path/to/disabled.ts")),
+                settings: serde_json::Value::Null,
             },
         );
 
@@ -1617,6 +1658,7 @@ mod tests {
             PluginConfig {
                 enabled: false,
                 path: Some(std::path::PathBuf::from("/some/path/plugin.ts")),
+                settings: serde_json::Value::Null,
             },
         );
 
@@ -1639,6 +1681,7 @@ mod tests {
                 PartialPluginConfig {
                     enabled: Some(false),
                     path: None,
+                    settings: serde_json::Value::Null,
                 },
             )])),
             ..Default::default()
@@ -1667,6 +1710,7 @@ mod tests {
                 PartialPluginConfig {
                     enabled: Some(false), // User disabled
                     path: None,
+                    settings: serde_json::Value::Null,
                 },
             )])),
             ..Default::default()
@@ -1678,6 +1722,7 @@ mod tests {
                 PartialPluginConfig {
                     enabled: Some(true), // Lower layer has it enabled
                     path: None,
+                    settings: serde_json::Value::Null,
                 },
             )])),
             ..Default::default()
@@ -1704,6 +1749,7 @@ mod tests {
             PluginConfig {
                 enabled: true,
                 path: Some(std::path::PathBuf::from("/a.ts")),
+                settings: serde_json::Value::Null,
             },
         );
         config.plugins.insert(
@@ -1711,6 +1757,7 @@ mod tests {
             PluginConfig {
                 enabled: false,
                 path: Some(std::path::PathBuf::from("/b.ts")),
+                settings: serde_json::Value::Null,
             },
         );
         config.plugins.insert(
@@ -1718,6 +1765,7 @@ mod tests {
             PluginConfig {
                 enabled: true,
                 path: Some(std::path::PathBuf::from("/c.ts")),
+                settings: serde_json::Value::Null,
             },
         );
 

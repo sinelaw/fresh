@@ -1889,6 +1889,64 @@ interface EditorAPI {
 	*/
 	getUserConfig(): unknown;
 	/**
+	* Declare a boolean config field for the calling plugin.
+	* 
+	* Validates `options` synchronously: the JS call throws if any
+	* unknown key is present or if `default` isn't a boolean. The
+	* Settings UI grows a "Plugin Settings → <plugin>" sub-category
+	* containing a toggle for this field. Returns the current value
+	* (user-set if present, otherwise the declared `default`).
+	*/
+	defineConfigBoolean(name: string, options: {
+		default: boolean;
+		description?: string;
+	}): boolean;
+	/**
+	* Declare an integer config field for the calling plugin. Throws on
+	* invalid options or if the default falls outside `minimum/maximum`.
+	*/
+	defineConfigInteger(name: string, options: {
+		default: number;
+		description?: string;
+		minimum?: number;
+		maximum?: number;
+	}): number;
+	/**
+	* Declare a floating-point number config field. Throws on bad
+	* options or default outside `minimum/maximum`.
+	*/
+	defineConfigNumber(name: string, options: {
+		default: number;
+		description?: string;
+		minimum?: number;
+		maximum?: number;
+	}): number;
+	/**
+	* Declare a free-form string config field.
+	*/
+	defineConfigString(name: string, options: {
+		default: string;
+		description?: string;
+	}): string;
+	/**
+	* Declare an array-of-strings config field (e.g. a list of
+	* patterns). The Settings UI renders this as a list editor.
+	*/
+	defineConfigStringArray(name: string, options: {
+		default: string[];
+		description?: string;
+	}): string[];
+	/**
+	* Get the calling plugin's settings as a JS object.
+	* 
+	* Returns the merged value at `config.plugins.<plugin_name>.settings`.
+	* The shape comes from whatever the plugin declared via
+	* `editor.definePluginConfig(...)` (defaults pre-populated by the
+	* host, user overrides on top from the Settings UI). Returns `null`
+	* if the plugin hasn't declared a schema and has no user-set value.
+	*/
+	getPluginConfig(): unknown;
+	/**
 	* Reload configuration from file
 	*/
 	reloadConfig(): void;
@@ -2808,6 +2866,33 @@ interface EditorAPI {
 */
 interface EditorAPI {
 	getPluginApi<K extends keyof FreshPluginRegistry>(name: K): FreshPluginRegistry[K] | null;
+}
+/**
+* Typed overload of `editor.defineConfigEnum`. The macro-generated
+* signature can't express `<E extends string>` propagating from the
+* `values` array into the return type, so it's declared here. Use
+* `as const` on the `values` array to get a literal-union return:
+*
+* ```ts
+* const mode = editor.defineConfigEnum("mode", {
+*   values: ["normal", "insert"] as const,
+*   default: "normal",
+* });
+* mode; // typed as "normal" | "insert"
+* ```
+*
+* Typed overload of `editor.getPluginConfig`. Plugins that declared
+* their fields via `defineConfigX` can pass the shape type explicitly:
+* `editor.getPluginConfig<{ autoEnable: boolean; ... }>()`. Without
+* the generic, falls back to `unknown`.
+*/
+interface EditorAPI {
+	defineConfigEnum<E extends string>(name: string, options: {
+		values: readonly E[];
+		default: NoInfer<E>;
+		description?: string;
+	}): E;
+	getPluginConfig<T = unknown>(): T;
 }
 /**
 * Maps every hook event name to its payload type.

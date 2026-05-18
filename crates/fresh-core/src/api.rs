@@ -1947,6 +1947,20 @@ pub enum PluginCommand {
         value: JsonValue,
     },
 
+    /// Register one field of a plugin-defined config schema. Each field
+    /// arrives independently (one per `defineConfigBoolean` / `Integer` /
+    /// etc. call from the plugin's TypeScript). The host accumulates
+    /// fields into `plugins.<plugin_name>` schema and pre-populates the
+    /// declared default into `plugins.<plugin_name>.settings.<field>`.
+    AddPluginConfigField {
+        plugin_name: String,
+        field_name: String,
+        /// JSON Schema fragment for this single field (e.g.
+        /// `{"type":"boolean","default":false,"description":"..."}`).
+        #[ts(type = "unknown")]
+        field_schema: JsonValue,
+    },
+
     /// Register a custom command
     RegisterCommand { command: Command },
 

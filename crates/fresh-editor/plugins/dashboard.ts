@@ -1586,18 +1586,20 @@ async function dashboardShowOrFocus() {
 registerHandler("dashboardShowOrFocus", dashboardShowOrFocus);
 
 // Auto-open resolution: the session override (set via the exported
-// plugin API from init.ts) wins over the user config. We read from
-// getUserConfig (raw file) rather than getConfig because unknown
-// fields are dropped when the Config struct reserializes. Default
-// is true.
+// plugin API from init.ts) wins over the user-configured value, which
+// comes from the typed plugin-config field declared below. The field
+// shows up in the Settings UI under "Plugin Settings → dashboard".
+editor.defineConfigBoolean("autoOpen", {
+    default: true,
+    description: "Show the dashboard automatically when Fresh starts with no real files open.",
+});
+
 let autoOpenOverride: boolean | null = null;
 
 function autoOpenEnabled(): boolean {
     if (autoOpenOverride !== null) return autoOpenOverride;
-    const cfg = editor.getUserConfig() as Record<string, unknown> | null;
-    const plugins = cfg?.plugins as Record<string, unknown> | undefined;
-    const dashboard = plugins?.dashboard as Record<string, unknown> | undefined;
-    return dashboard?.["auto-open"] !== false;
+    const cfg = (editor.getPluginConfig() ?? {}) as { autoOpen?: boolean };
+    return cfg.autoOpen !== false;
 }
 
 function shouldShowDashboard(): boolean {

@@ -15,6 +15,7 @@ rust_i18n::i18n!(
 // Core types and config are always available (needed for schema generation)
 pub mod config;
 pub mod partial_config;
+pub mod plugin_schemas;
 pub mod types;
 
 // Runtime-only modules (require the "runtime" feature)

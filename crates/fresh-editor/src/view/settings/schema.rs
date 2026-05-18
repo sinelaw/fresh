@@ -380,6 +380,79 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
     Ok(categories)
 }
 
+/// Append a top-level "Plugin Settings" category whose subcategories are
+/// built from per-plugin schema sidecars (`<plugin_name>.schema.json`).
+///
+/// Each sub-category lives at JSON pointer `/plugins/<name>/settings`.
+/// Only the names passed in `enabled_plugins_with_schema` are rendered —
+/// disabled plugins are hidden from the Settings UI (per the design
+/// decision).
+pub fn append_plugin_settings_category(
+    categories: &mut Vec<SettingCategory>,
+    plugin_schemas: &HashMap<String, serde_json::Value>,
+    enabled_plugins_with_schema: &[String],
+) {
+    if enabled_plugins_with_schema.is_empty() {
+        return;
+    }
+
+    // Push each plugin as its own top-level category, prefixed so they
+    // cluster together in the left-panel alphabetical sort and don't
+    // collide with built-in names like "Editor" / "Plugins".
+    let mut added = 0;
+    for name in enabled_plugins_with_schema {
+        let Some(schema_value) = plugin_schemas.get(name) else {
+            continue;
+        };
+        let Some(mut category) = plugin_schema_to_category(name, schema_value) else {
+            continue;
+        };
+        category.name = format!("Plugin: {}", name);
+        categories.push(category);
+        added += 1;
+    }
+
+    if added == 0 {
+        return;
+    }
+
+    // Re-sort categories. "General" stays first; "Plugin: <name>"
+    // entries land alphabetically among the rest.
+    categories.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
+        ("General", _) => std::cmp::Ordering::Less,
+        (_, "General") => std::cmp::Ordering::Greater,
+        (a, b) => a.cmp(b),
+    });
+}
+
+fn plugin_schema_to_category(
+    plugin_name: &str,
+    schema_value: &serde_json::Value,
+) -> Option<SettingCategory> {
+    // Parse the plugin's schema as if it were a regular JSON Schema
+    // fragment, then walk its `properties` to build SettingSchema entries
+    // rooted at `/plugins/<name>/settings/...`.
+    let raw: RawSchema = serde_json::from_value(schema_value.clone()).ok()?;
+    let defs = HashMap::new();
+    let enum_values_map = HashMap::new();
+    let base_path = format!("/plugins/{}/settings", plugin_name);
+
+    let properties = raw.properties.as_ref()?;
+    let settings = parse_properties(properties, &base_path, &defs, &enum_values_map);
+    if settings.is_empty() {
+        return None;
+    }
+
+    Some(SettingCategory {
+        name: plugin_name.to_string(),
+        path: base_path,
+        description: raw.description.clone(),
+        nullable: false,
+        settings,
+        subcategories: Vec::new(),
+    })
+}
+
 /// Build a map from $ref paths to their enum options
 fn build_enum_values_map(entries: &[EnumValueEntry]) -> EnumValuesMap {
     let mut map: EnumValuesMap = HashMap::new();

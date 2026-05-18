@@ -1,0 +1,228 @@
+//! E2E test: a plugin registers config fields via
+//! `editor.defineConfigBoolean/.../defineConfigString`. The Settings UI
+//! must surface a "Plugin: <name>" category populated with those
+//! fields, the user must be able to toggle/edit values, and a re-open
+//! must show the persisted state. The test plugin exposes its current
+//! config value as visible buffer text (via a command) so we can assert
+//! on the rendered output rather than internal state — matching the
+//! "E2E Tests Observe, Not Inspect" rule in CONTRIBUTING.md.
+//!
+//! Without the new `defineConfigX` API + Settings-UI integration this
+//! test panics: the plugin's category never appears, so the navigation
+//! loop times out before finding it.
+
+use crate::common::harness::{copy_plugin_lib, EditorTestHarness};
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+use std::fs;
+
+const PLUGIN_NAME: &str = "test_config_plugin";
+const PLUGIN_SOURCE: &str = r#"
+/// <reference path="./lib/fresh.d.ts" />
+const editor = getEditor();
+
+// Strongly-typed config registration. The TS types are inferred from
+// each call, and the host throws synchronously if anything's wrong.
+editor.defineConfigString("prefix", {
+    default: "DEFAULT",
+    description: "Prefix prepended to the inserted greeting",
+});
+editor.defineConfigBoolean("uppercase", {
+    default: false,
+    description: "Whether to uppercase the greeting suffix",
+});
+
+function insertGreeting(): void {
+    // Re-read on each invocation so a Settings UI save is picked up live.
+    const cfg = (editor.getPluginConfig() ?? {}) as { prefix?: string; uppercase?: boolean };
+    const prefix = cfg.prefix ?? "DEFAULT";
+    const suffix = cfg.uppercase ? "HELLO" : "hello";
+    editor.insertAtCursor(`${prefix}:${suffix}`);
+}
+registerHandler("test_config_plugin_insert", insertGreeting);
+
+editor.registerCommand(
+    "test_config_plugin: Insert Greeting",
+    "Insert greeting using the plugin config values",
+    "test_config_plugin_insert",
+    null,
+);
+"#;
+
+fn harness_with_test_plugin() -> (EditorTestHarness, tempfile::TempDir) {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let working_dir = temp.path().join("work");
+    fs::create_dir_all(&working_dir).unwrap();
+    let plugins_dir = working_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+
+    fs::write(
+        plugins_dir.join(format!("{}.ts", PLUGIN_NAME)),
+        PLUGIN_SOURCE,
+    )
+    .unwrap();
+    copy_plugin_lib(&plugins_dir);
+
+    let harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), working_dir)
+            .expect("harness");
+    (harness, temp)
+}
+
+/// Run the plugin's "Insert Greeting" command via the command palette.
+/// The plugin handler synchronously appends to the active buffer; the
+/// inserted text shows up on the next render.
+fn run_insert_greeting(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("test_config_plugin: Insert Greeting").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_prompt_closed().unwrap();
+    h.render().unwrap();
+}
+
+/// Navigate the Settings UI category list until the named entry is
+/// highlighted (its row gains the `>` selection marker), then open it.
+fn focus_category(h: &mut EditorTestHarness, name: &str) {
+    let probe = format!(">     {}", name);
+    for _ in 0..40 {
+        let screen = h.screen_to_string();
+        if screen.contains(&probe) {
+            return;
+        }
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+    }
+    panic!(
+        "category {:?} never became selected. Screen:\n{}",
+        name,
+        h.screen_to_string()
+    );
+}
+
+/// 1. The plugin's category shows up under "Plugin: <name>".
+/// 2. Both registered fields render with their default values.
+/// 3. After toggling a boolean and saving, the plugin's visible
+///    behavior reflects the new value on the next invocation.
+#[test]
+fn plugin_config_round_trip_toggles_visible_behavior() {
+    let (mut harness, _tmp) = harness_with_test_plugin();
+    harness.render().unwrap();
+
+    // Sanity: default behavior — `uppercase: false` → lower-case suffix.
+    run_insert_greeting(&mut harness);
+    let after_first = harness.screen_to_string();
+    assert!(
+        after_first.contains("DEFAULT:hello"),
+        "Plugin should have inserted the default greeting. Screen:\n{after_first}"
+    );
+
+    // Open settings and verify the plugin category is present.
+    harness.open_settings().unwrap();
+    let after_open = harness.screen_to_string();
+    assert!(
+        after_open.contains(&format!("Plugin: {}", PLUGIN_NAME)),
+        "Settings UI should show the plugin's category. Screen:\n{after_open}"
+    );
+
+    focus_category(&mut harness, &format!("Plugin: {}", PLUGIN_NAME));
+    let after_focus = harness.screen_to_string();
+    assert!(
+        after_focus.contains("Prefix"),
+        "Plugin category should render the `prefix` field. Screen:\n{after_focus}"
+    );
+    assert!(
+        after_focus.contains("Uppercase"),
+        "Plugin category should render the `uppercase` field. Screen:\n{after_focus}"
+    );
+    assert!(
+        after_focus.contains("DEFAULT"),
+        "The text input should show the declared default `DEFAULT`. Screen:\n{after_focus}"
+    );
+
+    // Move focus into the settings panel and toggle `uppercase` (the
+    // second item) from false → true.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let after_toggle = harness.screen_to_string();
+    assert!(
+        after_toggle.contains("ACTIVE"),
+        "Toggling `uppercase` should leave the toggle ACTIVE. Screen:\n{after_toggle}"
+    );
+
+    // Save via Ctrl+S, then close the settings dialog.
+    harness.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Settings saved"))
+        .unwrap();
+
+    // Re-running the plugin command must now insert the upper-case
+    // suffix — proving the new value reached the plugin's
+    // `getPluginConfig()` read on the snapshot.
+    run_insert_greeting(&mut harness);
+    let after_second = harness.screen_to_string();
+    assert!(
+        after_second.contains("DEFAULT:HELLO"),
+        "After toggling `uppercase` and saving, the plugin must observe \
+         the new value on its next invocation. Screen:\n{after_second}"
+    );
+
+    // Re-opening Settings rebuilds the category tree from the live
+    // schema map, so the persisted value should still be reflected
+    // (toggle still shows ACTIVE).
+    harness.open_settings().unwrap();
+    focus_category(&mut harness, &format!("Plugin: {}", PLUGIN_NAME));
+    let after_reopen = harness.screen_to_string();
+    assert!(
+        after_reopen.contains("Uppercase")
+            && after_reopen.contains("ACTIVE")
+            && after_reopen.contains("(user)"),
+        "Re-opened settings must show the persisted Uppercase=ACTIVE \
+         from the User layer. Screen:\n{after_reopen}"
+    );
+}
+
+/// The plugin's category must NOT appear when the plugin is disabled.
+/// Mirrors the explicit design decision: disabled plugins are hidden
+/// from the Settings UI, period.
+#[test]
+fn plugin_config_category_hidden_when_plugin_disabled() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let working_dir = temp.path().join("work");
+    fs::create_dir_all(&working_dir).unwrap();
+    let plugins_dir = working_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(
+        plugins_dir.join(format!("{}.ts", PLUGIN_NAME)),
+        PLUGIN_SOURCE,
+    )
+    .unwrap();
+    copy_plugin_lib(&plugins_dir);
+
+    let mut config = Config::default();
+    config.plugins.insert(
+        PLUGIN_NAME.to_string(),
+        fresh::config::PluginConfig {
+            enabled: false,
+            path: None,
+            settings: serde_json::Value::Null,
+        },
+    );
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, config, working_dir)
+            .expect("harness");
+    harness.render().unwrap();
+
+    harness.open_settings().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains(&format!("Plugin: {}", PLUGIN_NAME)),
+        "A disabled plugin must not show a 'Plugin: <name>' category. Screen:\n{screen}"
+    );
+}

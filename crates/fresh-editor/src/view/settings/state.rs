@@ -14,6 +14,36 @@ use crate::view::controls::FocusState;
 use crate::view::ui::{FocusManager, ScrollItem, ScrollablePanel};
 use std::collections::HashMap;
 
+/// Set a value at a JSON pointer path, creating intermediate objects as
+/// needed. Mirrors `config_io::set_json_pointer` (kept private there).
+fn set_json_pointer_create(root: &mut serde_json::Value, pointer: &str, value: serde_json::Value) {
+    if pointer.is_empty() || pointer == "/" {
+        *root = value;
+        return;
+    }
+    let parts: Vec<&str> = pointer.trim_start_matches('/').split('/').collect();
+    let mut current = root;
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            if let serde_json::Value::Object(map) = current {
+                map.insert(part.to_string(), value);
+            }
+            return;
+        }
+        if let serde_json::Value::Object(map) = current {
+            if !map.contains_key(*part) {
+                map.insert(
+                    part.to_string(),
+                    serde_json::Value::Object(Default::default()),
+                );
+            }
+            current = map.get_mut(*part).unwrap();
+        } else {
+            return;
+        }
+    }
+}
+
 /// Info needed to open a nested dialog (extracted before mutable borrow)
 enum NestedDialogInfo {
     MapEntry {
@@ -176,7 +206,38 @@ impl crate::view::ui::ScrollItem for TreeRow {
 impl SettingsState {
     /// Create a new settings state from schema and current config
     pub fn new(schema_json: &str, config: &Config) -> Result<Self, serde_json::Error> {
-        let categories = parse_schema(schema_json)?;
+        Self::new_with_plugin_schemas(schema_json, config, &HashMap::new())
+    }
+
+    /// Same as [`Self::new`], plus inject per-plugin config schemas as
+    /// subcategories of a "Plugin Settings" top-level category. Only
+    /// enabled plugins with a schema are rendered.
+    pub fn new_with_plugin_schemas(
+        schema_json: &str,
+        config: &Config,
+        plugin_schemas: &HashMap<String, serde_json::Value>,
+    ) -> Result<Self, serde_json::Error> {
+        let mut categories = parse_schema(schema_json)?;
+
+        // Collect enabled plugins that have a schema sidecar.
+        let mut enabled_with_schema: Vec<String> = config
+            .plugins
+            .iter()
+            .filter_map(|(name, cfg)| {
+                if cfg.enabled && plugin_schemas.contains_key(name) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        enabled_with_schema.sort();
+        super::schema::append_plugin_settings_category(
+            &mut categories,
+            plugin_schemas,
+            &enabled_with_schema,
+        );
+
         let config_value = serde_json::to_value(config)?;
         let layer_sources = HashMap::new(); // Populated via set_layer_sources()
         let target_layer = ConfigLayer::User; // Default to user-global settings
@@ -880,8 +941,16 @@ impl SettingsState {
         let mut config_value = serde_json::to_value(config)?;
 
         for (path, value) in &self.pending_changes {
+            // `pointer_mut` only succeeds when the path already exists,
+            // which is the common case (most settings are statically
+            // declared in the Rust Config struct). For plugin settings
+            // the user may be setting a brand-new leaf under
+            // `/plugins/<name>/settings/...` — fall back to a
+            // create-intermediate write so those land.
             if let Some(target) = config_value.pointer_mut(path) {
                 *target = value.clone();
+            } else {
+                set_json_pointer_create(&mut config_value, path, value.clone());
             }
         }
 

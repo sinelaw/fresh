@@ -811,6 +811,226 @@ pub struct JsEditorApi {
     pub plugin_name: String,
 }
 
+// ─── Helpers for the defineConfigX methods ────────────────────────────
+// Free functions kept out of the impl block (which is processed by the
+// `plugin_api_impl` macro and would otherwise try to export them).
+
+fn throw_js<'js>(ctx: &rquickjs::Ctx<'js>, msg: &str) -> rquickjs::Error {
+    match rquickjs::String::from_str(ctx.clone(), msg) {
+        Ok(s) => ctx.throw(s.into_value()),
+        Err(e) => e,
+    }
+}
+
+fn parse_options<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    method: &str,
+    field: &str,
+    options: rquickjs::Object<'js>,
+) -> rquickjs::Result<serde_json::Map<String, serde_json::Value>> {
+    let value: serde_json::Value = rquickjs_serde::from_value(options.into_value())
+        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+    match value {
+        serde_json::Value::Object(m) => Ok(m),
+        _ => Err(throw_js(
+            ctx,
+            &format!("{}(\"{}\"): options must be an object", method, field),
+        )),
+    }
+}
+
+fn validate_allowed_keys<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    method: &str,
+    field: &str,
+    opts: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+) -> rquickjs::Result<()> {
+    for k in opts.keys() {
+        if !allowed.contains(&k.as_str()) {
+            return Err(throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): unknown option `{}` (allowed: {})",
+                    method,
+                    field,
+                    k,
+                    allowed.join(", "),
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn string_opt(opts: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    opts.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+fn require_integer<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    method: &str,
+    field: &str,
+    opts: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> rquickjs::Result<i64> {
+    match opts.get(key) {
+        Some(v) => v.as_i64().ok_or_else(|| {
+            throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): `{}` must be an integer",
+                    method, field, key
+                ),
+            )
+        }),
+        None => Err(throw_js(
+            ctx,
+            &format!("{}(\"{}\"): `{}` is required", method, field, key),
+        )),
+    }
+}
+
+fn optional_integer<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    method: &str,
+    field: &str,
+    opts: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> rquickjs::Result<Option<i64>> {
+    match opts.get(key) {
+        None => Ok(None),
+        Some(v) => v.as_i64().map(Some).ok_or_else(|| {
+            throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): `{}` must be an integer",
+                    method, field, key
+                ),
+            )
+        }),
+    }
+}
+
+fn require_number<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    method: &str,
+    field: &str,
+    opts: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> rquickjs::Result<f64> {
+    match opts.get(key) {
+        Some(v) => v.as_f64().ok_or_else(|| {
+            throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): `{}` must be a number",
+                    method, field, key
+                ),
+            )
+        }),
+        None => Err(throw_js(
+            ctx,
+            &format!("{}(\"{}\"): `{}` is required", method, field, key),
+        )),
+    }
+}
+
+fn optional_number<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    method: &str,
+    field: &str,
+    opts: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> rquickjs::Result<Option<f64>> {
+    match opts.get(key) {
+        None => Ok(None),
+        Some(v) => v.as_f64().map(Some).ok_or_else(|| {
+            throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): `{}` must be a number",
+                    method, field, key
+                ),
+            )
+        }),
+    }
+}
+
+fn check_range<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    method: &str,
+    field: &str,
+    default: f64,
+    minimum: Option<f64>,
+    maximum: Option<f64>,
+) -> rquickjs::Result<()> {
+    if let Some(min) = minimum {
+        if default < min {
+            return Err(throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): default ({}) is below minimum ({})",
+                    method, field, default, min
+                ),
+            ));
+        }
+    }
+    if let Some(max) = maximum {
+        if default > max {
+            return Err(throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): default ({}) is above maximum ({})",
+                    method, field, default, max
+                ),
+            ));
+        }
+    }
+    if let (Some(min), Some(max)) = (minimum, maximum) {
+        if min > max {
+            return Err(throw_js(
+                ctx,
+                &format!(
+                    "{}(\"{}\"): minimum ({}) is greater than maximum ({})",
+                    method, field, min, max
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+// Internal helpers used by the macro-processed `impl JsEditorApi` below.
+// Kept in a plain impl block so they don't get exported as JS methods.
+impl JsEditorApi {
+    /// Send an AddPluginConfigField command to the host.
+    fn send_field_registration(&self, field_name: &str, field_schema: serde_json::Value) {
+        let _ = self
+            .command_sender
+            .send(PluginCommand::AddPluginConfigField {
+                plugin_name: self.plugin_name.clone(),
+                field_name: field_name.to_string(),
+                field_schema,
+            });
+    }
+
+    /// Look up the current value of one of this plugin's settings
+    /// fields from the snapshot. Returns `None` if not yet present.
+    fn current_field_value(&self, field_name: &str) -> Option<serde_json::Value> {
+        self.state_snapshot.read().ok().and_then(|s| {
+            s.config
+                .pointer(&format!(
+                    "/plugins/{}/settings/{}",
+                    self.plugin_name, field_name
+                ))
+                .cloned()
+        })
+    }
+}
+
 #[plugin_api_impl]
 #[rquickjs::methods(rename_all = "camelCase")]
 impl JsEditorApi {
@@ -2151,6 +2371,356 @@ impl JsEditorApi {
             .unwrap_or_else(|_| std::sync::Arc::new(serde_json::json!({})));
 
         rquickjs_serde::to_value(ctx, &*config)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Declare a boolean config field for the calling plugin.
+    ///
+    /// Validates `options` synchronously: the JS call throws if any
+    /// unknown key is present or if `default` isn't a boolean. The
+    /// Settings UI grows a "Plugin Settings → <plugin>" sub-category
+    /// containing a toggle for this field. Returns the current value
+    /// (user-set if present, otherwise the declared `default`).
+    #[plugin_api(ts_return = "boolean")]
+    pub fn define_config_boolean<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        #[plugin_api(ts_type = "{ default: boolean; description?: string }")]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<bool> {
+        let opts = parse_options(&ctx, "defineConfigBoolean", &name, options)?;
+        validate_allowed_keys(&ctx, "defineConfigBoolean", &name, &opts, &["default", "description"])?;
+        let default = match opts.get("default") {
+            Some(serde_json::Value::Bool(b)) => *b,
+            _ => {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "defineConfigBoolean(\"{}\"): `default` (boolean) is required",
+                        name
+                    ),
+                ));
+            }
+        };
+        let description = string_opt(&opts, "description");
+        let mut field = serde_json::Map::new();
+        field.insert("type".into(), serde_json::json!("boolean"));
+        field.insert("default".into(), serde_json::json!(default));
+        if let Some(d) = description {
+            field.insert("description".into(), serde_json::json!(d));
+        }
+        self.send_field_registration(&name, serde_json::Value::Object(field));
+        Ok(self
+            .current_field_value(&name)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default))
+    }
+
+    /// Declare an integer config field for the calling plugin. Throws on
+    /// invalid options or if the default falls outside `minimum/maximum`.
+    #[plugin_api(ts_return = "number")]
+    pub fn define_config_integer<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        #[plugin_api(
+            ts_type = "{ default: number; description?: string; minimum?: number; maximum?: number }"
+        )]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<i64> {
+        let opts = parse_options(&ctx, "defineConfigInteger", &name, options)?;
+        validate_allowed_keys(
+            &ctx,
+            "defineConfigInteger",
+            &name,
+            &opts,
+            &["default", "description", "minimum", "maximum"],
+        )?;
+        let default = require_integer(&ctx, "defineConfigInteger", &name, &opts, "default")?;
+        let minimum = optional_integer(&ctx, "defineConfigInteger", &name, &opts, "minimum")?;
+        let maximum = optional_integer(&ctx, "defineConfigInteger", &name, &opts, "maximum")?;
+        check_range(&ctx, "defineConfigInteger", &name, default as f64, minimum.map(|v| v as f64), maximum.map(|v| v as f64))?;
+        let description = string_opt(&opts, "description");
+        let mut field = serde_json::Map::new();
+        field.insert("type".into(), serde_json::json!("integer"));
+        field.insert("default".into(), serde_json::json!(default));
+        if let Some(d) = description {
+            field.insert("description".into(), serde_json::json!(d));
+        }
+        if let Some(v) = minimum {
+            field.insert("minimum".into(), serde_json::json!(v));
+        }
+        if let Some(v) = maximum {
+            field.insert("maximum".into(), serde_json::json!(v));
+        }
+        self.send_field_registration(&name, serde_json::Value::Object(field));
+        Ok(self
+            .current_field_value(&name)
+            .and_then(|v| v.as_i64())
+            .unwrap_or(default))
+    }
+
+    /// Declare a floating-point number config field. Throws on bad
+    /// options or default outside `minimum/maximum`.
+    #[plugin_api(ts_return = "number")]
+    pub fn define_config_number<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        #[plugin_api(
+            ts_type = "{ default: number; description?: string; minimum?: number; maximum?: number }"
+        )]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<f64> {
+        let opts = parse_options(&ctx, "defineConfigNumber", &name, options)?;
+        validate_allowed_keys(
+            &ctx,
+            "defineConfigNumber",
+            &name,
+            &opts,
+            &["default", "description", "minimum", "maximum"],
+        )?;
+        let default = require_number(&ctx, "defineConfigNumber", &name, &opts, "default")?;
+        let minimum = optional_number(&ctx, "defineConfigNumber", &name, &opts, "minimum")?;
+        let maximum = optional_number(&ctx, "defineConfigNumber", &name, &opts, "maximum")?;
+        check_range(&ctx, "defineConfigNumber", &name, default, minimum, maximum)?;
+        let description = string_opt(&opts, "description");
+        let mut field = serde_json::Map::new();
+        field.insert("type".into(), serde_json::json!("number"));
+        field.insert("default".into(), serde_json::json!(default));
+        if let Some(d) = description {
+            field.insert("description".into(), serde_json::json!(d));
+        }
+        if let Some(v) = minimum {
+            field.insert("minimum".into(), serde_json::json!(v));
+        }
+        if let Some(v) = maximum {
+            field.insert("maximum".into(), serde_json::json!(v));
+        }
+        self.send_field_registration(&name, serde_json::Value::Object(field));
+        Ok(self
+            .current_field_value(&name)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(default))
+    }
+
+    /// Declare a free-form string config field.
+    #[plugin_api(ts_return = "string")]
+    pub fn define_config_string<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        #[plugin_api(ts_type = "{ default: string; description?: string }")]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<String> {
+        let opts = parse_options(&ctx, "defineConfigString", &name, options)?;
+        validate_allowed_keys(&ctx, "defineConfigString", &name, &opts, &["default", "description"])?;
+        let default = match opts.get("default") {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            _ => {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "defineConfigString(\"{}\"): `default` (string) is required",
+                        name
+                    ),
+                ));
+            }
+        };
+        let description = string_opt(&opts, "description");
+        let mut field = serde_json::Map::new();
+        field.insert("type".into(), serde_json::json!("string"));
+        field.insert("default".into(), serde_json::json!(default));
+        if let Some(d) = description {
+            field.insert("description".into(), serde_json::json!(d));
+        }
+        self.send_field_registration(&name, serde_json::Value::Object(field));
+        Ok(self
+            .current_field_value(&name)
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or(default))
+    }
+
+    /// Declare a string config field constrained to one of a fixed set
+    /// of values. The Settings UI renders this as a dropdown.
+    ///
+    /// The TS signature for this method is hand-written in the d.ts
+    /// trailer because the macro can't express the `<E extends string>`
+    /// generic that propagates `values` into the return type.
+    #[plugin_api(skip)]
+    pub fn define_config_enum<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<String> {
+        let opts = parse_options(&ctx, "defineConfigEnum", &name, options)?;
+        validate_allowed_keys(
+            &ctx,
+            "defineConfigEnum",
+            &name,
+            &opts,
+            &["default", "description", "values"],
+        )?;
+        let values: Vec<String> = match opts.get("values") {
+            Some(serde_json::Value::Array(arr)) if !arr.is_empty() => {
+                let mut out = Vec::with_capacity(arr.len());
+                for v in arr {
+                    match v {
+                        serde_json::Value::String(s) => out.push(s.clone()),
+                        _ => {
+                            return Err(throw_js(
+                                &ctx,
+                                &format!(
+                                    "defineConfigEnum(\"{}\"): `values` must be an array of strings",
+                                    name
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            _ => {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "defineConfigEnum(\"{}\"): `values` (non-empty string[]) is required",
+                        name
+                    ),
+                ));
+            }
+        };
+        let default = match opts.get("default") {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            _ => {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "defineConfigEnum(\"{}\"): `default` (string) is required",
+                        name
+                    ),
+                ));
+            }
+        };
+        if !values.contains(&default) {
+            return Err(throw_js(
+                &ctx,
+                &format!(
+                    "defineConfigEnum(\"{}\"): `default` must be one of {:?}",
+                    name, values
+                ),
+            ));
+        }
+        let description = string_opt(&opts, "description");
+        let mut field = serde_json::Map::new();
+        field.insert("type".into(), serde_json::json!("string"));
+        field.insert("enum".into(), serde_json::json!(values));
+        field.insert("default".into(), serde_json::json!(default));
+        if let Some(d) = description {
+            field.insert("description".into(), serde_json::json!(d));
+        }
+        self.send_field_registration(&name, serde_json::Value::Object(field));
+        let current = self
+            .current_field_value(&name)
+            .and_then(|v| v.as_str().map(|s| s.to_string()));
+        // Only honour current if it's still one of the declared values
+        // (the user could have hand-edited config.json to something
+        // stale after the plugin's enum changed).
+        Ok(current
+            .filter(|v| values.contains(v))
+            .unwrap_or(default))
+    }
+
+    /// Declare an array-of-strings config field (e.g. a list of
+    /// patterns). The Settings UI renders this as a list editor.
+    #[plugin_api(ts_return = "string[]")]
+    pub fn define_config_string_array<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        name: String,
+        #[plugin_api(ts_type = "{ default: string[]; description?: string }")]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<Vec<String>> {
+        let opts = parse_options(&ctx, "defineConfigStringArray", &name, options)?;
+        validate_allowed_keys(
+            &ctx,
+            "defineConfigStringArray",
+            &name,
+            &opts,
+            &["default", "description"],
+        )?;
+        let default: Vec<String> = match opts.get("default") {
+            Some(serde_json::Value::Array(arr)) => {
+                let mut out = Vec::with_capacity(arr.len());
+                for v in arr {
+                    match v {
+                        serde_json::Value::String(s) => out.push(s.clone()),
+                        _ => {
+                            return Err(throw_js(
+                                &ctx,
+                                &format!(
+                                    "defineConfigStringArray(\"{}\"): `default` entries must all be strings",
+                                    name
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            _ => {
+                return Err(throw_js(
+                    &ctx,
+                    &format!(
+                        "defineConfigStringArray(\"{}\"): `default` (string[]) is required",
+                        name
+                    ),
+                ));
+            }
+        };
+        let description = string_opt(&opts, "description");
+        let mut field = serde_json::Map::new();
+        field.insert("type".into(), serde_json::json!("array"));
+        field.insert("items".into(), serde_json::json!({"type": "string"}));
+        field.insert("default".into(), serde_json::json!(default));
+        if let Some(d) = description {
+            field.insert("description".into(), serde_json::json!(d));
+        }
+        self.send_field_registration(&name, serde_json::Value::Object(field));
+        Ok(self
+            .current_field_value(&name)
+            .and_then(|v| {
+                v.as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or(default))
+    }
+
+    /// Get the calling plugin's settings as a JS object.
+    ///
+    /// Returns the merged value at `config.plugins.<plugin_name>.settings`.
+    /// The shape comes from whatever the plugin declared via
+    /// `editor.definePluginConfig(...)` (defaults pre-populated by the
+    /// host, user overrides on top from the Settings UI). Returns `null`
+    /// if the plugin hasn't declared a schema and has no user-set value.
+    pub fn get_plugin_config<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let config = self
+            .state_snapshot
+            .read()
+            .map(|s| std::sync::Arc::clone(&s.config))
+            .unwrap_or_else(|_| std::sync::Arc::new(serde_json::json!({})));
+
+        let settings = config
+            .pointer(&format!("/plugins/{}/settings", self.plugin_name))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+
+        rquickjs_serde::to_value(ctx, &settings)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 

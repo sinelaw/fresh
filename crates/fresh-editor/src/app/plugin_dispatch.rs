@@ -602,6 +602,13 @@ impl Editor {
             PluginCommand::SetSetting { path, value, .. } => {
                 self.handle_set_setting(path, value);
             }
+            PluginCommand::AddPluginConfigField {
+                plugin_name,
+                field_name,
+                field_schema,
+            } => {
+                self.handle_add_plugin_config_field(plugin_name, field_name, field_schema);
+            }
             PluginCommand::ReloadThemes { apply_theme } => {
                 self.reload_themes();
                 if let Some(theme_name) = apply_theme {
@@ -1439,7 +1446,8 @@ impl Editor {
     /// Load a plugin from a file path
     #[cfg(feature = "plugins")]
     fn handle_load_plugin(&mut self, path: std::path::PathBuf, callback_id: JsCallbackId) {
-        match self.plugin_manager.read().unwrap().load_plugin(&path) {
+        let load_result = self.plugin_manager.read().unwrap().load_plugin(&path);
+        match load_result {
             Ok(()) => {
                 tracing::info!("Loaded plugin from {:?}", path);
                 self.plugin_manager
@@ -1466,6 +1474,9 @@ impl Editor {
         match result {
             Ok(()) => {
                 tracing::info!("Unloaded plugin: {}", name);
+                if let Ok(mut schemas) = self.plugin_schemas.write() {
+                    schemas.remove(&name);
+                }
                 self.plugin_manager
                     .read()
                     .unwrap()
@@ -1484,7 +1495,20 @@ impl Editor {
     /// Reload a plugin by name
     #[cfg(feature = "plugins")]
     fn handle_reload_plugin(&mut self, name: String, callback_id: JsCallbackId) {
-        match self.plugin_manager.read().unwrap().reload_plugin(&name) {
+        // Capture the plugin's path before reloading so we can refresh its
+        // schema sidecar too. `list_plugins` is cheap (one channel
+        // round-trip).
+        let path = self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .list_plugins()
+            .into_iter()
+            .find(|p| p.name == name)
+            .map(|p| p.path);
+        let _ = path; // schema is now re-registered by plugin code on reload
+        let reload_result = self.plugin_manager.read().unwrap().reload_plugin(&name);
+        match reload_result {
             Ok(()) => {
                 tracing::info!("Reloaded plugin: {}", name);
                 self.plugin_manager
