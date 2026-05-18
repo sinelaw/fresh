@@ -229,12 +229,32 @@ impl SettingsState {
                         dialog.cursor_up();
                     }
                 } else {
-                    // Auto-accept pending text in TextList before navigating
-                    if let Some(item) = dialog.current_item_mut() {
+                    // For a TextList: commit any pending new-item text,
+                    // then try to move focus within the list. If focus
+                    // was already on the trailing [+] Add new sentinel
+                    // (and no pending text), escape out of text-edit
+                    // mode and let the dialog navigate to the previous
+                    // field instead of trapping the user on the slot.
+                    let escape = if let Some(item) = dialog.current_item_mut() {
                         if let SettingControl::TextList(state) = &mut item.control {
+                            let was_on_addnew = state.focused_item.is_none();
+                            let had_pending = !state.new_item_text.is_empty();
                             state.add_item();
-                            state.focus_prev();
+                            if was_on_addnew && !had_pending {
+                                true
+                            } else {
+                                state.focus_prev();
+                                false
+                            }
+                        } else {
+                            false
                         }
+                    } else {
+                        false
+                    };
+                    if escape {
+                        dialog.stop_editing();
+                        dialog.focus_prev();
                     }
                 }
             }
@@ -247,12 +267,29 @@ impl SettingsState {
                         dialog.cursor_down();
                     }
                 } else {
-                    // Auto-accept pending text in TextList before navigating
-                    if let Some(item) = dialog.current_item_mut() {
+                    // See KeyCode::Up above for the escape semantics —
+                    // the trailing [+] Add new slot of a TextList must
+                    // not trap the user.
+                    let escape = if let Some(item) = dialog.current_item_mut() {
                         if let SettingControl::TextList(state) = &mut item.control {
+                            let was_on_addnew = state.focused_item.is_none();
+                            let had_pending = !state.new_item_text.is_empty();
                             state.add_item();
-                            state.focus_next();
+                            if was_on_addnew && !had_pending {
+                                true
+                            } else {
+                                state.focus_next();
+                                false
+                            }
+                        } else {
+                            false
                         }
+                    } else {
+                        false
+                    };
+                    if escape {
+                        dialog.stop_editing();
+                        dialog.focus_next();
                     }
                 }
             }
@@ -281,14 +318,25 @@ impl SettingsState {
                     }
                     // If not valid, Tab is ignored (user must fix or press Esc)
                 } else {
-                    // Auto-accept pending text in TextList before exiting
-                    if let Some(item) = dialog.current_item_mut() {
-                        if let SettingControl::TextList(state) = &mut item.control {
-                            state.add_item();
-                        }
-                    }
-                    // Tab exits text editing mode for non-JSON controls (TextList, Text)
+                    // Tab on a TextList: commit any pending text, then
+                    // exit text-edit mode AND advance the dialog to the
+                    // next field so Tab doesn't strand the user on the
+                    // trailing add-new slot (UX review F19).
+                    let escape_forward =
+                        if let Some(item) = dialog.current_item_mut() {
+                            if let SettingControl::TextList(state) = &mut item.control {
+                                state.add_item();
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
                     dialog.stop_editing();
+                    if escape_forward {
+                        dialog.focus_next();
+                    }
                 }
             }
             _ => {}
