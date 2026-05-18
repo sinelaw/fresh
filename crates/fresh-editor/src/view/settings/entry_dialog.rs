@@ -295,6 +295,18 @@ impl EntryDialogState {
         }
     }
 
+    /// True when any field in the dialog differs from the original
+    /// value passed to the constructor. Used to gate Esc on a
+    /// "Discard changes?" confirmation prompt — pressing Esc with
+    /// uncommitted edits should not silently destroy work.
+    ///
+    /// New entries are dirty as soon as any field has a non-default
+    /// value (which is the natural "is there anything to lose?" test
+    /// for an Add dialog).
+    pub fn is_dirty(&self) -> bool {
+        self.to_value() != self.original_value
+    }
+
     /// Convert dialog state back to JSON value (excludes the __key__ item)
     pub fn to_value(&self) -> Value {
         // For single-value dialogs (non-Object schemas like ObjectArray),

@@ -243,6 +243,14 @@ pub fn render_settings(
         }
     }
 
+    // Render entry-dialog discard-confirm prompt if showing, on top of
+    // the entry dialog stack. Dim first so the user can see the prompt
+    // is asking about the dialog underneath.
+    if state.showing_entry_discard_confirm {
+        crate::view::dimming::apply_dimming(frame, modal_area);
+        render_entry_discard_confirm(frame, modal_area, state, theme);
+    }
+
     // Render help overlay if showing
     if has_help {
         crate::view::dimming::apply_dimming(frame, modal_area);
@@ -3134,6 +3142,91 @@ fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
 
     // Help text
     let help = "←/→/Tab: Select   Enter: Confirm   Esc: Cancel";
+    let help_style = Style::default().fg(theme.line_number_fg);
+    frame.render_widget(
+        Paragraph::new(help).style(help_style),
+        Rect::new(inner.x, button_y + 1, inner.width, 1),
+    );
+}
+
+/// Render the "Discard changes?" prompt that appears when the user
+/// presses Esc on a dirty entry dialog.
+fn render_entry_discard_confirm(
+    frame: &mut Frame,
+    parent_area: Rect,
+    state: &SettingsState,
+    theme: &Theme,
+) {
+    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
+    let dialog_height = 7u16.min(parent_area.height.saturating_sub(4));
+    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
+    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;
+    let dialog_area = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
+
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Discard changes? ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.diagnostic_warning_fg))
+        .style(Style::default().bg(theme.popup_bg));
+    frame.render_widget(block, dialog_area);
+
+    let inner = Rect::new(
+        dialog_area.x + 2,
+        dialog_area.y + 1,
+        dialog_area.width.saturating_sub(4),
+        dialog_area.height.saturating_sub(2),
+    );
+
+    let prompt_style = Style::default().fg(theme.popup_text_fg);
+    frame.render_widget(
+        Paragraph::new("You have uncommitted edits in this dialog.").style(prompt_style),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    // Buttons. 0 = Keep editing (default), 1 = Discard. Discard styled
+    // in the danger fg to make the destructive choice unmistakable.
+    let button_y = dialog_area.y + dialog_area.height - 3;
+    let options = ["Keep editing", "Discard"];
+    let total_width: u16 = options.iter().map(|o| o.len() as u16 + 4).sum::<u16>() + 4;
+    let mut x = inner.x + (inner.width.saturating_sub(total_width)) / 2;
+
+    for (idx, label) in options.iter().enumerate() {
+        let is_selected = idx == state.entry_discard_confirm_selection;
+        let is_discard = idx == 1;
+        let style = if is_selected && is_discard {
+            Style::default()
+                .fg(theme.diagnostic_error_fg)
+                .bg(theme.popup_selection_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_selected {
+            Style::default()
+                .fg(theme.popup_selection_fg)
+                .bg(theme.popup_selection_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_discard {
+            Style::default()
+                .fg(theme.diagnostic_error_fg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.popup_text_fg)
+        };
+        let text = if is_selected {
+            format!(">[ {} ]", label)
+        } else {
+            format!(" [ {} ]", label)
+        };
+        let w = label.len() as u16 + 5;
+        frame.render_widget(
+            Paragraph::new(text).style(style),
+            Rect::new(x, button_y, w, 1),
+        );
+        x += w + 2;
+    }
+
+    let help = "Tab/←→: Select   Enter: Confirm   Esc: Keep editing";
     let help_style = Style::default().fg(theme.line_number_fg);
     frame.render_widget(
         Paragraph::new(help).style(help_style),

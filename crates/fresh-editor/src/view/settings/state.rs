@@ -90,6 +90,14 @@ pub struct SettingsState {
     pub reset_dialog_selection: usize,
     /// Hovered option in reset dialog (for mouse hover feedback)
     pub reset_dialog_hover: Option<usize>,
+    /// Whether the "Discard changes?" prompt is showing over the
+    /// currently-open entry dialog. Set when the user presses Esc
+    /// on a dialog that has uncommitted edits; cleared by either
+    /// button choice.
+    pub showing_entry_discard_confirm: bool,
+    /// Selection in the entry-discard prompt: 0 = Keep editing,
+    /// 1 = Discard.
+    pub entry_discard_confirm_selection: usize,
     /// Whether the help overlay is showing
     pub showing_help: bool,
     /// Scrollable panel for settings items
@@ -215,6 +223,8 @@ impl SettingsState {
             showing_reset_dialog: false,
             reset_dialog_selection: 0,
             reset_dialog_hover: None,
+            showing_entry_discard_confirm: false,
+            entry_discard_confirm_selection: 0,
             showing_help: false,
             scroll_panel: ScrollablePanel::new(),
             sub_focus: None,

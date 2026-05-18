@@ -25,6 +25,12 @@ enum ControlAction {
 
 impl InputHandler for SettingsState {
     fn handle_key_event(&mut self, event: &KeyEvent, ctx: &mut InputContext) -> InputResult {
+        // Entry-dialog "Discard changes?" prompt takes priority over
+        // the entry dialog itself — it's stacked on top.
+        if self.showing_entry_discard_confirm {
+            return self.handle_entry_discard_confirm_input(event);
+        }
+
         // Entry dialog takes priority when open
         if self.has_entry_dialog() {
             return self.handle_entry_dialog_input(event, ctx);
@@ -315,7 +321,20 @@ impl SettingsState {
     ) -> InputResult {
         match event.code {
             KeyCode::Esc => {
-                self.close_entry_dialog();
+                // Esc on a dialog with uncommitted edits prompts for
+                // confirmation; a clean dialog closes immediately.
+                // Without the dirty check, an accidental Esc silently
+                // destroys every field the user just typed in.
+                let dirty = self
+                    .entry_dialog()
+                    .map(|d| d.is_dirty())
+                    .unwrap_or(false);
+                if dirty {
+                    self.showing_entry_discard_confirm = true;
+                    self.entry_discard_confirm_selection = 0;
+                } else {
+                    self.close_entry_dialog();
+                }
             }
             KeyCode::Up => {
                 if let Some(dialog) = self.entry_dialog_mut() {
@@ -575,6 +594,47 @@ impl SettingsState {
             }
             _ => InputResult::Consumed, // Modal: consume all
         }
+    }
+
+    /// Handle input when the entry-dialog discard-confirm prompt is up.
+    /// Buttons: 0 = Keep editing (default), 1 = Discard.
+    fn handle_entry_discard_confirm_input(&mut self, event: &KeyEvent) -> InputResult {
+        match event.code {
+            KeyCode::Left | KeyCode::BackTab => {
+                if self.entry_discard_confirm_selection > 0 {
+                    self.entry_discard_confirm_selection -= 1;
+                }
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                if self.entry_discard_confirm_selection < 1 {
+                    self.entry_discard_confirm_selection += 1;
+                }
+            }
+            KeyCode::Enter => {
+                match self.entry_discard_confirm_selection {
+                    0 => {
+                        // Keep editing — just dismiss the prompt.
+                        self.showing_entry_discard_confirm = false;
+                    }
+                    1 => {
+                        // Discard — close the entry dialog without saving.
+                        self.showing_entry_discard_confirm = false;
+                        self.close_entry_dialog();
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Esc => {
+                // Esc on the prompt means "keep editing".
+                self.showing_entry_discard_confirm = false;
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                self.showing_entry_discard_confirm = false;
+                self.close_entry_dialog();
+            }
+            _ => {}
+        }
+        InputResult::Consumed
     }
 
     /// Handle input when help overlay is showing
