@@ -764,6 +764,12 @@ impl Editor {
         {
             self.active_window_mut().terminal_mode = true;
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
+            // Live PTY takes over the render path again; drop any
+            // outstanding freeze marker for this buffer.
+            let __frozen_buf = self.active_buffer();
+            self.active_window_mut()
+                .terminals_frozen
+                .remove(&__frozen_buf);
 
             // Re-enable editing when in terminal mode (input goes to PTY)
             let __buffer_id = self.active_buffer();
@@ -1013,6 +1019,11 @@ impl Window {
             None => return,
         };
 
+        // Promote this buffer out of the post-exit "frozen" overlay
+        // state: once we've synced the visible screen into the backing
+        // buffer the renderer should switch to the text-buffer path.
+        self.terminals_frozen.remove(&buffer_id);
+
         // Append visible screen to backing file
         // The scrollback has already been incrementally streamed by the PTY read loop
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
@@ -1121,11 +1132,13 @@ impl Window {
             // *not* in terminal mode, the buffer is showing the
             // synced scrollback view — defer to the normal text
             // rendering so the user can scroll. The live grid only
-            // overlays when terminal mode is active, or when the
-            // tab isn't the active one (so a split's hidden tab
-            // still gets live updates).
+            // overlays when terminal mode is active, the buffer is
+            // currently frozen (just exited terminal mode, scroll-back
+            // sync deferred), or when the tab isn't the active one
+            // (so a split's hidden tab still gets live updates).
             let is_active = *buffer_id == self.active_buffer();
-            if is_active && !self.terminal_mode {
+            let is_frozen = self.terminals_frozen.contains(buffer_id);
+            if is_active && !self.terminal_mode && !is_frozen {
                 continue;
             }
             let Some(handle) = self.terminal_manager.get(terminal_id) else {

@@ -367,15 +367,17 @@ impl Editor {
         {
             // a mounted widget panel consumed the scroll
         } else {
-            if self.active_window().terminal_mode
-                && self
-                    .active_window()
-                    .is_terminal_buffer(self.active_buffer())
+            // Promote a live or frozen terminal buffer into the
+            // scroll-back view before applying the wheel delta: mouse
+            // wheel is a scroll-back gesture, so the user wants buffer
+            // text rendering from here on.
+            let buf = self.active_buffer();
+            if self.active_window().is_terminal_buffer(buf)
+                && (self.active_window().terminal_mode
+                    || self.active_window().terminals_frozen.contains(&buf))
             {
-                {
-                    let __b = self.active_buffer();
-                    self.active_window_mut().sync_terminal_to_buffer(__b);
-                };
+                self.active_window_mut().terminals_frozen.remove(&buf);
+                self.active_window_mut().sync_terminal_to_buffer(buf);
                 self.active_window_mut().terminal_mode = false;
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;

@@ -93,6 +93,7 @@ impl Editor {
 
             // Remove from terminal_mode_resume to prevent stale entries
             self.active_window_mut().terminal_mode_resume.remove(&id);
+            self.active_window_mut().terminals_frozen.remove(&id);
 
             // Exit terminal mode if we were in it
             if self.active_window().terminal_mode {

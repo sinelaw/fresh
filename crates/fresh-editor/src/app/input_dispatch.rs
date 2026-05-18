@@ -104,11 +104,29 @@ impl Editor {
             .is_terminal_buffer(self.active_buffer())
             && should_enter_terminal_mode(event)
         {
+            // Re-entering terminal mode from frozen state: the live PTY
+            // is about to take over again so drop the freeze marker.
+            let buf = self.active_buffer();
+            self.active_window_mut().terminals_frozen.remove(&buf);
             self.enter_terminal_mode();
             // Forward the key to the terminal so the user's input isn't lost
             self.active_window_mut()
                 .send_terminal_key(event.code, event.modifiers);
             return Some(InputResult::Consumed);
+        }
+
+        // If the active terminal buffer is in the post-exit "frozen"
+        // state (live PTY still overlaid, scroll-back not yet synced),
+        // any other input is the user starting to interact with the
+        // scroll-back view. Promote the buffer out of the frozen set
+        // and run the deferred sync so subsequent rendering uses the
+        // text buffer instead of the PTY grid.
+        let buf = self.active_buffer();
+        if self.active_window().is_terminal_buffer(buf)
+            && self.active_window().terminals_frozen.contains(&buf)
+        {
+            self.active_window_mut().terminals_frozen.remove(&buf);
+            self.active_window_mut().sync_terminal_to_buffer(buf);
         }
 
         None
@@ -510,10 +528,14 @@ impl Editor {
                     // User explicitly exited - don't auto-resume when switching back
                     let buf = self.active_buffer();
                     self.active_window_mut().terminal_mode_resume.remove(&buf);
-                    {
-                        let __b = self.active_buffer();
-                        self.active_window_mut().sync_terminal_to_buffer(__b);
-                    };
+                    // Defer the scroll-back sync until the user actually
+                    // scrolls. Until then keep the live PTY overlay
+                    // rendering so the exit moment is pixel-identical to
+                    // the last terminal frame (no gutter pop-in, no
+                    // viewport jump). `terminals_frozen` flips the render
+                    // path; the first scrolling input promotes the buffer
+                    // out of the set and runs `sync_terminal_to_buffer`.
+                    self.active_window_mut().terminals_frozen.insert(buf);
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
                     );
@@ -525,6 +547,7 @@ impl Editor {
                     crate::input::keybindings::KeyContext::Normal;
                 {
                     let __b = self.active_buffer();
+                    self.active_window_mut().terminals_frozen.remove(&__b);
                     self.active_window_mut().sync_terminal_to_buffer(__b);
                 };
                 self.set_status_message(

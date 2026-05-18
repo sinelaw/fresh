@@ -342,6 +342,17 @@ pub struct Window {
     /// buffers are per-window (Step 0d).
     pub terminal_mode_resume: std::collections::HashSet<BufferId>,
 
+    /// Terminal buffers that were just exited from terminal mode but
+    /// have not yet been promoted to a scroll-back view. While a buffer
+    /// is in this set the renderer keeps overlaying the live PTY grid
+    /// (same paint path as terminal mode), so the exit is visually
+    /// invisible — the user sees exactly the same frame as the last
+    /// terminal-mode tick. Promotion to scroll-back happens lazily on
+    /// the first scrolling input (`EnterScrollbackMode`, PageUp, mouse
+    /// wheel up, etc.), at which point we sync the visible screen into
+    /// the backing buffer and remove the entry from this set.
+    pub terminals_frozen: std::collections::HashSet<BufferId>,
+
     /// Track which byte ranges have been seen per buffer (for the
     /// `lines_changed` plugin-hook optimisation). Keyed by `BufferId`,
     /// follows the buffers onto Window.
@@ -1529,6 +1540,7 @@ impl Window {
             preview: None,
             terminal_mode: false,
             terminal_mode_resume: std::collections::HashSet::new(),
+            terminals_frozen: std::collections::HashSet::new(),
             seen_byte_ranges: HashMap::new(),
             previous_viewports: HashMap::new(),
             same_buffer_scroll_sync: false,
