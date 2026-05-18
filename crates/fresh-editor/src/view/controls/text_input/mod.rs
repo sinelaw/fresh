@@ -242,6 +242,10 @@ pub struct TextInputColors {
     pub focused: Color,
     /// Disabled color
     pub disabled: Color,
+    /// Background colour used when the field is actively being edited
+    /// (state.focus == Focused && state.editing). Gives the user a
+    /// clear "keystrokes go here" signal.
+    pub editing_bg: Color,
 }
 
 impl Default for TextInputColors {
@@ -254,6 +258,7 @@ impl Default for TextInputColors {
             cursor: Color::Yellow,
             focused: Color::Cyan,
             disabled: Color::DarkGray,
+            editing_bg: Color::DarkGray,
         }
     }
 }
@@ -273,6 +278,11 @@ impl TextInputColors {
             // and renders as dark-on-dark on high-contrast themes.
             focused: theme.settings_selected_fg,
             disabled: theme.line_number_fg,
+            // Reuse the popup-selection bg (`ui.popup_selection_bg`) —
+            // the same key the plugin widget framework's Toggle /
+            // Button use for focused chrome. Guaranteed to contrast
+            // with popup_bg across all bundled themes.
+            editing_bg: theme.popup_selection_bg,
         }
     }
 
@@ -288,6 +298,7 @@ impl TextInputColors {
             cursor: theme.cursor,
             focused: theme.settings_selected_fg,
             disabled: theme.line_number_fg,
+            editing_bg: theme.popup_selection_bg,
         }
     }
 }

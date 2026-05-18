@@ -130,10 +130,32 @@ pub fn render_text_input_aligned(
     let padding = " ".repeat(inner_width.saturating_sub(visible_width));
     let padded = format!("{}{}", visible_text, padding);
 
-    let text_style = if is_placeholder {
-        Style::default().fg(placeholder_color)
+    // When the input is actively being edited, fill the field with a
+    // contrast background and bold the brackets — a web-form-style
+    // "keystrokes go here" signal that's unmissable in a terminal.
+    //
+    // We key on `state.editing` alone (not `focus == Focused && editing`)
+    // because the entry dialog's per-item `state.focus` is not
+    // consistently set to `Focused` on the selected item — the dialog
+    // tracks focus via its own `selected_item` index. `state.editing`
+    // is the authoritative "this is where keystrokes go right now".
+    let is_actively_editing = state.editing;
+    let bracket_style = if is_actively_editing {
+        Style::default()
+            .fg(border_color)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(text_color)
+        Style::default().fg(border_color)
+    };
+    let base_fg = if is_placeholder {
+        placeholder_color
+    } else {
+        text_color
+    };
+    let field_text_style = if is_actively_editing {
+        Style::default().fg(base_fg).bg(colors.editing_bg)
+    } else {
+        Style::default().fg(base_fg)
     };
 
     let padded_label = format!(
@@ -145,9 +167,9 @@ pub fn render_text_input_aligned(
     let line = Line::from(vec![
         Span::styled(padded_label, Style::default().fg(label_color)),
         Span::styled(": ", Style::default().fg(label_color)),
-        Span::styled("[", Style::default().fg(border_color)),
-        Span::styled(padded, text_style),
-        Span::styled("]", Style::default().fg(border_color)),
+        Span::styled("[", bracket_style),
+        Span::styled(padded, field_text_style),
+        Span::styled("]", bracket_style),
     ]);
 
     let paragraph = Paragraph::new(line);
@@ -156,7 +178,7 @@ pub fn render_text_input_aligned(
     let input_start = area.x + final_label_width;
     let input_area = Rect::new(input_start, area.y, actual_field_width + 2, 1);
 
-    let cursor_pos = if state.focus == FocusState::Focused && state.editing && !is_placeholder {
+    let cursor_pos = if is_actively_editing && !is_placeholder {
         // Calculate cursor visual position within the visible area
         let cursor_visual_in_field = cursor_visual_pos.saturating_sub(scroll_visual_offset);
         let cursor_x = input_start + 1 + cursor_visual_in_field as u16;
