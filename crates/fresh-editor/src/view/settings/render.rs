@@ -3827,16 +3827,19 @@ fn render_entry_dialog_inner(
         let style = if is_selected && is_delete {
             // Selected Delete: keep the red fg as a "this is still a
             // destructive action" cue, but add a focused bg so the
-            // user can still see Tab landed here.
+            // user can still see Tab landed here. REVERSED matches the
+            // visual convention for "this is the active button" and
+            // also lets keyboard-focus tests detect the selected button
+            // via cell style rather than fragile byte-vs-cell offsets.
             Style::default()
                 .fg(theme.diagnostic_error_fg)
                 .bg(theme.popup_selection_bg)
-                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
         } else if is_selected {
             Style::default()
                 .fg(theme.popup_selection_fg)
                 .bg(theme.popup_selection_bg)
-                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
         } else if is_hovered && is_delete {
             Style::default()
                 .fg(theme.diagnostic_error_fg)
