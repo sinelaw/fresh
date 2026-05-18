@@ -1020,7 +1020,6 @@ impl Window {
         // the visible screen we're about to append, which is exactly
         // where the live PTY grid drew its row 0.
         let mut history_end_byte: Option<u64> = None;
-        let mut size_after_append: Option<u64> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
                 // Record the current file size as the history end point
@@ -1028,7 +1027,6 @@ impl Window {
                 if let Ok(metadata) = self.resources.authority.filesystem.metadata(&backing_file) {
                     state.set_backing_file_history_end(metadata.size);
                     history_end_byte = Some(metadata.size);
-                    tracing::info!("ANCHOR_DBG before_append size={}", metadata.size);
                 }
 
                 // Open backing file in append mode to add visible screen
@@ -1039,23 +1037,13 @@ impl Window {
                     .open_file_for_append(&backing_file)
                 {
                     use std::io::BufWriter;
-                    use std::io::Write as _;
                     let mut writer = BufWriter::new(&mut *file);
                     if let Err(e) = state.append_visible_screen(&mut writer) {
                         tracing::error!("Failed to append visible screen to backing file: {}", e);
                     }
-                    let _ = writer.flush();
-                }
-                if let Ok(metadata) = self.resources.authority.filesystem.metadata(&backing_file) {
-                    size_after_append = Some(metadata.size);
-                    tracing::info!("ANCHOR_DBG after_append_inside_lock size={}", metadata.size);
                 }
             }
         }
-        if let Ok(metadata) = self.resources.authority.filesystem.metadata(&backing_file) {
-            tracing::info!("ANCHOR_DBG after_lock_release size={}", metadata.size);
-        }
-        let _ = size_after_append;
 
         // Reload buffer from the backing file (reusing existing file loading)
         let large_file_threshold = self.resources.config.editor.large_file_threshold_bytes as usize;
@@ -1069,7 +1057,6 @@ impl Window {
             std::sync::Arc::clone(&self.resources.authority.filesystem),
         ) {
             let total_bytes = new_state.buffer.total_bytes();
-            tracing::info!("ANCHOR_DBG after_reload total_bytes={}", total_bytes);
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 *state = new_state;
                 // Terminal buffers should never be considered "modified"
