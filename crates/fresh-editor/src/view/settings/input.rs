@@ -359,18 +359,16 @@ impl SettingsState {
             }
             KeyCode::Enter => {
                 // Check button state first with immutable borrow
+                // Button layout: [Save, Cancel] or [Save, Cancel, Delete].
+                // Save = 0, Cancel = 1, Delete = 2 (when present).
                 let button_action = self.entry_dialog().and_then(|dialog| {
                     if dialog.focus_on_buttons {
-                        let cancel_idx = dialog.button_count() - 1;
-                        if dialog.focused_button == 0 {
-                            Some(ButtonAction::Save)
-                        } else if !dialog.is_new && !dialog.no_delete && dialog.focused_button == 1
-                        {
-                            Some(ButtonAction::Delete)
-                        } else if dialog.focused_button == cancel_idx {
-                            Some(ButtonAction::Cancel)
-                        } else {
-                            None
+                        let has_delete = !dialog.is_new && !dialog.no_delete;
+                        match dialog.focused_button {
+                            0 => Some(ButtonAction::Save),
+                            1 => Some(ButtonAction::Cancel),
+                            2 if has_delete => Some(ButtonAction::Delete),
+                            _ => None,
                         }
                     } else {
                         None

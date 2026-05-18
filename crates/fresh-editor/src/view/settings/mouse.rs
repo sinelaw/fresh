@@ -648,23 +648,54 @@ impl Editor {
             return old_item.is_some() || old_button.is_some();
         }
 
-        // Check button hover
+        // Check button hover. Layout matches `render_entry_dialog`:
+        // [Save, Cancel] or [Save, Cancel, Delete] with a wider gap
+        // before Delete so the destructive button stands apart.
         if row == layout.button_y {
-            let buttons: &[&str] = if dialog.is_new || dialog.no_delete {
-                &["[ Save ]", "[ Cancel ]"]
+            let has_delete = !dialog.is_new && !dialog.no_delete;
+            let buttons: &[&str] = if has_delete {
+                &["[ Save ]", "[ Cancel ]", "[ Delete ]"]
             } else {
-                &["[ Save ]", "[ Delete ]", "[ Cancel ]"]
+                &["[ Save ]", "[ Cancel ]"]
             };
-            let total_width: u16 = buttons.iter().map(|b| b.len() as u16 + 2).sum();
+            let delete_idx = if has_delete {
+                Some(buttons.len() - 1)
+            } else {
+                None
+            };
+            const BUTTON_GAP: u16 = 2;
+            const DELETE_GAP: u16 = 6;
+            let total_width: u16 = buttons
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    let gap = if Some(i) == delete_idx {
+                        DELETE_GAP
+                    } else if i == 0 {
+                        0
+                    } else {
+                        BUTTON_GAP
+                    };
+                    b.len() as u16 + gap
+                })
+                .sum();
             let mut x = layout.dialog_x + (layout.dialog_width.saturating_sub(total_width)) / 2;
 
             for (idx, label) in buttons.iter().enumerate() {
+                if idx > 0 {
+                    let gap = if Some(idx) == delete_idx {
+                        DELETE_GAP
+                    } else {
+                        BUTTON_GAP
+                    };
+                    x += gap;
+                }
                 let width = label.len() as u16;
                 if col >= x && col < x + width {
                     dialog.hover_button = Some(idx);
                     break;
                 }
-                x += width + 2;
+                x += width;
             }
         }
 
@@ -737,22 +768,51 @@ impl Editor {
             return Ok(false);
         };
 
-        let buttons: &[&str] = if dialog.is_new || dialog.no_delete {
-            &["[ Save ]", "[ Cancel ]"]
+        let has_delete = !dialog.is_new && !dialog.no_delete;
+        let buttons: &[&str] = if has_delete {
+            &["[ Save ]", "[ Cancel ]", "[ Delete ]"]
         } else {
-            &["[ Save ]", "[ Delete ]", "[ Cancel ]"]
+            &["[ Save ]", "[ Cancel ]"]
         };
-        let total_width: u16 = buttons.iter().map(|b| b.len() as u16 + 2).sum();
+        let delete_idx = if has_delete {
+            Some(buttons.len() - 1)
+        } else {
+            None
+        };
+        const BUTTON_GAP: u16 = 2;
+        const DELETE_GAP: u16 = 6;
+        let total_width: u16 = buttons
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let gap = if Some(i) == delete_idx {
+                    DELETE_GAP
+                } else if i == 0 {
+                    0
+                } else {
+                    BUTTON_GAP
+                };
+                b.len() as u16 + gap
+            })
+            .sum();
         let mut x = layout.dialog_x + (layout.dialog_width.saturating_sub(total_width)) / 2;
 
         for (idx, label) in buttons.iter().enumerate() {
+            if idx > 0 {
+                let gap = if Some(idx) == delete_idx {
+                    DELETE_GAP
+                } else {
+                    BUTTON_GAP
+                };
+                x += gap;
+            }
             let width = label.len() as u16;
             if col >= x && col < x + width {
                 dialog.focus_on_buttons = true;
                 dialog.focused_button = idx;
                 return self.settings_entry_dialog_activate_button();
             }
-            x += width + 2;
+            x += width;
         }
         Ok(false)
     }
@@ -806,16 +866,19 @@ impl Editor {
             return Ok(false);
         };
 
-        let (btn, is_new) = {
+        let (btn, has_delete) = {
             let Some(dialog) = state.entry_dialog() else {
                 return Ok(false);
             };
-            (dialog.focused_button, dialog.is_new)
+            let has_delete = !dialog.is_new && !dialog.no_delete;
+            (dialog.focused_button, has_delete)
         };
 
-        match (btn, is_new) {
+        // Button order: [Save, Cancel] or [Save, Cancel, Delete].
+        match (btn, has_delete) {
             (0, _) => state.save_entry_dialog(),
-            (1, false) => state.delete_entry_dialog(),
+            (1, _) => state.close_entry_dialog(),
+            (2, true) => state.delete_entry_dialog(),
             _ => state.close_entry_dialog(),
         }
         Ok(true)

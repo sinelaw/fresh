@@ -3436,22 +3436,57 @@ fn render_entry_dialog_inner(
         render_scrollbar(frame, scrollbar_area, &scrollbar_state, &scrollbar_colors);
     }
 
-    // Render buttons at bottom
+    // Render buttons at bottom.
+    //
+    // Order is [Save, Cancel, Delete] — Save and Cancel are the
+    // non-destructive pair the user reaches first via Tab, with
+    // Delete pushed to the far right (with extra spacing) so the
+    // destructive action is impossible to hit by accidentally
+    // tabbing one too many times. Delete keeps its red Danger
+    // styling whether focused or not.
     let button_y = dialog_area.y + dialog_area.height - 2;
-    // New entries and no_delete entries only show Save/Cancel (no Delete)
-    let buttons: Vec<&str> = if dialog.is_new || dialog.no_delete {
-        vec!["[ Save ]", "[ Cancel ]"]
+    let has_delete = !dialog.is_new && !dialog.no_delete;
+    let buttons: Vec<&str> = if has_delete {
+        vec!["[ Save ]", "[ Cancel ]", "[ Delete ]"]
     } else {
-        vec!["[ Save ]", "[ Delete ]", "[ Cancel ]"]
+        vec!["[ Save ]", "[ Cancel ]"]
     };
-    let button_width: u16 = buttons.iter().map(|b: &&str| b.len() as u16 + 2).sum();
+    // Index of Delete (last entry, when present). Used for the
+    // visual gap between safe buttons and Delete.
+    let delete_idx = if has_delete {
+        Some(buttons.len() - 1)
+    } else {
+        None
+    };
+    const BUTTON_GAP: u16 = 2;
+    const DELETE_GAP: u16 = 6;
+    let button_width: u16 = buttons
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let gap = if Some(i) == delete_idx {
+                DELETE_GAP
+            } else if i == 0 {
+                0
+            } else {
+                BUTTON_GAP
+            };
+            b.len() as u16 + gap
+        })
+        .sum();
     let button_x = dialog_area.x + (dialog_area.width.saturating_sub(button_width)) / 2;
 
     let mut x = button_x;
     for (idx, label) in buttons.iter().enumerate() {
         let is_selected = dialog.focus_on_buttons && dialog.focused_button == idx;
         let is_hovered = dialog.hover_button == Some(idx);
-        let is_delete = !dialog.is_new && !dialog.no_delete && idx == 1;
+        let is_delete = Some(idx) == delete_idx;
+        // Apply the inter-button gap before this button (except the
+        // first one). Delete gets a wider gap so it stands apart.
+        if idx > 0 {
+            let gap = if is_delete { DELETE_GAP } else { BUTTON_GAP };
+            x += gap;
+        }
         // Render ">" focus indicator before selected button
         if is_selected {
             let indicator_style = Style::default()
@@ -3459,20 +3494,35 @@ fn render_entry_dialog_inner(
                 .add_modifier(Modifier::BOLD);
             frame.render_widget(
                 Paragraph::new(">").style(indicator_style),
-                Rect::new(x, button_y, 1, 1),
+                Rect::new(x.saturating_sub(2), button_y, 1, 1),
             );
-            x += 2;
         }
-        let style = if is_selected {
+        let style = if is_selected && is_delete {
+            // Selected Delete: keep the red fg as a "this is still a
+            // destructive action" cue, but add a focused bg so the
+            // user can still see Tab landed here.
             Style::default()
-                .fg(theme.menu_highlight_fg)
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                .fg(theme.diagnostic_error_fg)
+                .bg(theme.popup_selection_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_selected {
+            Style::default()
+                .fg(theme.popup_selection_fg)
+                .bg(theme.popup_selection_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_hovered && is_delete {
+            Style::default()
+                .fg(theme.diagnostic_error_fg)
+                .bg(theme.menu_hover_bg)
+                .add_modifier(Modifier::BOLD)
         } else if is_hovered {
             Style::default()
                 .fg(theme.menu_hover_fg)
                 .bg(theme.menu_hover_bg)
         } else if is_delete {
-            Style::default().fg(theme.diagnostic_error_fg)
+            Style::default()
+                .fg(theme.diagnostic_error_fg)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.editor_fg)
         };
@@ -3480,7 +3530,7 @@ fn render_entry_dialog_inner(
             Paragraph::new(*label).style(style),
             Rect::new(x, button_y, label.len() as u16, 1),
         );
-        x += label.len() as u16 + 2;
+        x += label.len() as u16;
     }
 
     // Check if current item has invalid JSON (for Text controls with validation)
