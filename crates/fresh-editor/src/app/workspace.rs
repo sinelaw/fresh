@@ -1804,9 +1804,8 @@ impl Editor {
                                     // Ensure keyed state exists for this buffer
                                     view_state.ensure_buffer_state(buffer_id);
                                     if terminal_buffers.values().any(|&tid| tid == buffer_id) {
-                                        let buf_state = view_state
-                                            .buffer_state_mut(buffer_id)
-                                            .unwrap();
+                                        let buf_state =
+                                            view_state.buffer_state_mut(buffer_id).unwrap();
                                         buf_state.viewport.line_wrap_enabled = false;
                                         // Match the freshly-spawned terminal path: no
                                         // gutter / current-line highlight when this
