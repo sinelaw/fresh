@@ -1778,6 +1778,43 @@ fn render_completion_item_overlay(
     text.push_str(body_no_nl);
     text.push('│');
     text.push('\n');
+    // Selection highlight is emitted as an inline overlay that
+    // covers ONLY the body byte range (between the two `│`
+    // chars) instead of a row-level `extend_to_line_end` style.
+    // A row-level selection style would also cover the border
+    // cells, and the per-border fg-only overlay below couldn't
+    // paint bg back over them — the right `│` would sit on
+    // selection blue. With the highlight scoped to the body
+    // range, the borders fall outside the selection's reach
+    // and paint with the panel's base bg (`theme.suggestion_bg`,
+    // filled in by the painter when no overlay supplies a bg).
+    //
+    // The body inline overlay covers the leading space, the
+    // candidate text, the trailing pad, AND the scrollbar
+    // column — so the selection reads as a single solid block
+    // across the whole inside of the popup rather than
+    // truncating at the end of the candidate text. The
+    // scrollbar's own fg-only overlay is appended after the
+    // selection overlay so it re-tints the scrollbar glyph's
+    // fg (per-property overlay merge keeps the selection bg).
+    let left_border_bytes = "│".len();
+    let body_no_nl_bytes = body_no_nl.len();
+    let right_border_start = left_border_bytes + body_no_nl_bytes;
+    let right_border_end = right_border_start + "│".len();
+    let mut inline_overlays: Vec<InlineOverlay> = Vec::new();
+    if selected {
+        inline_overlays.push(InlineOverlay {
+            start: left_border_bytes,
+            end: right_border_start,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_FG)),
+                bg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
     // Shift the body's inline overlays right by one byte
     // (the leading `│`) so the scrollbar tint still lands on
     // the right cell. Then add two more inline overlays for
@@ -1785,19 +1822,11 @@ fn render_completion_item_overlay(
     // popup-border theme key — same key the dim separator and
     // bottom border use, so the popup chrome reads as a
     // single themed surface.
-    let left_border_bytes = "│".len();
-    let body_no_nl_bytes = body_no_nl.len();
-    let right_border_start = left_border_bytes + body_no_nl_bytes;
-    let right_border_end = right_border_start + "│".len();
-    let mut inline_overlays: Vec<InlineOverlay> = body_entry
-        .inline_overlays
-        .into_iter()
-        .map(|mut io| {
-            io.start += left_border_bytes;
-            io.end += left_border_bytes;
-            io
-        })
-        .collect();
+    inline_overlays.extend(body_entry.inline_overlays.into_iter().map(|mut io| {
+        io.start += left_border_bytes;
+        io.end += left_border_bytes;
+        io
+    }));
     inline_overlays.push(InlineOverlay {
         start: 0,
         end: left_border_bytes,
@@ -1821,7 +1850,7 @@ fn render_completion_item_overlay(
     TextPropertyEntry {
         text,
         properties: Default::default(),
-        style: body_entry.style,
+        style: None,
         inline_overlays,
         segments: Vec::new(),
         pad_to_chars: None,
@@ -1829,13 +1858,17 @@ fn render_completion_item_overlay(
     }
 }
 
-/// One completion-candidate row. Renders as a single leading
-/// space followed by the candidate text, padded / truncated by
-/// the wrapping `LabeledSection` to `total_cols`. The leading
-/// space places the candidate's first character at the same
-/// column as the input value's first character (right after the
-/// input's `[` bracket), which is what the user expects from a
-/// "below the input, aligned with what you typed" popup.
+/// One completion-candidate row. Renders as two leading spaces
+/// followed by the candidate text, padded / truncated by the
+/// wrapping `LabeledSection` to `total_cols`. The two leading
+/// spaces place the candidate's first character at the same
+/// column as the input value's first character: the input
+/// row's leading chrome is `│ [` (border + section padding +
+/// open bracket) — three columns — and the popup row's leading
+/// chrome is `│ ` plus the body's two leading spaces, also
+/// three columns. So the popup item's first char sits directly
+/// under the value's first char, matching the user's "below
+/// the input, aligned with what you typed" expectation.
 ///
 /// `selected` rows paint with the standard popup-selection
 /// fg/bg theme keys + `extend_to_line_end` so the highlight
@@ -1863,7 +1896,11 @@ fn render_completion_item(
     // glyph to keep its position regardless of how long the
     // candidate text is, so we hand-pad rather than relying on
     // entry-level `pad_to_chars`.
-    let text_budget = total_cols.saturating_sub(1).saturating_sub(1); // leading space + scrollbar col
+    //
+    // Budget = total_cols - (2 leading spaces) - (1 scrollbar col).
+    // The two leading spaces align the item with the bracketed
+    // input value (see the function docstring).
+    let text_budget = total_cols.saturating_sub(2).saturating_sub(1);
     let item_chars: Vec<char> = item.chars().collect();
     let (visible_item, truncated): (String, bool) = if item_chars.len() <= text_budget {
         (item.to_string(), false)
@@ -1880,11 +1917,12 @@ fn render_completion_item(
     let scrollbar_ch = scrollbar.unwrap_or(' ');
     let mut text = String::with_capacity(total_cols * 4 + 2);
     text.push(' ');
+    text.push(' ');
     text.push_str(&visible_item);
     // Pad with spaces between the candidate text and the
     // scrollbar column so all rows have the scrollbar glyph in
     // the same column regardless of candidate length.
-    let used_cols = 1 + visible_item.chars().count();
+    let used_cols = 2 + visible_item.chars().count();
     let pad_cols = total_cols.saturating_sub(used_cols).saturating_sub(1);
     for _ in 0..pad_cols {
         text.push(' ');
