@@ -1444,6 +1444,29 @@ fn render_json_control(
     let edit_x = area.x + indent;
     let edit_start_y = y;
 
+    // Unset JSON values used to render as the literal text `null` inside
+    // the editor frame, which read like a stray keyword. Replace it with
+    // a muted "(not set — press Enter to add)" hint so the user can tell
+    // the field is empty and editable. start_editing() wipes the `null`
+    // text so typing doesn't concatenate onto it; the placeholder only
+    // disappears once the user has actually started editing.
+    if state.is_unset() && content_row >= skip_rows && y < area.y + area.height {
+        let hint = "(not set — press Enter to add)";
+        let hint_line = Line::from(vec![
+            Span::raw(" ".repeat(indent as usize)),
+            Span::styled(
+                hint,
+                Style::default()
+                    .fg(theme.line_number_fg)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(hint_line), Rect::new(area.x, y, area.width, 1));
+        return ControlLayoutInfo::Json {
+            edit_area: Rect::new(edit_x, edit_start_y, edit_width, 1),
+        };
+    }
+
     // Render all lines (scrolling handled by entry dialog/scroll panel)
     let lines = state.lines();
     let total_lines = lines.len();

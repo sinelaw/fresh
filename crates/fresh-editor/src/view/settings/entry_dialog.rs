@@ -873,8 +873,10 @@ impl EntryDialogState {
                     state.start_editing();
                     self.editing_text = true;
                 }
-                SettingControl::Json(_) => {
-                    // JSON editor is always ready to edit, just set the flag
+                SettingControl::Json(state) => {
+                    // Wipe the `null` placeholder so typing replaces it
+                    // instead of concatenating onto the literal text.
+                    state.clear_placeholder_for_edit();
                     self.editing_text = true;
                 }
                 _ => {}
@@ -897,6 +899,10 @@ impl EntryDialogState {
                     state.new_item_text.clear();
                     state.cursor = 0;
                 }
+                // If the user opened a JSON field but didn't type
+                // anything (or deleted everything), put the `null`
+                // sentinel back so the value still round-trips as JSON.
+                SettingControl::Json(state) => state.restore_unset_if_empty(),
                 _ => {}
             }
         }

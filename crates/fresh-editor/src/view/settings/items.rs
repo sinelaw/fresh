@@ -45,6 +45,34 @@ impl JsonEditState {
         }
     }
 
+    /// True if the editor is showing the JSON `null` sentinel — i.e. the
+    /// value is "not set". Used by the renderer to swap the literal
+    /// `null` for a helpful placeholder line, and by `start_editing` to
+    /// wipe the buffer so the user can type fresh JSON without manually
+    /// deleting the placeholder first.
+    pub fn is_unset(&self) -> bool {
+        self.editor.value().trim() == "null"
+    }
+
+    /// Clear the `null` placeholder so subsequent keystrokes type into
+    /// an empty editor. Called at the start of an edit session — paired
+    /// with `restore_unset_if_empty` on stop so abandoning the edit
+    /// brings the placeholder back.
+    pub fn clear_placeholder_for_edit(&mut self) {
+        if self.is_unset() {
+            self.editor.set_value("");
+        }
+    }
+
+    /// If the user left the editor empty, restore the `null` sentinel
+    /// so the saved value round-trips as JSON null rather than as the
+    /// empty string (which doesn't parse).
+    pub fn restore_unset_if_empty(&mut self) {
+        if self.editor.value().trim().is_empty() {
+            self.editor.set_value("null");
+        }
+    }
+
     /// Revert to original value (for Escape key)
     pub fn revert(&mut self) {
         self.editor.set_value(&self.original_text);
