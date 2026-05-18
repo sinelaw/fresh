@@ -1110,12 +1110,21 @@ impl Window {
         // view state was created.
         if let Some((mgr, view_states)) = self.buffers.splits_mut() {
             let active_split = mgr.active_split();
+            tracing::info!("EXIT_DBG sync_terminal_to_buffer buf={:?} active_split={:?}", buffer_id, active_split);
+            for (split_id, vs) in view_states.iter() {
+                if vs.has_buffer(buffer_id) {
+                    if let Some(bs) = vs.buffer_state(buffer_id) {
+                        tracing::info!("EXIT_DBG vs split={:?} buf={:?} show_line_numbers={} active_buffer={:?}", split_id, buffer_id, bs.show_line_numbers, vs.active_buffer);
+                    }
+                }
+            }
             if let Some(view_state) = view_states.get_mut(&active_split) {
                 view_state.viewport.line_wrap_enabled = false;
                 view_state.viewport.set_skip_ensure_visible();
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
+                tracing::info!("EXIT_DBG after setting false: show_line_numbers={}", buf_state.show_line_numbers);
             }
         }
     }
