@@ -377,15 +377,16 @@ fn test_settings_selection_indicator() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test number input increment with Right arrow
+/// Type-to-edit on a focused number control: pressing a digit enters edit
+/// mode and replaces the value (start_editing select-alls). Tab confirms
+/// the new value.
 #[test]
-fn test_settings_number_increment() {
+fn test_settings_number_type_to_edit() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
     harness.open_settings().unwrap();
 
-    // Search for a number setting (mouse hover delay)
+    // Navigate to "hover delay" — a Number setting with default 500.
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
@@ -395,50 +396,43 @@ fn test_settings_number_increment() {
             .unwrap();
     }
     harness.render().unwrap();
-
-    // Jump to result
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
-    // The default value is 500
     harness.assert_screen_contains("500");
 
-    // Press Right arrow to increment
+    // Type '7' — should auto-enter edit mode and replace 500 with 7.
+    harness
+        .send_key(KeyCode::Char('7'), KeyModifiers::NONE)
+        .unwrap();
+    // Tab commits the pending edit.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("modified");
+
+    // Discard
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
-    harness.render().unwrap();
-
-    // Value should now be 501
-    harness.assert_screen_contains("501");
-
-    // Should show modified indicator
-    harness.assert_screen_contains("modified");
-
-    // Press Left arrow to decrement back
-    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Value should be back to 500
-    harness.assert_screen_contains("500");
-
-    // Close settings (no changes now)
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
 }
 
-/// Reproducer for issue #1825: clicking the `[+]` / `[-]` buttons next to a
-/// Number setting must change the value, and clicking the value between the
-/// brackets must enter inline editing mode (so the user can immediately type
-/// over it). Before the fix, both flows were no-ops.
+/// Clicking the value cell of a Number setting enters inline editing mode
+/// (start_editing select-alls) so the next typed digit replaces the value.
+/// Direct-typing is the only path to change Number values — the legacy
+/// `[-]` / `[+]` buttons have been removed in favour of typing.
 #[test]
-fn test_settings_number_mouse_buttons_and_value_click() {
+fn test_settings_number_value_click_enters_edit_mode() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     harness.open_settings().unwrap();
 
-    // Search for the "hover delay" Number setting (default 500). Use a
-    // search query specific enough to land directly on this setting.
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
@@ -453,43 +447,17 @@ fn test_settings_number_mouse_buttons_and_value_click() {
         .unwrap();
     harness.render().unwrap();
 
-    // Locate the value cell rendered as "[500 ]" — anchor every click on
-    // that row so we don't accidentally hit a sibling Number control or a
-    // description line that mentions "500". The value is right-aligned in
-    // a 3-char digit area followed by a 1-char reserved trailing cell
-    // (where the cursor block lives during editing).
+    // Render: `Label: [500 ]` — `[` then the 4-char inner cell then `]`.
     let (bracket_col, value_row) = harness.find_text_on_screen("[500 ]").unwrap_or_else(|| {
         panic!(
             "expected '[500 ]' value cell after navigating to the setting:\n{}",
             harness.screen_to_string()
         )
     });
-
-    // Render: `[500 ] [-] [+]` — bracket_col points to '['. Inner cell is
-    // 4 chars, then `]`, then ` `, then `[-]`, ` `, `[+]`.
     let value_col = bracket_col + 1; // first inner char ("5")
-    let minus_col = bracket_col + 7; // first '[' of '[-]'
-    let plus_col = bracket_col + 11; // first '[' of '[+]'
 
-    // Click [+] — value cell on this row should change from 500 to 501.
-    harness.mouse_click(plus_col + 1, value_row).unwrap();
-    let after_plus = harness.screen_row_text(value_row);
-    assert!(
-        after_plus.contains("[501 ]"),
-        "[+] click should bump value to 501 on this row:\n{after_plus}"
-    );
-
-    // Click [-] — value should decrement back to 500.
-    harness.mouse_click(minus_col + 1, value_row).unwrap();
-    let after_minus = harness.screen_row_text(value_row);
-    assert!(
-        after_minus.contains("[500 ]"),
-        "[-] click should bring value back to 500:\n{after_minus}"
-    );
-
-    // Click the value between the brackets — should enter editing mode so
-    // typing replaces the value (start_editing selects-all). Type "9" and
-    // confirm with Tab; the value must become 9, right-aligned to "[  9 ]".
+    // Click the value area — should enter edit mode (select-all). Type "9"
+    // and Tab; the value becomes 9, right-aligned to "[  9 ]".
     harness.mouse_click(value_col, value_row).unwrap();
     harness
         .send_key(KeyCode::Char('9'), KeyModifiers::NONE)
@@ -513,15 +481,15 @@ fn test_settings_number_mouse_buttons_and_value_click() {
         .unwrap();
 }
 
-/// Test number input decrement with Left arrow
+/// Left arrow on a focused Number control no longer decrements — it now
+/// behaves like every other control (navigates back to Categories), since
+/// numbers are edited by direct typing.
 #[test]
-fn test_settings_number_decrement() {
+fn test_settings_number_left_returns_to_categories() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
     harness.open_settings().unwrap();
 
-    // Search for hover delay (number setting) - same as increment test but decrement
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
@@ -531,35 +499,24 @@ fn test_settings_number_decrement() {
             .unwrap();
     }
     harness.render().unwrap();
-
-    // Jump to result
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
-    // The default value is 500
+    // Default is 500.
     harness.assert_screen_contains("500");
 
-    // Press Left arrow to decrement
+    // Left should navigate back to Categories, NOT change the value.
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Value should now be 499
-    harness.assert_screen_contains("499");
+    // Value unchanged.
+    harness.assert_screen_contains("500");
+    // No dirty marker.
+    harness.assert_screen_not_contains("modified");
 
-    // Should show modified indicator
-    harness.assert_screen_contains("modified");
-
-    // Discard and close
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
 }
 
 /// Test dropdown cycling with Enter key
@@ -1867,10 +1824,12 @@ fn test_settings_loads_saved_values_on_reopen() {
     // Should show the default value of 4
     harness.assert_screen_contains("4");
 
-    // Increment the value 1 time (4 -> 5)
+    // Type '5' to replace the value (direct typing auto-enters edit mode
+    // with select-all, so the typed digit replaces the value). Tab commits.
     harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('5'), KeyModifiers::NONE)
         .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Should now show 5

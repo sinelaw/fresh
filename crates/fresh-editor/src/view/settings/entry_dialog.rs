@@ -1181,34 +1181,6 @@ impl EntryDialogState {
         }
     }
 
-    /// Increment number value
-    pub fn increment_number(&mut self) {
-        self.user_edited = true;
-        if let Some(item) = self.current_item_mut() {
-            // Don't allow editing read-only fields
-            if item.read_only {
-                return;
-            }
-            if let SettingControl::Number(state) = &mut item.control {
-                state.increment();
-            }
-        }
-    }
-
-    /// Decrement number value
-    pub fn decrement_number(&mut self) {
-        self.user_edited = true;
-        if let Some(item) = self.current_item_mut() {
-            // Don't allow editing read-only fields
-            if item.read_only {
-                return;
-            }
-            if let SettingControl::Number(state) = &mut item.control {
-                state.decrement();
-            }
-        }
-    }
-
     /// Delete the currently focused item from a TextList control
     pub fn delete_list_item(&mut self) {
         self.user_edited = true;

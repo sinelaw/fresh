@@ -49,29 +49,15 @@ pub fn render_number_input_aligned(
         return NumberInputLayout::default();
     }
 
-    let (label_color, value_color, border_color, button_color) = match state.focus {
-        FocusState::Normal => (colors.label, colors.value, colors.border, colors.button),
-        FocusState::Focused => (
-            colors.focused_fg,
-            colors.focused_fg,
-            colors.focused_fg,
-            colors.focused_fg,
-        ),
-        FocusState::Hovered => (
-            colors.focused_fg,
-            colors.focused_fg,
-            colors.focused_fg,
-            colors.focused_fg,
-        ),
-        FocusState::Disabled => (
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-            colors.disabled,
-        ),
+    let (label_color, value_color, border_color) = match state.focus {
+        FocusState::Normal => (colors.label, colors.value, colors.border),
+        FocusState::Focused => (colors.focused_fg, colors.focused_fg, colors.focused_fg),
+        FocusState::Hovered => (colors.focused_fg, colors.focused_fg, colors.focused_fg),
+        FocusState::Disabled => (colors.disabled, colors.disabled, colors.disabled),
     };
+    let _ = colors.button;
 
-    // Format: "Label: [ value ] [-] [+]"
+    // Format: "Label: [ value ]"
     let value_str = state.display_text();
 
     let actual_label_width = label_width.unwrap_or(state.label.len() as u16);
@@ -99,13 +85,7 @@ pub fn render_number_input_aligned(
         Span::styled("[", Style::default().fg(border_color)),
     ];
     spans.extend(value_spans);
-    spans.extend(vec![
-        Span::styled("]", Style::default().fg(border_color)),
-        Span::raw(" "),
-        Span::styled("[-]", Style::default().fg(button_color)),
-        Span::raw(" "),
-        Span::styled("[+]", Style::default().fg(button_color)),
-    ]);
+    spans.push(Span::styled("]", Style::default().fg(border_color)));
 
     let line = Line::from(spans);
 
@@ -117,17 +97,11 @@ pub fn render_number_input_aligned(
     // 2 brackets + MIN_WIDTH digit cells + 1 trailing cursor cell.
     let value_width = (VALUE_CELL_MIN_WIDTH as u16) + 1 + 2;
 
-    let dec_start = value_start + value_width + 1;
-    let dec_width = 3;
-
-    let inc_start = dec_start + dec_width + 1;
-    let inc_width = 3;
-
     NumberInputLayout {
         value_area: Rect::new(value_start, area.y, value_width, 1),
-        decrement_area: Rect::new(dec_start, area.y, dec_width, 1),
-        increment_area: Rect::new(inc_start, area.y, inc_width, 1),
-        full_area: Rect::new(area.x, area.y, inc_start - area.x + inc_width, 1),
+        decrement_area: Rect::default(),
+        increment_area: Rect::default(),
+        full_area: Rect::new(area.x, area.y, value_start + value_width - area.x, 1),
     }
 }
 

@@ -44,13 +44,7 @@ impl NumberInputState {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if layout.is_increment(event.column, event.row) {
-                    self.increment();
-                    Some(NumberInputEvent::Incremented(self.value))
-                } else if layout.is_decrement(event.column, event.row) {
-                    self.decrement();
-                    Some(NumberInputEvent::Decremented(self.value))
-                } else if layout.is_value(event.column, event.row) {
+                if layout.is_value(event.column, event.row) {
                     if !self.editing() {
                         self.start_editing();
                         Some(NumberInputEvent::StartedEditing)
@@ -183,16 +177,17 @@ impl NumberInputState {
             }
         } else if self.focus == FocusState::Focused {
             match key.code {
-                KeyCode::Up | KeyCode::Char('+') | KeyCode::Char('=') => {
-                    self.increment();
-                    Some(NumberInputEvent::Incremented(self.value))
-                }
-                KeyCode::Down | KeyCode::Char('-') => {
-                    self.decrement();
-                    Some(NumberInputEvent::Decremented(self.value))
-                }
                 KeyCode::Enter => {
                     self.start_editing();
+                    Some(NumberInputEvent::StartedEditing)
+                }
+                // Direct-typing entry: pressing a digit, minus, or period on a
+                // focused number replaces the value with what the user typed.
+                // start_editing() select-alls so the first inserted char wipes
+                // the old value.
+                KeyCode::Char(c) if c.is_ascii_digit() || c == '-' || c == '.' => {
+                    self.start_editing();
+                    self.insert_char(c);
                     Some(NumberInputEvent::StartedEditing)
                 }
                 _ => None,
@@ -212,9 +207,9 @@ mod tests {
     fn make_layout() -> NumberInputLayout {
         NumberInputLayout {
             value_area: Rect::new(8, 0, 7, 1),
-            decrement_area: Rect::new(16, 0, 3, 1),
-            increment_area: Rect::new(20, 0, 3, 1),
-            full_area: Rect::new(0, 0, 23, 1),
+            decrement_area: Rect::default(),
+            increment_area: Rect::default(),
+            full_area: Rect::new(0, 0, 15, 1),
         }
     }
 
@@ -234,26 +229,6 @@ mod tests {
             row: y,
             modifiers: KeyModifiers::empty(),
         }
-    }
-
-    #[test]
-    fn test_click_increment() {
-        let mut state = NumberInputState::new(5, "Value");
-        let layout = make_layout();
-
-        let result = state.handle_mouse(mouse_down(20, 0), &layout);
-        assert_eq!(result, Some(NumberInputEvent::Incremented(6)));
-        assert_eq!(state.value, 6);
-    }
-
-    #[test]
-    fn test_click_decrement() {
-        let mut state = NumberInputState::new(5, "Value");
-        let layout = make_layout();
-
-        let result = state.handle_mouse(mouse_down(16, 0), &layout);
-        assert_eq!(result, Some(NumberInputEvent::Decremented(4)));
-        assert_eq!(state.value, 4);
     }
 
     #[test]
@@ -281,21 +256,15 @@ mod tests {
     }
 
     #[test]
-    fn test_keyboard_increment() {
-        let mut state = NumberInputState::new(5, "Value").with_focus(FocusState::Focused);
+    fn test_keyboard_digit_starts_editing_and_replaces_value() {
+        let mut state = NumberInputState::new(42, "Value").with_focus(FocusState::Focused);
 
-        let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
-        let result = state.handle_key(up);
-        assert_eq!(result, Some(NumberInputEvent::Incremented(6)));
-    }
-
-    #[test]
-    fn test_keyboard_decrement() {
-        let mut state = NumberInputState::new(5, "Value").with_focus(FocusState::Focused);
-
-        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
-        let result = state.handle_key(down);
-        assert_eq!(result, Some(NumberInputEvent::Decremented(4)));
+        let key = KeyEvent::new(KeyCode::Char('7'), KeyModifiers::empty());
+        let result = state.handle_key(key);
+        assert_eq!(result, Some(NumberInputEvent::StartedEditing));
+        assert!(state.editing());
+        // start_editing() select-alls so the typed digit replaces the value.
+        assert_eq!(state.display_text(), "7");
     }
 
     #[test]
@@ -367,7 +336,7 @@ mod tests {
         let mut state = NumberInputState::new(5, "Value").with_focus(FocusState::Disabled);
         let layout = make_layout();
 
-        let result = state.handle_mouse(mouse_down(20, 0), &layout);
+        let result = state.handle_mouse(mouse_down(10, 0), &layout);
         assert!(result.is_none());
         assert_eq!(state.value, 5);
     }

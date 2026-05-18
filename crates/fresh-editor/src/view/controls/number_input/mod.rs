@@ -1,6 +1,7 @@
-//! Number input control with increment/decrement
+//! Number input control
 //!
-//! Renders as: `Label: [  42  ] [-] [+]`
+//! Renders as: `Label: [  42 ]` — direct-typing only; focus the field and
+//! type digits / `-` / `.` to replace the value.
 //!
 //! This module provides a complete number input component with:
 //! - State management (`NumberInputState`)
@@ -406,9 +407,11 @@ impl NumberInputColors {
 pub struct NumberInputLayout {
     /// The value display area
     pub value_area: Rect,
-    /// The decrement button area
+    /// Legacy decrement-button area. Always empty since the buttons were
+    /// removed in favour of direct typing; preserved so downstream layout
+    /// code keeps compiling.
     pub decrement_area: Rect,
-    /// The increment button area
+    /// Legacy increment-button area. Always empty (see `decrement_area`).
     pub increment_area: Rect,
     /// The full control area
     pub full_area: Rect,
@@ -476,8 +479,9 @@ mod tests {
             let layout = render_number_input(frame, area, &state, &colors);
 
             assert!(layout.value_area.width > 0);
-            assert!(layout.decrement_area.width > 0);
-            assert!(layout.increment_area.width > 0);
+            // Inc/dec buttons removed in favour of direct typing — areas are empty.
+            assert_eq!(layout.decrement_area.width, 0);
+            assert_eq!(layout.increment_area.width, 0);
         });
     }
 
@@ -529,13 +533,11 @@ mod tests {
             let colors = NumberInputColors::default();
             let layout = render_number_input(frame, area, &state, &colors);
 
-            let dec_x = layout.decrement_area.x;
-            assert!(layout.is_decrement(dec_x, 0));
-            assert!(!layout.is_increment(dec_x, 0));
-
-            let inc_x = layout.increment_area.x;
-            assert!(layout.is_increment(inc_x, 0));
-            assert!(!layout.is_decrement(inc_x, 0));
+            // Value area is hittable; the (removed) inc/dec buttons are not.
+            let val_x = layout.value_area.x;
+            assert!(layout.is_value(val_x, 0));
+            assert!(!layout.is_increment(val_x, 0));
+            assert!(!layout.is_decrement(val_x, 0));
         });
     }
 

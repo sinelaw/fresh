@@ -415,18 +415,16 @@ impl SettingsState {
             }
             KeyCode::Left => {
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    if !dialog.focus_on_buttons {
-                        dialog.decrement_number();
-                    } else if dialog.focused_button > 0 {
+                    if dialog.focus_on_buttons && dialog.focused_button > 0 {
                         dialog.focused_button -= 1;
                     }
                 }
             }
             KeyCode::Right => {
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    if !dialog.focus_on_buttons {
-                        dialog.increment_number();
-                    } else if dialog.focused_button + 1 < dialog.button_count() {
+                    if dialog.focus_on_buttons
+                        && dialog.focused_button + 1 < dialog.button_count()
+                    {
                         dialog.focused_button += 1;
                     }
                 }
@@ -886,22 +884,25 @@ impl SettingsState {
                 InputResult::Consumed
             }
             KeyCode::Left => {
-                // Left on number controls: decrement value
-                // Left on other controls: navigate back to categories
-                if self.is_number_control() {
-                    self.handle_control_decrement();
-                } else {
-                    self.update_control_focus(false);
-                    self.focus.set(FocusPanel::Categories);
-                }
-                InputResult::Consumed
-            }
-            KeyCode::Right => {
-                self.handle_control_increment();
+                // Left always navigates back to categories — numbers no
+                // longer use Left/Right for inc/dec (direct typing only).
+                self.update_control_focus(false);
+                self.focus.set(FocusPanel::Categories);
                 InputResult::Consumed
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.handle_control_activate(ctx);
+                InputResult::Consumed
+            }
+            // Type-to-edit: digit / '-' / '.' on a focused number control
+            // enters edit mode with the typed char replacing the value.
+            KeyCode::Char(c)
+                if self.is_number_control()
+                    && (c.is_ascii_digit() || c == '-' || c == '.') =>
+            {
+                self.start_number_editing();
+                self.number_insert(c);
+                self.on_value_changed();
                 InputResult::Consumed
             }
             KeyCode::PageDown => {
@@ -1442,33 +1443,6 @@ impl SettingsState {
         }
     }
 
-    /// Handle control increment (Right arrow on numbers/dropdowns)
-    fn handle_control_increment(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut state) = &mut item.control {
-                state.value += 1;
-                if let Some(max) = state.max {
-                    state.value = state.value.min(max);
-                }
-                self.on_value_changed();
-            }
-        }
-    }
-
-    /// Handle control decrement (Left arrow on numbers)
-    fn handle_control_decrement(&mut self) {
-        if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Number(ref mut state) = &mut item.control {
-                if state.value > 0 {
-                    state.value -= 1;
-                }
-                if let Some(min) = state.min {
-                    state.value = state.value.max(min);
-                }
-                self.on_value_changed();
-            }
-        }
-    }
 }
 
 #[cfg(test)]
