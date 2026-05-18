@@ -149,10 +149,10 @@ mod tests {
             let colors = ToggleColors::default();
             let layout = render_toggle(frame, area, &state, &colors);
 
-            // Chip is "[ ✓ ACTIVE ]" = 12 cols.
-            assert_eq!(layout.checkbox_area.width, 12);
-            // "Enable" (6) + ": " (2) + chip (12) = 20.
-            assert_eq!(layout.full_area.width, 20);
+            // Chip is "[v]" = 3 cols.
+            assert_eq!(layout.checkbox_area.width, 3);
+            // "Enable" (6) + ": " (2) + chip (3) = 11.
+            assert_eq!(layout.full_area.width, 11);
         });
     }
 
@@ -164,7 +164,7 @@ mod tests {
             let layout = render_toggle(frame, area, &state, &colors);
 
             // Same chip width either way — layout doesn't shift on toggle.
-            assert_eq!(layout.checkbox_area.width, 12);
+            assert_eq!(layout.checkbox_area.width, 3);
         });
     }
 
@@ -175,16 +175,16 @@ mod tests {
             let colors = ToggleColors::default();
             let layout = render_toggle(frame, area, &state, &colors);
 
-            // Click on the chip (cols 8..20).
+            // Click on the chip (cols 8..11).
             assert!(layout.contains(8, 0));
-            assert!(layout.contains(15, 0));
+            assert!(layout.contains(10, 0));
 
             // Click on the label (cols 0..6).
             assert!(layout.contains(0, 0));
             assert!(layout.contains(5, 0));
 
             // Click past the chip.
-            assert!(!layout.contains(25, 0));
+            assert!(!layout.contains(15, 0));
         });
     }
 

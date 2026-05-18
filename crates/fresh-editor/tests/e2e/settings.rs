@@ -2431,11 +2431,11 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify it now shows as checked [ ✓ ACTIVE ]
+    // Verify it now shows as checked [v]
     // After toggling, the item is modified so it shows ">● " (3-char indicator area)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">● Check For Updates") && screen.contains(": [ ✓ ACTIVE ]"),
+        screen.contains(">● Check For Updates") && screen.contains(": [v]"),
         "Check For Updates should now be checked (with modified indicator). Screen:\n{}",
         screen
     );
@@ -2472,11 +2472,11 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     harness.render().unwrap();
 
     // This is the key assertion: the toggle should show the SAVED value
-    // (chip reads "[ ✓ ACTIVE ]") not the ORIGINAL unchecked state.
+    // (chip reads "[v]") not the ORIGINAL unchecked state.
     // Note: The "●" indicator may or may not appear depending on layer detection.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Check For Updates") && screen.contains(": [ ✓ ACTIVE ]"),
+        screen.contains("Check For Updates") && screen.contains(": [v]"),
         "BUG #474: After save and reopen, Check For Updates should still be checked, \
          but it shows the original unchecked state. Screen:\n{}",
         screen
