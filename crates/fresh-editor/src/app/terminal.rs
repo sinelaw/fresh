@@ -1110,12 +1110,25 @@ impl Window {
         // view state was created.
         if let Some((mgr, view_states)) = self.buffers.splits_mut() {
             let active_split = mgr.active_split();
-            tracing::info!("EXIT_DBG sync_terminal_to_buffer buf={:?} active_split={:?}", buffer_id, active_split);
-            for (split_id, vs) in view_states.iter() {
+            // The active split's view state may not yet have a keyed
+            // entry for the terminal buffer (e.g. user just pressed
+            // Alt+] into a split that has the terminal as a tab but
+            // never displayed it before). ensure_buffer_state will
+            // create one with defaults (show_line_numbers=true) the
+            // very first time — so we have to *immediately* override
+            // those defaults here, otherwise the next render flashes
+            // a gutter for restored terminals.
+            //
+            // Also force the gutter / current-line-highlight off on
+            // every other split that has this terminal as a tab. A
+            // single missed BufferViewState (e.g. created lazily by
+            // workspace restore + Alt+]) leaks a gutter pop-in.
+            for vs in view_states.values_mut() {
                 if vs.has_buffer(buffer_id) {
-                    if let Some(bs) = vs.buffer_state(buffer_id) {
-                        tracing::info!("EXIT_DBG vs split={:?} buf={:?} show_line_numbers={} active_buffer={:?}", split_id, buffer_id, bs.show_line_numbers, vs.active_buffer);
-                    }
+                    let buf_state = vs.ensure_buffer_state(buffer_id);
+                    buf_state.show_line_numbers = false;
+                    buf_state.highlight_current_line = false;
+                    buf_state.viewport.line_wrap_enabled = false;
                 }
             }
             if let Some(view_state) = view_states.get_mut(&active_split) {
@@ -1124,7 +1137,6 @@ impl Window {
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
-                tracing::info!("EXIT_DBG after setting false: show_line_numbers={}", buf_state.show_line_numbers);
             }
         }
     }
