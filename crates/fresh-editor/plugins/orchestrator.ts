@@ -2774,9 +2774,20 @@ registerHandler("orchestrator_form_key_enter", () => {
   // `completion_dismiss` (plugin syncs local state via that
   // event) without firing the form's picker-Enter or focus
   // advance — Enter is "dismiss the popup, stay focused on
-  // the text input". When the popup is closed, Enter falls
-  // through to the host's normal Text-widget Enter (picker
-  // activate or focus advance).
+  // the text input". When the popup is closed, Enter on a
+  // single-line Text widget advances focus to the next
+  // tabbable; on a Button/Toggle it activates. The plugin's
+  // local focus mirror must advance in lockstep with the
+  // host on the focus-advance branch so that the next Up/Down
+  // walks the *new* field's history (not the previous text
+  // input's). Without this, focus appears to move (cursor
+  // gone, next field highlighted) while the plugin still
+  // thinks it's on the previous text input — pressing Down
+  // then walks that text input's history and silently
+  // rewrites its value.
+  if (!completionVisibleForFocused() && focusToHistoryField(formFocusedKey())) {
+    advanceFormFocus(1);
+  }
   dispatchFormKey("Enter");
 });
 registerHandler(

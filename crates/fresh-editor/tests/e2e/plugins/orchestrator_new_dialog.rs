@@ -526,6 +526,72 @@ fn completion_candidates_left_aligned_with_input_value() {
     );
 }
 
+/// After the popup dismisses on Enter and a second Enter advances
+/// focus to the next tabbable widget, the plugin's local focus
+/// mirror must advance in lockstep with the host. Without this,
+/// the plugin still thinks the text input is focused and the
+/// next Up/Down walks the *previous* text input's history,
+/// silently rewriting its value. This was the user-reported
+/// breakage: "after using the popup and pressing enter to visit
+/// the checkbox/next field, up/down still modify the input box".
+///
+/// We verify by typing a marker character after the focus
+/// advance and asserting the original input is unchanged. If
+/// focus is correctly on the next tabbable, the marker goes
+/// elsewhere; if focus is stuck on the original text input, the
+/// marker extends its value.
+#[test]
+fn enter_advance_after_popup_dismiss_moves_plugin_focus_mirror() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    let typed = type_alpha_prefix_and_wait(&mut harness, &workspace);
+
+    // Popup is open. Enter #1 dismisses it (stays on the
+    // Project Path text input).
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("alpha_two/"))
+        .unwrap();
+    assert_eq!(
+        project_path_field_value(&harness.screen_to_string()),
+        typed,
+        "Enter #1 should dismiss the popup without changing the typed text",
+    );
+
+    // Enter #2 advances focus to the next tabbable widget.
+    // (The worktree checkbox is disabled because the typed
+    // `<workspace>/al` path doesn't exist; the focus cycle
+    // skips it.)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    // Now type a marker character. If the plugin's focus
+    // mirror correctly advanced past Project Path, this char
+    // lands somewhere else (Session Name's input replaces the
+    // placeholder, etc.) and the Project Path value stays at
+    // `typed`. If the plugin's mirror is stuck on
+    // project_path, the marker extends it.
+    harness.type_text("Z").unwrap();
+    harness.tick_and_render().unwrap();
+
+    assert_eq!(
+        project_path_field_value(&harness.screen_to_string()),
+        typed,
+        "after Enter-Enter, focus must have advanced past the Project Path \
+         text input; a subsequent keystroke must not extend the Project Path \
+         value. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
 /// Mouse wheel over the popup scrolls its candidate list — same
 /// behaviour the user gets from Down arrow, except the selected
 /// index stays put (it's a scroll, not a selection move). Goes
