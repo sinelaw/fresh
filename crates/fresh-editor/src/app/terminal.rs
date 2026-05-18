@@ -241,6 +241,18 @@ impl Window {
                 // Terminal buffers should not wrap lines so escape
                 // sequences stay intact.
                 view_state.viewport.line_wrap_enabled = false;
+                // Disable line numbers + current-line highlight for the
+                // terminal buffer's per-buffer view state so exiting
+                // terminal mode doesn't suddenly add a gutter / row
+                // highlight. The render path overwrites the buffer's
+                // margin config every frame from this view-state flag,
+                // so setting it here is required even though
+                // `state.margins.configure_for_line_numbers(false)` was
+                // already called above.
+                let buf_state = view_state.ensure_buffer_state(buffer_id);
+                buf_state.show_line_numbers = false;
+                buf_state.highlight_current_line = false;
+                buf_state.viewport.line_wrap_enabled = false;
             }
         }
 

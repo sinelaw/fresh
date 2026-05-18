@@ -1499,9 +1499,14 @@ impl Editor {
                                 self.terminal_height,
                                 buffer_id,
                             );
+                            // Terminal-dedicated splits never show line
+                            // numbers or current-line highlight — the
+                            // buffer is a PTY scrollback view, not source
+                            // code. (Mirrors the plugin-terminal split
+                            // setup in `create_plugin_terminal`.)
                             view_state.apply_config_defaults(
-                                self.config.editor.line_numbers,
-                                self.config.editor.highlight_current_line,
+                                false,
+                                false,
                                 self.active_window().resolve_line_wrap_for_buffer(buffer_id),
                                 self.config.editor.wrap_indent,
                                 self.active_window()
