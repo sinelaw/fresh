@@ -97,8 +97,8 @@ pub mod config;
 pub mod file_explorer;
 pub mod file_uri;
 pub mod menu;
-pub mod plugin_schemas;
 pub mod overlay;
+pub mod plugin_schemas;
 pub mod services;
 pub mod text_property;
 

@@ -73,7 +73,8 @@ fn harness_with_test_plugin() -> (EditorTestHarness, tempfile::TempDir) {
 /// The plugin handler synchronously appends to the active buffer; the
 /// inserted text shows up on the next render.
 fn run_insert_greeting(h: &mut EditorTestHarness) {
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     h.wait_for_prompt().unwrap();
     h.type_text("cfg_test: Insert Greeting").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
@@ -209,7 +210,9 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
     harness.render().unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     let after_toggle = harness.screen_to_string();
@@ -219,7 +222,9 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
     );
 
     // Save via Ctrl+S, then close the settings dialog.
-    harness.send_key(KeyCode::Char('s'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Settings saved"))
         .unwrap();
@@ -277,9 +282,8 @@ fn plugin_config_category_hidden_when_plugin_disabled() {
         },
     );
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, config, working_dir)
-            .expect("harness");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(120, 40, config, working_dir)
+        .expect("harness");
     harness.render().unwrap();
 
     harness.open_settings().unwrap();

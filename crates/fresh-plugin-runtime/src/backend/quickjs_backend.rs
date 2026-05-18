@@ -880,10 +880,7 @@ fn require_integer<'js>(
         Some(v) => v.as_i64().ok_or_else(|| {
             throw_js(
                 ctx,
-                &format!(
-                    "{}(\"{}\"): `{}` must be an integer",
-                    method, field, key
-                ),
+                &format!("{}(\"{}\"): `{}` must be an integer", method, field, key),
             )
         }),
         None => Err(throw_js(
@@ -905,10 +902,7 @@ fn optional_integer<'js>(
         Some(v) => v.as_i64().map(Some).ok_or_else(|| {
             throw_js(
                 ctx,
-                &format!(
-                    "{}(\"{}\"): `{}` must be an integer",
-                    method, field, key
-                ),
+                &format!("{}(\"{}\"): `{}` must be an integer", method, field, key),
             )
         }),
     }
@@ -925,10 +919,7 @@ fn require_number<'js>(
         Some(v) => v.as_f64().ok_or_else(|| {
             throw_js(
                 ctx,
-                &format!(
-                    "{}(\"{}\"): `{}` must be a number",
-                    method, field, key
-                ),
+                &format!("{}(\"{}\"): `{}` must be a number", method, field, key),
             )
         }),
         None => Err(throw_js(
@@ -950,10 +941,7 @@ fn optional_number<'js>(
         Some(v) => v.as_f64().map(Some).ok_or_else(|| {
             throw_js(
                 ctx,
-                &format!(
-                    "{}(\"{}\"): `{}` must be a number",
-                    method, field, key
-                ),
+                &format!("{}(\"{}\"): `{}` must be a number", method, field, key),
             )
         }),
     }
@@ -2390,7 +2378,13 @@ impl JsEditorApi {
         options: rquickjs::Object<'js>,
     ) -> rquickjs::Result<bool> {
         let opts = parse_options(&ctx, "defineConfigBoolean", &name, options)?;
-        validate_allowed_keys(&ctx, "defineConfigBoolean", &name, &opts, &["default", "description"])?;
+        validate_allowed_keys(
+            &ctx,
+            "defineConfigBoolean",
+            &name,
+            &opts,
+            &["default", "description"],
+        )?;
         let default = match opts.get("default") {
             Some(serde_json::Value::Bool(b)) => *b,
             _ => {
@@ -2440,7 +2434,14 @@ impl JsEditorApi {
         let default = require_integer(&ctx, "defineConfigInteger", &name, &opts, "default")?;
         let minimum = optional_integer(&ctx, "defineConfigInteger", &name, &opts, "minimum")?;
         let maximum = optional_integer(&ctx, "defineConfigInteger", &name, &opts, "maximum")?;
-        check_range(&ctx, "defineConfigInteger", &name, default as f64, minimum.map(|v| v as f64), maximum.map(|v| v as f64))?;
+        check_range(
+            &ctx,
+            "defineConfigInteger",
+            &name,
+            default as f64,
+            minimum.map(|v| v as f64),
+            maximum.map(|v| v as f64),
+        )?;
         let description = string_opt(&opts, "description");
         let mut field = serde_json::Map::new();
         field.insert("type".into(), serde_json::json!("integer"));
@@ -2515,7 +2516,13 @@ impl JsEditorApi {
         options: rquickjs::Object<'js>,
     ) -> rquickjs::Result<String> {
         let opts = parse_options(&ctx, "defineConfigString", &name, options)?;
-        validate_allowed_keys(&ctx, "defineConfigString", &name, &opts, &["default", "description"])?;
+        validate_allowed_keys(
+            &ctx,
+            "defineConfigString",
+            &name,
+            &opts,
+            &["default", "description"],
+        )?;
         let default = match opts.get("default") {
             Some(serde_json::Value::String(s)) => s.clone(),
             _ => {
@@ -2628,9 +2635,7 @@ impl JsEditorApi {
         // Only honour current if it's still one of the declared values
         // (the user could have hand-edited config.json to something
         // stale after the plugin's enum changed).
-        Ok(current
-            .filter(|v| values.contains(v))
-            .unwrap_or(default))
+        Ok(current.filter(|v| values.contains(v)).unwrap_or(default))
     }
 
     /// Declare an array-of-strings config field (e.g. a list of

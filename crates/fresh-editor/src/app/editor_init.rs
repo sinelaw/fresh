@@ -1569,7 +1569,8 @@ impl Editor {
     ) {
         tracing::trace!(
             "Registering plugin config field: {}.{}",
-            plugin_name, field_name
+            plugin_name,
+            field_name
         );
         // Merge the new field into the existing accumulated schema (or a
         // fresh one) and run the same strict validation as a bulk-register.
