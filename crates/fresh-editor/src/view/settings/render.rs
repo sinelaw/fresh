@@ -3852,7 +3852,12 @@ fn render_entry_dialog_inner(
         let help_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(Paragraph::new(help).style(help_style), help_area);
     } else {
-        let help = "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel";
+        // The trailing `●:modified` legend is the only place in the
+        // dialog that explains what the `●` row-indicator means. Without
+        // it the user has to guess whether it's a focus dot, a bullet,
+        // or noise.
+        let help =
+            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Esc:Cancel  ●:modified";
         let help_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(Paragraph::new(help).style(help_style), help_area);
     }
