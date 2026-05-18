@@ -221,12 +221,24 @@ pub(crate) fn render_content(
                 .as_deref()
                 .and_then(|svs| svs.get(&split_id))
                 .is_some_and(|vs| vs.suppress_chrome);
-        // Hide tildes per-split (e.g., for buffer group panels)
+        // Hide tildes per-split (e.g., for buffer group panels). Also
+        // hide them when the split's active buffer is a terminal in
+        // scrollback view — the PTY drew blank rows, so empty rows
+        // past end-of-buffer should look blank rather than tilde-padded.
+        // Without this, viewing a small-PTY terminal in a larger split
+        // (e.g. workspace-restored dock terminal switched via Alt+]
+        // into the main pane) shows tildes where the live PTY drew
+        // blank.
+        let active_buf_is_terminal = buffer_metadata
+            .get(&buffer_id)
+            .and_then(|m| m.virtual_mode())
+            .is_some_and(|m| m == "terminal");
         let split_show_tilde = show_tilde
             && !split_view_states
                 .as_deref()
                 .and_then(|svs| svs.get(&split_id))
-                .is_some_and(|vs| vs.hide_tilde);
+                .is_some_and(|vs| vs.hide_tilde)
+            && !active_buf_is_terminal;
 
         // Non-scrollable panels (Fixed toolbars/headers/footers by default,
         // or any panel created with `scrollable: false`) don't get a
