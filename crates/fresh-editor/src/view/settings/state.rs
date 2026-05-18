@@ -1759,7 +1759,11 @@ impl SettingsState {
                 .trim_end_matches('/')
                 .to_string();
 
-            // Find and update the ObjectArray in the parent dialog
+            // Find and update the ObjectArray in the parent dialog. Mark
+            // the parent dirty so its title flips to `• modified` —
+            // without this, a Ctrl+S in the inner dialog quietly mutated
+            // the parent and the user had to guess whether they still
+            // owed another save.
             if let Some(parent) = self.entry_dialog_stack.last_mut() {
                 if let Some(item) = parent.items.iter_mut().find(|i| i.path == item_path) {
                     if let SettingControl::ObjectArray(array_state) = &mut item.control {
@@ -1770,6 +1774,7 @@ impl SettingsState {
                                 array_state.bindings[index] = value.clone();
                             }
                         }
+                        parent.user_edited = true;
                     }
                 }
             }
