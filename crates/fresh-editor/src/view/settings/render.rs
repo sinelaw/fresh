@@ -3787,6 +3787,35 @@ fn render_entry_dialog_inner(
         x += label.len() as u16;
     }
 
+    // Render a single line of helper text for the focused field, on
+    // the row immediately above the button bar. Surface the schema's
+    // description so the user can tell, say, what `Name` actually
+    // means without having to leave the dialog. Skip when focused on
+    // buttons (no field selected).
+    let helper_y = button_y.saturating_sub(1);
+    if !dialog.focus_on_buttons && helper_y > inner.y {
+        if let Some(desc) = dialog
+            .current_item()
+            .and_then(|it| it.description.as_deref())
+            .filter(|d| !d.is_empty())
+        {
+            let max_width = dialog_area.width.saturating_sub(4) as usize;
+            let truncated: String = desc.chars().take(max_width).collect();
+            let helper_style = Style::default()
+                .fg(theme.line_number_fg)
+                .add_modifier(Modifier::ITALIC);
+            frame.render_widget(
+                Paragraph::new(truncated).style(helper_style),
+                Rect::new(
+                    dialog_area.x + 2,
+                    helper_y,
+                    dialog_area.width.saturating_sub(4),
+                    1,
+                ),
+            );
+        }
+    }
+
     // Check if current item has invalid JSON (for Text controls with validation)
     // and if we're actively editing a JSON control
     let is_editing_json = dialog.editing_text && dialog.is_editing_json();
