@@ -232,6 +232,11 @@ impl SettingsState {
             })
             .collect();
         enabled_with_schema.sort();
+        tracing::trace!(
+            "SettingsState built: total plugin_schemas={}, enabled_with_schema={:?}",
+            plugin_schemas.len(),
+            enabled_with_schema
+        );
         super::schema::append_plugin_settings_category(
             &mut categories,
             plugin_schemas,

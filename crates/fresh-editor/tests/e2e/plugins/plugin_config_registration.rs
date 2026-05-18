@@ -106,6 +106,7 @@ fn focus_category(h: &mut EditorTestHarness, name: &str) {
 ///    behavior reflects the new value on the next invocation.
 #[test]
 fn plugin_config_round_trip_toggles_visible_behavior() {
+    crate::common::tracing::init_tracing_from_env();
     let (mut harness, _tmp) = harness_with_test_plugin();
     harness.render().unwrap();
 
@@ -117,11 +118,31 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
         "Plugin should have inserted the default greeting. Screen:\n{after_first}"
     );
 
-    // Open settings and verify the plugin category is present.
+    // Open settings and verify the plugin category is present. The
+    // schema-registration commands arrive on the editor's command
+    // channel asynchronously, so the very first `open_settings` may
+    // race them — wait_until-reopen-loop until the category shows up.
+    // The Settings panel rebuilds its category list every time it
+    // opens, so re-opening is enough to pick up newly-registered
+    // schemas without an editor restart.
+    let plugin_marker = format!("Plugin: {}", PLUGIN_NAME);
     harness.open_settings().unwrap();
+    // The Settings panel rebuilds its category list every time it
+    // opens, so close + reopen drives a fresh read of plugin_schemas.
+    // Loop on the screen contents until the registration commands
+    // have drained from the plugin → editor channel and the category
+    // surfaces.
+    for _attempt in 0..200 {
+        if harness.screen_to_string().contains(&plugin_marker) {
+            break;
+        }
+        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        harness.open_settings().unwrap();
+    }
     let after_open = harness.screen_to_string();
     assert!(
-        after_open.contains(&format!("Plugin: {}", PLUGIN_NAME)),
+        after_open.contains(&plugin_marker),
         "Settings UI should show the plugin's category. Screen:\n{after_open}"
     );
 
