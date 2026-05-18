@@ -1101,11 +1101,21 @@ impl Window {
         // screen and undoing the anchor. The flag is consumed
         // (cleared) by the first navigation / scroll action, so normal
         // scrolling still works after that.
+        //
+        // Also force the per-buffer gutter / current-line-highlight off
+        // here as the exit-path's last line of defense. Spawn /
+        // workspace-restore code paths each have their own setup, and a
+        // single missed spot leaks a gutter pop-in on exit — pinning
+        // them on this path covers any terminal regardless of how its
+        // view state was created.
         if let Some((mgr, view_states)) = self.buffers.splits_mut() {
             let active_split = mgr.active_split();
             if let Some(view_state) = view_states.get_mut(&active_split) {
                 view_state.viewport.line_wrap_enabled = false;
                 view_state.viewport.set_skip_ensure_visible();
+                let buf_state = view_state.ensure_buffer_state(buffer_id);
+                buf_state.show_line_numbers = false;
+                buf_state.highlight_current_line = false;
             }
         }
     }

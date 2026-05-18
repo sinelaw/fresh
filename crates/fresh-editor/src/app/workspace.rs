@@ -1828,6 +1828,10 @@ impl Editor {
                                     // tab gets entered after workspace restore.
                                     buf_state.show_line_numbers = false;
                                     buf_state.highlight_current_line = false;
+                                    tracing::info!(
+                                        "RESTORE_DBG terminal tab buf={:?} show_line_numbers set to false",
+                                        buffer_id
+                                    );
                                 }
                             }
                             SerializedTabRef::Unnamed(recovery_id) => {
