@@ -750,7 +750,7 @@ impl Editor {
 
         // Item click
         if layout.in_content_area(col, row) {
-            return self.handle_entry_dialog_item_click(row, &layout);
+            return self.handle_entry_dialog_item_click(col, row, &layout);
         }
 
         Ok(false)
@@ -819,6 +819,7 @@ impl Editor {
 
     fn handle_entry_dialog_item_click(
         &mut self,
+        col: u16,
         row: u16,
         layout: &EntryDialogLayout,
     ) -> AnyhowResult<bool> {
@@ -848,6 +849,17 @@ impl Editor {
                 if item.read_only {
                     return Ok(false);
                 }
+                let sub_row = click_y - content_y;
+                // TextList rows render as: label (sub_row 0), one row
+                // per committed item, then the trailing add-new row.
+                // Map the click to either remove (`[x]`), focus +
+                // edit (text area), or activate-pending (`[+] Add new`
+                // / input `[+]`). Without this, every click in a
+                // TextList row just opened the input, ignoring `[x]`
+                // and the row-text targets entirely.
+                if matches!(item.control, SettingControl::TextList(_)) {
+                    return self.handle_text_list_click(idx, sub_row, col, layout);
+                }
                 dialog.focus_on_buttons = false;
                 dialog.selected_item = idx;
                 dialog.update_focus_states();
@@ -859,6 +871,110 @@ impl Editor {
             content_y = item_end;
         }
         Ok(false)
+    }
+
+    fn handle_text_list_click(
+        &mut self,
+        item_idx: usize,
+        sub_row: usize,
+        col: u16,
+        _layout: &EntryDialogLayout,
+    ) -> AnyhowResult<bool> {
+        let Some(ref mut state) = self.settings_state else {
+            return Ok(false);
+        };
+        let Some(dialog) = state.entry_dialog_mut() else {
+            return Ok(false);
+        };
+        let item = match dialog.items.get_mut(item_idx) {
+            Some(it) => it,
+            None => return Ok(false),
+        };
+        let tl = match &mut item.control {
+            SettingControl::TextList(s) => s,
+            _ => return Ok(false),
+        };
+
+        // sub_row 0 is the label row.
+        if sub_row == 0 {
+            // Focus the control on a generic label click; user
+            // can keyboard from there.
+            dialog.focus_on_buttons = false;
+            dialog.selected_item = item_idx;
+            dialog.update_focus_states();
+            return Ok(true);
+        }
+
+        let n_items = tl.items.len();
+        // Compute which TextList row was clicked: existing item rows
+        // are sub_row 1..=n_items, the add-new row is sub_row n_items+1.
+        let on_add_row = sub_row == n_items + 1;
+        let item_row_idx = if !on_add_row { Some(sub_row - 1) } else { None };
+
+        // Hit-test the trailing button (`[x]` or `[+]`). The renderer
+        // uses indent=2 then `[xxx]` for actual_field_width chars, then
+        // ` ` then `[x]` or `[+]` (3 chars). The dialog inner area starts
+        // at `inner_x + focus_indicator_width` (3 cols). Computing the
+        // exact column would need the actual_field_width, which we
+        // don't carry here; treat anything in the rightmost ~5 chars
+        // of the rendered row that the user is likely to click as the
+        // trailing button. With the dialog defaulting to 30-char fields
+        // this lands cleanly on `[x]` / `[+]`.
+        let dialog_inner_right = _layout.dialog_x + _layout.dialog_width.saturating_sub(2);
+        let in_trailing_button = col + 5 >= dialog_inner_right
+            || {
+                // Fallback: if the row text is shorter than the field
+                // (common — items rarely fill 30 chars), the user clicks
+                // the [x] which is right after `]`. Use a hand-rolled
+                // approximation: text_indent + field_width + 1 ≤ col.
+                let text_indent = _layout.dialog_x + 2 + 3 /* focus indicator */ + 2 /* TextList indent */ + 1 /* `[` */;
+                let estimated_field_width = 28u16;
+                col >= text_indent + estimated_field_width + 1
+            };
+
+        match (on_add_row, item_row_idx, in_trailing_button) {
+            // Click on `[+]` of an active input: commit pending.
+            (true, _, true) if tl.pending_active || !tl.new_item_text.is_empty() => {
+                tl.add_item();
+                dialog.user_edited = true;
+                dialog.focus_on_buttons = false;
+                dialog.selected_item = item_idx;
+                tl.focused_item = None;
+                tl.pending_active = false;
+                dialog.update_focus_states();
+                Ok(true)
+            }
+            // Click anywhere on the (collapsed) `[+] Add new` row, or
+            // on the input text area: focus the trailing slot and
+            // activate input mode so the user can start typing.
+            (true, _, _) => {
+                dialog.focus_on_buttons = false;
+                dialog.selected_item = item_idx;
+                tl.activate_pending();
+                dialog.editing_text = true;
+                dialog.update_focus_states();
+                Ok(true)
+            }
+            // Click on `[x]` of a committed row: remove it.
+            (false, Some(row_idx), true) if row_idx < tl.items.len() => {
+                tl.remove_item(row_idx);
+                dialog.user_edited = true;
+                dialog.focus_on_buttons = false;
+                dialog.selected_item = item_idx;
+                dialog.update_focus_states();
+                Ok(true)
+            }
+            // Click on a committed row's text area: focus that item.
+            (false, Some(row_idx), false) if row_idx < tl.items.len() => {
+                dialog.focus_on_buttons = false;
+                dialog.selected_item = item_idx;
+                tl.focused_item = Some(row_idx);
+                tl.pending_active = false;
+                dialog.update_focus_states();
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     fn settings_entry_dialog_activate_button(&mut self) -> AnyhowResult<bool> {

@@ -422,6 +422,34 @@ impl SettingsState {
                     dialog.focus_prev();
                 }
             }
+            KeyCode::Delete => {
+                // Del on a focused TextList item removes the row.
+                // Without this, the only way to drop an entry was to
+                // mouse-click `[x]` — which (a) wasn't wired and (b)
+                // isn't obvious from the keyboard.
+                let removed = self
+                    .entry_dialog_mut()
+                    .map(|dialog| {
+                        if dialog.focus_on_buttons {
+                            return false;
+                        }
+                        if let Some(item) = dialog.current_item_mut() {
+                            if let SettingControl::TextList(state) = &mut item.control {
+                                if let Some(idx) = state.focused_item {
+                                    state.remove_item(idx);
+                                    dialog.user_edited = true;
+                                    return true;
+                                }
+                            }
+                        }
+                        false
+                    })
+                    .unwrap_or(false);
+                if !removed {
+                    // Fall through to nothing — no other Del semantic
+                    // in the dialog navigation mode for now.
+                }
+            }
             KeyCode::Left => {
                 if let Some(dialog) = self.entry_dialog_mut() {
                     if dialog.focus_on_buttons && dialog.focused_button > 0 {

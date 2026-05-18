@@ -1648,14 +1648,26 @@ fn render_text_list_partial(
         let visible: String = item.chars().take(inner_width).collect();
         let padded = format!("{:width$}", visible, width = inner_width);
 
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::raw(" ".repeat(indent as usize)),
             Span::styled("[", Style::default().fg(border_color)),
             Span::styled(padded, Style::default().fg(text_color)),
             Span::styled("]", Style::default().fg(border_color)),
             Span::raw(" "),
             Span::styled("[x]", Style::default().fg(colors.remove_button)),
-        ]);
+        ];
+        // Inline hint on a focused committed row: tell the user
+        // exactly how to remove it. Otherwise the `[x]` looks
+        // clickable but offers no keyboard equivalent.
+        if is_focused {
+            spans.push(Span::styled(
+                "  Del:remove  Enter:edit",
+                Style::default()
+                    .fg(colors.disabled)
+                    .add_modifier(ratatui::style::Modifier::ITALIC),
+            ));
+        }
+        let line = Line::from(spans);
 
         let row_area = Rect::new(area.x, y, area.width, 1);
         frame.render_widget(Paragraph::new(line), row_area);
