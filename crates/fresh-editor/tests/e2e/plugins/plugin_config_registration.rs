@@ -16,7 +16,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
 
-const PLUGIN_NAME: &str = "test_config_plugin";
+const PLUGIN_NAME: &str = "cfg_test";
 const PLUGIN_SOURCE: &str = r#"
 /// <reference path="./lib/fresh.d.ts" />
 const editor = getEditor();
@@ -39,12 +39,12 @@ function insertGreeting(): void {
     const suffix = cfg.uppercase ? "HELLO" : "hello";
     editor.insertAtCursor(`${prefix}:${suffix}`);
 }
-registerHandler("test_config_plugin_insert", insertGreeting);
+registerHandler("cfg_test_insert", insertGreeting);
 
 editor.registerCommand(
-    "test_config_plugin: Insert Greeting",
+    "cfg_test: Insert Greeting",
     "Insert greeting using the plugin config values",
-    "test_config_plugin_insert",
+    "cfg_test_insert",
     null,
 );
 "#;
@@ -75,19 +75,21 @@ fn harness_with_test_plugin() -> (EditorTestHarness, tempfile::TempDir) {
 fn run_insert_greeting(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
     h.wait_for_prompt().unwrap();
-    h.type_text("test_config_plugin: Insert Greeting").unwrap();
+    h.type_text("cfg_test: Insert Greeting").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
     h.render().unwrap();
 }
 
 /// Navigate the Settings UI category list until the named entry is
-/// highlighted (its row gains the `>` selection marker), then open it.
+/// highlighted. The selection marker `>` lives in column 0 of the
+/// category cell, but expandable categories (those with sub-sections)
+/// render a `▶` chevron in front of the name, which shifts the layout.
+/// Just look for any line that contains both the `>` selector glyph
+/// and the category name — robust against either layout.
 fn focus_category(h: &mut EditorTestHarness, name: &str) {
-    let probe = format!(">     {}", name);
     for _ in 0..40 {
-        let screen = h.screen_to_string();
-        if screen.contains(&probe) {
+        if category_is_selected(h, name) {
             return;
         }
         h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -98,6 +100,16 @@ fn focus_category(h: &mut EditorTestHarness, name: &str) {
         name,
         h.screen_to_string()
     );
+}
+
+/// True iff some line in the rendered screen contains both the `>`
+/// selection marker AND `name`. The marker is column-aligned to the
+/// category cell's first glyph, so co-occurrence on the same line is
+/// a reliable indicator that *that* row is the selected one.
+fn category_is_selected(h: &EditorTestHarness, name: &str) -> bool {
+    h.screen_to_string()
+        .lines()
+        .any(|line| line.contains('>') && line.contains(name))
 }
 
 /// 1. The plugin's category shows up under "Plugin: <name>".
@@ -145,6 +157,36 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
         after_open.contains(&plugin_marker),
         "Settings UI should show the plugin's category. Screen:\n{after_open}"
     );
+
+    // Plugin categories belong at the bottom of the category list so
+    // plugin configuration doesn't interleave with built-in editor
+    // settings. Verify by asserting that the plugin marker appears
+    // AFTER every built-in category name in the left-panel pane.
+    let plugin_marker_pos = after_open
+        .find(&plugin_marker)
+        .expect("plugin marker present");
+    for builtin in &[
+        "General",
+        "Clipboard",
+        "Editor",
+        "File Browser",
+        "File Explorer",
+        "Packages",
+        "Plugins",
+        "Terminal",
+        "Warnings",
+    ] {
+        let bi_pos = after_open
+            .find(builtin)
+            .unwrap_or_else(|| panic!("built-in category {:?} missing from screen", builtin));
+        assert!(
+            bi_pos < plugin_marker_pos,
+            "Built-in category {:?} (offset {bi_pos}) must render before the plugin \
+             marker {:?} (offset {plugin_marker_pos}). Screen:\n{after_open}",
+            builtin,
+            plugin_marker,
+        );
+    }
 
     focus_category(&mut harness, &format!("Plugin: {}", PLUGIN_NAME));
     let after_focus = harness.screen_to_string();

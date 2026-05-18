@@ -417,11 +417,17 @@ pub fn append_plugin_settings_category(
     }
 
     // Re-sort categories. "General" stays first; "Plugin: <name>"
-    // entries land alphabetically among the rest.
+    // entries are pushed to the bottom of the list so plugin
+    // configuration doesn't interleave with built-in editor settings.
+    // Within each band the order is alphabetical.
     categories.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
         ("General", _) => std::cmp::Ordering::Less,
         (_, "General") => std::cmp::Ordering::Greater,
-        (a, b) => a.cmp(b),
+        (a, b) => match (a.starts_with("Plugin: "), b.starts_with("Plugin: ")) {
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => a.cmp(b),
+        },
     });
 }
 
