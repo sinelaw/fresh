@@ -4295,7 +4295,7 @@ impl Editor {
                     ..
                 }) if !completions.is_empty() => {
                     let idx = (*completion_selected_index).min(completions.len() - 1);
-                    (focus_key, completions[idx].clone())
+                    (focus_key, completions[idx].value.clone())
                 }
                 _ => return,
             }

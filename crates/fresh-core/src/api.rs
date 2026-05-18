@@ -716,6 +716,85 @@ impl<'js> rquickjs::FromJs<'js> for StyledText {
     }
 }
 
+/// One candidate row in a Text widget's completion popup. `value` is
+/// what gets sent back to the plugin as the `completion_accept`
+/// payload when the user picks the row. `kind` is an optional
+/// presentation hint the renderer reads to style certain rows
+/// differently from the rest — e.g. `"history"` rows render with
+/// a leading marker glyph + italic so the user can tell at-a-glance
+/// that the entry came from their submission history rather than
+/// from the live completion source. `None` is the default "regular"
+/// candidate.
+///
+/// Serializes from JS either as a bare string (treated as
+/// `{ value: <string>, kind: null }` for the legacy
+/// `string[]` setCompletions signature) or as a full object.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct CompletionItem {
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kind: Option<String>,
+}
+
+impl From<String> for CompletionItem {
+    fn from(value: String) -> Self {
+        Self { value, kind: None }
+    }
+}
+
+impl From<&str> for CompletionItem {
+    fn from(value: &str) -> Self {
+        Self {
+            value: value.to_string(),
+            kind: None,
+        }
+    }
+}
+
+/// Custom deserializer module that accepts either a `Vec<String>`
+/// (legacy bare-string completions) or a `Vec<CompletionItem>` (new
+/// typed shape). Lets plugins call `setCompletions(key, ["a", "b"])`
+/// and `setCompletions(key, [{ value: "a", kind: "history" }])`
+/// interchangeably.
+pub mod completion_items_serde {
+    use super::CompletionItem;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Either {
+        Bare(String),
+        Typed(CompletionItem),
+    }
+
+    pub fn serialize<S>(items: &[CompletionItem], s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        items.serialize(s)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Vec<CompletionItem>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw: Vec<Either> = Vec::deserialize(d)?;
+        Ok(raw
+            .into_iter()
+            .map(|e| match e {
+                Either::Bare(s) => CompletionItem {
+                    value: s,
+                    kind: None,
+                },
+                Either::Typed(item) => item,
+            })
+            .collect())
+    }
+}
+
 // ============================================================================
 // Composite Buffer Configuration (for multi-buffer single-tab views)
 // ============================================================================
@@ -1591,8 +1670,13 @@ pub enum WidgetSpec {
         /// widget's `change` event via
         /// `WidgetMutation::SetCompletions`. An empty `items`
         /// closes the popup.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        completions: Vec<String>,
+        #[serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            with = "completion_items_serde"
+        )]
+        #[ts(type = "Array<string | CompletionItem>")]
+        completions: Vec<CompletionItem>,
         /// How many candidate rows the popup paints at once
         /// when it opens. Excess candidates stay reachable
         /// via Up/Down (host auto-scrolls to keep selection
@@ -1859,7 +1943,9 @@ pub enum WidgetMutation {
     /// `setPromptSuggestions` for the legacy prompt UI.
     SetCompletions {
         widget_key: String,
-        items: Vec<String>,
+        #[serde(with = "completion_items_serde")]
+        #[ts(type = "Array<string | CompletionItem>")]
+        items: Vec<CompletionItem>,
     },
     /// Set a `Toggle`'s checked state. Mutates the Toggle's
     /// `checked` field in the spec.

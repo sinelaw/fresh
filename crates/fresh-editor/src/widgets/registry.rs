@@ -102,7 +102,7 @@ pub enum WidgetInstanceState {
         /// keep painting the popup across renders that don't
         /// re-push it, and so `Up`/`Down` selection survives a
         /// spec refresh.
-        completions: Vec<String>,
+        completions: Vec<fresh_core::api::CompletionItem>,
         /// Host-managed selection cursor into `completions`.
         /// Reset to 0 every time `SetCompletions` runs with a
         /// non-empty list; clamped on every render in case the
