@@ -84,7 +84,12 @@ pub fn render_toggle_aligned(
             Span::styled(padded_label, Style::default().fg(label_color)),
             Span::styled(": ", Style::default().fg(label_color)),
             Span::styled("[", Style::default().fg(bracket_color)),
-            Span::styled("v", Style::default().fg(check_color).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                "v",
+                Style::default()
+                    .fg(check_color)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled("]", Style::default().fg(bracket_color)),
         ])
     } else {
@@ -103,9 +108,7 @@ pub fn render_toggle_aligned(
     // Chip position after label (label + ": ").
     let label_overhead = actual_label_width.saturating_add(2);
     let checkbox_start = area.x.saturating_add(label_overhead);
-    let chip_avail = area
-        .width
-        .saturating_sub(label_overhead.min(area.width));
+    let chip_avail = area.width.saturating_sub(label_overhead.min(area.width));
     let checkbox_area = Rect::new(checkbox_start, area.y, CHIP_WIDTH.min(chip_avail), 1);
 
     // Full area is label + ": " + chip

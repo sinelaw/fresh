@@ -1461,7 +1461,10 @@ fn render_json_control(
                     .add_modifier(Modifier::ITALIC),
             ),
         ]);
-        frame.render_widget(Paragraph::new(hint_line), Rect::new(area.x, y, area.width, 1));
+        frame.render_widget(
+            Paragraph::new(hint_line),
+            Rect::new(area.x, y, area.width, 1),
+        );
         return ControlLayoutInfo::Json {
             edit_area: Rect::new(edit_x, edit_start_y, edit_width, 1),
         };

@@ -322,17 +322,16 @@ impl SettingsState {
                     // exit text-edit mode AND advance the dialog to the
                     // next field so Tab doesn't strand the user on the
                     // trailing add-new slot (UX review F19).
-                    let escape_forward =
-                        if let Some(item) = dialog.current_item_mut() {
-                            if let SettingControl::TextList(state) = &mut item.control {
-                                state.add_item();
-                                true
-                            } else {
-                                false
-                            }
+                    let escape_forward = if let Some(item) = dialog.current_item_mut() {
+                        if let SettingControl::TextList(state) = &mut item.control {
+                            state.add_item();
+                            true
                         } else {
                             false
-                        };
+                        }
+                    } else {
+                        false
+                    };
                     dialog.stop_editing();
                     if escape_forward {
                         dialog.focus_next();
@@ -380,10 +379,7 @@ impl SettingsState {
                 // confirmation; a clean dialog closes immediately.
                 // Without the dirty check, an accidental Esc silently
                 // destroys every field the user just typed in.
-                let dirty = self
-                    .entry_dialog()
-                    .map(|d| d.is_dirty())
-                    .unwrap_or(false);
+                let dirty = self.entry_dialog().map(|d| d.is_dirty()).unwrap_or(false);
                 if dirty {
                     self.showing_entry_discard_confirm = true;
                     self.entry_discard_confirm_selection = 0;
@@ -422,8 +418,7 @@ impl SettingsState {
             }
             KeyCode::Right => {
                 if let Some(dialog) = self.entry_dialog_mut() {
-                    if dialog.focus_on_buttons
-                        && dialog.focused_button + 1 < dialog.button_count()
+                    if dialog.focus_on_buttons && dialog.focused_button + 1 < dialog.button_count()
                     {
                         dialog.focused_button += 1;
                     }
@@ -704,18 +699,16 @@ impl SettingsState {
                     self.entry_delete_confirm_selection += 1;
                 }
             }
-            KeyCode::Enter => {
-                match self.entry_delete_confirm_selection {
-                    0 => {
-                        self.showing_entry_delete_confirm = false;
-                    }
-                    1 => {
-                        self.showing_entry_delete_confirm = false;
-                        self.delete_entry_dialog();
-                    }
-                    _ => {}
+            KeyCode::Enter => match self.entry_delete_confirm_selection {
+                0 => {
+                    self.showing_entry_delete_confirm = false;
                 }
-            }
+                1 => {
+                    self.showing_entry_delete_confirm = false;
+                    self.delete_entry_dialog();
+                }
+                _ => {}
+            },
             KeyCode::Esc => {
                 self.showing_entry_delete_confirm = false;
             }
@@ -897,8 +890,7 @@ impl SettingsState {
             // Type-to-edit: digit / '-' / '.' on a focused number control
             // enters edit mode with the typed char replacing the value.
             KeyCode::Char(c)
-                if self.is_number_control()
-                    && (c.is_ascii_digit() || c == '-' || c == '.') =>
+                if self.is_number_control() && (c.is_ascii_digit() || c == '-' || c == '.') =>
             {
                 self.start_number_editing();
                 self.number_insert(c);
@@ -1442,7 +1434,6 @@ impl SettingsState {
             }
         }
     }
-
 }
 
 #[cfg(test)]
