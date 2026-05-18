@@ -85,23 +85,43 @@ impl MapState {
     /// Get the display value for an entry (either from display_field or fallback to field count)
     pub fn get_display_value(&self, value: &serde_json::Value) -> String {
         if let Some(ref field) = self.display_field {
-            // For array values, apply display_field to the first element
-            let target = if let serde_json::Value::Array(arr) = value {
-                arr.first()
-            } else {
-                Some(value)
-            };
-            if let Some(target) = target {
-                if let Some(v) = target.pointer(field) {
-                    return match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Bool(b) => b.to_string(),
-                        serde_json::Value::Number(n) => n.to_string(),
-                        serde_json::Value::Null => "null".to_string(),
-                        serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
-                        serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
-                    };
+            // For array values (e.g. multi-server LSP entries), show each
+            // element's `display_field` so the collapsed row reflects the
+            // full set. Otherwise a row that maps `python` to two servers
+            // still rendered as just `pylsp`, making the user think the
+            // second server hadn't saved.
+            if let serde_json::Value::Array(arr) = value {
+                let parts: Vec<String> = arr
+                    .iter()
+                    .filter_map(|el| el.pointer(field))
+                    .filter_map(|v| match v {
+                        serde_json::Value::String(s) => Some(s.clone()),
+                        serde_json::Value::Bool(b) => Some(b.to_string()),
+                        serde_json::Value::Number(n) => Some(n.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                if !parts.is_empty() {
+                    // The map row's value column truncates at ~20 chars
+                    // (truncate_chars_with_ellipsis in render). When the
+                    // joined list would overflow, fall back to
+                    // "first +N more" so the user can still tell the
+                    // entry has more than one item.
+                    let joined = parts.join(", ");
+                    if joined.chars().count() <= 20 || parts.len() == 1 {
+                        return joined;
+                    }
+                    return format!("{}, +{} more", parts[0], parts.len() - 1);
                 }
+            } else if let Some(v) = value.pointer(field) {
+                return match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Null => "null".to_string(),
+                    serde_json::Value::Array(arr) => format!("[{} items]", arr.len()),
+                    serde_json::Value::Object(obj) => format!("{{{} fields}}", obj.len()),
+                };
             }
         }
         // Fallback to showing field count with correct pluralization
@@ -477,6 +497,50 @@ mod tests {
         assert_eq!(state.label, "Test");
         assert!(state.entries.is_empty());
         assert!(state.focused_entry.is_none());
+    }
+
+    #[test]
+    fn test_get_display_value_single_object() {
+        let state = MapState::new("Test").with_display_field("/command".to_string());
+        let value = serde_json::json!({"command": "pylsp"});
+        assert_eq!(state.get_display_value(&value), "pylsp");
+    }
+
+    #[test]
+    fn test_get_display_value_array_single_element() {
+        let state = MapState::new("Test").with_display_field("/command".to_string());
+        let value = serde_json::json!([{"command": "pylsp"}]);
+        assert_eq!(state.get_display_value(&value), "pylsp");
+    }
+
+    #[test]
+    fn test_get_display_value_array_two_short_elements_joined() {
+        let state = MapState::new("Test").with_display_field("/command".to_string());
+        let value = serde_json::json!([{"command": "a"}, {"command": "b"}]);
+        // Joined string fits under the ~20-char column.
+        assert_eq!(state.get_display_value(&value), "a, b");
+    }
+
+    #[test]
+    fn test_get_display_value_array_overflow_uses_plus_n_more() {
+        let state = MapState::new("Test").with_display_field("/command".to_string());
+        let value = serde_json::json!([
+            {"command": "pylsp"},
+            {"command": "pyright-langserver"},
+        ]);
+        // "pylsp, pyright-langserver" is 25 chars, exceeds the budget.
+        assert_eq!(state.get_display_value(&value), "pylsp, +1 more");
+    }
+
+    #[test]
+    fn test_get_display_value_array_three_elements_uses_plus_n_more() {
+        let state = MapState::new("Test").with_display_field("/command".to_string());
+        let value = serde_json::json!([
+            {"command": "alpha-server"},
+            {"command": "beta-server"},
+            {"command": "gamma-server"},
+        ]);
+        assert_eq!(state.get_display_value(&value), "alpha-server, +2 more");
     }
 
     #[test]
