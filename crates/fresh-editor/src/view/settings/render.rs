@@ -2016,16 +2016,31 @@ fn render_keybinding_list_partial(
                     colors.delete_fg,
                 )
             };
-            let line = Line::from(vec![
-                Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
-                Span::styled(
-                    format!("{:<20}", key_combo),
-                    Style::default().fg(key_fg).bg(bg),
-                ),
-                Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
-                Span::styled(action, Style::default().fg(action_fg).bg(bg)),
-                Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
-            ]);
+            // The KeybindingList widget is reused for non-keybinding
+            // ObjectArrays (e.g. LSP servers under a language), where the
+            // `key_combo` column is always empty — a single LSP entry then
+            // rendered as `                           → clangd [x]`, with
+            // the empty Name column padding and an unexplained arrow. When
+            // there's nothing to put left of the arrow, collapse to just
+            // `action [x]` so the row reads like the form field it is.
+            let line = if key_combo.trim().is_empty() {
+                Line::from(vec![
+                    Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
+                    Span::styled(action, Style::default().fg(action_fg).bg(bg)),
+                    Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
+                    Span::styled(
+                        format!("{:<20}", key_combo),
+                        Style::default().fg(key_fg).bg(bg),
+                    ),
+                    Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
+                    Span::styled(action, Style::default().fg(action_fg).bg(bg)),
+                    Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
+                ])
+            };
             frame.render_widget(Paragraph::new(line), entry_area);
 
             // Track delete button area
