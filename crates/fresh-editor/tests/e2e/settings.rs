@@ -2661,7 +2661,8 @@ fn test_json_editor_delete_key_works() {
 
     navigate_to_lsp_json_editor(&mut harness);
 
-    // Press Enter to start editing the JSON field
+    // Press Enter to start editing the JSON field. The placeholder
+    // `null` is wiped on edit start so the buffer is empty.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -2670,13 +2671,10 @@ fn test_json_editor_delete_key_works() {
     // The help line should change to indicate JSON editing mode
     harness.assert_screen_contains("Enter:Newline");
 
-    // When entering edit mode, cursor is at position 0
-    // Type "ABC" which will be inserted at the start, resulting in "ABCnull"
+    // Type "ABC" into the empty editor.
     harness.type_text("ABC").unwrap();
     harness.render().unwrap();
-
-    // Should see "ABCnull" (typed at cursor position 0)
-    harness.assert_screen_contains("ABCnull");
+    harness.assert_screen_contains("ABC");
 
     // Cursor is now after 'C'. Move left 3 times to position before 'A'
     for _ in 0..3 {
@@ -2690,11 +2688,12 @@ fn test_json_editor_delete_key_works() {
         .unwrap();
     harness.render().unwrap();
 
-    // After deleting 'A', should show "BCnull"
+    // After deleting 'A', should show "BC" (no surrounding "null" — the
+    // placeholder was cleared on edit start).
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("BCnull") && !screen.contains("ABCnull"),
-        "Delete key should remove character at cursor. Expected 'BCnull', got:\n{}",
+        screen.contains("│BC") && !screen.contains("ABC"),
+        "Delete key should remove character at cursor. Expected 'BC', got:\n{}",
         screen
     );
 
@@ -2720,13 +2719,11 @@ fn test_json_editor_home_end_keys_work() {
         .unwrap();
     harness.render().unwrap();
 
-    // When entering edit mode, cursor is at position 0
-    // Type "XYZ" which results in "XYZnull"
+    // When entering edit mode, the `null` placeholder is wiped so the
+    // buffer starts empty. Type "XYZ" — the editor now contains "XYZ".
     harness.type_text("XYZ").unwrap();
     harness.render().unwrap();
-
-    // Should see "XYZnull" (typed at cursor position 0)
-    harness.assert_screen_contains("XYZnull");
+    harness.assert_screen_contains("XYZ");
 
     // Cursor is now after 'Z'. Press End - should go to the end of text
     harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
@@ -2738,8 +2735,8 @@ fn test_json_editor_home_end_keys_work() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should now show "XYZnullB" (B appended at end)
-    harness.assert_screen_contains("XYZnullB");
+    // Should now show "XYZB" (B appended at end)
+    harness.assert_screen_contains("XYZB");
 
     // Press Home - cursor should go to beginning
     harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
@@ -2751,8 +2748,8 @@ fn test_json_editor_home_end_keys_work() {
         .unwrap();
     harness.render().unwrap();
 
-    // Should now show "AXYZnullB" (A inserted at beginning)
-    harness.assert_screen_contains("AXYZnullB");
+    // Should now show "AXYZB" (A inserted at beginning)
+    harness.assert_screen_contains("AXYZB");
 
     // Close dialogs
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -2776,13 +2773,11 @@ fn test_json_editor_ctrl_a_selects_all() {
         .unwrap();
     harness.render().unwrap();
 
-    // When entering edit mode, cursor is at position 0
-    // Type "OLD" which results in "OLDnull"
+    // When entering edit mode, the `null` placeholder is wiped so the
+    // buffer starts empty. Type "OLD" — the editor now contains "OLD".
     harness.type_text("OLD").unwrap();
     harness.render().unwrap();
-
-    // Should see "OLDnull"
-    harness.assert_screen_contains("OLDnull");
+    harness.assert_screen_contains("OLD");
 
     // Press Ctrl+A to select all
     harness
@@ -2794,10 +2789,10 @@ fn test_json_editor_ctrl_a_selects_all() {
     harness.type_text("NEW").unwrap();
     harness.render().unwrap();
 
-    // Should now show "NEW" only (replaced "OLDnull")
+    // Should now show "NEW" only (replaced "OLD")
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("NEW") && !screen.contains("OLDnull") && !screen.contains("OLD"),
+        screen.contains("NEW") && !screen.contains("OLD"),
         "Ctrl+A should select all, then typing should replace. Expected only 'NEW', got:\n{}",
         screen
     );
@@ -2831,10 +2826,8 @@ fn test_json_editor_ctrl_c_copies_selected_text() {
     // Verify we're in JSON editing mode
     harness.assert_screen_contains("Enter:Newline");
 
-    // Select all with Ctrl+A, then type known text to have predictable content
-    harness
-        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
-        .unwrap();
+    // The `null` placeholder is wiped on edit start, so the buffer is
+    // already empty. Type known text directly.
     harness.type_text("HELLO").unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("HELLO");

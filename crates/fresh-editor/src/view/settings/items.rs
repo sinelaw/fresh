@@ -89,9 +89,15 @@ impl JsonEditState {
         self.editor.value()
     }
 
-    /// Check if the JSON is valid
+    /// Check if the JSON is valid. An empty editor counts as valid:
+    /// it's the "the user just opened a not-yet-set field" state, which
+    /// `restore_unset_if_empty` will round-trip back to JSON `null` on
+    /// close. Treating empty as invalid otherwise flashes a spurious
+    /// "Invalid JSON" footer the moment the user presses Enter on a
+    /// null field.
     pub fn is_valid(&self) -> bool {
-        serde_json::from_str::<serde_json::Value>(&self.value()).is_ok()
+        let text = self.value();
+        text.trim().is_empty() || serde_json::from_str::<serde_json::Value>(&text).is_ok()
     }
 
     /// Get number of lines to display (all lines)
