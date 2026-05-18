@@ -54,6 +54,11 @@ pub struct EntryDialogState {
     /// When true, the dialog wraps a single non-Object value (e.g., an ObjectArray).
     /// `to_value()` returns the raw control value instead of wrapping in an Object.
     pub is_single_value: bool,
+    /// Set to true on the first user-driven mutation (typed char,
+    /// toggled bool, list add/remove, etc.). Drives the dirty
+    /// indicator + the Esc discard prompt without relying on a
+    /// JSON-equality check that's too noisy at the schema layer.
+    pub user_edited: bool,
 }
 
 impl EntryDialogState {
@@ -155,6 +160,7 @@ impl EntryDialogState {
             first_editable_index,
             no_delete,
             is_single_value,
+            user_edited: false,
         };
         // Pre-focus the first item in any ObjectArray controls so pressing
         // Enter opens the item editor instead of "Add new".
@@ -231,6 +237,7 @@ impl EntryDialogState {
             first_editable_index,
             no_delete: false, // Arrays typically allow deletion
             is_single_value: false,
+            user_edited: false,
         }
     }
 
@@ -295,16 +302,25 @@ impl EntryDialogState {
         }
     }
 
-    /// True when any field in the dialog differs from the original
-    /// value passed to the constructor. Used to gate Esc on a
-    /// "Discard changes?" confirmation prompt — pressing Esc with
-    /// uncommitted edits should not silently destroy work.
+    /// True when the user has made *any* change to the dialog since
+    /// it was opened. Tracked as an explicit flag (`user_edited`)
+    /// rather than comparing `to_value() != original_value`, because
+    /// the rebuilt JSON shape can differ from the input shape by
+    /// schema-default normalization (e.g. an absent optional field
+    /// rebuilds as an explicit empty string) — which would make the
+    /// dialog read as dirty at open, with no user input.
     ///
-    /// New entries are dirty as soon as any field has a non-default
-    /// value (which is the natural "is there anything to lose?" test
-    /// for an Add dialog).
+    /// Used to gate the Esc 'Discard changes?' prompt and to drive
+    /// the title-bar modified indicator.
     pub fn is_dirty(&self) -> bool {
-        self.to_value() != self.original_value
+        self.user_edited
+    }
+
+    /// Mark the dialog as edited. Called from every mutator path
+    /// (insert_char, toggle_bool, list add/remove, etc.) — anywhere
+    /// the user can produce a change the dialog should remember.
+    pub fn mark_edited(&mut self) {
+        self.user_edited = true;
     }
 
     /// Convert dialog state back to JSON value (excludes the __key__ item)
@@ -883,6 +899,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {
@@ -906,6 +923,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {
@@ -932,6 +950,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {
@@ -1071,6 +1090,7 @@ impl EntryDialogState {
 
     /// Insert newline in JSON editor
     pub fn insert_newline(&mut self) {
+        self.user_edited = true;
         if !self.editing_text {
             return;
         }
@@ -1103,6 +1123,7 @@ impl EntryDialogState {
 
     /// Toggle boolean value
     pub fn toggle_bool(&mut self) {
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             // Don't allow toggling read-only fields
             if item.read_only {
@@ -1129,6 +1150,7 @@ impl EntryDialogState {
 
     /// Move dropdown selection up
     pub fn dropdown_prev(&mut self) {
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Dropdown(state) = &mut item.control {
                 if state.open {
@@ -1140,6 +1162,7 @@ impl EntryDialogState {
 
     /// Move dropdown selection down
     pub fn dropdown_next(&mut self) {
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Dropdown(state) = &mut item.control {
                 if state.open {
@@ -1160,6 +1183,7 @@ impl EntryDialogState {
 
     /// Increment number value
     pub fn increment_number(&mut self) {
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             // Don't allow editing read-only fields
             if item.read_only {
@@ -1173,6 +1197,7 @@ impl EntryDialogState {
 
     /// Decrement number value
     pub fn decrement_number(&mut self) {
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             // Don't allow editing read-only fields
             if item.read_only {
@@ -1186,6 +1211,7 @@ impl EntryDialogState {
 
     /// Delete the currently focused item from a TextList control
     pub fn delete_list_item(&mut self) {
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::TextList(state) = &mut item.control {
                 // Remove the currently focused item if any
@@ -1201,6 +1227,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
+        self.user_edited = true;
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {

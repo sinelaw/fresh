@@ -3374,13 +3374,28 @@ fn render_entry_dialog_inner(
     // Clear and draw border
     frame.render_widget(Clear, dialog_area);
 
-    let title = format!(" {} ", dialog.title);
+    // Dialog title bar reads `Edit Item` clean / `Edit Item • modified`
+    // when the form has uncommitted edits — gives the user an
+    // at-a-glance "is there anything to save?" answer without making
+    // the Save button itself misleadingly disabled (UX review
+    // suggestion: Save stays clickable; the title carries the cue).
+    let title = if dialog.is_dirty() {
+        format!(" {} • modified ", dialog.title)
+    } else {
+        format!(" {} ", dialog.title)
+    };
+
+    let border_color = if dialog.is_dirty() {
+        theme.diagnostic_warning_fg
+    } else {
+        theme.popup_border_fg
+    };
 
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.popup_border_fg))
+        .border_style(Style::default().fg(border_color))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
 
