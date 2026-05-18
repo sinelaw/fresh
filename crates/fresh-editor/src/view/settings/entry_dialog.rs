@@ -888,6 +888,15 @@ impl EntryDialogState {
             match &mut item.control {
                 SettingControl::Number(state) => state.cancel_editing(),
                 SettingControl::Text(state) => state.editing = false,
+                // Cancelling on a pending list row (the trailing
+                // [+] add-new slot) discards whatever the user typed.
+                // Without this, Esc was a silent no-op that left the
+                // draft text dangling until the user committed or
+                // cleared it manually.
+                SettingControl::TextList(state) if state.focused_item.is_none() => {
+                    state.new_item_text.clear();
+                    state.cursor = 0;
+                }
                 _ => {}
             }
         }
