@@ -1014,13 +1014,19 @@ impl Window {
         };
 
         // Append visible screen to backing file
-        // The scrollback has already been incrementally streamed by the PTY read loop
+        // The scrollback has already been incrementally streamed by the PTY read loop.
+        // Capture the file size *just before* the append so the viewport
+        // can anchor to it below — that byte offset is the first byte of
+        // the visible screen we're about to append, which is exactly
+        // where the live PTY grid drew its row 0.
+        let mut history_end_byte: Option<u64> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
                 // Record the current file size as the history end point
                 // (before appending visible screen) so we can truncate back to it
                 if let Ok(metadata) = self.resources.authority.filesystem.metadata(&backing_file) {
                     state.set_backing_file_history_end(metadata.size);
+                    history_end_byte = Some(metadata.size);
                 }
 
                 // Open backing file in append mode to add visible screen
@@ -1056,11 +1062,25 @@ impl Window {
                 // Terminal buffers should never be considered "modified"
                 state.buffer.set_modified(false);
             }
-            // Move cursor to end of buffer in SplitViewState
+            // Anchor the viewport at the first byte of the appended
+            // visible screen and place the cursor there too. The scroll-
+            // back view now opens with the just-appended PTY rows at the
+            // top — exactly where the live grid drew them — so exit is
+            // pixel-identical to the last terminal-mode tick even when
+            // most of the screen is blank (post-`clear` / `reset`). The
+            // old `cursor = total_bytes` + `ensure_cursor_visible` path
+            // anchored the bottom row instead, which pulled older
+            // scrollback into rows the PTY had drawn blank.
+            let anchor_byte = history_end_byte
+                .map(|h| (h as usize).min(total_bytes))
+                .unwrap_or(total_bytes);
             if let Some((mgr, view_states)) = self.buffers.splits_mut() {
                 let active_split = mgr.active_split();
                 if let Some(view_state) = view_states.get_mut(&active_split) {
-                    view_state.cursors.primary_mut().position = total_bytes;
+                    view_state.cursors.primary_mut().position = anchor_byte;
+                    view_state.viewport.top_byte = anchor_byte;
+                    view_state.viewport.top_view_line_offset = 0;
+                    view_state.viewport.left_column = 0;
                 }
             }
         }
@@ -1071,15 +1091,18 @@ impl Window {
             state.margins.configure_for_line_numbers(false);
         }
 
-        // In read-only view, keep line wrapping disabled for terminal buffers
-        // Also scroll viewport to show the end of the buffer where the cursor is.
-        let active_split = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .0
-            .active_split();
-        self.enter_terminal_scrollback_view(buffer_id, active_split);
+        // Refresh line-wrap state for the scroll-back view. We deliberately
+        // do not call `ensure_cursor_visible` here: the viewport top is
+        // already pinned to `anchor_byte` above, and ensure-visible would
+        // re-scroll to put the cursor at the viewport's bottom row,
+        // undoing the alignment.
+        if let Some((mgr, view_states)) = self.buffers.splits_mut() {
+            let active_split = mgr.active_split();
+            if let Some(view_state) = view_states.get_mut(&active_split) {
+                view_state.viewport.line_wrap_enabled = false;
+                view_state.viewport.clear_skip_ensure_visible();
+            }
+        }
     }
 
     /// Render terminal content for terminal buffers in this window's
