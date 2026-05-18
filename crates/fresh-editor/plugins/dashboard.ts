@@ -1801,12 +1801,14 @@ editor.exportPluginApi("dashboard", {
 // `plugins.dashboard.enabled` is true in the resolved config — so the
 // standard settings UI is the single enable/disable surface.
 //
-// If the plugin loads mid-session (user toggles it on in Settings),
-// the `ready` hook has already fired, so we also run an immediate
-// check. At startup the `listBuffers().length > 0` guard keeps us
-// dormant until the workspace has actually restored: plugins load
-// before restore, and opening a buffer here would race with the
-// restore and leave a stray Dashboard tab even when real files exist.
+// Auto-open is driven exclusively by the `ready` hook (and the
+// `buffer_closed` handler for the last-tab-closed case). We
+// deliberately do NOT auto-open at module load: dashboard.ts loads
+// during the startup plugin batch, *before* the user's init.ts has
+// been evaluated, so an immediate auto-open would race
+// `setAutoOpen(false)` and dismiss the user's preference. Users who
+// hot-load the plugin mid-session (toggle on in Settings) get the
+// dashboard via the "Show Dashboard" command in the palette.
 editor.on("ready", "dashboardOnReady");
 editor.on("buffer_closed", "dashboardOnBufferClosed");
 editor.on("viewport_changed", "dashboardOnViewportChanged");
@@ -1820,7 +1822,3 @@ editor.registerCommand(
     "Open the dashboard, or bring it to the front if it's already open",
     "dashboardShowOrFocus",
 );
-
-if (editor.listBuffers().length > 0 && shouldShowDashboard()) {
-    openDashboard();
-}

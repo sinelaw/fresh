@@ -8,6 +8,8 @@
 
 * **Workspace clobbered when only the Dashboard was open**: Quitting from a Dashboard-only tab no longer wipes the saved open-file list. The serializer strips virtual buffers (Dashboard, plugin scratch buffers); the workspace save path now refuses to overwrite a real on-disk workspace with the resulting all-virtual snapshot.
 
+* **`init.ts` `setAutoOpen(false)` ignored on startup**: The `dashboard` plugin used to call `openDashboard()` at module-load time, which runs during the startup plugin batch — *before* the user's `init.ts` has been evaluated. The dashboard appeared regardless of `getPluginApi("dashboard")?.setAutoOpen(false)`. Auto-open is now driven exclusively by the `ready` hook handler, which fires after `init.ts` has settled.
+
 ## 0.3.6
 
 This version includes a major internal refactoring to support multiple windows in a single Fresh process. The work will be used to add a multi-window orchestrator in a future version.

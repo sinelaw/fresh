@@ -284,8 +284,9 @@ pub struct Window {
     /// Plugin-managed per-window state. Outer key is plugin name,
     /// inner is the plugin-defined key. Read via
     /// `editor.getWindowState(key)` and written via
-    /// `editor.setWindowState(key, value)`. Persisted to
-    /// `.fresh/windows.json` so it survives editor restarts.
+    /// `editor.setWindowState(key, value)`. Persisted to the
+    /// orchestrator's global `windows.json` under the platform
+    /// data dir so it survives editor restarts.
     pub plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
 
     /// Window-scoped layout hit-test cache: split-leaf rects, tab
