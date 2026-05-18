@@ -997,6 +997,35 @@ impl SettingsState {
     /// (from lower-precedence layers) or to the schema default.
     ///
     /// Only items defined in the target layer can be reset.
+    /// Reset the focused entry-dialog field to its schema default.
+    ///
+    /// Per-field counterpart of [`reset_current_to_default`], scoped to
+    /// the active entry dialog rather than the main settings page. Skips
+    /// read-only / non-modified / no-default fields. The dialog itself
+    /// becomes dirty (user_edited = true) so the title flips to
+    /// `• modified`, signalling that the parent still owes a save.
+    pub fn reset_focused_entry_field(&mut self) {
+        let Some(dialog) = self.entry_dialog_mut() else {
+            return;
+        };
+        if dialog.focus_on_buttons {
+            return;
+        }
+        let idx = dialog.selected_item;
+        let Some(item) = dialog.items.get_mut(idx) else {
+            return;
+        };
+        if item.read_only {
+            return;
+        }
+        let Some(default) = item.default.clone() else {
+            return;
+        };
+        update_control_from_value(&mut item.control, &default);
+        item.modified = false;
+        dialog.user_edited = true;
+    }
+
     pub fn reset_current_to_default(&mut self) {
         // Get the info we need first, then release the borrow
         let reset_info = self.current_item().and_then(|item| {
