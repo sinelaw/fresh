@@ -6,7 +6,7 @@
 //! multi-script accented graphemes.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -70,99 +70,107 @@ fn migrated_select_down_then_up_shrinks_selection() {
     });
 }
 
+/// Issue #1332 regression coverage: SelectWord from any grapheme
+/// position inside a multi-script word must select the entire
+/// word, not split mid-grapheme.
+///
+/// Original: `test_select_word_accented_characters` (tests/e2e/
+/// selection.rs:207). The e2e iterates over every grapheme of
+/// 13 multi-script words. The original bug:
+///   On "hibajavítás" with cursor on 'í', Ctrl+W selected only
+///   "hibajav" — splitting mid-grapheme because the word-end
+///   scan used codepoint indices instead of grapheme cluster
+///   boundaries.
+///
+/// The migration walks every grapheme of every entry and asserts
+/// SelectWord yields the full word. Driving through
+/// `EditorTestHarness` directly because per-position cursor
+/// placement + selection-text readback doesn't fit the
+/// single-shot BufferScenario shape (see "Direct-harness for
+/// cross-state claims" in docs/internal/scenario-migration-status.md).
 #[test]
-fn migrated_select_word_picks_hungarian_word() {
-    // Subset of `test_select_word_accented_characters`.
-    // SelectWord on a Hungarian word with diacritics.
+fn migrated_select_word_at_every_grapheme_position_in_multi_script_words() {
+    use crate::common::harness::EditorTestHarness;
+    use fresh::test_api::EditorTestApi;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let words: &[&str] = &[
+        // Original bug report (issue #1332).
+        "hibajavítás",
+        // German with umlaut.
+        "Änderung",
+        // French accented.
+        "résumé",
+        // Czech.
+        "příliš",
+        // Polish.
+        "żółć",
+        // Cyrillic (Russian).
+        "Привет",
+        // Greek.
+        "Ελληνικά",
+        // Korean Hangul.
+        "안녕하세요",
+        // Japanese Hiragana.
+        "こんにちは",
+        // CJK.
+        "你好世界",
+        // Combining diacritic: 'e' + U+0301 (the cluster has two
+        // codepoints; word selection must include both).
+        "caf\u{0065}\u{0301}",
+        // Emoji (single grapheme word; classifier treats as
+        // punctuation, so SelectWord from inside the cluster
+        // selects the cluster itself).
+        "🇫🇷",
+        "👨\u{200D}👩\u{200D}👧",
+    ];
+
+    for word in words {
+        let grapheme_count = word.graphemes(true).count();
+        for grapheme_idx in 0..grapheme_count {
+            let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+            let _f = harness.load_buffer_from_text(word).unwrap();
+            let api = harness.api_mut();
+
+            api.dispatch(Action::MoveLineStart);
+            for _ in 0..grapheme_idx {
+                api.dispatch(Action::MoveRight);
+            }
+            api.dispatch(Action::SelectWord);
+
+            let selected = api.selection_text();
+            assert_eq!(
+                selected, *word,
+                "SelectWord on {word:?} from grapheme index {grapheme_idx} \
+                 must select the whole word; got {selected:?}",
+            );
+        }
+    }
+}
+
+/// Anti-test: with SelectWord dropped, no selection exists at any
+/// grapheme position. Proves the loop's assertion is load-bearing.
+#[test]
+fn anti_select_word_at_every_grapheme_yields_no_selection() {
+    use crate::common::harness::EditorTestHarness;
+    use fresh::test_api::EditorTestApi;
+    use unicode_segmentation::UnicodeSegmentation;
+
     let word = "hibajavítás";
-    assert_buffer_scenario(BufferScenario {
-        description: "SelectWord picks the entire Hungarian accented word 'hibajavítás'".into(),
-        initial_text: word.into(),
-        actions: vec![Action::SelectWord],
-        expected_text: word.into(),
-        expected_primary: CursorExpect::range(0, word.len()),
-        expected_selection_text: Some(word.into()),
-        ..Default::default()
-    });
-}
-
-#[test]
-fn migrated_select_word_picks_german_word() {
-    let word = "Änderung";
-    assert_buffer_scenario(BufferScenario {
-        description: "SelectWord picks the entire German word with umlaut".into(),
-        initial_text: word.into(),
-        actions: vec![Action::SelectWord],
-        expected_text: word.into(),
-        expected_primary: CursorExpect::range(0, word.len()),
-        expected_selection_text: Some(word.into()),
-        ..Default::default()
-    });
-}
-
-#[test]
-fn migrated_select_word_picks_korean_hangul() {
-    let word = "안녕하세요";
-    assert_buffer_scenario(BufferScenario {
-        description: "SelectWord picks the entire Korean Hangul word".into(),
-        initial_text: word.into(),
-        actions: vec![Action::SelectWord],
-        expected_text: word.into(),
-        expected_primary: CursorExpect::range(0, word.len()),
-        expected_selection_text: Some(word.into()),
-        ..Default::default()
-    });
-}
-
-#[test]
-fn migrated_select_word_picks_cjk_word() {
-    let word = "你好世界";
-    assert_buffer_scenario(BufferScenario {
-        description: "SelectWord picks the entire CJK word".into(),
-        initial_text: word.into(),
-        actions: vec![Action::SelectWord],
-        expected_text: word.into(),
-        expected_primary: CursorExpect::range(0, word.len()),
-        expected_selection_text: Some(word.into()),
-        ..Default::default()
-    });
-}
-
-#[test]
-fn migrated_select_word_picks_combining_diacritic_word() {
-    // 'café' with combining acute (U+0301) on the 'e' instead of
-    // the precomposed U+00E9. The grapheme cluster contains two
-    // codepoints; word selection must include both.
-    let word = "caf\u{0065}\u{0301}";
-    assert_buffer_scenario(BufferScenario {
-        description: "SelectWord includes a combining diacritic at the end of the word".into(),
-        initial_text: word.into(),
-        actions: vec![Action::SelectWord],
-        expected_text: word.into(),
-        expected_primary: CursorExpect::range(0, word.len()),
-        expected_selection_text: Some(word.into()),
-        ..Default::default()
-    });
-}
-
-/// Anti-test: drops `SelectWord`. Without it, the cursor stays at
-/// byte 0 with no selection, so the word-selection-text expectation
-/// must NOT match.
-#[test]
-fn anti_select_word_dropping_action_yields_check_err() {
-    let word = "hibajavítás";
-    let scenario = BufferScenario {
-        description: "anti: SelectWord dropped — selection_text expectation cannot match".into(),
-        initial_text: word.into(),
-        actions: vec![],
-        expected_text: word.into(),
-        expected_primary: CursorExpect::range(0, word.len()),
-        expected_selection_text: Some(word.into()),
-        ..Default::default()
-    };
-    assert!(
-        check_buffer_scenario(scenario).is_err(),
-        "anti-test: with no SelectWord, no selection exists; the word-text \
-         expectation must NOT match"
-    );
+    let grapheme_count = word.graphemes(true).count();
+    for grapheme_idx in 0..grapheme_count {
+        let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+        let _f = harness.load_buffer_from_text(word).unwrap();
+        let api = harness.api_mut();
+        api.dispatch(Action::MoveLineStart);
+        for _ in 0..grapheme_idx {
+            api.dispatch(Action::MoveRight);
+        }
+        // No SelectWord dispatch.
+        let selected = api.selection_text();
+        assert_eq!(
+            selected, "",
+            "anti: without SelectWord, no selection should exist at grapheme {grapheme_idx}",
+        );
+    }
 }
