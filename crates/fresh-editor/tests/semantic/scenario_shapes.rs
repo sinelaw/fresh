@@ -78,6 +78,7 @@ fn json_roundtrip_layout_scenario() {
             width: 40,
             height: 12,
             actions: vec![Action::MoveDocumentEnd],
+            config: None,
             expected_top_byte: Some(0),
             expected_snapshot: RenderSnapshotExpect {
                 hardware_cursor: Some((2, 1)),

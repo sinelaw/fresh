@@ -20,6 +20,7 @@ fn layout_cursor_at_origin_after_load() {
         width: 80,
         height: 24,
         actions: vec![],
+        config: None,
         expected_top_byte: Some(0),
         expected_snapshot: RenderSnapshotExpect {
             hardware_cursor: Some((0, 0)),
@@ -36,6 +37,7 @@ fn layout_cursor_after_three_right_arrows() {
         width: 80,
         height: 24,
         actions: vec![Action::MoveRight, Action::MoveRight, Action::MoveRight],
+        config: None,
         expected_top_byte: Some(0),
         expected_snapshot: RenderSnapshotExpect {
             hardware_cursor: Some((3, 0)),
@@ -52,6 +54,7 @@ fn layout_cursor_after_move_down() {
         width: 80,
         height: 24,
         actions: vec![Action::MoveDown],
+        config: None,
         expected_top_byte: Some(0),
         expected_snapshot: RenderSnapshotExpect {
             hardware_cursor: Some((0, 1)),
@@ -70,6 +73,7 @@ fn layout_gutter_width_grows_at_100_lines() {
         width: 100,
         height: 30,
         actions: vec![],
+        config: None,
         expected_top_byte: Some(0),
         expected_snapshot: RenderSnapshotExpect {
             gutter_width: Some(7),
@@ -89,6 +93,7 @@ fn layout_cursor_after_move_line_end_lands_one_past_last_char() {
         width: 80,
         height: 24,
         actions: vec![Action::MoveLineEnd],
+        config: None,
         expected_top_byte: Some(0),
         expected_snapshot: RenderSnapshotExpect {
             hardware_cursor: Some((4, 0)),

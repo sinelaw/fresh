@@ -20,6 +20,7 @@ fn theorem_gutter_width_uses_minimum_two_digits() {
         width: 80,
         height: 24,
         actions: vec![],
+        config: None,
         expected_top_byte: Some(0),
         expected_snapshot: RenderSnapshotExpect {
             gutter_width: Some(6),

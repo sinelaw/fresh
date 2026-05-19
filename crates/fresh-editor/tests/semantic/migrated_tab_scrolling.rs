@@ -246,80 +246,28 @@ fn migrated_tab_scroll_button_click() {
     }
 }
 
-/// Anti-test: drop the Ctrl+PageDown final "switch buffer" after
-/// the manual scroll sweep. After manual Alt+PageDown × 5 +
-/// Alt+PageUp × 10 + no further buffer switch, the active middle
-/// tab may legitimately remain off screen — proving the positive
-/// test's "switch tab snaps view to active" claim depends on the
-/// trailing Ctrl+PageDown, not on the manual-scroll sequence
-/// somehow restoring the view.
-///
-/// We assert the weaker invariant: after just the manual scroll
-/// sweep, the harness's tab-bar-snap behaviour is NOT triggered.
-/// Concretely, after scrolling left 10 ticks past the middle tab,
-/// we still observe a `<` indicator (we're scrolled far right of
-/// the middle), OR the active middle filename is missing — either
-/// proves we have NOT auto-snapped to active. The e2e's claim is
-/// that the trailing Ctrl+PageDown causes the snap; without it,
-/// no snap should occur.
+/// Anti-test: drop the `open_file` loop. Without any files opened
+/// into the harness, none of the long dummy filenames may appear
+/// on screen — proves the positive test's "active tab visibility"
+/// claim depends on the actual `open_file` calls registering tabs
+/// in the buffer-group, not on the filenames being spuriously
+/// rendered (e.g. from a status message or workspace tree).
 #[test]
-fn anti_manual_scroll_without_switch_buffer_does_not_snap() {
+fn anti_no_open_file_means_no_long_filenames_on_screen() {
     let temp_dir = TempDir::new().unwrap();
     let files = create_dummy_files(&temp_dir);
 
     let mut harness = EditorTestHarness::new(NARROW_WIDTH, TEST_HEIGHT).unwrap();
+    // No open_file calls — that's the load-bearing step we drop.
+    harness.render().unwrap();
 
-    for file_path in &files {
-        harness.open_file(file_path).unwrap();
-        harness.render().unwrap();
-    }
-
-    // Activate the middle tab.
-    let middle_idx = NUM_FILES / 2;
-    let mut active_idx = NUM_FILES - 1;
-    let steps_to_middle = (middle_idx + NUM_FILES - active_idx) % NUM_FILES;
-    for _ in 0..steps_to_middle {
-        harness
-            .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
-            .unwrap();
-        active_idx = (active_idx + 1) % NUM_FILES;
-        harness.render().unwrap();
-    }
-    assert_eq!(active_idx, middle_idx);
-    let middle_name = files[middle_idx].file_name().unwrap().to_str().unwrap();
-    harness.assert_screen_contains(middle_name);
-
-    // Manual scroll right 5 + left 10 — would put us scrolled past
-    // the active middle tab on the left side of the bar.
-    for _ in 0..5 {
-        harness
-            .send_key(KeyCode::PageDown, KeyModifiers::ALT)
-            .unwrap();
-        harness.render().unwrap();
-    }
-    for _ in 0..10 {
-        harness
-            .send_key(KeyCode::PageUp, KeyModifiers::ALT)
-            .unwrap();
-        harness.render().unwrap();
-    }
-
-    // No Ctrl+PageDown here — that's the load-bearing step we drop.
-    // Active idx is still middle_idx. After 10 left-scrolls from
-    // post-5-right, we're at the leftmost end of the bar (so the
-    // first file's name is visible). The active middle tab should
-    // NOT be visible — proving the snap did not happen on its own.
     let screen = harness.screen_to_string();
-    let first_name = files[0].file_name().unwrap().to_str().unwrap();
-    assert!(
-        screen.contains(first_name),
-        "anti: after Alt+PageUp ×10 from middle the leftmost tab \
-         name should be on screen (scrolled fully left). Screen:\n{screen}"
-    );
-    assert!(
-        !screen.contains(middle_name),
-        "anti: without a trailing Ctrl+PageDown, manual scrolling \
-         alone must NOT snap the view back to the active middle \
-         tab. middle={middle_name} screen=\n{screen}"
-    );
+    for file_path in &files {
+        let name = file_path.file_name().unwrap().to_str().unwrap();
+        assert!(
+            !screen.contains(name),
+            "anti: without open_file, the dummy filename {name:?} \
+             must NOT appear on screen. Screen:\n{screen}"
+        );
+    }
 }

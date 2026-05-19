@@ -5,18 +5,20 @@
 //! the Down-from-last-content-line and toggle-line-wrap-after-
 //! Ctrl+End follow-ups that shared the same regression root.
 //!
-//! Per-row text inspection now uses
-//! `RenderSnapshot::extract_with_rendered_rows` +
-//! `RowMatch::NoRowContains` (the framework extension landed
-//! per #2058 step 5). Each positive test asserts on the
-//! cursor's rendered row by index, plus the "no data content
-//! anywhere on the cursor row" claim from the original e2e
-//! assertion (mirrored substring set).
+//! The Ctrl+End test uses the declarative
+//! `EditorTestApi`-based path (viewport-byte bounds suffice).
+//! The Down-after-Left and toggle-wrap-off tests need per-row
+//! text inspection of the cursor's terminal-absolute row, so
+//! they use the harness-direct pattern (the same pattern
+//! `migrated_line_wrap_parity.rs` uses):
+//! `harness.screen_cursor_position()` + `harness.get_row_text()`
+//! (the `EditorTestApi::hardware_cursor_position` accessor is
+//! viewport-relative and would index the wrong row of the
+//! terminal-absolute rendered output).
 //!
 //! Source: `tests/e2e/ctrl_end_wrapped.rs` (3 tests; 0 deferred).
 
 use crate::common::harness::EditorTestHarness;
-use crate::common::scenario::render_snapshot::RenderSnapshot;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::test_api::{Action, EditorTestApi};
 
@@ -103,22 +105,27 @@ fn migrated_down_from_last_content_line_reaches_trailing_empty_line() {
     let _f = harness.load_buffer_from_text(&content).unwrap();
     harness.render().unwrap();
 
-    // Ctrl+End → empty trailing line.
-    harness.api_mut().dispatch(Action::MoveDocumentEnd);
+    // Ctrl+End → empty trailing line. Mirror the original
+    // e2e exactly via `send_key` — the bug is sensitive to the
+    // full key-handling pipeline (sticky column tracking on
+    // wrapped lines), not just the underlying Action.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
     assert_eq!(
         harness.api_mut().primary_caret().position,
         doc_end,
-        "MoveDocumentEnd must reach the trailing empty line byte"
+        "Ctrl+End must reach the trailing empty line byte"
     );
 
     // Left → end of previous content line.
-    harness.api_mut().dispatch(Action::MoveLeft);
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Down → must return to the trailing empty line (doc_end).
-    harness.api_mut().dispatch(Action::MoveDown);
-    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
 
     let pos_after_down = harness.api_mut().primary_caret().position;
     assert_eq!(
@@ -126,18 +133,17 @@ fn migrated_down_from_last_content_line_reaches_trailing_empty_line() {
         "Down after Left from doc end should move cursor byte back to doc_end ({doc_end}), got {pos_after_down}",
     );
 
-    let (_cx, cy) = snap.hardware_cursor.expect("hardware cursor must be set");
+    // Mirror the e2e exactly via harness-direct surfaces:
+    // `screen_cursor_position` returns terminal-absolute
+    // `(col, row)` (the `EditorTestApi::hardware_cursor_position`
+    // accessor is viewport-relative, so its row would not match
+    // the absolute row indices used by `get_row_text` or
+    // `RenderSnapshot.rendered_rows`).
+    let (_cx, cy) = harness.screen_cursor_position();
+    let cursor_row = harness.get_row_text(cy);
 
     // Mirror the e2e assertion: the rendered cursor row must
-    // not contain any of these data-line substrings. RowMatch
-    // doesn't have a negative-row-at-index variant, so inspect
-    // `rendered_rows[cy]` directly (snapshot is built with
-    // `extract_with_rendered_rows`).
-    let cursor_row = snap
-        .rendered_rows
-        .get(cy as usize)
-        .map(|s| s.as_str())
-        .unwrap_or("");
+    // not contain any of these data-line substrings.
     for needle in [
         "entry_",
         "Entry ",
@@ -163,12 +169,9 @@ fn migrated_down_from_last_content_line_reaches_trailing_empty_line() {
 /// must keep the cursor on the trailing empty line; the
 /// rendered cursor row must NOT be a tilde row.
 ///
-/// The original uses the command palette
-/// (Ctrl+P → "Toggle Line Wrap" → Enter). The migrated test
-/// dispatches `Action::ToggleLineWrap` directly — same end
-/// state, same regression-triggering condition (line wrap
-/// disabled mid-session after the viewport scrolled under
-/// wrap mode).
+/// Uses `send_key` for Ctrl+End and the command palette
+/// sequence (Ctrl+P → "Toggle Line Wrap" → Enter) — exactly
+/// mirroring the original e2e action sequence.
 #[test]
 fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
     let content = make_csv_like_content_with_trailing_newline();
@@ -180,13 +183,24 @@ fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
     harness.render().unwrap();
 
     // Ctrl+End → cursor on trailing empty line.
-    harness.api_mut().dispatch(Action::MoveDocumentEnd);
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
     assert_eq!(harness.api_mut().primary_caret().position, doc_end);
 
-    // Toggle line wrap off.
-    harness.api_mut().dispatch(Action::ToggleLineWrap);
-    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
+    // Toggle line wrap off via the command palette (Ctrl+P,
+    // type "Toggle Line Wrap", Enter).
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Toggle Line Wrap").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
 
     // Cursor byte must still be at doc_end.
     assert_eq!(
@@ -195,15 +209,12 @@ fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
         "Cursor byte should remain at doc end after toggling line wrap off"
     );
 
-    // The rendered cursor row must not be a tilde row. RowMatch
-    // lacks a negative-row-at-index matcher, so inspect the
-    // cursor row directly.
-    let (_cx, cy) = snap.hardware_cursor.expect("hardware cursor must be set");
-    let cursor_row = snap
-        .rendered_rows
-        .get(cy as usize)
-        .map(|s| s.as_str())
-        .unwrap_or("");
+    // Mirror the e2e exactly: harness-direct
+    // `screen_cursor_position` + `get_row_text` for the cursor
+    // row's terminal-absolute text. The rendered cursor row must
+    // not be a tilde row.
+    let (_cx, cy) = harness.screen_cursor_position();
+    let cursor_row = harness.get_row_text(cy);
     assert!(
         !cursor_row.contains('~'),
         "After Ctrl+End then disabling line wrap, the rendered cursor row {cy} \
@@ -238,12 +249,12 @@ fn anti_ctrl_end_without_wrap_still_scrolls_to_cursor() {
 }
 
 /// Anti-test for `migrated_down_from_last_content_line_reaches_
-/// trailing_empty_line`: drop the trailing `MoveDown` after
-/// `MoveDocumentEnd` + `MoveLeft`. Without it, the cursor sits
-/// on the last content line (Entry 140) — the rendered cursor
-/// row MUST contain data substrings, so the positive
-/// "no data content" claim would fail. Pins that the migrated
-/// test's success depends on the actual Down keystroke.
+/// trailing_empty_line`: drop the trailing Down keystroke after
+/// Ctrl+End + Left. Without it, the cursor sits on the last
+/// content line (Entry 140) — the rendered cursor row MUST
+/// contain data substrings, so the positive "no data content"
+/// claim would fail. Pins that the migrated test's success
+/// depends on the actual Down keystroke.
 #[test]
 fn anti_down_from_last_content_line_without_down_stays_on_data_row() {
     let content = make_csv_like_content_with_trailing_newline();
@@ -254,30 +265,28 @@ fn anti_down_from_last_content_line_without_down_stays_on_data_row() {
     let _f = harness.load_buffer_from_text(&content).unwrap();
     harness.render().unwrap();
 
-    harness.api_mut().dispatch(Action::MoveDocumentEnd);
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
     harness.render().unwrap();
-    harness.api_mut().dispatch(Action::MoveLeft);
-    // Drop the MoveDown — that's the load-bearing step.
-    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    // Drop the Down keystroke — that's the load-bearing step.
+    harness.render().unwrap();
 
     let pos = harness.api_mut().primary_caret().position;
     assert!(
         pos < doc_end,
-        "anti: without MoveDown, cursor stays on previous content line (pos={pos} < doc_end={doc_end})",
+        "anti: without Down keystroke, cursor stays on previous content line (pos={pos} < doc_end={doc_end})",
     );
 
-    let (_cx, cy) = snap.hardware_cursor.expect("hardware cursor must be set");
-    let cursor_row = snap
-        .rendered_rows
-        .get(cy as usize)
-        .map(|s| s.as_str())
-        .unwrap_or("");
+    let (_cx, cy) = harness.screen_cursor_position();
+    let cursor_row = harness.get_row_text(cy);
     let has_data_content = ["entry_", "Entry ", ".html", "example.com", "archive.org"]
         .iter()
         .any(|needle| cursor_row.contains(needle));
     assert!(
         has_data_content,
-        "anti: without MoveDown, cursor row {cy} must contain data content \
+        "anti: without Down keystroke, cursor row {cy} must contain data content \
          (the cursor is on the last content line, not the empty trailing line). \
          Row text: {:?}",
         cursor_row.trim_end(),
@@ -285,13 +294,13 @@ fn anti_down_from_last_content_line_without_down_stays_on_data_row() {
 }
 
 /// Anti-test for `migrated_ctrl_end_then_disable_line_wrap_
-/// cursor_row`: drop the `ToggleLineWrap` dispatch. Without
-/// the toggle, line wrap stays on and the cursor stays on the
-/// trailing empty line; the regression-triggering condition
-/// (toggling wrap off mid-session) never occurred. Pins that
-/// the migrated test exercises the toggle path specifically.
+/// cursor_row`: drop the Ctrl+End. Without Ctrl+End the
+/// cursor stays at byte 0 (top of the buffer) and the
+/// regression scenario (wrap-toggle-off while the cursor is
+/// on the trailing empty line of a long wrapped buffer) cannot
+/// occur. Pins that Ctrl+End is the load-bearing precondition.
 #[test]
-fn anti_ctrl_end_without_toggle_keeps_wrap_on() {
+fn anti_disable_line_wrap_without_ctrl_end_leaves_cursor_at_top() {
     let content = make_csv_like_content_with_trailing_newline();
     let doc_end = content.len();
 
@@ -300,17 +309,24 @@ fn anti_ctrl_end_without_toggle_keeps_wrap_on() {
     let _f = harness.load_buffer_from_text(&content).unwrap();
     harness.render().unwrap();
 
-    harness.api_mut().dispatch(Action::MoveDocumentEnd);
-    // Drop the ToggleLineWrap dispatch — that's the load-bearing step.
+    // Drop the Ctrl+End — that's the load-bearing step.
+    // Toggle line wrap off via the command palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Toggle Line Wrap").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
-    assert_eq!(
-        harness.api_mut().primary_caret().position,
-        doc_end,
-        "anti: cursor byte should still be at doc_end without toggling wrap"
+    let pos = harness.api_mut().primary_caret().position;
+    assert!(
+        pos < doc_end / 2,
+        "anti: without Ctrl+End, cursor must stay near the top of the buffer \
+         (pos={pos}, doc_end={doc_end}). The positive test's regression \
+         depends on the cursor being on the trailing empty line."
     );
-    // Without the toggle, wrap remains on and the original
-    // regression (cursor landing on a tilde row after wrap-off)
-    // simply cannot manifest — proving the toggle is the
-    // load-bearing precondition.
 }

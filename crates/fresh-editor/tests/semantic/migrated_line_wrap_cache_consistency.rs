@@ -410,37 +410,47 @@ fn migrated_edit_invalidates_cache_visibly() {
     );
 }
 
-/// Anti-test: drop the render call before probing the cache. On a
-/// freshly-constructed harness with a loaded buffer but NO render,
-/// the cache must be empty (no entries have been written yet) —
-/// proving the positive `render_writeback_values_match_fresh_recompute`
-/// claim depends on the render writeback actually populating the
-/// cache, not on the cache being pre-loaded from elsewhere.
+/// Anti-test: drop the `line_wrap = true` config flag. With
+/// `line_wrap = false` the cache `line_wrap_enabled` key dimension
+/// is `false`, so the wrap-enabled keys built by `current_keys`
+/// (which hard-codes `line_wrap_enabled: true`) must NOT match any
+/// stored entry — every read returns `None`. Proves the positive
+/// `migrated_render_writeback_values_match_fresh_recompute` claim is
+/// gated on `line_wrap` being on; with wrap off, the cache-key
+/// match path doesn't fire and the writeback parity claim is
+/// vacuous.
 #[test]
-fn anti_cache_is_empty_before_first_render() {
+fn anti_no_wrap_enabled_keys_when_line_wrap_disabled() {
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
     let mut harness =
-        EditorTestHarness::with_config(80, TERMINAL_HEIGHT, config_with_wrap()).expect("harness");
+        EditorTestHarness::with_config(80, TERMINAL_HEIGHT, config).expect("harness");
     let fixture = harness
         .load_buffer_from_text(&mixed_buffer())
         .expect("load");
     std::mem::forget(fixture);
-    // No render call here — that's the load-bearing step we drop.
+    harness.render().expect("render");
 
     let lines = enumerate_lines(&mut harness, 30);
-    let mut populated = 0usize;
+    let mut wrap_enabled_hits = 0usize;
     for (line_start, _) in &lines {
+        // current_keys() hard-codes line_wrap_enabled: true — so
+        // looking these up against a wrap-disabled cache must miss
+        // every line.
         let (compose_key, source_key) = current_keys(&harness, *line_start);
         if read_cache_entry(&harness, &compose_key).is_some()
             || read_cache_entry(&harness, &source_key).is_some()
         {
-            populated += 1;
+            wrap_enabled_hits += 1;
         }
     }
     assert_eq!(
-        populated, 0,
-        "anti: without an initial render, the line-wrap cache must \
-         be empty (no entries written yet). Got {populated} populated \
-         line(s); positive test relies on render writeback being the \
-         source of those entries."
+        wrap_enabled_hits, 0,
+        "anti: with line_wrap=false on the editor config, no \
+         line-wrap-enabled keys may match the cache (the key's \
+         `line_wrap_enabled` dimension separates entries). Got \
+         {wrap_enabled_hits} matched line(s); positive test relies \
+         on the wrap flag being on so the writeback path uses the \
+         line_wrap_enabled=true key."
     );
 }

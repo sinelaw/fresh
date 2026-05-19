@@ -44,6 +44,7 @@ pub mod migrated_line_wrap_full_visibility;
 pub mod migrated_line_wrap_parity;
 pub mod migrated_line_wrap_scroll_bugs;
 pub mod migrated_macros;
+pub mod migrated_margin;
 pub mod migrated_marker_roundtrip;
 pub mod migrated_recenter;
 pub mod migrated_redraw_screen;
