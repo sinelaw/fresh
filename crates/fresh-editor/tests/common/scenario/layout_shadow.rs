@@ -46,6 +46,7 @@ impl LayoutShadow {
                 visible_byte_range: None,
             },
             hardware_cursor: None,
+            terminal_cursor: None,
             gutter_width,
             cursor_byte: 0,
             buffer_text: String::new(),

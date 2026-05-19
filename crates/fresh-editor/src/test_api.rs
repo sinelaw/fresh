@@ -336,6 +336,56 @@ pub trait EditorTestApi {
     /// without performing a render. Lets a scenario reach hunk-nav
     /// state before any frame paints.
     fn flush_layout_for_tests(&mut self);
+
+    // ── Class H: scenario-seeding extensions for the per-row sweep ───────
+    //
+    // These give the `LayoutScenario` runner declarative knobs to
+    // inject virtual lines, margin annotations, and to read status
+    // messages / margin width without reaching into production
+    // internals or holding an `EditorTestHarness` reference.
+
+    /// Latest status message set by the editor (the same string the
+    /// status bar would display). `None` ⇒ no message has been set
+    /// since the last clear. Used by scrollbar-toggle scenarios that
+    /// assert on the "Vertical scrollbar hidden/shown" round-trip.
+    fn status_message(&self) -> Option<String>;
+
+    /// Inject a virtual line at the marker for `byte_offset` with
+    /// `text`, fg/bg colors (each as `Option<(r,g,b)>`), placement
+    /// (`"above"` or `"below"`), namespace, and priority.
+    fn seed_virtual_line(
+        &mut self,
+        byte_offset: usize,
+        text: &str,
+        fg: Option<(u8, u8, u8)>,
+        bg: Option<(u8, u8, u8)>,
+        placement: &str,
+        namespace: &str,
+        priority: i32,
+    );
+
+    /// Total count of virtual texts on the active state.
+    fn virtual_text_count(&self) -> usize;
+
+    /// Clear every virtual text belonging to `namespace`.
+    fn clear_virtual_text_namespace(&mut self, namespace: &str);
+
+    /// Inject a margin annotation (gutter symbol with optional color)
+    /// at `line` (0-indexed). `position` is `"left"` or `"right"`.
+    fn add_margin_annotation(
+        &mut self,
+        line: usize,
+        position: &str,
+        symbol: &str,
+        color: Option<(u8, u8, u8)>,
+        annotation_id: Option<&str>,
+    );
+
+    /// Remove the previously-added margin annotation with this id.
+    fn remove_margin_annotation(&mut self, annotation_id: &str);
+
+    /// `margins.left_total_width()` of the active state, in cells.
+    fn margin_left_total_width(&self) -> usize;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -728,5 +778,97 @@ impl EditorTestApi for crate::app::Editor {
 
     fn flush_layout_for_tests(&mut self) {
         self.flush_layout();
+    }
+
+    fn status_message(&self) -> Option<String> {
+        self.get_status_message().cloned()
+    }
+
+    fn seed_virtual_line(
+        &mut self,
+        byte_offset: usize,
+        text: &str,
+        fg: Option<(u8, u8, u8)>,
+        bg: Option<(u8, u8, u8)>,
+        placement: &str,
+        namespace: &str,
+        priority: i32,
+    ) {
+        use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
+        use ratatui::style::{Color, Style};
+        let pos = match placement {
+            "above" | "Above" | "LineAbove" => VirtualTextPosition::LineAbove,
+            "below" | "Below" | "LineBelow" => VirtualTextPosition::LineBelow,
+            other => panic!("seed_virtual_line: unsupported placement {other:?}; want 'above' or 'below'"),
+        };
+        let mut style = Style::default();
+        if let Some((r, g, b)) = fg {
+            style = style.fg(Color::Rgb(r, g, b));
+        } else {
+            style = style.fg(Color::DarkGray);
+        }
+        if let Some((r, g, b)) = bg {
+            style = style.bg(Color::Rgb(r, g, b));
+        }
+        let ns = VirtualTextNamespace::from_string(namespace.to_string());
+        let state = self.active_state_mut();
+        state.virtual_texts.add_line(
+            &mut state.marker_list,
+            byte_offset,
+            text.to_string(),
+            style,
+            pos,
+            ns,
+            priority,
+        );
+    }
+
+    fn virtual_text_count(&self) -> usize {
+        self.active_state().virtual_texts.len()
+    }
+
+    fn clear_virtual_text_namespace(&mut self, namespace: &str) {
+        use crate::view::virtual_text::VirtualTextNamespace;
+        let ns = VirtualTextNamespace::from_string(namespace.to_string());
+        let state = self.active_state_mut();
+        state.virtual_texts.clear_namespace(&mut state.marker_list, &ns);
+    }
+
+    fn add_margin_annotation(
+        &mut self,
+        line: usize,
+        position: &str,
+        symbol: &str,
+        color: Option<(u8, u8, u8)>,
+        annotation_id: Option<&str>,
+    ) {
+        use crate::model::event::{Event, MarginContentData, MarginPositionData};
+        let pos = match position {
+            "left" | "Left" => MarginPositionData::Left,
+            "right" | "Right" => MarginPositionData::Right,
+            other => panic!("add_margin_annotation: unsupported position {other:?}"),
+        };
+        let event = Event::AddMarginAnnotation {
+            line,
+            position: pos,
+            content: MarginContentData::Symbol {
+                text: symbol.to_string(),
+                color,
+            },
+            annotation_id: annotation_id.map(|s| s.to_string()),
+        };
+        self.apply_event_to_active_buffer(&event);
+    }
+
+    fn remove_margin_annotation(&mut self, annotation_id: &str) {
+        use crate::model::event::Event;
+        let event = Event::RemoveMarginAnnotation {
+            annotation_id: annotation_id.to_string(),
+        };
+        self.apply_event_to_active_buffer(&event);
+    }
+
+    fn margin_left_total_width(&self) -> usize {
+        self.active_state().margins.left_total_width()
     }
 }

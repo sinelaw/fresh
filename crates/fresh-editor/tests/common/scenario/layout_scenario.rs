@@ -130,6 +130,129 @@ pub struct LayoutScenario {
     /// `None` ⇒ skip the check.
     #[serde(default)]
     pub expected_scrollbar_at_column: Option<u16>,
+    /// Optional final assertion: NO column on the bottom-most
+    /// content row carries a scrollbar (track or thumb). Used by
+    /// migrated_horizontal_scrollbar anti-tests that drop the
+    /// `show_horizontal_scrollbar = true` config flag.
+    #[serde(default)]
+    pub expected_no_horizontal_scrollbar_on_last_content_row: Option<bool>,
+    /// Optional final assertion: the horizontal scrollbar IS
+    /// present on either the last content row or the row below it
+    /// (the natural slots the renderer uses for the horizontal
+    /// thumb). Used by positive scrollbar-visibility scenarios.
+    #[serde(default)]
+    pub expected_horizontal_scrollbar_visible: Option<bool>,
+    /// Optional final assertion: the editor's status_message
+    /// matches this string. `None` ⇒ skip. Used by scrollbar /
+    /// line-numbers toggle scenarios that round-trip through the
+    /// "Vertical scrollbar hidden/shown" status display.
+    #[serde(default)]
+    pub expected_status_message: Option<String>,
+    /// Optional final assertion: the primary cursor's hardware
+    /// column equals `gutter_width + offset`. Used by the
+    /// migrated_margin "cursor X position after typing 'abc' lands
+    /// at gutter + 3" scenario.
+    #[serde(default)]
+    pub expected_cursor_col_equals_margin_plus: Option<u16>,
+    /// Optional final assertion: the primary cursor's hardware row
+    /// equals this value. Companion to
+    /// `expected_cursor_col_equals_margin_plus`.
+    #[serde(default)]
+    pub expected_cursor_row_equals_content_first: bool,
+    /// Optional final assertion: the row text containing a given
+    /// substring must NOT start (after trimming leading spaces)
+    /// with an ASCII digit. Used by
+    /// `migrated_virtual_lines_have_no_gutter_line_number`.
+    /// `(substring,)` — every row containing `substring` is checked.
+    #[serde(default)]
+    pub expected_virtual_rows_no_digit_gutter: Vec<String>,
+    /// Optional final assertion: across the snapshot's
+    /// `rendered_rows`, the row containing `before` must precede
+    /// the row containing `after`. Used by the ABOVE-source-BELOW
+    /// ordering scenario for virtual lines.
+    #[serde(default)]
+    pub expected_row_order: Vec<(String, String)>,
+    /// Declarative virtual-text injections. Seeded before any
+    /// `clear_virtual_text_namespaces` and before the final render
+    /// via `EditorTestApi::seed_virtual_line`.
+    #[serde(default)]
+    pub initial_virtual_texts: Vec<VirtualTextSpec>,
+    /// Declarative virtual-text namespace clears, applied after
+    /// `initial_virtual_texts` but before the final render. Use
+    /// for "after clearing namespace X, only Y remains".
+    #[serde(default)]
+    pub clear_virtual_text_namespaces: Vec<String>,
+    /// Optional final assertion: the editor's `virtual_text_count`
+    /// equals this value (after all injections / clears settle).
+    #[serde(default)]
+    pub expected_virtual_text_count: Option<usize>,
+    /// Declarative margin annotations applied before the final
+    /// render via `EditorTestApi::add_margin_annotation`.
+    #[serde(default)]
+    pub initial_margin_annotations: Vec<MarginAnnotationSpec>,
+    /// Declarative margin-annotation removals (by id), applied
+    /// after `initial_margin_annotations` but before the final
+    /// render.
+    #[serde(default)]
+    pub remove_margin_annotations: Vec<String>,
+}
+
+/// Declarative virtual-line injection. Mirrors the parameter set
+/// `VirtualTextManager::add_line` takes. Inline placements are
+/// declared in the enum for future expansion but the seed shim
+/// only wires the line variants today.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VirtualTextSpec {
+    /// Buffer byte offset the virtual line anchors to.
+    pub byte_offset: usize,
+    /// Display text of the virtual line.
+    pub text: String,
+    /// Placement relative to the anchor's source line.
+    pub position: VirtualTextPositionSpec,
+    /// Optional foreground RGB. `None` ⇒ default DarkGray.
+    #[serde(default)]
+    pub fg: Option<(u8, u8, u8)>,
+    /// Optional background RGB.
+    #[serde(default)]
+    pub bg: Option<(u8, u8, u8)>,
+    /// Namespace label (e.g. `"test"`, `"git-blame"`, `"lsp"`).
+    pub namespace: String,
+    /// Sort key: higher priority renders later.
+    #[serde(default)]
+    pub priority: i32,
+}
+
+/// Position enum for `VirtualTextSpec`. Mirrors the discriminants
+/// of `fresh::view::virtual_text::VirtualTextPosition`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum VirtualTextPositionSpec {
+    /// Render as a full line ABOVE the source line.
+    Above,
+    /// Render as a full line BELOW the source line.
+    Below,
+    /// Render inline. Reserved — the seed shim only handles
+    /// `Above` / `Below` today; `Inline` panics if used.
+    Inline,
+}
+
+/// Declarative margin annotation. Becomes an
+/// `Event::AddMarginAnnotation` on the active buffer via
+/// `EditorTestApi::add_margin_annotation`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MarginAnnotationSpec {
+    /// 0-indexed source line.
+    pub line: usize,
+    /// `"left"` or `"right"`.
+    pub position: String,
+    /// Glyph rendered in the gutter cell.
+    pub symbol: String,
+    /// Optional RGB foreground; `None` ⇒ theme default.
+    #[serde(default)]
+    pub color: Option<(u8, u8, u8)>,
+    /// Identifier for later removal via
+    /// `LayoutScenario::remove_margin_annotations`.
+    #[serde(default)]
+    pub annotation_id: Option<String>,
 }
 
 /// Declarative side-by-side diff composite-buffer setup. The
@@ -336,6 +459,43 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         None
     };
 
+    // Declarative virtual-text seeding. Runs before any action /
+    // event dispatch so the lines are present in the editor state
+    // for the full action sequence.
+    for spec in &s.initial_virtual_texts {
+        let placement = match spec.position {
+            VirtualTextPositionSpec::Above => "above",
+            VirtualTextPositionSpec::Below => "below",
+            VirtualTextPositionSpec::Inline => {
+                return Err(ScenarioFailure::InputProjectionFailed {
+                    description: s.description.clone(),
+                    reason: "VirtualTextPositionSpec::Inline is reserved; seed shim does not wire it yet".into(),
+                });
+            }
+        };
+        harness.api_mut().seed_virtual_line(
+            spec.byte_offset,
+            &spec.text,
+            spec.fg,
+            spec.bg,
+            placement,
+            &spec.namespace,
+            spec.priority,
+        );
+    }
+
+    // Declarative margin-annotation seeding. Mirrors
+    // `Event::AddMarginAnnotation` exactly.
+    for spec in &s.initial_margin_annotations {
+        harness.api_mut().add_margin_annotation(
+            spec.line,
+            &spec.position,
+            &spec.symbol,
+            spec.color,
+            spec.annotation_id.as_deref(),
+        );
+    }
+
     // Determine whether per-row text inspection is needed anywhere
     // in the scenario (final expectation or any step expectation).
     // Any matcher that reads `rendered_rows` / `buffer_text` forces
@@ -452,6 +612,17 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
             })?;
     }
 
+    // Declarative virtual-text namespace clears, applied after
+    // actions / events have run.
+    for ns in &s.clear_virtual_text_namespaces {
+        harness.api_mut().clear_virtual_text_namespace(ns);
+    }
+
+    // Declarative margin-annotation removals.
+    for id in &s.remove_margin_annotations {
+        harness.api_mut().remove_margin_annotation(id);
+    }
+
     // Inject any declarative popup before the final render.
     if let Some(popup) = &s.show_popup {
         use fresh::model::event::{
@@ -459,16 +630,24 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         };
         // Resolve the declarative `PopupPlacement` to a
         // `PopupPositionData` the editor event accepts.
-        // `AtHardwareCursorOffset` reads the live hardware-cursor
-        // position from the API right now (the cursor is the result
-        // of every action dispatched up to this point), so test
-        // data doesn't need to hard-code cell coordinates that
-        // depend on gutter width or terminal geometry.
+        //
+        // `AtHardwareCursorOffset` needs the cursor's TERMINAL-
+        // absolute screen position (the same coordinate system
+        // `PopupPosition::Fixed { x, y }` consumes), not the
+        // viewport-relative `(col, row)` that
+        // `EditorTestApi::hardware_cursor_position` returns.
+        // Run a real render first so vt100 sees the post-action
+        // frame, then read `vt100_cursor_position()` — that's the
+        // exact cell the user's real terminal would put the cursor
+        // on. Test data therefore doesn't need to hard-code cell
+        // coordinates that depend on gutter width, menu-bar
+        // height, or other chrome.
         let position = match &popup.position {
             PopupPlacement::Centered => PopupPositionData::Centered,
             PopupPlacement::Fixed { x, y } => PopupPositionData::Fixed { x: *x, y: *y },
             PopupPlacement::AtHardwareCursorOffset { dx, dy } => {
-                match harness.api_mut().hardware_cursor_position() {
+                harness.render_real().expect("render_real before popup placement failed");
+                match harness.vt100_cursor_position() {
                     Some((cx, cy)) => {
                         let x = (cx as i32 + dx).max(0) as u16;
                         let y = (cy as i32 + dy).max(0) as u16;

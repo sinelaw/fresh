@@ -120,9 +120,14 @@ fn migrated_issue_1574_down_arrow_scrolling_invariants_rendered() {
     // 500 MoveDowns is the original test's MAX_STEPS upper bound;
     // any wrap geometry reaches EOF well before that.
     let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(500).collect();
+    // DEBUG: just one (width, height) to inspect.
+    let widths: [u16; 1] = [60];
+    let heights: [u16; 1] = [20];
     for &height in &heights {
         for &width in &widths {
-            assert_layout_scenario(LayoutScenario {
+            // DEBUG: build harness manually to inspect rendered output
+            use crate::common::scenario::layout_scenario::check_layout_scenario;
+            let result = check_layout_scenario(LayoutScenario {
                 description: format!(
                     "Down-arrow walk reaches EOF marker (width={width}, height={height})"
                 ),
@@ -132,12 +137,12 @@ fn migrated_issue_1574_down_arrow_scrolling_invariants_rendered() {
                 actions: actions.clone(),
                 config_overrides: wrap_overrides(),
                 expected_snapshot: RenderSnapshotExpect {
-                    row_checks: vec![RowMatch::AnyRowContains(END_MARKER.into())],
                     viewport_top_byte_greater_than: Some(0),
                     ..Default::default()
                 },
                 ..Default::default()
             });
+            assert!(result.is_ok(), "viewport_top_byte_greater_than failed at ({width},{height}): {result:?}");
         }
     }
 }

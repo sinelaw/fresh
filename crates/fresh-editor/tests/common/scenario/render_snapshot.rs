@@ -34,6 +34,18 @@ pub struct RenderSnapshot {
     /// under the cursor. Empty for the cheap default `extract`.
     #[serde(default)]
     pub buffer_text: String,
+    /// Terminal-absolute hardware cursor position as the vt100
+    /// backend observes it after `render_real()`. This is the
+    /// cell coordinate the cursor would land on in the user's
+    /// real terminal — distinct from `hardware_cursor` above,
+    /// which is the editor's viewport-relative reading of the
+    /// same cursor (used by overlay-obscuration checks). The
+    /// `cursor_cell_matches_buffer_char` matcher indexes
+    /// `rendered_rows` by this row, so the two coordinate
+    /// systems agree. None when the cursor is hidden or the
+    /// snapshot was built with the cheap `extract`.
+    #[serde(default)]
+    pub terminal_cursor: Option<(u16, u16)>,
     /// One string per visible terminal row, populated by
     /// `extract_with_rendered_rows`. Empty for the default
     /// `extract` (which uses the cheaper abstract render path).
@@ -69,6 +81,7 @@ impl Observable for RenderSnapshot {
             gutter_width: api.gutter_width(),
             cursor_byte,
             buffer_text: String::new(),
+            terminal_cursor: None,
             rendered_rows: Vec::new(),
         }
     }
@@ -106,6 +119,7 @@ impl RenderSnapshot {
         // regardless of overlay state, which would silently fail
         // any cursor-under-popup assertion.
         let cursor_hidden_by_render = harness.vt100_cursor_hidden();
+        let terminal_cursor_raw = harness.vt100_cursor_position();
         let api = harness.api_mut();
         let cursor_byte = api.primary_caret().position;
         let buffer_text = api.buffer_text();
@@ -114,6 +128,11 @@ impl RenderSnapshot {
             None
         } else {
             raw_cursor
+        };
+        let terminal_cursor = if cursor_hidden_by_render {
+            None
+        } else {
+            terminal_cursor_raw
         };
         RenderSnapshot {
             width: api.terminal_width(),
@@ -126,6 +145,7 @@ impl RenderSnapshot {
             gutter_width: api.gutter_width(),
             cursor_byte,
             buffer_text,
+            terminal_cursor,
             rendered_rows,
         }
     }
@@ -643,12 +663,16 @@ impl RenderSnapshotExpect {
             // the renderer may legitimately paint a blank cell.
             if let Some(exp) = expected_char {
                 if !exp.is_ascii_whitespace() && exp != '\n' {
-                    match actual.hardware_cursor {
+                    // Use terminal-absolute cursor coords so the row
+                    // index aligns with `rendered_rows` (which is
+                    // indexed from the top of the terminal, not the
+                    // top of the viewport).
+                    match actual.terminal_cursor {
                         None => {
                             return Some((
                                 "cursor_cell_matches_buffer_char",
                                 format!("cell == {exp:?}"),
-                                "hardware_cursor = None".into(),
+                                "terminal_cursor = None".into(),
                             ));
                         }
                         Some((hw_col, hw_row)) => {
