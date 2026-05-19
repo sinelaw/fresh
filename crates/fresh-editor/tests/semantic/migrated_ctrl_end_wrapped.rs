@@ -161,7 +161,12 @@ fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
     // row).
     let content = make_csv_like_content_with_trailing_newline();
     let doc_end = content.len();
-    let max_visible_bytes = 135usize * 37;
+    // After ToggleLineWrap turns wrapping off, each visible row
+    // shows one (long) logical line of the CSV-like fixture
+    // (≈250 bytes/line). With height 37, the visible byte span is
+    // ≈ 37 × 250 ≈ 9250 bytes, so the viewport's top must be
+    // within ~3× max_visible_bytes-with-wrap-on of doc_end.
+    let max_visible_bytes_no_wrap = 135usize * 37 * 3;
     assert_layout_scenario(LayoutScenario {
         description:
             "Ctrl+End then ToggleLineWrap keeps cursor on trailing empty line".into(),
@@ -171,7 +176,7 @@ fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
         actions: vec![Action::MoveDocumentEnd, Action::ToggleLineWrap],
         config_overrides: wrap_overrides(),
         expected_snapshot: RenderSnapshotExpect {
-            viewport_top_within_delta_of: Some((doc_end, max_visible_bytes)),
+            viewport_top_within_delta_of: Some((doc_end, max_visible_bytes_no_wrap)),
             viewport_top_byte_greater_than: Some(0),
             ..Default::default()
         },
