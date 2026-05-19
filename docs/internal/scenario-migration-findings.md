@@ -29,20 +29,26 @@ column 5 (immediately after 'o'), not column 4 (on top of 'o').
 Pinned in
 `tests/semantic/migrated_layout_cursor.rs::layout_cursor_after_move_line_end_lands_one_past_last_char`.
 
-## 2. `ToUpperCase` with no selection uppercases the entire buffer
+## 2. `ToUpperCase` with no selection uppercases the *word under cursor* (not the whole buffer)
 
 **Source:** `tests/e2e/case_conversion.rs`-adjacent migrations.
-**Sequence:** `Action::ToUpperCase` on `"hello"` with no
-selection.
+**Sequence:** `Action::ToUpperCase` with no active selection.
 **Expectation (one of two reasonable):** (a) no-op, since
 there's nothing selected; or (b) uppercase word/line under cursor.
-**Observation:** Uppercases the entire buffer (`"hello"` →
-`"HELLO"`) and parks the cursor at the *end* of the upcased range.
-**Assessment:** Behavior is consistent (the editor's "upcase"
-command falls back to whole-buffer when no selection exists), but
-worth recording so a future change to "no-op without selection"
-is surfaced. Pinned in
-`migrated_bulk::bulk_uppercase_with_no_selection_uppercases_full_buffer`.
+**Observation:** On the single-word buffer `"hello"`, upcasing
+yields `"HELLO"` — which initially read as a "full buffer"
+fallback. The multi-word evidence on `"hello world"` (cursor at
+byte 0) disambiguates: only `"hello"` is upcased, yielding
+`"HELLO world"`. The cursor parks at the *end* of the upcased
+range (byte 5).
+**Assessment:** The editor's "upcase" command falls back to the
+*word under cursor* (`find_word_start` / `find_word_end` in
+`primitives/word_navigation.rs`), not the whole buffer. The
+single-word case in `migrated_bulk::bulk_uppercase_with_no_selection_uppercases_full_buffer`
+is consistent — `word_end == buffer.len()` there — but the test
+name overstates the rule. Pinned in
+`migrated_case_conversion_full::migrated_to_uppercase_no_selection_upcases_word_under_cursor`,
+which is the discriminating evidence.
 
 ## 3. `SelectLeft` at byte 0 sets an empty anchor
 

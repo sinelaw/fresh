@@ -184,36 +184,23 @@ fn migrated_to_uppercase_no_selection_upcases_word_under_cursor() {
 
 /// Migration of `test_case_conversion_from_command_palette`.
 ///
-/// Deferred: needs CommandPalette routing into editor mutations
-/// from the headless `BufferScenario` runner.
-///
-/// The e2e drives:
+/// The e2e drives the keyboard path:
 ///   Ctrl+P → open palette
 ///   type "uppercase" → filter command list
 ///   Enter → execute the selected "Uppercase" command
 ///
-/// The semantic translation would be:
-///   `Action::CommandPalette`
-///   `Action::InsertChar('u')`, `…('p')`, `…('p')`, …
-///   `Action::PromptConfirm`
+/// The semantic translation routes through the production action
+/// alphabet end-to-end, with no test-only back-doors:
+///   `Action::SelectAll` to seed the selection,
+///   `Action::CommandPalette` to open the prompt,
+///   `Action::InsertChar(c)` per character of "uppercase",
+///   `Action::PromptConfirm` to execute the highlighted command.
 ///
-/// In the headless test harness, `BufferScenario` skips plugin
-/// loading (`with_temp_project_no_plugins`) and the command
-/// registry that backs the palette's fuzzy-matched command list
-/// is populated by the same wiring that the prompt-confirm
-/// dispatcher consults. Until a follow-up adds either (a) a
-/// plugin-loading variant of `BufferScenario`, or (b) a
-/// `ModalScenario`-style observable that pins palette command
-/// execution end-to-end, this test stays `#[ignore]`d to avoid
-/// asserting on an under-specified surface.
-///
-/// TODO: re-home this in `ModalScenario` once palette command
-/// dispatch grows a scenario observable, or extend
-/// `BufferScenario` with a plugin-enabled mode.
+/// This validates that the palette's fuzzy match + confirm path
+/// genuinely dispatches the buffer-mutating `ToUpperCase` action,
+/// not just that it opens a prompt.
 #[test]
 fn migrated_to_uppercase_via_command_palette() {
-    // Attempted shape — kept here so the next person knows what
-    // was tried. Re-enable once the routing gap is closed.
     let actions: Vec<Action> = std::iter::once(Action::SelectAll)
         .chain(std::iter::once(Action::CommandPalette))
         .chain("uppercase".chars().map(Action::InsertChar))

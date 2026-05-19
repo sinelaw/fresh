@@ -8,14 +8,13 @@
 //! test — *Undo and Redo skip over readonly cursor-movement actions
 //! and step through write-actions only* — is the same in both forms.
 //!
-//! Skipped (deferred):
+//! Migrated to `semantic/migrated_undo_save_point.rs` (the
+//! `is_modified` save-point invariants now have a dedicated home
+//! that reaches for `EditorTestHarness` + `EditorTestApi`):
 //!   * `test_undo_to_save_point_marks_buffer_unmodified`
 //!   * `test_undo_after_save_as_marks_buffer_unmodified`
 //!   * `test_undo_past_save_point`
 //!   * `test_undo_to_empty_after_save_as`
-//!     — these test `buffer.is_modified()` against a save point on
-//!     disk; that observable isn't on the `EditorTestApi` projection.
-//!     Migrate together with a `dirty_state()` extension.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, BufferScenario, CursorExpect,
