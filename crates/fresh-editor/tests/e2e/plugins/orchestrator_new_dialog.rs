@@ -488,34 +488,34 @@ fn completion_candidates_left_aligned_with_input_value() {
     let prefix = type_alpha_prefix_and_wait(&mut harness, &workspace);
     let _ = prefix;
 
-    // The typed value starts with the workspace path; its first
-    // char on the input row is the leading `/` of `/tmp/...`.
-    // The popup's first candidate row is `alpha_dir/` —
-    // however, both rows contain the workspace path as a prefix
-    // (we typed `<workspace>/al` and the popup echoes
-    // `<workspace>/alpha_dir/`), so the leading `/` is the
-    // common anchor we can locate on both rows.
+    // The typed value starts with the workspace path; the candidate
+    // popup row begins with the same workspace path followed by
+    // `alpha_dir/`. So the workspace path string is the natural
+    // anchor on both rows — locating its first occurrence on each
+    // gives the column of the first char of the value (input row)
+    // and of the candidate text (popup row).
+    //
+    // We must not anchor on `'/'` here: on Windows the workspace
+    // path is rendered as `\\?\C:\...` so the first `/` lands deep
+    // inside the path, far past the actual start of the candidate.
+    let workspace_str = workspace.display().to_string();
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
     let input_row = lines
         .iter()
-        .position(|l| l.contains('[') && l.contains(']') && l.contains("/al"))
+        .position(|l| l.contains('[') && l.contains(']') && l.contains(&workspace_str))
         .expect("input row with [<typed path>] should be on screen");
     let popup_row = lines
         .iter()
-        .position(|l| l.contains("alpha_dir/"))
+        .position(|l| l.contains("alpha_dir/") && l.contains(&workspace_str))
         .expect("popup row with `alpha_dir/` should be on screen");
 
     let input_col = lines[input_row]
-        .find('[')
-        .map(|i| i + '['.len_utf8())
-        .expect("input row should contain `[`");
-    // First `/` on the popup row IS the candidate's first char
-    // (the candidate starts with the workspace path, which
-    // begins with `/`). Use that as the anchor.
+        .find(&workspace_str)
+        .expect("input row should contain the workspace path");
     let popup_col = lines[popup_row]
-        .find('/')
-        .expect("popup row should contain the candidate's leading `/`");
+        .find(&workspace_str)
+        .expect("popup row should contain the workspace path");
 
     assert_eq!(
         input_col, popup_col,
