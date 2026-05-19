@@ -709,49 +709,51 @@ fn migrated_keybinding_p_and_brackets_navigate_hunks() {
 // Anti-tests
 // =============================================================================
 
-/// Anti-test: drop the `composite_next_hunk_active` call. Without
-/// the navigation, the viewport stays at the top — Line 1 must
-/// remain visible AND "MODIFIED in hunk 1" must NOT be on screen.
-/// Proves the positive
+/// Anti-test: drop the second + third `composite_next_hunk_active`
+/// calls. Without them, the viewport never reaches hunk 2 (line 60,
+/// outside the default 40-row viewport that starts at line 1) and
+/// "MODIFIED in hunk 2" must NOT be on screen. Proves the positive
 /// `migrated_next_hunk_navigation_shows_hunk_content` claim depends
-/// on the actual nav call, not on the harness/setup accidentally
-/// placing the viewport over hunk 1.
+/// on the repeated nav calls actually advancing through the hunk
+/// list, not on the viewport accidentally containing hunk 2.
 #[test]
 fn anti_next_hunk_without_call_keeps_hunk_off_screen() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     let (old_content, new_content, hunks) = generate_multi_hunk_content();
     let _composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
 
-    // No composite_next_hunk_active call here — that's the dropped step.
-    assert_any_row_contains(
+    // No composite_next_hunk_active calls here — that's the dropped step.
+    // Hunk 2 lives at line 60, well past the default viewport (lines 1-34).
+    assert_no_row_contains(
         &mut harness,
-        "Line 1 original",
-        "anti: without next_hunk, viewport must still show Line 1",
+        "MODIFIED in hunk 2",
+        "anti: without next_hunk, hunk 2 content must NOT be visible \
+         (proves the positive test depends on the actual nav call)",
     );
     assert_no_row_contains(
         &mut harness,
-        "MODIFIED in hunk 1",
-        "anti: without next_hunk, hunk 1 content must NOT be visible \
-         (proves the positive test depends on the actual nav call)",
+        "MODIFIED in hunk 3",
+        "anti: without next_hunk, hunk 3 content must NOT be visible",
     );
 }
 
-/// Anti-test: drop the `'n'` keypress. Without it, the viewport
-/// stays at the top and "MODIFIED in hunk 1" must NOT appear.
-/// Proves the positive `migrated_keybinding_n_navigates_to_next_hunk`
-/// claim depends on the keypress dispatch routing through the
-/// Action-based keymap.
+/// Anti-test: drop the `'n'` keypresses. Without them, the viewport
+/// never reaches hunk 2 (line 60, outside the default viewport) so
+/// "MODIFIED in hunk 2" must NOT appear. Proves the positive
+/// `migrated_keybinding_n_navigates_to_next_hunk` claim depends on
+/// the keypress dispatch routing through the Action-based keymap.
 #[test]
 fn anti_keybinding_n_without_press_keeps_hunk_off_screen() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     let (old_content, new_content, hunks) = generate_multi_hunk_content();
     let _composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
 
-    // No send_key('n') here — that's the dropped step.
+    // No send_key('n') here — that's the dropped step. Hunk 2 is at
+    // line 60, off the bottom of the default 40-row viewport.
     assert_no_row_contains(
         &mut harness,
-        "MODIFIED in hunk 1",
-        "anti: without pressing 'n', hunk 1 content must NOT be visible \
+        "MODIFIED in hunk 2",
+        "anti: without pressing 'n', hunk 2 content must NOT be visible \
          (proves the positive keybinding test depends on the keypress)",
     );
 }

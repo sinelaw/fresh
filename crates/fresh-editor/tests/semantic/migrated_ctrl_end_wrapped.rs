@@ -235,3 +235,81 @@ fn anti_ctrl_end_without_wrap_still_scrolls_to_cursor() {
         "MoveDocumentEnd on a long buffer scrolls the viewport regardless of wrap mode"
     );
 }
+
+/// Anti-test for `migrated_down_from_last_content_line_reaches_
+/// trailing_empty_line`: drop the trailing `MoveDown` after
+/// `MoveDocumentEnd` + `MoveLeft`. Without it, the cursor sits
+/// on the last content line (Entry 140) — the rendered cursor
+/// row MUST contain data substrings, so the positive
+/// "no data content" claim would fail. Pins that the migrated
+/// test's success depends on the actual Down keystroke.
+#[test]
+fn anti_down_from_last_content_line_without_down_stays_on_data_row() {
+    let content = make_csv_like_content_with_trailing_newline();
+    let doc_end = content.len();
+
+    let mut harness =
+        EditorTestHarness::with_config(135, 37, config_with_line_wrap()).unwrap();
+    let _f = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    harness.api_mut().dispatch(Action::MoveDocumentEnd);
+    harness.render().unwrap();
+    harness.api_mut().dispatch(Action::MoveLeft);
+    // Drop the MoveDown — that's the load-bearing step.
+    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
+
+    let pos = harness.api_mut().primary_caret().position;
+    assert!(
+        pos < doc_end,
+        "anti: without MoveDown, cursor stays on previous content line (pos={pos} < doc_end={doc_end})",
+    );
+
+    let (_cx, cy) = snap.hardware_cursor.expect("hardware cursor must be set");
+    let cursor_row = snap
+        .rendered_rows
+        .get(cy as usize)
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    let has_data_content = ["entry_", "Entry ", ".html", "example.com", "archive.org"]
+        .iter()
+        .any(|needle| cursor_row.contains(needle));
+    assert!(
+        has_data_content,
+        "anti: without MoveDown, cursor row {cy} must contain data content \
+         (the cursor is on the last content line, not the empty trailing line). \
+         Row text: {:?}",
+        cursor_row.trim_end(),
+    );
+}
+
+/// Anti-test for `migrated_ctrl_end_then_disable_line_wrap_
+/// cursor_row`: drop the `ToggleLineWrap` dispatch. Without
+/// the toggle, line wrap stays on and the cursor stays on the
+/// trailing empty line; the regression-triggering condition
+/// (toggling wrap off mid-session) never occurred. Pins that
+/// the migrated test exercises the toggle path specifically.
+#[test]
+fn anti_ctrl_end_without_toggle_keeps_wrap_on() {
+    let content = make_csv_like_content_with_trailing_newline();
+    let doc_end = content.len();
+
+    let mut harness =
+        EditorTestHarness::with_config(135, 37, config_with_line_wrap()).unwrap();
+    let _f = harness.load_buffer_from_text(&content).unwrap();
+    harness.render().unwrap();
+
+    harness.api_mut().dispatch(Action::MoveDocumentEnd);
+    // Drop the ToggleLineWrap dispatch — that's the load-bearing step.
+    harness.render().unwrap();
+
+    assert_eq!(
+        harness.api_mut().primary_caret().position,
+        doc_end,
+        "anti: cursor byte should still be at doc_end without toggling wrap"
+    );
+    // Without the toggle, wrap remains on and the original
+    // regression (cursor landing on a tilde row after wrap-off)
+    // simply cannot manifest — proving the toggle is the
+    // load-bearing precondition.
+}
