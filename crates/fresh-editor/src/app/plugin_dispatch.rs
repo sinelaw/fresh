@@ -949,6 +949,14 @@ impl Editor {
                 self.handle_delay(callback_id, duration_ms);
             }
 
+            PluginCommand::HttpFetch {
+                url,
+                target_path,
+                callback_id,
+            } => {
+                self.handle_http_fetch(url, target_path, callback_id);
+            }
+
             PluginCommand::SpawnBackgroundProcess {
                 process_id,
                 command,
@@ -3284,6 +3292,54 @@ impl Editor {
                 .read()
                 .unwrap()
                 .resolve_callback(callback_id, "null".to_string());
+        }
+    }
+
+    fn handle_http_fetch(
+        &mut self,
+        url: String,
+        target_path: std::path::PathBuf,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            let sender = bridge.sender();
+            let process_id = callback_id.as_u64();
+
+            runtime.spawn(async move {
+                let fetch = tokio::task::spawn_blocking(move || {
+                    fetch_url_to_file(&url, &target_path)
+                })
+                .await;
+
+                let (stdout, stderr, exit_code) = match fetch {
+                    Ok(Ok(status)) => {
+                        if (200..300).contains(&status) {
+                            (String::new(), String::new(), 0)
+                        } else {
+                            (
+                                String::new(),
+                                format!("HTTP {}", status),
+                                i32::from(status),
+                            )
+                        }
+                    }
+                    Ok(Err(e)) => (String::new(), e, -1),
+                    Err(e) => (String::new(), format!("fetch task failed: {}", e), -1),
+                };
+
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                    process_id,
+                    stdout,
+                    stderr,
+                    exit_code,
+                });
+            });
+        } else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "Async runtime not available".to_string());
         }
     }
 
@@ -6245,4 +6301,47 @@ impl Window {
             }
         }
     }
+}
+
+/// Maximum size of a body downloaded via `editor.httpFetch`. 64 MB is well
+/// above any reasonable theme/plugin asset (themes are tens of KB) while
+/// still capping a misbehaving server's blast radius.
+const HTTP_FETCH_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Fetch a URL over HTTP(S) and stream the response body into `target`.
+///
+/// Returns the HTTP status code on success. Non-2xx responses are returned
+/// as their status code without writing to the target file. Transport
+/// errors (DNS, TLS, timeout, …) are returned as `Err`.
+fn fetch_url_to_file(url: &str, target: &std::path::Path) -> Result<u16, String> {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+
+    let response = agent
+        .get(url)
+        .header("User-Agent", "fresh-editor")
+        .call()
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Ok(status);
+    }
+
+    let mut file = std::fs::File::create(target)
+        .map_err(|e| format!("failed to create {}: {}", target.display(), e))?;
+
+    let mut reader = response
+        .into_body()
+        .into_with_config()
+        .limit(HTTP_FETCH_MAX_BYTES)
+        .reader();
+
+    std::io::copy(&mut reader, &mut file)
+        .map_err(|e| format!("failed to write response body: {}", e))?;
+
+    Ok(status)
 }

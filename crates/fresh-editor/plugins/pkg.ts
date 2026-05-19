@@ -875,20 +875,16 @@ async function installFromDirectFile(
   );
 
   editor.setStatus(`Downloading ${url}...`);
-  const result = await editor.spawnProcess("curl", [
-    "-fsSL",
-    "--max-time", "30",
-    "-o", tempFile,
-    url,
-  ]);
+  const result = await editor.httpFetch(url, tempFile);
 
   if (result.exit_code !== 0) {
-    const stderr = result.stderr || "";
-    const errorMsg = stderr.includes("404") || /not found/i.test(stderr)
+    // exit_code mirrors editor.httpFetch's contract: 0 on 2xx, the HTTP
+    // status code on non-2xx, -1 on transport errors.
+    const errorMsg = result.exit_code === 404
       ? "File not found"
-      : stderr.includes("Could not resolve host") || stderr.includes("resolve")
-      ? "Network error"
-      : stderr.split("\n")[0] || `curl exited ${result.exit_code}`;
+      : result.exit_code > 0
+      ? `HTTP ${result.exit_code}`
+      : result.stderr.split("\n")[0] || "Download failed";
     editor.setStatus(`Failed to download ${packageName}: ${errorMsg}`);
     editor.removePath(tempFile);
     return false;

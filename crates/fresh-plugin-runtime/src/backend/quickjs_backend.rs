@@ -5609,6 +5609,40 @@ impl JsEditorApi {
             .send(PluginCommand::ClearRemoteIndicatorState);
     }
 
+    /// Fetch a URL over HTTP(S) and stream the response body into `target_path`.
+    ///
+    /// Resolves with a `SpawnResult`-shaped value: `exit_code` is `0` on a
+    /// 2xx response (file written), the HTTP status code on non-2xx
+    /// (target file untouched), and `-1` on transport errors. `stderr`
+    /// carries an error message in the non-success cases; `stdout` is
+    /// always empty.
+    ///
+    /// This uses the editor's built-in HTTP client (`ureq`), so plugins
+    /// don't need `curl`/`wget` on PATH.
+    #[plugin_api(async_thenable, js_name = "httpFetch", ts_return = "SpawnResult")]
+    #[qjs(rename = "_httpFetchStart")]
+    pub fn http_fetch_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        url: String,
+        target_path: String,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        tracing::info!(
+            "http_fetch_start: plugin='{}', url='{}', target='{}', callback_id={}",
+            self.plugin_name,
+            url,
+            target_path,
+            id
+        );
+        let _ = self.command_sender.send(PluginCommand::HttpFetch {
+            url,
+            target_path: std::path::PathBuf::from(target_path),
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
     /// Wait for a process to complete and get its result (async)
     #[plugin_api(async_promise, js_name = "spawnProcessWait", ts_return = "SpawnResult")]
     #[qjs(rename = "_spawnProcessWaitStart")]

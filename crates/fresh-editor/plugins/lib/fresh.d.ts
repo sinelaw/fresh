@@ -1006,7 +1006,7 @@ type WidgetSpec = {
 	* `WidgetMutation::SetCompletions`. An empty `items`
 	* closes the popup.
 	*/
-	completions?: Array<string>;
+	completions?: Array<string | CompletionItem>;
 	/**
 	* How many candidate rows the popup paints at once
 	* when it opens. Excess candidates stay reachable
@@ -1091,7 +1091,7 @@ type WidgetMutation = {
 } | {
 	"kind": "setCompletions";
 	widgetKey: string;
-	items: Array<string>;
+	items: Array<string | CompletionItem>;
 } | {
 	"kind": "setChecked";
 	widgetKey: string;
@@ -2798,6 +2798,19 @@ interface EditorAPI {
 	* without a prior `setRemoteIndicatorState`.
 	*/
 	clearRemoteIndicatorState(): void;
+	/**
+	* Fetch a URL over HTTP(S) and stream the response body into `target_path`.
+	* 
+	* Resolves with a `SpawnResult`-shaped value: `exit_code` is `0` on a
+	* 2xx response (file written), the HTTP status code on non-2xx
+	* (target file untouched), and `-1` on transport errors. `stderr`
+	* carries an error message in the non-success cases; `stdout` is
+	* always empty.
+	* 
+	* This uses the editor's built-in HTTP client (`ureq`), so plugins
+	* don't need `curl`/`wget` on PATH.
+	*/
+	httpFetch(url: string, targetPath: string): ProcessHandle<SpawnResult>;
 	/**
 	* Wait for a process to complete and get its result (async)
 	*/

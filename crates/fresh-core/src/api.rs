@@ -2220,6 +2220,20 @@ pub enum PluginCommand {
         duration_ms: u64,
     },
 
+    /// Fetch a URL over HTTP(S) and write the response body to a file.
+    ///
+    /// Streams the response body directly to `target_path` rather than
+    /// buffering in memory, so large downloads stay off the JS bridge. The
+    /// callback resolves with a `SpawnResult`-shaped value: `exit_code` is
+    /// `0` on 2xx, the HTTP status code on non-2xx responses, and `-1` on
+    /// transport errors; `stderr` carries any error message; `stdout` is
+    /// always empty.
+    HttpFetch {
+        url: String,
+        target_path: PathBuf,
+        callback_id: JsCallbackId,
+    },
+
     /// Spawn a long-running background process
     /// Unlike SpawnProcess, this returns immediately with a process handle
     /// and provides streaming output via hooks
