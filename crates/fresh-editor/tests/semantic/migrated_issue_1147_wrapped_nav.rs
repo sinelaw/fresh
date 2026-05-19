@@ -181,3 +181,83 @@ fn migrated_issue_1147_end_key_advances_through_wrapped_visual_segments() {
         harness.api_mut().primary_caret().position,
     );
 }
+
+#[test]
+fn migrated_issue_1147_viewport_stable_while_navigating_up_through_wrapped_content() {
+    // Original: `test_issue_1147_viewport_stable_while_navigating_up_through_wrapped_content`.
+    // Stricter invariant than the 4-press test: 8 Up presses from
+    // end-of-file through wrapped content must trigger AT MOST ONE
+    // viewport scroll. The content area is HEIGHT - chrome = ~21 rows,
+    // and the cursor starts near the bottom — so it remains well
+    // within the visible area for 8 presses. The harness exposes
+    // `viewport_top_byte` (no scroll counter), so we count transitions
+    // of that observable across the walk.
+    let mut harness = EditorTestHarness::with_temp_project(80, 25).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text(&make_issue_1147_content())
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.api_mut().dispatch(Action::MoveDocumentEnd);
+    harness.render().unwrap();
+
+    let mut viewport_scrolled_count = 0usize;
+    let mut prev_top_byte = harness.api_mut().viewport_top_byte();
+    for _ in 0..8 {
+        harness.api_mut().dispatch(Action::MoveUp);
+        harness.render().unwrap();
+        let top_byte_after = harness.api_mut().viewport_top_byte();
+        if top_byte_after != prev_top_byte {
+            viewport_scrolled_count += 1;
+        }
+        prev_top_byte = top_byte_after;
+    }
+
+    assert!(
+        viewport_scrolled_count <= 1,
+        "Issue #1147: viewport scrolled {viewport_scrolled_count} times during 8 \
+         Up presses from end-of-file. Expected at most 1 scroll (only if the \
+         cursor started on the very last visible row). With the bug, every Up \
+         press scrolls the viewport even though the cursor stays visible.",
+    );
+}
+
+#[test]
+fn migrated_issue_1147_viewport_stable_anti_test_no_moveup_means_no_scroll_events() {
+    // Anti-test for `migrated_issue_1147_viewport_stable_while_navigating_up_through_wrapped_content`.
+    // If we never dispatch MoveUp at all, the viewport cannot scroll
+    // (because the only thing that could move the viewport in this
+    // scenario is cursor motion). Eight no-op iterations must yield
+    // zero observed transitions of `viewport_top_byte`. This pins
+    // down the "transitions count" methodology: it must be sensitive
+    // to MoveUp specifically, not to render() calls or harness
+    // bookkeeping.
+    let mut harness = EditorTestHarness::with_temp_project(80, 25).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text(&make_issue_1147_content())
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.api_mut().dispatch(Action::MoveDocumentEnd);
+    harness.render().unwrap();
+
+    let mut transitions = 0usize;
+    let mut prev_top_byte = harness.api_mut().viewport_top_byte();
+    for _ in 0..8 {
+        // Deliberately *do not* dispatch MoveUp.
+        harness.render().unwrap();
+        let top_byte_after = harness.api_mut().viewport_top_byte();
+        if top_byte_after != prev_top_byte {
+            transitions += 1;
+        }
+        prev_top_byte = top_byte_after;
+    }
+
+    assert_eq!(
+        transitions, 0,
+        "anti-test: with no MoveUp dispatches, the viewport must not scroll \
+         across 8 idle render() iterations. Seeing {transitions} transitions \
+         means the scroll-count methodology is picking up spurious events \
+         unrelated to up-navigation, invalidating the main assertion.",
+    );
+}

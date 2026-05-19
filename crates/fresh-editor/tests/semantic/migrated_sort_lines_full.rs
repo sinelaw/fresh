@@ -5,6 +5,12 @@
 //! cursor + selection state at t=∞ — the original e2e tests did
 //! not assert on cursor, so these scenarios add coverage.
 //!
+//! Coverage: basic full-buffer sort, single-line no-op, numeric
+//! lexicographic ordering, trailing-newline preservation, undo
+//! round-trip, already-sorted idempotence, case-sensitive ASCII
+//! ordering, empty-line handling, and **partial selection** (only
+//! the selected lines are sorted; outside lines untouched).
+//!
 //! **Finding pinned here** (see
 //! `docs/internal/scenario-migration-findings.md` §7):
 //! `SelectAll + SortLines` preserves the selection anchor when
@@ -14,7 +20,7 @@
 //! future change is flagged.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use crate::common::scenario::trace_scenario::{assert_trace_scenario, TraceScenario};
 use fresh::test_api::Action;
@@ -126,4 +132,68 @@ fn migrated_sort_lines_with_empty_lines() {
         expected_primary: CursorExpect::at(21),
         ..Default::default()
     });
+}
+
+#[test]
+fn migrated_sort_lines_partial_selection() {
+    // Original: `test_sort_lines_partial_selection`. Cursor starts
+    // at byte 0; MoveDown lands on line 2 ("zebra"), SelectLine
+    // selects "zebra\n", two SelectDown extends the selection over
+    // "apple\n" and "mango\n". SortLines then reorders only those
+    // three selected lines; "first" (line 1) and "last" (line 5)
+    // are outside the selection and stay put.
+    //
+    // Buffer layout (bytes):
+    //   "first\n"  0..6
+    //   "zebra\n"  6..12
+    //   "apple\n"  12..18
+    //   "mango\n"  18..24
+    //   "last"     24..28
+    assert_buffer_scenario(BufferScenario {
+        description:
+            "SortLines on partial selection sorts only selected lines; outside lines untouched"
+                .into(),
+        initial_text: "first\nzebra\napple\nmango\nlast".into(),
+        actions: vec![
+            Action::MoveDown,
+            Action::SelectLine,
+            Action::SelectDown,
+            Action::SelectDown,
+        ]
+        .into_iter()
+        .chain(std::iter::once(Action::SortLines))
+        .collect(),
+        expected_text: "first\napple\nmango\nzebra\nlast".into(),
+        // After sort, the selection collapses (anchor cleared, matching
+        // the "buffer changed ⇒ anchor None" leg of finding §7), and
+        // the cursor parks at the end of the sorted range (byte 24,
+        // start of "last").
+        expected_primary: CursorExpect::at(24),
+        ..Default::default()
+    });
+}
+
+/// Anti-test: drops `Action::SortLines` from the partial-selection
+/// sequence. Without it, the buffer keeps the original line order,
+/// so the post-sort expectation must NOT match.
+#[test]
+fn anti_sort_lines_partial_selection_dropping_action_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: SortLines dropped — partial selection cannot reorder lines".into(),
+        initial_text: "first\nzebra\napple\nmango\nlast".into(),
+        actions: vec![
+            Action::MoveDown,
+            Action::SelectLine,
+            Action::SelectDown,
+            Action::SelectDown,
+        ],
+        expected_text: "first\napple\nmango\nzebra\nlast".into(),
+        expected_primary: CursorExpect::at(24),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: selection setup alone cannot sort lines; \
+         the reordered expectation must NOT match"
+    );
 }

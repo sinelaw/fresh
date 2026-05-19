@@ -152,6 +152,83 @@ fn migrated_undo_after_to_uppercase_restores_original_text() {
     });
 }
 
+#[test]
+fn migrated_to_uppercase_no_selection_upcases_word_under_cursor() {
+    // Original: `test_case_conversion_no_selection`. With no
+    // selection and the cursor at byte 0 of "hello world",
+    // `ToUpperCase` uppercases the word under cursor — i.e. the
+    // range [0, 5) ("hello"), leaving " world" untouched.
+    //
+    // Behavioral note: this contrasts with the prior pinning
+    // claim in `migrated_bulk::bulk_uppercase_with_no_selection_uppercases_full_buffer`,
+    // which observed full-buffer upcasing on a single-word input
+    // ("hello"). The two are consistent — single-word buffers
+    // happen to have word_end == buffer_end, so the "word under
+    // cursor" rule coincides with "whole buffer" in that case.
+    // The multi-word case here is the discriminating evidence:
+    // the editor really does use word boundaries, not buffer
+    // bounds. See finding #2 in
+    // `docs/internal/scenario-migration-findings.md`.
+    assert_buffer_scenario(BufferScenario {
+        description:
+            "ToUpperCase with no selection upcases the word under cursor: 'hello world' → 'HELLO world'"
+                .into(),
+        initial_text: "hello world".into(),
+        actions: vec![Action::ToUpperCase],
+        expected_text: "HELLO world".into(),
+        // Cursor parks at end of the upcased range (byte 5).
+        expected_primary: CursorExpect::at(5),
+        ..Default::default()
+    });
+}
+
+/// Migration of `test_case_conversion_from_command_palette`.
+///
+/// Deferred: needs CommandPalette routing into editor mutations
+/// from the headless `BufferScenario` runner.
+///
+/// The e2e drives:
+///   Ctrl+P → open palette
+///   type "uppercase" → filter command list
+///   Enter → execute the selected "Uppercase" command
+///
+/// The semantic translation would be:
+///   `Action::CommandPalette`
+///   `Action::InsertChar('u')`, `…('p')`, `…('p')`, …
+///   `Action::PromptConfirm`
+///
+/// In the headless test harness, `BufferScenario` skips plugin
+/// loading (`with_temp_project_no_plugins`) and the command
+/// registry that backs the palette's fuzzy-matched command list
+/// is populated by the same wiring that the prompt-confirm
+/// dispatcher consults. Until a follow-up adds either (a) a
+/// plugin-loading variant of `BufferScenario`, or (b) a
+/// `ModalScenario`-style observable that pins palette command
+/// execution end-to-end, this test stays `#[ignore]`d to avoid
+/// asserting on an under-specified surface.
+///
+/// TODO: re-home this in `ModalScenario` once palette command
+/// dispatch grows a scenario observable, or extend
+/// `BufferScenario` with a plugin-enabled mode.
+#[test]
+fn migrated_to_uppercase_via_command_palette() {
+    // Attempted shape — kept here so the next person knows what
+    // was tried. Re-enable once the routing gap is closed.
+    let actions: Vec<Action> = std::iter::once(Action::SelectAll)
+        .chain(std::iter::once(Action::CommandPalette))
+        .chain("uppercase".chars().map(Action::InsertChar))
+        .chain(std::iter::once(Action::PromptConfirm))
+        .collect();
+    assert_buffer_scenario(BufferScenario {
+        description: "CommandPalette → type 'uppercase' → PromptConfirm → buffer uppercased".into(),
+        initial_text: "hello world".into(),
+        actions,
+        expected_text: "HELLO WORLD".into(),
+        expected_primary: CursorExpect::at(11),
+        ..Default::default()
+    });
+}
+
 /// Anti-test: drops the `ToUpperCase` from the multiline
 /// scenario. Without it, `SelectAll` alone leaves the buffer
 /// unchanged ("hello\nworld\ntest"), so the all-caps expectation
@@ -170,5 +247,24 @@ fn anti_to_uppercase_dropping_action_yields_check_err() {
         check_buffer_scenario(scenario).is_err(),
         "anti-test: SelectAll alone cannot uppercase the buffer; \
          the all-caps expectation must NOT match"
+    );
+}
+
+/// Anti-test: drops `ToUpperCase` from the no-selection
+/// scenario; the buffer should remain "hello world", so claiming
+/// "HELLO world" must NOT validate.
+#[test]
+fn anti_to_uppercase_no_selection_dropping_action_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: ToUpperCase dropped from no-selection scenario".into(),
+        initial_text: "hello world".into(),
+        actions: vec![],
+        expected_text: "HELLO world".into(),
+        expected_primary: CursorExpect::at(5),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without ToUpperCase, 'hello world' cannot become 'HELLO world'"
     );
 }
