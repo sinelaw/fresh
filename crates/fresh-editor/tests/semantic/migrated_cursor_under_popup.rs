@@ -31,11 +31,7 @@ use crate::common::scenario::layout_scenario::{
 use crate::common::scenario::render_snapshot::{
     HardwareCursorRect, RenderSnapshotExpect, RowMatch,
 };
-
-// Buffer text typed before the popup is injected. Cursor lands at
-// the end of "hello world" (byte 11), giving a non-trivial hardware
-// cursor position well inside the content area — never at (0, 0).
-const TYPED_TEXT: &str = "hello world";
+use fresh::test_api::Action;
 
 // Popup geometry mirrors the e2e: width 40 cells, with 3 content
 // lines + 2 borders = 5 rows. Placed at (cursor.col - 2,
@@ -47,8 +43,18 @@ const POPUP_DY: i32 = -1;
 // Width covered = POPUP_WIDTH; height covered = 3 content + 2
 // borders = 5. The cursor sits at offset (+2, +1) from the popup
 // origin (we anchored at -2, -1), so it lands well inside.
-const POPUP_RECT_W: u16 = POPUP_WIDTH;
 const POPUP_RECT_H: u16 = 5;
+
+/// `Action::InsertChar` sequence for "hello world". Typing via
+/// actions (rather than via `initial_text`) is load-bearing here:
+/// it moves the primary cursor to byte 11, which the
+/// `AtHardwareCursorOffset` popup placement then anchors against
+/// at injection time. Loading the same text via `initial_text`
+/// would leave the cursor at byte 0 and the popup would land in
+/// the upper-left corner, not over the cursor.
+fn type_hello_world() -> Vec<Action> {
+    "hello world".chars().map(Action::InsertChar).collect()
+}
 
 fn popup_lines() -> Vec<String> {
     vec![
@@ -85,9 +91,10 @@ fn migrated_hardware_cursor_is_hidden_when_popup_covers_it() {
                       when a popup covers the cell it would otherwise \
                       occupy"
             .into(),
-        initial_text: TYPED_TEXT.into(),
+        initial_text: String::new(),
         width: 80,
         height: 30,
+        actions: type_hello_world(),
         show_popup: Some(PopupSpec {
             title: None,
             lines: popup_lines(),
@@ -152,9 +159,10 @@ fn anti_hardware_cursor_without_popup_stays_visible() {
                       on row 0 (the cursor-hide claim is gated on \
                       the popup, not on harness construction)"
             .into(),
-        initial_text: TYPED_TEXT.into(),
+        initial_text: String::new(),
         width: 80,
         height: 30,
+        actions: type_hello_world(),
         // show_popup intentionally unset.
         expected_snapshot: RenderSnapshotExpect {
             hardware_cursor_row_in: Some((0, 0)),

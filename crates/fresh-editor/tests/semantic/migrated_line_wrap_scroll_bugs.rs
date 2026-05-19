@@ -148,7 +148,7 @@ fn migrated_mouse_wheel_scrolls_wrapped_content() {
                 // Later content from the wrapped line must be visible.
                 // Any letter past 'A' on screen proves the scroll
                 // happened.
-                RowMatch::AnyRowContains("DDDD".into()),
+                RowMatch::AnyRowContains("HHHH".into()),
             ],
             ..Default::default()
         },
@@ -171,7 +171,7 @@ fn migrated_scrollbar_drag_with_wrapped_lines() {
         mouse_drags: vec![MouseDragSpec::VerticalScrollbarFullRange],
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![
-                RowMatch::AnyRowContains("DDDD".into()),
+                RowMatch::AnyRowContains("HHHH".into()),
             ],
             ..Default::default()
         },
@@ -195,9 +195,12 @@ fn migrated_page_down_scrolls_visual_rows_with_wrapped_line() {
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![
                 // After one PageDown on a width=60/height=20 viewport
-                // (~17 visible content rows ≈ 884 chars), we must be
-                // well past 'A' (200 chars) and into 'B' or 'C'.
-                RowMatch::AnyRowContains("BBBB".into()),
+                // (~17 visible content rows ≈ 884 chars), the
+                // viewport has advanced past 'A' (the first 200
+                // chars of the wrapped line). The "AAAA" sentinel
+                // that's visible at the top of the buffer must NOT
+                // be visible anymore.
+                RowMatch::NoRowContains("AAAA".into()),
             ],
             ..Default::default()
         },
@@ -303,7 +306,7 @@ fn anti_mouse_wheel_without_scroll_leaves_screen_unchanged() {
         events: Vec::new(),
         config_overrides: config_wrap_on(),
         expected_snapshot: RenderSnapshotExpect {
-            row_checks: vec![RowMatch::AnyRowContains("DDDD".into())],
+            row_checks: vec![RowMatch::AnyRowContains("HHHH".into())],
             ..Default::default()
         },
         ..Default::default()
@@ -317,19 +320,19 @@ fn anti_mouse_wheel_without_scroll_leaves_screen_unchanged() {
 }
 
 /// Anti-test: drop the `PageDown` action. Without it the viewport
-/// stays at the top and "BBBB" must NOT appear — proves the
-/// PageDown test's assertion is gated on the keystroke.
+/// stays at the top, so "AAAA" remains visible — and the positive
+/// test's `NoRowContains("AAAA")` claim must fail.
 #[test]
 fn anti_page_down_without_keypress_leaves_screen_unchanged() {
     let scenario = LayoutScenario {
-        description: "anti: no PageDown — viewport stuck at top, BBBB off-screen".into(),
+        description: "anti: no PageDown — viewport stuck at top, AAAA still on screen".into(),
         initial_text: striped_long_line(),
         width: TERMINAL_WIDTH_60,
         height: TERMINAL_HEIGHT_20,
         actions: vec![Action::MoveDocumentStart],
         config_overrides: config_wrap_on(),
         expected_snapshot: RenderSnapshotExpect {
-            row_checks: vec![RowMatch::AnyRowContains("BBBB".into())],
+            row_checks: vec![RowMatch::NoRowContains("AAAA".into())],
             ..Default::default()
         },
         ..Default::default()
@@ -337,7 +340,7 @@ fn anti_page_down_without_keypress_leaves_screen_unchanged() {
     assert!(
         check_layout_scenario(scenario).is_err(),
         "anti-test: without PageDown the viewport stays at the start of the \
-         wrapped line, so BBBB must NOT be visible. The positive test's 'BBBB \
-         visible' check should fail."
+         wrapped line, so AAAA remains on screen. The positive test's \
+         NoRowContains('AAAA') check should fail."
     );
 }

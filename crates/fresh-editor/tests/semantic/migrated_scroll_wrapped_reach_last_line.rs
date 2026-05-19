@@ -6,41 +6,41 @@
 //! A purely declarative rewrite (scenarios-as-data,
 //! zero `EditorTestHarness::` usage) was attempted and DEFERRED. The
 //! load-bearing claims here cannot be expressed in the current
-//! scenario DSL without significant extensions:
+//! scenario DSL without further extensions. Status of each piece:
 //!
-//!   * `mouse_scroll_down(col, row)` and `mouse_drag(c0, r0, c1, r1)` —
-//!     `LayoutScenario` does not accept `InputEvent::Mouse(...)` and
-//!     `EditorTestApi` exposes only `dispatch_mouse_click` (no wheel,
-//!     no drag). Extension needed:
-//!       - Add `EditorTestApi::dispatch_mouse_wheel(col, row, dy)` and
-//!         `dispatch_mouse_drag(c0,r0,c1,r1)`.
-//!       - Add `events: Vec<InputEvent>` (or extend `actions`) to
-//!         `LayoutScenario` and route `Mouse(Wheel/Drag)` through the
-//!         new test_api hooks.
+//!   * Mouse wheel / scrollbar drag — RESOLVED.
+//!     `LayoutScenario.events` now accepts `InputEvent::Mouse(Wheel
+//!     { row, col, dy })` and `Mouse(Drag { from_row, from_col,
+//!     to_row, to_col, button })`, and `LayoutScenario.mouse_drags`
+//!     accepts symbolic `MouseDragSpec::VerticalScrollbarFullRange`.
+//!     Either could carry the scroll mechanism in scenario data.
 //!
-//!   * `content_area_rows()` and `get_screen_row(row)` — the
-//!     `~`-past-EOF row counting in `bug1_check_clamped` and the
-//!     "marker on the last content row" check both require knowing
-//!     which terminal rows are content-area rows. There is no test_api
-//!     projection. Extension needed:
-//!       - Add `EditorTestApi::content_area_rows() -> (u16, u16)`
-//!         that returns (first_content_row, last_content_row).
-//!       - Re-express the marker / `~` checks via
-//!         `RenderSnapshotExpect.row_checks` with a new
-//!         `RowMatch::RowEqualsTrim { row, text: "~" }` variant or
-//!         via per-row `RowMatch::Contains` checks pinned at the
-//!         content-area rows surfaced through the new accessor.
+//!   * `content_area_rows()` / `get_screen_row(row)` — STILL BLOCKING.
+//!     Bug 1's "viewport fully populated (no past-EOF `~` rows)"
+//!     check needs to count populated rows over the content-area
+//!     row range. The "marker sits on the last content row" check
+//!     needs the same range. There is no `EditorTestApi` projection
+//!     of `content_area_rows()`. Extension needed:
+//!       - Add `EditorTestApi::content_area_rows() -> (u16, u16)`.
+//!       - Surface it on `RenderSnapshot.content_area_rows: Option<(u16,
+//!         u16)>` so a scenario matcher can address rows relative to
+//!         the content area instead of hard-coding terminal-chrome
+//!         offsets.
+//!       - Add `RowMatch::AllRowsInRangeMatch { lo, hi, predicate }`
+//!         (or a `NoRowInRangeContains`) so a scenario can express
+//!         "across rows [first_content..=last_content], none is just
+//!         `~`" without expanding the matcher list per row.
 //!
-//!   * Width-sweep + skip-on-precondition logic — each sweep entry
-//!     can either succeed, fail, or skip ("buffer not large enough at
-//!     this width to require scrolling"). `LayoutScenario` has no
-//!     SetupSkipped concept. Extension needed: a wrapper that
-//!     collects per-entry outcomes and asserts at least one
-//!     non-skipped entry, parallel to `drive_width_sweep` here but
-//!     consuming scenarios.
+//!   * Width-sweep + skip-on-precondition logic — STILL BLOCKING.
+//!     Each sweep entry can succeed, fail, or skip ("buffer not
+//!     large enough at this width to require scrolling"). The
+//!     declarative runner has no SetupSkipped concept. Extension
+//!     needed: a sweep wrapper that consumes
+//!     `Vec<LayoutScenario>` and collects per-entry outcomes,
+//!     asserting at least one non-skipped entry succeeded.
 //!
 //! Keeping the current harness-direct implementation (documented in
-//! the section below) until the DSL extensions land.
+//! the section below) until the remaining DSL extensions land.
 //!
 //! See `docs/internal/scenario-migration-status.md` for the broader
 //! migration roadmap.
