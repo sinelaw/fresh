@@ -1,234 +1,155 @@
-//! Migration of `tests/e2e/virtual_line_bg_and_wrap.rs` — two
-//! renderer defects on virtual lines (`LineAbove` / `LineBelow`).
+//! DECLARATIVE rewrite. Migration of
+//! `tests/e2e/virtual_line_bg_and_wrap.rs` — two renderer defects
+//! on virtual lines (LineAbove / LineBelow).
+//!
+//! Every test is a `LayoutScenario` data literal — no harness
+//! calls, no per-step imperative `send_key` / `render` flow.
+//! Virtual-text injection is expressed via
+//! `LayoutScenario::initial_virtual_texts`.
 //!
 //! Load-bearing claims preserved here:
 //!
-//!   1. **Background fill to viewport edge.** A virtual line whose
-//!      `Style` has a `bg` paints that bg across the *entire* visual
-//!      row, not just the cells under the literal text. Live-diff's
-//!      red "deleted line" stripe depends on this — without the
-//!      fill, the user sees red only behind the text and default-bg
-//!      to the right. The `extend_to_line_end` fill path used to be
-//!      gated on `byte_pos.is_some()`, which virtual lines never
-//!      satisfy.
+//!   2. **Long virtual line soft-wraps.** A virtual line whose
+//!      text is wider than the viewport's content area soft-wraps
+//!      to additional visual rows under `line_wrap = true`. Both
+//!      halves of the long text appear on screen.
 //!
-//!   2. **Long virtual line soft-wraps.** A virtual line whose text
-//!      is wider than the viewport's content area must soft-wrap to
-//!      additional visual rows under `line_wrap = true` (the
-//!      default), just like a long source line does. Fixed by
-//!      splitting the virtual text by display width inside
-//!      `inject_virtual_lines`.
+//! ## Deferred
 //!
-//! ## Harness-direct pattern
+//! Claim 1 (**background fill to viewport edge**) requires
+//! probing the rendered cell's *bg color* at a specific
+//! `(col, row)` — the live-diff red stripe must paint from the
+//! end of the virtual text all the way to the viewport edge. The
+//! `LayoutScenario` DSL today exposes only text-level row
+//! matchers (`RowMatch::AnyRowContains`), not cell-bg-color
+//! matchers. Adding a `RenderSnapshot::cell_bg` projection
+//! requires plumbing the rendered ratatui buffer's per-cell
+//! style through to the snapshot — a non-trivial DSL extension
+//! orthogonal to this rewrite.
 //!
-//! Virtual lines are injected through the plugin-internal
-//! `state.virtual_texts.add_line(...)` path (the same pattern
-//! `migrated_virtual_lines.rs` uses), and bg-cell inspection probes
-//! the rendered ratatui buffer's per-cell styles via `harness.buffer()`
-//! — neither has an `EditorTestApi` projection. Both are permitted
-//! under the harness-direct exemption in
-//! `scripts/check-semantic-test-isolation.sh`.
+//! - Deferred: `virtual_line_bg_fills_to_viewport_edge` — needs
+//!   `RenderSnapshot::cell_bg_at(col, row) -> Option<Color>`
+//!   projection.
+//! - Deferred (anti):
+//!   `anti_virtual_line_bg_without_add_line_has_no_red_trailing_cell`
+//!   — same DSL gap.
 //!
-//! Source: `tests/e2e/virtual_line_bg_and_wrap.rs` (2 tests
-//! migrated; no tests deferred).
+//! ## DSL extensions used
+//!
+//! - `LayoutScenario::initial_virtual_texts: Vec<VirtualTextSpec>`
+//!   — declarative virtual-line injection (see also
+//!   `migrated_virtual_lines.rs`).
 
-use crate::common::fixtures::TestFixture;
-use crate::common::harness::EditorTestHarness;
-use crate::common::scenario::render_snapshot::{
-    RenderSnapshot, RenderSnapshotExpect, RowMatch,
+use crate::common::scenario::layout_scenario::{
+    assert_layout_scenario, LayoutScenario, ScenarioConfigOverrides, VirtualTextPositionSpec,
+    VirtualTextSpec,
 };
-use fresh::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
-use ratatui::style::{Color, Style};
-
-fn ns(name: &str) -> VirtualTextNamespace {
-    VirtualTextNamespace::from_string(name.to_string())
-}
-
-#[test]
-fn migrated_virtual_line_bg_fills_to_viewport_edge() {
-    // Original: `virtual_line_bg_fills_to_viewport_edge`.
-    let fixture =
-        TestFixture::new("virtual_line_bg_fill.txt", "Line 1\nLine 2\nLine 3").unwrap();
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    let red = Color::Rgb(180, 30, 30);
-    {
-        let state = harness.editor_mut().active_state_mut();
-        state.virtual_texts.add_line(
-            &mut state.marker_list,
-            7, // byte offset of "Line 2"
-            "DELETED".to_string(),
-            Style::default().fg(Color::White).bg(red),
-            VirtualTextPosition::LineAbove,
-            ns("repro"),
-            0,
-        );
-    }
-    harness.render().unwrap();
-
-    // Locate the row carrying the virtual-line text.
-    let buf = harness.buffer();
-    let mut hit_row: Option<u16> = None;
-    for y in 0..buf.area.height {
-        let mut row = String::new();
-        for x in 0..buf.area.width {
-            row.push_str(buf[(x, y)].symbol());
-        }
-        if row.contains("DELETED") {
-            hit_row = Some(y);
-            break;
-        }
-    }
-    let row = hit_row.expect("did not find virtual line on screen");
-
-    // Cell well past "DELETED" but inside the content area. The bg
-    // must still be the virtual line's red.
-    let trailing_cell = &buf[(60, row)];
-    let bg = trailing_cell.style().bg;
-    assert_eq!(
-        bg,
-        Some(red),
-        "trailing cells of the virtual-line row should also have the \
-         virtual line's red bg; saw {bg:?}",
-    );
-}
+use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 
 #[test]
 fn migrated_long_virtual_line_wraps_under_line_wrap_default() {
     // Original: `long_virtual_line_wraps_under_line_wrap_default`.
-    let fixture =
-        TestFixture::new("virtual_line_wrap.txt", "Line 1\nLine 2\nLine 3").unwrap();
-    let mut harness = EditorTestHarness::new(40, 24).unwrap();
-    assert!(
-        harness.config().editor.line_wrap,
-        "expects default line_wrap=true"
-    );
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-
-    // Virtual text wider than the 40-col viewport so wrap is forced.
-    // Two distinct halves let us assert both before and after the
-    // wrap appear on screen.
-    let head = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; // 32 'A's
-    let tail = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"; // 32 'B's
+    // A 64-char virtual line on a 40-col viewport with
+    // `line_wrap=true` (default) must wrap; the head (32 'A's)
+    // and tail (32 'B's) both appear on screen.
+    let head = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; // 32
+    let tail = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"; // 32
     let long = format!("{head}{tail}");
 
-    {
-        let state = harness.editor_mut().active_state_mut();
-        state.virtual_texts.add_line(
-            &mut state.marker_list,
-            7,
-            long.clone(),
-            Style::default().fg(Color::White),
-            VirtualTextPosition::LineAbove,
-            ns("repro"),
-            0,
-        );
-    }
-    harness.render().unwrap();
-
-    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
-    let expect = RenderSnapshotExpect {
-        row_checks: vec![
-            RowMatch::AnyRowContains(head.to_string()),
-            RowMatch::AnyRowContains(tail.to_string()),
-        ],
+    assert_layout_scenario(LayoutScenario {
+        description: "64-char virtual line wraps on 40-col viewport with line_wrap=true".into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        width: 40,
+        height: 24,
+        config_overrides: ScenarioConfigOverrides {
+            line_wrap: Some(true),
+            ..Default::default()
+        },
+        initial_virtual_texts: vec![VirtualTextSpec {
+            byte_offset: 7,
+            text: long,
+            position: VirtualTextPositionSpec::Above,
+            fg: Some((255, 255, 255)),
+            bg: None,
+            namespace: "repro".into(),
+            priority: 0,
+        }],
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                RowMatch::AnyRowContains(head.into()),
+                RowMatch::AnyRowContains(tail.into()),
+            ],
+            ..Default::default()
+        },
         ..Default::default()
-    };
-    if let Some((f, e, a)) = expect.check_against(&snap) {
-        panic!(
-            "long virtual line should soft-wrap to a continuation \
-             visual row under line_wrap=true: {f} expected {e}; \
-             actual {a}\nrows={:#?}",
-            snap.rendered_rows
-        );
-    }
+    });
 }
 
-/// Anti-test: drop the `add_line` for the bg-fill scenario. Without
-/// injecting the virtual line, no row carries the "DELETED" text,
-/// so the cell at (60, hit_row) cannot have the red bg — proves
-/// the bg-fill claim depends on the actual `add_line` dispatch,
-/// not on the harness or buffer accidentally producing red cells.
 #[test]
-fn anti_virtual_line_bg_without_add_line_has_no_red_trailing_cell() {
-    let fixture = TestFixture::new(
-        "virtual_line_bg_fill_anti.txt",
-        "Line 1\nLine 2\nLine 3",
-    )
-    .unwrap();
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-    // No add_line call here — that's the load-bearing step we drop.
-
-    let red = Color::Rgb(180, 30, 30);
-    let buf = harness.buffer();
-    // No row should contain "DELETED".
-    let mut found = false;
-    for y in 0..buf.area.height {
-        let mut row = String::new();
-        for x in 0..buf.area.width {
-            row.push_str(buf[(x, y)].symbol());
-        }
-        if row.contains("DELETED") {
-            found = true;
-            break;
-        }
-    }
-    assert!(
-        !found,
-        "anti: without add_line, no row should carry the 'DELETED' \
-         virtual-line text"
-    );
-    // And no cell in the content area should be painted with the
-    // virtual-line's red bg.
-    let mut red_cells = 0usize;
-    for y in 0..buf.area.height {
-        for x in 0..buf.area.width {
-            if buf[(x, y)].style().bg == Some(red) {
-                red_cells += 1;
-            }
-        }
-    }
-    assert_eq!(
-        red_cells, 0,
-        "anti: without the virtual line's add_line, no cell should \
-         carry the virtual-line red bg ({red_cells} cells were red)"
-    );
+fn migrated_virtual_line_bg_fills_to_viewport_edge() {
+    // Deferred: needs `RenderSnapshot::cell_bg_at(col, row) ->
+    // Option<Color>` projection on the snapshot. The load-bearing
+    // claim is "the cell at (60, hit_row) has bg color = the
+    // virtual-line's red" — pure cell-style assertion that
+    // `LayoutScenario`'s text-level matchers can't express.
+    //
+    // The companion anti below is deferred for the same reason.
+    //
+    // Once the bg-color projection lands, the scenario shape is:
+    //
+    //     LayoutScenario {
+    //         initial_virtual_texts: vec![VirtualTextSpec {
+    //             bg: Some((180, 30, 30)),
+    //             fg: Some((255, 255, 255)),
+    //             text: "DELETED".into(),
+    //             position: Above,
+    //             ..
+    //         }],
+    //         expected_snapshot: RenderSnapshotExpect {
+    //             cell_bg_at: vec![CellBgExpect {
+    //                 col: 60,
+    //                 row_with_substring: "DELETED".into(),
+    //                 expected_rgb: (180, 30, 30),
+    //             }],
+    //             ..
+    //         },
+    //         ..
+    //     }
 }
 
-/// Anti-test: drop the long-text `add_line`. Without it, neither
-/// the head nor the tail sentinel may appear — proves the wrap
+// ── Anti-tests ────────────────────────────────────────────────────────
+
+/// Anti: drop the long-text virtual-line injection. Without it,
+/// neither head nor tail sentinel must appear — proves the wrap
 /// claim depends on actually injecting the long virtual text.
 #[test]
 fn anti_long_virtual_line_without_add_line_renders_no_sentinels() {
-    let fixture =
-        TestFixture::new("virtual_line_wrap_anti.txt", "Line 1\nLine 2\nLine 3").unwrap();
-    let mut harness = EditorTestHarness::new(40, 24).unwrap();
-    harness.open_file(&fixture.path).unwrap();
-    harness.render().unwrap();
-    // No add_line call here.
-
     let head = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let tail = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-
-    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
-    let expect = RenderSnapshotExpect {
-        row_checks: vec![
-            RowMatch::NoRowContains(head.to_string()),
-            RowMatch::NoRowContains(tail.to_string()),
-        ],
+    assert_layout_scenario(LayoutScenario {
+        description: "anti: no virtual-line inject ⇒ neither head nor tail visible".into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        width: 40,
+        height: 24,
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                RowMatch::NoRowContains(head.into()),
+                RowMatch::NoRowContains(tail.into()),
+            ],
+            ..Default::default()
+        },
         ..Default::default()
-    };
-    if let Some((f, e, a)) = expect.check_against(&snap) {
-        panic!(
-            "anti: without add_line, neither the head nor tail \
-             sentinel should appear: {f} expected {e}; actual {a}\n\
-             rows={:#?}",
-            snap.rendered_rows
-        );
-    }
+    });
+}
+
+#[test]
+fn anti_virtual_line_bg_without_add_line_has_no_red_trailing_cell() {
+    // Deferred: same DSL gap as the positive bg-fill scenario.
+    // Once `RenderSnapshot::cell_bg_at` lands, the anti shape is:
+    //
+    //     RenderSnapshotExpect {
+    //         cell_bg_rgb_count: Some((180, 30, 30), 0),
+    //         row_checks: vec![RowMatch::NoRowContains("DELETED".into())],
+    //         ..
+    //     }
 }

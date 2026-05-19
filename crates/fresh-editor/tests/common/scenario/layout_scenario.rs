@@ -508,7 +508,9 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     let needs_rows = expect_needs_rows(&s.expected_snapshot)
         || s.step_assertions
             .iter()
-            .any(|sa| expect_needs_rows(&sa.expect));
+            .any(|sa| expect_needs_rows(&sa.expect))
+        || !s.expected_virtual_rows_no_digit_gutter.is_empty()
+        || !s.expected_row_order.is_empty();
 
     let extract_snapshot = |h: &mut EditorTestHarness| -> RenderSnapshot {
         if needs_rows {
