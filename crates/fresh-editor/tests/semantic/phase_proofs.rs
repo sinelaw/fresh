@@ -12,7 +12,9 @@ use crate::common::scenario::context::{
 };
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::modal_scenario::{assert_modal_scenario, ModalScenario};
-use crate::common::scenario::observable::{FsState, ModalState, RoundTripGrid, WorkspaceState};
+use crate::common::scenario::observable::{
+    ActivePathExpect, BufferPathsExpect, FsState, ModalState, RoundTripGrid, WorkspaceExpect,
+};
 use crate::common::scenario::persistence_scenario::{
     assert_persistence_scenario, PersistenceScenario,
 };
@@ -85,12 +87,15 @@ fn phase7_two_named_buffers_count_as_two() {
             initial_splits: None,
         },
         events: vec![],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 2,
-            // Wildcard (None) — the temp-prefixed display path
-            // varies per run.
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            // Harness load_buffer_from_text_named routes through
+            // open_file → most-recently-opened becomes active.
+            active_buffer_path: ActivePathExpect::EndsWith("bravo.txt".into()),
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(vec![
+                "alpha.txt".into(),
+                "bravo.txt".into(),
+            ]),
         },
     });
 }

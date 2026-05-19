@@ -4,14 +4,16 @@
 
 use crate::common::scenario::context::{NamedBuffer, WorkspaceContext};
 use crate::common::scenario::input_event::InputEvent;
-use crate::common::scenario::observable::WorkspaceState;
+use crate::common::scenario::observable::{
+    ActivePathExpect, BufferPathsExpect, WorkspaceExpect,
+};
 use crate::common::scenario::workspace_scenario::{assert_workspace_scenario, WorkspaceScenario};
 use fresh::test_api::Action;
 
 #[test]
 fn migrated_one_buffer_yields_count_one() {
     assert_workspace_scenario(WorkspaceScenario {
-        description: "one initial buffer ⇒ buffer_count == 1".into(),
+        description: "one initial buffer ⇒ buffer_count == 1, active is that file".into(),
         workspace: WorkspaceContext {
             initial_buffers: vec![NamedBuffer {
                 filename: "lonely.txt".into(),
@@ -20,10 +22,10 @@ fn migrated_one_buffer_yields_count_one() {
             initial_splits: None,
         },
         events: vec![],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 1,
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            active_buffer_path: ActivePathExpect::EndsWith("lonely.txt".into()),
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(vec!["lonely.txt".into()]),
         },
     });
 }
@@ -31,7 +33,7 @@ fn migrated_one_buffer_yields_count_one() {
 #[test]
 fn migrated_three_buffers_yield_count_three() {
     assert_workspace_scenario(WorkspaceScenario {
-        description: "three initial buffers ⇒ buffer_count == 3".into(),
+        description: "three initial buffers ⇒ count == 3, paths in load order".into(),
         workspace: WorkspaceContext {
             initial_buffers: vec![
                 NamedBuffer {
@@ -50,10 +52,14 @@ fn migrated_three_buffers_yield_count_three() {
             initial_splits: None,
         },
         events: vec![],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 3,
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            active_buffer_path: ActivePathExpect::Any,
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(vec![
+                "a.txt".into(),
+                "b.txt".into(),
+                "c.txt".into(),
+            ]),
         },
     });
 }
@@ -74,10 +80,10 @@ fn migrated_typing_leaves_buffer_count_unchanged() {
             InputEvent::Action(Action::MoveDocumentEnd),
             InputEvent::Action(Action::InsertChar('!')),
         ],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 1,
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            active_buffer_path: ActivePathExpect::EndsWith("x.txt".into()),
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(vec!["x.txt".into()]),
         },
     });
 }

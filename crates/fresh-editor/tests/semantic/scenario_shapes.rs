@@ -18,7 +18,8 @@ use crate::common::scenario::layout_scenario::LayoutScenario;
 use crate::common::scenario::lsp_scenario::LspScenario;
 use crate::common::scenario::modal_scenario::ModalScenario;
 use crate::common::scenario::observable::{
-    FsState, LspTraffic, ModalState, PopupSnapshot, RoundTripGrid, StyledFrame, WorkspaceState,
+    ActivePathExpect, BufferPathsExpect, FsState, LspTraffic, ModalState, PopupSnapshot,
+    RoundTripGrid, StyledFrame, WorkspaceExpect,
 };
 use crate::common::scenario::persistence_scenario::PersistenceScenario;
 use crate::common::scenario::render_snapshot::{RenderSnapshot, RenderSnapshotExpect};
@@ -146,10 +147,13 @@ fn json_roundtrip_workspace_scenario() {
                 initial_splits: None,
             },
             events: vec![],
-            expected: WorkspaceState {
+            expected: WorkspaceExpect {
                 buffer_count: 2,
-                active_buffer_path: Some("a.rs".into()),
-                buffer_paths: vec!["a.rs".into(), "b.rs".into()],
+                active_buffer_path: ActivePathExpect::EndsWith("a.rs".into()),
+                buffer_paths: BufferPathsExpect::EndsWithInOrder(vec![
+                    "a.rs".into(),
+                    "b.rs".into(),
+                ]),
             },
         },
     );

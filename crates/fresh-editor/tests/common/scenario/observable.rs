@@ -99,6 +99,13 @@ impl Observable for ModalState {
 // Workspace observable (Phase 7)
 // ─────────────────────────────────────────────────────────────────────
 
+/// Observed workspace state at a single point in time.
+///
+/// This is the value the runner extracts from the harness and
+/// compares against the test's expectations. Tests should not
+/// construct `WorkspaceState` directly as their expectation —
+/// use `WorkspaceExpect` (below) so the wildcard vs. specific
+/// match for each field is explicit.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct WorkspaceState {
     pub buffer_count: usize,
@@ -117,6 +124,48 @@ impl Observable for WorkspaceState {
             buffer_paths: api.buffer_paths(),
         }
     }
+}
+
+/// Expectation for the workspace's active buffer path.
+///
+/// Path matching is suffix-based because the harness uses a temp
+/// project directory whose absolute prefix isn't known to the
+/// test author. `EndsWith("foo.txt")` matches both
+/// `/tmp/xxx/foo.txt` and `/tmp/yyy/sub/foo.txt`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ActivePathExpect {
+    /// Don't check the active buffer path. Must be explicit — there
+    /// is no implicit wildcard from leaving a field unset.
+    #[default]
+    Any,
+    /// Must have no active buffer (e.g. after closing the last one).
+    None_,
+    /// Must have an active buffer whose path ends with the given
+    /// suffix.
+    EndsWith(String),
+}
+
+/// Expectation for the open buffer-list.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum BufferPathsExpect {
+    /// Don't check the list. Must be explicit.
+    #[default]
+    Any,
+    /// Each entry of the expected vec must be a suffix of the
+    /// actual entry at the same index. Vec length must match
+    /// exactly. Ordering matters.
+    EndsWithInOrder(Vec<String>),
+}
+
+/// What a test asserts about the workspace at the end of an event
+/// sequence. Distinct from `WorkspaceState` so callers must make
+/// every field's match policy explicit.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceExpect {
+    /// Required exact buffer count.
+    pub buffer_count: usize,
+    pub active_buffer_path: ActivePathExpect,
+    pub buffer_paths: BufferPathsExpect,
 }
 
 // ─────────────────────────────────────────────────────────────────────

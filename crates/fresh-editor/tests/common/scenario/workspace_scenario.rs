@@ -8,7 +8,9 @@ use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::context::WorkspaceContext;
 use crate::common::scenario::failure::ScenarioFailure;
 use crate::common::scenario::input_event::InputEvent;
-use crate::common::scenario::observable::{Observable, WorkspaceState};
+use crate::common::scenario::observable::{
+    ActivePathExpect, BufferPathsExpect, Observable, WorkspaceExpect, WorkspaceState,
+};
 use fresh::test_api::EditorTestApi;
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -16,7 +18,7 @@ pub struct WorkspaceScenario {
     pub description: String,
     pub workspace: WorkspaceContext,
     pub events: Vec<InputEvent>,
-    pub expected: WorkspaceState,
+    pub expected: WorkspaceExpect,
 }
 
 pub fn check_workspace_scenario(s: WorkspaceScenario) -> Result<(), ScenarioFailure> {
@@ -62,19 +64,64 @@ pub fn check_workspace_scenario(s: WorkspaceScenario) -> Result<(), ScenarioFail
             actual: actual.buffer_count.to_string(),
         });
     }
-    // active_buffer_path: only assert if the expectation is non-empty.
-    // None on the expected side acts as a wildcard so callers can
-    // assert just on count without knowing the exact temp-file path.
-    if let Some(want) = &s.expected.active_buffer_path {
-        if actual.active_buffer_path.as_deref() != Some(want.as_str()) {
-            return Err(ScenarioFailure::WorkspaceStateMismatch {
-                description: s.description,
-                field: "active_buffer_path".into(),
-                expected: format!("{want:?}"),
-                actual: format!("{:?}", actual.active_buffer_path),
-            });
+
+    match &s.expected.active_buffer_path {
+        ActivePathExpect::Any => {}
+        ActivePathExpect::None_ => {
+            if actual.active_buffer_path.is_some() {
+                return Err(ScenarioFailure::WorkspaceStateMismatch {
+                    description: s.description,
+                    field: "active_buffer_path".into(),
+                    expected: "None".into(),
+                    actual: format!("{:?}", actual.active_buffer_path),
+                });
+            }
+        }
+        ActivePathExpect::EndsWith(suffix) => match actual.active_buffer_path.as_deref() {
+            None => {
+                return Err(ScenarioFailure::WorkspaceStateMismatch {
+                    description: s.description,
+                    field: "active_buffer_path".into(),
+                    expected: format!("EndsWith({suffix:?})"),
+                    actual: "None".into(),
+                });
+            }
+            Some(p) if !p.ends_with(suffix) => {
+                return Err(ScenarioFailure::WorkspaceStateMismatch {
+                    description: s.description,
+                    field: "active_buffer_path".into(),
+                    expected: format!("EndsWith({suffix:?})"),
+                    actual: format!("{p:?}"),
+                });
+            }
+            Some(_) => {}
+        },
+    }
+
+    match &s.expected.buffer_paths {
+        BufferPathsExpect::Any => {}
+        BufferPathsExpect::EndsWithInOrder(expected) => {
+            if actual.buffer_paths.len() != expected.len() {
+                return Err(ScenarioFailure::WorkspaceStateMismatch {
+                    description: s.description,
+                    field: "buffer_paths.len".into(),
+                    expected: expected.len().to_string(),
+                    actual: format!("{} ({:?})", actual.buffer_paths.len(), actual.buffer_paths),
+                });
+            }
+            for (i, (want, got)) in expected.iter().zip(actual.buffer_paths.iter()).enumerate() {
+                if !got.ends_with(want) {
+                    return Err(ScenarioFailure::WorkspaceStateMismatch {
+                        description: s.description,
+                        field: format!("buffer_paths[{i}]"),
+                        expected: format!("EndsWith({want:?})"),
+                        actual: format!("{got:?}"),
+                    });
+                }
+            }
         }
     }
+
     Ok(())
 }
 

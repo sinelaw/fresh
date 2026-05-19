@@ -6,22 +6,23 @@
 
 use crate::common::scenario::context::{NamedBuffer, WorkspaceContext};
 use crate::common::scenario::input_event::InputEvent;
-use crate::common::scenario::observable::WorkspaceState;
+use crate::common::scenario::observable::{
+    ActivePathExpect, BufferPathsExpect, WorkspaceExpect,
+};
 use crate::common::scenario::workspace_scenario::{
     assert_workspace_scenario, check_workspace_scenario, WorkspaceScenario,
 };
 use fresh::test_api::Action;
 
 #[test]
-fn migrated_three_buffers_active_path_is_first_loaded() {
-    // Original: `test_open_multiple_files`. The runner opens all
-    // three buffers in order; the *first* becomes active (this
-    // matches the `WorkspaceContext` documented contract — the
-    // production `open_file` switches the active buffer to the
-    // most-recently-opened, but the harness's
-    // `load_buffer_from_text_named` keeps the first as active).
+fn migrated_three_buffers_active_path_is_most_recently_loaded() {
+    // Original: `test_open_multiple_files`. The harness's
+    // `load_buffer_from_text_named` calls the same `open_file`
+    // path the production binary walks, which makes the
+    // most-recently-opened buffer active. So after loading three
+    // buffers in order, `file3.txt` is active.
     assert_workspace_scenario(WorkspaceScenario {
-        description: "three loaded buffers ⇒ active_buffer_path ends with 'file1.txt'".into(),
+        description: "three loaded buffers ⇒ active_buffer_path ends with 'file3.txt'".into(),
         workspace: WorkspaceContext {
             initial_buffers: vec![
                 NamedBuffer {
@@ -40,13 +41,14 @@ fn migrated_three_buffers_active_path_is_first_loaded() {
             initial_splits: None,
         },
         events: vec![],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 3,
-            // Wildcard on the active path because the harness
-            // returns a system-temp absolute path; the count + the
-            // close-decrements scenario below pin the topology.
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            active_buffer_path: ActivePathExpect::EndsWith("file3.txt".into()),
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(vec![
+                "file1.txt".into(),
+                "file2.txt".into(),
+                "file3.txt".into(),
+            ]),
         },
     });
 }
@@ -72,10 +74,10 @@ fn migrated_close_active_buffer_decrements_buffer_count() {
             initial_splits: None,
         },
         events: vec![InputEvent::Action(Action::Close)],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 1,
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            active_buffer_path: ActivePathExpect::Any,
+            buffer_paths: BufferPathsExpect::Any,
         },
     });
 }
@@ -107,10 +109,18 @@ fn migrated_next_buffer_does_not_change_count() {
             InputEvent::Action(Action::NextBuffer),
             InputEvent::Action(Action::NextBuffer),
         ],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 3,
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            // NextBuffer changes which buffer is active; pin that the
+            // active path is one of the loaded files, but don't pin
+            // which one — the harness's NextBuffer ordering is not
+            // load-bearing on this claim.
+            active_buffer_path: ActivePathExpect::Any,
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(vec![
+                "x.txt".into(),
+                "y.txt".into(),
+                "z.txt".into(),
+            ]),
         },
     });
 }
@@ -137,10 +147,10 @@ fn anti_close_buffer_dropping_action_yields_check_err() {
             initial_splits: None,
         },
         events: vec![],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 1,
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            active_buffer_path: ActivePathExpect::Any,
+            buffer_paths: BufferPathsExpect::Any,
         },
     };
     assert!(

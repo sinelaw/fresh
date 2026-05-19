@@ -1,7 +1,9 @@
 //! Wave-3 WorkspaceScenarios — additional buffer/tab claims.
 
 use crate::common::scenario::context::{NamedBuffer, WorkspaceContext};
-use crate::common::scenario::observable::WorkspaceState;
+use crate::common::scenario::observable::{
+    ActivePathExpect, BufferPathsExpect, WorkspaceExpect,
+};
 use crate::common::scenario::workspace_scenario::{assert_workspace_scenario, WorkspaceScenario};
 
 #[test]
@@ -14,7 +16,7 @@ fn migrated_zero_initial_buffers_yields_empty_workspace_runner_error() {
         description: "empty workspace context is rejected".into(),
         workspace: WorkspaceContext::default(),
         events: vec![],
-        expected: WorkspaceState::default(),
+        expected: WorkspaceExpect::default(),
     });
     assert!(
         result.is_err(),
@@ -31,16 +33,18 @@ fn migrated_five_initial_buffers_yield_count_five() {
         })
         .collect();
     assert_workspace_scenario(WorkspaceScenario {
-        description: "five initial buffers ⇒ buffer_count == 5".into(),
+        description: "five initial buffers ⇒ buffer_count == 5, paths in load order".into(),
         workspace: WorkspaceContext {
             initial_buffers: buffers,
             initial_splits: None,
         },
         events: vec![],
-        expected: WorkspaceState {
+        expected: WorkspaceExpect {
             buffer_count: 5,
-            active_buffer_path: None,
-            buffer_paths: Vec::new(),
+            active_buffer_path: ActivePathExpect::Any,
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(
+                (0..5).map(|i| format!("file_{i}.txt")).collect(),
+            ),
         },
     });
 }
