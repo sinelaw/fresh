@@ -748,6 +748,9 @@ fn anti_keybinding_n_without_press_keeps_hunk_off_screen() {
     let (old_content, new_content, hunks) = generate_multi_hunk_content();
     let _composite_id = setup_diff(&mut harness, &old_content, &new_content, &hunks);
 
+    // TEMP verify: add the keypresses back
+    harness.send_key(KeyCode::Char('n'), KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Char('n'), KeyModifiers::NONE).unwrap();
     // No send_key('n') here — that's the dropped step. Hunk 2 is at
     // line 60, off the bottom of the default 40-row viewport.
     assert_no_row_contains(

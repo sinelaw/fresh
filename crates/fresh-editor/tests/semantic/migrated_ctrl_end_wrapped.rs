@@ -17,6 +17,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::render_snapshot::RenderSnapshot;
+use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::test_api::{Action, EditorTestApi};
 
 fn config_with_line_wrap() -> fresh::config::Config {

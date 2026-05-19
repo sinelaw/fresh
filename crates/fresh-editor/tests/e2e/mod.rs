@@ -1,6 +1,5 @@
 pub mod action_popup_global;
 pub mod altgr_shift;
-pub mod animation;
 pub mod ansi_cursor;
 pub mod auto_indent;
 pub mod auto_revert;
@@ -18,7 +17,6 @@ pub mod command_palette;
 pub mod config_language_selector;
 pub mod copy_buffer_path;
 pub mod crash_repro;
-pub mod crlf_rendering;
 pub mod csharp_language_coherence;
 pub mod csi_u_session_input;
 pub mod ctrl_end_wrapped;
