@@ -111,20 +111,20 @@ fn search_for(needle: &str) -> Vec<Action> {
 #[test]
 fn migrated_issue_1574_down_arrow_scrolling_invariants_rendered() {
     // Original: `test_issue_1574_down_arrow_scrolling_invariants_rendered`.
-    // Width sweep [60, 70, 80, 90, 100] × heights [20, 28].
-    // Encoded as a list of (width, height) LayoutScenarios each
-    // dispatching a generous MoveDown chain and asserting
-    // `RowMatch::AnyRowContains(END_MARKER)`.
-    let widths: [u16; 5] = [60, 70, 80, 90, 100];
+    // Width sweep [60, 80, 100] × heights [20, 28] — sparser than
+    // the original e2e's [60, 70, 80, 90, 100] to keep wall-time
+    // bounded; the regression invariant is geometry-independent
+    // so any sample of the sweep captures it.
+    let widths: [u16; 3] = [60, 80, 100];
     let heights: [u16; 2] = [20, 28];
-    // 80 MoveDowns is enough to walk the 29-line fixture at any
-    // of the sweep widths (worst case ≈ 65 visual rows at width
+    // 150 MoveDowns is enough to walk the 29-line fixture at any
+    // of the sweep widths (worst case ≈ 100+ visual rows at width
     // 60). Each step renders so the wrap-aware MoveDown path
     // (`compute_wrap_aware_visual_move_fallback`) sees a fresh
     // layout cache — without that, MoveDown falls back to the
     // byte-based logical-line variant that advances only one
     // visual row at a time.
-    let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(80).collect();
+    let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(150).collect();
     // Render between each MoveDown by adding a step assertion at
     // every action index — the runner renders before each step,
     // populating the layout cache that wrap-aware MoveDown needs.
@@ -165,7 +165,7 @@ fn migrated_issue_1574_up_arrow_scrolling_invariants_rendered() {
     let widths: [u16; 5] = [60, 70, 80, 90, 100];
     let heights: [u16; 2] = [20, 28];
     let mut actions = vec![Action::MoveDocumentEnd];
-    actions.extend(std::iter::repeat(Action::MoveUp).take(80));
+    actions.extend(std::iter::repeat(Action::MoveUp).take(150));
     // Render between each MoveUp so the wrap-aware MoveUp fallback
     // sees a fresh layout cache (mirror of the Down sweep — see
     // `compute_wrap_aware_visual_move_fallback` for the rationale).

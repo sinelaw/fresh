@@ -54,6 +54,12 @@ pub struct RenderSnapshot {
     /// a specific glyph or content lands on a specific row).
     #[serde(default)]
     pub rendered_rows: Vec<String>,
+    /// Active status-bar message text, if any. Populated by
+    /// `extract` from `EditorTestApi::status_message`. Used by
+    /// `RenderSnapshotExpect::status_message` to assert specific
+    /// status messages after an action (e.g. theme-load errors).
+    #[serde(default)]
+    pub status_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -70,6 +76,7 @@ impl Observable for RenderSnapshot {
         let _ = harness.render();
         let api = harness.api_mut();
         let cursor_byte = api.primary_caret().position;
+        let status_message = api.status_message();
         RenderSnapshot {
             width: api.terminal_width(),
             height: api.terminal_height(),
@@ -83,6 +90,7 @@ impl Observable for RenderSnapshot {
             buffer_text: String::new(),
             terminal_cursor: None,
             rendered_rows: Vec::new(),
+            status_message,
         }
     }
 }
@@ -102,43 +110,49 @@ impl RenderSnapshot {
     /// `row_contains` / `row_equals` matchers to assert on
     /// specific row content.
     pub fn extract_with_rendered_rows(harness: &mut EditorTestHarness) -> Self {
+        // Run a sentinel-tracking render BEFORE the real-ANSI
+        // render so we can detect whether the production
+        // cursor-obscured-by-overlay check fired and suppressed
+        // `Frame::set_cursor_position`.
+        //
+        // `render_observing_cursor` parks the backend cursor at
+        // `(0, 0)` as a sentinel and runs `Terminal::draw`; if
+        // the editor populated `Frame::cursor_position`, the
+        // cursor moves and the call returns `Some((x, y))`. If
+        // the editor left it `None` (because a popup covers the
+        // cursor cell), the sentinel survives and the call
+        // returns `None`. We project that through into
+        // `hardware_cursor: None` and `terminal_cursor: None` so
+        // scenarios observe the same "cursor was hidden" outcome
+        // the real terminal would display.
+        //
+        // The vt100 hidden flag (`vt100_cursor_hidden`) is
+        // unreliable for this signal because `render_real` writes
+        // plain cell payloads without going through
+        // `Terminal::draw`, so vt100 never sees the
+        // cursor-visibility command. The sentinel trick captures
+        // the real `Terminal::draw` decision.
+        let observed_cursor = harness.render_observing_cursor().ok().flatten();
         let _ = harness.render_real();
         let screen = harness.vt100_screen_to_string();
         let rendered_rows: Vec<String> =
             screen.split('\n').map(|s| s.to_string()).collect();
-        // The production cursor-obscured-by-overlay check fires
-        // inside `render_real`: when a popup covers the cell the
-        // editor would otherwise call `Frame::set_cursor_position`
-        // on, the call is omitted and ratatui ends the frame with
-        // `hide_cursor`. vt100 reflects that as
-        // `screen().hide_cursor() == true`. Project it through as
-        // `hardware_cursor: None` so scenarios observe the same
-        // "cursor was hidden" outcome the real terminal would
-        // display — `EditorTestApi::hardware_cursor_position()`
-        // alone returns the cursor's viewport-derived location
-        // regardless of overlay state, which would silently fail
-        // any cursor-under-popup assertion.
-        let cursor_hidden_by_render = harness.vt100_cursor_hidden();
-        // Terminal-absolute cursor position from ratatui's
-        // TestBackend (where `Terminal::draw` left the cursor).
-        // Always populated for an `extract_with_rendered_rows`
-        // snapshot — unlike `vt100_cursor_position` it's not gated
-        // on `render_real()` emitting cursor-visibility commands.
-        // Distinct from `hardware_cursor` below, which is the
-        // editor's viewport-relative reading and IS gated on the
-        // vt100 hidden flag (so overlay-obscuration tests still
-        // see `hardware_cursor = None` when a popup covers it).
-        let terminal_cursor_raw = Some(harness.screen_cursor_position());
+        let terminal_cursor = observed_cursor;
         let api = harness.api_mut();
         let cursor_byte = api.primary_caret().position;
         let buffer_text = api.buffer_text();
         let raw_cursor = api.hardware_cursor_position();
-        let hardware_cursor = if cursor_hidden_by_render {
-            None
-        } else {
+        // hardware_cursor mirrors the editor's viewport-relative
+        // coordinates (matchers like `hardware_cursor_row_in`
+        // compare against these), but is set to `None` when the
+        // renderer hid the cursor — the obscured-by-overlay path
+        // the cursor-under-popup tests guard against.
+        let hardware_cursor = if observed_cursor.is_some() {
             raw_cursor
+        } else {
+            None
         };
-        let terminal_cursor = terminal_cursor_raw;
+        let status_message = api.status_message();
         RenderSnapshot {
             width: api.terminal_width(),
             height: api.terminal_height(),
@@ -152,6 +166,7 @@ impl RenderSnapshot {
             buffer_text,
             terminal_cursor,
             rendered_rows,
+            status_message,
         }
     }
 }
@@ -321,6 +336,11 @@ pub struct RenderSnapshotExpect {
     /// dropped.
     #[serde(default)]
     pub hardware_cursor_at: Option<(u16, u16)>,
+    /// Active status-bar message text. Some(s) ⇒ assert the snapshot's
+    /// `status_message` field exactly equals `s`. Populated by
+    /// snapshots built with `extract_with_rendered_rows`.
+    #[serde(default)]
+    pub status_message: Option<String>,
 }
 
 /// Rectangle used by `hardware_cursor_hidden_or_outside_rect`.

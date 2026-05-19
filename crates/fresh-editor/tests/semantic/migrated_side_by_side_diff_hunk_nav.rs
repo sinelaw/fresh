@@ -5,7 +5,7 @@
 //! Scenarios are pure data: each test is a single `LayoutScenario`
 //! literal with `composite_buffer: Some(CompositeBufferSpec)` for
 //! the diff setup and an `events` list for the post-setup hunk-nav
-//! / keybinding events. No `EditorTestHarness::` usage anywhere
+//! / keybinding events. No direct harness usage anywhere
 //! in this file.
 //!
 //! Load-bearing claims preserved here:

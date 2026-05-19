@@ -4,7 +4,7 @@
 //! Scenarios are pure data: each test is a single `LayoutScenario`
 //! literal whose `row_checks` assert the per-row text produced by
 //! the real `render_real()` → ANSI → vt100 round-trip. No
-//! `EditorTestHarness::` usage; no `let grid = RoundTripGrid::...`
+//! direct harness usage; no `let grid = RoundTripGrid::...`
 //! imperative extraction.
 //!
 //! These prove the render → ANSI-emit → vt100-parse pipeline

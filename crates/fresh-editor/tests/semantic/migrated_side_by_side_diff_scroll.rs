@@ -5,7 +5,7 @@
 //! Scenarios are pure data: each test is a single `LayoutScenario`
 //! literal with a `composite_buffer: Some(CompositeBufferSpec)` for
 //! the diff setup and an `events` list for the post-setup mouse /
-//! scrollbar events. No `EditorTestHarness::` usage; no imperative
+//! scrollbar events. No direct harness usage; no imperative
 //! `let mut harness = ...; for _ in 0..N { harness.mouse_X; }`
 //! blocks anywhere in this file.
 //!
