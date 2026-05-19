@@ -648,6 +648,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
             PopupPlacement::Centered => PopupPositionData::Centered,
             PopupPlacement::Fixed { x, y } => PopupPositionData::Fixed { x: *x, y: *y },
             PopupPlacement::AtHardwareCursorOffset { dx, dy } => {
+<<<<<<< Updated upstream
                 // Resolve to the cursor's TERMINAL-absolute screen
                 // position (the same coordinate system
                 // `PopupPosition::Fixed { x, y }` consumes) via the
@@ -658,8 +659,16 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 // hidden.
                 match harness.render_observing_cursor() {
                     Ok(Some((cx, cy))) => {
+=======
+                harness.render_real().expect("render_real before popup placement failed");
+                let vt = harness.vt100_cursor_position();
+                eprintln!("[DEBUG popup placement] vt100_cursor={vt:?}, hidden={}", harness.vt100_cursor_hidden());
+                match vt {
+                    Some((cx, cy)) => {
+>>>>>>> Stashed changes
                         let x = (cx as i32 + dx).max(0) as u16;
                         let y = (cy as i32 + dy).max(0) as u16;
+                        eprintln!("[DEBUG popup placement] popup origin=({x},{y})");
                         PopupPositionData::Fixed { x, y }
                     }
                     _ => PopupPositionData::Centered,
@@ -812,6 +821,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     }
 
     if let Some(offset) = s.expected_cursor_col_equals_margin_plus {
+<<<<<<< Updated upstream
         // Terminal-absolute cursor — `screen_cursor_position`
         // reads ratatui's TestBackend, so the column is in
         // terminal coords (matches the original e2e's contract).
@@ -825,11 +835,27 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 expected: format!("col {expected_col} (gutter {gutter} + {offset})"),
                 actual: format!("col {col}"),
             });
+=======
+        let gutter = harness.api_mut().margin_left_total_width() as u16;
+        let cursor = harness.api_mut().hardware_cursor_position();
+        let expected_col = gutter + offset;
+        match cursor {
+            Some((col, _)) if col == expected_col => {}
+            other => {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: s.description.clone(),
+                    field: "cursor_col_equals_margin_plus".into(),
+                    expected: format!("col {expected_col} (gutter {gutter} + {offset})"),
+                    actual: format!("{other:?}"),
+                });
+            }
+>>>>>>> Stashed changes
         }
     }
 
     if s.expected_cursor_row_equals_content_first {
         let (first, _) = harness.content_area_rows();
+<<<<<<< Updated upstream
         let (_, row) = harness.screen_cursor_position();
         if row as usize != first {
             return Err(ScenarioFailure::SnapshotFieldMismatch {
@@ -838,6 +864,19 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 expected: format!("row {first}"),
                 actual: format!("row {row}"),
             });
+=======
+        let cursor = harness.api_mut().hardware_cursor_position();
+        match cursor {
+            Some((_, row)) if row as usize == first => {}
+            other => {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: s.description.clone(),
+                    field: "cursor_row_equals_content_first".into(),
+                    expected: format!("row {first}"),
+                    actual: format!("{other:?}"),
+                });
+            }
+>>>>>>> Stashed changes
         }
     }
 

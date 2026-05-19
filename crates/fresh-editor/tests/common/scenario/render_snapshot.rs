@@ -137,7 +137,30 @@ impl RenderSnapshot {
         let screen = harness.vt100_screen_to_string();
         let rendered_rows: Vec<String> =
             screen.split('\n').map(|s| s.to_string()).collect();
+<<<<<<< Updated upstream
         let terminal_cursor = observed_cursor;
+=======
+        // The production cursor-obscured-by-overlay check fires
+        // inside `render_real`: when a popup covers the cell the
+        // editor would otherwise call `Frame::set_cursor_position`
+        // on, the call is omitted and ratatui ends the frame with
+        // `hide_cursor`. vt100 reflects that as
+        // `screen().hide_cursor() == true`. Project it through as
+        // `hardware_cursor: None` so scenarios observe the same
+        // "cursor was hidden" outcome the real terminal would
+        // display — `EditorTestApi::hardware_cursor_position()`
+        // alone returns the cursor's viewport-derived location
+        // regardless of overlay state, which would silently fail
+        // any cursor-under-popup assertion.
+        let cursor_hidden_by_render = harness.vt100_cursor_hidden();
+        // Terminal-absolute cursor position from the TestBackend
+        // (what ratatui's `Terminal::draw` left the backend at).
+        // Distinct from `hardware_cursor_position` on `EditorTestApi`,
+        // which is the editor's viewport-relative reading. Used by
+        // `cursor_cell_matches_buffer_char` so the cursor row indexes
+        // into `rendered_rows` correctly.
+        let terminal_cursor_raw = Some(harness.screen_cursor_position());
+>>>>>>> Stashed changes
         let api = harness.api_mut();
         let cursor_byte = api.primary_caret().position;
         let buffer_text = api.buffer_text();
@@ -149,10 +172,22 @@ impl RenderSnapshot {
         // the cursor-under-popup tests guard against.
         let hardware_cursor = if observed_cursor.is_some() {
             raw_cursor
+<<<<<<< Updated upstream
         } else {
             None
         };
         let status_message = api.status_message();
+=======
+        };
+        // `terminal_cursor` is always populated when the snapshot is
+        // built with `extract_with_rendered_rows`; the vt100 hidden
+        // flag is unreliable here because `render_real()` doesn't
+        // emit cursor-show/-hide commands. Tests that care about the
+        // "cursor hidden by overlay" outcome should consult
+        // `hardware_cursor` instead, which IS gated on the vt100
+        // hidden flag.
+        let terminal_cursor = terminal_cursor_raw;
+>>>>>>> Stashed changes
         RenderSnapshot {
             width: api.terminal_width(),
             height: api.terminal_height(),
