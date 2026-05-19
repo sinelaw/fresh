@@ -454,6 +454,21 @@ impl Window {
             }
         }
 
+        // When the new terminal ended up as this window's active
+        // buffer, switch the window into terminal mode so the live
+        // grid renders immediately. Without this, the renderer
+        // skips the grid (see `render_terminal_splits` — it defers
+        // to the file-backed scrollback view whenever the active
+        // tab is a terminal buffer but the window is not in
+        // terminal mode) and the user sees a blank tab until the
+        // next event flips `terminal_mode` — typically the next
+        // printable keystroke via `should_enter_terminal_mode`.
+        // Mirrors `open_terminal_in_window`'s post-spawn flip.
+        if self.active_buffer() == buffer_id {
+            self.terminal_mode = true;
+            self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        }
+
         self.resize_visible_terminals();
         Ok((terminal_id, buffer_id, created_split_id))
     }

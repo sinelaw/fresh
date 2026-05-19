@@ -41,6 +41,7 @@ pub mod load_from_buffer;
 pub mod lsp_find_references;
 pub mod markdown_source;
 pub mod orchestrator_new_dialog;
+pub mod orchestrator_new_session_renders;
 pub mod orchestrator_open_cross_project;
 pub mod package_manager;
 pub mod plugin;
