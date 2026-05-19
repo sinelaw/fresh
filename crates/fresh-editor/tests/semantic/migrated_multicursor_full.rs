@@ -141,26 +141,28 @@ fn migrated_multi_cursor_undo_atomic_full() {
 
 #[test]
 fn migrated_multi_cursor_delete_undo_atomic() {
-    // Original: `test_multi_cursor_delete_undo_atomic`. After
-    // multi-cursor inserts, multi-cursor DeleteBackward
-    // sequences also obey the per-keystroke undo unit rule.
+    // Original: `test_multi_cursor_delete_undo_atomic` in
+    // tests/e2e/multicursor.rs:359. The load-bearing claim:
+    // ONE Delete keypress with 3 active cursors = ONE undo
+    // unit. After the delete, "aaa\nbbb\nccc" → "aa\nbb\ncc";
+    // a single Undo restores the full buffer.
+    //
+    // The prior migration inverted this property — it tested 3
+    // DeleteBackward dispatches as 6 undo units, which is the
+    // opposite invariant (per-dispatch atomicity, not
+    // per-keystroke vectorisation across cursors).
     assert_trace_scenario(TraceScenario {
-        description: "3 inserts + 3 deletes across 3 cursors = 6 undo units".into(),
+        description: "1 DeleteForward at 3 cursors = 1 undo unit (vectorised)".into(),
         initial_text: "aaa\nbbb\nccc".into(),
         actions: vec![
             Action::MoveDocumentStart,
             Action::AddCursorBelow,
             Action::AddCursorBelow,
-            Action::InsertChar('X'),
-            Action::InsertChar('Y'),
-            Action::InsertChar('Z'),
-            Action::DeleteBackward,
-            Action::DeleteBackward,
-            Action::DeleteBackward,
+            Action::DeleteForward,
         ],
-        expected_text: "aaa\nbbb\nccc".into(),
-        // 3 inserts + 3 deletes = 6 separate undo units; 6
-        // undos roll back to the initial buffer.
-        undo_count: 6,
+        expected_text: "aa\nbb\ncc".into(),
+        // One Delete keystroke = one undo unit, even with N
+        // cursors. Undoing once restores all three lines.
+        undo_count: 1,
     });
 }

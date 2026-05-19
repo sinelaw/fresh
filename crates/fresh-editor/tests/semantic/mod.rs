@@ -25,7 +25,6 @@ pub mod migrated_duplicate_line_full;
 pub mod migrated_emacs_extras;
 pub mod migrated_emacs_full;
 pub mod migrated_goto_matching_bracket;
-pub mod migrated_indent;
 pub mod migrated_indent_dedent_full;
 pub mod migrated_issue_1147_wrapped_nav;
 pub mod migrated_issue_1574_viewport_drift;
