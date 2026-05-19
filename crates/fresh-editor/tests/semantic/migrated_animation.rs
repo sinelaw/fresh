@@ -2,6 +2,40 @@
 //! (tab-switch slide effects, cursor-jump trail) that run independent
 //! of the plugin system.
 //!
+//! ## DECLARATIVE-REWRITE DEFERRAL
+//!
+//! A purely declarative rewrite as a `TemporalScenario` (with
+//! `InputEvent::AdvanceClock(Duration)` and `expected_frames`) was
+//! attempted and DEFERRED. The animation machinery is the
+//! load-bearing observable for every test in this file and has no
+//! `EditorTestApi` projection. Extensions needed:
+//!
+//!   * `EditorTestApi::animations_total_started() -> u64` projecting
+//!     `active_window().animations.total_started()`.
+//!   * `EditorTestApi::animations_is_active() -> bool` projecting
+//!     `active_window().animations.is_active()`.
+//!   * `RenderSnapshot` field carrying both observables, plus a
+//!     `RenderSnapshotExpect.animations_started_gt: Option<u64>` /
+//!     `animations_is_active: Option<bool>` so a scenario can assert
+//!     them.
+//!   * `TemporalScenario` runner extension: a `WaitCondition`
+//!     variant `AnimationsIdle` mapped to the new
+//!     `animations_is_active()` accessor so a scenario can
+//!     `AdvanceClock` until idle without polling from Rust code.
+//!   * Multi-file workspace (matches the deferral in
+//!     `migrated_tab_scrolling.rs`) — the slide-animation tests need
+//!     two or three real files on disk so `prev_buffer()` / `next_buffer()`
+//!     actually cycles between distinguishable buffers.
+//!   * `cursor_jump_animation` config — `Config::default()` enables
+//!     `animations` and `cursor_jump_animation`, but flipping the
+//!     toggle off in scenarios requires `BufferContext.config` to
+//!     carry a `cursor_jump_animation: Option<bool>` field (or just
+//!     to pass through the full `editor` config block).
+//!
+//! Until those land, the harness-direct implementation below
+//! preserves the e2e claims verbatim. See
+//! `docs/internal/scenario-migration-status.md`.
+//!
 //! Load-bearing claims preserved here:
 //!
 //!   1. **Tab switch kicks off a slide animation.** `prev_buffer()`

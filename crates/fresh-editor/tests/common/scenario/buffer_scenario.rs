@@ -12,6 +12,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::failure::ScenarioFailure;
+use crate::common::scenario::input_event::{InputEvent, KeyMods, KeySpec};
 use fresh::test_api::{Action, Caret};
 
 /// Expected state of one cursor.
@@ -132,7 +133,29 @@ pub struct BufferScenario {
     #[serde(default)]
     pub terminal: TerminalSize,
     /// Action sequence applied left-to-right.
+    #[serde(default)]
     pub actions: Vec<Action>,
+    /// Optional input-event sequence, applied **after** `actions`.
+    ///
+    /// `actions` is the right level for almost every buffer
+    /// scenario — pure semantic operations expressed as `Action`s.
+    /// Some claims, though, must be observed through the production
+    /// key handler (`Editor::handle_key`) rather than the action
+    /// layer: `Shift+Backspace` (issue #1588) only reaches
+    /// `DeleteBackward` because `normalize_key` strips the
+    /// redundant SHIFT before lookup. Dispatching
+    /// `Action::DeleteBackward` directly bypasses that path and
+    /// can't catch the regression.
+    ///
+    /// `events` lets the scenario remain pure data while still
+    /// routing through the same `handle_key` path — the runner
+    /// translates each `InputEvent::SendKey { code, modifiers }`
+    /// into `harness.send_key(...)` and each
+    /// `InputEvent::Action(a)` into `api.dispatch(a)`. Mouse and
+    /// prompt variants are rejected (use `InputScenario` /
+    /// `ModalScenario` for those subjects).
+    #[serde(default)]
+    pub events: Vec<InputEvent>,
     /// Buffer text at t=∞.
     pub expected_text: String,
     /// Primary cursor at t=∞.
@@ -198,8 +221,21 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
         .expect("load_buffer_from_text_named failed");
     timer.phase("load_buffer");
 
+    harness.api_mut().dispatch_seq(&s.actions);
+    // `events` runs after `actions` so a scenario can pre-load
+    // state through actions, then exercise the production key
+    // handler via `SendKey` for the bit under test.
+    if !s.events.is_empty() {
+        // Mouse / cell-projection variants depend on viewport
+        // size and gutter width being reconciled, which happens
+        // during render. Rendering here is a no-op for pure
+        // `SendKey` / `Action` events.
+        harness.render().expect("render before events failed");
+        for ev in &s.events {
+            dispatch_buffer_event(&mut harness, ev, &s.description)?;
+        }
+    }
     let api = harness.api_mut();
-    api.dispatch_seq(&s.actions);
     timer.phase("dispatch_actions");
 
     // ── Assert buffer text ──────────────────────────────────────────
@@ -291,4 +327,103 @@ pub fn assert_buffer_scenario(s: BufferScenario) {
 
 fn behavior_is_default(b: BehaviorFlags) -> bool {
     !b.auto_close && !b.auto_indent && !b.auto_surround
+}
+
+/// Project a `KeySpec` onto the matching `crossterm::event::KeyCode`.
+/// Lives next to the runner so the data module (`input_event.rs`)
+/// doesn't have to depend on crossterm.
+fn key_spec_to_crossterm(code: KeySpec) -> crossterm::event::KeyCode {
+    use crossterm::event::KeyCode;
+    match code {
+        KeySpec::Char(c) => KeyCode::Char(c),
+        KeySpec::Backspace => KeyCode::Backspace,
+        KeySpec::Enter => KeyCode::Enter,
+        KeySpec::Left => KeyCode::Left,
+        KeySpec::Right => KeyCode::Right,
+        KeySpec::Up => KeyCode::Up,
+        KeySpec::Down => KeyCode::Down,
+        KeySpec::Home => KeyCode::Home,
+        KeySpec::End => KeyCode::End,
+        KeySpec::PageUp => KeyCode::PageUp,
+        KeySpec::PageDown => KeyCode::PageDown,
+        KeySpec::Tab => KeyCode::Tab,
+        KeySpec::BackTab => KeyCode::BackTab,
+        KeySpec::Delete => KeyCode::Delete,
+        KeySpec::Insert => KeyCode::Insert,
+        KeySpec::Esc => KeyCode::Esc,
+    }
+}
+
+fn key_mods_to_crossterm(m: KeyMods) -> crossterm::event::KeyModifiers {
+    let mut out = crossterm::event::KeyModifiers::NONE;
+    if m.ctrl {
+        out |= crossterm::event::KeyModifiers::CONTROL;
+    }
+    if m.shift {
+        out |= crossterm::event::KeyModifiers::SHIFT;
+    }
+    if m.alt {
+        out |= crossterm::event::KeyModifiers::ALT;
+    }
+    out
+}
+
+/// Translate a single `InputEvent` for the buffer-scenario runner.
+///
+/// The runner accepts `Action` (dispatched through `EditorTestApi`)
+/// and `SendKey` (routed through the production `handle_key` path
+/// via `EditorTestHarness::send_key`). Other variants are
+/// out-of-domain — those belong to `InputScenario` (mouse / IME)
+/// or `ModalScenario` (prompt flow). The runner rejects them
+/// rather than silently dropping them, so a mis-typed scenario
+/// fails loudly.
+fn dispatch_buffer_event(
+    harness: &mut EditorTestHarness,
+    ev: &InputEvent,
+    description: &str,
+) -> Result<(), ScenarioFailure> {
+    match ev {
+        InputEvent::Action(a) => {
+            harness.api_mut().dispatch(a.clone());
+            Ok(())
+        }
+        InputEvent::SendKey { code, modifiers } => {
+            let cc = key_spec_to_crossterm(*code);
+            let mm = key_mods_to_crossterm(*modifiers);
+            harness
+                .send_key(cc, mm)
+                .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("send_key({code:?}, {modifiers:?}): {e}"),
+                })
+        }
+        InputEvent::Mouse(crate::common::scenario::context::MouseEvent::Click {
+            row,
+            col,
+            button: crate::common::scenario::context::MouseButton::Left,
+        }) => {
+            // Click sequencing — repeated clicks at the same
+            // position within the editor's click-detection window
+            // are promoted to double-click / triple-click semantics
+            // by `Editor::handle_mouse`. We don't have to model the
+            // promotion here; we just send each click through.
+            let consumed = harness.api_mut().dispatch_mouse_click(*col, *row);
+            if !consumed {
+                return Err(ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!(
+                        "Editor did not consume Mouse::Click({col},{row}) — likely outside the buffer area"
+                    ),
+                });
+            }
+            Ok(())
+        }
+        other => Err(ScenarioFailure::InputProjectionFailed {
+            description: description.into(),
+            reason: format!(
+                "BufferScenario does not handle {other:?} — use InputScenario \
+                 (mouse/IME) or ModalScenario (prompt) for that subject"
+            ),
+        }),
+    }
 }

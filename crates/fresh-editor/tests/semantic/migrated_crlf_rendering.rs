@@ -1,5 +1,65 @@
 //! Migration of `tests/e2e/crlf_rendering.rs` — line-ending handling.
 //!
+//! ## DECLARATIVE-REWRITE DEFERRAL
+//!
+//! A purely declarative rewrite (split between `LayoutScenario` for
+//! render-only claims and `ModalScenario` for the
+//! command-palette-driven Set-Line-Ending flow) was attempted and
+//! DEFERRED. Most tests here cross the file/disk boundary, which the
+//! scenario DSL does not yet model. Extensions needed:
+//!
+//!   * **On-disk fixture with named filename + raw bytes.** Each test
+//!     uses `load_buffer_from_text_named("crlf_test.txt", "...\r\n...")`
+//!     so the editor's line-ending-detection picks CRLF from the
+//!     bytes-on-disk. `BufferContext.initial_text` is a `String` and
+//!     never lands on a filesystem. Extension needed: a
+//!     `BufferContext.fixture: Option<{ filename: String, raw_bytes:
+//!     Vec<u8> }>` (or reuse `VirtualFs`) wired into the
+//!     `LayoutScenario` runner.
+//!
+//!   * **Save-and-read-back assertion.** Tests 5, 7, 8, 9, 10, 13, 14
+//!     end with `Ctrl+S` and assert `std::fs::read_to_string(path) ==
+//!     "..."`. There is no scenario field for "after the actions
+//!     settle, the saved file bytes must equal X". Extension needed:
+//!     `LayoutScenario.expected_saved_bytes: Option<(PathBuf,
+//!     Vec<u8>)>` plus a `Wait(BufferModified(false))` step (this
+//!     `WaitCondition` already exists) so the runner waits for the
+//!     save to flush before reading.
+//!
+//!   * **Hardware-cursor visibility sweep** (test 12) — walks every
+//!     line of a grown buffer checking `screen_cursor_position()`
+//!     stays inside `content_area_rows()` and within screen width
+//!     at start and end of each line. Per-step assertion has no
+//!     scenario expression. Extension needed: a folded matcher like
+//!     `RenderSnapshotExpect.hardware_cursor_inside_content_area:
+//!     bool` plus per-step evaluation in `TemporalScenario`-style
+//!     interleaved-event/expect runner.
+//!
+//!   * **Command-palette → "Set Line Ending" → arrow-key menu pick
+//!     → Enter.** `ModalScenario`'s `OpenPrompt(CommandPalette) +
+//!     FilterPrompt("set line") + ConfirmPrompt` opens the picker
+//!     but cannot then navigate inside the secondary line-ending
+//!     picker. Extension needed: route `Action::PopupSelectPrev/Next`
+//!     through `ModalScenario`, or add `MenuSelect(idx)` translation
+//!     (the variant exists in `InputEvent`, but the runner currently
+//!     panics on it — "needs popup.select(idx) accessor").
+//!
+//!   * **Internal-only clipboard** for cut/paste round-trip (test
+//!     10) — `set_clipboard_for_test("")` is on `Editor`, not
+//!     `EditorTestApi`. Without it, parallel test runs share the OS
+//!     clipboard and corrupt the `\r\n` round-trip. Extension needed:
+//!     either always-internal clipboard in test mode, or a
+//!     `BehaviorFlags.internal_clipboard: bool` field.
+//!
+//!   * **Status-bar `LF` / `CRLF` text** (tests 13, 14) — currently
+//!     asserted via `assert_any_row_contains` which works with the
+//!     existing `RowMatch::AnyRowContains` matcher. THIS part of the
+//!     migration IS expressible declaratively today.
+//!
+//! Until the on-disk-fixture, save-read-back, and palette extensions
+//! land, the harness-direct implementation below preserves the e2e
+//! claims verbatim. See `docs/internal/scenario-migration-status.md`.
+//!
 //! Load-bearing claims preserved here:
 //!
 //!   1. **CRLF transparent rendering.** Files with `\r\n` line endings

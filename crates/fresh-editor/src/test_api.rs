@@ -247,6 +247,95 @@ pub trait EditorTestApi {
     /// it back to `false` — the property under test in
     /// `tests/semantic/undo_redo.rs::theorem_undo_to_save_point_*`.
     fn is_modified(&self) -> bool;
+
+    /// Consume the one-shot "full hardware redraw" flag the editor's
+    /// event loop polls each frame: `Action::RedrawScreen` sets it,
+    /// the loop's tick clears it. Returns the previous value and
+    /// resets the flag to `false`.
+    ///
+    /// Exposed for `LayoutScenario`'s `expected_full_redraw_requested`
+    /// assertion — the only stable observation surface for the
+    /// "redraw screen" claim (issue #1070).
+    fn take_full_redraw_request_for_tests(&mut self) -> bool;
+
+    // ── Class F: marker observables (used by MarkerRoundtripScenario) ────
+    //
+    // Markers / line indicators track a byte position that survives
+    // edits, undo, and redo. They have no `Action` projection — the
+    // marker model is a production-internal thing — so the scenario
+    // runner needs declarative setters/getters on the test API instead
+    // of reaching into `editor.active_state_mut().margins`.
+
+    /// Seed a line indicator (margin marker) at `byte_offset` with the
+    /// given `symbol` (used as both the indicator glyph and the
+    /// namespace) and a `color` name (`"red"`, `"green"`, `"blue"`,
+    /// `"yellow"`; anything else falls back to `Color::Red`).
+    fn seed_marker(&mut self, byte_offset: usize, symbol: &str, color: &str);
+
+    /// Current byte positions of every marker whose namespace matches
+    /// `symbol`, in ascending order. Empty if no marker was seeded for
+    /// that namespace.
+    fn marker_positions(&self, symbol: &str) -> Vec<usize>;
+
+    /// Length (in events) of the active buffer's event log. Used by
+    /// `PersistenceScenario` save-point claims that check no undo
+    /// history is dropped on a no-op file-watcher notification.
+    fn active_event_log_len(&self) -> usize;
+
+    /// Notify the editor that `path` on disk has changed. Triggers the
+    /// auto-revert path; the editor reads the file and updates its
+    /// buffer (or skips when on-disk content already matches).
+    fn notify_file_changed(&mut self, path: &str);
+
+    // ── Class G: composite-buffer setup (used by diff layout scenarios) ──
+    //
+    // Side-by-side diff and unified-diff layout scenarios need a
+    // composite buffer built from two virtual buffers + a hunk-derived
+    // line alignment. Each accessor below is a stable, declarative
+    // wrapper around the equivalent `Editor` / `Window` method so the
+    // layout scenario runner can construct the composite from a data
+    // spec (`CompositeDiffSpec`) without reaching into production
+    // internals.
+
+    /// Create a side-by-side composite diff view named `name` with
+    /// mode `mode`. Builds two virtual buffers (OLD, NEW), seeds them
+    /// with `old_content` / `new_content`, computes a line alignment
+    /// from `hunks`, and switches the active buffer to the composite.
+    /// Returns a 64-bit handle to the composite for follow-up calls
+    /// (`composite_next_hunk_on`, `set_composite_initial_focus_hunk_on`).
+    fn create_side_by_side_diff(
+        &mut self,
+        name: &str,
+        mode: &str,
+        old_content: &str,
+        new_content: &str,
+        hunks: &[(usize, usize, usize, usize)],
+    ) -> u64;
+
+    /// Set the composite buffer's `initial_focus_hunk` field — the
+    /// one-shot "scroll to hunk N on first render" knob. The first
+    /// render consumes the value and resets the field to `None`.
+    fn set_composite_initial_focus_hunk_on(&mut self, composite_handle: u64, hunk_index: usize);
+
+    /// Read the composite buffer's current `initial_focus_hunk`
+    /// (after the first render this should be `None`, i.e. the field
+    /// was consumed). Returns `None` for missing or non-composite
+    /// buffers.
+    fn composite_initial_focus_hunk_on(&self, composite_handle: u64) -> Option<usize>;
+
+    /// Jump the active split's view of `composite_handle` to the next
+    /// hunk. Mirrors the `n` / `]` keybinding semantics; returns
+    /// `true` iff a next hunk existed.
+    fn composite_next_hunk_active_on(&mut self, composite_handle: u64) -> bool;
+
+    /// Jump back to the previous hunk; companion of
+    /// `composite_next_hunk_active_on`.
+    fn composite_prev_hunk_active_on(&mut self, composite_handle: u64) -> bool;
+
+    /// Force-materialize composite view state across visible splits
+    /// without performing a render. Lets a scenario reach hunk-nav
+    /// state before any frame paints.
+    fn flush_layout_for_tests(&mut self);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -370,6 +459,10 @@ impl EditorTestApi for crate::app::Editor {
         self.active_state().buffer.is_modified()
     }
 
+    fn take_full_redraw_request_for_tests(&mut self) -> bool {
+        self.take_full_redraw_request()
+    }
+
     fn modal_snapshot(&self) -> ModalSnapshot {
         // Two popup stacks live on the editor:
         // - `global_popups`: editor-wide modals (palette, file open, …)
@@ -484,5 +577,65 @@ impl EditorTestApi for crate::app::Editor {
             modifiers: KeyModifiers::NONE,
         };
         self.handle_mouse(up).unwrap_or(false)
+    }
+
+    fn seed_marker(&mut self, byte_offset: usize, symbol: &str, color: &str) {
+        use crate::view::margin::LineIndicator;
+        use ratatui::style::Color;
+        let color = match color.to_ascii_lowercase().as_str() {
+            "red" => Color::Red,
+            "green" => Color::Green,
+            "blue" => Color::Blue,
+            "yellow" => Color::Yellow,
+            "cyan" => Color::Cyan,
+            "magenta" => Color::Magenta,
+            "white" => Color::White,
+            "black" => Color::Black,
+            _ => Color::Red,
+        };
+        let indicator = LineIndicator::new(symbol, color, 10);
+        let state = self.active_state_mut();
+        let _ = state
+            .margins
+            .set_line_indicator(byte_offset, symbol.to_string(), indicator);
+    }
+
+    fn marker_positions(&self, symbol: &str) -> Vec<usize> {
+        let margins = &self.active_state().margins;
+        // Collect every marker whose namespace map contains `symbol`.
+        // Iterate the indicator markers in the byte range covering the
+        // whole buffer so positions come back sorted.
+        let max = self
+            .active_state()
+            .buffer
+            .to_string()
+            .map(|s| s.len())
+            .unwrap_or(usize::MAX);
+        let mut out: Vec<usize> = margins
+            .query_indicator_range(0, max.saturating_add(1))
+            .into_iter()
+            .filter_map(|(id, start, _end)| {
+                // `id` is the MarkerId; look up whether `symbol` is one
+                // of its namespaces via `get_indicator_position` for the
+                // existence check plus a namespace-membership test.
+                if margins.get_indicator_position(id).is_some()
+                    && margins.namespaces_for_marker(id).iter().any(|n| n == symbol)
+                {
+                    Some(start)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    fn active_event_log_len(&self) -> usize {
+        self.active_event_log().len()
+    }
+
+    fn notify_file_changed(&mut self, path: &str) {
+        self.handle_file_changed(path);
     }
 }

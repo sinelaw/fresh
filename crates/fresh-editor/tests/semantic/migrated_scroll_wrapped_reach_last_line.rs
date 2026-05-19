@@ -1,6 +1,50 @@
 //! Migration of `tests/e2e/scroll_wrapped_reach_last_line.rs` —
 //! reproductions for two related scroll-when-wrapped bugs.
 //!
+//! ## DECLARATIVE-REWRITE DEFERRAL
+//!
+//! A purely declarative rewrite (scenarios-as-data,
+//! zero `EditorTestHarness::` usage) was attempted and DEFERRED. The
+//! load-bearing claims here cannot be expressed in the current
+//! scenario DSL without significant extensions:
+//!
+//!   * `mouse_scroll_down(col, row)` and `mouse_drag(c0, r0, c1, r1)` —
+//!     `LayoutScenario` does not accept `InputEvent::Mouse(...)` and
+//!     `EditorTestApi` exposes only `dispatch_mouse_click` (no wheel,
+//!     no drag). Extension needed:
+//!       - Add `EditorTestApi::dispatch_mouse_wheel(col, row, dy)` and
+//!         `dispatch_mouse_drag(c0,r0,c1,r1)`.
+//!       - Add `events: Vec<InputEvent>` (or extend `actions`) to
+//!         `LayoutScenario` and route `Mouse(Wheel/Drag)` through the
+//!         new test_api hooks.
+//!
+//!   * `content_area_rows()` and `get_screen_row(row)` — the
+//!     `~`-past-EOF row counting in `bug1_check_clamped` and the
+//!     "marker on the last content row" check both require knowing
+//!     which terminal rows are content-area rows. There is no test_api
+//!     projection. Extension needed:
+//!       - Add `EditorTestApi::content_area_rows() -> (u16, u16)`
+//!         that returns (first_content_row, last_content_row).
+//!       - Re-express the marker / `~` checks via
+//!         `RenderSnapshotExpect.row_checks` with a new
+//!         `RowMatch::RowEqualsTrim { row, text: "~" }` variant or
+//!         via per-row `RowMatch::Contains` checks pinned at the
+//!         content-area rows surfaced through the new accessor.
+//!
+//!   * Width-sweep + skip-on-precondition logic — each sweep entry
+//!     can either succeed, fail, or skip ("buffer not large enough at
+//!     this width to require scrolling"). `LayoutScenario` has no
+//!     SetupSkipped concept. Extension needed: a wrapper that
+//!     collects per-entry outcomes and asserts at least one
+//!     non-skipped entry, parallel to `drive_width_sweep` here but
+//!     consuming scenarios.
+//!
+//! Keeping the current harness-direct implementation (documented in
+//! the section below) until the DSL extensions land.
+//!
+//! See `docs/internal/scenario-migration-status.md` for the broader
+//! migration roadmap.
+//!
 //! The two bugs (verbatim from the e2e):
 //!
 //!   1. **Over-scroll into empty viewport.**  `scroll_down_visual`'s

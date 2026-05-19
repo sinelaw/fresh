@@ -3,6 +3,45 @@
 //! active tab visible, and clicking the `<` / `>` scroll buttons
 //! routes through the mouse path.
 //!
+//! ## DECLARATIVE-REWRITE DEFERRAL
+//!
+//! A purely declarative rewrite (scenarios-as-data, zero
+//! `EditorTestHarness::` usage) was attempted and DEFERRED. The
+//! load-bearing claims here need DSL extensions that don't yet exist:
+//!
+//!   * Multi-file workspace on a real `TempDir` — `open_file(path)`
+//!     loads buffers from disk so each tab's display name is the
+//!     resolved filename. `WorkspaceScenario`'s `NamedBuffer` carries
+//!     in-memory content keyed by `filename`, but does not currently
+//!     drive `Action::Open` against a real on-disk path. Extension
+//!     needed: add `WorkspaceContext.tempfs_files: Vec<(PathBuf,
+//!     String)>` and a runner step that writes them to disk before
+//!     dispatching `Action::Open(path)` for each one.
+//!
+//!   * Mouse-click on the `<` / `>` tab-bar scroll buttons —
+//!     `dispatch_mouse_click(col, row)` is on `EditorTestApi`, but
+//!     `LayoutScenario` only accepts `actions: Vec<Action>` and
+//!     `WorkspaceScenario` accepts no input events at all. Extension
+//!     needed: thread `Vec<InputEvent>` through either runner so a
+//!     scenario can interleave `InputEvent::Mouse(Click{...})` with
+//!     buffer cycling.
+//!
+//!   * Per-step assertion (active filename on screen at every cycle
+//!     step) — `LayoutScenario` evaluates expectations once at the
+//!     end. Extension needed: either a per-step assertion shape, or
+//!     a folded representation where each `Action::NextBuffer` is
+//!     followed by an `InputEvent::Wait(WaitCondition::ScreenContains(
+//!     filename))` that the runner asserts on the fly.
+//!
+//!   * Tab-bar `<` / `>` indicator visibility — requires inspecting
+//!     specific characters at the tab-bar row. Expressible with
+//!     `RowMatch::AnyRowContains(">")` but the per-step edge
+//!     invariants ("first tab → no `<`, last tab → no `>`") need a
+//!     parameterized matcher tied to the cycle step.
+//!
+//! Keeping the current harness-direct implementation until the
+//! WorkspaceScenario / LayoutScenario extensions land.
+//!
 //! Load-bearing claims preserved here:
 //!
 //!   1. **Active tab visibility on open / cycle.** Opening many

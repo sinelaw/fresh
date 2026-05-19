@@ -489,6 +489,16 @@ impl MarginManager {
         self.indicator_markers.get_position(marker_id)
     }
 
+    /// Namespaces under which `marker_id` has a stored indicator.
+    /// Exposed for the semantic-test marker lookup which queries by
+    /// namespace string rather than `MarkerId`.
+    pub fn namespaces_for_marker(&self, marker_id: MarkerId) -> Vec<String> {
+        self.line_indicators
+            .get(&marker_id.0)
+            .map(|indicators| indicators.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Query indicator markers in a byte range.
     /// Returns (MarkerId, start, end) tuples for markers in the range.
     pub fn query_indicator_range(&self, start: usize, end: usize) -> Vec<(MarkerId, usize, usize)> {
