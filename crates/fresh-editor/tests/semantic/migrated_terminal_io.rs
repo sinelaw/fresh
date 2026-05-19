@@ -46,3 +46,22 @@ fn migrated_typing_appears_in_grid_after_render_real() {
         grid.rows
     );
 }
+
+/// Anti-test (harness-direct): drops the InsertChar dispatches
+/// from `migrated_typing_appears_in_grid_after_render_real`.
+/// Without them, the buffer stays empty, so no grid row can
+/// contain "ABC" — proves the InsertChar actions are what
+/// produce the round-tripped text in the vt100 grid.
+#[test]
+fn anti_terminal_io_dropping_insert_char_yields_no_abc_in_grid() {
+    let mut h = EditorTestHarness::with_temp_project(60, 12).unwrap();
+    let _f = h.load_buffer_from_text("").unwrap();
+    // No InsertChar dispatches here.
+    let grid = RoundTripGrid::extract(&mut h);
+    assert!(
+        !grid.rows.iter().any(|r| r.contains("ABC")),
+        "anti-test: without InsertChar dispatches the grid must NOT contain 'ABC'; \
+         got rows: {:#?}",
+        grid.rows
+    );
+}

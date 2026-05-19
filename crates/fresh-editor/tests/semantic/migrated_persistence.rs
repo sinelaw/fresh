@@ -7,7 +7,7 @@ use crate::common::scenario::context::{VirtualFile, VirtualFs};
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::observable::FsState;
 use crate::common::scenario::persistence_scenario::{
-    assert_persistence_scenario, write_then_save, PersistenceScenario,
+    assert_persistence_scenario, check_persistence_scenario, write_then_save, PersistenceScenario,
 };
 use fresh::test_api::Action;
 use std::collections::BTreeMap;
@@ -33,6 +33,38 @@ fn migrated_save_unchanged_buffer_leaves_disk_unchanged() {
         "",
         "untouched",
     ));
+}
+
+/// Anti-test: drops the `FsExternalEdit` event from
+/// `migrated_external_edit_visible_to_other_processes`. Without
+/// the external edit, the file on disk stays at "v1"; the
+/// expected post-edit content "v2" cannot match.
+#[test]
+fn anti_persistence_dropping_fs_external_edit_yields_check_err() {
+    let mut files = BTreeMap::new();
+    files.insert(
+        PathBuf::from("a.txt"),
+        VirtualFile {
+            content: "v1".into(),
+            mode: None,
+            mtime_unix_secs: None,
+        },
+    );
+    let scenario = PersistenceScenario {
+        description: "anti: FsExternalEdit dropped — disk still shows v1, not v2".into(),
+        initial_fs: VirtualFs { files },
+        initial_open: "a.txt".into(),
+        events: vec![],
+        expected_buffer: None,
+        expected_fs: FsState {
+            expected_files: std::iter::once(("a.txt".into(), "v2".into())).collect(),
+        },
+    };
+    assert!(
+        check_persistence_scenario(scenario).is_err(),
+        "anti-test: without the FsExternalEdit event, the disk file stays at 'v1'; \
+         the expected 'v2' content cannot appear"
+    );
 }
 
 #[test]

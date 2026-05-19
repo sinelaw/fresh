@@ -12,7 +12,7 @@
 //! on different aspects.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -89,6 +89,37 @@ fn migrated_redo_skips_readonly_movement_actions_full() {
         expected_primary: CursorExpect::at(2),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops the trailing `Undo` from
+/// `migrated_undo_skips_readonly_movement_actions_full`.
+/// Without it, all 5 chars survive — "hello" remains in the
+/// buffer, so the expected post-undo "hell" cannot match.
+/// Proves the Undo action is the load-bearing step.
+#[test]
+fn anti_undo_redo_dropping_undo_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: trailing Undo dropped — 'hello' is not rolled back to 'hell'".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::InsertChar('h'),
+            Action::InsertChar('e'),
+            Action::InsertChar('l'),
+            Action::InsertChar('l'),
+            Action::InsertChar('o'),
+            Action::MoveLeft,
+            Action::MoveLeft,
+            // Undo removed.
+        ],
+        expected_text: "hell".into(),
+        expected_primary: CursorExpect::at(4),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without Undo the buffer stays 'hello'; \
+         the rolled-back 'hell' cannot appear"
+    );
 }
 
 #[test]

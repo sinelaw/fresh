@@ -13,7 +13,7 @@
 //! - shrinkable as proptest seeds (the corpus dump emits these).
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -118,6 +118,29 @@ fn migrated_up_from_line_below_empty_lands_on_empty_line() {
         expected_primary: CursorExpect::at(7),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops the final `MoveUp` from
+/// `migrated_up_from_line_below_empty_lands_on_empty_line`.
+/// Without it, after Down/Down the cursor sits at byte 8 (start
+/// of "Line 3"); the expectation of byte 7 (the empty line)
+/// cannot match. Proves MoveUp's stop-at-empty-line behavior is
+/// what the test pins.
+#[test]
+fn anti_movement_dropping_move_up_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: final MoveUp dropped — cursor ends at byte 8 not 7".into(),
+        initial_text: "Line 1\n\nLine 3\n".into(),
+        actions: vec![Action::MoveDown, Action::MoveDown],
+        expected_text: "Line 1\n\nLine 3\n".into(),
+        expected_primary: CursorExpect::at(7),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without the final MoveUp the cursor stays at byte 8 \
+         (start of Line 3); the empty-line landing at byte 7 cannot appear"
+    );
 }
 
 #[test]

@@ -97,3 +97,29 @@ fn migrated_issue_1574_down_arrow_does_not_drift_viewport_when_visible() {
         "After 3 Down presses near the top, viewport must not have moved"
     );
 }
+
+/// Anti-test (harness-direct): drops the
+/// `MoveDocumentEnd` jump from
+/// `migrated_issue_1574_up_arrow_does_not_drift_viewport_when_visible`.
+/// Without parking the cursor near the bottom of a long-wrapped
+/// buffer, `viewport_top_byte()` stays at 0 — i.e. the viewport
+/// never had a non-zero `top_after_end` to assert against. This
+/// proves `MoveDocumentEnd` is load-bearing: without it the test
+/// would be vacuously asserting that 0 == 0 across the Ups.
+#[test]
+fn anti_issue_1574_dropping_move_document_end_yields_zero_top() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 20).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text(&long_wrapped_content())
+        .unwrap();
+    harness.render().unwrap();
+
+    // No MoveDocumentEnd here — viewport should still be at top.
+    let top_before = harness.api_mut().viewport_top_byte();
+    assert_eq!(
+        top_before, 0,
+        "anti-test: without MoveDocumentEnd the viewport stays at byte 0; \
+         the positive test's 'cursor visible near bottom' precondition \
+         depends entirely on the MoveDocumentEnd jump"
+    );
+}

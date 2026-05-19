@@ -6,7 +6,7 @@
 //! `tests/e2e/multibyte_characters.rs` makes.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -50,6 +50,27 @@ fn migrated_delete_backward_removes_full_codepoint() {
         expected_primary: CursorExpect::at(3),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `DeleteBackward` from
+/// `migrated_delete_backward_removes_full_codepoint`. Without
+/// it, the buffer stays "café" with cursor at byte 5, so the
+/// expected "caf" with cursor at byte 3 cannot match.
+#[test]
+fn anti_unicode_dropping_delete_backward_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: DeleteBackward dropped — 'é' is not removed from 'café'".into(),
+        initial_text: "café".into(),
+        actions: vec![Action::MoveDocumentEnd],
+        expected_text: "caf".into(),
+        expected_primary: CursorExpect::at(3),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without DeleteBackward the buffer stays 'café'; \
+         the trailing 'é' is not stripped to leave 'caf'"
+    );
 }
 
 #[test]

@@ -8,7 +8,7 @@
 //! e2e's Ctrl+End + Enter.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BehaviorFlags, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BehaviorFlags, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -127,6 +127,31 @@ fn migrated_fallback_copies_previous_indent() {
         expected_primary: CursorExpect::at(22),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `InsertNewline` from
+/// `migrated_rust_auto_indent_after_opening_brace`. Without it,
+/// the buffer stays at the initial "fn main() {" and the expected
+/// post-newline-with-indent text "fn main() {\n    " cannot
+/// match, so `check_buffer_scenario` must return Err — proving
+/// the InsertNewline is what drives the auto-indent action.
+#[test]
+fn anti_auto_indent_dropping_insert_newline_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: InsertNewline dropped — auto-indent never fires".into(),
+        initial_text: "fn main() {".into(),
+        language: Some("x.rs".into()),
+        behavior: auto_indent(),
+        actions: vec![Action::MoveDocumentEnd],
+        expected_text: "fn main() {\n    ".into(),
+        expected_primary: CursorExpect::at(16),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without InsertNewline, the buffer stays at 'fn main() {{' \
+         and the auto-indented '\\n    ' suffix cannot appear"
+    );
 }
 
 #[test]

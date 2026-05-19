@@ -13,7 +13,7 @@
 //! with cursor at start.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use crate::common::scenario::trace_scenario::{assert_trace_scenario, TraceScenario};
 use fresh::test_api::Action;
@@ -100,6 +100,27 @@ fn migrated_duplicate_line_cursor_lands_on_duplicate() {
         expected_primary: CursorExpect::at(7),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `DuplicateLine` from
+/// `migrated_duplicate_line_with_newline_first_line`. Without
+/// it, the buffer stays "first\nsecond\nthird" and the expected
+/// duplicated "first\nfirst\nsecond\nthird" cannot match.
+#[test]
+fn anti_duplicate_line_dropping_action_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: DuplicateLine dropped — line 1 never duplicates".into(),
+        initial_text: "first\nsecond\nthird".into(),
+        actions: vec![Action::MoveDocumentStart],
+        expected_text: "first\nfirst\nsecond\nthird".into(),
+        expected_primary: CursorExpect::at(6),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without DuplicateLine the buffer stays at the initial 3 lines; \
+         the duplicated 'first\\nfirst' prefix cannot appear"
+    );
 }
 
 #[test]

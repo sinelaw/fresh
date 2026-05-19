@@ -10,7 +10,7 @@
 //! `Action::AddCursorAbove` / `Action::AddCursorBelow`.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use crate::common::scenario::trace_scenario::{assert_trace_scenario, TraceScenario};
 use fresh::test_api::Action;
@@ -141,6 +141,36 @@ fn migrated_multi_cursor_undo_atomic_full() {
         expected_text: "xyzaaa\nxyzbbb\nxyzccc\nddd".into(),
         undo_count: 3,
     });
+}
+
+/// Anti-test: drops both `AddCursorBelow` actions from
+/// `migrated_multi_cursor_typing_distributes_across_lines`.
+/// Without them only the primary cursor exists, so typing "xyz"
+/// only prepends to line 1 — the expected
+/// "xyzaaa\nxyzbbb\nxyzccc\nddd" with x/y/z distributed to all
+/// three lines cannot match.
+#[test]
+fn anti_multicursor_dropping_add_cursor_below_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: AddCursorBelow ×2 dropped — only line 1 receives 'xyz'".into(),
+        initial_text: "aaa\nbbb\nccc\nddd".into(),
+        actions: vec![
+            Action::MoveDocumentStart,
+            Action::InsertChar('x'),
+            Action::InsertChar('y'),
+            Action::InsertChar('z'),
+        ],
+        expected_text: "xyzaaa\nxyzbbb\nxyzccc\nddd".into(),
+        expected_primary: CursorExpect::at(17),
+        expected_extra_cursors: vec![CursorExpect::at(3), CursorExpect::at(10)],
+        expected_selection_text: Some("".into()),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without AddCursorBelow ×2 only one cursor exists; \
+         'xyz' cannot be distributed to lines 2 and 3"
+    );
 }
 
 #[test]

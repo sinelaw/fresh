@@ -7,7 +7,9 @@ use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::observable::{
     ActivePathExpect, BufferPathsExpect, WorkspaceExpect,
 };
-use crate::common::scenario::workspace_scenario::{assert_workspace_scenario, WorkspaceScenario};
+use crate::common::scenario::workspace_scenario::{
+    assert_workspace_scenario, check_workspace_scenario, WorkspaceScenario,
+};
 use fresh::test_api::Action;
 
 #[test]
@@ -62,6 +64,39 @@ fn migrated_three_buffers_yield_count_three() {
             ]),
         },
     });
+}
+
+/// Anti-test: drops two of the three initial buffers from
+/// `migrated_three_buffers_yield_count_three`. With only one
+/// buffer seeded, the workspace cannot satisfy `buffer_count:
+/// 3` — proves the initial_buffers list is what drives the
+/// count.
+#[test]
+fn anti_workspace_dropping_initial_buffers_yields_check_err() {
+    let scenario = WorkspaceScenario {
+        description: "anti: 2 of 3 initial_buffers dropped — count cannot reach 3".into(),
+        workspace: WorkspaceContext {
+            initial_buffers: vec![NamedBuffer {
+                filename: "a.txt".into(),
+                content: "alpha".into(),
+            }],
+            initial_splits: None,
+        },
+        events: vec![],
+        expected: WorkspaceExpect {
+            buffer_count: 3,
+            active_buffer_path: ActivePathExpect::Any,
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(vec![
+                "a.txt".into(),
+                "b.txt".into(),
+                "c.txt".into(),
+            ]),
+        },
+    };
+    assert!(
+        check_workspace_scenario(scenario).is_err(),
+        "anti-test: with only 1 initial buffer, buffer_count cannot equal 3"
+    );
 }
 
 #[test]

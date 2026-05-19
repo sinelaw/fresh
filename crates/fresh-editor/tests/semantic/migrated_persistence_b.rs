@@ -12,7 +12,7 @@ use crate::common::scenario::context::{VirtualFile, VirtualFs};
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::observable::FsState;
 use crate::common::scenario::persistence_scenario::{
-    assert_persistence_scenario, PersistenceScenario,
+    assert_persistence_scenario, check_persistence_scenario, PersistenceScenario,
 };
 use fresh::test_api::Action;
 use std::collections::BTreeMap;
@@ -56,6 +56,56 @@ fn migrated_save_preserves_unedited_sibling_files() {
             .collect(),
         },
     });
+}
+
+/// Anti-test: drops the `Save` action from
+/// `migrated_save_preserves_unedited_sibling_files`. Without
+/// Save, the typed '!' lives only in the buffer; b.txt on disk
+/// stays "edited me", so the expected "edited me!" content
+/// cannot match.
+#[test]
+fn anti_persistence_b_dropping_save_yields_check_err() {
+    let mut files = BTreeMap::new();
+    files.insert(
+        PathBuf::from("a.txt"),
+        VirtualFile {
+            content: "untouched".into(),
+            mode: None,
+            mtime_unix_secs: None,
+        },
+    );
+    files.insert(
+        PathBuf::from("b.txt"),
+        VirtualFile {
+            content: "edited me".into(),
+            mode: None,
+            mtime_unix_secs: None,
+        },
+    );
+    let scenario = PersistenceScenario {
+        description: "anti: Save dropped — typed '!' never reaches disk".into(),
+        initial_fs: VirtualFs { files },
+        initial_open: "b.txt".into(),
+        events: vec![
+            InputEvent::Action(Action::MoveDocumentEnd),
+            InputEvent::Action(Action::InsertChar('!')),
+            // Save removed.
+        ],
+        expected_buffer: None,
+        expected_fs: FsState {
+            expected_files: [
+                ("a.txt".into(), "untouched".into()),
+                ("b.txt".into(), "edited me!".into()),
+            ]
+            .into_iter()
+            .collect(),
+        },
+    };
+    assert!(
+        check_persistence_scenario(scenario).is_err(),
+        "anti-test: without Save, the typed '!' never reaches disk; \
+         b.txt content stays 'edited me' and the 'edited me!' expectation cannot match"
+    );
 }
 
 #[test]

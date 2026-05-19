@@ -31,6 +31,7 @@ pub mod migrated_goto_matching_bracket;
 pub mod migrated_indent_dedent_full;
 pub mod migrated_issue_1147_wrapped_nav;
 pub mod migrated_issue_1574_viewport_drift;
+pub mod migrated_large_file_viewport;
 pub mod migrated_macros;
 pub mod migrated_marker_roundtrip;
 pub mod migrated_recenter;

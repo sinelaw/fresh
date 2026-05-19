@@ -17,7 +17,7 @@
 //! default of the scenario harness.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -81,6 +81,28 @@ fn migrated_shift_tab_dedent_multiple_lines_spaces() {
         expected_selection_text: Some("Line 1\nLine 2\nLine 3".into()),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `InsertTab` from
+/// `migrated_tab_indent_single_line_spaces`. Without it, the
+/// buffer stays "Hello world" and the expected
+/// "    Hello world" (with 4-space indent prepended) cannot
+/// match.
+#[test]
+fn anti_indent_dedent_dropping_insert_tab_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: InsertTab dropped — no 4-space indent appears".into(),
+        initial_text: "Hello world".into(),
+        actions: vec![Action::MoveLineStart],
+        expected_text: "    Hello world".into(),
+        expected_primary: CursorExpect::at(4),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without InsertTab the buffer stays unindented; \
+         the '    Hello world' result cannot appear"
+    );
 }
 
 #[test]

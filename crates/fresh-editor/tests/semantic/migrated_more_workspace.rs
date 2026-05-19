@@ -32,6 +32,35 @@ fn migrated_zero_initial_buffers_yields_empty_workspace_runner_error() {
     );
 }
 
+/// Anti-test: drops the initial buffers from
+/// `migrated_five_initial_buffers_yield_count_five`. Without
+/// seeding 5 buffers, the workspace either errors (empty) or
+/// has the wrong count, so the
+/// `buffer_count: 5` expectation cannot match.
+#[test]
+fn anti_more_workspace_dropping_initial_buffers_yields_check_err() {
+    use crate::common::scenario::workspace_scenario::check_workspace_scenario;
+    let scenario = WorkspaceScenario {
+        description: "anti: initial_buffers dropped — workspace cannot reach count=5".into(),
+        workspace: WorkspaceContext {
+            initial_buffers: vec![],
+            initial_splits: None,
+        },
+        events: vec![],
+        expected: WorkspaceExpect {
+            buffer_count: 5,
+            active_buffer_path: ActivePathExpect::Any,
+            buffer_paths: BufferPathsExpect::EndsWithInOrder(
+                (0..5).map(|i| format!("file_{i}.txt")).collect(),
+            ),
+        },
+    };
+    assert!(
+        check_workspace_scenario(scenario).is_err(),
+        "anti-test: without the 5 initial buffers, buffer_count cannot equal 5"
+    );
+}
+
 #[test]
 fn migrated_five_initial_buffers_yield_count_five() {
     let buffers: Vec<NamedBuffer> = (0..5)

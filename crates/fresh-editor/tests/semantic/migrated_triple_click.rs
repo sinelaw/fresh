@@ -81,3 +81,31 @@ fn migrated_double_click_selects_word_not_line() {
         "double-click should not select the whole line; got {selection:?}"
     );
 }
+
+/// Anti-test (harness-direct): drops the third click from
+/// `migrated_triple_click_selects_first_line`. Only two clicks
+/// trigger double-click (SelectWord) semantics, NOT triple-click
+/// (SelectLine), so the selection must NOT contain the entire
+/// "First line here" — proves the third click is what promotes
+/// the gesture to line-select.
+#[test]
+fn anti_triple_click_dropping_third_click_does_not_select_full_line() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _f = harness
+        .load_buffer_from_text("First line here\nSecond line here\nThird line here\n")
+        .unwrap();
+    harness.render().unwrap();
+    let row = content_first_row(&harness);
+
+    // Only TWO clicks (third dropped).
+    harness.api_mut().dispatch_mouse_click(12, row);
+    harness.api_mut().dispatch_mouse_click(12, row);
+
+    let api = harness.api_mut();
+    let selection = api.selection_text();
+    assert!(
+        !selection.contains("First line here"),
+        "anti-test: with only 2 clicks (no triple-click) the selection must NOT \
+         span the full line; got {selection:?}"
+    );
+}

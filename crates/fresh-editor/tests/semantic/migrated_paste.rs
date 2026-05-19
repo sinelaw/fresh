@@ -7,7 +7,7 @@
 //! independent of any keymap.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -55,6 +55,36 @@ fn migrated_cut_removes_selection_and_replaces_on_paste() {
         expected_primary: CursorExpect::at(11),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops the `Copy` action from
+/// `migrated_copy_then_paste_at_eof_duplicates_selection`.
+/// Without it, the clipboard is empty, so the final Paste at
+/// EOF appends nothing — buffer stays "hello world" and the
+/// expected "hello worldhello" cannot match.
+#[test]
+fn anti_paste_dropping_copy_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: Copy dropped — clipboard is empty, Paste is a no-op".into(),
+        initial_text: "hello world".into(),
+        actions: vec![
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::MoveDocumentEnd,
+            Action::Paste,
+        ],
+        expected_text: "hello worldhello".into(),
+        expected_primary: CursorExpect::at(16),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without Copy the clipboard is empty; \
+         the trailing 'hello' from the Paste cannot appear"
+    );
 }
 
 #[test]

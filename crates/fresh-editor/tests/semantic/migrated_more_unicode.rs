@@ -3,7 +3,7 @@
 //! `tests/e2e/issue_1577_unicode_width.rs`.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -61,4 +61,26 @@ fn migrated_mixed_ascii_and_multibyte_byte_positions() {
         expected_primary: CursorExpect::at(4),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `MoveLeft` from
+/// `migrated_mixed_ascii_and_multibyte_byte_positions`. Without
+/// it, the cursor stays at byte 5 (end of "a中b") rather than
+/// stepping back over the 3-byte CJK char to byte 4. Proves
+/// MoveLeft is the load-bearing grapheme-aware step.
+#[test]
+fn anti_more_unicode_dropping_move_left_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: MoveLeft dropped — cursor stays at byte 5 not 4".into(),
+        initial_text: "a中b".into(),
+        actions: vec![Action::MoveDocumentEnd],
+        expected_text: "a中b".into(),
+        expected_primary: CursorExpect::at(4),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without MoveLeft the cursor sits at byte 5; \
+         the grapheme-aware byte-4 landing cannot be observed"
+    );
 }

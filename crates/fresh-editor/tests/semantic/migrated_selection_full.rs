@@ -5,7 +5,7 @@
 //! (`test_select_word_with_*`) the e2e file pins.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -151,6 +151,28 @@ fn migrated_select_line_first_includes_trailing_newline() {
         expected_selection_text: Some("alpha\n".into()),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `SelectWord` from
+/// `migrated_select_word_with_hyphen_treats_hyphen_as_separator`.
+/// Without it, no selection forms — the expected range 0..3
+/// covering "foo" cannot match.
+#[test]
+fn anti_selection_dropping_select_word_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: SelectWord dropped — no selection forms over 'foo'".into(),
+        initial_text: "foo-bar".into(),
+        actions: vec![Action::MoveLineStart],
+        expected_text: "foo-bar".into(),
+        expected_primary: CursorExpect::range(0, 3),
+        expected_selection_text: Some("foo".into()),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without SelectWord no selection forms; \
+         the 'foo' selection range cannot match"
+    );
 }
 
 #[test]

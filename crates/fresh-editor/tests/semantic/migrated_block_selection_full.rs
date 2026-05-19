@@ -3,7 +3,7 @@
 //! cycle-state semantics).
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -101,4 +101,37 @@ fn migrated_block_select_then_type_inserts_at_each_cursor() {
         expected_selection_text: Some("".into()),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `BlockSelectDown` from
+/// `migrated_block_select_then_type_inserts_at_each_cursor`.
+/// Without it, only one cursor exists and InsertChar('X') lands
+/// on line 1 only, so the expected
+/// "line1X text\nline2X text" cannot match.
+#[test]
+fn anti_block_selection_dropping_block_select_down_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: BlockSelectDown dropped — only one cursor, X inserts on line 1 only"
+            .into(),
+        initial_text: "line1 text\nline2 text".into(),
+        actions: vec![
+            Action::MoveDocumentStart,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::InsertChar('X'),
+        ],
+        expected_text: "line1X text\nline2X text".into(),
+        expected_primary: CursorExpect::at(18),
+        expected_extra_cursors: vec![CursorExpect::at(6)],
+        expected_selection_text: Some("".into()),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without BlockSelectDown no secondary cursor exists, \
+         so X cannot be inserted on line 2 simultaneously"
+    );
 }

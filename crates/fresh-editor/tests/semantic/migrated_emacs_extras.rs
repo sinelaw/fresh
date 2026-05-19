@@ -9,7 +9,7 @@
 //! of the kill verbs.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -43,4 +43,31 @@ fn migrated_kill_word_from_word_start_removes_word() {
         expected_primary: CursorExpect::at(0),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `DeleteToLineEnd` from
+/// `migrated_kill_line_partial_from_middle`. Without it, the
+/// buffer stays "hello world" and the expected "hello" (after
+/// killing " world") cannot match.
+#[test]
+fn anti_emacs_kill_dropping_delete_to_line_end_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: DeleteToLineEnd dropped — ' world' is never killed".into(),
+        initial_text: "hello world".into(),
+        actions: vec![
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+        ],
+        expected_text: "hello".into(),
+        expected_primary: CursorExpect::at(5),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without DeleteToLineEnd the buffer stays 'hello world'; \
+         the post-kill 'hello' result cannot appear"
+    );
 }

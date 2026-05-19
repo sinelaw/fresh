@@ -7,7 +7,7 @@
 //! not here.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -87,4 +87,36 @@ fn migrated_delete_backward_at_bof_is_noop() {
         expected_primary: CursorExpect::at(0),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops the `MoveDocumentEnd` from
+/// `migrated_append_at_end_of_file`. Without it, the typed
+/// chars insert at byte 0 (cursor's initial position) instead
+/// of after "Line 3", so the expected
+/// "Line 1\nLine 2\nLine 3!!\nLine 4" cannot match.
+#[test]
+fn anti_basic_dropping_move_document_end_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: MoveDocumentEnd dropped — typing inserts at byte 0 not EOF".into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        actions: vec![
+            Action::InsertChar('!'),
+            Action::InsertChar('!'),
+            Action::InsertNewline,
+            Action::InsertChar('L'),
+            Action::InsertChar('i'),
+            Action::InsertChar('n'),
+            Action::InsertChar('e'),
+            Action::InsertChar(' '),
+            Action::InsertChar('4'),
+        ],
+        expected_text: "Line 1\nLine 2\nLine 3!!\nLine 4".into(),
+        expected_primary: CursorExpect::at(29),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without MoveDocumentEnd the insertions land at byte 0 — \
+         the EOF-append result cannot appear"
+    );
 }

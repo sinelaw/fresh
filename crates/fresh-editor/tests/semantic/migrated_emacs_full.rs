@@ -14,7 +14,7 @@
 //!     mark-mode cancellation.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -123,6 +123,26 @@ fn migrated_set_mark_creates_zero_width_selection() {
         expected_primary: CursorExpect::range(0, 0),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops `TransposeChars` from
+/// `migrated_transpose_chars_basic`. Without it, the buffer
+/// stays "abc" and the expected swapped "acb" cannot match.
+#[test]
+fn anti_emacs_transpose_chars_dropping_action_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: TransposeChars dropped — 'abc' never becomes 'acb'".into(),
+        initial_text: "abc".into(),
+        actions: vec![Action::MoveDocumentEnd, Action::MoveLeft],
+        expected_text: "acb".into(),
+        expected_primary: CursorExpect::at(3),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: without TransposeChars the buffer stays 'abc'; \
+         the swapped 'acb' result cannot appear"
+    );
 }
 
 #[test]

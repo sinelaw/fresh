@@ -6,7 +6,7 @@
 //! grapheme-cluster movement surfaces here.
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, BufferScenario, CursorExpect,
+    assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -165,6 +165,34 @@ fn migrated_select_shift_left_chinese() {
         expected_selection_text: Some("好".into()),
         ..Default::default()
     });
+}
+
+/// Anti-test: drops one `SelectRight` from
+/// `migrated_select_multiple_chinese_characters`. Without all
+/// four SelectRight presses, the selection range falls short of
+/// 0..12 — proves each SelectRight extends by exactly one
+/// 3-byte CJK grapheme.
+#[test]
+fn anti_multibyte_dropping_select_right_yields_check_err() {
+    let scenario = BufferScenario {
+        description: "anti: one SelectRight dropped — selection ends at byte 9 not 12".into(),
+        initial_text: "你好世界".into(),
+        actions: vec![
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            // 4th SelectRight removed.
+        ],
+        expected_text: "你好世界".into(),
+        expected_primary: CursorExpect::range(0, 12),
+        expected_selection_text: Some("你好世界".into()),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: with only 3 SelectRights the selection covers 9 bytes, \
+         not the full 12-byte range; the four-char selection cannot match"
+    );
 }
 
 #[test]
