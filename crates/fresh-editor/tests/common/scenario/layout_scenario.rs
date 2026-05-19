@@ -654,6 +654,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                     Some((cx, cy)) => {
                         let x = (cx as i32 + dx).max(0) as u16;
                         let y = (cy as i32 + dy).max(0) as u16;
+                        eprintln!("[DEBUG popup placement] popup origin=({x},{y})");
                         PopupPositionData::Fixed { x, y }
                     }
                     None => PopupPositionData::Centered,
@@ -766,7 +767,161 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         }
     }
 
+    // Horizontal scrollbar visibility: probe the natural slots
+    // (last content row, or the row below it). True ⇒ at least
+    // one cell in those rows carries a scrollbar style.
+    if let Some(want) = s.expected_horizontal_scrollbar_visible {
+        let found = horizontal_scrollbar_visible(&harness);
+        if want != found {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "horizontal_scrollbar_visible".into(),
+                expected: want.to_string(),
+                actual: found.to_string(),
+            });
+        }
+    }
+    if let Some(want_absent) = s.expected_no_horizontal_scrollbar_on_last_content_row {
+        let (_, last_content_row) = harness.content_area_rows();
+        let found = has_scrollbar_at_row(&harness, last_content_row as u16);
+        if want_absent && found {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "no_horizontal_scrollbar_on_last_content_row".into(),
+                expected: "no scrollbar on last content row".into(),
+                actual: format!("scrollbar present on row {last_content_row}"),
+            });
+        }
+    }
+
+    if let Some(want) = &s.expected_status_message {
+        let actual = harness.api_mut().status_message();
+        if actual.as_deref() != Some(want.as_str()) {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "status_message".into(),
+                expected: format!("{want:?}"),
+                actual: format!("{actual:?}"),
+            });
+        }
+    }
+
+    if let Some(offset) = s.expected_cursor_col_equals_margin_plus {
+        let gutter = harness.api_mut().margin_left_total_width() as u16;
+        let cursor = harness.api_mut().hardware_cursor_position();
+        let expected_col = gutter + offset;
+        match cursor {
+            Some((col, _)) if col == expected_col => {}
+            other => {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: s.description.clone(),
+                    field: "cursor_col_equals_margin_plus".into(),
+                    expected: format!("col {expected_col} (gutter {gutter} + {offset})"),
+                    actual: format!("{other:?}"),
+                });
+            }
+        }
+    }
+
+    if s.expected_cursor_row_equals_content_first {
+        let (first, _) = harness.content_area_rows();
+        let cursor = harness.api_mut().hardware_cursor_position();
+        match cursor {
+            Some((_, row)) if row as usize == first => {}
+            other => {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: s.description.clone(),
+                    field: "cursor_row_equals_content_first".into(),
+                    expected: format!("row {first}"),
+                    actual: format!("{other:?}"),
+                });
+            }
+        }
+    }
+
+    for substring in &s.expected_virtual_rows_no_digit_gutter {
+        let matching_rows: Vec<&String> = snapshot
+            .rendered_rows
+            .iter()
+            .filter(|r| r.contains(substring.as_str()))
+            .collect();
+        if matching_rows.is_empty() {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "virtual_rows_no_digit_gutter".into(),
+                expected: format!("at least one row containing {substring:?}"),
+                actual: "no row contained it".into(),
+            });
+        }
+        for line in matching_rows {
+            if line
+                .trim_start()
+                .starts_with(|c: char| c.is_ascii_digit())
+            {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: s.description.clone(),
+                    field: "virtual_rows_no_digit_gutter".into(),
+                    expected: format!(
+                        "row containing {substring:?} does not start with digit"
+                    ),
+                    actual: format!("row starts with digit: {line:?}"),
+                });
+            }
+        }
+    }
+
+    for (before, after) in &s.expected_row_order {
+        let before_idx = snapshot
+            .rendered_rows
+            .iter()
+            .position(|r| r.contains(before.as_str()));
+        let after_idx = snapshot
+            .rendered_rows
+            .iter()
+            .position(|r| r.contains(after.as_str()));
+        match (before_idx, after_idx) {
+            (Some(b), Some(a)) if b < a => {}
+            (b, a) => {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: s.description.clone(),
+                    field: "row_order".into(),
+                    expected: format!("row({before:?}) < row({after:?})"),
+                    actual: format!("before={b:?}, after={a:?}"),
+                });
+            }
+        }
+    }
+
+    if let Some(want) = s.expected_virtual_text_count {
+        let actual = harness.api_mut().virtual_text_count();
+        if actual != want {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "virtual_text_count".into(),
+                expected: want.to_string(),
+                actual: actual.to_string(),
+            });
+        }
+    }
+
     Ok(())
+}
+
+/// True if any cell at row `y` carries a scrollbar style (thumb or track).
+fn has_scrollbar_at_row(harness: &EditorTestHarness, row: u16) -> bool {
+    let buffer = harness.buffer();
+    let width = buffer.area.width;
+    (0..width).any(|col| {
+        harness.is_scrollbar_thumb_at(col, row) || harness.is_scrollbar_track_at(col, row)
+    })
+}
+
+/// True if the horizontal scrollbar's natural slot (last content
+/// row or the row below it) carries any scrollbar cells.
+fn horizontal_scrollbar_visible(harness: &EditorTestHarness) -> bool {
+    let (_, last_content_row) = harness.content_area_rows();
+    has_scrollbar_at_row(harness, last_content_row as u16)
+        || has_scrollbar_at_row(harness, (last_content_row + 1) as u16)
 }
 
 /// Translate a high-level `InputEvent` into the editor's input

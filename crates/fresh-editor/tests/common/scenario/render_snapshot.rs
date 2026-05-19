@@ -790,6 +790,15 @@ impl RenderSnapshotExpect {
                 ));
             }
         }
+        if let Some(want) = &self.status_message {
+            if actual.status_message.as_deref() != Some(want.as_str()) {
+                return Some((
+                    "status_message",
+                    format!("{want:?}"),
+                    format!("{:?}", actual.status_message),
+                ));
+            }
+        }
         None
     }
 }

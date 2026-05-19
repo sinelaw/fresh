@@ -51,6 +51,7 @@ impl LayoutShadow {
             cursor_byte: 0,
             buffer_text: String::new(),
             rendered_rows: Vec::new(),
+            status_message: None,
         }
     }
 }

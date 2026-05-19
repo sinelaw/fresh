@@ -117,13 +117,14 @@ fn migrated_issue_1574_down_arrow_scrolling_invariants_rendered() {
     // `RowMatch::AnyRowContains(END_MARKER)`.
     let widths: [u16; 5] = [60, 70, 80, 90, 100];
     let heights: [u16; 2] = [20, 28];
-    // 500 MoveDowns is the original test's MAX_STEPS upper bound;
-    // any wrap geometry reaches EOF well before that.
-    // 200 MoveDowns is enough to walk the fixture at any of the
-    // sweep widths; each step renders so the wrap-aware MoveDown
-    // path (`compute_wrap_aware_visual_move_fallback`) sees a
-    // fresh layout cache.
-    let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(200).collect();
+    // 80 MoveDowns is enough to walk the 29-line fixture at any
+    // of the sweep widths (worst case ≈ 65 visual rows at width
+    // 60). Each step renders so the wrap-aware MoveDown path
+    // (`compute_wrap_aware_visual_move_fallback`) sees a fresh
+    // layout cache — without that, MoveDown falls back to the
+    // byte-based logical-line variant that advances only one
+    // visual row at a time.
+    let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(80).collect();
     // Render between each MoveDown by adding a step assertion at
     // every action index — the runner renders before each step,
     // populating the layout cache that wrap-aware MoveDown needs.
@@ -164,7 +165,17 @@ fn migrated_issue_1574_up_arrow_scrolling_invariants_rendered() {
     let widths: [u16; 5] = [60, 70, 80, 90, 100];
     let heights: [u16; 2] = [20, 28];
     let mut actions = vec![Action::MoveDocumentEnd];
-    actions.extend(std::iter::repeat(Action::MoveUp).take(500));
+    actions.extend(std::iter::repeat(Action::MoveUp).take(80));
+    // Render between each MoveUp so the wrap-aware MoveUp fallback
+    // sees a fresh layout cache (mirror of the Down sweep — see
+    // `compute_wrap_aware_visual_move_fallback` for the rationale).
+    let step_assertions: Vec<crate::common::scenario::layout_scenario::StepAssertion> = (1..actions
+        .len())
+        .map(|i| crate::common::scenario::layout_scenario::StepAssertion {
+            after_action_index: i,
+            expect: RenderSnapshotExpect::default(),
+        })
+        .collect();
     for &height in &heights {
         for &width in &widths {
             assert_layout_scenario(LayoutScenario {
@@ -176,6 +187,7 @@ fn migrated_issue_1574_up_arrow_scrolling_invariants_rendered() {
                 height,
                 actions: actions.clone(),
                 config_overrides: wrap_overrides(),
+                step_assertions: step_assertions.clone(),
                 expected_snapshot: RenderSnapshotExpect {
                     row_checks: vec![RowMatch::AnyRowContains(TOP_MARKER.into())],
                     ..Default::default()
