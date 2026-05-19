@@ -3306,21 +3306,16 @@ impl Editor {
             let process_id = callback_id.as_u64();
 
             runtime.spawn(async move {
-                let fetch = tokio::task::spawn_blocking(move || {
-                    fetch_url_to_file(&url, &target_path)
-                })
-                .await;
+                let fetch =
+                    tokio::task::spawn_blocking(move || fetch_url_to_file(&url, &target_path))
+                        .await;
 
                 let (stdout, stderr, exit_code) = match fetch {
                     Ok(Ok(status)) => {
                         if (200..300).contains(&status) {
                             (String::new(), String::new(), 0)
                         } else {
-                            (
-                                String::new(),
-                                format!("HTTP {}", status),
-                                i32::from(status),
-                            )
+                            (String::new(), format!("HTTP {}", status), i32::from(status))
                         }
                     }
                     Ok(Err(e)) => (String::new(), e, -1),
