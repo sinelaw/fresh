@@ -19,7 +19,6 @@ pub mod copy_buffer_path;
 pub mod crash_repro;
 pub mod csharp_language_coherence;
 pub mod csi_u_session_input;
-pub mod ctrl_end_wrapped;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
 pub mod dock_panel_routing;

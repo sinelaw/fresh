@@ -281,9 +281,23 @@ fn anti_down_from_last_content_line_without_down_stays_on_data_row() {
 
     let (_cx, cy) = harness.screen_cursor_position();
     let cursor_row = harness.get_row_text(cy);
-    let has_data_content = ["entry_", "Entry ", ".html", "example.com", "archive.org"]
-        .iter()
-        .any(|needle| cursor_row.contains(needle));
+    // The cursor lands at the end of the last content line.
+    // Under wrap, that's a wrapped row of Entry 140 — possibly
+    // the very last wrapped chunk ("descriptive text that
+    // makes this line longer"), so use the broader substring
+    // list from the original e2e (which includes "longer").
+    let has_data_content = [
+        "entry_",
+        "Entry ",
+        ".html",
+        "example.com",
+        "archive.org",
+        "NEWTON",
+        "Poetry",
+        "longer",
+    ]
+    .iter()
+    .any(|needle| cursor_row.contains(needle));
     assert!(
         has_data_content,
         "anti: without Down keystroke, cursor row {cy} must contain data content \
