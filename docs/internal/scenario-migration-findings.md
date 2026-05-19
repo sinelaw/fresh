@@ -211,6 +211,24 @@ non-obvious. Pinned in
 `migrated_multicursor_extras::migrated_add_cursor_next_match_with_*_selection`
 (case 3).
 
+## 13. Macro playback is per-action, not grouped as a single undo unit
+
+**Source:** `tests/e2e/macros.rs::test_macro_playback_is_undoable`.
+**Observation:** The e2e test asserted "one Ctrl+Z removes the
+macro playback" with a deliberately weak comparison
+(`abc_count_after < abc_count`), suggesting it expected (or at
+least tolerated) macro replay being grouped as a single undo
+unit. The current production behaviour in
+`crates/fresh-editor/src/app/macro_actions.rs::play_macro` is
+that each replayed action is forwarded to `handle_action` in a
+plain loop with no `BulkEdit` wrapper, so each replayed
+`InsertChar` lands as its own event-log entry. A 3-char macro
+replay therefore takes 3 Undos to fully revert.
+**Assessment:** Likely intentional given how cheap individual
+`InsertChar` events are, but the e2e wording made it ambiguous.
+Pinned in
+`migrated_macros::migrated_macro_playback_appends_replay`.
+
 ---
 
 ## How to add a finding
