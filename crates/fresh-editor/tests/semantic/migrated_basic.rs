@@ -25,14 +25,30 @@ fn migrated_basic_editing_workflow_typing_inserts_at_cursor() {
 
 #[test]
 fn migrated_append_at_end_of_file() {
-    // Originally `test_append_at_end_of_file` — the editor's
-    // append-at-EOF path was buggy in early versions.
+    // Original: `test_append_at_end_of_file` (tests/e2e/basic.rs:278).
+    // The e2e walks the full append sequence: Ctrl+End, two
+    // chars, Enter, six more chars. The buggy path was
+    // specifically "after appending past the original EOF, can
+    // we still Enter and type on a new line?" — pinning the
+    // full sequence so a regression at any step surfaces.
     assert_buffer_scenario(BufferScenario {
-        description: "MoveDocumentEnd then InsertChar appends to EOF".into(),
-        initial_text: "before".into(),
-        actions: vec![Action::MoveDocumentEnd, Action::InsertChar('!')],
-        expected_text: "before!".into(),
-        expected_primary: CursorExpect::at(7),
+        description: "Ctrl+End + '!' + '!' + Enter + 'Line 4' appends through new line at EOF"
+            .into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::InsertChar('!'),
+            Action::InsertChar('!'),
+            Action::InsertNewline,
+            Action::InsertChar('L'),
+            Action::InsertChar('i'),
+            Action::InsertChar('n'),
+            Action::InsertChar('e'),
+            Action::InsertChar(' '),
+            Action::InsertChar('4'),
+        ],
+        expected_text: "Line 1\nLine 2\nLine 3!!\nLine 4".into(),
+        expected_primary: CursorExpect::at(29),
         ..Default::default()
     });
 }
