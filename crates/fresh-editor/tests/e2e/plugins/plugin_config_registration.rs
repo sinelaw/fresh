@@ -217,8 +217,8 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
 
     let after_toggle = harness.screen_to_string();
     assert!(
-        after_toggle.contains("ACTIVE"),
-        "Toggling `uppercase` should leave the toggle ACTIVE. Screen:\n{after_toggle}"
+        after_toggle.contains(": [v]"),
+        "Toggling `uppercase` should leave the toggle checked ([v]). Screen:\n{after_toggle}"
     );
 
     // Save via Ctrl+S, then close the settings dialog.
@@ -242,15 +242,15 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
 
     // Re-opening Settings rebuilds the category tree from the live
     // schema map, so the persisted value should still be reflected
-    // (toggle still shows ACTIVE).
+    // (toggle still renders checked as [v]).
     harness.open_settings().unwrap();
     focus_category(&mut harness, &format!("Plugin: {}", PLUGIN_NAME));
     let after_reopen = harness.screen_to_string();
     assert!(
         after_reopen.contains("Uppercase")
-            && after_reopen.contains("ACTIVE")
+            && after_reopen.contains(": [v]")
             && after_reopen.contains("(user)"),
-        "Re-opened settings must show the persisted Uppercase=ACTIVE \
+        "Re-opened settings must show the persisted Uppercase=[v] \
          from the User layer. Screen:\n{after_reopen}"
     );
 }
