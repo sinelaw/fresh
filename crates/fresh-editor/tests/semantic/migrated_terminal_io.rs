@@ -1,4 +1,11 @@
-//! Shallow vt100 / ANSI round-trip smoke tests.
+//! DECLARATIVE: shallow vt100 / ANSI round-trip smoke tests
+//! migrated from `tests/e2e/terminal_io_smoke.rs`.
+//!
+//! Scenarios are pure data: each test is a single `LayoutScenario`
+//! literal whose `row_checks` assert the per-row text produced by
+//! the real `render_real()` → ANSI → vt100 round-trip. No
+//! `EditorTestHarness::` usage; no `let grid = RoundTripGrid::...`
+//! imperative extraction.
 //!
 //! These prove the render → ANSI-emit → vt100-parse pipeline
 //! transports buffer text end-to-end. They do NOT cover the
@@ -16,52 +23,69 @@
 //! just compared `grid.height` to the constructed terminal
 //! height — same source, vacuously true.
 
-use crate::common::harness::EditorTestHarness;
-use crate::common::scenario::observable::{Observable, RoundTripGrid};
+use crate::common::scenario::layout_scenario::{
+    assert_layout_scenario, check_layout_scenario, LayoutScenario,
+};
+use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 use fresh::test_api::Action;
 
 #[test]
 fn migrated_buffer_text_round_trips_through_ansi_emit() {
-    let mut h = EditorTestHarness::with_temp_project(60, 12).unwrap();
-    let _f = h.load_buffer_from_text("hello world").unwrap();
-    let grid = RoundTripGrid::extract(&mut h);
-    assert!(
-        grid.rows.iter().any(|r| r.contains("hello world")),
-        "vt100 grid lacks 'hello world'; rows: {:#?}",
-        grid.rows
-    );
+    assert_layout_scenario(LayoutScenario {
+        description: "buffer text round-trips through ANSI emit + vt100 parse".into(),
+        initial_text: "hello world".into(),
+        width: 60,
+        height: 12,
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![RowMatch::AnyRowContains("hello world".into())],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 }
 
 #[test]
 fn migrated_typing_appears_in_grid_after_render_real() {
-    let mut h = EditorTestHarness::with_temp_project(60, 12).unwrap();
-    let _f = h.load_buffer_from_text("").unwrap();
-    h.api_mut().dispatch(Action::InsertChar('A'));
-    h.api_mut().dispatch(Action::InsertChar('B'));
-    h.api_mut().dispatch(Action::InsertChar('C'));
-    let grid = RoundTripGrid::extract(&mut h);
-    assert!(
-        grid.rows.iter().any(|r| r.contains("ABC")),
-        "vt100 grid lacks typed 'ABC'; rows: {:#?}",
-        grid.rows
-    );
+    assert_layout_scenario(LayoutScenario {
+        description: "typed chars appear in the vt100 round-trip grid".into(),
+        initial_text: String::new(),
+        width: 60,
+        height: 12,
+        actions: vec![
+            Action::InsertChar('A'),
+            Action::InsertChar('B'),
+            Action::InsertChar('C'),
+        ],
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![RowMatch::AnyRowContains("ABC".into())],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 }
 
-/// Anti-test (harness-direct): drops the InsertChar dispatches
-/// from `migrated_typing_appears_in_grid_after_render_real`.
-/// Without them, the buffer stays empty, so no grid row can
-/// contain "ABC" — proves the InsertChar actions are what
-/// produce the round-tripped text in the vt100 grid.
+/// Anti-test: drops the InsertChar dispatches from
+/// `migrated_typing_appears_in_grid_after_render_real`. Without
+/// them the buffer stays empty, so no grid row can contain "ABC".
+/// Proves the InsertChar actions are what produce the round-tripped
+/// text in the vt100 grid.
 #[test]
 fn anti_terminal_io_dropping_insert_char_yields_no_abc_in_grid() {
-    let mut h = EditorTestHarness::with_temp_project(60, 12).unwrap();
-    let _f = h.load_buffer_from_text("").unwrap();
-    // No InsertChar dispatches here.
-    let grid = RoundTripGrid::extract(&mut h);
+    let scenario = LayoutScenario {
+        description:
+            "anti: without InsertChar, the vt100 grid must NOT contain 'ABC'".into(),
+        initial_text: String::new(),
+        width: 60,
+        height: 12,
+        actions: vec![],
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![RowMatch::AnyRowContains("ABC".into())],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     assert!(
-        !grid.rows.iter().any(|r| r.contains("ABC")),
-        "anti-test: without InsertChar dispatches the grid must NOT contain 'ABC'; \
-         got rows: {:#?}",
-        grid.rows
+        check_layout_scenario(scenario).is_err(),
+        "anti-test: empty buffer should not contain 'ABC'"
     );
 }

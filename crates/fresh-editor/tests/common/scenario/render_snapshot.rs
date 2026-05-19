@@ -135,6 +135,13 @@ pub enum RowMatch {
     /// regressions like "after Ctrl+End the empty final line
     /// must be visible, NOT obscured by Entry 140's content".
     NoRowContains(String),
+    /// At least one row must contain at least one of the listed
+    /// substrings. Disjunctive variant of `AnyRowContains` — used
+    /// when a test's load-bearing claim is "some later content is
+    /// visible" without pinning the exact line index (e.g. e2e
+    /// scroll tests that allow `Line 80 | 90 | 95 | 100 | modified
+    /// content`).
+    AnyRowContainsAny(Vec<String>),
     /// Pick the Nth row (0-indexed) of those that contain the
     /// gutter separator `│`, take the content area after the
     /// FIRST `│`, count leading spaces. The count must satisfy
@@ -458,6 +465,22 @@ impl RenderSnapshotExpect {
                         ));
                     }
                 }
+                RowMatch::AnyRowContainsAny(substrings) => {
+                    let found = actual.rendered_rows.iter().any(|r| {
+                        let t = r.trim_end();
+                        substrings.iter().any(|s| t.contains(s.as_str()))
+                    });
+                    if !found {
+                        return Some((
+                            "rendered_rows[AnyRowContainsAny]",
+                            format!("some row contains any of {substrings:?}"),
+                            format!(
+                                "none of {} rows contained any",
+                                actual.rendered_rows.len()
+                            ),
+                        ));
+                    }
+                }
                 RowMatch::ContentRowLeadingSpaces {
                     nth_content_row,
                     min,
@@ -686,6 +709,36 @@ impl RenderSnapshotExpect {
                     format!(
                         "got {leading} leading spaces; continuation = {cont:?}"
                     ),
+                ));
+            }
+        }
+        if let Some(rect) = &self.hardware_cursor_hidden_or_outside_rect {
+            if let Some((cx, cy)) = actual.hardware_cursor {
+                let inside = cx >= rect.x
+                    && cx < rect.x + rect.w
+                    && cy >= rect.y
+                    && cy < rect.y + rect.h;
+                if inside {
+                    return Some((
+                        "hardware_cursor_hidden_or_outside_rect",
+                        format!(
+                            "cursor hidden OR outside [{},{})×[{},{})",
+                            rect.x,
+                            rect.x + rect.w,
+                            rect.y,
+                            rect.y + rect.h
+                        ),
+                        format!("cursor at ({cx},{cy}) is inside the rect"),
+                    ));
+                }
+            }
+        }
+        if let Some(want) = self.hardware_cursor_at {
+            if Some(want) != actual.hardware_cursor {
+                return Some((
+                    "hardware_cursor_at",
+                    format!("{want:?}"),
+                    format!("{:?}", actual.hardware_cursor),
                 ));
             }
         }

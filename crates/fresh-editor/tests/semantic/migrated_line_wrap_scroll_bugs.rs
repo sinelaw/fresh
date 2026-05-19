@@ -1,625 +1,343 @@
-//! Migration of `tests/e2e/line_wrap_scroll_bugs.rs` — scrolling
-//! bugs that surface when line wrapping is enabled.
+//! DECLARATIVE: Migration of `tests/e2e/line_wrap_scroll_bugs.rs` —
+//! scrolling bugs that surface when line wrapping is enabled.
 //!
-//! Two related root causes, eight regression-triggering scenarios
-//! preserved here verbatim:
+//! Two related root causes preserved here:
 //!
-//!   1. **Scrollbar appearance.** When a file has long lines that
-//!      wrap to many visual rows, the scrollbar incorrectly shows
-//!      as "nothing to scroll" because it calculates based on
-//!      logical line count (1) instead of visual row count (many).
-//!   2. **Mouse wheel / Page Down / scrollbar click+drag.** Scrolling
-//!      doesn't work because the scroll routines iterate through
-//!      logical lines, not visual rows.
-//!   3. **Scrollbar thumb drag-start jump.** Clicking on the thumb
-//!      (or dragging horizontally with the same row) must not jump
-//!      the viewport — the thumb should move relative to where it
-//!      was clicked, not center around the mouse.
+//!   1. **Mouse-wheel / Page-Down / scrollbar click-and-drag scroll
+//!      under wrap.** Pre-fix, the scroll routines iterated logical
+//!      lines (the file may have only one), so they couldn't advance
+//!      a viewport whose 20+ visual rows were a single wrapped
+//!      logical line.
 //!
-//! ## Harness-direct pattern
+//!   2. **Multi-line files with one very long wrapped line.** Same
+//!      root cause, exercised on a 6-logical-line / ~30-visual-row
+//!      file.
 //!
-//! Every test in this file probes surfaces with no `EditorTestApi`
-//! projection:
-//!   * `content_area_rows`, `get_cell_style`, `is_scrollbar_thumb_at`
-//!     for scrollbar geometry,
-//!   * `editor().theme()` for the scrollbar thumb/track colors,
-//!   * `mouse_scroll_down`, `mouse_drag`, `mouse_click`, `send_mouse`
-//!     for input plumbing,
-//!   * `top_line_number` and `editor().get_split_areas()` for
-//!     scroll-position observation.
+//! ## What's declarative here
 //!
-//! These tests therefore take the harness-direct path (the same
-//! pattern `migrated_horizontal_scrollbar.rs` and
-//! `migrated_line_wrap_parity.rs` use).
+//! Each migrated test asserts "after the scroll action, later
+//! content from the wrapped buffer is visible on screen" via
+//! `RowMatch::AnyRowContains` on a sentinel substring that wouldn't
+//! be visible from the top of the buffer. The scroll action is
+//! either an `Action` (PageDown) or an `InputEvent::Mouse` (wheel,
+//! click, drag) — both routed through the production input path.
 //!
-//! Source: `tests/e2e/line_wrap_scroll_bugs.rs` (8 tests migrated;
-//! no tests deferred).
+//! ## Deferred (probes that have no `EditorTestApi` projection)
+//!
+//!   * `test_scrollbar_shows_scrollable_content_with_wrapped_lines` —
+//!     counts scrollbar thumb/track cells by colour via
+//!     `harness.get_cell_style()` + `editor().theme()`. No
+//!     `RenderSnapshot` equivalent for "scrollbar geometry".
+//!   * `test_scrollbar_thumb_drag_no_jump_on_start` — reads
+//!     `editor().get_split_areas()` for the thumb's row range and
+//!     `harness.top_line_number()` for the scroll position. Both
+//!     are renderer-internal; the test asserts on the relative
+//!     change in scroll position after a horizontal drag, which
+//!     can't be expressed against the snapshot today.
+//!
+//! Source: `tests/e2e/line_wrap_scroll_bugs.rs` (6 of 8 tests
+//! migrated; 2 deferred — file retained).
 
-use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use crate::common::scenario::context::{MouseButton, MouseEvent};
+use crate::common::scenario::input_event::InputEvent;
+use crate::common::scenario::layout_scenario::{
+    assert_layout_scenario, check_layout_scenario, LayoutScenario, MouseDragSpec,
+    ScenarioConfigOverrides,
+};
+use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
+use fresh::test_api::Action;
 
-/// Helper to create a config with line wrapping enabled.
-fn config_with_line_wrap() -> Config {
-    let mut config = Config::default();
-    config.editor.line_wrap = true;
-    config
-}
+const TERMINAL_WIDTH_60: u16 = 60;
+const TERMINAL_HEIGHT_20: u16 = 20;
+const TERMINAL_WIDTH_80: u16 = 80;
+const TERMINAL_HEIGHT_24: u16 = 24;
 
-#[test]
-fn migrated_scrollbar_shows_scrollable_content_with_wrapped_lines() {
-    // Original: `test_scrollbar_shows_scrollable_content_with_wrapped_lines`.
-    // Bug: when line_wrap=true and the file is a single very long
-    // line, the scrollbar thumb fills the entire track ("nothing to
-    // scroll") because `scrollbar_line_counts()` uses logical lines
-    // (1) instead of visual rows (~20 at width 60).
-    const TERMINAL_WIDTH: u16 = 60;
-    const TERMINAL_HEIGHT: u16 = 20;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    // Single logical line, 1000 chars — wraps to ~20 visual rows at
-    // width 60 (gutter ~8, scrollbar 1 → ~51 chars per row).
-    let long_line = "X".repeat(1000);
-    harness.type_text(&long_line).unwrap();
-    harness.render().unwrap();
-
-    let buffer_content = harness.get_buffer_content().unwrap();
-    assert!(
-        !buffer_content.contains('\n'),
-        "Should be a single logical line"
-    );
-    assert_eq!(buffer_content.len(), 1000, "Line should be 1000 chars");
-
-    let scrollbar_col = TERMINAL_WIDTH - 1;
-    let (content_first_row, content_last_row) = harness.content_area_rows();
-
-    // Compare against the active theme's scrollbar colors (which the
-    // renderer uses) to count thumb vs. track cells.
-    let theme = harness.editor().theme();
-    let thumb_bg = theme.scrollbar_thumb_fg;
-    let track_bg = theme.scrollbar_track_fg;
-    let mut thumb_count = 0;
-    let mut track_count = 0;
-    let content_height = content_last_row - content_first_row + 1;
-
-    for row in content_first_row..=content_last_row {
-        if let Some(style) = harness.get_cell_style(scrollbar_col, row as u16) {
-            match style.bg {
-                Some(c) if c == thumb_bg => thumb_count += 1,
-                Some(c) if c == track_bg => track_count += 1,
-                _ => {}
-            }
-        }
-    }
-
-    assert!(
-        thumb_count < content_height,
-        "Scrollbar thumb ({} cells) should NOT fill the entire content area ({} rows). \
-         This indicates the scrollbar incorrectly thinks there's nothing to scroll. \
-         The file has 1000 chars that wrap to ~20 visual lines, which exceeds the viewport.",
-        thumb_count,
-        content_height
-    );
-    assert!(
-        track_count > 0,
-        "Scrollbar track should be visible, indicating there's content to scroll to"
-    );
-}
-
-#[test]
-fn migrated_mouse_wheel_scrolls_wrapped_content() {
-    // Original: `test_mouse_wheel_scrolls_wrapped_content`.
-    // Bug: mouse wheel scrolling doesn't move the viewport because
-    // scroll_up/scroll_down iterate logical lines (1), not visual
-    // rows.
-    const TERMINAL_WIDTH: u16 = 60;
-    const TERMINAL_HEIGHT: u16 = 20;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    // Pattern: "AAA...BBB...CCC...DDD..." — 200 chars per letter,
-    // so we can identify which slice of the wrapped line is visible.
+/// Build the 1600-char `AAAA…HHHH` pattern used by the
+/// single-logical-line tests. 8 letters × 200 chars each lets a
+/// per-row check ("DDDD on screen") prove the viewport scrolled
+/// far enough into the wrapped line.
+fn striped_long_line() -> String {
     let mut long_line = String::new();
     for ch in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] {
         long_line.push_str(&ch.to_string().repeat(200));
     }
-
-    harness.type_text(&long_line).unwrap();
-    // Move cursor to the beginning so we start at top.
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_before = harness.screen_to_string();
-    assert!(
-        screen_before.contains("AAAA"),
-        "Before scrolling, should see the beginning of the line (A chars)"
-    );
-
-    let (content_first_row, _) = harness.content_area_rows();
-    let scroll_col = TERMINAL_WIDTH / 2;
-    let scroll_row = content_first_row as u16 + 5;
-
-    // 20 mouse-wheel scrolls — should move the viewport down through
-    // many visual rows.
-    for _ in 0..20 {
-        harness.mouse_scroll_down(scroll_col, scroll_row).unwrap();
-    }
-
-    let screen_after = harness.screen_to_string();
-    let content_changed = screen_before != screen_after;
-    let sees_later_content = screen_after.contains("BBBB")
-        || screen_after.contains("CCCC")
-        || screen_after.contains("DDDD")
-        || screen_after.contains("EEEE")
-        || screen_after.contains("FFFF")
-        || screen_after.contains("GGGG")
-        || screen_after.contains("HHHH");
-
-    assert!(
-        content_changed,
-        "Screen content should change after scrolling down with mouse wheel. \
-         The viewport appears stuck, indicating scroll_down is not moving through \
-         visual (wrapped) lines correctly."
-    );
-    assert!(
-        sees_later_content,
-        "After scrolling down, should see content from later in the wrapped line. \
-         Screen still shows only the beginning, indicating scrolling is not working with wrapped lines.\n\
-         Screen:\n{}", screen_after
-    );
+    long_line
 }
 
-#[test]
-fn migrated_scrollbar_drag_with_wrapped_lines() {
-    // Original: `test_scrollbar_drag_with_wrapped_lines`.
-    const TERMINAL_WIDTH: u16 = 60;
-    const TERMINAL_HEIGHT: u16 = 20;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    let mut long_line = String::new();
-    for ch in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] {
-        long_line.push_str(&ch.to_string().repeat(200));
-    }
-
-    harness.type_text(&long_line).unwrap();
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_at_top = harness.screen_to_string();
-    assert!(
-        screen_at_top.contains("AAAA"),
-        "Should start at top showing A characters"
-    );
-
-    let scrollbar_col = TERMINAL_WIDTH - 1;
-    let (content_first_row, content_last_row) = harness.content_area_rows();
-
-    let drag_start_row = content_first_row as u16 + 2;
-    let drag_end_row = content_last_row as u16 - 2;
-
-    harness
-        .mouse_drag(scrollbar_col, drag_start_row, scrollbar_col, drag_end_row)
-        .unwrap();
-
-    let screen_after_drag = harness.screen_to_string();
-    let sees_later_content = screen_after_drag.contains("DDDD")
-        || screen_after_drag.contains("EEEE")
-        || screen_after_drag.contains("FFFF")
-        || screen_after_drag.contains("GGGG")
-        || screen_after_drag.contains("HHHH");
-
-    assert!(
-        sees_later_content || screen_at_top != screen_after_drag,
-        "Scrollbar drag should move the viewport to show later content in the wrapped line. \
-         The viewport didn't change, indicating scrollbar drag doesn't work with line wrapping."
-    );
-}
-
-#[test]
-fn migrated_page_down_scrolls_visual_rows_with_wrapped_line() {
-    // Original: `test_page_down_scrolls_visual_rows_with_wrapped_line`.
-    // Page Down should scroll by approximately one viewport height
-    // of visual rows.
-    const TERMINAL_WIDTH: u16 = 60;
-    const TERMINAL_HEIGHT: u16 = 20;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    let mut long_line = String::new();
-    for ch in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] {
-        long_line.push_str(&ch.to_string().repeat(200));
-    }
-
-    harness.type_text(&long_line).unwrap();
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_before = harness.screen_to_string();
-    assert!(
-        screen_before.contains("AAAA"),
-        "Should start at top showing A characters"
-    );
-
-    harness
-        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_after = harness.screen_to_string();
-    let content_changed = screen_before != screen_after;
-    assert!(
-        content_changed,
-        "PageDown should scroll the viewport through visual rows of the wrapped line. \
-         The screen content didn't change, indicating PageDown is stuck on a single logical line."
-    );
-}
-
-#[test]
-fn migrated_mouse_wheel_with_multiline_file_one_long_line() {
-    // Original: `test_mouse_wheel_with_multiline_file_one_long_line`.
-    // File structure mimics ~/Downloads/zz.txt: short lines + one
-    // very long line + short lines.
-    const TERMINAL_WIDTH: u16 = 80;
-    const TERMINAL_HEIGHT: u16 = 24;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
+/// Build a 6-logical-line file with three short lines, one very
+/// long line, then two trailing short lines — the multiline shape
+/// the production bug reproduced with (mimics `~/Downloads/zz.txt`
+/// from the original report).
+fn multiline_with_long_x() -> String {
     let short_line1 = "Short line 1";
     let short_line2 = "Short line 2";
     let short_line3 = "Short line 3";
     let long_line = "X".repeat(2000);
     let short_line4 = "Short line 4";
     let short_line5 = "Short line 5";
-
-    let content = format!(
+    format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
         short_line1, short_line2, short_line3, long_line, short_line4, short_line5
-    );
-
-    let _fixture = harness.load_buffer_from_text(&content).unwrap();
-    harness.render().unwrap();
-
-    let screen_before = harness.screen_to_string();
-    assert!(
-        screen_before.contains("Short line 1"),
-        "Should see Short line 1 at top"
-    );
-
-    let (content_first_row, _) = harness.content_area_rows();
-
-    for _ in 0..10 {
-        harness
-            .mouse_scroll_down(40, content_first_row as u16 + 5)
-            .unwrap();
-    }
-
-    let screen_after = harness.screen_to_string();
-    let content_changed = screen_before != screen_after;
-
-    assert!(
-        content_changed,
-        "Mouse wheel scroll should change viewport in multi-line file with wrapped content.\n\
-         Before:\n{}\n\nAfter:\n{}",
-        screen_before, screen_after
-    );
+    )
 }
 
-#[test]
-fn migrated_scrollbar_click_with_multiline_file_one_long_line() {
-    // Original: `test_scrollbar_click_with_multiline_file_one_long_line`.
-    // Bug: scrollbar click doesn't work because the handler
-    // computes max_scroll_line using logical lines (here 6, less
-    // than the viewport's 24 rows), so max_scroll_line is 0 and
-    // no scrolling is allowed — even though the long line wraps to
-    // 30+ visual rows.
-    const TERMINAL_WIDTH: u16 = 80;
-    const TERMINAL_HEIGHT: u16 = 24;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    let short_line1 = "<p>Short line 1</p>";
-    let short_line2 = "</p>";
-    let short_line3 = "</div>";
-    let long_line = format!(
-        "<div class=\"content\">{}</div>",
-        "CONTENT_".repeat(250)
-    );
-    let short_line5 = "";
-    let short_line6 = "";
-
-    let content = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
-        short_line1, short_line2, short_line3, long_line, short_line5, short_line6
-    );
-
-    let _fixture = harness.load_buffer_from_text(&content).unwrap();
-    harness.render().unwrap();
-
-    let screen_before = harness.screen_to_string();
-    assert!(
-        screen_before.contains("Short line 1"),
-        "Should see Short line 1 at top"
-    );
-
-    let scrollbar_col = TERMINAL_WIDTH - 1;
-    let (_content_first_row, content_last_row) = harness.content_area_rows();
-
-    let click_row = content_last_row as u16 - 3;
-
-    harness.mouse_click(scrollbar_col, click_row).unwrap();
-    harness.render().unwrap();
-
-    let screen_after = harness.screen_to_string();
-    let content_changed = screen_before != screen_after;
-
-    assert!(
-        content_changed,
-        "Scrollbar click should change viewport in multi-line file with wrapped content.\n\
-         Clicking at row {} should scroll down, but viewport didn't change.\n\
-         This indicates scrollbar click is broken for files with few logical lines but many visual rows.\n\
-         Before:\n{}\n\nAfter:\n{}",
-        click_row, screen_before, screen_after
-    );
-}
-
-#[test]
-fn migrated_scrollbar_drag_with_multiline_file_one_long_line() {
-    // Original: `test_scrollbar_drag_with_multiline_file_one_long_line`.
-    const TERMINAL_WIDTH: u16 = 80;
-    const TERMINAL_HEIGHT: u16 = 24;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
+/// HTML-shaped variant of `multiline_with_long_x` used by the
+/// click-and-drag tests in the original — 6 logical lines with
+/// the long one being `<div ... CONTENT_CONTENT_CONTENT_ ...>`.
+fn multiline_with_long_html() -> String {
     let short_line1 = "<p>Short line 1</p>";
     let short_line2 = "</p>";
     let short_line3 = "</div>";
     let long_line = format!("<div class=\"content\">{}</div>", "CONTENT_".repeat(250));
     let short_line5 = "";
     let short_line6 = "";
-
-    let content = format!(
+    format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
         short_line1, short_line2, short_line3, long_line, short_line5, short_line6
-    );
+    )
+}
 
-    let _fixture = harness.load_buffer_from_text(&content).unwrap();
-    harness.render().unwrap();
+fn config_wrap_on() -> ScenarioConfigOverrides {
+    ScenarioConfigOverrides {
+        line_wrap: Some(true),
+        ..Default::default()
+    }
+}
 
-    let screen_before = harness.screen_to_string();
-    assert!(
-        screen_before.contains("Short line 1"),
-        "Should see Short line 1 at top"
-    );
-
-    let scrollbar_col = TERMINAL_WIDTH - 1;
-    let (content_first_row, content_last_row) = harness.content_area_rows();
-
-    let drag_start_row = content_first_row as u16 + 2;
-    let drag_end_row = content_last_row as u16 - 2;
-
-    harness
-        .mouse_drag(scrollbar_col, drag_start_row, scrollbar_col, drag_end_row)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_after = harness.screen_to_string();
-    let content_changed = screen_before != screen_after;
-
-    assert!(
-        content_changed,
-        "Scrollbar drag should change viewport in multi-line file with wrapped content.\n\
-         Dragging from row {} to {} should scroll, but viewport didn't change.\n\
-         Before:\n{}\n\nAfter:\n{}",
-        drag_start_row, drag_end_row, screen_before, screen_after
-    );
+/// Build a sequence of 20 mouse-wheel-down events at the same
+/// (col, row). Each entry becomes one `MouseEventKind::ScrollDown`
+/// dispatched through the editor's real `handle_mouse` path.
+fn wheel_down_events(count: usize, col: u16, row: u16) -> Vec<InputEvent> {
+    (0..count)
+        .map(|_| {
+            InputEvent::Mouse(MouseEvent::Wheel {
+                col,
+                row,
+                dy: -1,
+            })
+        })
+        .collect()
 }
 
 #[test]
-fn migrated_scrollbar_thumb_drag_no_jump_on_start() {
-    // Original: `test_scrollbar_thumb_drag_no_jump_on_start`.
-    // Reproduction: click on the thumb, drag horizontally (same
-    // row), release — should not scroll. The thumb must move
-    // relative to where it was clicked, not center around the
-    // mouse position.
-    const TERMINAL_WIDTH: u16 = 80;
-    const TERMINAL_HEIGHT: u16 = 24;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    // 100 short lines → scrollable.
-    let content: String = (1..=100)
-        .map(|i| format!("Line {} content here\n", i))
-        .collect();
-
-    harness.load_buffer_from_text(&content).unwrap();
-    harness.render().unwrap();
-
-    // Scroll down 30 lines via keyboard so the thumb is mid-track.
-    for _ in 0..30 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
-
-    let top_line_before = harness.top_line_number();
-
-    // Pull thumb position from the cached split-area layout.
-    let scrollbar_col = TERMINAL_WIDTH - 1;
-    let split_areas = harness.editor().get_split_areas().to_vec();
-    let (_split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) =
-        split_areas[0];
-    assert!(
-        thumb_end > thumb_start,
-        "Thumb should have nonzero size: start={}, end={}",
-        thumb_start,
-        thumb_end
-    );
-    let thumb_mid = (thumb_start + thumb_end) / 2;
-    let thumb_row = scrollbar_rect.y + thumb_mid as u16;
-
-    // Mouse down on the thumb starts the drag — must NOT change
-    // scroll position.
-    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-    let down_event = MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: scrollbar_col,
-        row: thumb_row,
-        modifiers: KeyModifiers::NONE,
-    };
-    harness.send_mouse(down_event).unwrap();
-    harness.render().unwrap();
-
-    let top_line_after_click = harness.top_line_number();
-    assert_eq!(
-        top_line_before, top_line_after_click,
-        "Clicking on scrollbar thumb should not change scroll position.\n\
-         Before click: line {}, After click: line {}",
-        top_line_before, top_line_after_click
-    );
-
-    // Horizontal drag (same row, different col) — must NOT scroll.
-    let drag_event = MouseEvent {
-        kind: MouseEventKind::Drag(MouseButton::Left),
-        column: scrollbar_col - 5,
-        row: thumb_row,
-        modifiers: KeyModifiers::NONE,
-    };
-    harness.send_mouse(drag_event).unwrap();
-    harness.render().unwrap();
-
-    let top_line_after_horizontal_drag = harness.top_line_number();
-    assert_eq!(
-        top_line_before, top_line_after_horizontal_drag,
-        "Dragging scrollbar thumb horizontally (same row) should not change scroll position.\n\
-         Before: line {}, After horizontal drag: line {}\n\
-         This indicates the thumb is jumping to center around mouse position instead of using relative movement.",
-        top_line_before,
-        top_line_after_horizontal_drag
-    );
-
-    // Release — position should remain unchanged.
-    let up_event = MouseEvent {
-        kind: MouseEventKind::Up(MouseButton::Left),
-        column: scrollbar_col - 5,
-        row: thumb_row,
-        modifiers: KeyModifiers::NONE,
-    };
-    harness.send_mouse(up_event).unwrap();
-    harness.render().unwrap();
-
-    let top_line_after_release = harness.top_line_number();
-    assert_eq!(
-        top_line_before, top_line_after_release,
-        "After horizontal drag and release, scroll position should be unchanged.\n\
-         Before: line {}, After release: line {}",
-        top_line_before, top_line_after_release
-    );
+fn migrated_mouse_wheel_scrolls_wrapped_content() {
+    // Original: `test_mouse_wheel_scrolls_wrapped_content`. Bug:
+    // wheel scrolling didn't advance the viewport because the scroll
+    // routines iterated logical lines (1), not visual rows. We
+    // assert "later-letter content visible after wheel events" — at
+    // initial cursor-at-top, the screen shows only `AAAA…`.
+    //
+    // The wheel events fire at row 5 of the content area. The
+    // first content row at width=60/height=20 sits at row 1 (under
+    // the tab bar at row 0), so we use row 6 in scenario terms.
+    // The scroll handler doesn't depend on the row being inside
+    // the buffer area for wheel events — they propagate to the
+    // active viewport regardless of cell coordinates as long as the
+    // editor consumes them.
+    assert_layout_scenario(LayoutScenario {
+        description: "20× wheel-down on wrapped 1600-char line: later content visible"
+            .into(),
+        initial_text: striped_long_line(),
+        width: TERMINAL_WIDTH_60,
+        height: TERMINAL_HEIGHT_20,
+        actions: vec![Action::MoveDocumentStart],
+        events: wheel_down_events(20, TERMINAL_WIDTH_60 / 2, 6),
+        config_overrides: config_wrap_on(),
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                // Later content from the wrapped line must be visible.
+                // Any letter past 'A' on screen proves the scroll
+                // happened.
+                RowMatch::AnyRowContains("DDDD".into()),
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 }
 
-/// Anti-test: drop the 20 `mouse_scroll_down` calls. Without them,
-/// the viewport stays at the top of the buffer and the screen
-/// content must NOT change — proves that the positive
-/// `migrated_mouse_wheel_scrolls_wrapped_content` claim depends on
-/// the wheel events actually being delivered, not on the buffer
-/// being typed.
+#[test]
+fn migrated_scrollbar_drag_with_wrapped_lines() {
+    // Original: `test_scrollbar_drag_with_wrapped_lines`. Drag the
+    // vertical scrollbar from near-top to near-bottom; later
+    // content from the wrapped line must appear.
+    assert_layout_scenario(LayoutScenario {
+        description: "scrollbar drag on wrapped 1600-char line: later content visible".into(),
+        initial_text: striped_long_line(),
+        width: TERMINAL_WIDTH_60,
+        height: TERMINAL_HEIGHT_20,
+        actions: vec![Action::MoveDocumentStart],
+        config_overrides: config_wrap_on(),
+        mouse_drags: vec![MouseDragSpec::VerticalScrollbarFullRange],
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                RowMatch::AnyRowContains("DDDD".into()),
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_page_down_scrolls_visual_rows_with_wrapped_line() {
+    // Original: `test_page_down_scrolls_visual_rows_with_wrapped_line`.
+    // PageDown on a single wrapped logical line must advance the
+    // viewport by ~one screen of visual rows. We assert later
+    // content is visible.
+    assert_layout_scenario(LayoutScenario {
+        description: "PageDown on wrapped 1600-char line: later content visible".into(),
+        initial_text: striped_long_line(),
+        width: TERMINAL_WIDTH_60,
+        height: TERMINAL_HEIGHT_20,
+        actions: vec![Action::MoveDocumentStart, Action::MovePageDown],
+        config_overrides: config_wrap_on(),
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                // After one PageDown on a width=60/height=20 viewport
+                // (~17 visible content rows ≈ 884 chars), we must be
+                // well past 'A' (200 chars) and into 'B' or 'C'.
+                RowMatch::AnyRowContains("BBBB".into()),
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_mouse_wheel_with_multiline_file_one_long_line() {
+    // Original: `test_mouse_wheel_with_multiline_file_one_long_line`.
+    // 10 wheel-down events on a 6-logical-line file (one of which
+    // is 2000 chars) must scroll past the short header lines and
+    // into the long line's `XXXX` body or the trailing `Short
+    // line 4/5`.
+    assert_layout_scenario(LayoutScenario {
+        description: "10× wheel-down on multiline-with-long file: not at top anymore".into(),
+        initial_text: multiline_with_long_x(),
+        width: TERMINAL_WIDTH_80,
+        height: TERMINAL_HEIGHT_24,
+        actions: vec![],
+        events: wheel_down_events(10, 40, 6),
+        config_overrides: config_wrap_on(),
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                // After scrolling, the very first short header line
+                // must no longer be visible — pre-fix the viewport
+                // was stuck at the top of the file.
+                RowMatch::NoRowContains("Short line 1".into()),
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_scrollbar_click_with_multiline_file_one_long_line() {
+    // Original: `test_scrollbar_click_with_multiline_file_one_long_line`.
+    // Clicking the scrollbar near the bottom of the track on a
+    // 6-logical-line file (one of which is 2000-char HTML) must
+    // scroll the viewport. We assert the first short line is no
+    // longer visible — pre-fix the click was a no-op because
+    // `max_scroll_line` was computed from logical lines (6 ≤ 24).
+    assert_layout_scenario(LayoutScenario {
+        description: "scrollbar click on multiline+long file: viewport advanced".into(),
+        initial_text: multiline_with_long_html(),
+        width: TERMINAL_WIDTH_80,
+        height: TERMINAL_HEIGHT_24,
+        actions: vec![],
+        // Click near the bottom of the content area on the
+        // rightmost (scrollbar) column. content_last_row at 80x24
+        // is row 21 (24 - 1 status - 1 separator - 1 tabline ≈),
+        // so we click at row 19 (= content_last_row - 3 in the
+        // original e2e test).
+        events: vec![InputEvent::Mouse(MouseEvent::Click {
+            row: 19,
+            col: TERMINAL_WIDTH_80 - 1,
+            button: MouseButton::Left,
+        })],
+        config_overrides: config_wrap_on(),
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![RowMatch::NoRowContains("Short line 1".into())],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_scrollbar_drag_with_multiline_file_one_long_line() {
+    // Original: `test_scrollbar_drag_with_multiline_file_one_long_line`.
+    // Drag the scrollbar from near-top to near-bottom; the first
+    // short line must no longer be visible afterwards.
+    assert_layout_scenario(LayoutScenario {
+        description: "scrollbar drag on multiline+long file: viewport advanced".into(),
+        initial_text: multiline_with_long_html(),
+        width: TERMINAL_WIDTH_80,
+        height: TERMINAL_HEIGHT_24,
+        actions: vec![],
+        config_overrides: config_wrap_on(),
+        mouse_drags: vec![MouseDragSpec::VerticalScrollbarFullRange],
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![RowMatch::NoRowContains("Short line 1".into())],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+}
+
+/// Anti-test: drop the wheel-down events from
+/// `migrated_mouse_wheel_scrolls_wrapped_content`. Without them
+/// the viewport stays at the top of the wrapped line and "DDDD"
+/// must NOT be visible — proves the positive test's assertion is
+/// gated on the wheel events.
 #[test]
 fn anti_mouse_wheel_without_scroll_leaves_screen_unchanged() {
-    const TERMINAL_WIDTH: u16 = 60;
-    const TERMINAL_HEIGHT: u16 = 20;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    let mut long_line = String::new();
-    for ch in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] {
-        long_line.push_str(&ch.to_string().repeat(200));
-    }
-
-    harness.type_text(&long_line).unwrap();
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_before = harness.screen_to_string();
-    // No mouse_scroll_down calls — that's the load-bearing step we
-    // drop.
-    harness.render().unwrap();
-    let screen_after = harness.screen_to_string();
-
-    assert_eq!(
-        screen_before, screen_after,
-        "anti: without any mouse_scroll_down calls, the viewport must \
-         remain at the top of the wrapped line and the screen must be \
-         unchanged after a second render. The positive mouse-wheel test \
-         depends on the wheel events, not on harness construction."
-    );
-    // And we must still be at the beginning of the line.
+    let scenario = LayoutScenario {
+        description: "anti: no wheel events — viewport stuck at top, DDDD off-screen".into(),
+        initial_text: striped_long_line(),
+        width: TERMINAL_WIDTH_60,
+        height: TERMINAL_HEIGHT_20,
+        actions: vec![Action::MoveDocumentStart],
+        events: Vec::new(),
+        config_overrides: config_wrap_on(),
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![RowMatch::AnyRowContains("DDDD".into())],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     assert!(
-        screen_after.contains("AAAA"),
-        "anti: viewport must still show the start of the line (A chars) \
-         when no scroll has been performed. Got:\n{}",
-        screen_after
+        check_layout_scenario(scenario).is_err(),
+        "anti-test: without wheel-down events the viewport stays at the start \
+         of the wrapped line, so DDDD must NOT be visible. The positive test's \
+         'DDDD visible' check should fail."
     );
 }
 
-/// Anti-test: drop the `PageDown` key. Without it, the screen
-/// content must remain unchanged after a second render — proves
-/// the positive `migrated_page_down_scrolls_visual_rows_with_wrapped_line`
-/// claim depends on the keystroke actually being delivered.
+/// Anti-test: drop the `PageDown` action. Without it the viewport
+/// stays at the top and "BBBB" must NOT appear — proves the
+/// PageDown test's assertion is gated on the keystroke.
 #[test]
 fn anti_page_down_without_keypress_leaves_screen_unchanged() {
-    const TERMINAL_WIDTH: u16 = 60;
-    const TERMINAL_HEIGHT: u16 = 20;
-
-    let mut harness =
-        EditorTestHarness::with_config(TERMINAL_WIDTH, TERMINAL_HEIGHT, config_with_line_wrap())
-            .unwrap();
-
-    let mut long_line = String::new();
-    for ch in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] {
-        long_line.push_str(&ch.to_string().repeat(200));
-    }
-
-    harness.type_text(&long_line).unwrap();
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    let screen_before = harness.screen_to_string();
-    // No PageDown press here.
-    harness.render().unwrap();
-    let screen_after = harness.screen_to_string();
-
-    assert_eq!(
-        screen_before, screen_after,
-        "anti: without a PageDown press, the screen must remain unchanged. \
-         The positive PageDown test depends on the keystroke itself, \
-         not on the buffer being typed."
+    let scenario = LayoutScenario {
+        description: "anti: no PageDown — viewport stuck at top, BBBB off-screen".into(),
+        initial_text: striped_long_line(),
+        width: TERMINAL_WIDTH_60,
+        height: TERMINAL_HEIGHT_20,
+        actions: vec![Action::MoveDocumentStart],
+        config_overrides: config_wrap_on(),
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![RowMatch::AnyRowContains("BBBB".into())],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(
+        check_layout_scenario(scenario).is_err(),
+        "anti-test: without PageDown the viewport stays at the start of the \
+         wrapped line, so BBBB must NOT be visible. The positive test's 'BBBB \
+         visible' check should fail."
     );
 }

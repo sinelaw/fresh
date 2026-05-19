@@ -29,7 +29,10 @@ pub struct PersistenceScenario {
     /// well to keep scenarios portable across machines.
     pub initial_fs: VirtualFs,
     /// Path the editor opens at scenario start, relative to the
-    /// temp root.
+    /// temp root. Empty string ⇒ start with the harness's default
+    /// empty unnamed buffer (used by Save-As scenarios that begin
+    /// without an on-disk file).
+    #[serde(default)]
     pub initial_open: String,
     pub events: Vec<InputEvent>,
     /// Optional buffer-text expectation. None ⇒ skip.
@@ -56,14 +59,18 @@ pub fn check_persistence_scenario(s: PersistenceScenario) -> Result<(), Scenario
     // Seed the filesystem.
     seed_files(&temp_root, &s.initial_fs, &s.description)?;
 
-    // Open the initial buffer.
-    let open_path = relative_under(&temp_root, &s.initial_open);
-    harness
-        .open_file(&open_path)
-        .map_err(|e| ScenarioFailure::InputProjectionFailed {
-            description: s.description.clone(),
-            reason: format!("failed to open {open_path:?}: {e}"),
-        })?;
+    // Open the initial buffer if requested. Empty `initial_open`
+    // ⇒ stay on the harness's default empty unnamed buffer (the
+    // shape Save-As scenarios start from).
+    if !s.initial_open.is_empty() {
+        let open_path = relative_under(&temp_root, &s.initial_open);
+        harness
+            .open_file(&open_path)
+            .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                description: s.description.clone(),
+                reason: format!("failed to open {open_path:?}: {e}"),
+            })?;
+    }
 
     // Run events.
     for ev in &s.events {
@@ -152,6 +159,8 @@ fn dispatch(
     ev: &InputEvent,
     description: &str,
 ) -> Result<(), ScenarioFailure> {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::test_api::Action;
     match ev {
         InputEvent::Action(a) => {
             harness.api_mut().dispatch(a.clone());
@@ -173,7 +182,130 @@ fn dispatch(
                 reason: format!("FsExternalEdit write {abs:?}: {e}"),
             })?;
             let abs_str = abs.to_string_lossy().to_string();
-            harness.editor_mut().handle_file_changed(&abs_str);
+            harness.api_mut().notify_file_changed(&abs_str);
+            Ok(())
+        }
+        InputEvent::EditorFileChangedReaction { path } => {
+            // Notify *without* writing — the load-bearing case for
+            // "file-watcher fired for a save we just performed; the
+            // on-disk content matches the buffer; the auto-revert
+            // path must NOT clear the undo log" (issue #191
+            // follow-up). The path comes in as scenario-relative, so
+            // resolve under the temp root.
+            let abs = relative_under(root, path);
+            let abs_str = abs.to_string_lossy().to_string();
+            harness.api_mut().notify_file_changed(&abs_str);
+            Ok(())
+        }
+        InputEvent::AssertBufferText(want) => {
+            let got = harness.api_mut().buffer_text();
+            if &got != want {
+                return Err(ScenarioFailure::BufferTextMismatch {
+                    description: description.into(),
+                    expected: want.clone(),
+                    actual: got,
+                });
+            }
+            Ok(())
+        }
+        InputEvent::AssertIsModified(want) => {
+            let got = harness.api_mut().is_modified();
+            if got != *want {
+                return Err(ScenarioFailure::WorkspaceStateMismatch {
+                    description: description.into(),
+                    field: "is_modified".into(),
+                    expected: format!("{want}"),
+                    actual: format!("{got}"),
+                });
+            }
+            Ok(())
+        }
+        InputEvent::AssertEventLogLen(want) => {
+            let got = harness.api_mut().active_event_log_len();
+            if got != *want {
+                return Err(ScenarioFailure::WorkspaceStateMismatch {
+                    description: description.into(),
+                    field: "active_event_log_len".into(),
+                    expected: format!("{want}"),
+                    actual: format!("{got}"),
+                });
+            }
+            Ok(())
+        }
+        InputEvent::AssertPrimaryCursorAtMost(max) => {
+            let pos = harness.api_mut().primary_caret().position;
+            if pos > *max {
+                return Err(ScenarioFailure::WorkspaceStateMismatch {
+                    description: description.into(),
+                    field: "primary_caret.position".into(),
+                    expected: format!("<= {max}"),
+                    actual: format!("{pos}"),
+                });
+            }
+            Ok(())
+        }
+        InputEvent::OpenSaveAsPrompt => {
+            harness.api_mut().dispatch(Action::SaveAs);
+            // Defensive: confirm the prompt opened. Without this,
+            // a regression in `Action::SaveAs` that silently fails
+            // to open the prompt would let the subsequent
+            // PromptFillText flow type into the buffer instead.
+            if harness.api_mut().modal_snapshot().prompt.is_none() {
+                return Err(ScenarioFailure::ModalStateMismatch {
+                    description: description.into(),
+                    expected: "active SaveAs prompt".into(),
+                    actual: "no prompt".into(),
+                });
+            }
+            Ok(())
+        }
+        InputEvent::PromptBackspace { count } => {
+            for _ in 0..*count {
+                harness
+                    .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+                    .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                        description: description.into(),
+                        reason: format!("PromptBackspace send_key(Backspace): {e}"),
+                    })?;
+            }
+            Ok(())
+        }
+        InputEvent::PromptFillText(text) => {
+            // `type_text` routes each char through `handle_key`,
+            // which delegates to the prompt input handler while the
+            // prompt is active — same path the keymap uses.
+            harness
+                .type_text(text)
+                .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("PromptFillText type_text({text:?}): {e}"),
+                })?;
+            Ok(())
+        }
+        InputEvent::PromptFillTempPath { rel } => {
+            let abs = relative_under(root, rel);
+            let abs_str =
+                abs.to_str()
+                    .ok_or_else(|| ScenarioFailure::InputProjectionFailed {
+                        description: description.into(),
+                        reason: format!("temp path {abs:?} is not valid UTF-8"),
+                    })?
+                    .to_string();
+            harness
+                .type_text(&abs_str)
+                .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("PromptFillTempPath type_text({abs_str:?}): {e}"),
+                })?;
+            Ok(())
+        }
+        InputEvent::PromptConfirm => {
+            harness
+                .send_key(KeyCode::Enter, KeyModifiers::NONE)
+                .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("PromptConfirm send_key(Enter): {e}"),
+                })?;
             Ok(())
         }
         other => Err(ScenarioFailure::InputProjectionFailed {

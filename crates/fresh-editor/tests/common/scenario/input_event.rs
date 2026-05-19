@@ -166,6 +166,12 @@ pub enum InputEvent {
     /// `EditorTestHarness::type_text`, which routes each char
     /// through `handle_key` (so prompt input handlers see them).
     PromptFillText(String),
+    /// Type the absolute path `<temp_root>/<rel>` into the active
+    /// prompt. The runner resolves `rel` against the scenario's
+    /// temp root, which is only known at runtime. Save-As prompts
+    /// need an absolute path; without this variant the scenario
+    /// data would have to embed a per-run absolute path.
+    PromptFillTempPath { rel: String },
     /// Confirm the active prompt with Enter, routed through the
     /// production key handler so the prompt receives the same
     /// `handle_key` it would in production.

@@ -25,7 +25,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::failure::ScenarioFailure;
-use fresh::test_api::{Action, EditorTestApi};
+use fresh::test_api::Action;
 
 /// A marker to seed at scenario start.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

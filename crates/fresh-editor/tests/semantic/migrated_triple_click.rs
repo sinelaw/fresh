@@ -113,21 +113,27 @@ fn migrated_double_click_selects_word_not_line() {
 /// Anti-test (declarative): drop the third click from the
 /// triple-click scenario. With only two clicks, `handle_mouse`
 /// resolves to SelectWord — so the selection is a single token
-/// ("here"), not the entire "First line here" line. Proves the
-/// third click is what promotes the gesture from double-click to
-/// triple-click.
+/// (the word under the click), not the entire "First line here"
+/// line. Proves the third click is what promotes the gesture
+/// from double-click to triple-click.
+///
+/// The gutter offset for a 3-line buffer pushes the buffer
+/// column for screen col 12 onto the word "line" (bytes 6..10
+/// of line 1) — so the double-click selects "line", not the
+/// whole "First line here". The strict negative claim is on
+/// `expected_selection_text` (it is NOT the full line).
 #[test]
 fn anti_triple_click_dropping_third_click_does_not_select_full_line() {
     let row = CONTENT_FIRST_ROW;
     assert_buffer_scenario(BufferScenario {
         description:
-            "anti: two clicks (no third) yield SelectWord on 'here', NOT SelectLine".into(),
+            "anti: two clicks (no third) yield SelectWord ('line'), NOT SelectLine".into(),
         initial_text: "First line here\nSecond line here\nThird line here\n".into(),
         events: vec![click(row, 12), click(row, 12)],
         expected_text: "First line here\nSecond line here\nThird line here\n".into(),
-        // "First line " spans bytes 0..11; "here" spans 11..15.
-        expected_primary: CursorExpect::range(11, 15),
-        expected_selection_text: Some("here".into()),
+        // "First " spans bytes 0..6; "line" spans 6..10.
+        expected_primary: CursorExpect::range(6, 10),
+        expected_selection_text: Some("line".into()),
         ..Default::default()
     });
 }

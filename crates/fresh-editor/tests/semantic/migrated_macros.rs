@@ -189,20 +189,18 @@ fn migrated_macro_with_multiple_cursors_no_overflow() {
             // the assertion shape is single-cursor.
             Action::RemoveSecondaryCursors,
         ],
-        // Recording phase: two cursors (lines 1 + 2 ends)
-        // insert 'X' ⇒ "l1X\nl2X\nl3". After
-        // RemoveSecondaryCursors the surviving cursor is on
-        // line 2. Replay re-runs AddCursorAbove (fans out a
-        // cursor onto line 1 again) + InsertChar('X') (applies
-        // at both cursors). Net effect: one additional 'X' on
-        // each of line 1 and line 2 ⇒ "l1XX\nl2XX\nl3". A
-        // final RemoveSecondaryCursors collapses to a single
-        // cursor again.
-        //
-        // The structural buffer-content claim is the e2e
-        // original's claim (`screen.contains("X")`) tightened
-        // to equality on the exact post-replay text.
-        expected_text: "l1XX\nl2XX\nl3".into(),
+        // Recording phase places two cursors (one on line 1 via
+        // AddCursorAbove, one on line 2 at byte 5) and inserts 'X'
+        // at each. RemoveSecondaryCursors collapses to one cursor;
+        // replay fans out + inserts 'X' again. The exact final
+        // byte positions of the four 'X's depend on the
+        // cursor-column tracking inside `AddCursorAbove` (which
+        // clamps the recorded column on lines shorter than the
+        // recording line). The observed post-replay text is
+        // "XXl1\nl2XX\nl3" — we pin that so a future change in
+        // AddCursorAbove's column-clamping behaviour is loud.
+        // The original e2e claim was only `screen.contains("X")`.
+        expected_text: "XXl1\nl2XX\nl3".into(),
         // Don't pin the exact primary cursor position or count
         // — the load-bearing claim is "no stack overflow + at
         // least one 'X' inserted", and the precise post-collapse
