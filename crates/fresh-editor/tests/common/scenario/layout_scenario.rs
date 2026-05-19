@@ -812,35 +812,32 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     }
 
     if let Some(offset) = s.expected_cursor_col_equals_margin_plus {
+        // Terminal-absolute cursor — `screen_cursor_position`
+        // reads ratatui's TestBackend, so the column is in
+        // terminal coords (matches the original e2e's contract).
         let gutter = harness.api_mut().margin_left_total_width() as u16;
-        let cursor = harness.api_mut().hardware_cursor_position();
         let expected_col = gutter + offset;
-        match cursor {
-            Some((col, _)) if col == expected_col => {}
-            other => {
-                return Err(ScenarioFailure::SnapshotFieldMismatch {
-                    description: s.description.clone(),
-                    field: "cursor_col_equals_margin_plus".into(),
-                    expected: format!("col {expected_col} (gutter {gutter} + {offset})"),
-                    actual: format!("{other:?}"),
-                });
-            }
+        let (col, _) = harness.screen_cursor_position();
+        if col != expected_col {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "cursor_col_equals_margin_plus".into(),
+                expected: format!("col {expected_col} (gutter {gutter} + {offset})"),
+                actual: format!("col {col}"),
+            });
         }
     }
 
     if s.expected_cursor_row_equals_content_first {
         let (first, _) = harness.content_area_rows();
-        let cursor = harness.api_mut().hardware_cursor_position();
-        match cursor {
-            Some((_, row)) if row as usize == first => {}
-            other => {
-                return Err(ScenarioFailure::SnapshotFieldMismatch {
-                    description: s.description.clone(),
-                    field: "cursor_row_equals_content_first".into(),
-                    expected: format!("row {first}"),
-                    actual: format!("{other:?}"),
-                });
-            }
+        let (_, row) = harness.screen_cursor_position();
+        if row as usize != first {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "cursor_row_equals_content_first".into(),
+                expected: format!("row {first}"),
+                actual: format!("row {row}"),
+            });
         }
     }
 
