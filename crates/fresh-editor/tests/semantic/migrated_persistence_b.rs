@@ -1,5 +1,12 @@
 //! Multi-file PersistenceScenarios — saving across more than one
 //! file and asserting the disk state for each.
+//!
+//! Source coverage: invariants related to claims in
+//! `tests/e2e/multi_file_opening.rs` and the multi-file save
+//! flow in `tests/e2e/external_file_save_as_tab.rs`. The
+//! FsExternalEdit + read-back tests pin the framework guarantee
+//! that auto-revert fires (the runner was fixed in
+//! commit 5842e0a to actually call `handle_file_changed`).
 
 use crate::common::scenario::context::{VirtualFile, VirtualFs};
 use crate::common::scenario::input_event::InputEvent;

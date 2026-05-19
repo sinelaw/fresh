@@ -1,4 +1,12 @@
 //! Wave-3 WorkspaceScenarios — additional buffer/tab claims.
+//!
+//! Source coverage: assertions in this file pin invariants from
+//! `tests/e2e/multi_file_opening.rs` and
+//! `tests/e2e/buffer_lifecycle.rs` (buffer-count tracking under
+//! load and rotation). Specific e2e tests aren't cited per-test
+//! because this file is intentionally broad — the topology
+//! invariants (count after N loads, count after NextBuffer)
+//! cover the e2e cases collectively rather than 1:1.
 
 use crate::common::scenario::context::{NamedBuffer, WorkspaceContext};
 use crate::common::scenario::observable::{

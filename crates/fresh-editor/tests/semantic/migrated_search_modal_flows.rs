@@ -1,5 +1,6 @@
-//! Migrations of search-modal-driven claims that don't fit
-//! `migrated_search.rs` (which only covers no-modal cases).
+//! Migration of `tests/e2e/issue_1697_ctrl_d_after_search.rs`
+//! and related search-modal-driven claims that the simpler
+//! BufferScenario shape can't express.
 //!
 //! These scenarios exercise the *real* search prompt flow:
 //! `Action::Search` opens the prompt, `Action::InsertChar`

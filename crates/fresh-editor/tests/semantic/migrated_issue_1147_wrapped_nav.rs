@@ -238,7 +238,7 @@ fn migrated_issue_1147_viewport_stable_while_navigating_up_through_wrapped_conte
 }
 
 #[test]
-fn migrated_issue_1147_viewport_stable_anti_test_no_moveup_means_no_scroll_events() {
+fn anti_migrated_issue_1147_no_moveup_means_no_scroll_events() {
     // Anti-test for `migrated_issue_1147_viewport_stable_while_navigating_up_through_wrapped_content`.
     // If we never dispatch MoveUp at all, the viewport cannot scroll
     // (because the only thing that could move the viewport in this

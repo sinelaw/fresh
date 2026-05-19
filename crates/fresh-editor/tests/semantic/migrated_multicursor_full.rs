@@ -1,5 +1,9 @@
-//! Faithful migration of multicursor cases beyond what the
-//! existing `multicursor.rs` semantic file already covers.
+//! Migration of `tests/e2e/multicursor.rs` cases (subset)
+//! beyond what the existing `multicursor.rs` semantic file
+//! covers. Focus: AddCursorAbove / AddCursorBelow chains,
+//! multi-cursor typing, multi-cursor delete atomicity (issue
+//! tracked in #2058 — the delete_undo_atomic test had to be
+//! corrected from an inverted-property version).
 //!
 //! Originals call `editor.add_cursor_above()` /
 //! `add_cursor_below()` directly; the scenario equivalent is
