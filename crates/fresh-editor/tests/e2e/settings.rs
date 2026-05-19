@@ -2375,11 +2375,11 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Verify we're on Check For Updates and it shows as unchecked
+    // Verify we're on Check For Updates and it shows as unchecked [ ]
     // Format is ">  Check For Updates" (3-char indicator area: focus, modified, space)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">  Check For Updates") && screen.contains(": [          ]"),
+        screen.contains(">  Check For Updates") && screen.contains(": [ ]"),
         "Check For Updates should be focused and unchecked. Screen:\n{}",
         screen
     );
