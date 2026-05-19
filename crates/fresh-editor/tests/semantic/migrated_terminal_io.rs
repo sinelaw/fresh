@@ -1,7 +1,20 @@
-//! Migrated terminal-IO scenarios — the kinds of vt100 / ANSI
-//! claims `tests/e2e/rendering.rs`,
-//! `tests/e2e/redraw_screen.rs`, and `tests/e2e/ansi_cursor.rs`
-//! make.
+//! Shallow vt100 / ANSI round-trip smoke tests.
+//!
+//! These prove the render → ANSI-emit → vt100-parse pipeline
+//! transports buffer text end-to-end. They do NOT cover the
+//! specific regressions in the cited e2e files:
+//!   - tests/e2e/ansi_cursor.rs — files starting with ANSI
+//!     escape sequences must not place the hardware cursor at
+//!     (0,0). Tracked as an orphan in #2058.
+//!   - tests/e2e/redraw_screen.rs — Action::RedrawScreen must
+//!     force a full repaint. Tracked as an orphan in #2058.
+//!   - tests/e2e/rendering.rs — cursor position, line numbers,
+//!     current-line highlight, ANSI RGB color. Tracked as an
+//!     orphan in #2058.
+//!
+//! The dropped tautological grid_dimensions_match_terminal test
+//! just compared `grid.height` to the constructed terminal
+//! height — same source, vacuously true.
 
 use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::observable::{Observable, RoundTripGrid};
@@ -32,12 +45,4 @@ fn migrated_typing_appears_in_grid_after_render_real() {
         "vt100 grid lacks typed 'ABC'; rows: {:#?}",
         grid.rows
     );
-}
-
-#[test]
-fn migrated_grid_dimensions_match_terminal() {
-    let mut h = EditorTestHarness::with_temp_project(40, 8).unwrap();
-    let _f = h.load_buffer_from_text("hello").unwrap();
-    let grid = RoundTripGrid::extract(&mut h);
-    assert_eq!(grid.height, 8, "grid height should equal terminal height");
 }

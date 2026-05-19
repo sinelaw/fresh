@@ -1,11 +1,27 @@
-//! Migrations of `tests/e2e/paste.rs` cases not covered by
-//! `migrated_paste.rs`. Excludes the cases that depend on the
-//! test-only `set_clipboard_for_test()` shortcut: those would
-//! require either extending `EditorTestApi` with a clipboard
-//! setter (not done — the user's directive: no shortcuts) or
-//! shaping each scenario as a real Copy → Paste round-trip
-//! within the buffer. The migrations below take the round-trip
-//! shape.
+//! Copy/Paste round-trip scenarios *related to* — but NOT 1:1
+//! ports of — `tests/e2e/paste.rs` cases that depend on the
+//! test-only `set_clipboard_for_test()` shortcut. The e2e
+//! originals preload the clipboard with content not present in
+//! the buffer (e.g. paste " world" into an empty buffer to get
+//! " world"). Honoring the no-back-doors directive, the
+//! migrations below reshape each scenario as Copy-from-buffer
+//! → Paste — which tests the same Copy and Paste production
+//! paths end-to-end but is a *different theorem* than the e2e
+//! original (clipboard contents come from the buffer, not from
+//! external preload).
+//!
+//! Each test below pins a Copy→Paste round-trip claim that
+//! exercises real `Action::Copy` / `Action::Paste` and the
+//! production clipboard plumbing. Where the round-trip captures
+//! something close to the e2e's intent, the doc-comment says
+//! "Related to <test_name>"; where the round-trip exercises a
+//! distinct property, no e2e cross-ref is claimed.
+//!
+//! The 5 e2e cases that genuinely require preloaded-clipboard
+//! semantics (CRLF normalization, mixed line endings, external
+//! paste preload, prompt-paste, column-mode) remain guarded by
+//! tests/e2e/paste.rs and are not migratable in this shape —
+//! tracked in #2058 as a coverage gap.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, check_buffer_scenario, repeat, BufferScenario, CursorExpect,
@@ -14,10 +30,13 @@ use fresh::test_api::Action;
 
 #[test]
 fn migrated_paste_at_end_of_line_appends_copied_text() {
-    // Original: `test_paste_at_end_of_line` (re-shaped as a
-    // round-trip). Initial buffer has " world" + "hello"; copy
-    // " world", move to end-of-buffer, paste — the buffer
-    // duplicates " world" at the end.
+    // Related to `test_paste_at_end_of_line`. Different shape:
+    // the e2e pastes a preloaded " world" into a buffer
+    // containing only "hello"; this round-trip seeds " world"
+    // in the buffer, copies it, and pastes at EOF. Both exercise
+    // the Paste production path but the e2e tested "external
+    // clipboard, then paste at EOF", while this tests "Copy a
+    // 6-byte substring then Paste at EOF".
     let mut actions: Vec<Action> = repeat(Action::SelectRight, 6).collect();
     actions.push(Action::Copy);
     actions.push(Action::MoveDocumentEnd);
@@ -62,9 +81,13 @@ fn migrated_paste_in_middle_inserts_at_cursor() {
 
 #[test]
 fn migrated_paste_multiline_text_round_trip() {
-    // Original: `test_paste_multiline_text` (re-shaped). Initial
-    // buffer is "line1\nline2\nline3"; SelectAll + Copy gives a
-    // multiline clipboard; Paste at end appends another copy.
+    // Related to `test_paste_multiline_text`. Different shape:
+    // the e2e preloads a multiline clipboard and pastes into an
+    // *empty* buffer to test that the multiline payload inserts
+    // correctly. This round-trip starts with a 3-line buffer,
+    // SelectAll + Copy, then Paste at EOF — testing that the
+    // round-trip duplicates lines rather than that a preloaded
+    // multiline clipboard inserts into emptiness.
     let mut actions = vec![Action::SelectAll, Action::Copy, Action::MoveDocumentEnd];
     actions.push(Action::Paste);
 
@@ -104,10 +127,12 @@ fn migrated_paste_undo_round_trip_is_atomic() {
 
 #[test]
 fn migrated_paste_replaces_selection_round_trip() {
-    // Original: `test_paste_replaces_selection` (round-trip
-    // re-shape). Buffer is "universe-target"; select "universe"
-    // and Copy; SelectLineEnd → SelectLeft×6 selects "target"
-    // backward; Paste replaces it. Result: "universe-universe".
+    // Related to `test_paste_replaces_selection`. The
+    // load-bearing claim — Paste over an active selection
+    // replaces it — is faithful to the e2e. The clipboard
+    // source differs: the e2e preloads "universe" via
+    // set_clipboard_for_test; this round-trip seeds it in the
+    // buffer and Copies from there.
     let mut actions: Vec<Action> = repeat(Action::SelectRight, 8).collect();
     actions.push(Action::Copy);
     actions.push(Action::MoveLineEnd);
