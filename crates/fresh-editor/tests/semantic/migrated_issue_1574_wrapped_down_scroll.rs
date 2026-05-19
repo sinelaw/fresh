@@ -119,15 +119,24 @@ fn migrated_issue_1574_down_arrow_scrolling_invariants_rendered() {
     let heights: [u16; 2] = [20, 28];
     // 500 MoveDowns is the original test's MAX_STEPS upper bound;
     // any wrap geometry reaches EOF well before that.
-    let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(500).collect();
-    // DEBUG: just one (width, height) to inspect.
-    let widths: [u16; 1] = [60];
-    let heights: [u16; 1] = [20];
+    // 200 MoveDowns is enough to walk the fixture at any of the
+    // sweep widths; each step renders so the wrap-aware MoveDown
+    // path (`compute_wrap_aware_visual_move_fallback`) sees a
+    // fresh layout cache.
+    let actions: Vec<Action> = std::iter::repeat(Action::MoveDown).take(200).collect();
+    // Render between each MoveDown by adding a step assertion at
+    // every action index — the runner renders before each step,
+    // populating the layout cache that wrap-aware MoveDown needs.
+    let step_assertions: Vec<crate::common::scenario::layout_scenario::StepAssertion> = (0..actions
+        .len())
+        .map(|i| crate::common::scenario::layout_scenario::StepAssertion {
+            after_action_index: i,
+            expect: RenderSnapshotExpect::default(),
+        })
+        .collect();
     for &height in &heights {
         for &width in &widths {
-            // DEBUG: build harness manually to inspect rendered output
-            use crate::common::scenario::layout_scenario::check_layout_scenario;
-            let result = check_layout_scenario(LayoutScenario {
+            assert_layout_scenario(LayoutScenario {
                 description: format!(
                     "Down-arrow walk reaches EOF marker (width={width}, height={height})"
                 ),
@@ -136,13 +145,14 @@ fn migrated_issue_1574_down_arrow_scrolling_invariants_rendered() {
                 height,
                 actions: actions.clone(),
                 config_overrides: wrap_overrides(),
+                step_assertions: step_assertions.clone(),
                 expected_snapshot: RenderSnapshotExpect {
+                    row_checks: vec![RowMatch::AnyRowContains(END_MARKER.into())],
                     viewport_top_byte_greater_than: Some(0),
                     ..Default::default()
                 },
                 ..Default::default()
             });
-            assert!(result.is_ok(), "viewport_top_byte_greater_than failed at ({width},{height}): {result:?}");
         }
     }
 }

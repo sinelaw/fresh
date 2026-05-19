@@ -647,7 +647,10 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
             PopupPlacement::Fixed { x, y } => PopupPositionData::Fixed { x: *x, y: *y },
             PopupPlacement::AtHardwareCursorOffset { dx, dy } => {
                 harness.render_real().expect("render_real before popup placement failed");
-                match harness.vt100_cursor_position() {
+                let vt = harness.vt100_cursor_position();
+                let hcp = harness.api_mut().hardware_cursor_position();
+                eprintln!("[DEBUG popup] vt100_cursor={vt:?}, vt100_hidden={}, api.hardware_cursor={hcp:?}", harness.vt100_cursor_hidden());
+                match vt {
                     Some((cx, cy)) => {
                         let x = (cx as i32 + dx).max(0) as u16;
                         let y = (cy as i32 + dy).max(0) as u16;

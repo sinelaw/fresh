@@ -1,9 +1,10 @@
-//! Migration of `tests/e2e/line_wrap_full_visibility.rs` — under
-//! `line_wrap = true`, every printable character of every fixture
-//! line must be rendered somewhere in the viewport, at a variety of
-//! terminal widths and with the file-explorer sidebar both closed
-//! and open. The bug class being guarded against: characters that
-//! straddle a wrap boundary getting dropped from the rendered
+//! DECLARATIVE migration of `tests/e2e/line_wrap_full_visibility.rs`.
+//!
+//! Under `line_wrap = true`, every printable character of every
+//! fixture line must be rendered somewhere in the viewport, at a
+//! variety of terminal widths and with the file-explorer sidebar
+//! both closed and open. The bug class guarded against: characters
+//! that straddle a wrap boundary getting dropped from the rendered
 //! output ("too late" wrap regressions).
 //!
 //! Translation to the semantic framework:
@@ -19,49 +20,54 @@
 //!     than the full 40..=100 the e2e file walked) crossed with
 //!     sidebar open/closed. Picking widths that bracket the
 //!     sentinel-token length on both sides exercises the wrap
-//!     boundary at varied positions per line, which is what the
-//!     full e2e sweep was buying.
-//!   * Each trial uses its own harness (state isolation, same as
-//!     the e2e original) and `RenderSnapshot::extract_with_rendered_rows`
-//!     to read the vt100 round-tripped screen rows.
+//!     boundary at varied positions per line.
+//!   * Each trial is its own `LayoutScenario` data literal —
+//!     state isolation matches the e2e original.
 //!
 //! Caveats vs. the e2e original:
 //!
-//!   * The framework's `RowMatch` variants test for substring
-//!     presence on a single row; they cannot count occurrences
-//!     across the screen. A regression that drops one *middle*
-//!     character of a long line while preserving the head and
-//!     tail sentinels would not be detected here, whereas the
-//!     e2e's per-line non-whitespace comparison would catch it.
-//!     This is a deliberate trade-off: the head+tail-sentinel
-//!     approach catches the dominant "lost at wrap boundary"
-//!     class faithfully, with framework matchers. Listed in the
-//!     `migrated_large_file_viewport.rs` follow-up bucket if a
-//!     future `RowMatch::CountAcrossRows` lands.
-//!   * The fixture is narrower than the e2e curated set (which
-//!     exercised dozens of punctuation/paren shapes). We keep
-//!     the representative shapes — short word, long word, deep
+//!   * `RowMatch` variants test for substring presence on a single
+//!     row; they cannot count occurrences across the screen. A
+//!     regression that drops one *middle* character of a long line
+//!     while preserving the head and tail sentinels would not be
+//!     detected here, whereas the e2e's per-line non-whitespace
+//!     comparison would catch it. Deliberate trade-off: the
+//!     head+tail-sentinel approach catches the dominant
+//!     "lost at wrap boundary" class faithfully via framework
+//!     matchers. Future `RowMatch::CountAcrossRows` would close
+//!     the gap.
+//!   * Fixture is narrower than the e2e curated set; we keep the
+//!     representative shapes — short word, long word, deep
 //!     nesting, indented hanging-wrap, and char-boundary
-//!     stressor — because those are the ones that drove the
-//!     original regression.
+//!     stressor — because those drove the original regression.
+//!
+//! Source: `tests/e2e/line_wrap_full_visibility.rs` (1 sweep test
+//! migrated; no tests deferred).
 
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::EditorTestHarness;
-use crate::common::scenario::render_snapshot::{RenderSnapshot, RenderSnapshotExpect, RowMatch};
-use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use crate::common::scenario::layout_scenario::{
+    assert_layout_scenario, check_layout_scenario, LayoutScenario, ScenarioConfigOverrides,
+};
+use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
+use fresh::test_api::Action;
 
-fn config_with_wrap() -> Config {
-    let mut config = Config::default();
-    config.editor.line_wrap = true;
-    config
+fn wrap_overrides() -> ScenarioConfigOverrides {
+    ScenarioConfigOverrides {
+        line_wrap: Some(true),
+        ..Default::default()
+    }
+}
+
+fn no_wrap_overrides() -> ScenarioConfigOverrides {
+    ScenarioConfigOverrides {
+        line_wrap: Some(false),
+        ..Default::default()
+    }
 }
 
 /// Each entry is rendered as `LN###< ... >LN###` so the head and
 /// tail of the line are unique substrings that survive lookup in
-/// the rendered rows even after wrapping. The `...` middle is the
-/// shape we want to stress (paren nesting, indented hanging-wrap,
-/// long unbroken token, etc.).
+/// the rendered rows even after wrapping.
 fn interesting_lines() -> Vec<String> {
     let middles: Vec<String> = vec![
         // Short word — single visual row at every width.
@@ -88,66 +94,49 @@ fn interesting_lines() -> Vec<String> {
         .collect()
 }
 
-/// One `(width, sidebar_open)` trial. Each fixture line's head
-/// sentinel `LN###<` and tail sentinel `>LN###` must both appear
-/// in the rendered rows. Returns Err diagnostic on failure.
-fn run_trial(
-    width: u16,
-    height: u16,
-    sidebar_open: bool,
-    fixture_path: &std::path::Path,
-    lines: &[String],
-) -> Result<(), String> {
-    let mut harness = EditorTestHarness::with_config(width, height, config_with_wrap())
-        .map_err(|e| format!("w={width} sidebar={sidebar_open}: harness init: {e}"))?;
-    harness
-        .open_file(fixture_path)
-        .map_err(|e| format!("w={width} sidebar={sidebar_open}: open_file: {e}"))?;
-
-    // Jump to the very top so the first visual row is the
-    // fixture's first logical line.
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .map_err(|e| format!("w={width} sidebar={sidebar_open}: Ctrl+Home: {e}"))?;
-
-    if sidebar_open {
-        harness
-            .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
-            .map_err(|e| format!("w={width} sidebar={sidebar_open}: Ctrl+E: {e}"))?;
-        harness
-            .process_async_and_render()
-            .map_err(|e| format!("w={width} sidebar={sidebar_open}: post-toggle render: {e}"))?;
-    }
-
-    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
-
-    // Build head + tail sentinel checks for every fixture line.
+/// Build the row-check vec for the sentinel sweep: head + tail
+/// substring per fixture line.
+fn sentinel_row_checks(lines: &[String]) -> Vec<RowMatch> {
     let mut checks: Vec<RowMatch> = Vec::with_capacity(lines.len() * 2);
     for i in 0..lines.len() {
         checks.push(RowMatch::AnyRowContains(format!("LN{:03}<", i)));
         checks.push(RowMatch::AnyRowContains(format!(">LN{:03}", i)));
     }
+    checks
+}
 
-    let expect = RenderSnapshotExpect {
-        row_checks: checks,
-        ..Default::default()
-    };
-    if let Some((field, expected, actual)) = expect.check_against(&snap) {
-        return Err(format!(
-            "w={width} sidebar={sidebar_open}: render mismatch on {field}\n\
-             expected: {expected}\n\
-             actual:   {actual}\n\
-             rendered rows ({} total):\n{}\n",
-            snap.rendered_rows.len(),
-            snap.rendered_rows
-                .iter()
-                .enumerate()
-                .map(|(i, r)| format!("  [{i:>2}] {r}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ));
+/// One `(width, sidebar_open)` declarative trial.
+fn trial(
+    width: u16,
+    height: u16,
+    sidebar_open: bool,
+    fixture_path: &std::path::Path,
+    lines: &[String],
+) -> LayoutScenario {
+    let mut actions: Vec<Action> = vec![Action::MoveDocumentStart];
+    if sidebar_open {
+        // `Action::ToggleFileExplorer` is the editor-side
+        // projection of Ctrl+E. The runner's `dispatch_seq` calls
+        // `process_async_messages` after dispatch, so the async
+        // explorer-directory scan settles before the final render.
+        actions.push(Action::ToggleFileExplorer);
     }
-    Ok(())
+    LayoutScenario {
+        description: format!(
+            "line_wrap visibility: w={width} h={height} sidebar_open={sidebar_open}"
+        ),
+        initial_text: String::new(),
+        initial_file: Some(fixture_path.to_path_buf()),
+        width,
+        height,
+        config_overrides: wrap_overrides(),
+        actions,
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: sentinel_row_checks(lines),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -160,9 +149,8 @@ fn migrated_line_wrap_all_lines_visible_across_widths_and_sidebar() {
     // Sample widths that bracket each sentinel-token's length on
     // both sides, so the wrap boundary lands at a variety of
     // positions across the fixture. The e2e original swept every
-    // integer 40..=100; this sampled set preserves the per-trial
-    // coverage that drove the regression without paying the full
-    // 122-trial cost in CI.
+    // integer 40..=100; this sampled set preserves per-trial
+    // coverage without paying the full 122-trial cost in CI.
     let widths: [u16; 5] = [40, 50, 60, 80, 100];
     // Height generous enough that every wrapped line fits inside
     // the content area even at the narrowest width with the
@@ -172,18 +160,19 @@ fn migrated_line_wrap_all_lines_visible_across_widths_and_sidebar() {
 
     for &width in &widths {
         for &sidebar_open in &[false, true] {
-            if let Err(msg) = run_trial(width, height, sidebar_open, &fixture.path, &lines) {
-                panic!("line-wrap visibility regression:\n\n{msg}");
-            }
+            assert_layout_scenario(trial(width, height, sidebar_open, &fixture.path, &lines));
         }
     }
 }
 
-/// Anti-test: with `line_wrap = false` and a very narrow viewport,
-/// long fixture lines extend past the right edge and their tail
-/// sentinels `>LN###` are NOT rendered (no wrap → no tail). Drops
-/// the load-bearing `line_wrap = true` precondition and proves
-/// the visibility claim depends on wrap being enabled.
+/// Anti-test: with `line_wrap = false` and a narrow viewport, long
+/// fixture lines extend past the right edge and their tail
+/// sentinels are NOT rendered (no wrap → no tail). Encoded by
+/// flipping the sentinel expectations to `AnyRowContains(">LN006")`
+/// — line 6 is the 36-'a' char-stressor, wider than the 40-col
+/// viewport's content area. With `line_wrap = false` the tail
+/// `>LN006` is off-screen, so `check_layout_scenario` returns Err.
+/// Proves the visibility claim depends on `line_wrap = true`.
 #[test]
 fn anti_line_wrap_disabled_loses_tail_sentinels_off_screen() {
     let lines = interesting_lines();
@@ -191,39 +180,25 @@ fn anti_line_wrap_disabled_loses_tail_sentinels_off_screen() {
         TestFixture::new("line_wrap_visibility_anti.txt", &lines.join("\n"))
             .expect("create fixture");
 
-    // Narrow viewport with wrap DISABLED. Long lines like the
-    // 36-'a' stressor or the indented Kotlin-style hanging line
-    // can't fit horizontally, so their tail sentinels must be
-    // pushed off the right edge and not appear in any rendered
-    // row. (Note: `Config::default()` has `line_wrap = true`, so
-    // we explicitly flip it false here — that's the precondition
-    // this anti-test is dropping.)
-    let mut config = Config::default();
-    config.editor.line_wrap = false;
-    let mut harness = EditorTestHarness::with_config(40, 50, config).unwrap();
-    harness.open_file(&fixture.path).unwrap();
-    harness
-        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
-        .unwrap();
-
-    let snap = RenderSnapshot::extract_with_rendered_rows(&mut harness);
-
-    // The long indented line (index 5) and the 36-'a' stressor
-    // (index 6) are both wider than the 40-col viewport's content
-    // area, so their tail sentinels can't appear without wrap.
-    let expect = RenderSnapshotExpect {
-        row_checks: vec![
-            RowMatch::NoRowContains(">LN005".into()),
-            RowMatch::NoRowContains(">LN006".into()),
-        ],
+    let scenario = LayoutScenario {
+        description: "anti: line_wrap=false on 40-col viewport ⇒ tail '>LN006' off-screen".into(),
+        initial_text: String::new(),
+        initial_file: Some(fixture.path.clone()),
+        width: 40,
+        height: 50,
+        config_overrides: no_wrap_overrides(),
+        actions: vec![Action::MoveDocumentStart],
+        expected_snapshot: RenderSnapshotExpect {
+            // The positive sweep test would assert `AnyRowContains(">LN006")`
+            // here; with line_wrap=false this fails.
+            row_checks: vec![RowMatch::AnyRowContains(">LN006".into())],
+            ..Default::default()
+        },
         ..Default::default()
     };
-    if let Some((field, expected, actual)) = expect.check_against(&snap) {
-        panic!(
-            "anti: with line_wrap=false on a 40-col viewport the tail \
-             sentinels of long lines should be off-screen, but: {field} \
-             expected {expected}; actual {actual}\nrows={:#?}",
-            snap.rendered_rows
-        );
-    }
+    assert!(
+        check_layout_scenario(scenario).is_err(),
+        "anti-test: with line_wrap=false on a 40-col viewport the tail \
+         sentinel '>LN006' should be off-screen"
+    );
 }

@@ -119,7 +119,16 @@ impl RenderSnapshot {
         // regardless of overlay state, which would silently fail
         // any cursor-under-popup assertion.
         let cursor_hidden_by_render = harness.vt100_cursor_hidden();
-        let terminal_cursor_raw = harness.vt100_cursor_position();
+        // Terminal-absolute cursor position from ratatui's
+        // TestBackend (where `Terminal::draw` left the cursor).
+        // Always populated for an `extract_with_rendered_rows`
+        // snapshot — unlike `vt100_cursor_position` it's not gated
+        // on `render_real()` emitting cursor-visibility commands.
+        // Distinct from `hardware_cursor` below, which is the
+        // editor's viewport-relative reading and IS gated on the
+        // vt100 hidden flag (so overlay-obscuration tests still
+        // see `hardware_cursor = None` when a popup covers it).
+        let terminal_cursor_raw = Some(harness.screen_cursor_position());
         let api = harness.api_mut();
         let cursor_byte = api.primary_caret().position;
         let buffer_text = api.buffer_text();
@@ -129,11 +138,7 @@ impl RenderSnapshot {
         } else {
             raw_cursor
         };
-        let terminal_cursor = if cursor_hidden_by_render {
-            None
-        } else {
-            terminal_cursor_raw
-        };
+        let terminal_cursor = terminal_cursor_raw;
         RenderSnapshot {
             width: api.terminal_width(),
             height: api.terminal_height(),
