@@ -6704,6 +6704,7 @@ impl QuickJsBackend {
                 editor.createBufferGroup = _wrapAsync("_createBufferGroupStart", "createBufferGroup");
                 editor.sendLspRequest = _wrapAsync("_sendLspRequestStart", "sendLspRequest");
                 editor.spawnBackgroundProcess = _wrapAsyncThenable("_spawnBackgroundProcessStart", "spawnBackgroundProcess");
+                editor.httpFetch = _wrapAsyncThenable("_httpFetchStart", "httpFetch");
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");

@@ -6314,9 +6314,17 @@ const HTTP_FETCH_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// as their status code without writing to the target file. Transport
 /// errors (DNS, TLS, timeout, …) are returned as `Err`.
 fn fetch_url_to_file(url: &str, target: &std::path::Path) -> Result<u16, String> {
+    // Use the platform's native certificate verifier so requests work in
+    // environments with TLS-intercepting proxies or custom enterprise root
+    // CAs that aren't in Mozilla's bundled webpki-roots.
+    let tls_config = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(30)))
         .http_status_as_error(false)
+        .tls_config(tls_config)
         .build()
         .new_agent();
 

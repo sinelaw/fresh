@@ -174,7 +174,7 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 # runtime uses onig (faster), wasm uses fancy-regex (pure Rust, WASM-compatible)
 syntect = { version = "5.3", default-features = false, optional = true }
 
-ureq = { version = "3.1.4", default-features = false, features = ["rustls"], optional = true }
+ureq = { version = "3.1.4", default-features = false, features = ["rustls", "platform-verifier"], optional = true }
 # Unicode handling - always needed for primitives
 unicode-width = { version = "0.2" }
 unicode-segmentation = { version = "1.12" }
