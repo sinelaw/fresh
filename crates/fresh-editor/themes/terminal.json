@@ -15,9 +15,9 @@
     "diff_add_highlight_bg": "LightGreen",
     "diff_remove_highlight_bg": "LightRed",
     "diff_modify_bg": "Yellow",
-    "diff_add_fg": "Black",
-    "diff_remove_fg": "White",
-    "diff_modify_fg": "Black",
+    "diff_add_collision_fg": "Black",
+    "diff_remove_collision_fg": "White",
+    "diff_modify_collision_fg": "Black",
     "ruler_bg": "DarkGray",
     "whitespace_indicator_fg": "DarkGray",
     "after_eof_bg": "Default"

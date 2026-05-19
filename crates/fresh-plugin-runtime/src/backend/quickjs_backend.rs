@@ -3278,6 +3278,7 @@ impl JsEditorApi {
         let italic: bool = options.get("italic").unwrap_or(false);
         let strikethrough: bool = options.get("strikethrough").unwrap_or(false);
         let extend_to_line_end: bool = options.get("extendToLineEnd").unwrap_or(false);
+        let fg_on_collision_only: bool = options.get("fgOnCollisionOnly").unwrap_or(false);
         let url: Option<String> = options.get("url").ok();
 
         let options = OverlayOptions {
@@ -3288,6 +3289,7 @@ impl JsEditorApi {
             italic,
             strikethrough,
             extend_to_line_end,
+            fg_on_collision_only,
             url,
         };
 

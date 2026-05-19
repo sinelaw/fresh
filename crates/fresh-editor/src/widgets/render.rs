@@ -1954,6 +1954,7 @@ fn render_completion_item(
             fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_FG)),
             bg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
             extend_to_line_end: true,
+            fg_on_collision_only: false,
             ..Default::default()
         })
     } else {

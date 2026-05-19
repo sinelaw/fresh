@@ -73,6 +73,9 @@
           38,
           30
         ],
+        "diff_add_collision_fg": null,
+        "diff_remove_collision_fg": null,
+        "diff_modify_collision_fg": null,
         "ruler_bg": [
           50,
           50,
@@ -202,17 +205,17 @@
           79,
           120
         ],
+        "text_input_selection_bg": [
+          58,
+          79,
+          120
+        ],
         "popup_selection_fg": [
           255,
           255,
           255
         ],
         "popup_text_fg": "White",
-        "text_input_selection_bg": [
-          58,
-          79,
-          120
-        ],
         "suggestion_bg": [
           30,
           30,
@@ -576,6 +579,42 @@
             38,
             30
           ]
+        },
+        "diff_add_collision_fg": {
+          "description": "Fallback fg for cells whose existing fg matches `diff_add_bg`\n(e.g. ANSI Green-on-Green). Only applied on collision; other\ntokens keep their syntax colour.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "diff_remove_collision_fg": {
+          "description": "Collision-only fallback fg for `diff_remove_bg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "diff_modify_collision_fg": {
+          "description": "Collision-only fallback fg for `diff_modify_bg`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "ruler_bg": {
           "description": "Vertical ruler background color",
@@ -953,6 +992,15 @@
             120
           ]
         },
+        "text_input_selection_bg": {
+          "description": "Selection background inside a widget Text input. Reads\nagainst `prompt_bg`, so it needs higher contrast against\nthat tint than `editor.selection_bg` (which targets the\neditor surface). Defaults to the same `popup_selection_bg`\nblue used everywhere \"selected item inside a chrome\nsurface\" is shown — same key the prompt selection uses, so\nthe cue reads consistently across selection UIs.",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            58,
+            79,
+            120
+          ]
+        },
         "popup_selection_fg": {
           "description": "Popup selected item text color",
           "$ref": "#/$defs/ColorDef",
@@ -966,15 +1014,6 @@
           "description": "Popup window text color",
           "$ref": "#/$defs/ColorDef",
           "default": "White"
-        },
-        "text_input_selection_bg": {
-          "description": "Selection background inside a widget Text input. Reads against prompt_bg, so it needs higher contrast against that tint than editor.selection_bg.",
-          "$ref": "#/$defs/ColorDef",
-          "default": [
-            58,
-            79,
-            120
-          ]
         },
         "suggestion_bg": {
           "description": "Autocomplete suggestion background",

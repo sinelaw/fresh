@@ -376,8 +376,8 @@ Ship them as two PRs:
    these as `meta.diff.range.unified`-ish in some grammars. Decide
    whether they get bg highlight or stay plain.
 3. **Theme schema vs. live_diff**: live_diff uses `editor.diff_*_bg`
-   *and* `editor.diff_*_fg`. After this work, syntect-scoped diff
-   highlighting uses the same bg but **probably wants its own fg**
+   *and* `editor.diff_*_collision_fg`. After this work, syntect-scoped
+   diff highlighting uses the same bg but **probably wants its own fg**
    (so the `+` token itself is greener, distinct from context). Add
    `editor.diff_add_fg_syntect` (ugly) or rename the existing keys
    (breaks user themes) or just reuse the live_diff fg (simplest).

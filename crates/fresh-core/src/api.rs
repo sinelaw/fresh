@@ -682,6 +682,13 @@ pub struct OverlayOptions {
     #[serde(default)]
     pub extend_to_line_end: bool,
 
+    /// When `true`, `fg` is applied only on cells whose existing fg
+    /// matches this overlay's resolved bg — i.e. a same-colour fg/bg
+    /// collision. Lets a row-wide overlay stay legible on tokens that
+    /// share the bg's colour without repainting unrelated tokens.
+    #[serde(default)]
+    pub fg_on_collision_only: bool,
+
     /// Optional URL for OSC 8 terminal hyperlinks.
     /// When set, the overlay text becomes a clickable hyperlink in terminals
     /// that support OSC 8 escape sequences.
@@ -5104,6 +5111,7 @@ mod tests {
                 italic: false,
                 strikethrough: false,
                 extend_to_line_end: false,
+                fg_on_collision_only: false,
                 url: None,
             },
         );

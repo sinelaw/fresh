@@ -29,6 +29,9 @@ pub enum OverlayFace {
         fg_theme: Option<String>,
         /// Theme key for background color (e.g., "editor.selection_bg")
         bg_theme: Option<String>,
+        /// When `true`, apply `fg` only on cells whose existing fg
+        /// equals the resolved bg (a same-colour collision).
+        fg_on_collision_only: bool,
     },
 }
 
@@ -100,6 +103,7 @@ impl OverlayFace {
                 fallback_style: style,
                 fg_theme,
                 bg_theme,
+                fg_on_collision_only: options.fg_on_collision_only,
             }
         } else {
             OverlayFace::Style { style }

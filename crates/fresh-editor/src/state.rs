@@ -1028,6 +1028,7 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
                     fallback_style: style,
                     fg_theme,
                     bg_theme,
+                    fg_on_collision_only: options.fg_on_collision_only,
                 }
             } else {
                 OverlayFace::Style { style }

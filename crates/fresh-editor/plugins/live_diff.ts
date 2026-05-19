@@ -38,19 +38,18 @@ const PRIORITY = 9;
 
 // Theme keys for backgrounds and "on top of bg" foregrounds. These
 // are resolved at render time by the editor, so the diff colors track
-// the active theme automatically. The `editor.diff_*_fg` keys are
-// purpose-built for "text drawn on top of the matching diff bg" —
-// they default to `ui.file_status_*_fg` so themes that haven't been
-// updated still work, but themes whose `file_status_*_fg` collides
-// with `diff_*_bg` (e.g. `terminal`, where both resolve to ANSI Red)
-// override `editor.diff_*_fg` to a contrasting color.
+// the active theme automatically. The `editor.diff_*_collision_fg`
+// keys pair with `fgOnCollisionOnly: true` below: themes that define
+// them get a contrasting fg painted only on cells whose syntax fg
+// happens to match the diff bg (e.g. ANSI Green-on-Green); every
+// other cell keeps its syntax colour.
 const THEME = {
   addedBg: "editor.diff_add_bg",
-  addedFg: "editor.diff_add_fg",
+  addedFg: "editor.diff_add_collision_fg",
   modifiedBg: "editor.diff_modify_bg",
-  modifiedFg: "editor.diff_modify_fg",
+  modifiedFg: "editor.diff_modify_collision_fg",
   removedBg: "editor.diff_remove_bg",
-  removedFg: "editor.diff_remove_fg",
+  removedFg: "editor.diff_remove_collision_fg",
 };
 
 // `setLineIndicator` only accepts RGB triples (not theme keys), so the
@@ -845,14 +844,9 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
   for (const h of state.hunks) {
     if (h.kind === "added" || h.kind === "modified") {
       const bg = h.kind === "added" ? THEME.addedBg : THEME.modifiedBg;
-      // Passing `fg` as a theme key lets each theme decide whether to
-      // override the cell's existing fg: themes that DEFINE
-      // `editor.diff_*_fg` (e.g. `terminal`, where the ANSI bg would
-      // otherwise collide with same-named syntax colors) get a
-      // contrasting fg painted on; themes that don't define the key
-      // resolve to `None` in `OverlayFace::ThemedStyle`, so the
-      // overlay leaves the cell's fg alone and syntax highlighting
-      // shows through unchanged.
+      // `fgOnCollisionOnly` keeps syntax highlighting intact on the
+      // rest of the line and only paints `fg` where a token's colour
+      // would otherwise be invisible against the diff bg.
       const fg = h.kind === "added" ? THEME.addedFg : THEME.modifiedFg;
       for (let i = 0; i < h.newCount; i++) {
         const line = h.newStart + i;
@@ -871,6 +865,7 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
         editor.addOverlay(bid, NS_OVERLAY, start, end, {
           bg,
           fg,
+          fgOnCollisionOnly: true,
           underline: false,
           bold: false,
           italic: false,

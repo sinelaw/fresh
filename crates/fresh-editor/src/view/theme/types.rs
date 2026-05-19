@@ -520,21 +520,17 @@ pub struct EditorColors {
     /// Diff modified line background
     #[serde(default = "default_diff_modify_bg")]
     pub diff_modify_bg: ColorDef,
-    /// Foreground used for text rendered ON TOP OF `diff_add_bg`.
-    /// Optional: when unset, plugins fall back to
-    /// `ui.file_status_added_fg`. Set this on themes whose
-    /// `file_status_added_fg` collides with `diff_add_bg` (e.g. the
-    /// `terminal` theme where both default to ANSI Green).
+    /// Fallback fg for cells whose existing fg matches `diff_add_bg`
+    /// (e.g. ANSI Green-on-Green). Only applied on collision; other
+    /// tokens keep their syntax colour.
     #[serde(default)]
-    pub diff_add_fg: Option<ColorDef>,
-    /// Foreground used for text rendered ON TOP OF `diff_remove_bg`.
-    /// Optional: when unset, falls back to `ui.file_status_deleted_fg`.
+    pub diff_add_collision_fg: Option<ColorDef>,
+    /// Collision-only fallback fg for `diff_remove_bg`.
     #[serde(default)]
-    pub diff_remove_fg: Option<ColorDef>,
-    /// Foreground used for text rendered ON TOP OF `diff_modify_bg`.
-    /// Optional: when unset, falls back to `ui.file_status_modified_fg`.
+    pub diff_remove_collision_fg: Option<ColorDef>,
+    /// Collision-only fallback fg for `diff_modify_bg`.
     #[serde(default)]
-    pub diff_modify_fg: Option<ColorDef>,
+    pub diff_modify_collision_fg: Option<ColorDef>,
     /// Vertical ruler background color
     #[serde(default = "default_ruler_bg")]
     pub ruler_bg: ColorDef,
@@ -1250,19 +1246,12 @@ pub struct Theme {
     pub diff_add_highlight_bg: Color,
     /// Brighter background for inline diff highlighting on removed content
     pub diff_remove_highlight_bg: Color,
-    /// Foreground for text drawn ON TOP OF a diff bg.
-    ///
-    /// `None` means "don't override fg" — overlays that point at this
-    /// key leave the cell's existing fg alone, so syntax highlighting
-    /// shows through on added/modified lines. Themes whose
-    /// `file_status_*_fg` collides with the corresponding
-    /// `diff_*_bg` (e.g. the `terminal` theme, where both default to
-    /// ANSI Red/Green) explicitly set the key to a contrasting color
-    /// so the text becomes readable; everyone else inherits `None`
-    /// and the line keeps its original colors.
-    pub diff_add_fg: Option<Color>,
-    pub diff_remove_fg: Option<Color>,
-    pub diff_modify_fg: Option<Color>,
+    /// Collision-only fg fallback for cells whose existing fg matches
+    /// `diff_*_bg`. `None` keeps the cell's original fg; overlays opt
+    /// into the override via `fg_on_collision_only`.
+    pub diff_add_collision_fg: Option<Color>,
+    pub diff_remove_collision_fg: Option<Color>,
+    pub diff_modify_collision_fg: Option<Color>,
 
     // UI element colors
     pub tab_active_fg: Color,
@@ -1451,9 +1440,17 @@ impl From<ThemeFile> for Theme {
                 .diff_remove_highlight_bg
                 .map(|c| c.into())
                 .unwrap_or_else(|| brighten_color(file.editor.diff_remove_bg.into(), 40)),
-            diff_add_fg: file.editor.diff_add_fg.clone().map(|c| c.into()),
-            diff_remove_fg: file.editor.diff_remove_fg.clone().map(|c| c.into()),
-            diff_modify_fg: file.editor.diff_modify_fg.clone().map(|c| c.into()),
+            diff_add_collision_fg: file.editor.diff_add_collision_fg.clone().map(|c| c.into()),
+            diff_remove_collision_fg: file
+                .editor
+                .diff_remove_collision_fg
+                .clone()
+                .map(|c| c.into()),
+            diff_modify_collision_fg: file
+                .editor
+                .diff_modify_collision_fg
+                .clone()
+                .map(|c| c.into()),
             tab_active_fg: file.ui.tab_active_fg.into(),
             tab_active_bg: file.ui.tab_active_bg.into(),
             tab_inactive_fg: file.ui.tab_inactive_fg.into(),
@@ -1642,9 +1639,9 @@ impl From<Theme> for ThemeFile {
                 diff_add_highlight_bg: Some(theme.diff_add_highlight_bg.into()),
                 diff_remove_highlight_bg: Some(theme.diff_remove_highlight_bg.into()),
                 diff_modify_bg: theme.diff_modify_bg.into(),
-                diff_add_fg: theme.diff_add_fg.map(|c| c.into()),
-                diff_remove_fg: theme.diff_remove_fg.map(|c| c.into()),
-                diff_modify_fg: theme.diff_modify_fg.map(|c| c.into()),
+                diff_add_collision_fg: theme.diff_add_collision_fg.map(|c| c.into()),
+                diff_remove_collision_fg: theme.diff_remove_collision_fg.map(|c| c.into()),
+                diff_modify_collision_fg: theme.diff_modify_collision_fg.map(|c| c.into()),
                 ruler_bg: theme.ruler_bg.into(),
                 whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
                 after_eof_bg: Some(theme.after_eof_bg.into()),
@@ -1938,14 +1935,9 @@ impl Theme {
                 "diff_add_bg" => Some(self.diff_add_bg),
                 "diff_remove_bg" => Some(self.diff_remove_bg),
                 "diff_modify_bg" => Some(self.diff_modify_bg),
-                // `diff_*_fg` are intentionally `Option<Color>` —
-                // `None` means "no override, let syntax/cell fg show
-                // through". Returning `None` here propagates that all
-                // the way through `OverlayFace::ThemedStyle` so
-                // overlays don't clobber the syntax color.
-                "diff_add_fg" => self.diff_add_fg,
-                "diff_remove_fg" => self.diff_remove_fg,
-                "diff_modify_fg" => self.diff_modify_fg,
+                "diff_add_collision_fg" => self.diff_add_collision_fg,
+                "diff_remove_collision_fg" => self.diff_remove_collision_fg,
+                "diff_modify_collision_fg" => self.diff_modify_collision_fg,
                 "ruler_bg" => Some(self.ruler_bg),
                 "whitespace_indicator_fg" => Some(self.whitespace_indicator_fg),
                 _ => None,
@@ -2054,15 +2046,11 @@ impl Theme {
                 "diff_remove_bg" => Some(&mut self.diff_remove_bg),
                 "diff_modify_bg" => Some(&mut self.diff_modify_bg),
                 // `Option<Color>` — only addressable for mutation
-                // when already set in the theme JSON. UI-driven
-                // override of an unset key isn't supported yet;
-                // users who want to opt a theme into a diff-fg
-                // override edit the JSON directly. Keeps the
-                // resolve / resolve_mut lock-step the regression
-                // test enforces.
-                "diff_add_fg" => self.diff_add_fg.as_mut(),
-                "diff_remove_fg" => self.diff_remove_fg.as_mut(),
-                "diff_modify_fg" => self.diff_modify_fg.as_mut(),
+                // when already set in the theme JSON (lock-step with
+                // `resolve_theme_key`).
+                "diff_add_collision_fg" => self.diff_add_collision_fg.as_mut(),
+                "diff_remove_collision_fg" => self.diff_remove_collision_fg.as_mut(),
+                "diff_modify_collision_fg" => self.diff_modify_collision_fg.as_mut(),
                 "ruler_bg" => Some(&mut self.ruler_bg),
                 "whitespace_indicator_fg" => Some(&mut self.whitespace_indicator_fg),
                 _ => None,
