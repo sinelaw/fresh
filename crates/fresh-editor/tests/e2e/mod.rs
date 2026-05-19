@@ -176,7 +176,6 @@ pub mod settings_ui_usability;
 pub mod shell_command;
 pub mod shift_backspace;
 pub mod side_by_side_diff_hunk_nav;
-pub mod side_by_side_diff_scroll;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod smart_home;
