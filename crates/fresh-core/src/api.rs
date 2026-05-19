@@ -2132,6 +2132,25 @@ pub enum PluginCommand {
     /// follow up with `SetActiveWindow` to dive.
     CreateWindow { root: PathBuf, label: String },
 
+    /// Create a new window rooted at `root` AND seed it with a
+    /// terminal as its only buffer. Atomic alternative to
+    /// `CreateWindow` + `SetActiveWindow` + `CreateTerminal`
+    /// used by Orchestrator's new-session flow — bundling them
+    /// avoids the transient `[No Name]` placeholder that the
+    /// three-step sequence leaves as a leftover first tab, and
+    /// removes any window of time in which the new window is
+    /// visible to other plugins/preview rendering without its
+    /// agent terminal attached. Returns
+    /// `SessionWithTerminalResult` via the async callback.
+    CreateWindowWithTerminal {
+        root: PathBuf,
+        label: String,
+        cwd: Option<String>,
+        command: Option<Vec<String>>,
+        title: Option<String>,
+        request_id: u64,
+    },
+
     /// Make `id` the active session. No-op if `id` is already
     /// active. Fires `active_session_changed` on transition.
     /// Errors (id not found) are logged via tracing rather than
@@ -4227,6 +4246,60 @@ pub struct CreateTerminalOptions {
     pub title: Option<String>,
 }
 
+/// Options for `createWindowWithTerminal` — the atomic
+/// "spawn a new editor session that hosts an agent terminal"
+/// entry point used by Orchestrator. Bundles window creation,
+/// dive, and terminal spawn so the new window is born with the
+/// terminal as its seed buffer (no transient `[No Name]` tab,
+/// no race between create-window and create-terminal completing).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct CreateWindowWithTerminalOptions {
+    /// Absolute path to the new session's worktree / project
+    /// root. Relative paths are rejected (logged, no window
+    /// created).
+    pub root: String,
+    /// Human-readable label for the new session. When empty,
+    /// defaults to the basename of `root`.
+    #[serde(default)]
+    pub label: String,
+    /// Working directory for the spawned terminal. Defaults to
+    /// `root` when omitted.
+    #[serde(default)]
+    #[ts(optional)]
+    pub cwd: Option<String>,
+    /// Argv to spawn directly inside the PTY. `None` keeps the
+    /// shell-and-type behaviour; `Some([cmd, ...args])` runs the
+    /// command as the PTY child (used by Orchestrator so the
+    /// agent process is the PTY's direct child).
+    #[serde(default)]
+    #[ts(optional)]
+    pub command: Option<Vec<String>>,
+    /// Tab title override. Defaults to `command[0]`'s basename
+    /// when `command` is set, or "Terminal N" otherwise.
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
+}
+
+/// Result of `createWindowWithTerminal` — the ids of the new
+/// window plus the terminal seeded into its split layout.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct SessionWithTerminalResult {
+    /// The new window's id.
+    #[ts(type = "number")]
+    pub window_id: u64,
+    /// The seeded terminal's id (for `sendTerminalInput`, etc.).
+    #[ts(type = "number")]
+    pub terminal_id: u64,
+    /// The seeded terminal buffer's id.
+    #[ts(type = "number")]
+    pub buffer_id: u64,
+}
+
 /// Result of getTextPropertiesAtCursor - array of property objects
 ///
 /// Each element contains the properties from a text property span that overlaps
@@ -4278,6 +4351,7 @@ mod fromjs_impls {
         LspServerPackConfig,
         ProcessLimitsPackConfig,
         CreateTerminalOptions,
+        CreateWindowWithTerminalOptions,
     );
 
     impl<'js> rquickjs::IntoJs<'js> for TextPropertiesAtCursor {

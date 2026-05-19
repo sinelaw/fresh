@@ -97,6 +97,149 @@ impl crate::app::Editor {
         id
     }
 
+    /// Atomic "create a new window seeded with an agent terminal"
+    /// entry point. Used by Orchestrator's new-session flow.
+    ///
+    /// Unlike `create_window_at`, this path deliberately does NOT
+    /// seed an empty `[No Name]` buffer up front — the terminal
+    /// becomes the window's seed via `create_plugin_terminal`'s
+    /// no-active-split branch, so the new window is born with a
+    /// single tab (the terminal) instead of `[No Name] | <agent>`.
+    ///
+    /// The eager-seed invariant `create_window_at` upholds
+    /// ("window is renderable immediately after returning") still
+    /// holds here: the call to `create_plugin_terminal` runs
+    /// synchronously on the same thread before this function
+    /// yields, installing the terminal-rooted split layout before
+    /// any other code can observe the window. The `window_created`
+    /// hook is intentionally fired *after* the terminal is wired
+    /// up so plugin handlers see the new window in its final
+    /// shape, not the half-built intermediate state.
+    ///
+    /// `root` must be absolute; the plugin-command dispatcher
+    /// validates this before reaching here.
+    pub fn create_window_with_terminal(
+        &mut self,
+        root: PathBuf,
+        label: String,
+        cwd: Option<PathBuf>,
+        command: Option<Vec<String>>,
+        title: Option<String>,
+    ) -> Result<(WindowId, fresh_core::TerminalId, fresh_core::BufferId), String> {
+        let id = WindowId(self.next_window_id);
+        self.next_window_id += 1;
+
+        let resources = self.window_resources();
+        let mut session = Window::new(id, label, root.clone(), resources);
+        session.terminal_width = self.terminal_width;
+        session.terminal_height = self.terminal_height;
+        let resolved_label = session.label.clone();
+        self.windows.insert(id, session);
+
+        // Dive into the new window before spawning the terminal
+        // so `Window::create_plugin_terminal` operates on a window
+        // with `splits.is_none()` — that's the "no active_split"
+        // branch which seeds the layout rooted at the terminal
+        // buffer. We bypass `set_active_window`'s
+        // `build_fresh_layout_if_needed` call (which would install
+        // a `[No Name]` seed) by writing the active-window pointer
+        // directly.
+        let previous_id = self.active_window;
+        self.active_window = id;
+        self.working_dir = root.clone();
+
+        let spawn_result = {
+            let target = self
+                .windows
+                .get_mut(&id)
+                .expect("just-inserted window must be present");
+            target.create_plugin_terminal(
+                cwd.or_else(|| Some(root.clone())),
+                None, // no split direction — let the no-layout branch seed
+                None,
+                true,  // focus — newly spawned terminal is the seed
+                false, // ephemeral by default; orchestrator owns persistence
+                command,
+                title.filter(|t| !t.is_empty()),
+            )
+        };
+
+        let (terminal_id, buffer_id, _split_id) = match spawn_result {
+            Ok(triple) => triple,
+            Err(e) => {
+                // Roll back: tear down the half-built window and
+                // restore the previous active pointer so the user
+                // isn't stranded on an empty window when the PTY
+                // spawn fails (missing binary, permission denied,
+                // out of PTYs, ...).
+                self.windows.remove(&id);
+                self.active_window = previous_id;
+                if let Some(prev) = self.windows.get(&previous_id) {
+                    self.working_dir = prev.root.clone();
+                }
+                return Err(e);
+            }
+        };
+
+        // Register the leader pid with the new window's
+        // process_groups so window-level signal operations reach
+        // the spawned group. Mirrors `create_plugin_terminal`'s
+        // registration in the active-target path of
+        // `handle_create_terminal`, but kept here because we
+        // bypass that dispatcher.
+        if let Some(pid) = self
+            .windows
+            .get(&id)
+            .and_then(|w| w.terminal_manager.get(terminal_id))
+            .and_then(|h| h.pid())
+        {
+            let pg_label = format!("terminal #{}", terminal_id.0);
+            if let Some(win) = self.windows.get_mut(&id) {
+                win.process_groups.register(pid, pg_label);
+            }
+        }
+
+        // Resize the newly-active window's PTYs (mirrors
+        // `set_active_window`'s post-dive resize so the seeded
+        // terminal renders into the right cell rect on its first
+        // frame).
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.resize_visible_terminals();
+        }
+
+        // Plugin lifecycle: fire `window_created` first, then
+        // `active_window_changed`. Order mirrors the
+        // `create_window_at` + `set_active_window` sequence the
+        // orchestrator previously chained — plugin handlers that
+        // care about either event see the same payload order.
+        self.plugin_manager.read().unwrap().run_hook(
+            "window_created",
+            HookArgs::WindowCreated {
+                id: id.0,
+                label: resolved_label,
+                root: root.to_string_lossy().into_owned(),
+            },
+        );
+        if previous_id != id {
+            self.plugin_manager.read().unwrap().run_hook(
+                "active_window_changed",
+                HookArgs::ActiveWindowChanged {
+                    previous_id: Some(previous_id.0),
+                    active_id: id.0,
+                },
+            );
+        }
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+        #[cfg(feature = "plugins")]
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+        );
+
+        Ok((id, terminal_id, buffer_id))
+    }
+
     /// Switch the active window to `id`.
     ///
     /// Pointer write: every per-window field

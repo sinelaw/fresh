@@ -710,6 +710,18 @@ impl Editor {
                     let _ = self.create_window_at(root, label);
                 }
             }
+            PluginCommand::CreateWindowWithTerminal {
+                root,
+                label,
+                cwd,
+                command,
+                title,
+                request_id,
+            } => {
+                self.handle_create_window_with_terminal(
+                    root, label, cwd, command, title, request_id,
+                );
+            }
             PluginCommand::SetActiveWindow { id } => {
                 self.set_active_window(id);
             }
@@ -2972,6 +2984,51 @@ impl Editor {
         // click sees it" which feels unresponsive when the plugin
         // is reacting to an event the user just triggered.
         self.refresh_lsp_status_popup_if_open();
+    }
+
+    fn handle_create_window_with_terminal(
+        &mut self,
+        root: std::path::PathBuf,
+        label: String,
+        cwd: Option<String>,
+        command: Option<Vec<String>>,
+        title: Option<String>,
+        request_id: u64,
+    ) {
+        let callback_id = JsCallbackId::from(request_id);
+        if !root.is_absolute() {
+            let msg = format!(
+                "createWindowWithTerminal: root must be absolute, got {:?}",
+                root
+            );
+            tracing::warn!("{}", msg);
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, msg);
+            return;
+        }
+        let cwd_buf = cwd.map(std::path::PathBuf::from);
+        match self.create_window_with_terminal(root, label, cwd_buf, command, title) {
+            Ok((window_id, terminal_id, buffer_id)) => {
+                let api_result = fresh_core::api::SessionWithTerminalResult {
+                    window_id: window_id.0,
+                    terminal_id: terminal_id.0 as u64,
+                    buffer_id: buffer_id.0 as u64,
+                };
+                self.plugin_manager.read().unwrap().resolve_callback(
+                    callback_id,
+                    serde_json::to_string(&api_result).unwrap_or_default(),
+                );
+            }
+            Err(e) => {
+                tracing::error!("createWindowWithTerminal failed: {e}");
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, format!("createWindowWithTerminal: {e}"));
+            }
+        }
     }
 
     fn handle_create_terminal(

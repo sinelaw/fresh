@@ -621,6 +621,50 @@ type TerminalResult = {
 	*/
 	splitId: number | null;
 };
+type CreateWindowWithTerminalOptions = {
+	/**
+	* Absolute path to the new session's worktree / project
+	* root. Relative paths are rejected (logged, no window
+	* created).
+	*/
+	root: string;
+	/**
+	* Human-readable label for the new session. When empty,
+	* defaults to the basename of `root`.
+	*/
+	label: string;
+	/**
+	* Working directory for the spawned terminal. Defaults to
+	* `root` when omitted.
+	*/
+	cwd?: string;
+	/**
+	* Argv to spawn directly inside the PTY. `None` keeps the
+	* shell-and-type behaviour; `Some([cmd, ...args])` runs the
+	* command as the PTY child (used by Orchestrator so the
+	* agent process is the PTY's direct child).
+	*/
+	command?: Array<string>;
+	/**
+	* Tab title override. Defaults to `command[0]`'s basename
+	* when `command` is set, or "Terminal N" otherwise.
+	*/
+	title?: string;
+};
+type SessionWithTerminalResult = {
+	/**
+	* The new window's id.
+	*/
+	windowId: number;
+	/**
+	* The seeded terminal's id (for `sendTerminalInput`, etc.).
+	*/
+	terminalId: number;
+	/**
+	* The seeded terminal buffer's id.
+	*/
+	bufferId: number;
+};
 type CreateTerminalOptions = {
 	/**
 	* Working directory for the terminal (defaults to editor cwd)
@@ -2870,6 +2914,14 @@ interface EditorAPI {
 	* Create a new terminal in a split (async, returns TerminalResult)
 	*/
 	createTerminal(opts?: CreateTerminalOptions): Promise<TerminalResult>;
+	/**
+	* Create a new editor window seeded with an agent terminal as
+	* its only buffer. Atomic — replaces the legacy
+	* `createWindow` + `setActiveWindow` + `createTerminal`
+	* chain that left a transient `[No Name]` tab alongside the
+	* agent terminal.
+	*/
+	createWindowWithTerminal(opts: CreateWindowWithTerminalOptions): Promise<SessionWithTerminalResult>;
 	/**
 	* Send input data to a terminal
 	*/

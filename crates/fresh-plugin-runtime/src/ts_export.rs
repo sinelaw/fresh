@@ -74,6 +74,12 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Terminal types
         "TerminalResult" => Some(TerminalResult::decl(&cfg)),
         "CreateTerminalOptions" => Some(CreateTerminalOptions::decl(&cfg)),
+        "CreateWindowWithTerminalOptions" => {
+            Some(fresh_core::api::CreateWindowWithTerminalOptions::decl(&cfg))
+        }
+        "SessionWithTerminalResult" => {
+            Some(fresh_core::api::SessionWithTerminalResult::decl(&cfg))
+        }
 
         // Composite buffer types (ts-rs renames these with Ts prefix)
         "TsCompositeLayoutConfig" | "CompositeLayoutConfig" => {
@@ -227,47 +233,49 @@ const REMOTE_INDICATOR_STATE_DECL: &str = r#"type RemoteIndicatorStatePayload =
 /// These are types referenced inside option structs or other complex types
 /// that aren't directly in method signatures.
 const DEPENDENCY_TYPES: &[&str] = &[
-    "TextPropertyEntry",              // Used in CreateVirtualBuffer*Options.entries
-    "TsCompositeLayoutConfig",        // Used in createCompositeBuffer opts
-    "TsCompositeSourceConfig",        // Used in createCompositeBuffer opts.sources
-    "TsCompositePaneStyle",           // Used in TsCompositeSourceConfig.style
-    "TsCompositeHunk",                // Used in createCompositeBuffer opts.hunks
-    "TsCreateCompositeBufferOptions", // Options for createCompositeBuffer
-    "ViewportInfo",                   // Used by plugins for viewport queries
-    "ScreenSize",                     // Used by editor.getScreenSize()
-    "KeyEventPayload",                // Used by editor.getNextKey()
-    "SplitSnapshot",                  // Used by editor.listSplits()
-    "LayoutHints",                    // Used by plugins for view transforms
-    "ViewTokenWire",                  // Used by plugins for view transforms
-    "ViewTokenWireKind",              // Used by ViewTokenWire
-    "TokenColor",                     // Used by ViewTokenStyle fg/bg
-    "ViewTokenStyle",                 // Used by ViewTokenWire
-    "PromptSuggestion",               // Used by plugins for prompt suggestions
-    "DirEntry",                       // Used by plugins for directory entries
-    "BufferInfo",                     // Used by listBuffers, getBufferInfo
-    "WindowInfo",                     // Used by listWindows
-    "JsDiagnostic",                   // Used by getAllDiagnostics
-    "JsRange",                        // Used by JsDiagnostic
-    "JsPosition",                     // Used by JsRange
-    "ActionSpec",                     // Used by executeActions
-    "TsActionPopupAction",            // Used by ActionPopupOptions.actions
-    "ActionPopupOptions",             // Used by showActionPopup
-    "TsLspMenuItem",                  // Used by setLspMenuContributions
-    "FileExplorerDecoration",         // Used by setFileExplorerDecorations
-    "FormatterPackConfig",            // Used by LanguagePackConfig.formatter
-    "ProcessLimitsPackConfig",        // Used by LspServerPackConfig.process_limits
-    "TerminalResult",                 // Used by createTerminal return type
-    "CreateTerminalOptions",          // Used by createTerminal opts parameter
-    "CursorInfo",                     // Used by getPrimaryCursor, getAllCursors
-    "OverlayOptions",                 // Used by TextPropertyEntry.style and InlineOverlay
-    "OverlayColorSpec",               // Used by OverlayOptions.fg/bg
-    "InlineOverlay",                  // Used by TextPropertyEntry.inlineOverlays
-    "OffsetUnit",                     // Used by InlineOverlay.unit
-    "StyledSegment",                  // Used by TextPropertyEntry.segments
-    "GrammarInfoSnapshot",            // Used by listGrammars
-    "AnimationRect",                  // Used by animateArea
-    "PluginAnimationEdge",            // Used by PluginAnimationKind
-    "PluginAnimationKind",            // Used by animateArea/animateVirtualBuffer
+    "TextPropertyEntry",               // Used in CreateVirtualBuffer*Options.entries
+    "TsCompositeLayoutConfig",         // Used in createCompositeBuffer opts
+    "TsCompositeSourceConfig",         // Used in createCompositeBuffer opts.sources
+    "TsCompositePaneStyle",            // Used in TsCompositeSourceConfig.style
+    "TsCompositeHunk",                 // Used in createCompositeBuffer opts.hunks
+    "TsCreateCompositeBufferOptions",  // Options for createCompositeBuffer
+    "ViewportInfo",                    // Used by plugins for viewport queries
+    "ScreenSize",                      // Used by editor.getScreenSize()
+    "KeyEventPayload",                 // Used by editor.getNextKey()
+    "SplitSnapshot",                   // Used by editor.listSplits()
+    "LayoutHints",                     // Used by plugins for view transforms
+    "ViewTokenWire",                   // Used by plugins for view transforms
+    "ViewTokenWireKind",               // Used by ViewTokenWire
+    "TokenColor",                      // Used by ViewTokenStyle fg/bg
+    "ViewTokenStyle",                  // Used by ViewTokenWire
+    "PromptSuggestion",                // Used by plugins for prompt suggestions
+    "DirEntry",                        // Used by plugins for directory entries
+    "BufferInfo",                      // Used by listBuffers, getBufferInfo
+    "WindowInfo",                      // Used by listWindows
+    "JsDiagnostic",                    // Used by getAllDiagnostics
+    "JsRange",                         // Used by JsDiagnostic
+    "JsPosition",                      // Used by JsRange
+    "ActionSpec",                      // Used by executeActions
+    "TsActionPopupAction",             // Used by ActionPopupOptions.actions
+    "ActionPopupOptions",              // Used by showActionPopup
+    "TsLspMenuItem",                   // Used by setLspMenuContributions
+    "FileExplorerDecoration",          // Used by setFileExplorerDecorations
+    "FormatterPackConfig",             // Used by LanguagePackConfig.formatter
+    "ProcessLimitsPackConfig",         // Used by LspServerPackConfig.process_limits
+    "TerminalResult",                  // Used by createTerminal return type
+    "CreateWindowWithTerminalOptions", // Used by createWindowWithTerminal opts
+    "SessionWithTerminalResult",       // Used by createWindowWithTerminal return type
+    "CreateTerminalOptions",           // Used by createTerminal opts parameter
+    "CursorInfo",                      // Used by getPrimaryCursor, getAllCursors
+    "OverlayOptions",                  // Used by TextPropertyEntry.style and InlineOverlay
+    "OverlayColorSpec",                // Used by OverlayOptions.fg/bg
+    "InlineOverlay",                   // Used by TextPropertyEntry.inlineOverlays
+    "OffsetUnit",                      // Used by InlineOverlay.unit
+    "StyledSegment",                   // Used by TextPropertyEntry.segments
+    "GrammarInfoSnapshot",             // Used by listGrammars
+    "AnimationRect",                   // Used by animateArea
+    "PluginAnimationEdge",             // Used by PluginAnimationKind
+    "PluginAnimationKind",             // Used by animateArea/animateVirtualBuffer
     // Widget library types (see docs/internal/plugin-widget-library-design.md)
     "HintEntry",      // Used by WidgetSpec::HintBar
     "ButtonKind",     // Used by WidgetSpec::Button.intent
@@ -772,6 +780,8 @@ mod tests {
             "BackgroundProcessResult",
             "TerminalResult",
             "CreateTerminalOptions",
+            "CreateWindowWithTerminalOptions",
+            "SessionWithTerminalResult",
             "TsCompositeLayoutConfig",
             "TsCompositeSourceConfig",
             "TsCompositePaneStyle",

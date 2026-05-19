@@ -5960,6 +5960,39 @@ impl JsEditorApi {
         Ok(id)
     }
 
+    /// Create a new editor window seeded with an agent terminal as
+    /// its only buffer. Atomic — replaces the legacy
+    /// `createWindow` + `setActiveWindow` + `createTerminal`
+    /// chain that left a transient `[No Name]` tab alongside the
+    /// agent terminal.
+    #[plugin_api(
+        async_promise,
+        js_name = "createWindowWithTerminal",
+        ts_return = "SessionWithTerminalResult"
+    )]
+    #[qjs(rename = "_createWindowWithTerminalStart")]
+    pub fn create_window_with_terminal_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        opts: fresh_core::api::CreateWindowWithTerminalOptions,
+    ) -> rquickjs::Result<u64> {
+        let id = self.alloc_request_id();
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self
+            .command_sender
+            .send(PluginCommand::CreateWindowWithTerminal {
+                root: std::path::PathBuf::from(opts.root),
+                label: opts.label,
+                cwd: opts.cwd,
+                command: opts.command,
+                title: opts.title,
+                request_id: id,
+            });
+        Ok(id)
+    }
+
     /// Send input data to a terminal
     pub fn send_terminal_input(&self, terminal_id: u64, data: String) -> bool {
         self.command_sender
@@ -6720,6 +6753,7 @@ impl QuickJsBackend {
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
+                editor.createWindowWithTerminal = _wrapAsync("_createWindowWithTerminalStart", "createWindowWithTerminal");
                 editor.reloadGrammars = _wrapAsync("_reloadGrammarsStart", "reloadGrammars");
                 editor.grepProject = _wrapAsync("_grepProjectStart", "grepProject");
                 editor.replaceInFile = _wrapAsync("_replaceInFileStart", "replaceInFile");

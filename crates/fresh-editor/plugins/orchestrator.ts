@@ -84,27 +84,6 @@ interface AgentSession {
 
 const orchestratorSessions = new Map<number, AgentSession>();
 
-// Pending session-creation intent. Stashed across the
-// async `createWindow → window_created hook` handoff so the
-// hook handler can attach the spawned terminal. (Internally
-// the editor calls these "windows"; Orchestrator still presents
-// them as "sessions" in its UX.)
-let pendingNewSession:
-  | {
-      label: string;
-      branch: string;
-      cmd: string;
-      root: string;
-      // Recorded for `setWindowState` after `window_created`.
-      // `projectPath` is the canonical project root the user
-      // pointed the form at; `sharedWorktree` is `true` when the
-      // session shares its working tree (no dedicated `git
-      // worktree add`).
-      projectPath: string;
-      sharedWorktree: boolean;
-    }
-  | null = null;
-
 // New-session form state. `null` ⇒ the floating form isn't
 // open. Each field's `value` + `cursor` mirrors what the host
 // renders inside the panel's TextInput widgets; the `submitting`
@@ -2210,7 +2189,6 @@ function renderForm(): void {
 }
 
 function openForm(options?: { fromPicker?: boolean }): void {
-  pendingNewSession = null;
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
@@ -2713,11 +2691,11 @@ async function submitForm(): Promise<void> {
     editor.setGlobalState("orchestrator.last_cmd", cmd);
   }
 
-  // Branch / cmd values used for `pendingNewSession` — `branchName`
-  // only exists in the worktree-create flow above; for the
-  // shared-worktree / non-git case we report whatever's currently
-  // checked out (best-effort) so the new session record matches
-  // the situation on disk.
+  // Branch / cmd values used for the per-window state record —
+  // `branchName` only exists in the worktree-create flow above;
+  // for the shared-worktree / non-git case we report whatever's
+  // currently checked out (best-effort) so the new session record
+  // matches the situation on disk.
   const reportedBranch = createWorktree
     ? (branchInput || sessionName)
     : "";
@@ -2729,16 +2707,47 @@ async function submitForm(): Promise<void> {
   if (cmd) appendHistory("cmd", cmd);
   if (createWorktree) appendHistory("branch", reportedBranch);
 
-  pendingNewSession = {
-    label: sessionName,
-    branch: reportedBranch,
-    cmd,
-    root,
-    projectPath,
-    sharedWorktree: !createWorktree,
-  };
   closeForm();
-  editor.createWindow(root, sessionName);
+
+  // Spawn the new window + agent terminal atomically. Compared to
+  // the legacy `createWindow → window_created hook → createTerminal`
+  // chain this avoids the transient `[No Name]` tab the host's
+  // eager seed used to leave alongside the agent terminal: the
+  // terminal IS the new window's seed buffer, so the window is
+  // born with a single tab.
+  const argv = splitAgentCmd(cmd);
+  const sharedWorktree = !createWorktree;
+  try {
+    const result = await editor.createWindowWithTerminal({
+      root,
+      label: sessionName,
+      cwd: root,
+      command: argv.length > 0 ? argv : undefined,
+      title: argv.length > 0 ? argv[0] : undefined,
+    });
+    const id = result.windowId;
+    // `createWindowWithTerminal` already dove into the new window,
+    // so `setWindowState` writes to it.
+    editor.setWindowState("project_path", projectPath);
+    editor.setWindowState("shared_worktree", sharedWorktree);
+    const tracked: AgentSession = {
+      id,
+      label: sessionName,
+      root,
+      projectPath,
+      sharedWorktree,
+      terminalId: result.terminalId,
+      state: "running",
+      createdAt: Date.now(),
+    };
+    orchestratorSessions.set(id, tracked);
+  } catch (e) {
+    editor.setStatus(
+      `Orchestrator: failed to start session — ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
 }
 
 function startNewSession(): void {
@@ -3262,57 +3271,13 @@ function killSelected(): void {
 // Lifecycle hook handlers
 // =============================================================================
 
-editor.on("window_created", async (payload) => {
-  const id = payload.id;
-  if (
-    pendingNewSession &&
-    payload.label === pendingNewSession.label
-  ) {
-    const intent = pendingNewSession;
-    pendingNewSession = null;
-    // Dive into the new session FIRST so its terminal_manager is
-    // the editor-active one. Subsequent `createTerminal` /
-    // `sendTerminalInput` calls then resolve against the new
-    // session's window without needing a cross-window terminal
-    // lookup. Creating a session is a visit-now action anyway —
-    // the dive isn't user-visible flicker, it's the desired
-    // landing state.
-    editor.setActiveWindow(id);
-    // Record the new session's project_path / shared_worktree
-    // into per-window plugin state — these survive editor
-    // restarts via `orchestrator_persistence.rs`, and feed the
-    // Open dialog's "this project" filter on the next launch.
-    // `setWindowState` writes to the active window, which we
-    // just set above.
-    editor.setWindowState("project_path", intent.projectPath);
-    editor.setWindowState("shared_worktree", intent.sharedWorktree);
-    // When the user provided a non-empty agent command, spawn it as
-    // the PTY child directly (no shell middleman). Tab title reads
-    // the command name ("python3", "claude", ...) instead of the
-    // generic "*Terminal N*". When `cmd` is empty the host picks
-    // the user's shell as before.
-    const argv = splitAgentCmd(intent.cmd);
-    const term = await editor.createTerminal({
-      cwd: intent.root,
-      focus: false,
-      command: argv.length > 0 ? argv : undefined,
-      title: argv.length > 0 ? argv[0] : undefined,
-    });
-    const tracked: AgentSession = {
-      id,
-      label: intent.label,
-      root: intent.root,
-      terminalId: term.terminalId,
-      state: "running",
-      createdAt: Date.now(),
-    };
-    orchestratorSessions.set(id, tracked);
-    // Legacy `sendTerminalInput` path is no longer needed when the
-    // command is spawned directly. Kept for the shell-only case
-    // would be `editor.sendTerminalInput(term.terminalId, "\n")` to
-    // wake up the prompt, but that's unnecessary — the shell prints
-    // its own prompt on startup.
-  }
+editor.on("window_created", () => {
+  // The orchestrator's own new-session flow uses
+  // `createWindowWithTerminal` (atomic — populates the window
+  // before returning), so by the time this hook fires for one of
+  // our spawns the session is already tracked. Other plugins or
+  // host actions creating windows just need the picker to
+  // refresh.
   refreshOpenDialog();
 });
 

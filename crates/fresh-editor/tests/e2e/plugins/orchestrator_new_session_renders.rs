@@ -160,3 +160,103 @@ fn new_session_renders_terminal_output_without_keypress() {
         screen,
     );
 }
+
+/// The atomic `createWindowWithTerminal` entry point — the path
+/// Orchestrator's new-session flow takes — must seed the new
+/// window with the agent terminal as its *only* buffer, never
+/// alongside a placeholder `[No Name]` tab. The legacy
+/// `createWindow + createTerminal` sequence the orchestrator used
+/// to do left `[No Name]` as a leftover first tab because
+/// `create_window_at`'s eager seed populates the layout before the
+/// terminal arrives.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell (sh -c) as the agent command.
+fn new_session_atomic_api_seeds_terminal_as_only_tab() {
+    if !pty_available() {
+        eprintln!("Skipping orchestrator atomic-API test: PTY not available");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let mut harness = EditorTestHarness::with_temp_project(160, 50).unwrap();
+    harness.tick_and_render().unwrap();
+
+    let project_root = harness.project_dir().unwrap().canonicalize().unwrap();
+
+    let (new_window, _terminal_id, terminal_buffer) = harness
+        .editor_mut()
+        .create_window_with_terminal(
+            project_root.clone(),
+            "agent-session".into(),
+            Some(project_root.clone()),
+            Some(vec![
+                "sh".into(),
+                "-c".into(),
+                format!("printf {}; sleep 60", MARKER),
+            ]),
+            Some("agent".into()),
+        )
+        .expect("create_window_with_terminal should succeed");
+
+    harness.tick_and_render().unwrap();
+
+    // The new window's buffer set must contain exactly one
+    // buffer — the terminal. No `[No Name]` placeholder.
+    let win = harness
+        .editor()
+        .session(new_window)
+        .expect("new window present");
+    let buffer_count = win.buffers.len();
+    assert_eq!(
+        buffer_count, 1,
+        "new session window should be born with the terminal as its only buffer; \
+         found {} buffers (a `[No Name]` placeholder likely got seeded alongside)",
+        buffer_count,
+    );
+
+    // And that one buffer should be the terminal buffer that
+    // `create_window_with_terminal` returned.
+    assert!(
+        win.terminal_buffers.contains_key(&terminal_buffer),
+        "the seed buffer must be the agent terminal — `create_window_with_terminal` \
+         returned its buffer id but the window's terminal-buffer map doesn't \
+         know about it",
+    );
+
+    // Rendered screen sanity: only one tab visible (the terminal's),
+    // no `[No Name]` chrome.
+    harness
+        .wait_until(|h| {
+            let win = h.editor().active_window();
+            let Some(&tid) = win.terminal_buffers.get(&terminal_buffer) else {
+                return false;
+            };
+            let Some(handle) = win.terminal_manager.get(tid) else {
+                return false;
+            };
+            let Ok(state) = handle.state.lock() else {
+                return false;
+            };
+            let (_, rows) = state.size();
+            (0..rows).any(|r| {
+                let line: String = state.get_line(r).iter().map(|cell| cell.c).collect();
+                line.contains(MARKER)
+            })
+        })
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("[No Name]"),
+        "the new session window must not surface a `[No Name]` placeholder tab. \
+         Screen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains(MARKER),
+        "the agent terminal's output must render on screen without any further \
+         input. Screen:\n{}",
+        screen,
+    );
+}
