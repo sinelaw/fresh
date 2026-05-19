@@ -1743,7 +1743,30 @@ function applyCursorLineOverlay(panel: 'diff'): void {
     });
 }
 
-function review_refresh() { refreshMagitData(); }
+function review_refresh() {
+    // Synchronously acknowledge the keypress before kicking off the
+    // async `git status` + `git diff`. Those calls take long enough on
+    // a non-trivial repo that, without this immediate status update,
+    // the sticky-header totals visibly lag the new content: users
+    // press `r`, see the old `+N / -M`, conclude the keystroke was
+    // dropped, and press `r` again — which then "appears" to work
+    // because the first refresh has by then landed. See #2036.
+    //
+    // In range mode the refresh is intentionally a no-op for
+    // working-tree edits (the diff is always between two refs); the
+    // range-specific message explains that up front so the user
+    // doesn't think `r` is broken when their unstaged changes don't
+    // show up.
+    if (state.mode === 'range' && state.range) {
+        editor.setStatus(
+            editor.t("status.refreshing_range", { range: state.range.label }) ||
+                `Refreshing ${state.range.label}... (working tree not included)`
+        );
+    } else {
+        editor.setStatus(editor.t("status.refreshing") || "Refreshing review diff...");
+    }
+    void refreshMagitData();
+}
 registerHandler("review_refresh", review_refresh);
 
 // --- Cursor-driven navigation ---
@@ -3163,13 +3186,21 @@ function updateReviewStatus(): void {
     if (state.groupId === null) return;
     const total = state.hunkHeaderRows.length;
     const current = currentGlobalHunkIndex();
+    // Range reviews fundamentally don't include working-tree edits; the
+    // suffix makes that visible from the status bar at all times rather
+    // than only flashing past during a refresh. Without it users hit `r`,
+    // see their unsaved changes don't appear, and conclude the refresh is
+    // broken (#2036).
+    const rangeNote = state.mode === 'range' && state.range
+        ? ` · ${editor.t("status.working_tree_not_included") || "working tree not included"}`
+        : '';
     if (current !== null) {
         editor.setStatus(editor.t("status.review_summary_indexed", {
             current: String(current),
             count: String(total),
-        }));
+        }) + rangeNote);
     } else {
-        editor.setStatus(editor.t("status.review_summary", { count: String(total) }));
+        editor.setStatus(editor.t("status.review_summary", { count: String(total) }) + rangeNote);
     }
 }
 

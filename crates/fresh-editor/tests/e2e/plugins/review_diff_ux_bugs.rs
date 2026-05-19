@@ -1752,3 +1752,157 @@ fn test_issue4_empty_state_distinguishes_not_git_from_clean_repo() {
         screen_clean
     );
 }
+
+// ---------------------------------------------------------------------------
+// ISSUE #2036: `r` refresh feels unreliable (slow async refresh shows stale
+// numbers until it lands; range mode silently ignores working-tree edits).
+// ---------------------------------------------------------------------------
+
+/// Pressing `r` in working-tree mode must produce immediate visible
+/// feedback. Before #2036 the handler kicked off the async `git status` +
+/// `git diff` chain without updating any user-visible surface, so users
+/// stared at stale `+N / -M` totals for the duration of the refresh and
+/// concluded the keystroke had been dropped. The fix sets a status
+/// message synchronously on the keypress so the user knows the refresh is
+/// in flight even before the new diff lands.
+#[test]
+fn test_issue2036_refresh_shows_immediate_feedback() {
+    init_tracing_from_env();
+    let (repo, main_rs) = repo_with_one_modification();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CHANGED"))
+        .unwrap();
+
+    let _ = open_review_diff(&mut harness);
+
+    // Externally append more lines so the on-disk totals diverge from
+    // what Review Diff currently shows. The refresh must pick this up.
+    let mut new_content = fs::read_to_string(&main_rs).unwrap();
+    new_content.push_str("// extra line one\n// extra line two\n// extra line three\n");
+    fs::write(&main_rs, &new_content).unwrap();
+
+    // Press `r` once. The very next render must already carry the
+    // refresh-in-flight marker — that is the user's only signal that the
+    // keystroke landed before the async git calls complete.
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string().to_lowercase();
+            s.contains("refreshing")
+        })
+        .unwrap();
+
+    // The refresh should ultimately complete and the post-refresh status
+    // summary (the existing "Review Diff: N hunks" message) should land.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string().to_lowercase();
+            // Either the indexed form ("hunk X of N") or the bare summary;
+            // both indicate `updateReviewStatus` has run.
+            (s.contains("review diff:") || s.contains("hunk ")) && !s.contains("refreshing")
+        })
+        .unwrap();
+}
+
+/// In `range` mode the refresh is intentionally a no-op for working-tree
+/// changes: the diff is always between two refs, so unstaged edits never
+/// show up. Before #2036 there was no surface explaining this, so a user
+/// who modified a file and then hit `r` saw nothing change and assumed
+/// the refresh was broken. The status message now says so explicitly the
+/// moment `r` is pressed.
+#[test]
+fn test_issue2036_range_refresh_explains_working_tree_excluded() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    // A second commit gives us a non-trivial HEAD~..HEAD range to review.
+    let main_rs = repo.path.join("src/main.rs");
+    fs::write(
+        &main_rs,
+        "fn main() {\n    println!(\"second commit content\");\n}\n",
+    )
+    .unwrap();
+    repo.git_add_all();
+    repo.git_commit("second commit");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&main_rs).unwrap();
+    harness.render().unwrap();
+
+    // Open Review Range against HEAD~..HEAD.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Range").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Range picker prompt is open with "HEAD" prefilled — clear it and
+    // type our range.
+    harness.wait_for_prompt().unwrap();
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("HEAD~..HEAD").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Range mode opens with the range label in the toolbar header.
+            s.contains("HEAD~..HEAD") && !s.contains("Generating Review")
+        })
+        .unwrap();
+
+    // Modify the file in the working tree — exactly the case the issue
+    // calls out as confusing.
+    fs::write(
+        &main_rs,
+        "fn main() {\n    println!(\"working tree edit\");\n}\n",
+    )
+    .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .unwrap();
+
+    // The status bar must explain why `r` looks like a no-op: range
+    // refreshes don't include the working tree. Match a partial phrase
+    // because the status bar trims long messages with an ellipsis at
+    // narrower widths.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string().to_lowercase();
+            s.contains("working tree not")
+        })
+        .unwrap();
+}
