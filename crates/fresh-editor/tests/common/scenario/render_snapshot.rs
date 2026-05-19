@@ -23,6 +23,14 @@ pub struct RenderSnapshot {
     pub viewport: ViewportSnapshot,
     pub hardware_cursor: Option<(u16, u16)>,
     pub gutter_width: u16,
+    /// One string per visible terminal row, populated by
+    /// `extract_with_rendered_rows`. Empty for the default
+    /// `extract` (which uses the cheaper abstract render path).
+    /// Use the `extract_with_rendered_rows` constructor when a
+    /// test needs per-row text inspection (e.g. asserting that
+    /// a specific glyph or content lands on a specific row).
+    #[serde(default)]
+    pub rendered_rows: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -47,8 +55,68 @@ impl Observable for RenderSnapshot {
             },
             hardware_cursor: api.hardware_cursor_position(),
             gutter_width: api.gutter_width(),
+            rendered_rows: Vec::new(),
         }
     }
+}
+
+impl RenderSnapshot {
+    /// Like `Observable::extract`, but runs the full
+    /// CrosstermBackend → ANSI → vt100 pipeline (via
+    /// `harness.render_real()`) and populates `rendered_rows`
+    /// with the per-row text the terminal would actually
+    /// display. Slower than the default `extract`; use only
+    /// when per-row text assertions are needed.
+    ///
+    /// Resolves the long-standing framework gap tracked in
+    /// #2058 (per-row screen-text inspection blocking
+    /// ~50 e2e files). Tests in those clusters can now use
+    /// `extract_with_rendered_rows` + `RenderSnapshotExpect`'s
+    /// `row_contains` / `row_equals` matchers to assert on
+    /// specific row content.
+    pub fn extract_with_rendered_rows(harness: &mut EditorTestHarness) -> Self {
+        let _ = harness.render_real();
+        let screen = harness.vt100_screen_to_string();
+        let rendered_rows: Vec<String> =
+            screen.split('\n').map(|s| s.to_string()).collect();
+        let api = harness.api_mut();
+        RenderSnapshot {
+            width: api.terminal_width(),
+            height: api.terminal_height(),
+            viewport: ViewportSnapshot {
+                top_byte: api.viewport_top_byte(),
+                visible_byte_range: api.visible_byte_range(),
+            },
+            hardware_cursor: api.hardware_cursor_position(),
+            gutter_width: api.gutter_width(),
+            rendered_rows,
+        }
+    }
+}
+
+/// Per-row text matcher. Used by `RenderSnapshotExpect.row_checks`.
+///
+/// The matcher is intentionally permissive on trailing
+/// whitespace (vt100 pads rows to the terminal width with
+/// spaces); `Contains` and `Equals` both compare against the
+/// row's trimmed text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RowMatch {
+    /// Row at index `row` must contain the given substring
+    /// (after trimming trailing spaces).
+    Contains { row: u16, substring: String },
+    /// Row at index `row` must equal the given text (after
+    /// trimming trailing spaces).
+    Equals { row: u16, text: String },
+    /// Some row anywhere in the snapshot must contain the
+    /// given substring (for tests that don't pin the exact
+    /// row index, e.g. "the file's first line is somewhere
+    /// on screen").
+    AnyRowContains(String),
+    /// No row may contain the given substring. Useful for
+    /// regressions like "after Ctrl+End the empty final line
+    /// must be visible, NOT obscured by Entry 140's content".
+    NoRowContains(String),
 }
 
 /// Partial expectation: only fields set on the expectation are
@@ -63,6 +131,15 @@ pub struct RenderSnapshotExpect {
     pub gutter_width: Option<u16>,
     #[serde(default)]
     pub visible_byte_range: Option<(usize, usize)>,
+    /// Per-row text matchers. Each entry is checked against the
+    /// snapshot's `rendered_rows`. Empty list = no row checks.
+    /// Requires the snapshot to have been built with
+    /// `RenderSnapshot::extract_with_rendered_rows`; against a
+    /// snapshot from the cheaper default `extract` (where
+    /// `rendered_rows` is empty), any non-empty row matcher
+    /// will fail with "rendered_rows not populated".
+    #[serde(default)]
+    pub row_checks: Vec<RowMatch>,
 }
 
 impl RenderSnapshotExpect {
@@ -103,6 +180,66 @@ impl RenderSnapshotExpect {
                     format!("{want:?}"),
                     format!("{:?}", actual.viewport.visible_byte_range),
                 ));
+            }
+        }
+        if !self.row_checks.is_empty() && actual.rendered_rows.is_empty() {
+            return Some((
+                "rendered_rows",
+                format!("{} row check(s)", self.row_checks.len()),
+                "empty (snapshot built with extract, not extract_with_rendered_rows)".into(),
+            ));
+        }
+        for check in &self.row_checks {
+            match check {
+                RowMatch::Contains { row, substring } => {
+                    let idx = *row as usize;
+                    let actual_row = actual.rendered_rows.get(idx).map(|s| s.trim_end());
+                    if actual_row.is_none_or(|r| !r.contains(substring.as_str())) {
+                        return Some((
+                            "rendered_rows[Contains]",
+                            format!("row {row} contains {substring:?}"),
+                            format!("row {row} = {actual_row:?}"),
+                        ));
+                    }
+                }
+                RowMatch::Equals { row, text } => {
+                    let idx = *row as usize;
+                    let actual_row = actual.rendered_rows.get(idx).map(|s| s.trim_end());
+                    if actual_row != Some(text.as_str()) {
+                        return Some((
+                            "rendered_rows[Equals]",
+                            format!("row {row} equals {text:?}"),
+                            format!("row {row} = {actual_row:?}"),
+                        ));
+                    }
+                }
+                RowMatch::AnyRowContains(substring) => {
+                    if !actual
+                        .rendered_rows
+                        .iter()
+                        .any(|r| r.trim_end().contains(substring.as_str()))
+                    {
+                        return Some((
+                            "rendered_rows[AnyRowContains]",
+                            format!("some row contains {substring:?}"),
+                            format!("none of {} rows contained it", actual.rendered_rows.len()),
+                        ));
+                    }
+                }
+                RowMatch::NoRowContains(substring) => {
+                    if let Some((i, r)) = actual
+                        .rendered_rows
+                        .iter()
+                        .enumerate()
+                        .find(|(_, r)| r.trim_end().contains(substring.as_str()))
+                    {
+                        return Some((
+                            "rendered_rows[NoRowContains]",
+                            format!("no row contains {substring:?}"),
+                            format!("row {i} contains it: {:?}", r.trim_end()),
+                        ));
+                    }
+                }
             }
         }
         None
