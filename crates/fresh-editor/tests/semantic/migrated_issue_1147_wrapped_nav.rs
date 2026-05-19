@@ -161,24 +161,39 @@ fn migrated_issue_1147_end_key_advances_through_wrapped_visual_segments() {
     harness.render().unwrap();
     assert_eq!(harness.api_mut().primary_caret().position, line_24_start);
 
-    // First MoveLineEnd advances at least past the first visual
-    // segment (~72 chars wide on an 80-col terminal). Multiple
-    // presses (or a single one, depending on the editor's
-    // semantics) must eventually reach the logical line end.
-    for _ in 0..6 {
+    // Issue #1147 load-bearing claim: End-key advances PER PRESS
+    // through wrapped visual segments. Pre-fix, the second press
+    // would stick at the same position as the first (didn't
+    // advance past the first visual segment). Pin that each press
+    // either advances strictly OR reaches the logical line end.
+    let mut last_pos = line_24_start;
+    let mut positions = vec![last_pos];
+    for press in 1..=6 {
         harness.api_mut().dispatch(Action::MoveLineEnd);
         harness.render().unwrap();
-        if harness.api_mut().primary_caret().position == line_24_end {
+        let pos = harness.api_mut().primary_caret().position;
+        positions.push(pos);
+        assert!(
+            pos >= last_pos,
+            "Issue #1147: End press #{press} regressed (was at byte {last_pos}, now {pos}). \
+             Trace: {positions:?}",
+        );
+        if pos == line_24_end {
             break;
         }
+        assert!(
+            pos > last_pos,
+            "Issue #1147: End press #{press} stuck at byte {pos} (= byte {last_pos}, \
+             didn't advance, didn't reach logical end {line_24_end}). \
+             Trace: {positions:?}",
+        );
+        last_pos = pos;
     }
+    let final_pos = harness.api_mut().primary_caret().position;
     assert_eq!(
-        harness.api_mut().primary_caret().position,
-        line_24_end,
-        "Issue #1147: repeated MoveLineEnd on a wrapped line must eventually \
-         reach the logical line end (byte {line_24_end}); got \
-         {} after 6 presses",
-        harness.api_mut().primary_caret().position,
+        final_pos, line_24_end,
+        "Issue #1147: 6 End presses must reach logical line end (byte {line_24_end}); \
+         got {final_pos}. Trace: {positions:?}",
     );
 }
 
