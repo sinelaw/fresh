@@ -79,7 +79,6 @@ pub mod large_file_mode;
 pub mod lifecycle;
 pub mod line_number_bugs;
 pub mod line_wrap_cache_consistency;
-pub mod line_wrap_parity;
 pub mod line_wrap_scroll_bugs;
 pub mod line_wrapping;
 pub mod live_grep;
@@ -135,7 +134,6 @@ pub mod paste;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 pub mod popup_selection;
-pub mod popup_wrap_indent;
 pub mod position_history;
 pub mod position_history_bugs;
 pub mod position_history_debug;
@@ -221,7 +219,6 @@ pub mod vertical_rulers;
 pub mod vi_mode;
 #[cfg(feature = "plugins")]
 pub mod vi_mode_bugs;
-pub mod virtual_line_bg_and_wrap;
 pub mod visual_regression;
 pub mod warning_indicators;
 pub mod workspace;
