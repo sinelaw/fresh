@@ -85,29 +85,55 @@ fn migrated_select_word_with_dot_treats_as_separator() {
 }
 
 #[test]
-fn migrated_select_word_at_start_picks_first_word() {
-    // Original: `test_select_word_at_start`.
+fn migrated_select_word_at_start_picks_word_under_cursor() {
+    // Original: `test_select_word_at_start` (tests/e2e/selection.rs:141).
+    // The e2e positions cursor at byte 6 of "hello world" — start of
+    // the *interior* word "world" — and asserts SelectWord picks "world".
+    // The original migration used byte 0 of "foo bar" which is the
+    // trivial buffer-start path. Pinning the interior boundary here.
     assert_buffer_scenario(BufferScenario {
-        description: "SelectWord at byte 0 of 'foo bar' picks 'foo'".into(),
-        initial_text: "foo bar".into(),
-        actions: vec![Action::SelectWord],
-        expected_text: "foo bar".into(),
-        expected_primary: CursorExpect::range(0, 3),
-        expected_selection_text: Some("foo".into()),
+        description: "SelectWord at byte 6 of 'hello world' (start of 'world') picks 'world'"
+            .into(),
+        initial_text: "hello world".into(),
+        actions: vec![
+            Action::MoveLineStart,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::SelectWord,
+        ],
+        expected_text: "hello world".into(),
+        expected_primary: CursorExpect::range(6, 11),
+        expected_selection_text: Some("world".into()),
         ..Default::default()
     });
 }
 
 #[test]
-fn migrated_select_word_at_end_picks_last_word() {
-    // Original: `test_select_word_at_end`.
+fn migrated_select_word_at_end_of_first_word_picks_first_word() {
+    // Original: `test_select_word_at_end` (tests/e2e/selection.rs:171).
+    // The e2e positions cursor at byte 5 of "hello world" — the
+    // space *between* the two words — and asserts SelectWord picks
+    // "hello". The original migration used MoveDocumentEnd which is
+    // the buffer-end edge case, not the inter-word boundary.
     assert_buffer_scenario(BufferScenario {
-        description: "SelectWord at end of 'foo bar' picks 'bar'".into(),
-        initial_text: "foo bar".into(),
-        actions: vec![Action::MoveDocumentEnd, Action::SelectWord],
-        expected_text: "foo bar".into(),
-        expected_primary: CursorExpect::range(4, 7),
-        expected_selection_text: Some("bar".into()),
+        description: "SelectWord at byte 5 of 'hello world' (end of 'hello') picks 'hello'".into(),
+        initial_text: "hello world".into(),
+        actions: vec![
+            Action::MoveLineStart,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::SelectWord,
+        ],
+        expected_text: "hello world".into(),
+        expected_primary: CursorExpect::range(0, 5),
+        expected_selection_text: Some("hello".into()),
         ..Default::default()
     });
 }
