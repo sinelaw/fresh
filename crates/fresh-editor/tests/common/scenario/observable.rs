@@ -68,6 +68,12 @@ pub struct ModalState {
     pub top_popup: Option<PopupSnapshot>,
     /// Popup stack depth (top is index 0).
     pub depth: usize,
+    /// Active minibuffer prompt, or `None` if no prompt is open.
+    /// Mirrors `ModalSnapshot.prompt` from the editor test API. The
+    /// runner asserts on this so scenarios that drive prompt flows
+    /// (`CommandPalette` + filter + confirm) actually observe the
+    /// state change rather than passing by tautology.
+    pub prompt: Option<PromptSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -77,6 +83,15 @@ pub struct PopupSnapshot {
     pub items: Vec<String>,
     pub selected_index: Option<usize>,
     pub query: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PromptSnapshot {
+    pub prompt_type: String,
+    pub input: String,
+    pub cursor_pos: usize,
+    pub suggestions: Vec<String>,
+    pub selected_suggestion: Option<usize>,
 }
 
 impl Observable for ModalState {
@@ -90,6 +105,13 @@ impl Observable for ModalState {
                 items: p.items,
                 selected_index: p.selected_index,
                 query: None,
+            }),
+            prompt: snap.prompt.map(|p| PromptSnapshot {
+                prompt_type: p.prompt_type,
+                input: p.input,
+                cursor_pos: p.cursor_pos,
+                suggestions: p.suggestions,
+                selected_suggestion: p.selected_suggestion,
             }),
         }
     }

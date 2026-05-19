@@ -47,12 +47,29 @@ pub struct Caret {
 /// Test-side projection of the editor's popup stack. Captures only
 /// the fields scenario tests assert on — kind, title, items,
 /// selection — so internal popup struct refactors don't break tests.
+///
+/// Two distinct modal channels live on the editor and both are
+/// projected here:
+///   - `top_popup` / `depth` come from the popup stacks
+///     (`global_popups`, per-window `popups`) — completion,
+///     hover, action, list, text overlays.
+///   - `prompt` comes from `active_window().prompt` — the
+///     minibuffer / floating-overlay prompts opened by actions
+///     like `CommandPalette`, `QuickOpen`, `GotoLine`, `Search`,
+///     `OpenLiveGrep`, `SaveAs`, `RecordMacro`, etc. These do not
+///     live on the popup stacks; without projecting them, modal
+///     scenarios that drive prompt flows pass by tautology.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModalSnapshot {
-    /// `None` ⇒ no popup visible.
+    /// `None` ⇒ no popup visible on either popup stack.
     pub top_popup: Option<PopupView>,
-    /// Popup-stack depth (0 = no popups, 1 = one popup, …).
+    /// Popup-stack depth across both stacks (0 = no popups).
+    /// Does NOT count an active prompt — see the `prompt` field
+    /// for that.
     pub depth: usize,
+    /// Active minibuffer prompt, if one is open. `None` ⇒ no
+    /// prompt; the user is in normal editing mode.
+    pub prompt: Option<PromptView>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -65,6 +82,26 @@ pub struct PopupView {
     /// List items as plain text. Empty for non-list popups.
     pub items: Vec<String>,
     pub selected_index: Option<usize>,
+}
+
+/// Test-side projection of an active minibuffer prompt.
+///
+/// `prompt_type` is the `PromptType` variant name as a stable
+/// string (`"CommandPalette"`, `"QuickOpen"`, `"GotoLine"`,
+/// `"Search"`, …) so corpus JSON survives variant renames in
+/// production code. The runner inserts characters into the active
+/// prompt via `Action::InsertChar` (the production input handler
+/// routes those automatically when a prompt is open), so the
+/// `input` / `cursor_pos` fields are the right level to assert on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PromptView {
+    pub prompt_type: String,
+    pub input: String,
+    pub cursor_pos: usize,
+    /// Filtered suggestion texts shown to the user. Empty for
+    /// prompts that don't filter (e.g. `GotoLine`).
+    pub suggestions: Vec<String>,
+    pub selected_suggestion: Option<usize>,
 }
 
 impl Caret {
@@ -379,9 +416,20 @@ impl EditorTestApi for crate::app::Editor {
             .or_else(|| local.top())
             .map(project);
 
+        // Project the active prompt (minibuffer / floating overlay).
+        // Lives on `active_window().prompt`, not on the popup stacks.
+        let prompt = self.active_window().prompt.as_ref().map(|p| PromptView {
+            prompt_type: format!("{:?}", p.prompt_type),
+            input: p.input.clone(),
+            cursor_pos: p.cursor_pos,
+            suggestions: p.suggestions.iter().map(|s| s.text.clone()).collect(),
+            selected_suggestion: p.selected_suggestion,
+        });
+
         ModalSnapshot {
             top_popup: top,
             depth,
+            prompt,
         }
     }
 

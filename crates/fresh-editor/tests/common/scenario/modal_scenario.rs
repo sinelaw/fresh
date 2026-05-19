@@ -39,11 +39,8 @@ pub fn check_modal_scenario(s: ModalScenario) -> Result<(), ScenarioFailure> {
         .load_buffer_from_text(&s.initial_text)
         .expect("load_buffer_from_text failed");
 
-    {
-        let api: &mut dyn EditorTestApi = harness.api_mut();
-        for ev in &s.events {
-            dispatch_input_event(api, ev)?;
-        }
+    for ev in &s.events {
+        dispatch_input_event(&mut harness, ev)?;
     }
 
     let actual = ModalState::extract(&mut harness);
@@ -63,16 +60,21 @@ pub fn assert_modal_scenario(s: ModalScenario) {
     }
 }
 
-/// Translate a high-level `InputEvent` into the editor's `Action`
-/// alphabet for the prompt subset. Returns an error if the variant
-/// requires a hook this phase hasn't built.
+/// Translate a high-level `InputEvent` into the editor's input
+/// alphabet for the prompt subset. CancelPrompt / ConfirmPrompt
+/// route through `send_key` (Esc / Enter) so the production key
+/// handler — which knows about the active prompt — actually
+/// closes / commits it. Dispatching `Action::PromptCancel`
+/// directly is a no-op outside the file-open prompt's local
+/// handler, so we use the key path instead.
 fn dispatch_input_event(
-    api: &mut dyn EditorTestApi,
+    harness: &mut EditorTestHarness,
     ev: &InputEvent,
 ) -> Result<(), ScenarioFailure> {
+    use crossterm::event::{KeyCode, KeyModifiers};
     match ev {
         InputEvent::Action(a) => {
-            api.dispatch(a.clone());
+            harness.api_mut().dispatch(a.clone());
             Ok(())
         }
         InputEvent::OpenPrompt(kind) => {
@@ -90,21 +92,29 @@ fn dispatch_input_event(
                     });
                 }
             };
-            api.dispatch(action);
+            harness.api_mut().dispatch(action);
             Ok(())
         }
-        InputEvent::CancelPrompt => {
-            api.dispatch(Action::PromptCancel);
-            Ok(())
-        }
-        InputEvent::ConfirmPrompt => {
-            api.dispatch(Action::PromptConfirm);
-            Ok(())
-        }
+        InputEvent::CancelPrompt => harness
+            .send_key(KeyCode::Esc, KeyModifiers::NONE)
+            .map(|_| ())
+            .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                description: String::new(),
+                reason: format!("CancelPrompt send_key(Esc): {e}"),
+            }),
+        InputEvent::ConfirmPrompt => harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .map(|_| ())
+            .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                description: String::new(),
+                reason: format!("ConfirmPrompt send_key(Enter): {e}"),
+            }),
         InputEvent::FilterPrompt(text) => {
-            // Type each char into the prompt as a literal insert.
+            // Type each char into the prompt. The editor's input
+            // handler routes Action::InsertChar to the active
+            // prompt when one is open.
             for c in text.chars() {
-                api.dispatch(Action::InsertChar(c));
+                harness.api_mut().dispatch(Action::InsertChar(c));
             }
             Ok(())
         }
@@ -133,6 +143,7 @@ pub fn modal_open_then_confirm(
         expected_modal: ModalState {
             top_popup: None,
             depth: expected_depth_after,
+            prompt: None,
         },
     }
 }

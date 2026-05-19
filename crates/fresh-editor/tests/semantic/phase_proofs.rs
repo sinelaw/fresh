@@ -43,6 +43,7 @@ fn phase3_command_palette_opens_and_then_cancels() {
         expected_modal: ModalState {
             top_popup: None,
             depth: 0,
+            prompt: None,
         },
     });
 }
@@ -61,6 +62,7 @@ fn phase3_modal_runner_round_trips_through_observable_extraction() {
         expected_modal: ModalState {
             top_popup: None,
             depth: 0,
+            prompt: None,
         },
     });
 }

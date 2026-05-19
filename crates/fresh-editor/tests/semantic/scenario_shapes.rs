@@ -122,6 +122,7 @@ fn json_roundtrip_modal_scenario() {
                     query: Some("dup".into()),
                 }),
                 depth: 1,
+                prompt: None,
             },
         },
     );

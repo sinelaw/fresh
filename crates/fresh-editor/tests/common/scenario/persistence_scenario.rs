@@ -17,7 +17,6 @@ use crate::common::scenario::failure::ScenarioFailure;
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::observable::FsState;
 use crate::common::scenario::property::BufferState;
-use fresh::test_api::EditorTestApi;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
