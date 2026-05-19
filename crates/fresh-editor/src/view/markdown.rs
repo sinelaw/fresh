@@ -355,10 +355,11 @@ fn highlight_code_to_styled_lines(
 ) -> Vec<StyledLine> {
     let mut result = vec![StyledLine::new()];
     let code_bg = theme.inline_code_bg;
-    // Body text in a help/popup context — `help_key_fg` is reserved for
-    // keybinding/heading accents and on the light theme renders as a muddy
-    // dark navy against the near-white `inline_code_bg`. See issue #2033.
-    let default_fg = theme.help_fg;
+    // Markdown is rendered into popup surfaces (LSP hover, signature help,
+    // …). `help_key_fg` is the keybinding/heading accent — wrong role for
+    // code body. Use the popup body color so the text reads against
+    // `inline_code_bg` regardless of host terminal defaults. See issue #2033.
+    let default_fg = theme.popup_text_fg;
 
     let bytes = code.as_bytes();
     let mut pos = 0;
@@ -459,8 +460,12 @@ pub fn parse_markdown(
     let parser = Parser::new_ext(&preserved, options);
     let mut lines: Vec<StyledLine> = vec![StyledLine::new()];
 
-    // Style stack for nested formatting
-    let mut style_stack: Vec<Style> = vec![Style::default()];
+    // Style stack for nested formatting. Seeded with `popup_text_fg` so
+    // body text carries an explicit fg that reads against `popup_bg`,
+    // instead of inheriting the host terminal's default fg — which on a
+    // dark-terminal host running the light theme paints near-white text
+    // on the near-white popup background. See issue #2033.
+    let mut style_stack: Vec<Style> = vec![Style::default().fg(theme.popup_text_fg)];
     let mut in_code_block = false;
     let mut code_block_lang = String::new();
     // Track current link URL (if inside a link)
@@ -598,10 +603,11 @@ pub fn parse_markdown(
                         }
                     } else {
                         // Fallback: uniform code style for unknown languages.
-                        // Uses `help_fg` (body text) rather than `help_key_fg`
-                        // (key/heading accent) — see issue #2033.
-                        let code_style =
-                            Style::default().fg(theme.help_fg).bg(theme.inline_code_bg);
+                        // Uses `popup_text_fg` (popup body) rather than
+                        // `help_key_fg` (key/heading accent) — see issue #2033.
+                        let code_style = Style::default()
+                            .fg(theme.popup_text_fg)
+                            .bg(theme.inline_code_bg);
                         add_text_to_lines(&mut lines, &text, code_style, None);
                     }
                 } else {
@@ -611,9 +617,11 @@ pub fn parse_markdown(
             }
             Event::Code(code) => {
                 // Inline code - render with background styling (no backticks needed).
-                // Uses `help_fg` (body text) rather than `help_key_fg`
+                // Uses `popup_text_fg` (popup body) rather than `help_key_fg`
                 // (key/heading accent) — see issue #2033.
-                let style = Style::default().fg(theme.help_fg).bg(theme.inline_code_bg);
+                let style = Style::default()
+                    .fg(theme.popup_text_fg)
+                    .bg(theme.inline_code_bg);
                 if let Some(line) = lines.last_mut() {
                     line.push(code.to_string(), style);
                 }
@@ -748,18 +756,36 @@ mod tests {
         );
     }
 
-    /// Hover body inline code is body text on `inline_code_bg`, not a key
-    /// indicator — it must use `help_fg` (the panel body color), not
-    /// `help_key_fg` (the accent reserved for keybindings/headings). On the
-    /// light theme the two diverge dramatically (black vs dark navy on a
-    /// near-white background) and the latter renders as a muddy low-contrast
-    /// blot. See issue #2033.
+    /// Markdown is only ever rendered into popup-style surfaces (LSP hover,
+    /// signature help, …) so every span — body text included — must carry an
+    /// explicit fg color that reads against `theme.popup_bg`. Without it, a
+    /// `Style::default()` span inherits the terminal's default fg, which on
+    /// dark-terminal hosts running the light theme paints near-white text on
+    /// the near-white popup background. See issue #2033.
     #[test]
-    fn test_inline_code_uses_help_fg_not_help_key_fg() {
+    fn test_body_text_uses_popup_text_fg() {
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let lines = parse_markdown("Create a new string object.", &theme, None);
+        let span = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.text.contains("string"))
+            .expect("body text span");
+        assert_eq!(span.style.fg, Some(theme.popup_text_fg));
+    }
+
+    /// Hover body inline code is body text on `inline_code_bg`, not a key
+    /// indicator — it must use the popup body color, not `help_key_fg` (the
+    /// accent reserved for keybindings/headings). On the light theme the two
+    /// diverge dramatically (dark text vs dark navy on a near-white
+    /// background) and the latter renders as a muddy low-contrast blot. See
+    /// issue #2033.
+    #[test]
+    fn test_inline_code_uses_popup_text_fg() {
         let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
         assert_ne!(
-            theme.help_fg, theme.help_key_fg,
-            "precondition: light theme distinguishes help_fg from help_key_fg"
+            theme.popup_text_fg, theme.help_key_fg,
+            "precondition: light theme distinguishes popup_text_fg from help_key_fg"
         );
 
         let lines = parse_markdown("Use `println!` to print", &theme, None);
@@ -768,16 +794,16 @@ mod tests {
             .iter()
             .find(|s| s.text.contains("println"))
             .expect("inline code span");
-        assert_eq!(code_span.style.fg, Some(theme.help_fg));
+        assert_eq!(code_span.style.fg, Some(theme.popup_text_fg));
     }
 
     /// Same regression guard for code blocks whose language can't be
-    /// detected: the uniform fallback fg must be the panel body color, not
+    /// detected: the uniform fallback fg must be the popup body color, not
     /// the key/heading accent.
     #[test]
-    fn test_unknown_language_code_block_uses_help_fg_not_help_key_fg() {
+    fn test_unknown_language_code_block_uses_popup_text_fg() {
         let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
-        assert_ne!(theme.help_fg, theme.help_key_fg);
+        assert_ne!(theme.popup_text_fg, theme.help_key_fg);
 
         let lines = parse_markdown("```\nplain text\n```", &theme, None);
         let code_line = lines
@@ -789,7 +815,7 @@ mod tests {
             .iter()
             .find(|s| s.text.contains("plain"))
             .expect("code span");
-        assert_eq!(span.style.fg, Some(theme.help_fg));
+        assert_eq!(span.style.fg, Some(theme.popup_text_fg));
     }
 
     #[test]

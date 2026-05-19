@@ -257,6 +257,58 @@ fn test_theme_selection_colors() {
     assert_eq!(light_theme.selection_bg, Color::Rgb(225, 232, 242));
 }
 
+/// Regression test for issue #2033: LSP-hover body text was rendered with
+/// `Style::default()` (no fg), so cells inherited the host terminal's
+/// default fg. On a dark-terminal host running the `light` theme, that
+/// painted near-white text onto the near-white `popup_bg` of the hover
+/// card — unreadable. After the fix, every markdown span carries an
+/// explicit fg matched to `popup_bg`.
+#[test]
+fn test_markdown_popup_body_text_has_explicit_popup_text_fg() {
+    use fresh::view::popup::{Popup, PopupPosition};
+
+    let config = Config {
+        theme: "light".into(),
+        ..Default::default()
+    };
+    let mut harness = EditorTestHarness::with_config(80, 30, config).unwrap();
+
+    let popup_text_fg = {
+        let editor = harness.editor_mut();
+        let theme = editor.theme().clone();
+        let popup = Popup::markdown("Create a new string object.", &theme, None)
+            .with_position(PopupPosition::Fixed { x: 10, y: 5 })
+            .with_width(50)
+            .with_max_height(10)
+            .with_transient(true);
+        editor.active_state_mut().popups.show(popup);
+        theme.popup_text_fg
+    };
+
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let (col, row) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| {
+            line.find("string").map(|byte_offset| {
+                let col = line[..byte_offset].chars().count();
+                (col as u16, row as u16)
+            })
+        })
+        .expect("body text should be visible in the popup");
+
+    let style = harness
+        .get_cell_style(col, row)
+        .expect("cell under body text");
+    assert_eq!(
+        style.fg,
+        Some(popup_text_fg),
+        "body text must carry an explicit fg matched to popup_bg, not inherit terminal default"
+    );
+}
+
 #[test]
 fn test_theme_popup_colors() {
     let config = Config {
