@@ -127,20 +127,3 @@ fn migrated_save_then_external_edit_then_check_external_wins_on_disk() {
     });
 }
 
-#[test]
-fn migrated_create_new_file_via_save_writes_to_disk() {
-    // PersistenceScenario seeds the file too, but we can also seed
-    // a directory and let the editor create a new file.
-    let files = BTreeMap::new(); // no initial files
-    assert_persistence_scenario(PersistenceScenario {
-        description: "open + save (no initial seed) is rejected by harness".into(),
-        initial_fs: VirtualFs { files },
-        initial_open: "nope.txt".into(),
-        events: vec![],
-        expected_buffer: None,
-        // We don't run save here — open will fail. The runner
-        // surfaces that as InputProjectionFailed; we leave the
-        // assertion empty so success requires open to succeed.
-        expected_fs: FsState::default(),
-    });
-}

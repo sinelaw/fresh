@@ -1,27 +1,17 @@
-//! Additional emacs-binding-like scenarios beyond the existing
-//! `emacs_actions.rs` set. These exist because the original
-//! emacs_actions.rs file in tests/e2e covers ~25 tests; we cover
-//! a representative subset of the editing claims here.
+//! Kill-line and word-deletion Action invariants. NOT a migration
+//! of `tests/e2e/emacs_actions.rs` — that file has no
+//! `DeleteToLineEnd` or `DeleteWordForward` tests. The genuine
+//! emacs migrations live in `migrated_emacs_full.rs` and
+//! `semantic/emacs_actions.rs`.
+//!
+//! Kept here because the two remaining tests exercise real
+//! production paths and serve as load-bearing characterisations
+//! of the kill verbs.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
-
-#[test]
-fn migrated_kill_to_end_of_line_removes_remainder() {
-    // DeleteToLineEnd on "hello world" with cursor at byte 5 should
-    // remove " world" leaving "hello".
-    assert_buffer_scenario(BufferScenario {
-        description: "DeleteToLineEnd after MoveLineEnd is a no-op".into(),
-        initial_text: "hello world".into(),
-        actions: vec![Action::MoveLineEnd, Action::DeleteToLineEnd],
-        // Already at line end; nothing to kill.
-        expected_text: "hello world".into(),
-        expected_primary: CursorExpect::at(11),
-        ..Default::default()
-    });
-}
 
 #[test]
 fn migrated_kill_line_partial_from_middle() {
