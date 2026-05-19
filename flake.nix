@@ -56,6 +56,10 @@
               (lib.fileset.fileFilter (file: file.hasExt "py") unfilteredRoot)
               # Keep sublime-syntax grammar files (used by include_str! in grammar_registry.rs)
               (lib.fileset.fileFilter (file: file.hasExt "sublime-syntax") unfilteredRoot)
+              # Tree-sitter query files (used by include_str! in fresh-languages and shipped
+              # as runtime assets by fresh-editor). Filtering by extension covers query files
+              # under any crate without needing to enumerate per-crate query directories.
+              (lib.fileset.fileFilter (file: file.hasExt "scm") unfilteredRoot)
               # Font files (used by include_bytes! in fresh-gui and fresh-editor)
               (lib.fileset.fileFilter (file: file.hasExt "ttf") unfilteredRoot)
               # Icon files (used by include_bytes! in fresh-gui)
@@ -65,7 +69,6 @@
               ./crates/fresh-editor/keymaps
               ./crates/fresh-editor/locales
               ./crates/fresh-editor/plugins
-              ./crates/fresh-editor/queries
               ./crates/fresh-editor/themes
               ./crates/fresh-editor/types
               # Test files
