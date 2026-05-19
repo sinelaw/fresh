@@ -76,6 +76,7 @@ pub mod issue_1965_cursor_after_mouse_scroll;
 pub mod issue_2029_file_explorer_terminal_focus;
 pub mod issue_2030_quit_confirm_and_disable;
 pub mod issue_2031_next_prev_window;
+pub mod issue_2035_preview_renders_buffer_groups;
 pub mod issue_779_after_eof_shade;
 pub mod redraw_screen;
 pub mod suspend_process;

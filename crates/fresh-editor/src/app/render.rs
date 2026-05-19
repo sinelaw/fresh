@@ -1979,6 +1979,14 @@ impl Editor {
         let __preview_event_logs = &mut __win_for_preview.event_logs;
         let __preview_composite_buffers = &mut __win_for_preview.composite_buffers;
         let __preview_composite_view_states = &mut __win_for_preview.composite_view_states;
+        // Issue #2035: pass the previewed window's actual
+        // `grouped_subtrees` map. The previous code allocated an
+        // empty HashMap here, which made the split renderer unable
+        // to resolve any `active_group_tab` to its panel layout —
+        // so a session whose active tab was a buffer group (e.g.
+        // git_log's log/detail panels) silently fell through to
+        // rendering the split's underlying pre-group buffer.
+        let __preview_grouped_subtrees = &__win_for_preview.grouped_subtrees;
         let preview_tab_bar_visible = __win_for_preview.tab_bar_visible;
 
         // Per-call scratch — keeps the preview pass from
@@ -1987,10 +1995,6 @@ impl Editor {
         let mut scratch_cell_theme_map: Vec<crate::app::types::CellThemeInfo> = Vec::new();
         let mut scratch_pending_cursor: Option<(u16, u16)> = None;
         let lsp_waiting = false; // preview never shows LSP-waiting chrome
-        let no_grouped_subtrees: std::collections::HashMap<
-            crate::model::event::LeafId,
-            crate::view::split::SplitNode,
-        > = std::collections::HashMap::new();
 
         let mut preview_split_areas: Vec<(
             crate::model::event::LeafId,
@@ -2021,7 +2025,7 @@ impl Editor {
                     self.config.editor.estimated_line_length,
                     self.config.editor.highlight_context_bytes,
                     Some(view_states),
-                    &no_grouped_subtrees,
+                    __preview_grouped_subtrees,
                     true, // hide_cursor — the active session owns the hardware caret
                     None, // no tab-hover routing in the preview
                     None,
