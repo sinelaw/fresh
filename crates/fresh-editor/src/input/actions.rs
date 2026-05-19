@@ -2817,6 +2817,7 @@ pub fn action_to_events(
         | Action::CompletionAccept
         | Action::CompletionDismiss
         | Action::ToggleFileExplorer
+        | Action::ToggleFileExplorerSide
         | Action::ToggleMenuBar
         | Action::ToggleTabBar
         | Action::ToggleStatusBar

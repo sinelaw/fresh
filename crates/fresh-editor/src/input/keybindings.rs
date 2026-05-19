@@ -609,6 +609,8 @@ pub enum Action {
 
     // File explorer operations
     ToggleFileExplorer,
+    // File explorer side (left/right) toggle
+    ToggleFileExplorerSide,
     // Menu bar visibility
     ToggleMenuBar,
     // Tab bar visibility
@@ -1063,6 +1065,7 @@ impl Action {
             "completion_dismiss" => CompletionDismiss,
 
             "toggle_file_explorer" => ToggleFileExplorer,
+            "toggle_file_explorer_side" => ToggleFileExplorerSide,
             "toggle_menu_bar" => ToggleMenuBar,
             "toggle_tab_bar" => ToggleTabBar,
             "toggle_status_bar" => ToggleStatusBar,
@@ -1699,6 +1702,7 @@ impl KeybindingResolver {
                 | Action::TerminalPaste
                 // File explorer
                 | Action::ToggleFileExplorer
+                | Action::ToggleFileExplorerSide
                 // Menu bar
                 | Action::ToggleMenuBar
         )
@@ -2407,6 +2411,7 @@ impl KeybindingResolver {
             Action::CompletionAccept => t!("action.completion_accept"),
             Action::CompletionDismiss => t!("action.completion_dismiss"),
             Action::ToggleFileExplorer => t!("action.toggle_file_explorer"),
+            Action::ToggleFileExplorerSide => t!("action.toggle_file_explorer_side"),
             Action::ToggleMenuBar => t!("action.toggle_menu_bar"),
             Action::ToggleTabBar => t!("action.toggle_tab_bar"),
             Action::ToggleStatusBar => t!("action.toggle_status_bar"),

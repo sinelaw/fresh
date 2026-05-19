@@ -1901,6 +1901,7 @@ impl Editor {
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::ToggleMaximizeSplit => self.toggle_maximize_split(),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
+            Action::ToggleFileExplorerSide => self.toggle_file_explorer_side(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
             Action::ToggleTabBar => self.active_window_mut().toggle_tab_bar(),
             Action::ToggleStatusBar => self.active_window_mut().toggle_status_bar(),

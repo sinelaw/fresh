@@ -716,6 +716,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_file_explorer_side",
+        desc_key: "cmd.toggle_file_explorer_side_desc",
+        action: || Action::ToggleFileExplorerSide,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.toggle_menu_bar",
         desc_key: "cmd.toggle_menu_bar_desc",
         action: || Action::ToggleMenuBar,
