@@ -1,7 +1,7 @@
 //! Keybinding list rendering functions
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -45,7 +45,7 @@ pub fn render_keybinding_list(
         let bg = if is_entry_focused {
             colors.focused_bg
         } else {
-            Color::Reset
+            colors.row_bg
         };
 
         let key_combo = format_key_combo(binding);
@@ -106,7 +106,7 @@ pub fn render_keybinding_list(
         let bg = if is_add_focused {
             colors.focused_bg
         } else {
-            Color::Reset
+            colors.row_bg
         };
 
         let indicator = if is_add_focused { "> " } else { "  " };
@@ -186,5 +186,50 @@ fn capitalize_key(s: &str) -> String {
             None => String::new(),
             Some(c) => c.to_uppercase().chain(chars).collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::view::controls::KeybindingListState;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+    use ratatui::Terminal;
+
+    /// Regression test for issue #2033: unfocused keybinding rows used to
+    /// paint with `Color::Reset`, which falls back to the host terminal's
+    /// default bg — visible as a black band over the cream Settings panel
+    /// when the light theme runs on a dark-terminal host. Now the caller
+    /// passes a `row_bg` and the cells must adopt it.
+    #[test]
+    fn unfocused_row_paints_with_caller_supplied_row_bg() {
+        let backend = TestBackend::new(50, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut state = KeybindingListState::new("Keys");
+        state.bindings = vec![serde_json::json!({"key": "a", "action": "act"})];
+
+        let row_bg = Color::Rgb(232, 238, 245); // light theme popup_bg
+        let colors = KeybindingListColors {
+            row_bg,
+            ..Default::default()
+        };
+
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, 50, 5);
+                render_keybinding_list(frame, area, &state, &colors);
+            })
+            .unwrap();
+
+        // Row 1 holds the (only) unfocused entry; column 3 sits inside the
+        // entry's rendered span — well past the 2-cell indent and indicator.
+        let cell = terminal.backend().buffer().cell((3, 1)).unwrap();
+        assert_eq!(
+            cell.bg,
+            row_bg,
+            "unfocused row cell must adopt caller-supplied row_bg, not fall through to Color::Reset"
+        );
     }
 }

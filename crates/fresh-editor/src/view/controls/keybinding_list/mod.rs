@@ -191,6 +191,12 @@ pub struct KeybindingListColors {
     pub label_fg: Color,
     pub key_fg: Color,
     pub action_fg: Color,
+    /// Background color for unfocused rows. Should match the surrounding
+    /// surface (e.g. `theme.popup_bg` in the settings UI) so the list
+    /// doesn't paint a `Color::Reset` strip that falls back to the host
+    /// terminal's default bg — which on a dark-terminal host running the
+    /// light theme renders as a black band over the cream settings panel.
+    pub row_bg: Color,
     /// Background color for focused entries
     pub focused_bg: Color,
     /// Foreground color for focused entries (text on focused background)
@@ -205,6 +211,7 @@ impl Default for KeybindingListColors {
             label_fg: Color::White,
             key_fg: Color::Yellow,
             action_fg: Color::Cyan,
+            row_bg: Color::Reset,
             focused_bg: Color::DarkGray,
             focused_fg: Color::White,
             delete_fg: Color::Red,

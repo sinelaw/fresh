@@ -1329,6 +1329,10 @@ fn render_control(
                 label_fg: theme.editor_fg,
                 key_fg: theme.help_key_fg,
                 action_fg: theme.syntax_function,
+                // Match the surrounding settings panel so unfocused rows
+                // don't paint a `Color::Reset` strip that falls back to
+                // the host terminal's default bg. See issue #2033.
+                row_bg: theme.popup_bg,
                 // Use settings colors for focused items in settings UI
                 focused_bg: theme.settings_selected_bg,
                 focused_fg: theme.settings_selected_fg,
@@ -1966,7 +1970,7 @@ fn render_keybinding_list_partial(
             let bg = if is_entry_focused {
                 colors.focused_bg
             } else {
-                Color::Reset
+                colors.row_bg
             };
 
             let key_combo = format_key_combo(binding);
@@ -2027,7 +2031,7 @@ fn render_keybinding_list_partial(
         let bg = if is_add_focused {
             colors.focused_bg
         } else {
-            Color::Reset
+            colors.row_bg
         };
 
         let indicator = if is_add_focused { "> " } else { "  " };
