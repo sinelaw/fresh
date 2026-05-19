@@ -1,6 +1,7 @@
 // Domain-specific scenario test files. One file per domain to keep
 // failures grouped and discoverable.
 
+pub mod action_shapes;
 pub mod auto_pairs;
 pub mod case_conversion;
 pub mod corpus;
@@ -8,17 +9,18 @@ pub mod corpus_dump;
 pub mod duplicate_line;
 pub mod emacs_actions;
 pub mod indent_dedent;
+pub mod invariants_bulk;
+pub mod invariants_misc;
 pub mod layout;
+pub mod layout_cursor;
 pub mod layout_expanded;
 pub mod layout_shadow_diff;
-pub mod migrated_action_shapes;
 pub mod migrated_arrow_selection;
 pub mod migrated_auto_indent_extras;
 pub mod migrated_auto_indent_full;
 pub mod migrated_basic;
 pub mod migrated_block_selection_extras;
 pub mod migrated_block_selection_full;
-pub mod migrated_bulk;
 pub mod migrated_case_conversion_full;
 pub mod migrated_ctrl_end_wrapped;
 pub mod migrated_dabbrev;
@@ -29,12 +31,10 @@ pub mod migrated_goto_matching_bracket;
 pub mod migrated_indent_dedent_full;
 pub mod migrated_issue_1147_wrapped_nav;
 pub mod migrated_issue_1574_viewport_drift;
-pub mod migrated_layout_cursor;
 pub mod migrated_macros;
 pub mod migrated_marker_roundtrip;
 pub mod migrated_recenter;
 pub mod migrated_shift_backspace;
-pub mod migrated_misc;
 pub mod migrated_more_unicode;
 pub mod migrated_more_workspace;
 pub mod migrated_movement;
