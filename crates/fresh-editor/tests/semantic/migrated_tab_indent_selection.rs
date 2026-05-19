@@ -1,10 +1,10 @@
-//! Faithful migration of `tests/e2e/tab_indent_selection.rs`.
+//! Faithful migration of `tests/e2e/tab_indent_selection.rs`
+//! (issue #353: Tab/Shift-Tab on a selection should indent or
+//! dedent every selected line).
 //!
-//! Issue #353: Tab/Shift-Tab on a selection should indent or
-//! dedent every selected line. The existing
-//! `migrated_indent_dedent_full.rs` covers the basic
-//! single-/multi-line cases; this file picks up the remaining
-//! claims that aren't already covered:
+//! Covers the cases not in `migrated_indent_dedent_full.rs`
+//! (which faithfully migrates `tests/e2e/indent_dedent.rs` — a
+//! sibling file, NOT this one):
 //!
 //! - Go-language file uses tab character (not spaces) for indent.
 //! - Tab without selection inserts indent at the cursor position.

@@ -1,4 +1,11 @@
-//! Faithful migration of `tests/e2e/indent_dedent.rs`.
+//! Partial migration of `tests/e2e/indent_dedent.rs` — covers the
+//! basic single-line / multi-line Tab + Shift-Tab cases in
+//! spaces-mode. The e2e file has 16 tests; this migration covers
+//! the 5 most-fundamental cases. The remaining 11 cases (partial
+//! selection, tab-character files, mixed indentation, multi-cursor
+//! indent, smart backspace, issue #1304 boundary tests) are
+//! tracked in #2058 and remain guarded by the still-extant e2e
+//! file.
 //!
 //! Originals open a real file, send `Tab` / `Shift+Tab`, assert on
 //! buffer content. Scenario equivalent: load_buffer_from_text +

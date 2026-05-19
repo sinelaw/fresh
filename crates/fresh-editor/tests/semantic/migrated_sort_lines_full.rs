@@ -108,14 +108,15 @@ fn migrated_sort_lines_already_sorted_is_noop() {
 
 #[test]
 fn migrated_sort_lines_case_sensitive_ascii_ordering() {
-    // Original: `test_sort_lines_case_sensitive`.
-    // ASCII case ordering: uppercase comes first ('A'=0x41, 'a'=0x61).
+    // Original: `test_sort_lines_case_sensitive` (tests/e2e/sort_lines.rs).
+    // ASCII case ordering: uppercase comes first ('B'=0x42, 'C'=0x43, 'a'=0x61).
+    // Same input as the e2e original to keep this a 1:1 port.
     assert_buffer_scenario(BufferScenario {
         description: "SortLines uses case-sensitive ASCII order: uppercase first".into(),
-        initial_text: "banana\nApple\ncherry\nBerry".into(),
+        initial_text: "Banana\napple\nCherry".into(),
         actions: vec![Action::SelectAll, Action::SortLines],
-        expected_text: "Apple\nBerry\nbanana\ncherry".into(),
-        expected_primary: CursorExpect::at(25),
+        expected_text: "Banana\nCherry\napple".into(),
+        expected_primary: CursorExpect::at(19),
         ..Default::default()
     });
 }

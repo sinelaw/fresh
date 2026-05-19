@@ -1,9 +1,17 @@
-//! Faithful migration of `tests/e2e/emacs_actions.rs`.
+//! Partial migration of `tests/e2e/emacs_actions.rs` — covers
+//! TransposeChars, OpenLine, and SetMark verbs. The
+//! Ctrl+T / Ctrl+O / Ctrl+@ keybindings translate to
+//! `Action::TransposeChars` / `OpenLine` / `SetMark` (the
+//! semantic verbs they bind to).
 //!
-//! Each test mirrors the original action sequence; the
-//! Ctrl+T / Ctrl+O / Ctrl+L / Ctrl+@ keybindings translate to
-//! `Action::TransposeChars` / `OpenLine` / `Recenter` /
-//! `SetMark` (the semantic verbs they're bound to).
+//! Deferred from this file (tracked in #2058):
+//!   - `test_recenter_basic` — needs LayoutScenario to assert
+//!     viewport scrolling; Ctrl+L → Action::Recenter exists but
+//!     has no buffer-state observable.
+//!   - `test_set_mark_then_shift_move`, `test_escape_cancels_
+//!     mark_mode`, `test_ctrl_g_cancels_mark_mode` — need a
+//!     `deselect_on_move` projection on EditorTestApi to assert
+//!     mark-mode cancellation.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, BufferScenario, CursorExpect,
