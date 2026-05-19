@@ -43,7 +43,18 @@ pub fn check_temporal_scenario(s: TemporalScenario) -> Result<(), ScenarioFailur
 
     let mut frames = Vec::new();
     let mut elapsed = Duration::ZERO;
-    let _seed = s.clock.unwrap_or_default();
+
+    // Apply the scenario's initial clock seed by pre-advancing the
+    // logical time source. The harness's TestTimeSource starts at
+    // logical zero; this lets a scenario simulate "the editor has
+    // been running for N ms" before the first event.
+    if let Some(seed) = s.clock {
+        if seed.epoch_ms > 0 {
+            let pre = Duration::from_millis(seed.epoch_ms);
+            harness.advance_time(pre);
+            elapsed += pre;
+        }
+    }
 
     for ev in &s.events {
         match ev {

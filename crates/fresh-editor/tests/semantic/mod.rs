@@ -54,7 +54,6 @@ pub mod migrated_selection_full;
 pub mod migrated_smart_editing;
 pub mod migrated_sort_lines_full;
 pub mod migrated_tab_indent_selection;
-pub mod migrated_temporal;
 pub mod migrated_terminal_io;
 pub mod migrated_triple_click;
 pub mod migrated_undo_bulk_edit_after_save;
