@@ -32,6 +32,7 @@ pub mod migrated_layout_cursor;
 pub mod migrated_macros;
 pub mod migrated_marker_roundtrip;
 pub mod migrated_recenter;
+pub mod migrated_shift_backspace;
 pub mod migrated_misc;
 pub mod migrated_more_unicode;
 pub mod migrated_more_workspace;
