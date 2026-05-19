@@ -43,7 +43,6 @@ pub mod glob_language_detection;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod hanging_wrap_indent;
-pub mod horizontal_scrollbar;
 pub mod hot_exit_flows;
 pub mod hot_exit_recovery_lsp_sync;
 pub mod indent_dedent;
@@ -223,7 +222,6 @@ pub mod vi_mode;
 #[cfg(feature = "plugins")]
 pub mod vi_mode_bugs;
 pub mod virtual_line_bg_and_wrap;
-pub mod virtual_lines;
 pub mod visual_regression;
 pub mod warning_indicators;
 pub mod workspace;
