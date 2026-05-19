@@ -338,10 +338,17 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
 
     // Determine whether per-row text inspection is needed anywhere
     // in the scenario (final expectation or any step expectation).
-    let needs_rows = !s.expected_snapshot.row_checks.is_empty()
+    // Any matcher that reads `rendered_rows` / `buffer_text` forces
+    // the slower `extract_with_rendered_rows` path.
+    let expect_needs_rows = |e: &RenderSnapshotExpect| {
+        !e.row_checks.is_empty()
+            || e.cursor_cell_matches_buffer_char
+            || e.popup_hanging_indent.is_some()
+    };
+    let needs_rows = expect_needs_rows(&s.expected_snapshot)
         || s.step_assertions
             .iter()
-            .any(|sa| !sa.expect.row_checks.is_empty());
+            .any(|sa| expect_needs_rows(&sa.expect));
 
     let extract_snapshot = |h: &mut EditorTestHarness| -> RenderSnapshot {
         if needs_rows {

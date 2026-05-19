@@ -1559,6 +1559,22 @@ impl EditorTestHarness {
         }
     }
 
+    /// True if the vt100 backend's current screen state has the
+    /// hardware cursor hidden (`\x1b[?25l` was the last cursor-
+    /// visibility command). After `render_real()`, this reflects
+    /// the production `cursor_obscured_by_overlay` decision: when a
+    /// popup is drawn over the cell `Frame::set_cursor_position`
+    /// would target, the editor omits the `set_cursor_position`
+    /// call and ratatui's `Terminal::draw` ends the frame by
+    /// emitting `hide_cursor` instead.
+    ///
+    /// Use this in semantic scenarios that need to observe
+    /// "the cursor was hidden by an overlay" without using the
+    /// harness-direct `render_observing_cursor` sentinel trick.
+    pub fn vt100_cursor_hidden(&self) -> bool {
+        self.vt100_parser.screen().hide_cursor()
+    }
+
     /// Get the current terminal buffer (what would be displayed)
     pub fn buffer(&self) -> &ratatui::buffer::Buffer {
         self.terminal.backend().buffer()

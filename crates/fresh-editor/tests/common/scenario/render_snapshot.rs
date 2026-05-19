@@ -93,9 +93,28 @@ impl RenderSnapshot {
         let screen = harness.vt100_screen_to_string();
         let rendered_rows: Vec<String> =
             screen.split('\n').map(|s| s.to_string()).collect();
+        // The production cursor-obscured-by-overlay check fires
+        // inside `render_real`: when a popup covers the cell the
+        // editor would otherwise call `Frame::set_cursor_position`
+        // on, the call is omitted and ratatui ends the frame with
+        // `hide_cursor`. vt100 reflects that as
+        // `screen().hide_cursor() == true`. Project it through as
+        // `hardware_cursor: None` so scenarios observe the same
+        // "cursor was hidden" outcome the real terminal would
+        // display — `EditorTestApi::hardware_cursor_position()`
+        // alone returns the cursor's viewport-derived location
+        // regardless of overlay state, which would silently fail
+        // any cursor-under-popup assertion.
+        let cursor_hidden_by_render = harness.vt100_cursor_hidden();
         let api = harness.api_mut();
         let cursor_byte = api.primary_caret().position;
         let buffer_text = api.buffer_text();
+        let raw_cursor = api.hardware_cursor_position();
+        let hardware_cursor = if cursor_hidden_by_render {
+            None
+        } else {
+            raw_cursor
+        };
         RenderSnapshot {
             width: api.terminal_width(),
             height: api.terminal_height(),
@@ -103,7 +122,7 @@ impl RenderSnapshot {
                 top_byte: api.viewport_top_byte(),
                 visible_byte_range: api.visible_byte_range(),
             },
-            hardware_cursor: api.hardware_cursor_position(),
+            hardware_cursor,
             gutter_width: api.gutter_width(),
             cursor_byte,
             buffer_text,

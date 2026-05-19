@@ -40,9 +40,9 @@ use fresh::test_api::Action;
 const POPUP_WIDTH: u16 = 40;
 const POPUP_DX: i32 = -2;
 const POPUP_DY: i32 = -1;
-// Width covered = POPUP_WIDTH; height covered = 3 content + 2
-// borders = 5. The cursor sits at offset (+2, +1) from the popup
-// origin (we anchored at -2, -1), so it lands well inside.
+// Height covered = 3 content + 2 borders = 5. The cursor sits at
+// offset (+2, +1) from the popup origin (we anchored at -2, -1),
+// so it lands well inside.
 const POPUP_RECT_H: u16 = 5;
 
 /// `Action::InsertChar` sequence for "hello world". Typing via
