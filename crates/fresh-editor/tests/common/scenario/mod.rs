@@ -41,6 +41,10 @@ pub mod input_scenario;
 // ── Phase 10: Temporal (real, MockClock injection) ──────────────────
 pub mod temporal_scenario;
 
+// ── Marker-roundtrip (declarative migration of
+//     undo_redo_marker_roundtrip e2e tests) ────────────────────────────
+pub mod marker_roundtrip_scenario;
+
 // ── Skeleton phases — types + JSON shape, runners panic with the
 // concrete production hook the phase still needs. Each surviving
 // skeleton has an inline TODO with the prerequisite.

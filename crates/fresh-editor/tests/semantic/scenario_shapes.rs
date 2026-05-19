@@ -84,6 +84,7 @@ fn json_roundtrip_layout_scenario() {
                 hardware_cursor: Some((2, 1)),
                 ..Default::default()
             },
+            ..Default::default()
         },
     );
 }

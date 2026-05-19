@@ -124,12 +124,86 @@ pub enum InputEvent {
         path: PathBuf,
         content: String,
     },
+    /// Notify the editor's file-watcher path that `path` on disk has
+    /// changed, **without** mutating the file. Used by save-point
+    /// scenarios that need to assert the auto-revert handler does
+    /// *not* clobber the undo log when on-disk content already
+    /// matches the buffer (issue #191 follow-up). Distinct from
+    /// `FsExternalEdit` which writes-then-notifies. The path is
+    /// resolved relative to the scenario's temp root, matching the
+    /// `FsExternalEdit` convention.
+    EditorFileChangedReaction { path: String },
+
+    // ── Inline assertions (used by step-walking persistence flows) ─
+    /// Pin the buffer text mid-stream. Lets persistence scenarios
+    /// assert state at multiple points along a Save-As/Undo path
+    /// without abandoning the data shape.
+    AssertBufferText(String),
+    /// Pin `EditorTestApi::is_modified` mid-stream. The core
+    /// observable for issue #191 / save-point invariants.
+    AssertIsModified(bool),
+    /// Pin the active buffer's event-log length. Used by the file-
+    /// watcher scenarios that assert a no-op notification does not
+    /// clear undo history.
+    AssertEventLogLen(usize),
+    /// Pin "primary caret byte ≤ max" mid-stream. Issue #191
+    /// specifically called out cursor going to byte 0 on Undo —
+    /// asserting `<= max` rather than `== exact` matches the e2e
+    /// test's intent (cursor must stay within text bounds, exact
+    /// post-Undo position is implementation-defined).
+    AssertPrimaryCursorAtMost(usize),
+
+    // ── Prompt input (used by Save-As + similar prompt flows) ─────
+    /// Open the SaveAs prompt by dispatching `Action::SaveAs`. The
+    /// runner additionally asserts the prompt actually opened.
+    OpenSaveAsPrompt,
+    /// Backspace `count` characters in the active prompt. Routed
+    /// through the production key handler. Used defensively to clear
+    /// a prompt pre-populated with the buffer's current path before
+    /// `PromptFillText` types in the new path.
+    PromptBackspace { count: usize },
+    /// Type literal characters into the active prompt via
+    /// `EditorTestHarness::type_text`, which routes each char
+    /// through `handle_key` (so prompt input handlers see them).
+    PromptFillText(String),
+    /// Confirm the active prompt with Enter, routed through the
+    /// production key handler so the prompt receives the same
+    /// `handle_key` it would in production.
+    PromptConfirm,
 
     // ── Async / settle ────────────────────────────────────────────
     /// Wait for a *semantic* condition (popup appears, LSP
     /// publishes diagnostics, save completes). Never a wall-clock
     /// sleep — the condition is asserted on observable state.
     Wait(WaitCondition),
+
+    // ── Composite-buffer hunk navigation (LayoutScenario) ─────────
+    /// Jump to the next hunk in the scenario's composite buffer
+    /// `count` times. The scenario must have `composite_buffer` set;
+    /// the handle is resolved from the scenario context. Mirrors the
+    /// `n` / `]` keybinding semantics that
+    /// `composite_next_hunk_active` exposes.
+    CompositeNextHunk { count: u16 },
+    /// Companion of `CompositeNextHunk` — jumps back. `p` / `[`.
+    CompositePrevHunk { count: u16 },
+    /// Force-materialize composite view state for all visible splits
+    /// without rendering. Mirrors `Editor::flush_layout`; lets a
+    /// scenario reach hunk-nav state before the first frame paints.
+    FlushLayout,
+    /// Sleep `ms` milliseconds (wall-clock). Used by the scrollbar
+    /// drag tests to clear the editor's double-click detection
+    /// window between drags. The default harness config sets
+    /// `double_click_time_ms = 10`, so a 25-30ms sleep is safe.
+    SleepMs(u64),
+    /// Record the current rendered rows under `slot`; a later
+    /// `AssertRenderedRowsMatch { slot }` asserts that the rows at
+    /// that point equal the slot's recording. Used by tests like
+    /// "scrolling on the left pane and the right pane produces the
+    /// same view" that need to compare two grids.
+    RecordRenderedRows { slot: u32 },
+    /// Assert that the current rendered rows equal the rows
+    /// previously stored under `slot` (via `RecordRenderedRows`).
+    AssertRenderedRowsMatch { slot: u32 },
 }
 
 impl From<fresh::test_api::Action> for InputEvent {

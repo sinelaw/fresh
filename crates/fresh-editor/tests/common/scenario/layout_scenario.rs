@@ -110,6 +110,61 @@ pub struct LayoutScenario {
     /// final render. See [`PopupSpec`].
     #[serde(default)]
     pub show_popup: Option<PopupSpec>,
+    /// Optional side-by-side diff composite-buffer setup. When set,
+    /// the runner builds the composite (two virtual buffers + line
+    /// alignment) and switches to it BEFORE dispatching `actions`
+    /// or `events`; `initial_text` is unused in that mode. See
+    /// [`CompositeBufferSpec`].
+    #[serde(default)]
+    pub composite_buffer: Option<CompositeBufferSpec>,
+    /// Optional final assertion on the composite buffer's
+    /// `initial_focus_hunk` field. `Some(true)` ⇒ the field must
+    /// be `None` (the one-shot was consumed by a render);
+    /// `Some(false)` ⇒ the field must still be `Some(_)`. Requires
+    /// `composite_buffer` to be set. `None` ⇒ skip the check.
+    #[serde(default)]
+    pub expected_initial_focus_hunk_consumed: Option<bool>,
+    /// Optional final assertion: the rightmost column at `col`
+    /// contains a vertical scrollbar (track or thumb). Routed
+    /// through `EditorTestHarness::has_scrollbar_at_column`.
+    /// `None` ⇒ skip the check.
+    #[serde(default)]
+    pub expected_scrollbar_at_column: Option<u16>,
+}
+
+/// Declarative side-by-side diff composite-buffer setup. The
+/// scenario runner expands this into two virtual buffers + a line
+/// alignment computed from `hunks` via
+/// [`EditorTestApi::create_side_by_side_diff`] before any event in
+/// `events` runs. When `initial_focus_hunk` is `Some(_)`, the
+/// runner also sets the composite's `initial_focus_hunk` field
+/// before the first render.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CompositeBufferSpec {
+    /// Tab/title for the composite buffer (e.g. `"Diff View"`).
+    pub name: String,
+    /// Buffer mode for keybinding routing (e.g. `"diff-view"` so
+    /// the `n`/`]`/`[`/`p` hunk-nav keybindings fire).
+    pub mode: String,
+    /// Left-pane source content (the "OLD" side of the diff).
+    pub old_content: String,
+    /// Right-pane source content (the "NEW" side of the diff).
+    pub new_content: String,
+    /// Hunks as `(old_start, old_count, new_start, new_count)`,
+    /// 0-indexed line numbers — same shape as `DiffHunk::new`.
+    pub hunks: Vec<(usize, usize, usize, usize)>,
+    /// Optional one-shot scroll-to-hunk-N on the first render.
+    /// The first render consumes the field and resets it to
+    /// `None`. `None` ⇒ start at the buffer top.
+    #[serde(default)]
+    pub initial_focus_hunk: Option<usize>,
+    /// When `true`, the runner switches to the composite buffer
+    /// but does NOT perform the initial settle-render. Used by the
+    /// `flush_layout`-before-render tests that probe pre-render
+    /// composite state. Default `false` — the runner renders once
+    /// to settle the layout, mirroring the e2e `setup_diff` helper.
+    #[serde(default)]
+    pub skip_initial_render: bool,
 }
 
 /// Declarative mouse drag. See `LayoutScenario::mouse_drags`.
@@ -143,6 +198,32 @@ pub struct PopupSpec {
     pub max_height: u16,
     #[serde(default = "default_popup_bordered")]
     pub bordered: bool,
+    /// Optional placement. Defaults to `Centered` so existing
+    /// scenarios continue to work; tests that need to cover a
+    /// specific cell (e.g. the hardware cursor) opt into
+    /// `AtHardwareCursorOffset` which resolves to the current
+    /// hardware-cursor position at injection time, offset by
+    /// `(dx, dy)`. `Fixed { x, y }` is also available for raw
+    /// cell coordinates.
+    #[serde(default)]
+    pub position: PopupPlacement,
+}
+
+/// Declarative popup placement. Resolved against runtime state
+/// (hardware cursor position) at injection time.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PopupPlacement {
+    /// Default: centered in the viewport.
+    #[default]
+    Centered,
+    /// Fixed `(x, y)` cell coordinates.
+    Fixed { x: u16, y: u16 },
+    /// Anchor the top-left corner at
+    /// `(hardware_cursor.col + dx, hardware_cursor.row + dy)`
+    /// (saturating). `dx` / `dy` are signed offsets in cells.
+    /// Resolves to `Centered` if the hardware cursor is hidden.
+    AtHardwareCursorOffset { dx: i32, dy: i32 },
 }
 
 fn default_popup_max_height() -> u16 {
@@ -222,15 +303,38 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         None => EditorTestHarness::with_temp_project(width, height)
             .expect("EditorTestHarness::with_temp_project failed"),
     };
-    if let Some(path) = &s.initial_file {
-        harness.open_file(path).expect("open_file failed");
+    // Composite-buffer scenarios build their own buffer set; the
+    // `initial_text` / `initial_file` paths are skipped.
+    let composite_handle: Option<usize> = if let Some(spec) = &s.composite_buffer {
+        let handle = harness.api_mut().create_side_by_side_diff(
+            &spec.name,
+            &spec.mode,
+            &spec.old_content,
+            &spec.new_content,
+            &spec.hunks,
+        );
+        if let Some(hunk) = spec.initial_focus_hunk {
+            harness
+                .api_mut()
+                .set_composite_initial_focus_hunk_on(handle, hunk);
+        }
+        if !spec.skip_initial_render {
+            harness
+                .render()
+                .expect("composite initial render failed");
+        }
+        Some(handle)
     } else {
-        let _fixture = harness
-            .load_buffer_from_text(&s.initial_text)
-            .expect("load_buffer_from_text failed");
-    }
-
-    harness.render().expect("initial render failed");
+        if let Some(path) = &s.initial_file {
+            harness.open_file(path).expect("open_file failed");
+        } else {
+            let _fixture = harness
+                .load_buffer_from_text(&s.initial_text)
+                .expect("load_buffer_from_text failed");
+        }
+        harness.render().expect("initial render failed");
+        None
+    };
 
     // Determine whether per-row text inspection is needed anywhere
     // in the scenario (final expectation or any step expectation).
@@ -298,11 +402,21 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         api.dispatch_seq(remaining);
     }
 
-    // Dispatch declarative input events (mouse, etc.) after the
-    // Action sequence. Each event is translated to the editor's
-    // real input path.
+    // Dispatch declarative input events (mouse, hunk-nav, etc.)
+    // after the Action sequence. Each event is translated to the
+    // editor's real input path. Recorded-rows slots (set by
+    // `RecordRenderedRows`, asserted by `AssertRenderedRowsMatch`)
+    // live in this map so two events can refer to the same slot.
+    let mut recorded_rows: std::collections::HashMap<u32, Vec<String>> =
+        std::collections::HashMap::new();
     for ev in &s.events {
-        dispatch_layout_event(&mut harness, ev, &s.description)?;
+        dispatch_layout_event(
+            &mut harness,
+            ev,
+            &s.description,
+            composite_handle,
+            &mut recorded_rows,
+        )?;
     }
 
     // Dispatch declarative mouse drags. Symbolic variants are
@@ -336,6 +450,27 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         use fresh::model::event::{
             Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
         };
+        // Resolve the declarative `PopupPlacement` to a
+        // `PopupPositionData` the editor event accepts.
+        // `AtHardwareCursorOffset` reads the live hardware-cursor
+        // position from the API right now (the cursor is the result
+        // of every action dispatched up to this point), so test
+        // data doesn't need to hard-code cell coordinates that
+        // depend on gutter width or terminal geometry.
+        let position = match &popup.position {
+            PopupPlacement::Centered => PopupPositionData::Centered,
+            PopupPlacement::Fixed { x, y } => PopupPositionData::Fixed { x: *x, y: *y },
+            PopupPlacement::AtHardwareCursorOffset { dx, dy } => {
+                match harness.api_mut().hardware_cursor_position() {
+                    Some((cx, cy)) => {
+                        let x = (cx as i32 + dx).max(0) as u16;
+                        let y = (cy as i32 + dy).max(0) as u16;
+                        PopupPositionData::Fixed { x, y }
+                    }
+                    None => PopupPositionData::Centered,
+                }
+            }
+        };
         harness
             .apply_event(Event::ShowPopup {
                 popup: PopupData {
@@ -344,7 +479,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                     description: None,
                     transient: false,
                     content: PopupContentData::Text(popup.lines.clone()),
-                    position: PopupPositionData::Centered,
+                    position,
                     width: popup.width,
                     max_height: popup.max_height,
                     bordered: popup.bordered,
@@ -408,6 +543,40 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
             });
         }
     }
+
+    if let Some(want_consumed) = s.expected_initial_focus_hunk_consumed {
+        let handle = composite_handle.ok_or_else(|| ScenarioFailure::SnapshotFieldMismatch {
+            description: s.description.clone(),
+            field: "expected_initial_focus_hunk_consumed".into(),
+            expected: format!("composite_buffer to be set, consumed={want_consumed}"),
+            actual: "composite_buffer was None".into(),
+        })?;
+        let actual = harness.api_mut().composite_initial_focus_hunk_on(handle);
+        // consumed = true ⇒ initial_focus_hunk should now be None.
+        let actually_consumed = actual.is_none();
+        if actually_consumed != want_consumed {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "initial_focus_hunk_consumed".into(),
+                expected: want_consumed.to_string(),
+                actual: format!(
+                    "consumed={actually_consumed} (initial_focus_hunk = {actual:?})"
+                ),
+            });
+        }
+    }
+
+    if let Some(col) = s.expected_scrollbar_at_column {
+        if !harness.has_scrollbar_at_column(col) {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "scrollbar_at_column".into(),
+                expected: format!("scrollbar present at col {col}"),
+                actual: "no scrollbar at that column".into(),
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -420,12 +589,90 @@ fn dispatch_layout_event(
     harness: &mut EditorTestHarness,
     ev: &InputEvent,
     description: &str,
+    composite_handle: Option<usize>,
+    recorded_rows: &mut std::collections::HashMap<u32, Vec<String>>,
 ) -> Result<(), ScenarioFailure> {
+    use crate::common::scenario::buffer_scenario::{key_mods_to_crossterm, key_spec_to_crossterm};
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     match ev {
         InputEvent::Action(a) => {
             harness.api_mut().dispatch(a.clone());
             harness.render().expect("render after Action event failed");
+            Ok(())
+        }
+        InputEvent::SendKey { code, modifiers } => {
+            let cc = key_spec_to_crossterm(*code);
+            let mm = key_mods_to_crossterm(*modifiers);
+            harness
+                .send_key(cc, mm)
+                .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("send_key({code:?}, {modifiers:?}): {e}"),
+                })
+        }
+        InputEvent::CompositeNextHunk { count } => {
+            let handle = composite_handle.ok_or_else(|| ScenarioFailure::InputProjectionFailed {
+                description: description.into(),
+                reason: "CompositeNextHunk requires composite_buffer to be set".into(),
+            })?;
+            for _ in 0..*count {
+                harness.api_mut().composite_next_hunk_active_on(handle);
+            }
+            harness
+                .render()
+                .expect("render after CompositeNextHunk failed");
+            Ok(())
+        }
+        InputEvent::CompositePrevHunk { count } => {
+            let handle = composite_handle.ok_or_else(|| ScenarioFailure::InputProjectionFailed {
+                description: description.into(),
+                reason: "CompositePrevHunk requires composite_buffer to be set".into(),
+            })?;
+            for _ in 0..*count {
+                harness.api_mut().composite_prev_hunk_active_on(handle);
+            }
+            harness
+                .render()
+                .expect("render after CompositePrevHunk failed");
+            Ok(())
+        }
+        InputEvent::FlushLayout => {
+            harness.api_mut().flush_layout_for_tests();
+            Ok(())
+        }
+        InputEvent::SleepMs(ms) => {
+            std::thread::sleep(std::time::Duration::from_millis(*ms));
+            Ok(())
+        }
+        InputEvent::RecordRenderedRows { slot } => {
+            let snap = crate::common::scenario::render_snapshot::RenderSnapshot::extract_with_rendered_rows(harness);
+            recorded_rows.insert(*slot, snap.rendered_rows);
+            Ok(())
+        }
+        InputEvent::AssertRenderedRowsMatch { slot } => {
+            let snap = crate::common::scenario::render_snapshot::RenderSnapshot::extract_with_rendered_rows(harness);
+            let want = recorded_rows.get(slot).ok_or_else(|| {
+                ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("AssertRenderedRowsMatch: slot {slot} was not recorded"),
+                }
+            })?;
+            if &snap.rendered_rows != want {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: description.into(),
+                    field: format!("rendered_rows_match[slot={slot}]"),
+                    expected: format!("{} recorded rows", want.len()),
+                    actual: format!(
+                        "actual rows differ; first divergent: {:?} vs {:?}",
+                        snap.rendered_rows.iter().zip(want.iter()).enumerate()
+                            .find(|(_, (a, b))| a != b)
+                            .map(|(i, (a, _))| (i, a.clone())),
+                        snap.rendered_rows.iter().zip(want.iter()).enumerate()
+                            .find(|(_, (a, b))| a != b)
+                            .map(|(i, (_, b))| (i, b.clone())),
+                    ),
+                });
+            }
             Ok(())
         }
         InputEvent::Mouse(CtxMouseEvent::Click { row, col, button }) => {

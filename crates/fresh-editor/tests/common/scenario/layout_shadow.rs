@@ -47,6 +47,8 @@ impl LayoutShadow {
             },
             hardware_cursor: None,
             gutter_width,
+            cursor_byte: 0,
+            buffer_text: String::new(),
             rendered_rows: Vec::new(),
         }
     }

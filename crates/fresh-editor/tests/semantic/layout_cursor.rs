@@ -26,6 +26,7 @@ fn layout_cursor_at_origin_after_load() {
             hardware_cursor: Some((0, 0)),
             ..Default::default()
         },
+        ..Default::default()
     });
 }
 
@@ -43,6 +44,7 @@ fn layout_cursor_after_three_right_arrows() {
             hardware_cursor: Some((3, 0)),
             ..Default::default()
         },
+        ..Default::default()
     });
 }
 
@@ -60,6 +62,7 @@ fn layout_cursor_after_move_down() {
             hardware_cursor: Some((0, 1)),
             ..Default::default()
         },
+        ..Default::default()
     });
 }
 
@@ -79,6 +82,7 @@ fn layout_gutter_width_grows_at_100_lines() {
             gutter_width: Some(7),
             ..Default::default()
         },
+        ..Default::default()
     });
 }
 
@@ -99,5 +103,6 @@ fn layout_cursor_after_move_line_end_lands_one_past_last_char() {
             hardware_cursor: Some((4, 0)),
             ..Default::default()
         },
+        ..Default::default()
     });
 }

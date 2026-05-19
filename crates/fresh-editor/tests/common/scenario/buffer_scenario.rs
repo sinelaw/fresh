@@ -347,7 +347,7 @@ fn behavior_is_default(b: BehaviorFlags) -> bool {
 /// Project a `KeySpec` onto the matching `crossterm::event::KeyCode`.
 /// Lives next to the runner so the data module (`input_event.rs`)
 /// doesn't have to depend on crossterm.
-fn key_spec_to_crossterm(code: KeySpec) -> crossterm::event::KeyCode {
+pub(crate) fn key_spec_to_crossterm(code: KeySpec) -> crossterm::event::KeyCode {
     use crossterm::event::KeyCode;
     match code {
         KeySpec::Char(c) => KeyCode::Char(c),
@@ -369,7 +369,7 @@ fn key_spec_to_crossterm(code: KeySpec) -> crossterm::event::KeyCode {
     }
 }
 
-fn key_mods_to_crossterm(m: KeyMods) -> crossterm::event::KeyModifiers {
+pub(crate) fn key_mods_to_crossterm(m: KeyMods) -> crossterm::event::KeyModifiers {
     let mut out = crossterm::event::KeyModifiers::NONE;
     if m.ctrl {
         out |= crossterm::event::KeyModifiers::CONTROL;

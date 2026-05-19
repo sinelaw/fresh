@@ -256,6 +256,31 @@ pub struct RenderSnapshotExpect {
     /// Requires a snapshot built with `extract_with_rendered_rows`.
     #[serde(default)]
     pub popup_hanging_indent: Option<PopupHangingIndent>,
+    /// The hardware cursor must EITHER be hidden (`None`) OR sit
+    /// outside the rectangle `[x, x+w) × [y, y+h)`. Used by the
+    /// cursor-under-popup regression: when a popup covers the
+    /// cell where the cursor would be drawn, the renderer must
+    /// omit `Frame::set_cursor_position` so the terminal's
+    /// hardware cursor does not show through the popup.
+    #[serde(default)]
+    pub hardware_cursor_hidden_or_outside_rect: Option<HardwareCursorRect>,
+    /// The hardware cursor must be visible at the given `(col, row)`.
+    /// Same as `hardware_cursor`, but explicit — used in anti-tests
+    /// that pin the cursor stays put when the load-bearing step is
+    /// dropped.
+    #[serde(default)]
+    pub hardware_cursor_at: Option<(u16, u16)>,
+}
+
+/// Rectangle used by `hardware_cursor_hidden_or_outside_rect`.
+/// Inclusive on `x` / `y`, exclusive on the far edge — the cursor
+/// is "inside" iff `x <= cx < x+w AND y <= cy < y+h`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct HardwareCursorRect {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
 }
 
 impl RenderSnapshotExpect {

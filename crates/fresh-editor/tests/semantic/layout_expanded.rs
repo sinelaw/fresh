@@ -26,6 +26,7 @@ fn theorem_gutter_width_uses_minimum_two_digits() {
             gutter_width: Some(6),
             ..Default::default()
         },
+        ..Default::default()
     });
 }
 
