@@ -67,11 +67,8 @@ pub fn check_persistence_scenario(s: PersistenceScenario) -> Result<(), Scenario
         })?;
 
     // Run events.
-    {
-        let api: &mut dyn EditorTestApi = harness.api_mut();
-        for ev in &s.events {
-            dispatch(&temp_root, api, ev, &s.description)?;
-        }
+    for ev in &s.events {
+        dispatch(&temp_root, &mut harness, ev, &s.description)?;
     }
 
     // Assert buffer state if requested.
@@ -152,24 +149,33 @@ fn relative_under(root: &Path, p: impl AsRef<Path>) -> PathBuf {
 
 fn dispatch(
     root: &Path,
-    api: &mut dyn EditorTestApi,
+    harness: &mut EditorTestHarness,
     ev: &InputEvent,
     description: &str,
 ) -> Result<(), ScenarioFailure> {
     match ev {
         InputEvent::Action(a) => {
-            api.dispatch(a.clone());
+            harness.api_mut().dispatch(a.clone());
             Ok(())
         }
         InputEvent::FsExternalEdit { path, content } => {
-            // Mutate the file behind the editor's back. Real
-            // filesystem write; the editor's auto-revert / on-save
-            // logic will see the change.
+            // Mutate the file behind the editor's back, then notify
+            // the editor's auto-revert path. Without the notify,
+            // the editor has no live file-watcher in tests and a
+            // subsequent read-back of the same file would just
+            // reflect the disk bytes we just wrote — making the
+            // scenario tautological. With the notify, if the editor
+            // has the path open, its auto-revert reloads the
+            // buffer from disk and the editor-side state actually
+            // reacts to the external change.
             let abs = relative_under(root, path);
             std::fs::write(&abs, content).map_err(|e| ScenarioFailure::InputProjectionFailed {
                 description: description.into(),
                 reason: format!("FsExternalEdit write {abs:?}: {e}"),
-            })
+            })?;
+            let abs_str = abs.to_string_lossy().to_string();
+            harness.editor_mut().handle_file_changed(&abs_str);
+            Ok(())
         }
         other => Err(ScenarioFailure::InputProjectionFailed {
             description: description.into(),
