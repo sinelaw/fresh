@@ -127,10 +127,33 @@ pub struct RenderSnapshotExpect {
     pub viewport_top_byte: Option<usize>,
     #[serde(default)]
     pub hardware_cursor: Option<(u16, u16)>,
+    /// Cursor row must be in this inclusive range. Used when the
+    /// exact row depends on layout details a test doesn't want to
+    /// pin (e.g. "after Recenter the cursor lands somewhere in
+    /// the middle band of the viewport"). Compared against
+    /// `actual.hardware_cursor.map(|(_, row)| row)`.
+    #[serde(default)]
+    pub hardware_cursor_row_in: Option<(u16, u16)>,
     #[serde(default)]
     pub gutter_width: Option<u16>,
     #[serde(default)]
     pub visible_byte_range: Option<(usize, usize)>,
+    /// The cursor's logical byte position (the snapshot's
+    /// `viewport.top_byte`-anchored window via `visible_byte_range`)
+    /// must include this byte. Used for "after Ctrl+End the doc
+    /// end is visible" style claims.
+    #[serde(default)]
+    pub viewport_includes_byte: Option<usize>,
+    /// `viewport_top_byte` must be within `delta` bytes of `byte`.
+    /// Used when the exact top depends on wrap geometry but a
+    /// bound exists ("after Ctrl+End on a long buffer, top is
+    /// within max_visible_bytes of doc_end").
+    #[serde(default)]
+    pub viewport_top_within_delta_of: Option<(usize, usize)>,
+    /// `viewport_top_byte` must be strictly greater than this
+    /// value. Used for "viewport scrolled past the start".
+    #[serde(default)]
+    pub viewport_top_byte_greater_than: Option<usize>,
     /// Per-row text matchers. Each entry is checked against the
     /// snapshot's `rendered_rows`. Empty list = no row checks.
     /// Requires the snapshot to have been built with
@@ -161,6 +184,64 @@ impl RenderSnapshotExpect {
                     "hardware_cursor",
                     format!("{want:?}"),
                     format!("{:?}", actual.hardware_cursor),
+                ));
+            }
+        }
+        if let Some((lo, hi)) = self.hardware_cursor_row_in {
+            match actual.hardware_cursor {
+                None => {
+                    return Some((
+                        "hardware_cursor_row_in",
+                        format!("[{lo},{hi}]"),
+                        "None".into(),
+                    ));
+                }
+                Some((_, row)) if row < lo || row > hi => {
+                    return Some((
+                        "hardware_cursor_row_in",
+                        format!("[{lo},{hi}]"),
+                        format!("row {row}"),
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        if let Some(byte) = self.viewport_includes_byte {
+            match actual.viewport.visible_byte_range {
+                Some((lo, hi)) if byte < lo || byte > hi => {
+                    return Some((
+                        "viewport_includes_byte",
+                        format!("byte {byte}"),
+                        format!("visible {lo}..={hi}"),
+                    ));
+                }
+                None => {
+                    return Some((
+                        "viewport_includes_byte",
+                        format!("byte {byte}"),
+                        "visible_byte_range = None".into(),
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        if let Some((byte, delta)) = self.viewport_top_within_delta_of {
+            let top = actual.viewport.top_byte;
+            let gap = if top > byte { top - byte } else { byte - top };
+            if gap > delta {
+                return Some((
+                    "viewport_top_within_delta_of",
+                    format!("top within {delta} of {byte}"),
+                    format!("top={top}, gap={gap}"),
+                ));
+            }
+        }
+        if let Some(min) = self.viewport_top_byte_greater_than {
+            if actual.viewport.top_byte <= min {
+                return Some((
+                    "viewport_top_byte_greater_than",
+                    format!("> {min}"),
+                    actual.viewport.top_byte.to_string(),
                 ));
             }
         }

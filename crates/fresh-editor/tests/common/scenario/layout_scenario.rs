@@ -26,6 +26,11 @@ pub struct LayoutScenario {
     pub width: u16,
     pub height: u16,
     pub actions: Vec<Action>,
+    /// Optional editor config. None ⇒ default config. Use for
+    /// scenarios where `line_wrap` / `show_horizontal_scrollbar`
+    /// etc. are load-bearing.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub config: Option<fresh::config::Config>,
     /// Single-field shortcut: assert just the viewport's top byte.
     /// Kept because most landed scenarios only care about scroll.
     #[serde(default)]
@@ -40,8 +45,12 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     let width = if s.width == 0 { 80 } else { s.width };
     let height = if s.height == 0 { 24 } else { s.height };
 
-    let mut harness = EditorTestHarness::with_temp_project(width, height)
-        .expect("EditorTestHarness::with_temp_project failed");
+    let mut harness = match s.config.clone() {
+        Some(cfg) => EditorTestHarness::with_config(width, height, cfg)
+            .expect("EditorTestHarness::with_config failed"),
+        None => EditorTestHarness::with_temp_project(width, height)
+            .expect("EditorTestHarness::with_temp_project failed"),
+    };
     let _fixture = harness
         .load_buffer_from_text(&s.initial_text)
         .expect("load_buffer_from_text failed");
@@ -66,7 +75,15 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         }
     }
 
-    let snapshot = RenderSnapshot::extract(&mut harness);
+    // If the scenario asks for per-row text checks, use the
+    // slower extract_with_rendered_rows path; otherwise the
+    // cheap extract is sufficient.
+    let needs_rows = !s.expected_snapshot.row_checks.is_empty();
+    let snapshot = if needs_rows {
+        RenderSnapshot::extract_with_rendered_rows(&mut harness)
+    } else {
+        RenderSnapshot::extract(&mut harness)
+    };
     if let Some((field, expected, actual)) = s.expected_snapshot.check_against(&snapshot) {
         return Err(ScenarioFailure::SnapshotFieldMismatch {
             description: s.description,
