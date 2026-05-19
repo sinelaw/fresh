@@ -30,6 +30,7 @@ pub mod migrated_issue_1147_wrapped_nav;
 pub mod migrated_issue_1574_viewport_drift;
 pub mod migrated_layout_cursor;
 pub mod migrated_macros;
+pub mod migrated_marker_roundtrip;
 pub mod migrated_misc;
 pub mod migrated_more_unicode;
 pub mod migrated_more_workspace;
