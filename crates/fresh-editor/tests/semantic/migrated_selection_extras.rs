@@ -1,14 +1,22 @@
-//! Migrations of `tests/e2e/selection.rs` claims not covered by
-//! `migrated_selection_full.rs` or `semantic/selection.rs`.
+//! DECLARATIVE migration of `tests/e2e/selection.rs` claims not
+//! covered by `migrated_selection_full.rs` or `semantic/selection.rs`.
 //!
-//! Focus: Shift+Up/Down line-extending selection, selection
-//! reversal across the anchor, and word-selection through
-//! multi-script accented graphemes.
+//! Focus:
+//!   - Shift+Up / Shift+Down line-extending selection
+//!   - Selection reversal across the anchor
+//!   - Word-selection through multi-script accented graphemes
+//!     (issue #1332)
+//!
+//! Every test in this file is a `BufferScenario` literal — or, in
+//! the matrix case (`SelectWord at every grapheme position`), an
+//! iteration over a const data table where each row constructs
+//! exactly one `BufferScenario`. No raw `EditorTestHarness` usage.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[test]
 fn migrated_select_up_extends_to_previous_line() {
@@ -70,107 +78,142 @@ fn migrated_select_down_then_up_shrinks_selection() {
     });
 }
 
-/// Issue #1332 regression coverage: SelectWord from any grapheme
-/// position inside a multi-script word must select the entire
-/// word, not split mid-grapheme.
-///
-/// Original: `test_select_word_accented_characters` (tests/e2e/
-/// selection.rs:207). The e2e iterates over every grapheme of
-/// 13 multi-script words. The original bug:
-///   On "hibajavítás" with cursor on 'í', Ctrl+W selected only
-///   "hibajav" — splitting mid-grapheme because the word-end
-///   scan used codepoint indices instead of grapheme cluster
-///   boundaries.
-///
-/// The migration walks every grapheme of every entry and asserts
-/// SelectWord yields the full word. Driving through
-/// `EditorTestHarness` directly because per-position cursor
-/// placement + selection-text readback doesn't fit the
-/// single-shot BufferScenario shape (see "Direct-harness for
-/// cross-state claims" in docs/internal/scenario-migration-status.md).
+// ─────────────────────────────────────────────────────────────────────
+// Matrix: SelectWord from every grapheme position of every word
+// ─────────────────────────────────────────────────────────────────────
+//
+// Issue #1332: SelectWord must select the whole word regardless of
+// which grapheme inside it the cursor sits on. Bug pre-fix: on
+// "hibajavítás" with cursor on 'í', Ctrl+W returned "hibajav" —
+// the word-end scan used codepoint indices instead of grapheme
+// cluster boundaries.
+//
+// The migration walks every grapheme of every word below and
+// asserts SelectWord yields the full word. Each `(word,
+// grapheme_idx)` pair builds exactly one `BufferScenario` literal
+// via `select_word_at_grapheme_scenario` — the iteration is over
+// a const data table, the per-case test is still pure data.
+
+/// Multi-script words to exercise. Each contains at least one
+/// non-ASCII grapheme; some contain multi-codepoint clusters
+/// (combining diacritics, ZWJ emoji sequences) where the byte
+/// length per grapheme is ≥ 2.
+const SELECT_WORD_GRAPHEME_WORDS: &[&str] = &[
+    // Original bug report (issue #1332).
+    "hibajavítás",
+    // German with umlaut.
+    "Änderung",
+    // French accented.
+    "résumé",
+    // Czech.
+    "příliš",
+    // Polish.
+    "żółć",
+    // Cyrillic (Russian).
+    "Привет",
+    // Greek.
+    "Ελληνικά",
+    // Korean Hangul.
+    "안녕하세요",
+    // Japanese Hiragana.
+    "こんにちは",
+    // CJK.
+    "你好世界",
+    // Combining diacritic: 'e' + U+0301 (two codepoints, one cluster).
+    "caf\u{0065}\u{0301}",
+    // Emoji (single grapheme word; the classifier treats it as
+    // punctuation, so SelectWord from inside the cluster selects
+    // the cluster itself).
+    "🇫🇷",
+    "👨\u{200D}👩\u{200D}👧",
+];
+
+/// Byte offset of the start of the `grapheme_idx`-th grapheme of
+/// `word`. Used to spell out the expected cursor position before
+/// SelectWord runs.
+fn byte_offset_of_grapheme(word: &str, grapheme_idx: usize) -> usize {
+    word.graphemes(true)
+        .take(grapheme_idx)
+        .map(str::len)
+        .sum()
+}
+
+/// Build the positive scenario for `(word, grapheme_idx)`. The
+/// cursor walks to the target grapheme via MoveLineStart +
+/// `grapheme_idx` MoveRights (one per grapheme), then SelectWord
+/// fires. The expected end-state pins both the selection text
+/// (the whole word) and the caret range (anchor at word start,
+/// position at word end — the SelectWord implementation in
+/// `src/input/actions.rs::Action::SelectWord` parks the caret at
+/// `word_end` with `anchor = word_start`).
+fn select_word_at_grapheme_scenario(word: &str, grapheme_idx: usize) -> BufferScenario {
+    let mut actions = vec![Action::MoveLineStart];
+    for _ in 0..grapheme_idx {
+        actions.push(Action::MoveRight);
+    }
+    actions.push(Action::SelectWord);
+
+    BufferScenario {
+        description: format!(
+            "SelectWord on {word:?} from grapheme index {grapheme_idx} selects the whole word"
+        ),
+        initial_text: word.to_string(),
+        actions,
+        expected_text: word.to_string(),
+        // Word spans the entire buffer ⇒ word_start = 0, word_end = word.len().
+        expected_primary: CursorExpect::range(0, word.len()),
+        expected_selection_text: Some(word.to_string()),
+        ..Default::default()
+    }
+}
+
 #[test]
 fn migrated_select_word_at_every_grapheme_position_in_multi_script_words() {
-    use crate::common::harness::EditorTestHarness;
-    use fresh::test_api::EditorTestApi;
-    use unicode_segmentation::UnicodeSegmentation;
-
-    let words: &[&str] = &[
-        // Original bug report (issue #1332).
-        "hibajavítás",
-        // German with umlaut.
-        "Änderung",
-        // French accented.
-        "résumé",
-        // Czech.
-        "příliš",
-        // Polish.
-        "żółć",
-        // Cyrillic (Russian).
-        "Привет",
-        // Greek.
-        "Ελληνικά",
-        // Korean Hangul.
-        "안녕하세요",
-        // Japanese Hiragana.
-        "こんにちは",
-        // CJK.
-        "你好世界",
-        // Combining diacritic: 'e' + U+0301 (the cluster has two
-        // codepoints; word selection must include both).
-        "caf\u{0065}\u{0301}",
-        // Emoji (single grapheme word; classifier treats as
-        // punctuation, so SelectWord from inside the cluster
-        // selects the cluster itself).
-        "🇫🇷",
-        "👨\u{200D}👩\u{200D}👧",
-    ];
-
-    for word in words {
+    // Issue #1332 regression coverage. The iteration here is
+    // over the const `SELECT_WORD_GRAPHEME_WORDS` table; each
+    // iteration builds exactly one `BufferScenario` literal and
+    // runs it through the standard declarative runner. No
+    // EditorTestHarness usage in this file.
+    for word in SELECT_WORD_GRAPHEME_WORDS {
         let grapheme_count = word.graphemes(true).count();
         for grapheme_idx in 0..grapheme_count {
-            let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
-            let _f = harness.load_buffer_from_text(word).unwrap();
-            let api = harness.api_mut();
-
-            api.dispatch(Action::MoveLineStart);
-            for _ in 0..grapheme_idx {
-                api.dispatch(Action::MoveRight);
-            }
-            api.dispatch(Action::SelectWord);
-
-            let selected = api.selection_text();
-            assert_eq!(
-                selected, *word,
-                "SelectWord on {word:?} from grapheme index {grapheme_idx} \
-                 must select the whole word; got {selected:?}",
-            );
+            assert_buffer_scenario(select_word_at_grapheme_scenario(word, grapheme_idx));
         }
     }
 }
 
-/// Anti-test: with SelectWord dropped, no selection exists at any
-/// grapheme position. Proves the loop's assertion is load-bearing.
+// ─────────────────────────────────────────────────────────────────────
+// Anti-test
+// ─────────────────────────────────────────────────────────────────────
+
+/// Anti-test (declarative): without `SelectWord`, no selection
+/// exists at any grapheme position. Proves the matrix assertion
+/// above is load-bearing rather than a tautology over some
+/// accidental pre-existing selection state. Each grapheme
+/// position yields its own `BufferScenario` literal where the
+/// cursor sits at the start of that grapheme with no selection.
 #[test]
 fn anti_select_word_at_every_grapheme_yields_no_selection() {
-    use crate::common::harness::EditorTestHarness;
-    use fresh::test_api::EditorTestApi;
-    use unicode_segmentation::UnicodeSegmentation;
-
     let word = "hibajavítás";
     let grapheme_count = word.graphemes(true).count();
     for grapheme_idx in 0..grapheme_count {
-        let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
-        let _f = harness.load_buffer_from_text(word).unwrap();
-        let api = harness.api_mut();
-        api.dispatch(Action::MoveLineStart);
+        let mut actions = vec![Action::MoveLineStart];
         for _ in 0..grapheme_idx {
-            api.dispatch(Action::MoveRight);
+            actions.push(Action::MoveRight);
         }
-        // No SelectWord dispatch.
-        let selected = api.selection_text();
-        assert_eq!(
-            selected, "",
-            "anti: without SelectWord, no selection should exist at grapheme {grapheme_idx}",
-        );
+        // No SelectWord dispatch — cursor sits at the start of
+        // the target grapheme with no anchor.
+        let cursor_byte = byte_offset_of_grapheme(word, grapheme_idx);
+        assert_buffer_scenario(BufferScenario {
+            description: format!(
+                "anti: no SelectWord at grapheme {grapheme_idx} of {word:?} ⇒ empty selection"
+            ),
+            initial_text: word.to_string(),
+            actions,
+            expected_text: word.to_string(),
+            expected_primary: CursorExpect::at(cursor_byte),
+            expected_selection_text: Some(String::new()),
+            ..Default::default()
+        });
     }
 }

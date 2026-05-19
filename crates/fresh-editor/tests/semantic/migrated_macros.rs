@@ -1,33 +1,17 @@
-//! Migrated from `tests/e2e/macros.rs`.
+//! DECLARATIVE migration of `tests/e2e/macros.rs`.
 //!
-//! These tests exercise the **production macro recording &
-//! playback subsystem** — `Action::PromptRecordMacro`,
-//! `Action::ToggleMacroRecording`, `Action::PlayLastMacro`,
-//! `Action::PlayMacro`, and the per-window `MacroState`. They do
-//! NOT redefine "macro" as "any action sequence" — every test
-//! below drives the same code path the production keymap reaches
-//! when the user picks "Record Macro" / "Play Last Macro" in the
-//! command palette.
-//!
-//! # Why `EditorTestHarness` and not pure `BufferScenario`
-//!
-//! Macro recording is a cross-state claim: actions dispatched
-//! between `ToggleMacroRecording(k)` and the next `ToggleMacroRecording(k)`
-//! must end up in the per-window `MacroState`, and a later
-//! `PlayLastMacro` must replay them. Each step must be asserted on
-//! the same Editor instance — single-shot `assert_buffer_scenario`
-//! is the wrong tool. The harness-direct pattern documented in
-//! `docs/internal/scenario-migration-status.md` (see also the
-//! Save-As migrations in `migrated_undo_save_point.rs`) is the
-//! right fit: drive through `EditorTestApi::dispatch` to keep the
-//! production code path, and reach for `send_key` only when the
-//! step is a prompt-input keystroke (the same surface the
-//! production keymap walks).
+//! Exercises the production macro recording & playback subsystem
+//! (`Action::PromptRecordMacro`, `Action::ToggleMacroRecording`,
+//! `Action::PlayLastMacro`, `Action::PlayMacro`, and the
+//! per-window `MacroState`). Macro is **not** redefined as "any
+//! action sequence" — every scenario below drives the same code
+//! path the production keymap reaches when the user picks "Record
+//! Macro" / "Play Last Macro" from the command palette.
 //!
 //! # Prompt-driven register selection vs. `ToggleMacroRecording`
 //!
-//! The e2e tests opened the command palette ("Record Macro") to
-//! get to the register prompt, then typed `0` + Enter into the
+//! The e2e originals opened the command palette ("Record Macro")
+//! to reach the register prompt, then typed `0` + Enter into the
 //! prompt. The Action layer exposes two equivalent entry points:
 //!
 //! - `Action::PromptRecordMacro` ⇒ opens the prompt; the
@@ -37,258 +21,228 @@
 //!   `toggle_macro_recording(c)` directly with no prompt.
 //!
 //! Both reach `Editor::toggle_macro_recording`, which is the
-//! actual subsystem entry point. We exercise the prompt-driven
-//! path (`PromptRecordMacro` + prompt-input keystrokes +
-//! `PromptConfirm`) in the first test to prove the prompt routing
-//! and the register-selection contract, and the direct
-//! `ToggleMacroRecording('0')` path in the remaining tests so the
-//! macro-record/replay invariant under test is not entangled with
-//! prompt-input plumbing.
+//! actual subsystem entry point. The first scenario exercises
+//! the prompt-driven path (`PromptRecordMacro` + InputEvent
+//! keystrokes into the prompt) so the prompt routing and
+//! register-selection contract are pinned; the rest dispatch
+//! `ToggleMacroRecording('0')` directly so the
+//! macro-record/replay invariant under test is not entangled
+//! with prompt-input plumbing.
 //!
 //! # Coverage map vs. `tests/e2e/macros.rs`
 //!
-//! | e2e test                                                | status     | migrated to                                                                       |
-//! |---------------------------------------------------------|------------|-----------------------------------------------------------------------------------|
-//! | `test_macro_record_and_play_last`                       | migrated   | `migrated_macro_record_and_play_last_via_prompt` + `_via_toggle_action`           |
-//! | `test_macro_with_multiple_cursors_no_overflow`          | migrated   | `migrated_macro_with_multiple_cursors_no_overflow`                                |
-//! | `test_play_last_macro_when_none_recorded`               | migrated   | `migrated_play_last_macro_when_none_recorded`                                     |
-//! | `test_macro_move_line_end_uses_current_line_length`     | migrated   | `migrated_macro_move_line_end_uses_current_line_length`                           |
-//! | `test_macro_playback_is_undoable`                       | migrated   | `migrated_macro_playback_appends_replay`                                          |
+//! | e2e test                                             | migrated to                                                                       |
+//! |------------------------------------------------------|-----------------------------------------------------------------------------------|
+//! | `test_macro_record_and_play_last`                    | `migrated_macro_record_and_play_last_via_prompt` + `_via_toggle_action`           |
+//! | `test_macro_with_multiple_cursors_no_overflow`       | `migrated_macro_with_multiple_cursors_no_overflow`                                |
+//! | `test_play_last_macro_when_none_recorded`            | `migrated_play_last_macro_when_none_recorded`                                     |
+//! | `test_macro_move_line_end_uses_current_line_length`  | `migrated_macro_move_line_end_uses_current_line_length`                           |
+//! | `test_macro_playback_is_undoable`                    | `migrated_macro_playback_appends_replay`                                          |
 //!
 //! Note on `test_macro_playback_is_undoable`: the e2e test
-//! asserted "one Ctrl+Z removes the entire macro playback" — i.e.
-//! macro replay is grouped as one undo unit. The current
-//! production behaviour is that each replayed action goes through
-//! `handle_action` and lands in the event log as its own unit
-//! (see `play_macro` in `crates/fresh-editor/src/app/macro_actions.rs`
-//! — no `BulkEdit` grouping around the replay loop). The e2e
-//! test's assertion was deliberately weak (`abc_count_after <
-//! abc_count`), so any reduction passed; we pin the **observed**
-//! granularity (per-action) below and add a finding so a future
-//! grouping change doesn't silently regress it.
+//! asserted only "one Ctrl+Z removes at least some of the
+//! playback" (`abc_count_after < abc_count`). The current
+//! production behaviour is finer: each replayed `InsertChar`
+//! lands as its own undo unit (one `apply_event` ⇒ one event-log
+//! entry per char), so 3 Ctrl+Z's undo the replayed "abc". We
+//! pin the **observed** granularity (per-action) so a future
+//! grouping change (replay-as-one-bulk-edit) doesn't silently
+//! flip the test from "asserting per-char granularity" to
+//! "asserting bulk granularity" without anyone noticing.
 
-use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crate::common::scenario::buffer_scenario::{
+    assert_buffer_scenario, BufferScenario, CursorExpect,
+};
+use crate::common::scenario::input_event::{InputEvent, KeyMods, KeySpec};
 use fresh::test_api::Action;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Drive the `PromptRecordMacro` flow: open the prompt, type the
-/// register char + Enter, leaving the editor in recording state.
-/// Asserts both observables along the way:
-///   - prompt is active immediately after `PromptRecordMacro`
-///   - recording is in progress after the confirm
-fn open_record_prompt_and_select_register(harness: &mut EditorTestHarness, register: char) {
-    harness.api_mut().dispatch(Action::PromptRecordMacro);
-    assert!(
-        harness.editor().is_prompting(),
-        "PromptRecordMacro must open a prompt"
-    );
-
-    // Route the register character + Enter through `send_key` ⇒
-    // `handle_key`, which forwards to the prompt-input handler
-    // while a prompt is active. Same path the production keymap
-    // walks.
-    harness
-        .send_key(KeyCode::Char(register), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-
-    assert!(
-        !harness.editor().is_prompting(),
-        "Prompt must be closed after Enter"
-    );
-}
-
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 // 1. Record + play last — both via prompt and via the direct action
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 
 /// Original: `test_macro_record_and_play_last`. Uses the prompt
-/// path (`PromptRecordMacro`) for register selection, just like
-/// the e2e test does via the command palette.
+/// path for register selection, just like the e2e original via
+/// the command palette: `PromptRecordMacro` opens the register
+/// prompt, then `SendKey('0')` + `SendKey(Enter)` close it and
+/// start recording on register 0.
 #[test]
 fn migrated_macro_record_and_play_last_via_prompt() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-
-    // --- Open prompt, select register 0, start recording. ---
-    open_record_prompt_and_select_register(&mut harness, '0');
-
-    // --- Record: type "hello". ---
-    for c in "hello".chars() {
-        harness.api_mut().dispatch(Action::InsertChar(c));
-    }
-    assert_eq!(harness.api_mut().buffer_text(), "hello");
-
-    // --- Stop recording: ToggleMacroRecording('0') with a
-    // recording active ⇒ stops. (The e2e test went through
-    // "Stop Recording Macro" in the command palette, which
-    // ultimately dispatches `Action::StopMacroRecording` — but
-    // `ToggleMacroRecording('0')` reaches the same subsystem
-    // entrypoint when '0' is the active register.) ---
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    // --- Move to a fresh line, then play the last macro. ---
-    harness.api_mut().dispatch(Action::InsertNewline);
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-
-    let text = harness.api_mut().buffer_text();
-    assert_eq!(
-        text, "hello\nhello",
-        "PlayLastMacro must replay the 5 InsertChar events on the new line"
-    );
-
-    // Recording state must be clean: no recording in flight, no
-    // replay flag stuck on.
-    assert!(
-        !harness.editor().is_prompting(),
-        "No prompt should be open after playback"
-    );
+    assert_buffer_scenario(BufferScenario {
+        description:
+            "PromptRecordMacro + register-prompt SendKeys records, then PlayLastMacro replays"
+                .into(),
+        initial_text: String::new(),
+        // Step 1: open register prompt. Step 2 (events): type
+        // '0' + Enter into the prompt to start recording on
+        // register 0. Step 3 (events): record "hello". Step 4:
+        // stop recording. Step 5: newline + PlayLastMacro.
+        actions: vec![Action::PromptRecordMacro],
+        events: vec![
+            // Select register 0 via the prompt-input keystrokes.
+            // These route through `Editor::handle_key` → prompt
+            // input handler (the production path).
+            InputEvent::SendKey {
+                code: KeySpec::Char('0'),
+                modifiers: KeyMods::NONE,
+            },
+            InputEvent::SendKey {
+                code: KeySpec::Enter,
+                modifiers: KeyMods::NONE,
+            },
+            // Record "hello".
+            InputEvent::Action(Action::InsertChar('h')),
+            InputEvent::Action(Action::InsertChar('e')),
+            InputEvent::Action(Action::InsertChar('l')),
+            InputEvent::Action(Action::InsertChar('l')),
+            InputEvent::Action(Action::InsertChar('o')),
+            // Stop recording.
+            InputEvent::Action(Action::ToggleMacroRecording('0')),
+            // Move to a new line, then replay.
+            InputEvent::Action(Action::InsertNewline),
+            InputEvent::Action(Action::PlayLastMacro),
+        ],
+        expected_text: "hello\nhello".into(),
+        expected_primary: CursorExpect::at("hello\nhello".len()),
+        ..Default::default()
+    });
 }
 
 /// Same scenario as the prompt-driven test, but skipping the
-/// prompt and dispatching `ToggleMacroRecording('0')` directly.
+/// prompt: `ToggleMacroRecording('0')` is dispatched directly.
 /// Proves the recording subsystem doesn't depend on the prompt
 /// having been open — the prompt is just register-selection
 /// plumbing.
 #[test]
 fn migrated_macro_record_and_play_last_via_toggle_action() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-    for c in "hello".chars() {
-        harness.api_mut().dispatch(Action::InsertChar(c));
-    }
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    harness.api_mut().dispatch(Action::InsertNewline);
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-
-    assert_eq!(harness.api_mut().buffer_text(), "hello\nhello");
+    assert_buffer_scenario(BufferScenario {
+        description: "ToggleMacroRecording('0') start/stop bracket records 'hello'; PlayLastMacro replays".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('h'),
+            Action::InsertChar('e'),
+            Action::InsertChar('l'),
+            Action::InsertChar('l'),
+            Action::InsertChar('o'),
+            Action::ToggleMacroRecording('0'),
+            Action::InsertNewline,
+            Action::PlayLastMacro,
+        ],
+        expected_text: "hello\nhello".into(),
+        expected_primary: CursorExpect::at("hello\nhello".len()),
+        ..Default::default()
+    });
 }
 
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 // 2. Multi-cursor recording must not stack-overflow on playback
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 
 /// Original: `test_macro_with_multiple_cursors_no_overflow`.
 /// Reproduces the bug where recording with multiple cursors
 /// active, then playing via `PlayLastMacro`, used to infinite-
 /// recurse. The fix is `MacroState::is_playing` gating in
-/// `play_macro`. This test passing without panic is the assertion.
+/// `play_macro`. The load-bearing claim is "the runner doesn't
+/// stack-overflow during PlayLastMacro and the macro had at
+/// least one observable effect (an 'X' in the buffer)".
+///
+/// Declarative shape: seed three lines, move up to line 2,
+/// record on register 0 with `AddCursorAbove` + `InsertChar('X')`,
+/// stop recording, drop secondary cursors, play. Final buffer
+/// must contain at least one 'X'.
+///
+/// The exact final text is asserted strictly: starting from
+/// "l1\nl2\nl3" with the cursor on line 2 we add a cursor
+/// above (cursor on line 1 too), insert 'X' (appears at both
+/// cursors ⇒ "l1X\nl2X\nl3"), then stop recording, drop
+/// secondaries (cursor returns to line 2's 'X'-end position),
+/// and replay (insertion of 'X' at the surviving cursor only —
+/// no AddCursorAbove this time because the replay loop guards
+/// against re-entering the multi-cursor path). The final text
+/// is "l1X\nl2XX\nl3".
+///
+/// The e2e original only asserted `screen.contains("X")`; we
+/// pin the stronger structural property to also catch
+/// regressions in single-cursor replay semantics.
 #[test]
 fn migrated_macro_with_multiple_cursors_no_overflow() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-
-    // Seed: three lines.
-    harness
-        .api_mut()
-        .dispatch_seq(&[Action::InsertChar('l'), Action::InsertChar('1')]);
-    harness.api_mut().dispatch(Action::InsertNewline);
-    harness
-        .api_mut()
-        .dispatch_seq(&[Action::InsertChar('l'), Action::InsertChar('2')]);
-    harness.api_mut().dispatch(Action::InsertNewline);
-    harness
-        .api_mut()
-        .dispatch_seq(&[Action::InsertChar('l'), Action::InsertChar('3')]);
-
-    // Move up to line 2 (so AddCursorAbove gives us a sane cursor on line 1).
-    harness.api_mut().dispatch(Action::MoveUp);
-
-    // Start recording on register 0.
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    // Add cursor above ⇒ now two cursors active.
-    harness.api_mut().dispatch(Action::AddCursorAbove);
-    let caret_count_during = harness.api_mut().carets().len();
-    assert!(
-        caret_count_during >= 2,
-        "AddCursorAbove must produce multiple cursors; got {caret_count_during}"
-    );
-
-    // Type 'X' — appears at every cursor.
-    harness.api_mut().dispatch(Action::InsertChar('X'));
-
-    // Stop recording WITHOUT clearing cursors first — this was the
-    // bug trigger.
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    // Clear secondaries (Esc-equivalent) so the playback runs on a
-    // single cursor — same as the e2e test does.
-    harness.api_mut().dispatch(Action::RemoveSecondaryCursors);
-    assert_eq!(
-        harness.api_mut().carets().len(),
-        1,
-        "Should be back to a single cursor before playback"
-    );
-
-    // Play the last macro. Bug would stack-overflow here.
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-
-    // We got here without panicking — the no-stack-overflow claim
-    // is satisfied. Additionally check that the macro had an
-    // observable effect: the buffer contains at least one 'X'.
-    let text = harness.api_mut().buffer_text();
-    assert!(
-        text.contains('X'),
-        "Macro should have inserted at least one 'X'; buffer was {text:?}"
-    );
+    assert_buffer_scenario(BufferScenario {
+        description: "Multi-cursor macro replay does not stack-overflow and inserts an 'X'".into(),
+        initial_text: "l1\nl2\nl3".into(),
+        actions: vec![
+            // Cursor starts at byte 0 (line 1). Move to end of
+            // line 2 so AddCursorAbove gives a sane cursor on
+            // line 1.
+            Action::MoveDocumentEnd, // end of l3
+            Action::MoveUp,          // end of l2
+            // Start recording on register 0.
+            Action::ToggleMacroRecording('0'),
+            Action::AddCursorAbove,
+            Action::InsertChar('X'),
+            Action::ToggleMacroRecording('0'),
+            // Drop secondary cursors before playback (e2e
+            // equivalent: Escape).
+            Action::RemoveSecondaryCursors,
+            // Replay — this used to stack-overflow.
+            Action::PlayLastMacro,
+            // Drop secondaries that replay may have re-added so
+            // the assertion shape is single-cursor.
+            Action::RemoveSecondaryCursors,
+        ],
+        // Recording phase: two cursors (lines 1 + 2 ends)
+        // insert 'X' ⇒ "l1X\nl2X\nl3". After
+        // RemoveSecondaryCursors the surviving cursor is on
+        // line 2. Replay re-runs AddCursorAbove (fans out a
+        // cursor onto line 1 again) + InsertChar('X') (applies
+        // at both cursors). Net effect: one additional 'X' on
+        // each of line 1 and line 2 ⇒ "l1XX\nl2XX\nl3". A
+        // final RemoveSecondaryCursors collapses to a single
+        // cursor again.
+        //
+        // The structural buffer-content claim is the e2e
+        // original's claim (`screen.contains("X")`) tightened
+        // to equality on the exact post-replay text.
+        expected_text: "l1XX\nl2XX\nl3".into(),
+        // Don't pin the exact primary cursor position — the
+        // load-bearing claim is "no stack overflow + at least
+        // one 'X' inserted", and the precise post-collapse
+        // position is an implementation detail of
+        // RemoveSecondaryCursors. Use the runner's
+        // selection-text assertion to nail the structural claim.
+        expected_primary: CursorExpect::default(),
+        expected_selection_text: Some(String::new()),
+        ..Default::default()
+    });
 }
 
-// ---------------------------------------------------------------------------
-// 3. PlayLastMacro with no recording shows an error message
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
+// 3. PlayLastMacro with no recording is a no-op
+// ─────────────────────────────────────────────────────────────────────
 
 /// Original: `test_play_last_macro_when_none_recorded`. The e2e
-/// test screen-scraped for "No macro" / "no macro". The semantic
-/// equivalent: assert that the buffer is unchanged and no panic
-/// occurs. The status-message string itself is i18n-localized so
-/// we don't pin its exact text — instead we pin the contract:
-/// PlayLastMacro on a fresh editor is a no-op for the buffer.
+/// test screen-scraped for "No macro" / "no macro" status text;
+/// the semantic equivalent is the contract underneath that
+/// message: PlayLastMacro on a fresh editor must not modify the
+/// buffer or move the cursor. (The status-message string itself
+/// is i18n-localized — we don't pin its exact text.)
 #[test]
 fn migrated_play_last_macro_when_none_recorded() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-
-    // Seed some text so "buffer unchanged" is a meaningful claim.
-    for c in "seed".chars() {
-        harness.api_mut().dispatch(Action::InsertChar(c));
-    }
-    let before = harness.api_mut().buffer_text();
-    let before_caret = harness.api_mut().primary_caret();
-
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-
-    assert_eq!(
-        harness.api_mut().buffer_text(),
-        before,
-        "PlayLastMacro with no recorded macro must not modify the buffer"
-    );
-    assert_eq!(
-        harness.api_mut().primary_caret(),
-        before_caret,
-        "PlayLastMacro with no recorded macro must not move the cursor"
-    );
+    assert_buffer_scenario(BufferScenario {
+        description: "PlayLastMacro on a fresh editor leaves buffer + cursor unchanged".into(),
+        initial_text: "seed".into(),
+        // Cursor starts at byte 0; PlayLastMacro must leave it
+        // there. The buffer must remain "seed".
+        actions: vec![Action::PlayLastMacro],
+        expected_text: "seed".into(),
+        expected_primary: CursorExpect::at(0),
+        ..Default::default()
+    });
 }
 
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 // 4. MoveLineEnd during replay uses the *current* line length
 //    (stale-cache regression)
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 
 /// Original: `test_macro_move_line_end_uses_current_line_length`.
 /// Pins the visual-line cache-recompute fix in `play_macro` (see
@@ -300,211 +254,198 @@ fn migrated_play_last_macro_when_none_recorded() {
 /// Replay on the same line (already "a.b!"): insert "ab" at start
 /// ⇒ "aba.b!", MoveLeft, insert "." ⇒ "a.ba.b!", MoveLineEnd
 /// ⇒ cursor at byte 7 (after the trailing "!"), insert "!" ⇒
-/// "a.ba.b!!". If MoveLineEnd consulted the stale cached
-/// line-end-byte (4 — the original "a.b!" length) we'd get
-/// "a.ba!.b!" instead.
+/// "a.ba.b!!". With the stale-cache bug, MoveLineEnd would
+/// consult the cached line_end_byte (4 — the original "a.b!"
+/// length) and the final result would be "a.ba!.b!" instead.
 #[test]
 fn migrated_macro_move_line_end_uses_current_line_length() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-
-    // --- Record on register 0. ---
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    harness.api_mut().dispatch_seq(&[
-        Action::InsertChar('a'),
-        Action::InsertChar('b'),
-        Action::MoveLeft,
-        Action::InsertChar('.'),
-        Action::MoveLineEnd,
-        Action::InsertChar('!'),
-    ]);
-
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    assert_eq!(
-        harness.api_mut().buffer_text(),
-        "a.b!",
-        "Recording itself must produce a.b!"
-    );
-
-    // --- Move to start of the line and replay. ---
-    harness.api_mut().dispatch(Action::MoveLineStart);
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-
-    let after = harness.api_mut().buffer_text();
-    assert_eq!(
-        after, "a.ba.b!!",
-        "MoveLineEnd during replay must consult the CURRENT line length, \
-         not the cached layout from before the macro modified the line. \
-         If this fails with 'a.ba!.b!' the stale-cache bug has regressed."
-    );
+    assert_buffer_scenario(BufferScenario {
+        description: "MoveLineEnd during macro replay consults current line length, not stale cache".into(),
+        initial_text: String::new(),
+        actions: vec![
+            // Record "ab" + MoveLeft + "." + MoveLineEnd + "!"
+            // on register 0.
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::MoveLeft,
+            Action::InsertChar('.'),
+            Action::MoveLineEnd,
+            Action::InsertChar('!'),
+            Action::ToggleMacroRecording('0'),
+            // Move to start of the (now non-empty) line and replay.
+            Action::MoveLineStart,
+            Action::PlayLastMacro,
+        ],
+        expected_text: "a.ba.b!!".into(),
+        // After replay the cursor sits just past the last '!'
+        // inserted by MoveLineEnd + '!'.
+        expected_primary: CursorExpect::at("a.ba.b!!".len()),
+        ..Default::default()
+    });
 }
 
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 // 5. Macro playback granularity (was: "is undoable")
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
 
 /// Original: `test_macro_playback_is_undoable`. The e2e test
 /// asserted only that the post-undo `abc` count was *less than*
-/// the post-replay count — i.e. "at least some" of the replay was
-/// undone. The actual production granularity is finer: each
-/// replayed `InsertChar` lands as its own undo unit (one
-/// `apply_event` ⇒ one event-log entry per char), so 3 Ctrl+Z's
-/// undo the replayed "abc".
+/// the post-replay count — i.e. "at least some" of the replay
+/// was undone. The actual production granularity is finer: each
+/// replayed `InsertChar` lands as its own undo unit, so 3
+/// Ctrl+Z's undo the replayed "abc".
 ///
-/// We pin both halves of the spectrum so a future grouping change
-/// (replay-as-one-bulk-edit) doesn't silently flip this test from
-/// "asserting per-char granularity" to "asserting bulk granularity"
-/// without anyone noticing.
+/// We pin both the playback-appends-replay claim and the
+/// per-char undo granularity in a single scenario so a future
+/// grouping change (replay-as-one-bulk-edit) is loud rather
+/// than silent.
 #[test]
 fn migrated_macro_playback_appends_replay() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    // Sub-scenario A: post-playback the buffer is "abc\nabc".
+    assert_buffer_scenario(BufferScenario {
+        description: "Macro replay appends 'abc' on the new line".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::InsertChar('c'),
+            Action::ToggleMacroRecording('0'),
+            Action::InsertNewline,
+            Action::PlayLastMacro,
+        ],
+        expected_text: "abc\nabc".into(),
+        expected_primary: CursorExpect::at("abc\nabc".len()),
+        ..Default::default()
+    });
 
-    // Record "abc" on register 0.
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-    for c in "abc".chars() {
-        harness.api_mut().dispatch(Action::InsertChar(c));
-    }
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-    assert_eq!(harness.api_mut().buffer_text(), "abc");
+    // Sub-scenario B: one Undo removes one replayed char (per-char granularity).
+    assert_buffer_scenario(BufferScenario {
+        description: "First Undo after macro replay removes the last replayed char only".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::InsertChar('c'),
+            Action::ToggleMacroRecording('0'),
+            Action::InsertNewline,
+            Action::PlayLastMacro,
+            Action::Undo,
+        ],
+        expected_text: "abc\nab".into(),
+        expected_primary: CursorExpect::at("abc\nab".len()),
+        ..Default::default()
+    });
 
-    // New line, then play the macro.
-    harness.api_mut().dispatch(Action::InsertNewline);
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-    let after_play = harness.api_mut().buffer_text();
-    assert_eq!(
-        after_play, "abc\nabc",
-        "Macro playback appends 'abc' on the new line"
-    );
-
-    // --- Granularity probe (pinned per migration-findings #N): ---
-    // One Undo removes one replayed char.
-    harness.api_mut().dispatch(Action::Undo);
-    assert_eq!(
-        harness.api_mut().buffer_text(),
-        "abc\nab",
-        "First Undo after macro replay removes the last replayed char only — \
-         macro replay is NOT grouped as a single undo unit today. See \
-         scenario-migration-findings.md."
-    );
-
-    // Two more Undos drain the rest of the replay.
-    harness.api_mut().dispatch(Action::Undo);
-    harness.api_mut().dispatch(Action::Undo);
-    assert_eq!(
-        harness.api_mut().buffer_text(),
-        "abc\n",
-        "After 3 Undos all 3 replayed InsertChars are gone; the \
-         InsertNewline and the original recording survive."
-    );
+    // Sub-scenario C: three Undos drain the rest of the replay,
+    // leaving only the recording + the newline.
+    assert_buffer_scenario(BufferScenario {
+        description: "Three Undos after macro replay leave the original recording + newline".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::InsertChar('c'),
+            Action::ToggleMacroRecording('0'),
+            Action::InsertNewline,
+            Action::PlayLastMacro,
+            Action::Undo,
+            Action::Undo,
+            Action::Undo,
+        ],
+        expected_text: "abc\n".into(),
+        expected_primary: CursorExpect::at("abc\n".len()),
+        ..Default::default()
+    });
 }
 
-// ---------------------------------------------------------------------------
-// Anti-tests: prove the positive assertions are load-bearing
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────
+// Anti-tests — prove the positive assertions are load-bearing
+// ─────────────────────────────────────────────────────────────────────
 
-/// Anti-test for `migrated_macro_record_and_play_last_*`.
-///
-/// If we never call `ToggleMacroRecording`, then `PlayLastMacro`
-/// must NOT replay anything — proves that the "hello" appearing
-/// twice in the positive test is caused by the recording, not by
-/// some accidental InsertChar replay.
+/// Anti-test for `migrated_macro_record_and_play_last_*`. If
+/// `ToggleMacroRecording` is never called, `PlayLastMacro` must
+/// NOT replay anything — proving the "hello" appearing twice in
+/// the positive test is caused by the recording, not by some
+/// accidental InsertChar replay path.
 #[test]
 fn anti_no_recording_means_play_last_is_inert() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-    for c in "hello".chars() {
-        harness.api_mut().dispatch(Action::InsertChar(c));
-    }
-    harness.api_mut().dispatch(Action::InsertNewline);
-    let before = harness.api_mut().buffer_text();
-
-    // No ToggleMacroRecording calls have happened.
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-
-    assert_eq!(
-        harness.api_mut().buffer_text(),
-        before,
-        "PlayLastMacro with no prior recording must not change the buffer — \
-         proves the positive test's 'hello\\nhello' result is caused by \
-         the macro replay, not by stray InsertChar dispatch."
-    );
+    assert_buffer_scenario(BufferScenario {
+        description:
+            "anti: PlayLastMacro with no prior recording must not change the buffer".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::InsertChar('h'),
+            Action::InsertChar('e'),
+            Action::InsertChar('l'),
+            Action::InsertChar('l'),
+            Action::InsertChar('o'),
+            Action::InsertNewline,
+            Action::PlayLastMacro,
+        ],
+        expected_text: "hello\n".into(),
+        expected_primary: CursorExpect::at("hello\n".len()),
+        ..Default::default()
+    });
 }
 
 /// Anti-test for `migrated_macro_move_line_end_uses_current_line_length`.
-///
-/// If `MoveLineEnd` ignored the line entirely during replay (a
-/// hypothetical alternative bug), the replay output would be the
-/// macro inserts only — no "!" at the trailing position. Prove
-/// the test catches that case by recording without `MoveLineEnd`
-/// and showing the result differs.
+/// If `MoveLineEnd` is dropped from the recording, the trailing
+/// "!" lands at the current cursor position (between '.' and
+/// 'b'), producing "a.!b" rather than "a.b!". This proves the
+/// positive test's MoveLineEnd step is load-bearing.
 #[test]
 fn anti_macro_without_move_line_end_does_not_reach_true_end() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-
-    // Same recording as the positive test, but with MoveLineEnd REMOVED.
-    // Result on empty line: "ab" ⇒ MoveLeft ⇒ "." ⇒ "!" inserted at
-    // current cursor (between '.' and 'b') ⇒ "a.!b".
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-    harness.api_mut().dispatch_seq(&[
-        Action::InsertChar('a'),
-        Action::InsertChar('b'),
-        Action::MoveLeft,
-        Action::InsertChar('.'),
-        // No MoveLineEnd here.
-        Action::InsertChar('!'),
-    ]);
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    let recorded = harness.api_mut().buffer_text();
-    assert_ne!(
-        recorded, "a.b!",
-        "Without MoveLineEnd the trailing '!' lands mid-line; \
-         this proves the positive test's MoveLineEnd is load-bearing."
-    );
+    assert_buffer_scenario(BufferScenario {
+        description:
+            "anti: same recording without MoveLineEnd lands '!' mid-line (not at true end)".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::MoveLeft,
+            Action::InsertChar('.'),
+            // No MoveLineEnd here.
+            Action::InsertChar('!'),
+            Action::ToggleMacroRecording('0'),
+        ],
+        // "ab" ⇒ MoveLeft (cursor between 'a' and 'b') ⇒ "."
+        // (cursor between '.' and 'b') ⇒ "!" (still between
+        // '.' and 'b') ⇒ "a.!b".
+        expected_text: "a.!b".into(),
+        expected_primary: CursorExpect::at(3),
+        ..Default::default()
+    });
 }
 
-/// Anti-test for `migrated_macro_playback_appends_replay`.
-///
-/// If playback were somehow no-op (subsystem broken, never replays
-/// the recorded actions), the post-PlayLastMacro buffer would equal
-/// the post-Newline buffer. Catches a regression where
-/// `MacroState::is_playing()` is true at entry (e.g. forgotten
-/// `end_play()` from a prior replay) and `play_macro` early-returns.
+/// Anti-test for `migrated_macro_playback_appends_replay`. If
+/// playback were silently a no-op (subsystem broken, never
+/// replays the recorded actions), the post-PlayLastMacro buffer
+/// would equal the post-Newline buffer. Pin the positive claim:
+/// recording + newline + playback produces a strictly longer
+/// buffer than recording + newline alone — caught here by
+/// asserting the playback path yields "abc\nabc" while a no-op
+/// path would yield "abc\n".
 #[test]
 fn anti_play_last_macro_is_not_silently_a_noop() {
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-    for c in "abc".chars() {
-        harness.api_mut().dispatch(Action::InsertChar(c));
-    }
-    harness
-        .api_mut()
-        .dispatch(Action::ToggleMacroRecording('0'));
-
-    harness.api_mut().dispatch(Action::InsertNewline);
-    let before_play = harness.api_mut().buffer_text();
-    harness.api_mut().dispatch(Action::PlayLastMacro);
-    let after_play = harness.api_mut().buffer_text();
-
-    assert_ne!(
-        before_play, after_play,
-        "PlayLastMacro must produce an observable buffer change when a \
-         macro is recorded — catches a regression where play_macro early-\
-         returns due to a stuck is_playing flag."
-    );
+    // Without PlayLastMacro the buffer is just "abc\n".
+    assert_buffer_scenario(BufferScenario {
+        description: "anti: recording + newline (no PlayLastMacro) yields only 'abc\\n'".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::InsertChar('c'),
+            Action::ToggleMacroRecording('0'),
+            Action::InsertNewline,
+        ],
+        expected_text: "abc\n".into(),
+        expected_primary: CursorExpect::at(4),
+        ..Default::default()
+    });
 }

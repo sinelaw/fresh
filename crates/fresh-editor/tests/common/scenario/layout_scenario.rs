@@ -97,6 +97,59 @@ pub struct LayoutScenario {
     /// loop polls each frame.
     #[serde(default)]
     pub expected_full_redraw_requested: Option<bool>,
+    /// Declarative mouse drags executed after `actions` and any
+    /// `events`, before the final assertion render. Each entry is
+    /// one Down/Move…/Up sequence. Symbolic variants (e.g.
+    /// `VerticalScrollbarFullRange`) compute coordinates from the
+    /// harness's content-area geometry at runtime, so scenario
+    /// data doesn't have to hard-code layout-internal numbers.
+    #[serde(default)]
+    pub mouse_drags: Vec<MouseDragSpec>,
+    /// Declarative popup injection. None ⇒ no popup. Becomes an
+    /// `Event::ShowPopup` on the active buffer right before the
+    /// final render. See [`PopupSpec`].
+    #[serde(default)]
+    pub show_popup: Option<PopupSpec>,
+}
+
+/// Declarative mouse drag. See `LayoutScenario::mouse_drags`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MouseDragSpec {
+    /// Drag from `(from_col, from_row)` to `(to_col, to_row)` —
+    /// raw cell coordinates.
+    Cells {
+        from_col: u16,
+        from_row: u16,
+        to_col: u16,
+        to_row: u16,
+    },
+    /// Drag the vertical scrollbar thumb from the top of the
+    /// content area to the bottom of the content area. The thumb
+    /// column is `terminal_width - 1`; the first/last rows come
+    /// from `harness.content_area_rows()`. Symbolic so scenario
+    /// data doesn't need to know terminal geometry.
+    VerticalScrollbarFullRange,
+}
+
+/// Declarative popup injection. See `LayoutScenario::show_popup`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PopupSpec {
+    #[serde(default)]
+    pub title: Option<String>,
+    pub lines: Vec<String>,
+    pub width: u16,
+    #[serde(default = "default_popup_max_height")]
+    pub max_height: u16,
+    #[serde(default = "default_popup_bordered")]
+    pub bordered: bool,
+}
+
+fn default_popup_max_height() -> u16 {
+    20
+}
+fn default_popup_bordered() -> bool {
+    true
 }
 
 /// One per-step expectation. `after_action_index` is 0-based into
@@ -250,6 +303,54 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     // real input path.
     for ev in &s.events {
         dispatch_layout_event(&mut harness, ev, &s.description)?;
+    }
+
+    // Dispatch declarative mouse drags. Symbolic variants are
+    // resolved against the harness's current content-area
+    // geometry, so scenario data doesn't have to know layout
+    // internals (status bar height, etc.).
+    for drag in &s.mouse_drags {
+        let (from_col, from_row, to_col, to_row) = match drag {
+            MouseDragSpec::Cells {
+                from_col,
+                from_row,
+                to_col,
+                to_row,
+            } => (*from_col, *from_row, *to_col, *to_row),
+            MouseDragSpec::VerticalScrollbarFullRange => {
+                let scrollbar_col = width.saturating_sub(1);
+                let (first, last) = harness.content_area_rows();
+                (scrollbar_col, first as u16, scrollbar_col, last as u16)
+            }
+        };
+        harness
+            .mouse_drag(from_col, from_row, to_col, to_row)
+            .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                description: s.description.clone(),
+                reason: format!("mouse_drag({from_col},{from_row})→({to_col},{to_row}): {e}"),
+            })?;
+    }
+
+    // Inject any declarative popup before the final render.
+    if let Some(popup) = &s.show_popup {
+        use fresh::model::event::{
+            Event, PopupContentData, PopupData, PopupKindHint, PopupPositionData,
+        };
+        harness
+            .apply_event(Event::ShowPopup {
+                popup: PopupData {
+                    kind: PopupKindHint::Text,
+                    title: popup.title.clone(),
+                    description: None,
+                    transient: false,
+                    content: PopupContentData::Text(popup.lines.clone()),
+                    position: PopupPositionData::Centered,
+                    width: popup.width,
+                    max_height: popup.max_height,
+                    bordered: popup.bordered,
+                },
+            })
+            .expect("apply_event(ShowPopup) failed");
     }
 
     harness.render().expect("final render failed");

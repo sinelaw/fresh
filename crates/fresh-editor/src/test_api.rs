@@ -638,4 +638,95 @@ impl EditorTestApi for crate::app::Editor {
     fn notify_file_changed(&mut self, path: &str) {
         self.handle_file_changed(path);
     }
+
+    fn create_side_by_side_diff(
+        &mut self,
+        name: &str,
+        mode: &str,
+        old_content: &str,
+        new_content: &str,
+        hunks: &[(usize, usize, usize, usize)],
+    ) -> u64 {
+        use crate::model::composite_buffer::{
+            CompositeLayout, DiffHunk, LineAlignment, PaneStyle, SourcePane,
+        };
+        use crate::primitives::text_property::TextPropertyEntry;
+
+        let old_buffer_id = self.active_window_mut().create_virtual_buffer(
+            "OLD".to_string(),
+            "text".to_string(),
+            true,
+        );
+        self.set_virtual_buffer_content(
+            old_buffer_id,
+            vec![TextPropertyEntry::text(old_content)],
+        )
+        .expect("seed OLD virtual buffer");
+
+        let new_buffer_id = self.active_window_mut().create_virtual_buffer(
+            "NEW".to_string(),
+            "text".to_string(),
+            true,
+        );
+        self.set_virtual_buffer_content(
+            new_buffer_id,
+            vec![TextPropertyEntry::text(new_content)],
+        )
+        .expect("seed NEW virtual buffer");
+
+        let sources = vec![
+            SourcePane::new(old_buffer_id, "OLD", false).with_style(PaneStyle::old_diff()),
+            SourcePane::new(new_buffer_id, "NEW", false).with_style(PaneStyle::new_diff()),
+        ];
+        let layout = CompositeLayout::SideBySide {
+            ratios: vec![0.5, 0.5],
+            show_separator: true,
+        };
+        let composite_id =
+            self.create_composite_buffer(name.to_string(), mode.to_string(), layout, sources);
+
+        let hunk_vec: Vec<DiffHunk> = hunks
+            .iter()
+            .map(|(os, oc, ns, nc)| DiffHunk::new(*os, *oc, *ns, *nc))
+            .collect();
+        let old_line_count = old_content.lines().count();
+        let new_line_count = new_content.lines().count();
+        let alignment = LineAlignment::from_hunks(&hunk_vec, old_line_count, new_line_count);
+        self.active_window_mut()
+            .set_composite_alignment(composite_id, alignment);
+
+        self.switch_buffer(composite_id);
+
+        composite_id.0
+    }
+
+    fn set_composite_initial_focus_hunk_on(&mut self, composite_handle: u64, hunk_index: usize) {
+        use crate::model::event::BufferId;
+        let id = BufferId(composite_handle);
+        if let Some(c) = self.active_window_mut().get_composite_mut(id) {
+            c.initial_focus_hunk = Some(hunk_index);
+        }
+    }
+
+    fn composite_initial_focus_hunk_on(&self, composite_handle: u64) -> Option<usize> {
+        use crate::model::event::BufferId;
+        let id = BufferId(composite_handle);
+        self.active_window().get_composite(id).and_then(|c| c.initial_focus_hunk)
+    }
+
+    fn composite_next_hunk_active_on(&mut self, composite_handle: u64) -> bool {
+        use crate::model::event::BufferId;
+        let id = BufferId(composite_handle);
+        self.active_window_mut().composite_next_hunk_active(id)
+    }
+
+    fn composite_prev_hunk_active_on(&mut self, composite_handle: u64) -> bool {
+        use crate::model::event::BufferId;
+        let id = BufferId(composite_handle);
+        self.active_window_mut().composite_prev_hunk_active(id)
+    }
+
+    fn flush_layout_for_tests(&mut self) {
+        self.flush_layout();
+    }
 }

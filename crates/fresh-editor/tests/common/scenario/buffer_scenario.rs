@@ -159,7 +159,20 @@ pub struct BufferScenario {
     /// Buffer text at t=∞.
     pub expected_text: String,
     /// Primary cursor at t=∞.
+    ///
+    /// Always asserted unless `skip_cursor_check` is true. The
+    /// opt-out exists for scenarios whose final cursor position
+    /// is an implementation detail of a multi-cursor or
+    /// macro-replay collapse step (e.g. the multi-cursor macro
+    /// stack-overflow regression test) — the load-bearing claim
+    /// there is on the buffer text, not the surviving cursor's
+    /// byte position.
     pub expected_primary: CursorExpect,
+    /// When true, suppress both the primary-cursor and
+    /// cursor-count assertions. Defaults to false (cursor
+    /// checked, single-cursor enforced).
+    #[serde(default)]
+    pub skip_cursor_check: bool,
     /// Secondary cursors at t=∞, in ascending byte-position order.
     /// The runner always sees the primary first; this list covers the
     /// remaining cursors. Empty for single-cursor scenarios.
