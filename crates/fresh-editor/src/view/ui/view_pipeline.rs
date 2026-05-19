@@ -476,12 +476,15 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                                 }
                                 col += spaces;
 
-                                for _ in 1..spaces {
+                                // Spaces 1..N of the tab expansion. The i-th
+                                // space sits at `col_before_tab + i`, where
+                                // `col_before_tab = col - spaces` (col was
+                                // already incremented above).
+                                for i in 1..spaces {
                                     text.push(' ');
                                     char_source_bytes.push(source);
                                     char_styles.push(token_style.clone());
-                                    char_visual_cols
-                                        .push(col - spaces + char_source_bytes.len() - char_idx);
+                                    char_visual_cols.push(col - spaces + i);
                                 }
                                 continue;
                             }
@@ -1276,6 +1279,42 @@ mod tests {
             vec![Some(10), Some(11), Some(12), Some(13)],
             "Line 3 char_source_bytes mismatch - CRLF offset drift accumulated"
         );
+    }
+
+    /// Issue #1997: adjacent tab characters caused the indicator arrow to be
+    /// rendered twice. Root cause: `char_visual_cols` entries for the 2nd..Nth
+    /// expansion-space of every tab were one column too high, so the
+    /// renderer's `col_offset` skipped column 1, hit `tab_starts` for the next
+    /// tab one iteration early, and emitted "→" both for the trailing space
+    /// of the previous tab and the leading space of the next.
+    #[test]
+    fn test_adjacent_tabs_visual_cols_monotonic() {
+        // Two adjacent tabs at the start of a line with tab_size = 4.
+        // Source bytes: \t=0, \t=1
+        // Each tab expands to 4 spaces, so we expect 8 expansion chars at
+        // visual columns 0,1,2,3,4,5,6,7 — exactly one column per char.
+        let tokens = vec![
+            make_text_token("\t\t", Some(0)),
+            make_newline_token(Some(2)),
+        ];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, false, 4, false).collect();
+        assert_eq!(lines.len(), 1);
+
+        // 8 spaces + 1 newline char
+        assert_eq!(lines[0].char_visual_cols.len(), 9);
+        assert_eq!(
+            &lines[0].char_visual_cols[..8],
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+            "Each expansion space must sit at its own visual column"
+        );
+
+        // tab_starts records the char indices where each tab begins.
+        // With both tabs at col 0 and col 4, the only valid tab-start char
+        // indices are 0 and 4.
+        let mut starts: Vec<usize> = lines[0].tab_starts.iter().copied().collect();
+        starts.sort();
+        assert_eq!(starts, vec![0, 4]);
     }
 
     /// Test CRLF visual column to source byte mapping.
