@@ -310,27 +310,27 @@ pub trait EditorTestApi {
         old_content: &str,
         new_content: &str,
         hunks: &[(usize, usize, usize, usize)],
-    ) -> u64;
+    ) -> usize;
 
     /// Set the composite buffer's `initial_focus_hunk` field — the
     /// one-shot "scroll to hunk N on first render" knob. The first
     /// render consumes the value and resets the field to `None`.
-    fn set_composite_initial_focus_hunk_on(&mut self, composite_handle: u64, hunk_index: usize);
+    fn set_composite_initial_focus_hunk_on(&mut self, composite_handle: usize, hunk_index: usize);
 
     /// Read the composite buffer's current `initial_focus_hunk`
     /// (after the first render this should be `None`, i.e. the field
     /// was consumed). Returns `None` for missing or non-composite
     /// buffers.
-    fn composite_initial_focus_hunk_on(&self, composite_handle: u64) -> Option<usize>;
+    fn composite_initial_focus_hunk_on(&self, composite_handle: usize) -> Option<usize>;
 
     /// Jump the active split's view of `composite_handle` to the next
     /// hunk. Mirrors the `n` / `]` keybinding semantics; returns
     /// `true` iff a next hunk existed.
-    fn composite_next_hunk_active_on(&mut self, composite_handle: u64) -> bool;
+    fn composite_next_hunk_active_on(&mut self, composite_handle: usize) -> bool;
 
     /// Jump back to the previous hunk; companion of
     /// `composite_next_hunk_active_on`.
-    fn composite_prev_hunk_active_on(&mut self, composite_handle: u64) -> bool;
+    fn composite_prev_hunk_active_on(&mut self, composite_handle: usize) -> bool;
 
     /// Force-materialize composite view state across visible splits
     /// without performing a render. Lets a scenario reach hunk-nav
@@ -646,7 +646,7 @@ impl EditorTestApi for crate::app::Editor {
         old_content: &str,
         new_content: &str,
         hunks: &[(usize, usize, usize, usize)],
-    ) -> u64 {
+    ) -> usize {
         use crate::model::composite_buffer::{
             CompositeLayout, DiffHunk, LineAlignment, PaneStyle, SourcePane,
         };
@@ -700,7 +700,7 @@ impl EditorTestApi for crate::app::Editor {
         composite_id.0
     }
 
-    fn set_composite_initial_focus_hunk_on(&mut self, composite_handle: u64, hunk_index: usize) {
+    fn set_composite_initial_focus_hunk_on(&mut self, composite_handle: usize, hunk_index: usize) {
         use crate::model::event::BufferId;
         let id = BufferId(composite_handle);
         if let Some(c) = self.active_window_mut().get_composite_mut(id) {
@@ -708,19 +708,19 @@ impl EditorTestApi for crate::app::Editor {
         }
     }
 
-    fn composite_initial_focus_hunk_on(&self, composite_handle: u64) -> Option<usize> {
+    fn composite_initial_focus_hunk_on(&self, composite_handle: usize) -> Option<usize> {
         use crate::model::event::BufferId;
         let id = BufferId(composite_handle);
         self.active_window().get_composite(id).and_then(|c| c.initial_focus_hunk)
     }
 
-    fn composite_next_hunk_active_on(&mut self, composite_handle: u64) -> bool {
+    fn composite_next_hunk_active_on(&mut self, composite_handle: usize) -> bool {
         use crate::model::event::BufferId;
         let id = BufferId(composite_handle);
         self.active_window_mut().composite_next_hunk_active(id)
     }
 
-    fn composite_prev_hunk_active_on(&mut self, composite_handle: u64) -> bool {
+    fn composite_prev_hunk_active_on(&mut self, composite_handle: usize) -> bool {
         use crate::model::event::BufferId;
         let id = BufferId(composite_handle);
         self.active_window_mut().composite_prev_hunk_active(id)

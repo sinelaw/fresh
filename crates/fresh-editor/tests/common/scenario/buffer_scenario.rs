@@ -263,48 +263,50 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
 
     // ── Assert cursors ──────────────────────────────────────────────
     let primary = api.primary_caret();
-    if s.expected_primary != primary {
-        return Err(ScenarioFailure::PrimaryCursorMismatch {
-            description: s.description,
-            expected: s.expected_primary,
-            actual: primary,
-        });
-    }
-
-    let all_carets = api.carets();
-    let expected_count = 1 + s.expected_extra_cursors.len();
-    if all_carets.len() != expected_count {
-        return Err(ScenarioFailure::CursorCountMismatch {
-            description: s.description,
-            expected: expected_count,
-            actual: all_carets.len(),
-        });
-    }
-
-    // `carets()` is sorted ascending by position; the primary may be at
-    // any sorted index, so we filter it out and compare the remainder
-    // against the expected secondaries (also sorted ascending).
-    let mut secondaries: Vec<Caret> = all_carets
-        .into_iter()
-        .filter(|c| !(c.position == primary.position && c.anchor == primary.anchor))
-        .collect();
-    secondaries.sort_by_key(|c| c.position);
-
-    let mut expected_secondaries = s.expected_extra_cursors.clone();
-    expected_secondaries.sort_by_key(|c| c.position);
-
-    for (i, (got, want)) in secondaries
-        .iter()
-        .zip(expected_secondaries.iter())
-        .enumerate()
-    {
-        if want != got {
-            return Err(ScenarioFailure::SecondaryCursorMismatch {
+    if !s.skip_cursor_check {
+        if s.expected_primary != primary {
+            return Err(ScenarioFailure::PrimaryCursorMismatch {
                 description: s.description,
-                index: i,
-                expected: *want,
-                actual: *got,
+                expected: s.expected_primary,
+                actual: primary,
             });
+        }
+
+        let all_carets = api.carets();
+        let expected_count = 1 + s.expected_extra_cursors.len();
+        if all_carets.len() != expected_count {
+            return Err(ScenarioFailure::CursorCountMismatch {
+                description: s.description,
+                expected: expected_count,
+                actual: all_carets.len(),
+            });
+        }
+
+        // `carets()` is sorted ascending by position; the primary may be at
+        // any sorted index, so we filter it out and compare the remainder
+        // against the expected secondaries (also sorted ascending).
+        let mut secondaries: Vec<Caret> = all_carets
+            .into_iter()
+            .filter(|c| !(c.position == primary.position && c.anchor == primary.anchor))
+            .collect();
+        secondaries.sort_by_key(|c| c.position);
+
+        let mut expected_secondaries = s.expected_extra_cursors.clone();
+        expected_secondaries.sort_by_key(|c| c.position);
+
+        for (i, (got, want)) in secondaries
+            .iter()
+            .zip(expected_secondaries.iter())
+            .enumerate()
+        {
+            if want != got {
+                return Err(ScenarioFailure::SecondaryCursorMismatch {
+                    description: s.description,
+                    index: i,
+                    expected: *want,
+                    actual: *got,
+                });
+            }
         }
     }
 

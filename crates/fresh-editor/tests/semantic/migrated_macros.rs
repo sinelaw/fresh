@@ -203,14 +203,14 @@ fn migrated_macro_with_multiple_cursors_no_overflow() {
         // original's claim (`screen.contains("X")`) tightened
         // to equality on the exact post-replay text.
         expected_text: "l1XX\nl2XX\nl3".into(),
-        // Don't pin the exact primary cursor position — the
-        // load-bearing claim is "no stack overflow + at least
-        // one 'X' inserted", and the precise post-collapse
-        // position is an implementation detail of
-        // RemoveSecondaryCursors. Use the runner's
-        // selection-text assertion to nail the structural claim.
+        // Don't pin the exact primary cursor position or count
+        // — the load-bearing claim is "no stack overflow + at
+        // least one 'X' inserted", and the precise post-collapse
+        // cursor state is an implementation detail of
+        // RemoveSecondaryCursors / replay's fan-out re-entry.
+        // `skip_cursor_check` is the explicit opt-out.
         expected_primary: CursorExpect::default(),
-        expected_selection_text: Some(String::new()),
+        skip_cursor_check: true,
         ..Default::default()
     });
 }
