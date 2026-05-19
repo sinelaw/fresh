@@ -44,6 +44,14 @@ const editor = getEditor();
 
 type AgentState = "running" | "awaiting" | "ready" | "errored" | "killed";
 
+// One row in the completion popup. `kind: "history"` items
+// render with a leading `↶` marker + italic styling so the user
+// can tell at-a-glance that the row came from their submission
+// history rather than from the live completion source. Sent to
+// the host via `formPanel.setCompletions`; the host renders the
+// marker + style.
+type CompletionItem = { value: string; kind?: "history" };
+
 interface AgentSession {
   // Editor's stable session id.
   id: number;
@@ -169,7 +177,10 @@ interface NewSessionForm {
   probeToken: number;
   // Per-field input-history cursor. -1 = "not in history"
   // (showing the user's current draft). 0 = most recent, 1 =
-  // older, etc.
+  // older, etc. (Now only consulted by the host-side `↶`
+  // history rows mixed into the completion popup — Up/Down on a
+  // history-bearing field reopens the popup, where historical
+  // entries appear after live completion candidates.)
   historyCursor: { project_path: number; name: number; cmd: number; branch: number };
   // Saved draft text per field: when the user first presses Up
   // we squirrel away whatever was in `value` so Down can
@@ -186,7 +197,7 @@ interface NewSessionForm {
   // fetch bumps it; results bail if they're not the latest.
   completion: {
     field: "project_path" | "branch" | null;
-    items: string[];
+    items: CompletionItem[];
     selectedIndex: number;
     anchor: string;
     token: number;
@@ -2163,7 +2174,7 @@ function buildFormSpec(): WidgetSpec {
       hintBar([
         { keys: "Tab", label: "next / accept" },
         { keys: "S-Tab", label: "prev" },
-        { keys: "↑↓", label: "history" },
+        { keys: "↑↓", label: "suggest / history" },
         { keys: "Space", label: "toggle" },
         { keys: "Enter", label: "advance / act" },
         { keys: "Esc", label: "cancel" },
@@ -2417,8 +2428,28 @@ function setCompletionItems(
   items: string[],
 ): void {
   if (!form) return;
+  // Compose the popup row list: live completion candidates
+  // first (regular `kind: undefined`), then any history entries
+  // for this field that aren't already in the live list,
+  // marked `kind: "history"` so the host renders them with the
+  // `↶` marker + italic. Duplicate suppression keeps the popup
+  // from showing the same path twice when a candidate happens
+  // to match a previous submission.
+  const live: CompletionItem[] = items
+    .slice(0, COMPLETION_MAX_ITEMS)
+    .map((value) => ({ value }));
+  const histField = focusToHistoryField(field);
+  let composed: CompletionItem[] = live;
+  if (histField) {
+    const seen = new Set(live.map((i) => i.value));
+    const historyRows: CompletionItem[] = readHistory(histField)
+      .filter((v) => !seen.has(v))
+      .slice(0, COMPLETION_MAX_ITEMS)
+      .map((value) => ({ value, kind: "history" as const }));
+    composed = [...live, ...historyRows].slice(0, COMPLETION_MAX_ITEMS);
+  }
   form.completion.field = field;
-  form.completion.items = items.slice(0, COMPLETION_MAX_ITEMS);
+  form.completion.items = composed;
   form.completion.selectedIndex = 0;
   // Push the candidate list to the host's Text-widget instance
   // state. The host repaints the popup chrome (dim separator,
@@ -2776,7 +2807,11 @@ registerHandler("orchestrator_form_key_enter", () => {
   // advance — Enter is "dismiss the popup, stay focused on
   // the text input". When the popup is closed, Enter falls
   // through to the host's normal Text-widget Enter (picker
-  // activate or focus advance).
+  // activate or focus advance). On a focus advance, the host
+  // fires a `widget_event { event_type: "focus" }` and the
+  // plugin snaps `formFocusIndex` from that authoritative
+  // signal — see the `focus` branch in the widget_event
+  // handler below.
   dispatchFormKey("Enter");
 });
 registerHandler(
@@ -2812,15 +2847,24 @@ registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
 registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
 registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
 registerHandler("orchestrator_form_key_up", () => {
-  // When the completion popup is open the host short-circuits
-  // Up/Down to its own selection navigation — dispatch
-  // straight through. Otherwise walk history for the history-
-  // bearing inputs; otherwise pass through.
+  // Popup-open: dispatch straight through so the host moves
+  // the popup-selection cursor.
+  // Popup-closed: on a completion-bearing field
+  // (project_path / branch) re-fetch the popup so the user
+  // gets back live candidates AND any `↶`-marked history rows
+  // mixed in (see `setCompletionItems`). On a history-bearing
+  // non-completion field (name / cmd) walk history in place.
+  // Otherwise pass through.
   if (completionVisibleForFocused()) {
     dispatchFormKey("Up");
     return;
   }
-  const histField = focusToHistoryField(formFocusedKey());
+  const focusKey = formFocusedKey();
+  if (focusKey === "project_path" || focusKey === "branch") {
+    scheduleCompletionRefresh(focusKey);
+    return;
+  }
+  const histField = focusToHistoryField(focusKey);
   if (histField) {
     walkHistory(histField, -1);
   } else {
@@ -2832,7 +2876,12 @@ registerHandler("orchestrator_form_key_down", () => {
     dispatchFormKey("Down");
     return;
   }
-  const histField = focusToHistoryField(formFocusedKey());
+  const focusKey = formFocusedKey();
+  if (focusKey === "project_path" || focusKey === "branch") {
+    scheduleCompletionRefresh(focusKey);
+    return;
+  }
+  const histField = focusToHistoryField(focusKey);
   if (histField) {
     walkHistory(histField, 1);
   } else {
@@ -2930,6 +2979,18 @@ editor.on("widget_event", (e) => {
   // New-session form
   // ---------------------------------------------------------------------
   if (form && formPanel && e.panel_id === formPanel.id()) {
+    if (e.event_type === "focus") {
+      // Host fires this whenever the panel's focused widget
+      // changes — key-driven (Tab / Shift-Tab / Enter focus-
+      // advance), click-driven, or any other host-side focus
+      // mutation. The plugin keeps a local `formFocusIndex`
+      // mirror so handlers like Up/Down can look up the right
+      // history field without first asking the host; we snap
+      // that mirror from the authoritative signal here so the
+      // plugin never has to predict host-side focus rules.
+      snapFormFocusTo(e.widget_key);
+      return;
+    }
     if (e.event_type === "change") {
       const field = e.widget_key;
       const payload = (e.payload ?? {}) as Record<string, unknown>;

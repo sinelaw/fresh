@@ -638,7 +638,10 @@ export class WidgetPanel {
    * host-managed selection to index 0. The host repaints the
    * popup on its own; the plugin doesn't need to follow up with
    * an `update(spec)` call. */
-  setCompletions(widgetKey: string, items: string[]): boolean {
+  setCompletions(
+    widgetKey: string,
+    items: Array<string | { value: string; kind?: string }>,
+  ): boolean {
     return this.mutate({ kind: "setCompletions", widgetKey, items });
   }
 
@@ -805,7 +808,10 @@ export class FloatingWidgetPanel {
   /** Update a Text widget's completion popup candidates. Empty
    * `items` closes the popup; non-empty opens it and resets the
    * host-managed selection to index 0. */
-  setCompletions(widgetKey: string, items: string[]): boolean {
+  setCompletions(
+    widgetKey: string,
+    items: Array<string | { value: string; kind?: string }>,
+  ): boolean {
     return this.mutate({ kind: "setCompletions", widgetKey, items });
   }
 

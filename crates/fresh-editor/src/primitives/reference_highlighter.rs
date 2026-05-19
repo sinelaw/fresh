@@ -225,6 +225,7 @@ impl ReferenceHighlighter {
             Language::CSS => fresh_languages::tree_sitter_css::LANGUAGE.into(),
             Language::CSharp => fresh_languages::tree_sitter_c_sharp::LANGUAGE.into(),
             Language::Odin => fresh_languages::tree_sitter_odin::LANGUAGE.into(),
+            Language::Templ => fresh_languages::tree_sitter_templ::LANGUAGE.into(),
         };
 
         // Create parser

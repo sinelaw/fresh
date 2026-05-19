@@ -8,6 +8,14 @@ fn default_true() -> bool {
     true
 }
 
+fn settings_is_empty(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(o) => o.is_empty(),
+        _ => false,
+    }
+}
+
 /// Configuration for a single plugin
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(extend("x-display-field" = "/enabled"))]
@@ -22,6 +30,15 @@ pub struct PluginConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("readOnly" = true))]
     pub path: Option<PathBuf>,
+
+    /// Plugin-specific settings. The shape is defined by each plugin's
+    /// `<plugin_name>.schema.json` sidecar file; the host stores the value as
+    /// untyped JSON so a malformed plugin schema can't poison the rest of the
+    /// config. Plugins read this via `editor.getPluginConfig()` and the
+    /// Settings UI renders it as a sub-category under "Plugin Settings".
+    #[serde(default, skip_serializing_if = "settings_is_empty")]
+    #[schemars(extend("readOnly" = true))]
+    pub settings: serde_json::Value,
 }
 
 impl Default for PluginConfig {
@@ -29,6 +46,7 @@ impl Default for PluginConfig {
         Self {
             enabled: true,
             path: None,
+            settings: serde_json::Value::Null,
         }
     }
 }
@@ -38,6 +56,7 @@ impl PluginConfig {
         Self {
             enabled: true,
             path: Some(path),
+            settings: serde_json::Value::Null,
         }
     }
 }

@@ -1499,9 +1499,14 @@ impl Editor {
                                 self.terminal_height,
                                 buffer_id,
                             );
+                            // Terminal-dedicated splits never show line
+                            // numbers or current-line highlight — the
+                            // buffer is a PTY scrollback view, not source
+                            // code. (Mirrors the plugin-terminal split
+                            // setup in `create_plugin_terminal`.)
                             view_state.apply_config_defaults(
-                                self.config.editor.line_numbers,
-                                self.config.editor.highlight_current_line,
+                                false,
+                                false,
                                 self.active_window().resolve_line_wrap_for_buffer(buffer_id),
                                 self.config.editor.wrap_indent,
                                 self.active_window()
@@ -1897,10 +1902,13 @@ impl Editor {
             Action::CloseSplit => self.close_active_split(),
             Action::NextSplit => self.next_split(),
             Action::PrevSplit => self.prev_split(),
+            Action::NextWindow => self.next_window(),
+            Action::PrevWindow => self.prev_window(),
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::ToggleMaximizeSplit => self.toggle_maximize_split(),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
+            Action::ToggleFileExplorerSide => self.toggle_file_explorer_side(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
             Action::ToggleTabBar => self.active_window_mut().toggle_tab_bar(),
             Action::ToggleStatusBar => self.active_window_mut().toggle_status_bar(),

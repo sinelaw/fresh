@@ -55,6 +55,20 @@ impl Editor {
                     crate::input::keybindings::KeyContext::Normal;
                 return None; // fall through to normal input dispatch
             }
+            // Keyboard focus has been explicitly handed to the file
+            // explorer (issue #2029, sub-issue 1). Skip the PTY route
+            // even though `terminal_mode` is still set, so arrow keys
+            // reach the explorer instead of being swallowed by the
+            // shell. The `terminal_mode` flag is cleared up front by
+            // `take_focus_for_file_explorer`; this is a belt-and-braces
+            // guard against any async path that re-enables
+            // `terminal_mode` while file-explorer focus is legitimate.
+            if matches!(
+                self.active_window().key_context,
+                crate::input::keybindings::KeyContext::FileExplorer
+            ) {
+                return None;
+            }
             // Plugin commands flagged `terminalBypass: true` (via
             // `editor.registerCommand(..., { terminalBypass: true })`)
             // resolve to actions that must reach the editor even

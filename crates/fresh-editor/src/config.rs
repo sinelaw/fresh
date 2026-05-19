@@ -1158,6 +1158,16 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Recovery"))]
     pub hot_exit: bool,
 
+    /// Whether to confirm before quitting Fresh. When enabled, pressing
+    /// the quit shortcut surfaces a confirmation prompt even when no
+    /// buffers are modified. Useful for users who frequently hit
+    /// `Ctrl+Q` by mistake. Independent of the unsaved-changes prompt,
+    /// which always fires regardless of this setting.
+    /// Default: false
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Startup"))]
+    pub confirm_quit: bool,
+
     /// Whether to auto-open previously opened files (session restore) when
     /// starting Fresh in a directory.  When enabled (the default), tabs,
     /// splits, cursor positions and the file explorer state are restored
@@ -1427,6 +1437,7 @@ impl Default for EditorConfig {
             auto_save_enabled: false,
             auto_save_interval_secs: default_auto_save_interval(),
             hot_exit: true,
+            confirm_quit: false,
             restore_previous_session: true,
             skip_session_restore_when_files_passed: true,
             auto_create_empty_buffer_on_last_buffer_close: true,

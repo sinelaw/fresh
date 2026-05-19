@@ -1,14 +1,95 @@
 # Release Notes
 
-## Unreleased
+## 0.3.7
+
+Introduces an experimental **multi-window orchestrator** command (`Alt+Q`) - a UI that manages multiple Fresh windows side by side in a single Fresh process.
+
+### Features / Improvements
+
+#### Orchestrator (early experiment)
+
+The new orchestrator command (`Alt+Q`) lets one Fresh process juggle several independent windows — switch between sessions, open new ones from a project path / branch, or visit one in a separate Fresh process. This is an early experiment; expect rough edges. Please share your ideas and bug reports!
+
+#### Search and Replace
+
+Made an effort to improve the search & replace command, tackling several issues:
+
+* **All Files** scope toggle + dedicated current-file command.
+* Editor shortcuts (`Ctrl+P` etc.) pass through the panel.
+* Proper empty / searching / no-results states.
+* Large result sets stay responsive — incremental tree, throttled streaming, capped per-iteration work.
+
+#### Git Log / Review Diff
+
+* **Performance**: Per-commit diffs **stream into file-backed buffers** with full syntax highlighting, per-line add/delete backgrounds, working scrollbar, and `Fold by File` / `Fold by Hunk` commands. Now opens the famous "rewrite bun in rust" commit instantly!
+* **Open file at commit** (#1962): jump from a diff line in the review-branch detail panel to the file at that commit (read-only, `q` to go back).
+
+#### File Explorer
+
+* **Compact directories** (#1406, thanks @Nandaleio!): a directory containing a single child directory renders inline as `com.example.name`, VSCode/IntelliJ-style. On by default; toggle with `file_explorer.compact_directories`.
+* **Configurable tree indicators** (#1940, reported by @MicTheSquid): expand/collapse glyphs themable via *File Explorer → Tree Indicator Expanded / Collapsed* in the Settings UI.
+
+#### Plugins & API
+
+* **`git_statusbar` plugin + status-bar token registration API** (thanks @PavelLoparev!): show the current git branch in the status bar; plugins register their own tokens via `editor.registerStatusBarElement`. Add via *Settings → Editor → Status Bar → Left / Right*.
+* **`tab_actions` plugin** (#1844, thanks @PavelLoparev!): close all / to-the-left / to-the-right and move tabs within the current split.
+* **Plugins can register their own config items**: a new typed registration API lets plugins declare settings that appear in the Settings UI alongside built-in ones (sorted at the bottom of the category list), so users can toggle plugin behaviour from the same place as everything else. The bundled `vi_mode` plugin uses it to expose an **autoStart** option.
+
+#### Editing & Widgets
+
+* **Add Cursors to Line Ends** (#1870, reported by @aquasync): places a cursor at the end of every line in the selection.
+* Widget text inputs gain real selection rendering, `Shift+arrow` / `Ctrl+Shift+arrow` extension, and `Ctrl+C/V/X/A` — used by Search & Replace and plugin dialogs.
+* Floating completion popup on widget `Text` inputs.
+
+#### Live Diff
+
+* Word-level underline highlights on deletion lines; similarity threshold and size caps are runtime-tunable, so large diffs render as modified lines rather than paired add/remove blocks.
 
 ### Bug Fixes
 
-* **Stale "active window" leaks across projects**: Launching `fresh` in project A no longer activates a persisted orchestrator window rooted in project B just because B was the last window touched anywhere. The active-window picker now scopes to the launch cwd, so "Open Terminal" and the LSP target the project the user is actually in.
+* **`init.ts` `setAutoOpen(false)` ignored**: dashboard auto-open is now driven by the `ready` hook so user `init.ts` runs first.
 
-* **Workspace clobbered when only the Dashboard was open**: Quitting from a Dashboard-only tab no longer wipes the saved open-file list. The serializer strips virtual buffers (Dashboard, plugin scratch buffers); the workspace save path now refuses to overwrite a real on-disk workspace with the resulting all-virtual snapshot.
+#### Git Log / Review Diff
 
-* **`init.ts` `setAutoOpen(false)` ignored on startup**: The `dashboard` plugin used to call `openDashboard()` at module-load time, which runs during the startup plugin batch — *before* the user's `init.ts` has been evaluated. The dashboard appeared regardless of `getPluginApi("dashboard")?.setAutoOpen(false)`. Auto-open is now driven exclusively by the `ready` hook handler, which fires after `init.ts` has settled.
+* **Detail panel `PageUp` / `PageDown`** (action name was wrong); scrollbar now functional on the streamed buffer.
+
+#### File Explorer
+
+* **UI / navigation shortcuts** (#1903): `Ctrl+P` and friends are no longer swallowed when the file explorer has focus.
+* **Switch Project double-click** (#1931, reported by @SolarLune): double-clicking a directory navigates into it instead of dismissing the dialog.
+
+#### Plugins
+
+* **Plugin init scaffold** (#1986, @PavelLoparev): new plugins now generate `fresh.entry` (the current entry-point name) instead of stale `fresh.main`.
+* **Idle CPU from git plugins** (#2009, #2012): `git_statusbar` and `merge_conflict` no longer spawn idle subprocesses; `git_statusbar` is driven off `watchPath(.git/HEAD)`.
+
+#### Editing
+
+* **Smart Home with multiple cursors**: now runs for every cursor, not only the primary.
+* **Soft wrap at trailing space** (#1363, reported by @dragonfyre13): when a trailing space would overflow the wrap column, wrap backs up one word instead of breaking mid-token.
+* **Horizontal scroll-to-view on long lines** (#1873): the viewport now follows the cursor on long lines.
+
+#### Live Diff
+
+* **Wrapped overlay backgrounds** now extend across every visual row of a wrapped line.
+
+#### Rendering
+
+* **Highlighter cache preserved across bulk edits** (#1958): large pastes and replace-all no longer trigger a whole-file reparse.
+* **Phantom cursor offscreen** (#1965): a buffer cursor scrolled past the viewport no longer leaves a stray block at the screen edge.
+* **Split separator background** (#1963): separator cells now paint with `editor_bg` so split borders blend with the panes.
+* **Next / Prev Split un-maximizes** (#1961): navigating to another split un-maximizes first.
+* **Stable cursor-position indicator** (#1967): `Ln L, Col C` no longer jitters as the column count grows.
+* **PTY terminal background** now fills the render rect with the editor bg.
+* **Nostalgia theme** (#1890, reported by @NGRIT41): terminal-pane blue now covers full pane.
+* **Column rulers** suppressed on virtual buffers (dashboard, PTY panes, etc.).
+
+#### Misc
+
+* **No more stray `.fresh/` directory in your working dir** (#1991): orchestrator/cross-restart state now lives under `data_dir` instead of being dropped next to your project files.
+* **Buffer "library path" detection** (#1970, reported by @FF-AntiK): only `.cargo/registry` and `.cargo/git` are treated as Cargo library paths — local `.cargo/config.toml` etc. are no longer flagged.
+* **Julia grammar** (#1852, reported by @goszlanyi): the adjoint operator (`'`) no longer flips the rest of the line into string mode.
+* **`move_word_end` / `select_word_end` labels** (#1878, reported by @sour-dani): translated in all locales.
 
 ## 0.3.6
 

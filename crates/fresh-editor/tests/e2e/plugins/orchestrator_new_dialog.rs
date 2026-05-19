@@ -367,6 +367,231 @@ fn completion_popup_renders_scrollbar_when_overflowing() {
     );
 }
 
+/// The selected candidate's row paints with `popup_selection_bg`
+/// across the candidate text + trailing pad + scrollbar column,
+/// but the popup's `│` side borders must stay outside the
+/// highlight — the right `│` in particular must keep the
+/// popup's base bg (`theme.suggestion_bg`), not the selection
+/// blue. Regression guard for a bug where the row-level
+/// selection style propagated onto the wrapping `│ ... │` entry
+/// and the per-border fg-only inline overlay could not paint
+/// the bg back, so the right border sat on selection blue.
+#[test]
+fn selection_highlight_does_not_overlap_right_border() {
+    let (_temp, workspace, _names) = set_up_workspace_many_alphas();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    type_many_alphas_prefix_and_wait(&mut harness, &workspace);
+
+    // `alpha_00/` is the first candidate, selected by default
+    // (the host resets `selectedIndex` to 0 whenever the
+    // candidate list updates).
+    let (_text_col, row) = harness
+        .find_text_on_screen("alpha_00/")
+        .expect("`alpha_00/` should be visible as the first candidate row");
+
+    // Scan the selected row right-to-left for the popup's
+    // right `│` border. The dialog that wraps the form draws
+    // its own `│` one column further out, so the rightmost
+    // `│` is the dialog's border — the popup's right border
+    // is the next `│` inward, identified as the rightmost `│`
+    // whose left neighbor is NOT also `│` (the dialog border
+    // would have the popup's `│` immediately to its left).
+    let width = harness.buffer().area.width;
+    let mut right_border_col: Option<u16> = None;
+    for x in (1..width).rev() {
+        if harness.get_cell(x, row).as_deref() == Some("│")
+            && harness.get_cell(x - 1, row).as_deref() != Some("│")
+        {
+            right_border_col = Some(x);
+            break;
+        }
+    }
+    let right_border_col = right_border_col.unwrap_or_else(|| {
+        panic!(
+            "popup right `│` border should be visible on the selected candidate row.\nScreen:\n{}",
+            harness.screen_to_string(),
+        )
+    });
+
+    let (popup_selection_bg, suggestion_bg) = {
+        let theme = harness.editor().theme();
+        (theme.popup_selection_bg, theme.suggestion_bg)
+    };
+    let border_style = harness
+        .get_cell_style(right_border_col, row)
+        .expect("right border cell should have a style");
+
+    assert_ne!(
+        border_style.bg,
+        Some(popup_selection_bg),
+        "right `│` border on the selected candidate row must NOT paint with \
+         `popup_selection_bg` ({:?}); the selection highlight should stop \
+         inside the border, not overlap it. Border cell bg: {:?}.\nScreen:\n{}",
+        popup_selection_bg,
+        border_style.bg,
+        harness.screen_to_string(),
+    );
+    assert_eq!(
+        border_style.bg,
+        Some(suggestion_bg),
+        "right `│` border on the selected candidate row should paint on the \
+         popup's base background (`suggestion_bg` = {:?}), not {:?}.\nScreen:\n{}",
+        suggestion_bg,
+        border_style.bg,
+        harness.screen_to_string(),
+    );
+
+    // Also confirm the cell *inside* the popup's right border
+    // (which is either the `█` scrollbar thumb or a pad
+    // space, depending on whether the popup overflows) DOES
+    // carry the selection bg. Pins the "highlight reads as a
+    // single solid block, not truncated at end of text"
+    // requirement: the selection should extend all the way to
+    // the inside of the border, including the scrollbar
+    // column on selected rows.
+    let inside_col = right_border_col.saturating_sub(1);
+    let inside_style = harness
+        .get_cell_style(inside_col, row)
+        .expect("inside cell should have a style");
+    assert_eq!(
+        inside_style.bg,
+        Some(popup_selection_bg),
+        "selection highlight should extend across the row's interior up to \
+         the inside of the right border (including the scrollbar column \
+         when present). Cell at col {} ({:?}) bg: {:?}.\nScreen:\n{}",
+        inside_col,
+        harness.get_cell(inside_col, row),
+        inside_style.bg,
+        harness.screen_to_string(),
+    );
+}
+
+/// Completion candidates render left-aligned with the input
+/// field's value. The input row's leading chrome is `│ [` —
+/// dialog border + section padding + value's `[` bracket —
+/// putting the value's first char three columns inside the
+/// dialog border. The popup row's leading chrome should match,
+/// so the candidate's first char sits directly under the
+/// value's first char.
+#[test]
+fn completion_candidates_left_aligned_with_input_value() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    let prefix = type_alpha_prefix_and_wait(&mut harness, &workspace);
+    let _ = prefix;
+
+    // The typed value starts with the workspace path; the candidate
+    // popup row begins with the same workspace path followed by
+    // `alpha_dir/`. So the workspace path string is the natural
+    // anchor on both rows — locating its first occurrence on each
+    // gives the column of the first char of the value (input row)
+    // and of the candidate text (popup row).
+    //
+    // We must not anchor on `'/'` here: on Windows the workspace
+    // path is rendered as `\\?\C:\...` so the first `/` lands deep
+    // inside the path, far past the actual start of the candidate.
+    let workspace_str = workspace.display().to_string();
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+    let input_row = lines
+        .iter()
+        .position(|l| l.contains('[') && l.contains(']') && l.contains(&workspace_str))
+        .expect("input row with [<typed path>] should be on screen");
+    let popup_row = lines
+        .iter()
+        .position(|l| l.contains("alpha_dir/") && l.contains(&workspace_str))
+        .expect("popup row with `alpha_dir/` should be on screen");
+
+    let input_col = lines[input_row]
+        .find(&workspace_str)
+        .expect("input row should contain the workspace path");
+    let popup_col = lines[popup_row]
+        .find(&workspace_str)
+        .expect("popup row should contain the workspace path");
+
+    assert_eq!(
+        input_col, popup_col,
+        "popup candidate's first column ({}) should match the input value's first column ({}); \
+         the candidate text must sit directly under the typed value, not one column to the \
+         left of it.\nInput row {}:\n{}\nPopup row {}:\n{}",
+        popup_col, input_col, input_row, lines[input_row], popup_row, lines[popup_row],
+    );
+}
+
+/// After the popup dismisses on Enter and a second Enter advances
+/// focus to the next tabbable widget, the plugin's local focus
+/// mirror must advance in lockstep with the host. Without this,
+/// the plugin still thinks the text input is focused and the
+/// next Up/Down walks the *previous* text input's history,
+/// silently rewriting its value. This was the user-reported
+/// breakage: "after using the popup and pressing enter to visit
+/// the checkbox/next field, up/down still modify the input box".
+///
+/// We verify by typing a marker character after the focus
+/// advance and asserting the original input is unchanged. If
+/// focus is correctly on the next tabbable, the marker goes
+/// elsewhere; if focus is stuck on the original text input, the
+/// marker extends its value.
+#[test]
+fn enter_advance_after_popup_dismiss_moves_plugin_focus_mirror() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    let typed = type_alpha_prefix_and_wait(&mut harness, &workspace);
+
+    // Popup is open. Enter #1 dismisses it (stays on the
+    // Project Path text input).
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("alpha_two/"))
+        .unwrap();
+    assert_eq!(
+        project_path_field_value(&harness.screen_to_string()),
+        typed,
+        "Enter #1 should dismiss the popup without changing the typed text",
+    );
+
+    // Enter #2 advances focus to the next tabbable widget.
+    // (The worktree checkbox is disabled because the typed
+    // `<workspace>/al` path doesn't exist; the focus cycle
+    // skips it.)
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    // Now type a marker character. If the plugin's focus
+    // mirror correctly advanced past Project Path, this char
+    // lands somewhere else (Session Name's input replaces the
+    // placeholder, etc.) and the Project Path value stays at
+    // `typed`. If the plugin's mirror is stuck on
+    // project_path, the marker extends it.
+    harness.type_text("Z").unwrap();
+    harness.tick_and_render().unwrap();
+
+    assert_eq!(
+        project_path_field_value(&harness.screen_to_string()),
+        typed,
+        "after Enter-Enter, focus must have advanced past the Project Path \
+         text input; a subsequent keystroke must not extend the Project Path \
+         value. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
 /// Mouse wheel over the popup scrolls its candidate list — same
 /// behaviour the user gets from Down arrow, except the selected
 /// index stays put (it's a scroll, not a selection move). Goes

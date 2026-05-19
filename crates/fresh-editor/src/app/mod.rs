@@ -638,6 +638,15 @@ pub struct Editor {
     /// Global and lifetime-checked. Per-buffer values live on each `Window`.
     status_bar_token_registry: Mutex<HashMap<String, String>>,
 
+    /// Registry of plugin-provided config schemas, keyed by plugin name.
+    /// Each value is the validated JSON schema describing
+    /// `plugins.<name>.settings.*`. Populated at startup from
+    /// `<plugin_name>.schema.json` sidecar files discovered next to plugin
+    /// `.ts`/`.js` files; the Settings UI reads this to render a
+    /// per-plugin sub-category under "Plugin Settings".
+    pub(crate) plugin_schemas:
+        std::sync::Arc<std::sync::RwLock<HashMap<String, serde_json::Value>>>,
+
     // `seen_byte_ranges` moved onto `Window` — keyed by `BufferId`
     // which lives on `Window`, so the tracker follows the buffers.
 

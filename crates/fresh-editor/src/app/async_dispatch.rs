@@ -517,6 +517,37 @@ impl Editor {
                             if let Err(e) = self.revert_buffer_by_id(buffer_id, &backing_path) {
                                 tracing::warn!("Failed to revert terminal buffer: {}", e);
                             }
+
+                            // After revert, scroll the viewport so the just-
+                            // appended exit message is visible. sync_terminal_to_buffer
+                            // pinned the viewport to the start of the visible screen
+                            // (so exit is pixel-identical to the last live frame); the
+                            // exit message is appended *after* that pinned region,
+                            // so we have to deliberately scroll past the pin to bring
+                            // it on-screen. Move the cursor to the new end-of-buffer
+                            // and clear the skip_ensure_visible flag the sync path
+                            // armed; the next render's ensure_visible will then scroll
+                            // the cursor (and the exit-message line above it) into
+                            // view.
+                            let new_total = self
+                                .windows
+                                .get(&self.active_window)
+                                .and_then(|w| w.buffers.get(&buffer_id))
+                                .map(|s| s.buffer.total_bytes())
+                                .unwrap_or(0);
+                            if let Some((mgr, view_states)) = self
+                                .windows
+                                .get_mut(&self.active_window)
+                                .map(|w| &mut w.buffers)
+                                .expect("active window present")
+                                .splits_mut()
+                            {
+                                let active_split = mgr.active_split();
+                                if let Some(view_state) = view_states.get_mut(&active_split) {
+                                    view_state.cursors.primary_mut().position = new_total;
+                                    view_state.viewport.clear_skip_ensure_visible();
+                                }
+                            }
                         }
 
                         // Ensure buffer remains read-only with no line numbers

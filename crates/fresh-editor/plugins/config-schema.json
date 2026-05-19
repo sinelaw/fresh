@@ -103,6 +103,7 @@
         "auto_save_enabled": false,
         "auto_save_interval_secs": 30,
         "hot_exit": true,
+        "confirm_quit": false,
         "restore_previous_session": true,
         "skip_session_restore_when_files_passed": true,
         "auto_create_empty_buffer_on_last_buffer_close": true,
@@ -654,6 +655,12 @@
           "type": "boolean",
           "default": true,
           "x-section": "Recovery"
+        },
+        "confirm_quit": {
+          "description": "Whether to confirm before quitting Fresh. When enabled, pressing\nthe quit shortcut surfaces a confirmation prompt even when no\nbuffers are modified. Useful for users who frequently hit\n`Ctrl+Q` by mistake. Independent of the unsaved-changes prompt,\nwhich always fires regardless of this setting.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Startup"
         },
         "restore_previous_session": {
           "description": "Whether to auto-open previously opened files (session restore) when\nstarting Fresh in a directory.  When enabled (the default), tabs,\nsplits, cursor positions and the file explorer state are restored\nfrom the last clean exit in the same working directory.  When\ndisabled, Fresh starts with a clean workspace.  The workspace file\non disk is still written on exit, so re-enabling this setting picks\nup whatever state was saved at the most recent clean exit.  The\n`--no-restore` CLI flag is a stronger override: it skips both\nrestoring and saving the workspace.\nDefault: true",
@@ -1662,6 +1669,10 @@
             "string",
             "null"
           ],
+          "readOnly": true
+        },
+        "settings": {
+          "description": "Plugin-specific settings. The shape is defined by each plugin's\n`<plugin_name>.schema.json` sidecar file; the host stores the value as\nuntyped JSON so a malformed plugin schema can't poison the rest of the\nconfig. Plugins read this via `editor.getPluginConfig()` and the\nSettings UI renders it as a sub-category under \"Plugin Settings\".",
           "readOnly": true
         }
       },

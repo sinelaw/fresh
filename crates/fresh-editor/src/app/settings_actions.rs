@@ -22,33 +22,36 @@ impl Editor {
         // Include schema at compile time
         const SCHEMA_JSON: &str = include_str!("../../plugins/config-schema.json");
 
-        // Create settings state if not exists, or show existing
-        if self.settings_state.is_none() {
-            match crate::view::settings::SettingsState::new(SCHEMA_JSON, &self.config) {
-                Ok(mut state) => {
-                    // Load layer sources to show where each setting value comes from
-                    let resolver =
-                        ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
-                    if let Ok(sources) = resolver.get_layer_sources() {
-                        state.set_layer_sources(sources);
-                    }
-                    // Snapshot plugin-registered status-bar tokens for the dual-list picker.
-                    let tokens = self.status_bar_token_registry.lock().unwrap().clone();
-                    state.set_status_bar_tokens(tokens);
-                    state.show();
-                    self.settings_state = Some(state);
+        // Snapshot of plugin-provided schemas to inject as a
+        // "Plugin Settings" category — clone the map so we can drop
+        // the read lock before constructing SettingsState. Rebuilt on
+        // every open so plugins that lazily register their schemas
+        // after startup (or via Reload Plugin) show up without
+        // requiring a full editor restart.
+        let plugin_schemas = self.plugin_schemas.read().unwrap().clone();
+
+        match crate::view::settings::SettingsState::new_with_plugin_schemas(
+            SCHEMA_JSON,
+            &self.config,
+            &plugin_schemas,
+        ) {
+            Ok(mut state) => {
+                // Load layer sources to show where each setting value comes from
+                let resolver =
+                    ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+                if let Ok(sources) = resolver.get_layer_sources() {
+                    state.set_layer_sources(sources);
                 }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("settings.failed_to_open", error = e.to_string()).to_string(),
-                    );
-                }
-            }
-        } else {
-            let tokens = self.status_bar_token_registry.lock().unwrap().clone();
-            if let Some(ref mut state) = self.settings_state {
+                // Snapshot plugin-registered status-bar tokens for the dual-list picker.
+                let tokens = self.status_bar_token_registry.lock().unwrap().clone();
                 state.set_status_bar_tokens(tokens);
                 state.show();
+                self.settings_state = Some(state);
+            }
+            Err(e) => {
+                self.set_status_message(
+                    t!("settings.failed_to_open", error = e.to_string()).to_string(),
+                );
             }
         }
     }

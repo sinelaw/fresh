@@ -3885,3 +3885,64 @@ fn test_file_explorer_custom_tree_indicators() {
         "default expanded glyph leaked through when collapsed.\nLine: {subdir_line:?}"
     );
 }
+
+/// Locate the column of "File Explorer" in the screen output.
+///
+/// Returns the byte/column offset within the matching line. This is sufficient
+/// to compare relative positions because the file-explorer title is rendered
+/// with ASCII characters (1 byte = 1 column in the part we're matching).
+fn explorer_title_column(screen: &str) -> Option<usize> {
+    for line in screen.lines() {
+        if let Some(idx) = line.find("File Explorer") {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+/// Issue #1468: the file explorer can be moved between the left and right
+/// side of the window via a single command-palette action. The action
+/// flips `file_explorer.side` and the rendered title moves accordingly.
+#[test]
+fn test_toggle_file_explorer_side_moves_panel() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    fs::write(project_root.join("a.txt"), "content").unwrap();
+
+    // Open the file explorer (defaults to the left).
+    harness.editor_mut().toggle_file_explorer();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    let screen_left = harness.screen_to_string();
+    let col_left = explorer_title_column(&screen_left)
+        .unwrap_or_else(|| panic!("File Explorer title not found:\n{screen_left}"));
+    assert!(
+        col_left < 30,
+        "Expected file explorer on left side (col={col_left}):\n{screen_left}"
+    );
+
+    // Toggle to the right side.
+    harness.editor_mut().toggle_file_explorer_side();
+    harness.render().unwrap();
+    let screen_right = harness.screen_to_string();
+    let col_right = explorer_title_column(&screen_right)
+        .unwrap_or_else(|| panic!("File Explorer title not found after toggle:\n{screen_right}"));
+    assert!(
+        col_right > col_left + 20,
+        "Expected file explorer to move to the right (col_left={col_left}, col_right={col_right}):\n{screen_right}"
+    );
+
+    // Toggle back to the left.
+    harness.editor_mut().toggle_file_explorer_side();
+    harness.render().unwrap();
+    let screen_left2 = harness.screen_to_string();
+    let col_left2 = explorer_title_column(&screen_left2).unwrap_or_else(|| {
+        panic!("File Explorer title not found after second toggle:\n{screen_left2}")
+    });
+    assert_eq!(
+        col_left, col_left2,
+        "Second toggle should return the explorer to its original left position"
+    );
+}

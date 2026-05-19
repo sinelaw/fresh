@@ -241,6 +241,18 @@ impl Window {
                 // Terminal buffers should not wrap lines so escape
                 // sequences stay intact.
                 view_state.viewport.line_wrap_enabled = false;
+                // Disable line numbers + current-line highlight for the
+                // terminal buffer's per-buffer view state so exiting
+                // terminal mode doesn't suddenly add a gutter / row
+                // highlight. The render path overwrites the buffer's
+                // margin config every frame from this view-state flag,
+                // so setting it here is required even though
+                // `state.margins.configure_for_line_numbers(false)` was
+                // already called above.
+                let buf_state = view_state.ensure_buffer_state(buffer_id);
+                buf_state.show_line_numbers = false;
+                buf_state.highlight_current_line = false;
+                buf_state.viewport.line_wrap_enabled = false;
             }
         }
 
@@ -1002,13 +1014,19 @@ impl Window {
         };
 
         // Append visible screen to backing file
-        // The scrollback has already been incrementally streamed by the PTY read loop
+        // The scrollback has already been incrementally streamed by the PTY read loop.
+        // Capture the file size *just before* the append so the viewport
+        // can anchor to it below — that byte offset is the first byte of
+        // the visible screen we're about to append, which is exactly
+        // where the live PTY grid drew its row 0.
+        let mut history_end_byte: Option<u64> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
                 // Record the current file size as the history end point
                 // (before appending visible screen) so we can truncate back to it
                 if let Ok(metadata) = self.resources.authority.filesystem.metadata(&backing_file) {
                     state.set_backing_file_history_end(metadata.size);
+                    history_end_byte = Some(metadata.size);
                 }
 
                 // Open backing file in append mode to add visible screen
@@ -1044,11 +1062,25 @@ impl Window {
                 // Terminal buffers should never be considered "modified"
                 state.buffer.set_modified(false);
             }
-            // Move cursor to end of buffer in SplitViewState
+            // Anchor the viewport at the first byte of the appended
+            // visible screen and place the cursor there too. The scroll-
+            // back view now opens with the just-appended PTY rows at the
+            // top — exactly where the live grid drew them — so exit is
+            // pixel-identical to the last terminal-mode tick even when
+            // most of the screen is blank (post-`clear` / `reset`). The
+            // old `cursor = total_bytes` + `ensure_cursor_visible` path
+            // anchored the bottom row instead, which pulled older
+            // scrollback into rows the PTY had drawn blank.
+            let anchor_byte = history_end_byte
+                .map(|h| (h as usize).min(total_bytes))
+                .unwrap_or(total_bytes);
             if let Some((mgr, view_states)) = self.buffers.splits_mut() {
                 let active_split = mgr.active_split();
                 if let Some(view_state) = view_states.get_mut(&active_split) {
-                    view_state.cursors.primary_mut().position = total_bytes;
+                    view_state.cursors.primary_mut().position = anchor_byte;
+                    view_state.viewport.top_byte = anchor_byte;
+                    view_state.viewport.top_view_line_offset = 0;
+                    view_state.viewport.left_column = 0;
                 }
             }
         }
@@ -1059,15 +1091,54 @@ impl Window {
             state.margins.configure_for_line_numbers(false);
         }
 
-        // In read-only view, keep line wrapping disabled for terminal buffers
-        // Also scroll viewport to show the end of the buffer where the cursor is.
-        let active_split = self
-            .buffers
-            .splits()
-            .expect("active window must have a populated split layout")
-            .0
-            .active_split();
-        self.enter_terminal_scrollback_view(buffer_id, active_split);
+        // Refresh line-wrap state for the scroll-back view and arm the
+        // skip_ensure_visible flag so the next render does *not* run
+        // `Viewport::ensure_visible` against the cursor we just pinned.
+        // Without this the renderer would notice that the cursor sits
+        // on the viewport's top row, treat that as "above the scroll
+        // margin", and scroll `top_byte` up by `scroll_offset` lines —
+        // pulling pre-existing scrollback above the appended visible
+        // screen and undoing the anchor. The flag is consumed
+        // (cleared) by the first navigation / scroll action, so normal
+        // scrolling still works after that.
+        //
+        // Also force the per-buffer gutter / current-line-highlight off
+        // here as the exit-path's last line of defense. Spawn /
+        // workspace-restore code paths each have their own setup, and a
+        // single missed spot leaks a gutter pop-in on exit — pinning
+        // them on this path covers any terminal regardless of how its
+        // view state was created.
+        if let Some((mgr, view_states)) = self.buffers.splits_mut() {
+            let active_split = mgr.active_split();
+            // The active split's view state may not yet have a keyed
+            // entry for the terminal buffer (e.g. user just pressed
+            // Alt+] into a split that has the terminal as a tab but
+            // never displayed it before). ensure_buffer_state will
+            // create one with defaults (show_line_numbers=true) the
+            // very first time — so we have to *immediately* override
+            // those defaults here, otherwise the next render flashes
+            // a gutter for restored terminals.
+            //
+            // Also force the gutter / current-line-highlight off on
+            // every other split that has this terminal as a tab. A
+            // single missed BufferViewState (e.g. created lazily by
+            // workspace restore + Alt+]) leaks a gutter pop-in.
+            for vs in view_states.values_mut() {
+                if vs.has_buffer(buffer_id) {
+                    let buf_state = vs.ensure_buffer_state(buffer_id);
+                    buf_state.show_line_numbers = false;
+                    buf_state.highlight_current_line = false;
+                    buf_state.viewport.line_wrap_enabled = false;
+                }
+            }
+            if let Some(view_state) = view_states.get_mut(&active_split) {
+                view_state.viewport.line_wrap_enabled = false;
+                view_state.viewport.set_skip_ensure_visible();
+                let buf_state = view_state.ensure_buffer_state(buffer_id);
+                buf_state.show_line_numbers = false;
+                buf_state.highlight_current_line = false;
+            }
+        }
     }
 
     /// Render terminal content for terminal buffers in this window's

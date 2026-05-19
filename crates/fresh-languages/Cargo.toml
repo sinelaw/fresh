@@ -29,11 +29,18 @@ tree-sitter-bash = { version = "0.25.1", optional = true }
 tree-sitter-lua = { version = "0.4.1", optional = true }
 tree-sitter-pascal = { version = "0.10.2", optional = true }
 tree-sitter-odin = { version = "1.3.0", optional = true }
+tree-sitter-templ = { version = "2.2.0", optional = true }
 
 [features]
+# Note: enabling tree-sitter-templ also requires tree-sitter-go because the
+# templ grammar is built on top of Go and we reuse Go's highlight queries
+# for the embedded Go portions of a templ file.
+tree-sitter-templ = ["dep:tree-sitter-templ", "tree-sitter-go"]
+
 all-languages = [
     "tree-sitter-rust", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript",
     "tree-sitter-html", "tree-sitter-css", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-go",
     "tree-sitter-json", "tree-sitter-java", "tree-sitter-c-sharp", "tree-sitter-php", "tree-sitter-ruby",
-    "tree-sitter-bash", "tree-sitter-lua", "tree-sitter-pascal", "tree-sitter-odin"
+    "tree-sitter-bash", "tree-sitter-lua", "tree-sitter-pascal", "tree-sitter-odin",
+    "tree-sitter-templ"
 ]

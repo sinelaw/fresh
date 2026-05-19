@@ -419,6 +419,9 @@ impl Editor {
                     return PromptResult::EarlyReturn;
                 }
             }
+            PromptType::ConfirmQuit => {
+                self.handle_confirm_quit(&input);
+            }
             PromptType::LspRename {
                 original_text,
                 start_pos,
@@ -1369,6 +1372,26 @@ impl Editor {
             self.set_status_message(t!("buffer.close_cancelled").to_string());
         }
         false
+    }
+
+    /// Handle ConfirmQuit prompt (the `editor.confirm_quit` opt-in for
+    /// clean sessions, issue #2030). Treats the localized yes/quit key
+    /// or `"yes"` as confirmation; anything else (including Esc, which
+    /// arrives as empty input) cancels.
+    fn handle_confirm_quit(&mut self, input: &str) {
+        let input_trim = input.trim().to_lowercase();
+        let quit_first = t!("prompt.key.quit")
+            .to_string()
+            .to_lowercase()
+            .chars()
+            .next();
+        let first_char = input_trim.chars().next();
+        let confirms = first_char == quit_first || first_char == Some('y') || input_trim == "yes";
+        if confirms {
+            self.should_quit = true;
+        } else {
+            self.set_status_message(t!("buffer.close_cancelled").to_string());
+        }
     }
 
     /// Handle ConfirmQuitWithModified prompt. Returns true if early return is needed.

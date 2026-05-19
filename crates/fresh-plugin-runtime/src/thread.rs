@@ -1618,6 +1618,7 @@ async fn load_plugins_from_dir_with_config_internal(
             PluginConfig {
                 enabled: existing_config.enabled,
                 path: Some(path.clone()),
+                settings: existing_config.settings.clone(),
             }
         } else {
             // Create new config with default enabled = true

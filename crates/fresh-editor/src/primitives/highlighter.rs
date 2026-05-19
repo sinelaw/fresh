@@ -400,6 +400,9 @@ mod tests {
         let path = std::path::Path::new("test.p");
         assert!(matches!(Language::from_path(path), Some(Language::Pascal)));
 
+        let path = std::path::Path::new("home.templ");
+        assert!(matches!(Language::from_path(path), Some(Language::Templ)));
+
         // Markdown disabled due to tree-sitter version conflict
         // let path = std::path::Path::new("test.md");
         // assert!(matches!(Language::from_path(path), Some(Language::Markdown)));
@@ -423,6 +426,34 @@ mod tests {
         // Keywords like "fn" should be highlighted with the theme's keyword color
         let has_keyword = spans.iter().any(|s| s.color == theme.syntax_keyword);
         assert!(has_keyword, "Should highlight keywords");
+    }
+
+    #[test]
+    fn test_highlighter_templ() {
+        // Reproducer for #463: opening a `.templ` file should produce
+        // highlighted spans (templ is Go + components/HTML/CSS), not
+        // fall back to plain text.
+        let source = "package main\n\
+                      \n\
+                      templ Greet(name string) {\n\
+                      \t<div class=\"hello\">Hello, { name }</div>\n\
+                      }\n";
+        let buffer = Buffer::from_str_test(source);
+        let mut highlighter = Highlighter::new(Language::Templ).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        let spans = highlighter.highlight_viewport(&buffer, 0, buffer.len(), &theme, 100_000);
+
+        assert!(
+            !spans.is_empty(),
+            "Templ file should produce highlighted spans"
+        );
+
+        let has_keyword = spans.iter().any(|s| s.color == theme.syntax_keyword);
+        assert!(
+            has_keyword,
+            "Templ file should highlight at least one keyword (`package` from Go or `templ`)"
+        );
     }
 
     #[test]

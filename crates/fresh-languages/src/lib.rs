@@ -40,6 +40,8 @@ pub use tree_sitter_python;
 pub use tree_sitter_ruby;
 #[cfg(feature = "tree-sitter-rust")]
 pub use tree_sitter_rust;
+#[cfg(feature = "tree-sitter-templ")]
+pub use tree_sitter_templ;
 #[cfg(feature = "tree-sitter-typescript")]
 pub use tree_sitter_typescript;
 
@@ -203,6 +205,7 @@ pub enum Language {
     Lua,
     Pascal,
     Odin,
+    Templ,
 }
 
 impl Language {
@@ -557,6 +560,32 @@ impl Language {
                 #[cfg(not(feature = "tree-sitter-odin"))]
                 Err("Odin language support not enabled".to_string())
             }
+            Self::Templ => {
+                // The templ grammar extends Go (see vrischmann/tree-sitter-templ),
+                // so combining Go's highlights query with the templ-specific one
+                // gives us reasonable highlighting for both the Go expressions
+                // and the templ-specific component / element / CSS syntax.
+                #[cfg(feature = "tree-sitter-templ")]
+                {
+                    let combined_highlights = format!(
+                        "{}\n{}",
+                        tree_sitter_go::HIGHLIGHTS_QUERY,
+                        TEMPL_HIGHLIGHTS_QUERY,
+                    );
+                    let mut config = HighlightConfiguration::new(
+                        tree_sitter_templ::LANGUAGE.into(),
+                        "templ",
+                        &combined_highlights,
+                        "",
+                        "",
+                    )
+                    .map_err(|e| format!("Failed to create Templ highlight config: {e}"))?;
+                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
+                    Ok(config)
+                }
+                #[cfg(not(feature = "tree-sitter-templ"))]
+                Err("Templ language support not enabled".to_string())
+            }
         }
     }
 
@@ -592,6 +621,7 @@ impl Language {
             Language::Lua,
             Language::Pascal,
             Language::Odin,
+            Language::Templ,
         ]
     }
 
@@ -617,6 +647,7 @@ impl Language {
             Self::Lua => "lua",
             Self::Pascal => "pascal",
             Self::Odin => "odin",
+            Self::Templ => "templ",
         }
     }
 
@@ -662,6 +693,7 @@ impl Language {
             Self::Lua => &["lua"],
             Self::Pascal => &["pas", "p"],
             Self::Odin => &["odin"],
+            Self::Templ => &["templ"],
         }
     }
 
@@ -687,6 +719,7 @@ impl Language {
             Self::Lua => "Lua",
             Self::Pascal => "Pascal",
             Self::Odin => "Odin",
+            Self::Templ => "Templ",
         }
     }
 
@@ -713,6 +746,7 @@ impl Language {
             "lua" => Some(Self::Lua),
             "pascal" => Some(Self::Pascal),
             "odin" => Some(Self::Odin),
+            "templ" => Some(Self::Templ),
             _ => None,
         }
     }
@@ -754,6 +788,7 @@ impl Language {
             "lua" => Some(Self::Lua),
             "pascal" => Some(Self::Pascal),
             "odin" => Some(Self::Odin),
+            "templ" => Some(Self::Templ),
             _ => {
                 // Try matching shell variants
                 if name_lower.contains("bash") || name_lower.contains("shell") {
@@ -786,6 +821,19 @@ const DEFAULT_HIGHLIGHT_CAPTURES: &[&str] = &[
     "type",
     "variable",
 ];
+
+/// Templ-specific highlight rules, vendored from the upstream
+/// `tree-sitter-templ` crate's `queries/templ/highlights.scm`. The crate ships
+/// this file but does not re-export it as a public Rust constant, so we keep
+/// our own copy and concatenate it with Go's highlights query (templ extends
+/// the Go grammar) to obtain the final highlight configuration.
+///
+/// Captures that aren't in `DEFAULT_HIGHLIGHT_CAPTURES` (e.g. `@tag`,
+/// `@function.method`) simply go un-styled — the `tree-sitter-highlight`
+/// configurator drops unknown capture names and matches on prefix for the
+/// known ones, so this still produces correct output.
+#[cfg(feature = "tree-sitter-templ")]
+const TEMPL_HIGHLIGHTS_QUERY: &str = include_str!("../queries/templ/highlights.scm");
 
 const TYPESCRIPT_HIGHLIGHT_CAPTURES: &[&str] = &[
     "attribute",
@@ -869,6 +917,23 @@ mod tests {
         // Language::id() must return "csharp" to match the config key
         // used for LSP server lookup and language detection.
         assert_eq!(Language::CSharp.id(), "csharp");
+    }
+
+    #[test]
+    fn test_templ_detected_from_extension() {
+        let path = Path::new("home.templ");
+        assert!(matches!(Language::from_path(path), Some(Language::Templ)));
+    }
+
+    #[test]
+    #[cfg(feature = "tree-sitter-templ")]
+    fn test_templ_highlight_config_builds() {
+        // The combined Go + templ highlights query must parse cleanly against
+        // the templ grammar; otherwise opening a `.templ` file would fall
+        // back to plain text instead of highlighting.
+        Language::Templ
+            .highlight_config()
+            .expect("Templ highlight config should build");
     }
 
     /// Guard: `from_path` and `extensions()` must stay in sync — they used to

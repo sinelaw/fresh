@@ -170,6 +170,43 @@ impl crate::app::Editor {
         }
     }
 
+    /// Cycle to the next open window in the workspace.
+    ///
+    /// Windows are ordered by their numeric `WindowId` (which is
+    /// monotonically assigned by `create_window_at`), so "next"
+    /// reads in creation order with wrap-around. No-op when only
+    /// one window is open (issue #2031).
+    pub fn next_window(&mut self) {
+        self.cycle_active_window(1);
+    }
+
+    /// Cycle to the previous open window. See [`Self::next_window`]
+    /// for ordering.
+    pub fn prev_window(&mut self) {
+        self.cycle_active_window(-1);
+    }
+
+    /// Step `delta` positions through the open windows (positive =
+    /// forward, negative = backward), wrapping around at the ends.
+    /// Centralises the cycle logic shared by `next_window` and
+    /// `prev_window` so both directions stay in sync if the
+    /// underlying ordering changes (e.g. user-controlled reorder).
+    fn cycle_active_window(&mut self, delta: isize) {
+        let mut ids: Vec<WindowId> = self.windows.keys().copied().collect();
+        if ids.len() <= 1 {
+            return;
+        }
+        ids.sort_by_key(|id| id.0);
+        let current_pos = match ids.iter().position(|id| *id == self.active_window) {
+            Some(pos) => pos as isize,
+            None => 0,
+        };
+        let len = ids.len() as isize;
+        let next_pos = (((current_pos + delta) % len) + len) % len;
+        let next_id = ids[next_pos as usize];
+        self.set_active_window(next_id);
+    }
+
     /// Build a fresh seed buffer + split layout for `id` if that
     /// window is missing either a split tree or any buffer to back
     /// it. Returns `None` when the window is unknown or already

@@ -1169,7 +1169,7 @@ fn render_collected(
             // the spec (plugins push via `SetCompletions`), so we
             // carry them across renders verbatim and clamp the
             // index to the current list size below.
-            let mut prev_completions: Vec<String> = Vec::new();
+            let mut prev_completions: Vec<fresh_core::api::CompletionItem> = Vec::new();
             let mut prev_completion_idx: usize = 0;
             let mut prev_completion_scroll: u32 = 0;
             match key
@@ -1388,7 +1388,8 @@ fn render_collected(
                     overlays.push(OverlayRow {
                         buffer_row: anchor,
                         entry: render_completion_item_overlay(
-                            item,
+                            &item.value,
+                            item.kind.as_deref(),
                             i == prev_completion_idx,
                             popup_total,
                             thumb,
@@ -1760,15 +1761,16 @@ fn render_completion_bottom_border(total_cols: usize) -> TextPropertyEntry {
 /// row wrapper.
 fn render_completion_item_overlay(
     item: &str,
+    kind: Option<&str>,
     selected: bool,
     total_cols: usize,
     scrollbar: Option<char>,
 ) -> TextPropertyEntry {
     let inner = total_cols.saturating_sub(2).max(1);
     // Reuse the inline-row builder for the body — same layout
-    // rules (1 leading space, item text, pad-to-(inner-1),
+    // rules (2 leading chars, item text, pad-to-(inner-1),
     // scrollbar in the last column).
-    let body_entry = render_completion_item(item, selected, inner, scrollbar);
+    let body_entry = render_completion_item(item, kind, selected, inner, scrollbar);
     // Build the wrapped text: `│` + body content + `│`. We
     // strip the body's trailing newline first so the borders
     // sit on the same line.
@@ -1778,6 +1780,43 @@ fn render_completion_item_overlay(
     text.push_str(body_no_nl);
     text.push('│');
     text.push('\n');
+    // Selection highlight is emitted as an inline overlay that
+    // covers ONLY the body byte range (between the two `│`
+    // chars) instead of a row-level `extend_to_line_end` style.
+    // A row-level selection style would also cover the border
+    // cells, and the per-border fg-only overlay below couldn't
+    // paint bg back over them — the right `│` would sit on
+    // selection blue. With the highlight scoped to the body
+    // range, the borders fall outside the selection's reach
+    // and paint with the panel's base bg (`theme.suggestion_bg`,
+    // filled in by the painter when no overlay supplies a bg).
+    //
+    // The body inline overlay covers the leading space, the
+    // candidate text, the trailing pad, AND the scrollbar
+    // column — so the selection reads as a single solid block
+    // across the whole inside of the popup rather than
+    // truncating at the end of the candidate text. The
+    // scrollbar's own fg-only overlay is appended after the
+    // selection overlay so it re-tints the scrollbar glyph's
+    // fg (per-property overlay merge keeps the selection bg).
+    let left_border_bytes = "│".len();
+    let body_no_nl_bytes = body_no_nl.len();
+    let right_border_start = left_border_bytes + body_no_nl_bytes;
+    let right_border_end = right_border_start + "│".len();
+    let mut inline_overlays: Vec<InlineOverlay> = Vec::new();
+    if selected {
+        inline_overlays.push(InlineOverlay {
+            start: left_border_bytes,
+            end: right_border_start,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_FG)),
+                bg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_BG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
     // Shift the body's inline overlays right by one byte
     // (the leading `│`) so the scrollbar tint still lands on
     // the right cell. Then add two more inline overlays for
@@ -1785,19 +1824,11 @@ fn render_completion_item_overlay(
     // popup-border theme key — same key the dim separator and
     // bottom border use, so the popup chrome reads as a
     // single themed surface.
-    let left_border_bytes = "│".len();
-    let body_no_nl_bytes = body_no_nl.len();
-    let right_border_start = left_border_bytes + body_no_nl_bytes;
-    let right_border_end = right_border_start + "│".len();
-    let mut inline_overlays: Vec<InlineOverlay> = body_entry
-        .inline_overlays
-        .into_iter()
-        .map(|mut io| {
-            io.start += left_border_bytes;
-            io.end += left_border_bytes;
-            io
-        })
-        .collect();
+    inline_overlays.extend(body_entry.inline_overlays.into_iter().map(|mut io| {
+        io.start += left_border_bytes;
+        io.end += left_border_bytes;
+        io
+    }));
     inline_overlays.push(InlineOverlay {
         start: 0,
         end: left_border_bytes,
@@ -1821,7 +1852,7 @@ fn render_completion_item_overlay(
     TextPropertyEntry {
         text,
         properties: Default::default(),
-        style: body_entry.style,
+        style: None,
         inline_overlays,
         segments: Vec::new(),
         pad_to_chars: None,
@@ -1829,13 +1860,17 @@ fn render_completion_item_overlay(
     }
 }
 
-/// One completion-candidate row. Renders as a single leading
-/// space followed by the candidate text, padded / truncated by
-/// the wrapping `LabeledSection` to `total_cols`. The leading
-/// space places the candidate's first character at the same
-/// column as the input value's first character (right after the
-/// input's `[` bracket), which is what the user expects from a
-/// "below the input, aligned with what you typed" popup.
+/// One completion-candidate row. Renders as two leading spaces
+/// followed by the candidate text, padded / truncated by the
+/// wrapping `LabeledSection` to `total_cols`. The two leading
+/// spaces place the candidate's first character at the same
+/// column as the input value's first character: the input
+/// row's leading chrome is `│ [` (border + section padding +
+/// open bracket) — three columns — and the popup row's leading
+/// chrome is `│ ` plus the body's two leading spaces, also
+/// three columns. So the popup item's first char sits directly
+/// under the value's first char, matching the user's "below
+/// the input, aligned with what you typed" expectation.
 ///
 /// `selected` rows paint with the standard popup-selection
 /// fg/bg theme keys + `extend_to_line_end` so the highlight
@@ -1852,6 +1887,7 @@ fn render_completion_item_overlay(
 /// `None` when there's nothing to indicate.
 fn render_completion_item(
     item: &str,
+    kind: Option<&str>,
     selected: bool,
     total_cols: usize,
     scrollbar: Option<char>,
@@ -1863,7 +1899,11 @@ fn render_completion_item(
     // glyph to keep its position regardless of how long the
     // candidate text is, so we hand-pad rather than relying on
     // entry-level `pad_to_chars`.
-    let text_budget = total_cols.saturating_sub(1).saturating_sub(1); // leading space + scrollbar col
+    //
+    // Budget = total_cols - (2 leading chars) - (1 scrollbar col).
+    // The two leading chars align the item with the bracketed
+    // input value (see the function docstring).
+    let text_budget = total_cols.saturating_sub(2).saturating_sub(1);
     let item_chars: Vec<char> = item.chars().collect();
     let (visible_item, truncated): (String, bool) = if item_chars.len() <= text_budget {
         (item.to_string(), false)
@@ -1878,13 +1918,30 @@ fn render_completion_item(
     };
     let _ = truncated;
     let scrollbar_ch = scrollbar.unwrap_or(' ');
+    let is_history = kind == Some("history");
+    // For history rows we replace the second leading space (the
+    // column that lines up with the bracketed input's `[`) with
+    // a small `↶` marker so the row visibly reads as "from
+    // history" at a glance. Regular rows keep two leading
+    // spaces. The marker is one display column wide so the
+    // item text starts in the same column on both kinds.
+    let history_marker: char = '↶';
     let mut text = String::with_capacity(total_cols * 4 + 2);
     text.push(' ');
+    let marker_start_byte = text.len();
+    if is_history {
+        text.push(history_marker);
+    } else {
+        text.push(' ');
+    }
+    let marker_end_byte = text.len();
+    let item_start_byte = text.len();
     text.push_str(&visible_item);
+    let item_end_byte = text.len();
     // Pad with spaces between the candidate text and the
     // scrollbar column so all rows have the scrollbar glyph in
     // the same column regardless of candidate length.
-    let used_cols = 1 + visible_item.chars().count();
+    let used_cols = 2 + visible_item.chars().count();
     let pad_cols = total_cols.saturating_sub(used_cols).saturating_sub(1);
     for _ in 0..pad_cols {
         text.push(' ');
@@ -1902,12 +1959,38 @@ fn render_completion_item(
     } else {
         None
     };
-    // Scrollbar glyph paints in `popup_border_fg` so it reads as
+    let mut inline_overlays: Vec<InlineOverlay> = Vec::new();
+    // History rows: paint the `↶` marker in the popup-border
+    // theme key (so it reads as chrome, not item content) and
+    // italicize the item text. Same dim fg key the scrollbar
+    // uses so all popup chrome stays in one theme slot.
+    if is_history {
+        inline_overlays.push(InlineOverlay {
+            start: marker_start_byte,
+            end: marker_end_byte,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_BORDER_FG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+        inline_overlays.push(InlineOverlay {
+            start: item_start_byte,
+            end: item_end_byte,
+            style: OverlayOptions {
+                italic: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+    // Scrollbar glyph paints in the dim theme key so it reads as
     // chrome rather than as part of the candidate text. We do
     // this as an inline overlay over the last visible cell so
     // the selection highlight on selected rows doesn't repaint
     // the scrollbar in white-on-blue.
-    let mut inline_overlays: Vec<InlineOverlay> = Vec::new();
     if scrollbar.is_some() {
         let total_bytes = text.trim_end_matches('\n').len();
         let scrollbar_byte_len = scrollbar_ch.len_utf8();

@@ -71,6 +71,13 @@ pub fn key_to_pty_bytes(
                 Some(vec![b'\t'])
             }
         }
+        // Crossterm reports Shift+Tab as `KeyCode::BackTab` (with the
+        // SHIFT modifier already stripped by Fresh's `normalize_key`
+        // in `app/mod.rs`). Without this arm the BackTab variant
+        // fell into the `_ => None` catch-all below and Shift+Tab was
+        // silently dropped before reaching the PTY (issue #2029,
+        // sub-bug 2).
+        KeyCode::BackTab => Some(vec![0x1b, b'[', b'Z']),
         KeyCode::Backspace => {
             if ctrl {
                 // Ctrl+Backspace - delete word
@@ -213,6 +220,30 @@ mod tests {
     fn test_enter() {
         let bytes = key_to_pty_bytes(KeyCode::Enter, KeyModifiers::NONE, false);
         assert_eq!(bytes, Some(vec![b'\r']));
+    }
+
+    #[test]
+    fn test_tab() {
+        let bytes = key_to_pty_bytes(KeyCode::Tab, KeyModifiers::NONE, false);
+        assert_eq!(bytes, Some(vec![b'\t']));
+    }
+
+    /// Shift+Tab must emit the standard backtab escape sequence
+    /// (`ESC [ Z`). Crossterm reports it as either
+    /// `Tab + KeyModifiers::SHIFT` or as `BackTab` (with the SHIFT
+    /// modifier already stripped by `normalize_key`). Both shapes
+    /// must reach the PTY child as the same bytes — issue #2029
+    /// sub-bug 2.
+    #[test]
+    fn test_shift_tab_via_tab_variant() {
+        let bytes = key_to_pty_bytes(KeyCode::Tab, KeyModifiers::SHIFT, false);
+        assert_eq!(bytes, Some(vec![0x1b, b'[', b'Z']));
+    }
+
+    #[test]
+    fn test_shift_tab_via_backtab_variant() {
+        let bytes = key_to_pty_bytes(KeyCode::BackTab, KeyModifiers::NONE, false);
+        assert_eq!(bytes, Some(vec![0x1b, b'[', b'Z']));
     }
 
     #[test]

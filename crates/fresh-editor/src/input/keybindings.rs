@@ -548,6 +548,8 @@ pub enum Action {
     CloseSplit,
     NextSplit,
     PrevSplit,
+    NextWindow,
+    PrevWindow,
     IncreaseSplitSize,
     DecreaseSplitSize,
     ToggleMaximizeSplit,
@@ -609,6 +611,8 @@ pub enum Action {
 
     // File explorer operations
     ToggleFileExplorer,
+    // File explorer side (left/right) toggle
+    ToggleFileExplorerSide,
     // Menu bar visibility
     ToggleMenuBar,
     // Tab bar visibility
@@ -1016,6 +1020,8 @@ impl Action {
             "close_split" => CloseSplit,
             "next_split" => NextSplit,
             "prev_split" => PrevSplit,
+            "next_window" => NextWindow,
+            "prev_window" => PrevWindow,
             "increase_split_size" => IncreaseSplitSize,
             "decrease_split_size" => DecreaseSplitSize,
             "toggle_maximize_split" => ToggleMaximizeSplit,
@@ -1063,6 +1069,7 @@ impl Action {
             "completion_dismiss" => CompletionDismiss,
 
             "toggle_file_explorer" => ToggleFileExplorer,
+            "toggle_file_explorer_side" => ToggleFileExplorerSide,
             "toggle_menu_bar" => ToggleMenuBar,
             "toggle_tab_bar" => ToggleTabBar,
             "toggle_status_bar" => ToggleStatusBar,
@@ -1199,6 +1206,11 @@ impl Action {
         alias {
             "toggle_compose_mode" => TogglePageView,
             "set_compose_width" => SetPageWidth,
+            // Common synonym users reach for when trying to disable a
+            // default binding (issue #2030). Without this alias,
+            // `Action::from_str` returns `None` for `"none"` and the
+            // user's override silently fails to load.
+            "none" => None,
         }
         with_char {
             "insert_char" => InsertChar,
@@ -1680,6 +1692,9 @@ impl KeybindingResolver {
                 // Split navigation
                 | Action::NextSplit
                 | Action::PrevSplit
+                // Window navigation
+                | Action::NextWindow
+                | Action::PrevWindow
                 | Action::SplitHorizontal
                 | Action::SplitVertical
                 | Action::CloseSplit
@@ -1699,6 +1714,7 @@ impl KeybindingResolver {
                 | Action::TerminalPaste
                 // File explorer
                 | Action::ToggleFileExplorer
+                | Action::ToggleFileExplorerSide
                 // Menu bar
                 | Action::ToggleMenuBar
         )
@@ -1850,6 +1866,20 @@ impl KeybindingResolver {
 
             let ui_fallthrough = context.allows_ui_fallthrough();
 
+            // A user binding in Normal context shadows the default
+            // Normal binding for the same key — even if the user's
+            // action doesn't qualify for fallthrough (e.g. `noop` to
+            // disable a default). Without this, the resolver fell
+            // through to the default's application-wide entry,
+            // making it impossible to disable application-wide
+            // bindings like `Ctrl+Q → Quit` from a user config
+            // (issue #2030).
+            let custom_normal_has_binding = self
+                .bindings
+                .get(&KeyContext::Normal)
+                .and_then(|m| m.get(norm))
+                .is_some();
+
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
                 if let Some(action) = normal_bindings.get(norm) {
                     if full_fallthrough
@@ -1865,17 +1895,19 @@ impl KeybindingResolver {
                 }
             }
 
-            if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
-                if let Some(action) = normal_bindings.get(norm) {
-                    if full_fallthrough
-                        || Self::is_application_wide_action(action)
-                        || (ui_fallthrough && Self::is_terminal_ui_action(action))
-                    {
-                        tracing::trace!(
-                            "  -> Found action in default normal bindings (fallthrough): {:?}",
-                            action
-                        );
-                        return action.clone();
+            if !custom_normal_has_binding {
+                if let Some(normal_bindings) = self.default_bindings.get(&KeyContext::Normal) {
+                    if let Some(action) = normal_bindings.get(norm) {
+                        if full_fallthrough
+                            || Self::is_application_wide_action(action)
+                            || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                        {
+                            tracing::trace!(
+                                "  -> Found action in default normal bindings (fallthrough): {:?}",
+                                action
+                            );
+                            return action.clone();
+                        }
                     }
                 }
             }
@@ -2359,6 +2391,8 @@ impl KeybindingResolver {
             Action::CloseSplit => t!("action.close_split"),
             Action::NextSplit => t!("action.next_split"),
             Action::PrevSplit => t!("action.prev_split"),
+            Action::NextWindow => t!("action.next_window"),
+            Action::PrevWindow => t!("action.prev_window"),
             Action::IncreaseSplitSize => t!("action.increase_split_size"),
             Action::DecreaseSplitSize => t!("action.decrease_split_size"),
             Action::ToggleMaximizeSplit => t!("action.toggle_maximize_split"),
@@ -2407,6 +2441,7 @@ impl KeybindingResolver {
             Action::CompletionAccept => t!("action.completion_accept"),
             Action::CompletionDismiss => t!("action.completion_dismiss"),
             Action::ToggleFileExplorer => t!("action.toggle_file_explorer"),
+            Action::ToggleFileExplorerSide => t!("action.toggle_file_explorer_side"),
             Action::ToggleMenuBar => t!("action.toggle_menu_bar"),
             Action::ToggleTabBar => t!("action.toggle_tab_bar"),
             Action::ToggleStatusBar => t!("action.toggle_status_bar"),

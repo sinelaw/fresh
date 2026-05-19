@@ -154,6 +154,13 @@ impl Editor {
     pub fn quit(&mut self) {
         // Check for unsaved buffers (all are auto-persisted when hot_exit is enabled)
         let modified_count = self.count_modified_buffers_needing_prompt();
+        if modified_count == 0 && self.config.editor.confirm_quit {
+            // No dirty buffers, but the user has opted into a
+            // safety-net confirmation for a stray Ctrl+Q (issue #2030).
+            let msg = t!("prompt.quit_confirm").to_string();
+            self.start_prompt(msg, PromptType::ConfirmQuit);
+            return;
+        }
         if modified_count > 0 {
             let save_key = t!("prompt.key.save").to_string();
             let cancel_key = t!("prompt.key.cancel").to_string();

@@ -9,7 +9,7 @@
 use crate::types::LspServerConfig;
 use rust_i18n::t;
 
-use crate::config::Config;
+use crate::config::{Config, FileExplorerSide};
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::input::keybindings::KeybindingResolver;
 
@@ -74,6 +74,32 @@ impl Editor {
     // their `*_visible` getters live on `impl Window` — call them via
     // `self.active_window_mut().toggle_tab_bar()` etc. (or read
     // `active_window().tab_bar_visible` for the flag directly).
+
+    /// Toggle the file explorer side between left and right.
+    ///
+    /// Updates the runtime config and the active window's runtime side
+    /// shadow, then persists the change to the user config layer (same
+    /// pattern as `toggle_menu_bar`).
+    pub fn toggle_file_explorer_side(&mut self) {
+        let new_side = match self.config.file_explorer.side {
+            FileExplorerSide::Left => FileExplorerSide::Right,
+            FileExplorerSide::Right => FileExplorerSide::Left,
+        };
+        self.config_mut().file_explorer.side = new_side;
+        self.active_window_mut().file_explorer_side = new_side;
+        self.persist_config_change(
+            "/file_explorer/side",
+            serde_json::json!(match new_side {
+                FileExplorerSide::Left => "left",
+                FileExplorerSide::Right => "right",
+            }),
+        );
+        let status = match new_side {
+            FileExplorerSide::Left => t!("toggle.file_explorer_side_left"),
+            FileExplorerSide::Right => t!("toggle.file_explorer_side_right"),
+        };
+        self.set_status_message(status.to_string());
+    }
 
     /// Toggle vertical scrollbar visibility
     pub fn toggle_vertical_scrollbar(&mut self) {

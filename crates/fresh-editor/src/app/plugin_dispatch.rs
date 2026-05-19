@@ -602,6 +602,13 @@ impl Editor {
             PluginCommand::SetSetting { path, value, .. } => {
                 self.handle_set_setting(path, value);
             }
+            PluginCommand::AddPluginConfigField {
+                plugin_name,
+                field_name,
+                field_schema,
+            } => {
+                self.handle_add_plugin_config_field(plugin_name, field_name, field_schema);
+            }
             PluginCommand::ReloadThemes { apply_theme } => {
                 self.reload_themes();
                 if let Some(theme_name) = apply_theme {
@@ -940,6 +947,14 @@ impl Editor {
                 duration_ms,
             } => {
                 self.handle_delay(callback_id, duration_ms);
+            }
+
+            PluginCommand::HttpFetch {
+                url,
+                target_path,
+                callback_id,
+            } => {
+                self.handle_http_fetch(url, target_path, callback_id);
             }
 
             PluginCommand::SpawnBackgroundProcess {
@@ -1439,7 +1454,8 @@ impl Editor {
     /// Load a plugin from a file path
     #[cfg(feature = "plugins")]
     fn handle_load_plugin(&mut self, path: std::path::PathBuf, callback_id: JsCallbackId) {
-        match self.plugin_manager.read().unwrap().load_plugin(&path) {
+        let load_result = self.plugin_manager.read().unwrap().load_plugin(&path);
+        match load_result {
             Ok(()) => {
                 tracing::info!("Loaded plugin from {:?}", path);
                 self.plugin_manager
@@ -1466,6 +1482,9 @@ impl Editor {
         match result {
             Ok(()) => {
                 tracing::info!("Unloaded plugin: {}", name);
+                if let Ok(mut schemas) = self.plugin_schemas.write() {
+                    schemas.remove(&name);
+                }
                 self.plugin_manager
                     .read()
                     .unwrap()
@@ -1484,7 +1503,20 @@ impl Editor {
     /// Reload a plugin by name
     #[cfg(feature = "plugins")]
     fn handle_reload_plugin(&mut self, name: String, callback_id: JsCallbackId) {
-        match self.plugin_manager.read().unwrap().reload_plugin(&name) {
+        // Capture the plugin's path before reloading so we can refresh its
+        // schema sidecar too. `list_plugins` is cheap (one channel
+        // round-trip).
+        let path = self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .list_plugins()
+            .into_iter()
+            .find(|p| p.name == name)
+            .map(|p| p.path);
+        let _ = path; // schema is now re-registered by plugin code on reload
+        let reload_result = self.plugin_manager.read().unwrap().reload_plugin(&name);
+        match reload_result {
             Ok(()) => {
                 tracing::info!("Reloaded plugin: {}", name);
                 self.plugin_manager
@@ -3263,6 +3295,49 @@ impl Editor {
         }
     }
 
+    fn handle_http_fetch(
+        &mut self,
+        url: String,
+        target_path: std::path::PathBuf,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        if let (Some(runtime), Some(bridge)) = (&self.tokio_runtime, &self.async_bridge) {
+            let sender = bridge.sender();
+            let process_id = callback_id.as_u64();
+
+            runtime.spawn(async move {
+                let fetch =
+                    tokio::task::spawn_blocking(move || fetch_url_to_file(&url, &target_path))
+                        .await;
+
+                let (stdout, stderr, exit_code) = match fetch {
+                    Ok(Ok(status)) => {
+                        if (200..300).contains(&status) {
+                            (String::new(), String::new(), 0)
+                        } else {
+                            (String::new(), format!("HTTP {}", status), i32::from(status))
+                        }
+                    }
+                    Ok(Err(e)) => (String::new(), e, -1),
+                    Err(e) => (String::new(), format!("fetch task failed: {}", e), -1),
+                };
+
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                    process_id,
+                    stdout,
+                    stderr,
+                    exit_code,
+                });
+            });
+        } else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "Async runtime not available".to_string());
+        }
+    }
+
     fn handle_kill_background_process(&mut self, process_id: u64) {
         if let Some(handle) = self.background_process_handles.remove(&process_id) {
             handle.abort();
@@ -4036,8 +4111,46 @@ impl Editor {
         let n = panel.tabbable.len() as i32;
         let new_idx = ((cur_idx + delta) % n + n) % n;
         let new_key = panel.tabbable[new_idx as usize].clone();
-        self.widget_registry.set_focus_key(panel_id, new_key);
+        self.set_panel_focus_and_notify(panel_id, new_key);
         self.rerender_widget_panel(panel_id);
+    }
+
+    /// Update the panel's focused widget AND fire a
+    /// `widget_event { event_type: "focus" }` so plugins can
+    /// react. Used by every host-driven focus move — key-driven
+    /// Tab / Shift-Tab / Enter focus-advance, click-driven
+    /// focus moves, etc. — so plugins never have to predict the
+    /// host's focus rules to keep a local mirror in sync.
+    ///
+    /// No-op when the key isn't actually changing (avoids
+    /// spurious events on every render that touches focus).
+    pub(crate) fn set_panel_focus_and_notify(&mut self, panel_id: u64, new_key: String) {
+        let old_key = self
+            .widget_registry
+            .focus_key(panel_id)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if old_key == new_key {
+            return;
+        }
+        self.widget_registry
+            .set_focus_key(panel_id, new_key.clone());
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                fresh_core::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key: new_key,
+                    event_type: "focus".to_string(),
+                    payload: serde_json::json!({ "previous": old_key }),
+                },
+            );
+        }
     }
 
     fn handle_widget_activate(&mut self, panel_id: u64) {
@@ -4257,7 +4370,7 @@ impl Editor {
                     ..
                 }) if !completions.is_empty() => {
                     let idx = (*completion_selected_index).min(completions.len() - 1);
-                    (focus_key, completions[idx].clone())
+                    (focus_key, completions[idx].value.clone())
                 }
                 _ => return,
             }
@@ -6183,4 +6296,55 @@ impl Window {
             }
         }
     }
+}
+
+/// Maximum size of a body downloaded via `editor.httpFetch`. 64 MB is well
+/// above any reasonable theme/plugin asset (themes are tens of KB) while
+/// still capping a misbehaving server's blast radius.
+const HTTP_FETCH_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Fetch a URL over HTTP(S) and stream the response body into `target`.
+///
+/// Returns the HTTP status code on success. Non-2xx responses are returned
+/// as their status code without writing to the target file. Transport
+/// errors (DNS, TLS, timeout, …) are returned as `Err`.
+fn fetch_url_to_file(url: &str, target: &std::path::Path) -> Result<u16, String> {
+    // Use the platform's native certificate verifier so requests work in
+    // environments with TLS-intercepting proxies or custom enterprise root
+    // CAs that aren't in Mozilla's bundled webpki-roots.
+    let tls_config = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .http_status_as_error(false)
+        .tls_config(tls_config)
+        .build()
+        .new_agent();
+
+    let response = agent
+        .get(url)
+        .header("User-Agent", "fresh-editor")
+        .call()
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Ok(status);
+    }
+
+    let mut file = std::fs::File::create(target)
+        .map_err(|e| format!("failed to create {}: {}", target.display(), e))?;
+
+    let mut reader = response
+        .into_body()
+        .into_with_config()
+        .limit(HTTP_FETCH_MAX_BYTES)
+        .reader();
+
+    std::io::copy(&mut reader, &mut file)
+        .map_err(|e| format!("failed to write response body: {}", e))?;
+
+    Ok(status)
 }

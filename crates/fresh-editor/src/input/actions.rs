@@ -2708,6 +2708,8 @@ pub fn action_to_events(
         | Action::CloseSplit
         | Action::NextSplit
         | Action::PrevSplit
+        | Action::NextWindow
+        | Action::PrevWindow
         | Action::Copy
         | Action::CopyWithTheme(_)
         | Action::CopyFilePath
@@ -2817,6 +2819,7 @@ pub fn action_to_events(
         | Action::CompletionAccept
         | Action::CompletionDismiss
         | Action::ToggleFileExplorer
+        | Action::ToggleFileExplorerSide
         | Action::ToggleMenuBar
         | Action::ToggleTabBar
         | Action::ToggleStatusBar

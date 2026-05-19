@@ -32,6 +32,47 @@ fn test_show_whitespace_tabs_default_shows_arrow() {
     harness.assert_screen_contains("hello");
 }
 
+/// Issue #1997 — adjacent tab characters must not render their indicator arrow
+/// twice. Pre-fix, the off-by-one in tab-expansion column tracking caused
+/// `col_offset` to land on the next tab-start one cell early, so `→` was
+/// emitted both for the last expansion-space of the previous tab and for
+/// the first space of the next.
+#[test]
+fn test_issue_1997_adjacent_tabs_no_doubled_arrow() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Two adjacent tabs followed by a unique marker. With tab_size = 4 the
+    // tabs occupy columns 0..4 and 4..8, so the rendered indicator pattern
+    // must be exactly: "→" then 3 spaces, "→" then 3 spaces, "X".
+    std::fs::write(&file_path, "\t\tX").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Screen content:\n{}", screen);
+
+    // The line that contains 'X' is the one we care about — locate it.
+    let line_with_x = screen
+        .lines()
+        .find(|line| line.contains('X'))
+        .expect("the marker 'X' must appear on screen");
+
+    // Count arrows and assert no two arrows are adjacent. Pre-fix this
+    // produced "→→" because both tabs' indicators landed on the same cell.
+    let arrow_count = line_with_x.matches('→').count();
+    assert_eq!(
+        arrow_count, 2,
+        "expected exactly 2 tab indicators for two tabs, got {arrow_count} in line: {line_with_x:?}"
+    );
+    assert!(
+        !line_with_x.contains("→→"),
+        "tab indicators must not appear back-to-back, got line: {line_with_x:?}"
+    );
+}
+
 /// Test that tab characters in Go files do NOT show → indicator
 /// (Go convention is to use tabs for indentation, so we hide the indicators)
 #[test]

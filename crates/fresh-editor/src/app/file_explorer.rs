@@ -71,6 +71,30 @@ impl Editor {
         self.active_window().file_explorer_visible
     }
 
+    /// Transfer keyboard focus from whatever owns it (most importantly:
+    /// a live terminal) to the file explorer.
+    ///
+    /// `dispatch_terminal_input` routes keys to the PTY whenever
+    /// `terminal_mode` is set, regardless of `key_context`. So just
+    /// writing `key_context = FileExplorer` is not enough — if the user
+    /// was in a terminal, every keystroke would still be swallowed by
+    /// the PTY and the explorer would only *look* focused (issue #2029).
+    /// Clear `terminal_mode` and remember the terminal buffer in
+    /// `terminal_mode_resume` so re-focusing the terminal later restores
+    /// live mode, mirroring the buffer-switch path in
+    /// `set_active_buffer`.
+    pub(super) fn take_focus_for_file_explorer(&mut self) {
+        let win = self.active_window_mut();
+        if win.terminal_mode {
+            let active = win.active_buffer();
+            if win.is_terminal_buffer(active) {
+                win.terminal_mode_resume.insert(active);
+            }
+            win.terminal_mode = false;
+        }
+        win.key_context = KeyContext::FileExplorer;
+    }
+
     pub fn toggle_file_explorer(&mut self) {
         let new_visible = !self.active_window().file_explorer_visible;
         self.active_window_mut().file_explorer_visible = new_visible;
@@ -79,7 +103,7 @@ impl Editor {
             if self.file_explorer().is_none() {
                 self.init_file_explorer();
             }
-            self.active_window_mut().key_context = KeyContext::FileExplorer;
+            self.take_focus_for_file_explorer();
             self.set_status_message(t!("explorer.opened").to_string());
             self.active_window_mut().sync_file_explorer_to_active_file();
         } else {
@@ -111,7 +135,7 @@ impl Editor {
             // Cancel search/replace prompts when switching focus away from editor
             self.active_window_mut().cancel_search_prompt_if_active();
 
-            self.active_window_mut().key_context = KeyContext::FileExplorer;
+            self.take_focus_for_file_explorer();
             self.set_status_message(t!("explorer.focused").to_string());
             self.active_window_mut().sync_file_explorer_to_active_file();
         } else {

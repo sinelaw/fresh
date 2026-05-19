@@ -432,8 +432,9 @@ pub enum HookArgs {
     /// and dispatch on `(panel_id, widget_key, event_type)`.
     ///
     /// `event_type` is one of: `"activate"`, `"toggle"`, `"change"`,
-    /// `"submit"`, `"hover"`, `"dismiss"`. `payload` is event-specific
-    /// JSON (e.g. `{ "value": "search text" }` for `change`).
+    /// `"submit"`, `"hover"`, `"dismiss"`, `"focus"`. `payload` is
+    /// event-specific JSON (e.g. `{ "value": "search text" }` for
+    /// `change`, `{ "previous": "<old key>" }` for `focus`).
     ///
     /// At v1 only widgets that have user-driven behaviour fire this
     /// hook. The HintBar widget is read-only and does not emit events.

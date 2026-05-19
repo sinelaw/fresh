@@ -2942,5 +2942,16 @@ editor.exportPluginApi("vi-mode", {
 // Initialization
 // ============================================================================
 
+// User-configurable opt-in: when enabled, vi mode kicks in for every
+// session without the user having to run the toggle command. Surfaces
+// in Settings UI under "Plugin: vi_mode".
+const autoStart = editor.defineConfigBoolean("autoStart", {
+  default: false,
+  description:
+    "Automatically enable vi mode when the editor starts. Default off — users opt in.",
+});
+if (autoStart) {
+  enableVi();
+}
 
 registerHandler("vi_to_brace", vi_to_brace);

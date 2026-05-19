@@ -164,29 +164,26 @@ async function detectMergeConflictFor(
 // Color Definitions
 // =============================================================================
 
+// Theme keys preferred over hard-coded RGB so the look tracks the
+// active theme. `addOverlay` accepts theme key strings directly.
+const OURS_FG_KEY = "editor.diff_add_bg";        // green-ish in most themes
+const THEIRS_FG_KEY = "editor.diff_remove_bg";   // red-ish
+const UNRESOLVED_FG_KEY = "ui.file_status_conflicted_fg";
+
 const colors = {
-  // Panel headers
-  oursHeader: [100, 200, 255] as [number, number, number],    // Cyan for OURS
-  theirsHeader: [255, 180, 100] as [number, number, number],  // Orange for THEIRS
-  resultHeader: [150, 255, 150] as [number, number, number],  // Green for RESULT
-
-  // Conflict highlighting
-  conflictOurs: [50, 80, 100] as [number, number, number],    // Blue-tinted background
-  conflictTheirs: [100, 70, 50] as [number, number, number],  // Orange-tinted background
-  conflictBase: [70, 70, 70] as [number, number, number],     // Gray for base
-
-  // Intra-line diff colors
-  diffAdd: [50, 100, 50] as [number, number, number],         // Green for additions
-  diffDel: [100, 50, 50] as [number, number, number],         // Red for deletions
-  diffMod: [50, 50, 100] as [number, number, number],         // Blue for modifications
-
-  // Selection
-  selected: [80, 80, 120] as [number, number, number],        // Selection highlight
-
-  // Buttons/actions
-  button: [100, 149, 237] as [number, number, number],        // Cornflower blue
-  resolved: [100, 200, 100] as [number, number, number],      // Green for resolved
-  unresolved: [200, 100, 100] as [number, number, number],    // Red for unresolved
+  // RGB tuples retained for any future contributor who reaches for them
+  // — the active call sites use the theme keys above. None of these
+  // appear in the currently rendered UI.
+  oursHeader: [100, 200, 255] as [number, number, number],
+  theirsHeader: [255, 180, 100] as [number, number, number],
+  resultHeader: [150, 255, 150] as [number, number, number],
+  conflictBase: [70, 70, 70] as [number, number, number],
+  diffAdd: [50, 100, 50] as [number, number, number],
+  diffDel: [100, 50, 50] as [number, number, number],
+  diffMod: [50, 50, 100] as [number, number, number],
+  selected: [80, 80, 120] as [number, number, number],
+  button: [100, 149, 237] as [number, number, number],
+  resolved: [100, 200, 100] as [number, number, number],
 };
 
 // =============================================================================
@@ -1010,7 +1007,7 @@ function highlightPanel(bufferId: number, side: "ours" | "theirs"): void {
   const lines = content.split("\n");
 
   let byteOffset = 0;
-  const conflictColor = side === "ours" ? colors.conflictOurs : colors.conflictTheirs;
+  const conflictColor = side === "ours" ? OURS_FG_KEY : THEIRS_FG_KEY;
 
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx];
@@ -1049,7 +1046,7 @@ function highlightResultPanel(bufferId: number): void {
     // Highlight conflict markers
     if (line.startsWith("<<<<<<<") || line.startsWith("=======") || line.startsWith(">>>>>>>")) {
       editor.addOverlay(bufferId, `merge-marker-${lineIdx}`, lineStart, lineEnd, {
-        fg: colors.unresolved,
+        fg: UNRESOLVED_FG_KEY,
         underline: true,
       });
     }

@@ -120,6 +120,10 @@ pub enum PromptType {
     },
     /// Confirm quitting with modified buffers
     ConfirmQuitWithModified,
+    /// Confirm quitting on a clean session (opt-in via `editor.confirm_quit`).
+    /// Issued only when no buffer is modified; otherwise
+    /// `ConfirmQuitWithModified` runs instead.
+    ConfirmQuit,
     /// File Explorer rename operation
     /// Stores the original path and name for the file/directory being renamed
     FileExplorerRename {
