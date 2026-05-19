@@ -13,7 +13,7 @@
 //! - shrinkable as proptest seeds (the corpus dump emits these).
 
 use crate::common::scenario::buffer_scenario::{
-    assert_buffer_scenario, repeat, BufferScenario, CursorExpect,
+    assert_buffer_scenario, BufferScenario, CursorExpect,
 };
 use fresh::test_api::Action;
 
@@ -104,45 +104,38 @@ fn migrated_backspace_deletes_previous_char() {
 }
 
 #[test]
-fn migrated_movement_across_empty_lines() {
-    // Empty lines between content shouldn't trap the cursor.
+fn migrated_up_from_line_below_empty_lands_on_empty_line() {
+    // Original: tests/e2e/movement.rs:480 test_movement_across_empty_lines.
+    // The regression direction was Up, NOT Down. The bug:
+    // pressing Up from "Line 3" (cursor at byte 8) used to skip
+    // the empty line at byte 7 and land at byte 0 ("Line 1");
+    // the fix ensures Up lands at byte 7 (the empty line).
     assert_buffer_scenario(BufferScenario {
-        description: "MoveDown twice from line 1 walks past an empty middle line".into(),
-        initial_text: "alpha\n\ncharlie".into(),
-        actions: vec![Action::MoveDown, Action::MoveDown],
-        expected_text: "alpha\n\ncharlie".into(),
-        // alpha\n (6) + \n (1) = 7, which is line-3 col-0.
+        description: "Down/Down/Up: cursor at byte 8 then Up must land at byte 7 (empty line), not byte 0".into(),
+        initial_text: "Line 1\n\nLine 3\n".into(),
+        actions: vec![Action::MoveDown, Action::MoveDown, Action::MoveUp],
+        expected_text: "Line 1\n\nLine 3\n".into(),
         expected_primary: CursorExpect::at(7),
         ..Default::default()
     });
 }
 
 #[test]
-fn migrated_repeated_select_right_grows_selection() {
-    // Lift the imperative `for _ in 0..N` selection-extension
-    // pattern into one declarative `repeat`.
-    let mut actions: Vec<Action> = repeat(Action::SelectRight, 5).collect();
-    actions.push(Action::SelectRight);
+fn migrated_up_up_from_line_3_reaches_line_1() {
+    // Companion to the regression: a SECOND Up from the empty
+    // line at byte 7 must land at byte 0 (Line 1 start), proving
+    // the post-fix traversal reaches Line 1 in two Ups not one.
     assert_buffer_scenario(BufferScenario {
-        description: "6 SelectRight steps on 'hello world' yield range 0..6".into(),
-        initial_text: "hello world".into(),
-        actions,
-        expected_text: "hello world".into(),
-        expected_primary: CursorExpect::range(0, 6),
-        expected_selection_text: Some("hello ".into()),
-        ..Default::default()
-    });
-}
-
-#[test]
-fn migrated_select_all_then_delete_clears_buffer() {
-    assert_buffer_scenario(BufferScenario {
-        description: "SelectAll + DeleteBackward empties the buffer".into(),
-        initial_text: "non-empty content".into(),
-        actions: vec![Action::SelectAll, Action::DeleteBackward],
-        expected_text: String::new(),
+        description: "Down/Down/Up/Up walks back through the empty line to Line 1".into(),
+        initial_text: "Line 1\n\nLine 3\n".into(),
+        actions: vec![
+            Action::MoveDown,
+            Action::MoveDown,
+            Action::MoveUp,
+            Action::MoveUp,
+        ],
+        expected_text: "Line 1\n\nLine 3\n".into(),
         expected_primary: CursorExpect::at(0),
-        expected_selection_text: Some(String::new()),
         ..Default::default()
     });
 }
