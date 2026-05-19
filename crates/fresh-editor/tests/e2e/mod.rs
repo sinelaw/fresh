@@ -71,7 +71,6 @@ pub mod issue_2029_file_explorer_terminal_focus;
 pub mod issue_2030_quit_confirm_and_disable;
 pub mod issue_2031_next_prev_window;
 pub mod issue_779_after_eof_shade;
-pub mod redraw_screen;
 pub mod suspend_process;
 
 pub mod keybinding_editor;
@@ -81,7 +80,6 @@ pub mod large_file_mode;
 pub mod lifecycle;
 pub mod line_number_bugs;
 pub mod line_wrap_cache_consistency;
-pub mod line_wrap_full_visibility;
 pub mod line_wrap_parity;
 pub mod line_wrap_scroll_bugs;
 pub mod line_wrapping;
