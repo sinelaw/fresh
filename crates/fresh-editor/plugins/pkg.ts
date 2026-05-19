@@ -232,6 +232,12 @@ interface ParsedPackageUrl {
   name: string;
   /** Whether this is a local file path (not a remote URL) */
   isLocal: boolean;
+  /**
+   * Whether the URL points directly to a single downloadable file (e.g. a
+   * theme JSON) rather than to a git repository. When true, the URL should
+   * be fetched over HTTP instead of cloned with git.
+   */
+  isDirectFile: boolean;
 }
 
 // =============================================================================
@@ -297,6 +303,24 @@ function isLocalPath(str: string): boolean {
 }
 
 /**
+ * File extensions that indicate a URL points to a single downloadable file
+ * (e.g. a Fresh theme JSON) rather than to a git repository.
+ */
+const DIRECT_FILE_EXTENSIONS = /\.(jsonc?|JSONC?)$/;
+
+/**
+ * Check if a URL points directly to a single downloadable file rather than
+ * to a git repository. Examples:
+ * - `https://github.com/user-attachments/files/123/synthwave-84.json` → true
+ * - `https://github.com/user/repo` → false
+ */
+function isDirectFileUrl(url: string): boolean {
+  // Strip query string for extension check
+  const pathOnly = url.split("?")[0];
+  return DIRECT_FILE_EXTENSIONS.test(pathOnly);
+}
+
+/**
  * Parse a package URL that may contain a subpath fragment.
  *
  * Supported formats:
@@ -305,6 +329,7 @@ function isLocalPath(str: string): boolean {
  * - `https://github.com/user/repo.git#packages/my-plugin` - with .git suffix
  * - `/path/to/local/repo#subdir` - local path with subpath
  * - `/path/to/local/package` - direct local package path
+ * - `https://example.com/path/to/theme.json` - direct file (downloaded over HTTP)
  *
  * The fragment (after #) specifies a subdirectory within the repo.
  */
@@ -329,19 +354,28 @@ function parsePackageUrl(url: string): ParsedPackageUrl {
   // Determine if this is a local path
   const isLocal = isLocalPath(repoUrl);
 
+  // A remote URL ending in a recognized file extension (and without a
+  // subpath fragment) is treated as a direct file download, not a git repo.
+  const isDirectFile = !isLocal && !subpath && isDirectFileUrl(repoUrl);
+
   // Extract package name
   let name: string;
   if (subpath) {
     // For monorepo/directory, use the last component of the subpath
     const parts = subpath.split("/");
     name = parts[parts.length - 1].replace(/^fresh-/, "");
+  } else if (isDirectFile) {
+    // For direct file downloads, use the filename without the extension
+    const pathOnly = repoUrl.split("?")[0];
+    const match = pathOnly.match(/\/([^\/]+?)\.(jsonc?|JSONC?)$/);
+    name = match ? match[1].replace(/^fresh-/, "") : "unknown";
   } else {
     // For regular repo/path, use the last component
     const match = repoUrl.match(/\/([^\/]+?)(\.git)?$/);
     name = match ? match[1].replace(/^fresh-/, "") : "unknown";
   }
 
-  return { repoUrl, subpath, name, isLocal };
+  return { repoUrl, subpath, name, isLocal, isDirectFile };
 }
 
 /**
@@ -784,11 +818,12 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
 }
 
 /**
- * Install a package from git URL or local path.
+ * Install a package from a git URL, direct file URL, or local path.
  *
  * Supports:
  * - `https://github.com/user/repo` - standard git repo
  * - `https://github.com/user/repo#packages/my-plugin` - monorepo with subpath
+ * - `https://example.com/path/to/theme.json` - direct file download (theme JSON)
  * - `/path/to/local/repo#subdir` - local path with subpath
  * - `/path/to/local/package` - direct local package path
  *
@@ -808,6 +843,9 @@ async function installPackage(
   if (parsed.isLocal) {
     // Local path installation: copy directly
     return await installFromLocalPath(parsed, packageName);
+  } else if (parsed.isDirectFile) {
+    // Direct file URL (e.g. theme JSON): download with curl, not git clone
+    return await installFromDirectFile(parsed.repoUrl, packageName);
   } else if (parsed.subpath) {
     // Remote monorepo installation: clone to temp, copy subdirectory
     return await installFromMonorepo(parsed, packageName, version);
@@ -815,6 +853,137 @@ async function installPackage(
     // Standard git installation: clone directly
     return await installFromRepo(parsed.repoUrl, packageName, version);
   }
+}
+
+/**
+ * Install from a direct file URL (e.g. a single theme JSON hosted on a CDN
+ * or GitHub user-attachments). Downloads the file with curl, validates it
+ * looks like a Fresh package (currently themes only), and writes it into
+ * the appropriate packages directory with a synthetic package.json manifest.
+ *
+ * Supported file types:
+ * - `.json` / `.jsonc` containing a Fresh theme (object with a `name` field
+ *   and at least one theme section like `editor`, `ui`, `syntax`, etc.)
+ */
+async function installFromDirectFile(
+  url: string,
+  packageName: string
+): Promise<boolean> {
+  const tempFile = editor.pathJoin(
+    editor.getTempDir(),
+    `fresh-pkg-file-${hashString(url)}-${Date.now()}.json`
+  );
+
+  editor.setStatus(`Downloading ${url}...`);
+  const result = await editor.spawnProcess("curl", [
+    "-fsSL",
+    "--max-time", "30",
+    "-o", tempFile,
+    url,
+  ]);
+
+  if (result.exit_code !== 0) {
+    const stderr = result.stderr || "";
+    const errorMsg = stderr.includes("404") || /not found/i.test(stderr)
+      ? "File not found"
+      : stderr.includes("Could not resolve host") || stderr.includes("resolve")
+      ? "Network error"
+      : stderr.split("\n")[0] || `curl exited ${result.exit_code}`;
+    editor.setStatus(`Failed to download ${packageName}: ${errorMsg}`);
+    editor.removePath(tempFile);
+    return false;
+  }
+
+  const content = editor.readFile(tempFile);
+  if (!content) {
+    editor.setStatus(`Failed to read downloaded file`);
+    editor.removePath(tempFile);
+    return false;
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content) as Record<string, unknown>;
+  } catch (e) {
+    editor.setStatus(`Downloaded file is not valid JSON: ${e}`);
+    editor.removePath(tempFile);
+    return false;
+  }
+
+  // Heuristic: a Fresh theme JSON has a `name` string and at least one of
+  // the recognized theme sections. This rules out arbitrary JSON files
+  // (configs, package manifests, etc.) being installed as themes.
+  const themeName = typeof parsed.name === "string" ? parsed.name : null;
+  const looksLikeTheme = themeName !== null && (
+    parsed.editor !== undefined ||
+    parsed.ui !== undefined ||
+    parsed.syntax !== undefined ||
+    parsed.search !== undefined ||
+    parsed.diagnostics !== undefined ||
+    parsed.base !== undefined
+  );
+
+  if (!looksLikeTheme) {
+    editor.setStatus(
+      `Unrecognized file format at ${url} - direct file install currently supports Fresh theme JSON only`
+    );
+    editor.removePath(tempFile);
+    return false;
+  }
+
+  // Use the theme's own name as the package name when available.
+  if (themeName) packageName = themeName;
+
+  // Sanitize for use as a directory name.
+  const safeName = packageName.replace(/[^a-zA-Z0-9_.-]/g, "-");
+  const targetDir = editor.pathJoin(THEMES_PACKAGES_DIR, safeName);
+
+  if (editor.fileExists(targetDir)) {
+    editor.setStatus(`Package '${safeName}' is already installed`);
+    editor.removePath(tempFile);
+    return false;
+  }
+
+  ensureDir(THEMES_PACKAGES_DIR);
+  if (!ensureDir(targetDir)) {
+    editor.setStatus(`Failed to create package directory ${targetDir}`);
+    editor.removePath(tempFile);
+    return false;
+  }
+
+  const themeFileName = "theme.json";
+  if (!editor.writeFile(editor.pathJoin(targetDir, themeFileName), content)) {
+    editor.setStatus(`Failed to write theme file`);
+    editor.removePath(tempFile);
+    editor.removePath(targetDir);
+    return false;
+  }
+
+  const manifest: PackageManifest = {
+    name: safeName,
+    version: "1.0.0",
+    description: `Theme installed from ${url}`,
+    type: "theme",
+    fresh: {
+      themes: [{ file: themeFileName, name: themeName ?? safeName }],
+    },
+  };
+  if (!await writeJsonFile(editor.pathJoin(targetDir, "package.json"), manifest)) {
+    editor.setStatus(`Failed to write package manifest`);
+    editor.removePath(tempFile);
+    editor.removePath(targetDir);
+    return false;
+  }
+
+  await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), {
+    url,
+    installed_at: new Date().toISOString(),
+  });
+
+  editor.removePath(tempFile);
+  editor.reloadThemes();
+  editor.setStatus(`Installed theme ${themeName ?? safeName}`);
+  return true;
 }
 
 /**
@@ -2748,7 +2917,7 @@ async function pkg_install_theme() : Promise<void> {
 registerHandler("pkg_install_theme", pkg_install_theme);
 
 /**
- * Install from git URL or local path
+ * Install from git URL, direct file URL, or local path
  */
 function pkg_install_url() : void {
   editor.startPrompt("Git URL or local path:", "pkg-install-url");
