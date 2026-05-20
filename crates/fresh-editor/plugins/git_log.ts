@@ -1088,7 +1088,9 @@ registerHandler("git_log_file_view_close", git_log_file_view_close);
 function on_git_log_cursor_moved(data: { buffer_id: number; line: number }): void {
   if (!state.isOpen || state.logBufferId === null) return;
   if (data.buffer_id !== state.logBufferId) return;
-  const idx = data.line;
+  // `cursor_moved.line` is 1-based; commit rows are 0-based (no header),
+  // so the selected commit index is `line - 1`.
+  const idx = data.line - 1;
   if (idx < 0 || idx >= state.commits.length) return;
   void selectCommitLine(idx);
 }

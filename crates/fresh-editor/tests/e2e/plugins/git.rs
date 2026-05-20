@@ -1569,6 +1569,62 @@ fn test_git_log_mouse_click_updates_selection_for_keyboard_nav() {
     );
 }
 
+/// Regression: in the cursor-driven commit list the selected/highlighted
+/// commit must be the one the cursor is actually on. A 1-based (`cursor_moved`
+/// line) vs 0-based (commit index) mix-up put the selection one row below the
+/// cursor — the status bar showed `Ln 4` (cursor on the 4th row) yet
+/// `Commit 5/8` (the 5th commit). The invariant: cursor on line K ⟺ commit K
+/// selected. Both values are rendered on the status bar, so we assert on them.
+#[test]
+fn test_git_log_cursor_line_matches_selected_commit() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    for i in 1..=8 {
+        let name = format!("lf{i:02}.txt");
+        repo.create_file(&name, "x");
+        repo.git_add(&[&name]);
+        repo.git_commit(&format!("linecommit-{i:02}"));
+    }
+
+    repo.setup_git_log_plugin();
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
+        .unwrap();
+
+    // HEAD starts on row 1. Move the cursor down three rows.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+
+    // Wait for the cursor to settle on line 4 (the status bar's `Ln`
+    // segment) — this happens regardless of the bug, so the assertion
+    // below fails fast rather than hanging when the selection is wrong.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Ln 4"))
+        .unwrap();
+
+    // The selection (plugin's `Commit X/Y` status) must match the cursor's
+    // line: line 4 ⟺ commit 4 of 8. The off-by-one rendered `Commit 5/8`.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Commit 4/8"),
+        "selected commit must match the cursor's line (Ln 4 ⟹ Commit 4/8), \
+         not be off by one:\n{screen}"
+    );
+}
+
 /// Regression: pressing Enter on a diff line in the commit details panel
 /// opens the file at that commit. Closing the file-view and pressing Enter
 /// again on a diff line must also work — it previously failed with
