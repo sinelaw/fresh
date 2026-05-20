@@ -969,6 +969,107 @@ impl Editor {
         );
     }
 
+    /// Show the workspace-trust prompt: a centered list asking how this
+    /// project's tooling should be treated. Surfaced on opening an
+    /// untrusted project that contains executable content (env files,
+    /// `.csproj`/`.sln`, …). The default-focused choice is the safe
+    /// "Restricted" — dismissing with Escape leaves the project undecided
+    /// (and re-asks next open), while selecting any row records the
+    /// decision so the prompt stops appearing.
+    pub fn show_workspace_trust_popup(&mut self) {
+        use crate::view::popup::{Popup, PopupContent, PopupKind, PopupResolver};
+        use ratatui::style::Style;
+
+        // Don't stack a second copy if one is already up.
+        if self
+            .active_state()
+            .popups
+            .top()
+            .is_some_and(|p| matches!(p.resolver, PopupResolver::WorkspaceTrust))
+        {
+            return;
+        }
+
+        let items = vec![
+            crate::view::popup::PopupListItem::new("Trust this folder".to_string())
+                .with_detail("Allow project tooling (LSP, env managers, tasks) to run".to_string())
+                .with_data("trusted".to_string()),
+            crate::view::popup::PopupListItem::new("Keep restricted (default)".to_string())
+                .with_detail("Don't run repo-controlled code; system tools still run".to_string())
+                .with_data("restricted".to_string()),
+            crate::view::popup::PopupListItem::new("Block all execution".to_string())
+                .with_detail("No processes run at all in this workspace".to_string())
+                .with_data("blocked".to_string()),
+        ];
+
+        let popup_width = (items
+            .iter()
+            .map(|i| {
+                let detail_w = i
+                    .detail
+                    .as_deref()
+                    .map(unicode_width::UnicodeWidthStr::width)
+                    .unwrap_or(0);
+                unicode_width::UnicodeWidthStr::width(i.text.as_str()).max(detail_w)
+            })
+            .max()
+            .unwrap_or(40)
+            + 4) as u16;
+
+        let popup = Popup {
+            kind: PopupKind::List,
+            title: Some("This project can run code on your machine. Trust it?".to_string()),
+            description: None,
+            transient: false,
+            content: PopupContent::List {
+                items,
+                // Default focus on the safe "Keep restricted" choice.
+                selected: 1,
+            },
+            position: crate::view::popup::PopupPosition::Centered,
+            width: popup_width.clamp(40, 70),
+            max_height: 10,
+            bordered: true,
+            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
+            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            scroll_offset: 0,
+            text_selection: None,
+            accept_key_hint: None,
+            resolver: PopupResolver::WorkspaceTrust,
+            focused: true,
+            focus_key_hint: None,
+        };
+
+        let buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.popups.show(popup);
+        }
+    }
+
+    /// Dispatch the choice selected from the workspace-trust prompt.
+    /// `"trusted"` / `"restricted"` / `"blocked"` set the level (persisted,
+    /// and the editor restarts so the new policy applies to already-running
+    /// tooling). Anything else is logged and ignored.
+    pub fn handle_workspace_trust_action(&mut self, action_key: &str) {
+        use crate::services::workspace_trust::TrustLevel;
+        let level = match action_key {
+            "trusted" => TrustLevel::Trusted,
+            "restricted" => TrustLevel::Restricted,
+            "blocked" => TrustLevel::Blocked,
+            other => {
+                tracing::warn!("handle_workspace_trust_action: unknown action key '{other}'");
+                return;
+            }
+        };
+        self.set_workspace_trust_level(level);
+    }
+
     /// Probe for a `devcontainer.json` under the current working
     /// directory. Mirrors the first two priorities of the devcontainer
     /// plugin's `findConfig()` so the Remote Indicator menu can decide

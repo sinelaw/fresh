@@ -114,6 +114,11 @@ pub enum PopupResolver {
     /// Confirm dispatches the selected row's `data` through
     /// `handle_remote_indicator_action`.
     RemoteIndicator,
+    /// Workspace-trust prompt (shown on opening an untrusted project that has
+    /// executable content). Confirm dispatches the selected row's `data`
+    /// ("trusted" / "restricted" / "blocked") through
+    /// `handle_workspace_trust_action`.
+    WorkspaceTrust,
 }
 
 /// Content of a popup window

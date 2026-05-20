@@ -197,18 +197,15 @@ impl EditorServer {
             .unwrap_or_else(crate::services::authority::Authority::local);
         let session_keepalive = config.session_keepalive.take();
 
-        // Workspace Trust. Decisions persist per-workspace in the user's
-        // config dir; any prior decision for this directory is honored.
-        // NOTE: the *fallback* when nothing is recorded is `Trusted`, so this
-        // remains behavior-preserving until the trust-granting prompt/UI
-        // lands; flipping the fallback to the safe `TrustLevel::Restricted`
-        // default is a one-line change here once users can grant trust.
+        // Workspace Trust. Decisions persist per-project; any prior decision
+        // for this directory is honored, and a never-decided project falls
+        // back to the safe `TrustLevel::Restricted` default. The
+        // trust-granting prompt is surfaced after the editor is built (see
+        // `maybe_prompt_workspace_trust`).
         let trust_store = crate::services::workspace_trust::TrustStore::for_project_dir(
             &config.dir_context.project_state_dir(&config.working_dir),
         );
-        let initial_trust = trust_store
-            .level()
-            .unwrap_or(crate::services::workspace_trust::TrustLevel::Trusted);
+        let initial_trust = trust_store.level().unwrap_or_default();
         let workspace_trust =
             Arc::new(crate::services::workspace_trust::WorkspaceTrust::new_persistent(
                 Some(config.working_dir.clone()),
@@ -652,6 +649,8 @@ impl EditorServer {
         self.terminal = Some(terminal);
         self.editor = Some(editor);
 
+        self.maybe_prompt_workspace_trust();
+
         tracing::info!(
             "Editor initialized with size {}x{}",
             self.term_size.cols,
@@ -659,6 +658,29 @@ impl EditorServer {
         );
 
         Ok(())
+    }
+
+    /// Surface the workspace-trust prompt when this project has never been
+    /// decided *and* contains executable content (env files, `.csproj`, …).
+    /// Idempotent and cheap: re-reads the project's trust file (so a decision
+    /// recorded in a prior session suppresses it) and does a shallow,
+    /// read-only scan for marker files. Called after the editor is built on
+    /// first boot and after each rebuild.
+    fn maybe_prompt_workspace_trust(&mut self) {
+        let store = crate::services::workspace_trust::TrustStore::for_project_dir(
+            &self.config.dir_context.project_state_dir(&self.config.working_dir),
+        );
+        if store.level().is_some() {
+            return; // already decided for this project
+        }
+        if !crate::services::workspace_trust::workspace_has_executable_content(
+            &self.config.working_dir,
+        ) {
+            return; // nothing whose trust matters — Restricted is transparent here
+        }
+        if let Some(editor) = self.editor.as_mut() {
+            editor.show_workspace_trust_popup();
+        }
     }
 
     /// Rebuild the editor in place after an authority transition or a
@@ -739,6 +761,11 @@ impl EditorServer {
 
         self.terminal = Some(terminal);
         self.editor = Some(editor);
+
+        // A working-dir change lands us in a possibly-undecided project;
+        // re-evaluate the trust prompt. (A rebuild triggered by a trust
+        // decision just recorded one, so this is a no-op there.)
+        self.maybe_prompt_workspace_trust();
 
         // Force every attached client to repaint from scratch — the
         // previous frame described the old editor's screen.

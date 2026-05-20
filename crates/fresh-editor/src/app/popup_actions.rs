@@ -123,6 +123,20 @@ impl Editor {
                 PopupConfirmResult::EarlyReturn
             }
 
+            Some(PopupResolver::WorkspaceTrust) => {
+                let action_key = self
+                    .active_state()
+                    .popups
+                    .top()
+                    .and_then(|p| p.selected_item())
+                    .and_then(|item| item.data.clone());
+                self.hide_popup();
+                if let Some(key) = action_key {
+                    self.handle_workspace_trust_action(&key);
+                }
+                PopupConfirmResult::EarlyReturn
+            }
+
             Some(PopupResolver::Completion) => {
                 // Grab the selected item's label + insert-text before we
                 // mutate the popup stack — insert_completion_text edits
@@ -344,6 +358,12 @@ impl Editor {
             }
 
             Some(PopupResolver::RemoteIndicator) => {
+                self.hide_popup();
+            }
+
+            Some(PopupResolver::WorkspaceTrust) => {
+                // Escape = "not now": leave the project undecided (no record),
+                // so the prompt re-appears next open. Just dismiss.
                 self.hide_popup();
             }
 

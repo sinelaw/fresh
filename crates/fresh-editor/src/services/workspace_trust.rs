@@ -168,9 +168,11 @@ impl WorkspaceTrust {
     /// since trust is per-project. Passing `None` detaches persistence.
     pub fn set_store(&self, store: Option<TrustStore>) {
         if let Some(store) = &store {
-            if let Some(level) = store.level() {
-                self.level.store(level.as_u8(), Ordering::Relaxed);
-            }
+            // Adopt the new project's recorded decision, or fall back to the
+            // safe default when it has none — never inherit the previous
+            // project's level.
+            let level = store.level().unwrap_or_default();
+            self.level.store(level.as_u8(), Ordering::Relaxed);
         }
         if let Ok(mut guard) = self.store.write() {
             *guard = store;
@@ -339,6 +341,46 @@ impl TrustStore {
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
     }
+}
+
+/// Whether a workspace contains content whose execution trust matters — i.e.
+/// whether opening it should prompt for a trust decision. Detection is
+/// **passive** (a shallow scan of the root for marker files/dirs); it never
+/// runs anything. A project with none of these markers is functional under
+/// Restricted (system tools still run), so there's nothing to ask about.
+pub fn workspace_has_executable_content(root: &Path) -> bool {
+    // Files that drive env activation or repo-controlled execution.
+    const FILE_MARKERS: &[&str] = &[
+        ".envrc",         // direnv
+        "mise.toml",      // mise
+        ".mise.toml",     // mise
+        ".tool-versions", // mise / asdf
+        "Pipfile",        // pipenv
+        "poetry.lock",    // poetry
+    ];
+    // Directories that hold a repo-local interpreter/toolchain.
+    const DIR_MARKERS: &[&str] = &[".venv", "venv"];
+
+    if FILE_MARKERS.iter().any(|m| root.join(m).is_file()) {
+        return true;
+    }
+    if DIR_MARKERS.iter().any(|m| root.join(m).is_dir()) {
+        return true;
+    }
+    // C# / .NET: loading a project runs restore/build and design-time
+    // analyzers, so a solution or project file at the root is executable
+    // content.
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                if matches!(ext, "sln" | "csproj" | "fsproj") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Wraps a [`ProcessSpawner`] so every one-shot spawn is gated by trust.
@@ -637,5 +679,47 @@ mod tests {
         let wt = WorkspaceTrust::new(Some(PathBuf::from("/home/u/proj")), TrustLevel::Restricted);
         wt.set_level(TrustLevel::Blocked);
         assert_eq!(wt.level(), TrustLevel::Blocked);
+    }
+
+    #[test]
+    fn set_store_to_undecided_project_resets_to_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b"); // never recorded
+        TrustStore::for_project_dir(&a)
+            .record(TrustLevel::Trusted)
+            .unwrap();
+        let wt = WorkspaceTrust::new_persistent(
+            Some(a.clone()),
+            TrustLevel::Trusted,
+            TrustStore::for_project_dir(&a),
+        );
+        assert_eq!(wt.level(), TrustLevel::Trusted);
+        // Switching to an undecided project must not inherit Trusted.
+        wt.set_store(Some(TrustStore::for_project_dir(&b)));
+        assert_eq!(wt.level(), TrustLevel::default());
+        assert_eq!(TrustLevel::default(), TrustLevel::Restricted);
+    }
+
+    #[test]
+    fn executable_content_detection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(!workspace_has_executable_content(&empty));
+
+        let envrc = tmp.path().join("envrc");
+        std::fs::create_dir_all(&envrc).unwrap();
+        std::fs::write(envrc.join(".envrc"), "use flake\n").unwrap();
+        assert!(workspace_has_executable_content(&envrc));
+
+        let venv = tmp.path().join("venv");
+        std::fs::create_dir_all(venv.join(".venv")).unwrap();
+        assert!(workspace_has_executable_content(&venv));
+
+        let dotnet = tmp.path().join("dotnet");
+        std::fs::create_dir_all(&dotnet).unwrap();
+        std::fs::write(dotnet.join("App.csproj"), "<Project/>\n").unwrap();
+        assert!(workspace_has_executable_content(&dotnet));
     }
 }

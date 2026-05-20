@@ -882,27 +882,34 @@ impl Editor {
 
     /// Handle an action (for normal mode and command execution).
     /// Used by the app module internally and by the GUI module for native menu dispatch.
-    /// Change the current workspace's trust level and report it. The shared
-    /// `WorkspaceTrust` state (held on the authority) is updated in place and
-    /// persisted to disk; the guarding spawners read the new level live, so it
-    /// takes effect for subsequent spawns without an editor rebuild.
+    /// Change the current workspace's trust level, persist it, and report it.
+    /// When the level actually changes, the editor restarts so the new policy
+    /// applies to already-running tooling (a now-trusted project's LSP starts;
+    /// a now-restricted/blocked one is torn down). Already-correct selections
+    /// (e.g. confirming the current level) only persist the decision.
     pub(crate) fn set_workspace_trust_level(
         &mut self,
         level: crate::services::workspace_trust::TrustLevel,
     ) {
         use crate::services::workspace_trust::TrustLevel;
-        let msg = if let Some(trust) = &self.authority.workspace_trust {
-            trust.set_level(level);
-            match level {
-                TrustLevel::Trusted => t!("trust.now_trusted"),
-                TrustLevel::Restricted => t!("trust.now_restricted"),
-                TrustLevel::Blocked => t!("trust.now_blocked"),
-            }
-            .to_string()
-        } else {
-            t!("trust.unavailable").to_string()
+        let Some(trust) = &self.authority.workspace_trust else {
+            self.active_window_mut().status_message = Some(t!("trust.unavailable").to_string());
+            return;
         };
+        let changed = trust.level() != level;
+        trust.set_level(level);
+        let msg = match level {
+            TrustLevel::Trusted => t!("trust.now_trusted"),
+            TrustLevel::Restricted => t!("trust.now_restricted"),
+            TrustLevel::Blocked => t!("trust.now_blocked"),
+        }
+        .to_string();
         self.active_window_mut().status_message = Some(msg);
+        // Re-evaluate all authority-routed processes (LSP, terminals, …)
+        // under the new level by rebuilding around the same authority.
+        if changed {
+            self.request_restart(self.working_dir.clone());
+        }
     }
 
     pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
