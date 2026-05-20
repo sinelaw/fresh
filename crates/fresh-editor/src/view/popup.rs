@@ -1068,7 +1068,10 @@ impl Popup {
         // click target is 3 cells wide and obviously a UI affordance rather
         // than stray content).  Rendered only for bordered popups that are
         // big enough to accommodate it without colliding with the title.
-        if self.bordered && area.width >= 5 {
+        // The workspace-trust prompt is a forced choice with no dismiss, so it
+        // gets no close button.
+        let dismissible = !matches!(self.resolver, PopupResolver::WorkspaceTrust);
+        if self.bordered && area.width >= 5 && dismissible {
             let close_x = area.x + area.width - 4;
             let close_area = Rect {
                 x: close_x,

@@ -186,11 +186,9 @@ impl WorkspaceTrust {
     /// since trust is per-project. Passing `None` detaches persistence.
     pub fn set_store(&self, store: Option<TrustStore>) {
         if let Some(store) = &store {
-            // Adopt the new project's recorded decision, or fall back to the
-            // safe default when it has none — never inherit the previous
-            // project's level.
-            let level = store.level().unwrap_or_default();
-            self.level.store(level.as_u8(), Ordering::Relaxed);
+            // Adopt the new project's level (the safe default when it has no
+            // recorded decision) — never inherit the previous project's level.
+            self.level.store(store.level().as_u8(), Ordering::Relaxed);
         }
         if let Ok(mut guard) = self.store.write() {
             *guard = store;
@@ -334,11 +332,26 @@ impl TrustStore {
         }
     }
 
-    /// The persisted level for this project, if one has been recorded.
-    pub fn level(&self) -> Option<TrustLevel> {
+    /// This project's trust level. Always concrete: a project that has never
+    /// been decided reads as the safe default (`Restricted`) — there is no
+    /// "undecided" trust *value*. Whether a decision has actually been recorded
+    /// (and thus whether to prompt) is a separate question, see [`Self::is_decided`].
+    pub fn level(&self) -> TrustLevel {
+        self.recorded_level().unwrap_or_default()
+    }
+
+    /// Whether this project has a recorded trust decision on disk. Drives the
+    /// open-time prompt: undecided projects are prompted, decided ones are not.
+    pub fn is_decided(&self) -> bool {
+        self.recorded_level().is_some()
+    }
+
+    /// The raw recorded level, or `None` if no valid decision is on disk. A
+    /// corrupt file reads as `None` (treated as undecided; the next write
+    /// rewrites it cleanly) rather than crashing. Private: callers want either
+    /// a concrete [`Self::level`] or the [`Self::is_decided`] predicate.
+    fn recorded_level(&self) -> Option<TrustLevel> {
         let text = std::fs::read_to_string(&self.path).ok()?;
-        // A corrupt file is treated as "no decision" rather than crashing;
-        // the next write rewrites it cleanly.
         serde_json::from_str::<StoredTrust>(&text)
             .ok()
             .map(|s| s.level)
@@ -573,12 +586,15 @@ mod tests {
         let proj_dir = tmp.path().join("a/b/proj");
         let store = TrustStore::for_project_dir(&proj_dir);
 
-        assert_eq!(store.level(), None);
+        // Undecided reads as the safe default, not as a missing value.
+        assert!(!store.is_decided());
+        assert_eq!(store.level(), TrustLevel::default());
         store.record(TrustLevel::Trusted).unwrap();
-        assert_eq!(store.level(), Some(TrustLevel::Trusted));
+        assert!(store.is_decided());
+        assert_eq!(store.level(), TrustLevel::Trusted);
         // Overwrite wins.
         store.record(TrustLevel::Blocked).unwrap();
-        assert_eq!(store.level(), Some(TrustLevel::Blocked));
+        assert_eq!(store.level(), TrustLevel::Blocked);
         // The file lives inside the project's own state directory.
         assert!(proj_dir.join("trust.json").exists());
     }
@@ -590,8 +606,10 @@ mod tests {
         let b = TrustStore::for_project_dir(&tmp.path().join("b"));
         a.record(TrustLevel::Trusted).unwrap();
         // b is untouched by a's write — no shared file.
-        assert_eq!(a.level(), Some(TrustLevel::Trusted));
-        assert_eq!(b.level(), None);
+        assert_eq!(a.level(), TrustLevel::Trusted);
+        assert!(a.is_decided());
+        assert!(!b.is_decided());
+        assert_eq!(b.level(), TrustLevel::default());
     }
 
     #[test]
@@ -607,7 +625,7 @@ mod tests {
         // A fresh store reading the project's file sees the decision.
         assert_eq!(
             TrustStore::for_project_dir(&proj_dir).level(),
-            Some(TrustLevel::Trusted)
+            TrustLevel::Trusted
         );
     }
 

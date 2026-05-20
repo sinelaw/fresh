@@ -364,9 +364,9 @@ impl Editor {
             }
 
             Some(PopupResolver::WorkspaceTrust) => {
-                // Escape = "not now": leave the project undecided (no record),
-                // so the prompt re-appears next open. Just dismiss.
-                self.hide_popup();
+                // The trust prompt is a forced choice: there is no "undecided"
+                // outcome, so Escape does nothing. The user must pick Trust /
+                // Restricted / Blocked (each records a concrete decision).
             }
 
             Some(PopupResolver::None) | None => {

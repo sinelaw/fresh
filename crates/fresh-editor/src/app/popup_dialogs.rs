@@ -978,7 +978,7 @@ impl Editor {
         let store = crate::services::workspace_trust::TrustStore::for_project_dir(
             &self.dir_context.project_state_dir(&self.working_dir),
         );
-        if store.level().is_some() {
+        if store.is_decided() {
             return; // already decided for this project
         }
         if !crate::services::workspace_trust::workspace_has_executable_content(&self.working_dir) {
