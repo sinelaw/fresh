@@ -67,8 +67,12 @@ fn open_dialog_defaults_to_all_projects_then_scopes_to_current() {
     harness.render().unwrap();
 
     run_palette(&mut harness, "Orchestrator: Open");
+    // Match the title suffix specifically ("…  —  all projects"), not the
+    // bare phrase: the footer hint also renders "all projects" as the
+    // Alt+P toggle-target label whenever the scope is "current", so a bare
+    // `contains("all projects")` can't distinguish the two views.
     harness
-        .wait_until(|h| h.screen_to_string().contains("all projects"))
+        .wait_until(|h| h.screen_to_string().contains("—  all projects"))
         .expect("Orchestrator Open dialog should default to the all-projects view");
 
     // Default scope is "all": every session is listed and the Project
@@ -98,8 +102,11 @@ fn open_dialog_defaults_to_all_projects_then_scopes_to_current() {
         .send_key(KeyCode::Char('p'), KeyModifiers::ALT)
         .unwrap();
     harness.render().unwrap();
+    // The title suffix drops "—  all projects" once scoped to the current
+    // project. (The footer hint keeps the bare "all projects" affordance,
+    // so we must key off the title marker, not the bare phrase.)
     harness
-        .wait_until(|h| !h.screen_to_string().contains("all projects"))
+        .wait_until(|h| !h.screen_to_string().contains("—  all projects"))
         .expect("scope toggle should switch the dialog to the current-project view");
 
     let screen = harness.screen_to_string();
