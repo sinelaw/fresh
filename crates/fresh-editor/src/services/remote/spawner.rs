@@ -111,10 +111,30 @@ pub trait ProcessSpawner: Send + Sync {
     }
 }
 
-/// Local process spawner using tokio
+/// Local process spawner using tokio.
 ///
-/// Used for local file editing (the default).
-pub struct LocalProcessSpawner;
+/// Used for local file editing (the default). The optional `env` is layered
+/// onto every child's environment (under the inherited process env) — this is
+/// how an activated environment manager (venv / direnv / mise) injects its
+/// captured variables into one-shot spawns. Empty for the plain default.
+#[derive(Default)]
+pub struct LocalProcessSpawner {
+    env: Vec<(String, String)>,
+}
+
+impl LocalProcessSpawner {
+    /// Spawner that injects `env` into every child (e.g. an activated
+    /// environment-manager snapshot).
+    pub fn with_env(env: Vec<(String, String)>) -> Self {
+        Self { env }
+    }
+
+    fn apply_env(&self, cmd: &mut tokio::process::Command) {
+        if !self.env.is_empty() {
+            cmd.envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl ProcessSpawner for LocalProcessSpawner {
@@ -126,6 +146,7 @@ impl ProcessSpawner for LocalProcessSpawner {
     ) -> Result<SpawnResult, SpawnError> {
         let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&args);
+        self.apply_env(&mut cmd);
         cmd.hide_window();
 
         if let Some(ref dir) = cwd {
@@ -160,6 +181,7 @@ impl ProcessSpawner for LocalProcessSpawner {
 
         let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&args);
+        self.apply_env(&mut cmd);
         cmd.hide_window();
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -278,6 +300,7 @@ impl ProcessSpawner for LocalProcessSpawner {
 
         let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&args);
+        self.apply_env(&mut cmd);
         cmd.hide_window();
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -590,7 +613,19 @@ pub trait LongRunningSpawner: Send + Sync {
 /// their own implementation without any LSP-side awareness. Applies
 /// any `ProcessLimits` passed in via the same machinery the
 /// pre-refactor LSP code used (`apply_to_command` + `apply_to_child`).
-pub struct LocalLongRunningSpawner;
+#[derive(Default)]
+pub struct LocalLongRunningSpawner {
+    env: Vec<(String, String)>,
+}
+
+impl LocalLongRunningSpawner {
+    /// Spawner that injects `env` (e.g. an activated environment-manager
+    /// snapshot) under each long-running child's environment. Per-call env
+    /// from `spawn_stdio` is layered on top, so it overrides on conflict.
+    pub fn with_env(env: Vec<(String, String)>) -> Self {
+        Self { env }
+    }
+}
 
 #[async_trait::async_trait]
 impl LongRunningSpawner for LocalLongRunningSpawner {
@@ -604,6 +639,8 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
     ) -> Result<StdioChild, SpawnError> {
         let mut cmd = tokio::process::Command::new(command);
         cmd.args(args)
+            // Authority env first, then the per-call env so the caller wins.
+            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .envs(env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -632,6 +669,14 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
     }
 
     async fn command_exists(&self, command: &str) -> bool {
+        // Honor an injected PATH (e.g. an activated venv's `bin/`) so the
+        // existence probe searches the same place `spawn_stdio` will — without
+        // it, a repo-local `pyright`/`ruff` would look missing and the server
+        // would never start. Falls back to the process PATH when no override.
+        if let Some((_, path)) = self.env.iter().find(|(k, _)| k == "PATH") {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            return which::which_in(command, Some(path), &cwd).is_ok();
+        }
         which::which(command).is_ok()
     }
 }
@@ -643,7 +688,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner() {
-        let spawner = LocalProcessSpawner;
+        let spawner = LocalProcessSpawner::default();
         let result = spawner
             .spawn("echo".to_string(), vec!["hello".to_string()], None)
             .await
@@ -655,7 +700,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner_stdout_to_file() {
-        let spawner = LocalProcessSpawner;
+        let spawner = LocalProcessSpawner::default();
         let tmp =
             std::env::temp_dir().join(format!("fresh-spawner-test-{}.out", std::process::id()));
         // Best-effort cleanup of any leftover from a previous run.
@@ -689,7 +734,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner_cancellable_kill() {
-        let spawner = LocalProcessSpawner;
+        let spawner = LocalProcessSpawner::default();
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
 
         // Start a sleep that would take 30s normally; fire kill after 100ms.
@@ -730,7 +775,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_long_running_spawn_stdio_pipes_output() {
-        let spawner = LocalLongRunningSpawner;
+        let spawner = LocalLongRunningSpawner::default();
         let mut child = spawner
             .spawn_stdio(
                 "sh",
@@ -754,12 +799,80 @@ mod tests {
 
     #[tokio::test]
     async fn local_long_running_command_exists_for_sh() {
-        let spawner = LocalLongRunningSpawner;
+        let spawner = LocalLongRunningSpawner::default();
         assert!(spawner.command_exists("sh").await);
         assert!(
             !spawner
                 .command_exists("fresh-unlikely-binary-name-ygzu9")
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn local_spawner_injects_env() {
+        let spawner =
+            LocalProcessSpawner::with_env(vec![("FRESH_ENV_TEST".into(), "hi-from-env".into())]);
+        let result = spawner
+            .spawn(
+                "sh".into(),
+                vec!["-c".into(), "printf %s \"$FRESH_ENV_TEST\"".into()],
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hi-from-env");
+    }
+
+    #[tokio::test]
+    async fn local_long_running_layers_authority_env_under_call_env() {
+        // Authority env supplies A and B; the per-call env overrides B.
+        let spawner = LocalLongRunningSpawner::with_env(vec![
+            ("FRESH_A".into(), "auth".into()),
+            ("FRESH_B".into(), "auth".into()),
+        ]);
+        let mut child = spawner
+            .spawn_stdio(
+                "sh",
+                &[
+                    "-c".into(),
+                    "printf %s-%s \"$FRESH_A\" \"$FRESH_B\"".into(),
+                ],
+                vec![("FRESH_B".into(), "call".into())],
+                None,
+                None,
+            )
+            .await
+            .expect("spawn succeeds");
+        let mut out = String::new();
+        child
+            .take_stdout()
+            .expect("stdout piped")
+            .read_to_string(&mut out)
+            .await
+            .unwrap();
+        assert_eq!(out, "auth-call");
+        assert!(child.wait().await.unwrap().success());
+    }
+
+    #[tokio::test]
+    async fn local_command_exists_honors_injected_path() {
+        // A PATH override pointing at a temp dir with an executable makes a
+        // bare command name resolvable, even though it isn't on the real PATH.
+        let tmp = std::env::temp_dir().join(format!("fresh-trust-path-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let bin = tmp.join("fresh-fake-tool-xyz");
+        std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let spawner =
+            LocalLongRunningSpawner::with_env(vec![("PATH".into(), tmp.to_string_lossy().into())]);
+        assert!(spawner.command_exists("fresh-fake-tool-xyz").await);
+        let plain = LocalLongRunningSpawner::default();
+        assert!(!plain.command_exists("fresh-fake-tool-xyz").await);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

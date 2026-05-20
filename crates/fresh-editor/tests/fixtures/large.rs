@@ -1446,7 +1446,7 @@ impl Editor {
             fs_manager,
             filesystem,
             local_filesystem: Arc::new(crate::model::filesystem::StdFileSystem),
-            process_spawner: Arc::new(crate::services::remote::LocalProcessSpawner),
+            process_spawner: Arc::new(crate::services::remote::LocalProcessSpawner::default()),
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
             file_explorer_width_percent: file_explorer_width,

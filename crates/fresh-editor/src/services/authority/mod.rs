@@ -182,6 +182,18 @@ pub enum FilesystemSpec {
 pub enum SpawnerSpec {
     /// Spawn on the host. Equivalent to `LocalProcessSpawner`.
     Local,
+    /// Spawn on the host, but inject `env` into every child (one-shot
+    /// spawns, LSP/long-running, and the `command_exists` probe). This is
+    /// how an environment manager (venv / direnv / mise) activates: a plugin
+    /// captures the environment's variables — notably a `PATH` whose `bin/`
+    /// holds the project's interpreter and tools — and installs them here so
+    /// the editor's language servers, formatters, and `spawnProcess` calls
+    /// all see the same environment the user's shell would. Order is
+    /// preserved; per-call env layers on top.
+    LocalWithEnv {
+        #[serde(default)]
+        env: Vec<(String, String)>,
+    },
     /// Run via `docker exec` against a long-lived container. The plugin
     /// manages the container lifecycle (e.g. via `editor.spawnHostProcess`
     /// to invoke `devcontainer up`) and hands us the container id once it
@@ -270,8 +282,8 @@ impl Authority {
     pub fn local() -> Self {
         Self {
             filesystem: Arc::new(StdFileSystem),
-            process_spawner: Arc::new(LocalProcessSpawner),
-            long_running_spawner: Arc::new(LocalLongRunningSpawner),
+            process_spawner: Arc::new(LocalProcessSpawner::default()),
+            long_running_spawner: Arc::new(LocalLongRunningSpawner::default()),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,
@@ -296,7 +308,7 @@ impl Authority {
         Self {
             filesystem,
             process_spawner,
-            long_running_spawner: Arc::new(LocalLongRunningSpawner),
+            long_running_spawner: Arc::new(LocalLongRunningSpawner::default()),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,
@@ -348,8 +360,12 @@ impl Authority {
             Arc<dyn LongRunningSpawner>,
         ) = match payload.spawner {
             SpawnerSpec::Local => (
-                Arc::new(LocalProcessSpawner),
-                Arc::new(LocalLongRunningSpawner),
+                Arc::new(LocalProcessSpawner::default()),
+                Arc::new(LocalLongRunningSpawner::default()),
+            ),
+            SpawnerSpec::LocalWithEnv { env } => (
+                Arc::new(LocalProcessSpawner::with_env(env.clone())),
+                Arc::new(LocalLongRunningSpawner::with_env(env)),
             ),
             SpawnerSpec::DockerExec {
                 container_id,

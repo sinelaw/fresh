@@ -4750,7 +4750,7 @@ mod tests {
     /// Shared spawner used by every LspHandle::spawn test so individual
     /// call sites stay legible. Host-local, no limits applied.
     fn local_spawner() -> Arc<dyn crate::services::remote::LongRunningSpawner> {
-        Arc::new(LocalLongRunningSpawner)
+        Arc::new(LocalLongRunningSpawner::default())
     }
 
     #[test]

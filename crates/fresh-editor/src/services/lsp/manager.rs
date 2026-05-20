@@ -1024,7 +1024,7 @@ impl LspManager {
                      that skip set_boot_authority)",
                     language
                 );
-                std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner)
+                std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::default())
             }
         };
 
@@ -1153,7 +1153,7 @@ impl LspManager {
                 .as_ref()
                 .cloned()
                 .unwrap_or_else(|| {
-                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner)
+                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::default())
                 });
 
         let mut spawned = Vec::new();
@@ -1481,7 +1481,7 @@ impl LspManager {
                 .as_ref()
                 .cloned()
                 .unwrap_or_else(|| {
-                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner)
+                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::default())
                 });
 
         let scope = if is_universal {
