@@ -478,6 +478,7 @@ impl Editor {
         {
             lsp.set_long_running_spawner(self.authority.long_running_spawner.clone());
             lsp.set_path_translation(self.authority.path_translation.clone());
+            lsp.set_workspace_trust(self.authority.workspace_trust.clone());
         }
         #[cfg(feature = "plugins")]
         {

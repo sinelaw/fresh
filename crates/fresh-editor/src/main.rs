@@ -3735,6 +3735,11 @@ fn real_main() -> AnyhowResult<()> {
         // handing off to the event loop.
         editor.fire_ready_hook();
 
+        // Surface the Workspace Trust prompt for an undecided project with
+        // executable content. The in-process run path needs this explicitly —
+        // the session-server path calls it from `initialize_editor`.
+        editor.maybe_prompt_workspace_trust();
+
         let iteration = run_editor_iteration(
             &mut editor,
             workspace_enabled,

@@ -662,29 +662,12 @@ impl EditorServer {
         Ok(())
     }
 
-    /// Surface the workspace-trust prompt when this project has never been
-    /// decided *and* contains executable content (env files, `.csproj`, …).
-    /// Idempotent and cheap: re-reads the project's trust file (so a decision
-    /// recorded in a prior session suppresses it) and does a shallow,
-    /// read-only scan for marker files. Called after the editor is built on
-    /// first boot and after each rebuild.
+    /// Surface the workspace-trust prompt after the editor is built. Delegates
+    /// to `Editor::maybe_prompt_workspace_trust` (single source of truth shared
+    /// with the in-process run path).
     fn maybe_prompt_workspace_trust(&mut self) {
-        let store = crate::services::workspace_trust::TrustStore::for_project_dir(
-            &self
-                .config
-                .dir_context
-                .project_state_dir(&self.config.working_dir),
-        );
-        if store.level().is_some() {
-            return; // already decided for this project
-        }
-        if !crate::services::workspace_trust::workspace_has_executable_content(
-            &self.config.working_dir,
-        ) {
-            return; // nothing whose trust matters — Restricted is transparent here
-        }
         if let Some(editor) = self.editor.as_mut() {
-            editor.show_workspace_trust_popup();
+            editor.maybe_prompt_workspace_trust();
         }
     }
 

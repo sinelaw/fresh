@@ -307,6 +307,13 @@ pub struct LspManager {
     /// before any LSP spawn can happen.
     long_running_spawner: Option<std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>>,
 
+    /// Active authority's Workspace Trust handle. LSP servers load and execute
+    /// project-controlled code at startup (analyzers/source-generators for C#,
+    /// `build.rs`/proc-macros for Rust, `compile_commands` for clangd, …), so
+    /// auto-start is gated on this: an untrusted workspace doesn't auto-start
+    /// servers. `None` (tests / not yet wired) means "allow".
+    workspace_trust: Option<std::sync::Arc<crate::services::workspace_trust::WorkspaceTrust>>,
+
     /// Active authority's host↔remote workspace mapping. When set
     /// (devcontainer attach), [`Self::resolve_root_uri`] applies it to
     /// the marker-walked workspace root so an in-container LSP sees
@@ -349,6 +356,7 @@ impl LspManager {
             runtime: None,
             async_bridge: None,
             long_running_spawner: None,
+            workspace_trust: None,
             path_translation: None,
             restart_attempts: HashMap::new(),
             restart_cooldown: HashSet::new(),
@@ -371,6 +379,27 @@ impl LspManager {
         spawner: std::sync::Arc<dyn crate::services::remote::LongRunningSpawner>,
     ) {
         self.long_running_spawner = Some(spawner);
+    }
+
+    /// Install the active authority's Workspace Trust handle. Called from
+    /// `set_boot_authority` alongside the spawner setter so trust gating is in
+    /// place before any LSP auto-start.
+    pub fn set_workspace_trust(
+        &mut self,
+        trust: std::sync::Arc<crate::services::workspace_trust::WorkspaceTrust>,
+    ) {
+        self.workspace_trust = Some(trust);
+    }
+
+    /// Whether LSP servers may auto-start: only in a Trusted workspace (or
+    /// when trust isn't wired, e.g. tests). Untrusted workspaces don't
+    /// auto-start servers because starting one runs project-controlled code.
+    fn lsp_autostart_allowed(&self) -> bool {
+        use crate::services::workspace_trust::TrustLevel;
+        self.workspace_trust
+            .as_ref()
+            .map(|t| t.level() == TrustLevel::Trusted)
+            .unwrap_or(true)
     }
 
     /// Install the active authority's host↔remote path mapping. The
@@ -533,6 +562,21 @@ impl LspManager {
         // Check if we have runtime and bridge
         if self.runtime.is_none() || self.async_bridge.is_none() {
             return LspSpawnResult::Failed;
+        }
+
+        // Workspace Trust gate: starting an LSP server loads/executes
+        // project-controlled code (C# analyzers, Rust build scripts/proc-macros,
+        // clangd's compile_commands, …). In an untrusted workspace, don't
+        // auto-start — unless the user has explicitly enabled this language
+        // (manual start is an explicit, informed action). The trust prompt on
+        // open lets the user enable everything by trusting the folder.
+        if !self.lsp_autostart_allowed() && !self.allowed_languages.contains(language) {
+            tracing::info!(
+                "LSP for '{}' not auto-started: workspace is not trusted \
+                 (trust the folder to enable language servers)",
+                language
+            );
+            return LspSpawnResult::NotAutoStart;
         }
 
         // Always try to start universal servers (they manage their own auto_start check)

@@ -365,17 +365,36 @@ impl TrustStore {
 /// Whether a workspace contains content whose execution trust matters — i.e.
 /// whether opening it should prompt for a trust decision. Detection is
 /// **passive** (a shallow scan of the root for marker files/dirs); it never
-/// runs anything. A project with none of these markers is functional under
-/// Restricted (system tools still run), so there's nothing to ask about.
+/// runs anything.
+///
+/// This covers both env-manager files *and* project manifests, because a
+/// recognized project is one whose language server will auto-start — and that
+/// load runs project-controlled code (analyzers, build scripts, proc-macros),
+/// which is gated on trust (see `LspManager`). So prompting for a recognized
+/// project is what lets the user enable its tooling. A folder with none of
+/// these is plain text/docs — nothing to gate, no prompt.
 pub fn workspace_has_executable_content(root: &Path) -> bool {
-    // Files that drive env activation or repo-controlled execution.
+    // Files that drive env activation or whose project loader runs code.
     const FILE_MARKERS: &[&str] = &[
+        // env managers
         ".envrc",         // direnv
         "mise.toml",      // mise
         ".mise.toml",     // mise
         ".tool-versions", // mise / asdf
         "Pipfile",        // pipenv
         "poetry.lock",    // poetry
+        // project manifests (their language servers run project code at load)
+        "Cargo.toml",        // rust-analyzer: build scripts, proc-macros
+        "go.mod",            // gopls
+        "package.json",      // ts/eslint, npm scripts
+        "pyproject.toml",    // python tooling
+        "pom.xml",           // jdtls / maven
+        "build.gradle",      // jdtls / gradle
+        "build.gradle.kts",  // gradle (kotlin dsl)
+        "CMakeLists.txt",    // clangd (compile_commands generation)
+        "compile_commands.json", // clangd
+        "Gemfile",           // ruby
+        "composer.json",     // php
     ];
     // Directories that hold a repo-local interpreter/toolchain.
     const DIR_MARKERS: &[&str] = &[".venv", "venv"];
@@ -387,8 +406,8 @@ pub fn workspace_has_executable_content(root: &Path) -> bool {
         return true;
     }
     // C# / .NET: loading a project runs restore/build and design-time
-    // analyzers, so a solution or project file at the root is executable
-    // content.
+    // analyzers/source-generators, so a solution or project file at the root
+    // is executable content.
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
             let path = entry.path();

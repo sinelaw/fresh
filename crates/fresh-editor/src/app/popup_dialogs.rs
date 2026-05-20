@@ -969,6 +969,24 @@ impl Editor {
         );
     }
 
+    /// Show the trust prompt if this workspace is undecided and contains
+    /// content whose execution trust matters (env files, project manifests,
+    /// `.sln`/`.csproj`, …). No-op once a decision is recorded or when there's
+    /// nothing to gate. Called from every editor-startup path (in-process run
+    /// and the session server) so the prompt fires regardless of launch mode.
+    pub fn maybe_prompt_workspace_trust(&mut self) {
+        let store = crate::services::workspace_trust::TrustStore::for_project_dir(
+            &self.dir_context.project_state_dir(&self.working_dir),
+        );
+        if store.level().is_some() {
+            return; // already decided for this project
+        }
+        if !crate::services::workspace_trust::workspace_has_executable_content(&self.working_dir) {
+            return; // nothing whose trust matters here
+        }
+        self.show_workspace_trust_popup();
+    }
+
     /// Show the workspace-trust prompt: a centered list asking how this
     /// project's tooling should be treated. Surfaced on opening an
     /// untrusted project that contains executable content (env files,
