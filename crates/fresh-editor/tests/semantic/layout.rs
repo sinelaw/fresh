@@ -13,47 +13,7 @@
 //!   no `crossterm::KeyCode`, no manual render loops.
 
 use crate::common::scenario::layout_scenario::{assert_layout_scenario, LayoutScenario};
-use crate::common::scenario::render_snapshot::RenderSnapshotExpect;
 use fresh::test_api::Action;
-
-// Vertical / line-end movement is layout-dependent: it resolves against
-// the rendered line structure, so it only works once a render has run.
-// These moved here from the BufferScenario corpus, where they silently
-// no-op'd (no render → cursor never moved). LayoutScenario renders, so
-// they resolve correctly. (`cursor_byte` is the layout-resolved
-// observable; LayoutScenario can't yet assert selection *text*.)
-
-#[test]
-fn theorem_move_down_then_line_end_reaches_end_of_second_line() {
-    assert_layout_scenario(LayoutScenario {
-        description: "MoveDown then MoveLineEnd lands at end of the second line".into(),
-        initial_text: "ab\ncde".into(),
-        width: 80,
-        height: 24,
-        actions: vec![Action::MoveDown, Action::MoveLineEnd],
-        expected_snapshot: RenderSnapshotExpect {
-            cursor_byte: Some(6),
-            ..Default::default()
-        },
-        ..Default::default()
-    });
-}
-
-#[test]
-fn theorem_select_line_end_reaches_first_line_end() {
-    assert_layout_scenario(LayoutScenario {
-        description: "SelectLineEnd moves the caret to the end of the first line".into(),
-        initial_text: "hello\nworld".into(),
-        width: 80,
-        height: 24,
-        actions: vec![Action::SelectLineEnd],
-        expected_snapshot: RenderSnapshotExpect {
-            cursor_byte: Some(5),
-            ..Default::default()
-        },
-        ..Default::default()
-    });
-}
 
 #[test]
 fn theorem_freshly_loaded_buffer_has_top_byte_zero() {

@@ -188,6 +188,27 @@ pub struct BufferScenario {
 
 const DEFAULT_FILENAME: &str = "test_buffer.txt";
 
+/// The single buffer-action evaluation primitive: dispatch `actions`
+/// on `harness`, rendering a frame first and after each action —
+/// exactly as the real event loop renders before every keystroke.
+///
+/// Always rendering keeps the headless harness faithful to the real
+/// editor: layout-dependent moves (`MoveDown`, line-end, ...) resolve
+/// instead of silently no-opping. Every consumer routes through this
+/// (`check_buffer_scenario`, the combination driver, `evaluate_actions`)
+/// so a `BufferScenario` has exactly one evaluation semantics.
+pub(crate) fn run_buffer_actions(harness: &mut EditorTestHarness, actions: &[Action]) {
+    harness
+        .render()
+        .expect("run_buffer_actions: initial render failed");
+    for a in actions {
+        harness.api_mut().dispatch(a.clone());
+        harness
+            .render()
+            .expect("run_buffer_actions: render after action failed");
+    }
+}
+
 /// Evaluate a `BufferScenario` against a headless editor.
 ///
 /// Returns `Ok(())` on success or `Err(ScenarioFailure)` on the first
@@ -235,7 +256,7 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
         .expect("load_buffer_from_text_named failed");
     timer.phase("load_buffer");
 
-    harness.api_mut().dispatch_seq(&s.actions);
+    run_buffer_actions(&mut harness, &s.actions);
     // `events` runs after `actions` so a scenario can pre-load
     // state through actions, then exercise the production key
     // handler via `SendKey` for the bit under test.

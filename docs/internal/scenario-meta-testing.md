@@ -121,32 +121,42 @@ clear selection
 Both are bugs the fresh-harness model can never surface — which is the
 entire reason for using an active reset instead of a fresh harness.
 
-### Same evaluation semantics as the canonical runner
+### One evaluation primitive: always render
 
-The combination driver (`run_scenarios_with_reset_between`) MUST evaluate
-a scenario the same way `check_buffer_scenario` does — no render — and
-share the assertion logic (`assert_buffer_expectations`). The two paths
-differ ONLY in harness lifetime: fresh-per-call in `check_buffer_scenario`,
-one shared harness + active reset in combination. Any other divergence
-(e.g. one renders and the other doesn't) makes the same `BufferScenario`
-value mean two different things and is a bug.
+There is exactly one way to evaluate a `BufferScenario`'s actions:
+`run_buffer_actions(harness, &[Action])` (in `buffer_scenario.rs`). It
+**always renders** — a frame before the first action and after each
+action — exactly as the real event loop renders before every keystroke.
+Every consumer routes through it:
 
-This was learned the hard way: two corpus scenarios using `MoveDown` /
-`MoveLineEnd` / `SelectLineEnd` failed in combination. The wrong fix was
-to make combination render; the right fix is that **those actions are
-layout-dependent** — they resolve against the rendered line structure and
-**silently no-op in the no-render `BufferScenario` world** (cursor never
-moves, no selection forms). They don't belong in the buffer corpus; they
-were moved to `LayoutScenario` (which renders), and combination was kept
-no-render.
+- `check_buffer_scenario` (the per-test regression runner),
+- `run_scenarios_with_reset_between` (the combination driver),
+- `evaluate_actions` (proptest generators + the shadow differential).
 
-Eventual goal: **unify all runners / scenario executors.** Each scenario
-type should have ONE evaluation path; drivers (regression, combination,
-proptest, shadow) reuse it and differ only along an explicit axis (harness
-lifetime, generated vs fixed inputs, live vs shadow). `check_buffer_scenario`
-and the combination driver already share `assert_buffer_expectations`;
-the next step is a shared `run_buffer_actions(harness, &[Action])` so the
-dispatch half is shared too.
+So the drivers differ ONLY along explicit axes — **harness lifetime**
+(fresh-per-call vs one shared harness + active reset) and **inputs**
+(fixed vs proptest-generated) — never in dispatch/render semantics.
+
+**Why always render (not no-render-for-speed).** The real editor always
+has a rendered frame before handling input, so a no-render harness is
+strictly *less faithful*: layout-dependent actions (`MoveDown`,
+`MoveLineEnd`, `SelectLineEnd`, …) resolve against the rendered line
+structure and **silently no-op without a render** — cursor never moves,
+no selection forms. That silent no-op is a footgun: it bit a real change
+(two corpus scenarios appeared to fail; the actual cause was the missing
+render). Always rendering removes the footgun, lets the **single unified
+corpus** hold any scenario (logical *or* layout-dependent), and means
+`LayoutScenario` is distinguished only by **what it asserts** (rendered
+rows / viewport / cell colors), not by whether it renders.
+
+Cost: rendering is ~4 ms/frame; always-render added ~15% to the semantic
+suite (≈133 s → ≈155 s) — accepted for the faithfulness + unification.
+
+Shadow note: the corpus also feeds the pure-state shadow differential. A
+real (non-delegating) shadow can't model layout-dependent cursor
+movement, so it should skip those scenarios via the existing
+`supports_scenario` capability filter — a reason to *filter*, not to keep
+them out of the corpus.
 
 ## Build order
 
@@ -164,10 +174,7 @@ dispatch half is shared too.
 - Extending combination beyond the buffer layer would need a richer
   reset (history/config/markers) — revisit only if the buffer-layer
   results prove valuable.
-- **Guardrail:** the no-render buffer runner *silently* no-ops on
-  layout-dependent actions (`MoveDown`, `MoveLineEnd`, `SelectLineEnd`,
-  …) instead of rejecting them — which is how a layout-dependent
-  scenario slipped into the buffer corpus. `check_buffer_scenario`
-  should loudly reject those actions ("layout-dependent; use
-  LayoutScenario") so the mistake fails clearly instead of producing a
-  confusing cursor mismatch.
+- Folding `select_word_selections_at_each_grapheme` (the only remaining
+  bespoke buffer-eval loop) onto `run_buffer_actions` for full
+  consistency — currently left as-is since `SelectWord` is logical and
+  the per-grapheme loop wants to skip render cost.

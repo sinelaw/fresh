@@ -102,6 +102,23 @@ pub fn buffer_scenarios() -> Vec<BufferScenario> {
             ..Default::default()
         },
         BufferScenario {
+            description: "MoveDown then MoveLineEnd lands at end of the second line".into(),
+            initial_text: "ab\ncde".into(),
+            actions: vec![Action::MoveDown, Action::MoveLineEnd],
+            expected_text: "ab\ncde".into(),
+            expected_primary: CursorExpect::at(6),
+            ..Default::default()
+        },
+        BufferScenario {
+            description: "SelectLineEnd selects to the end of the first line".into(),
+            initial_text: "hello\nworld".into(),
+            actions: vec![Action::SelectLineEnd],
+            expected_text: "hello\nworld".into(),
+            expected_primary: CursorExpect::range(0, 5),
+            expected_selection_text: Some("hello".into()),
+            ..Default::default()
+        },
+        BufferScenario {
             description: "ToLowerCase on a select-all lowercases the buffer".into(),
             initial_text: "HELLO".into(),
             actions: vec![Action::SelectAll, Action::ToLowerCase],

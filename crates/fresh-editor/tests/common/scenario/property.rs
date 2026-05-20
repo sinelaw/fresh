@@ -14,7 +14,9 @@
 //! unrelated to the property under test.
 
 use crate::common::harness::EditorTestHarness;
-use crate::common::scenario::buffer_scenario::{assert_buffer_expectations, BufferScenario};
+use crate::common::scenario::buffer_scenario::{
+    assert_buffer_expectations, run_buffer_actions, BufferScenario,
+};
 use crate::common::scenario::failure::ScenarioFailure;
 use fresh::test_api::{Action, Caret};
 use proptest::prelude::*;
@@ -35,8 +37,9 @@ pub struct BufferState {
 }
 
 /// Run `actions` against a fresh headless harness seeded with
-/// `initial_text` and return the resulting state. Never panics on
-/// dispatch — runs the actions through `dispatch_seq`.
+/// `initial_text` and return the resulting state. Routes through
+/// `run_buffer_actions` (renders before/after each action, like the
+/// real event loop) so layout-dependent moves resolve.
 ///
 /// Harness construction failures (out of disk, etc.) still panic; an
 /// external driver should already trust its environment.
@@ -46,7 +49,7 @@ pub fn evaluate_actions(initial_text: &str, actions: &[Action]) -> BufferState {
     let _fixture = harness
         .load_buffer_from_text(initial_text)
         .expect("load_buffer_from_text failed");
-    harness.api_mut().dispatch_seq(actions);
+    run_buffer_actions(&mut harness, actions);
     observe(&mut harness)
 }
 
@@ -86,15 +89,16 @@ pub fn run_scenarios_with_reset_between(
     let mut out = Vec::with_capacity(order.len());
     for &i in order {
         let s = &scenarios[i];
-        // No render: same evaluation semantics as `check_buffer_scenario`
-        // (the canonical BufferScenario runner). The two paths differ
-        // ONLY in harness lifetime — fresh-per-call there, shared +
-        // active reset here. Layout-dependent actions (MoveDown,
-        // SelectLineEnd, ...) don't belong in BufferScenario; they live
-        // in LayoutScenario, which renders.
-        let mut seq = crate::common::scenario::reset::reset_actions(&s.initial_text);
-        seq.extend(s.actions.iter().cloned());
-        harness.api_mut().dispatch_seq(&seq);
+        // Same evaluation as `check_buffer_scenario` (both render via
+        // `run_buffer_actions`); the two paths differ ONLY in harness
+        // lifetime — fresh-per-call there, shared + active reset here.
+        // The reset is logical-only, so it goes through plain dispatch.
+        harness
+            .api_mut()
+            .dispatch_seq(&crate::common::scenario::reset::reset_actions(
+                &s.initial_text,
+            ));
+        run_buffer_actions(&mut harness, &s.actions);
         out.push(assert_buffer_expectations(&mut harness, s));
     }
     out
