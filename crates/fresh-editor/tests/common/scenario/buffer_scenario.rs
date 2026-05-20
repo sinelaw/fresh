@@ -249,15 +249,32 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
             dispatch_buffer_event(&mut harness, ev, &s.description)?;
         }
     }
-    let api = harness.api_mut();
     timer.phase("dispatch_actions");
+    let result = assert_buffer_expectations(&mut harness, &s);
+    timer.phase("assertions");
+    drop(harness);
+    timer.phase("harness_drop");
+    timer.finish();
+    result
+}
+
+/// Assert a `BufferScenario`'s expectations against the *live* state of
+/// `harness` (already positioned by the scenario's setup + actions, or
+/// by an active reset + actions in the combination driver). Factored
+/// out of [`check_buffer_scenario`] so the combination meta-test can
+/// run a scenario's own full assertions against a shared harness.
+pub(crate) fn assert_buffer_expectations(
+    harness: &mut EditorTestHarness,
+    s: &BufferScenario,
+) -> Result<(), ScenarioFailure> {
+    let api = harness.api_mut();
 
     // ── Assert buffer text ──────────────────────────────────────────
     let actual_text = api.buffer_text();
     if actual_text != s.expected_text {
         return Err(ScenarioFailure::BufferTextMismatch {
-            description: s.description,
-            expected: s.expected_text,
+            description: s.description.clone(),
+            expected: s.expected_text.clone(),
             actual: actual_text,
         });
     }
@@ -267,7 +284,7 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
     if !s.skip_cursor_check {
         if s.expected_primary != primary {
             return Err(ScenarioFailure::PrimaryCursorMismatch {
-                description: s.description,
+                description: s.description.clone(),
                 expected: s.expected_primary,
                 actual: primary,
             });
@@ -277,7 +294,7 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
         let expected_count = 1 + s.expected_extra_cursors.len();
         if all_carets.len() != expected_count {
             return Err(ScenarioFailure::CursorCountMismatch {
-                description: s.description,
+                description: s.description.clone(),
                 expected: expected_count,
                 actual: all_carets.len(),
             });
@@ -302,7 +319,7 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
         {
             if want != got {
                 return Err(ScenarioFailure::SecondaryCursorMismatch {
-                    description: s.description,
+                    description: s.description.clone(),
                     index: i,
                     expected: *want,
                     actual: *got,
@@ -316,17 +333,13 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
         let actual = api.selection_text();
         if &actual != expected {
             return Err(ScenarioFailure::SelectionTextMismatch {
-                description: s.description,
+                description: s.description.clone(),
                 expected: expected.clone(),
                 actual,
             });
         }
     }
 
-    timer.phase("assertions");
-    drop(harness);
-    timer.phase("harness_drop");
-    timer.finish();
     Ok(())
 }
 

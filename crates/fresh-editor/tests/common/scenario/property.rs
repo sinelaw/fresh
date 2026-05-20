@@ -14,6 +14,8 @@
 //! unrelated to the property under test.
 
 use crate::common::harness::EditorTestHarness;
+use crate::common::scenario::buffer_scenario::{assert_buffer_expectations, BufferScenario};
+use crate::common::scenario::failure::ScenarioFailure;
 use fresh::test_api::{Action, Caret};
 use proptest::prelude::*;
 
@@ -59,33 +61,35 @@ pub fn observe(harness: &mut EditorTestHarness) -> BufferState {
     }
 }
 
-/// Combination driver: run several `(initial_text, actions)` workloads
-/// on ONE long-lived harness, applying `reset::reset_actions(initial)`
-/// before each so the previous workload's text/cursor/selection is
-/// reversed (an *active* reset, not a fresh harness). Returns the
-/// observed state after each workload, in `order`.
+/// Combination driver: run several full `BufferScenario`s on ONE
+/// long-lived harness, applying `reset::reset_actions(initial)` before
+/// each (an *active* reset, not a fresh harness) and then running that
+/// scenario's **own** expectations at its checkpoint, before the next
+/// reset. Returns the per-scenario assertion result, in `order`.
 ///
-/// Comparing these against the per-workload fresh-harness baseline is
-/// what tests isolation: a mismatch means either the reset is
-/// incomplete or a workload secretly depends on ambient state left by
-/// a predecessor — neither of which a fresh-harness-per-test can
-/// surface.
-pub fn run_with_reset_between(
-    workloads: &[(&str, Vec<Action>)],
+/// A scenario that passes alone but fails after some predecessor means
+/// either the reset is incomplete or the scenario secretly depends on
+/// ambient state — neither of which a fresh-harness-per-test surfaces.
+///
+/// Scope: the scenario's `actions` are replayed (its `events` are not),
+/// and only text/cursor/selection are restored by reset — so workloads
+/// must be buffer-layer and free of `events`.
+pub fn run_scenarios_with_reset_between(
+    scenarios: &[BufferScenario],
     order: &[usize],
-) -> Vec<BufferState> {
-    let mut harness = EditorTestHarness::with_temp_project(80, 24)
-        .expect("EditorTestHarness::with_temp_project failed");
+) -> Vec<Result<(), ScenarioFailure>> {
+    let mut harness = EditorTestHarness::with_temp_project_no_plugins(80, 24)
+        .expect("EditorTestHarness::with_temp_project_no_plugins failed");
     harness
         .load_buffer_from_text("")
         .expect("seed empty buffer failed");
     let mut out = Vec::with_capacity(order.len());
     for &i in order {
-        let (initial_text, actions) = &workloads[i];
-        let mut seq = crate::common::scenario::reset::reset_actions(initial_text);
-        seq.extend(actions.iter().cloned());
+        let s = &scenarios[i];
+        let mut seq = crate::common::scenario::reset::reset_actions(&s.initial_text);
+        seq.extend(s.actions.iter().cloned());
         harness.api_mut().dispatch_seq(&seq);
-        out.push(observe(&mut harness));
+        out.push(assert_buffer_expectations(&mut harness, s));
     }
     out
 }
