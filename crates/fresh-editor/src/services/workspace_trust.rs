@@ -26,13 +26,17 @@
 //! cooperation. [`Authority::with_trust`](crate::services::authority::Authority::with_trust)
 //! installs the wrappers; the server calls it once per editor build.
 //!
+//! `editor.spawnHostProcess` (plugin internals that must run on the host,
+//! e.g. `devcontainer up`) bypasses the authority spawner, so it can't be
+//! caught at this choke-point; it consults [`WorkspaceTrust::decide`]
+//! directly at its call site instead, so the level still applies there.
+//!
 //! ## What this does *not* yet cover
 //!
-//! `editor.spawnHostProcess` (plugin internals that must run on the host before
-//! an authority exists, e.g. `devcontainer up`) deliberately bypasses the
-//! authority and so is *not* gated here. Gating host spawns, and the
-//! interactive "prompt each time" sub-mode of Blocked, land alongside the
-//! trust-granting UI; this module is the enforcement core they build on.
+//! The interactive "prompt each time" sub-mode of Blocked (ask before each
+//! spawn rather than failing outright) is not implemented; Blocked currently
+//! always fails. That sub-mode needs an async UI round-trip from the spawn
+//! site and lands later; this module is the enforcement core it builds on.
 
 use std::io;
 use std::path::{Component, Path, PathBuf};

@@ -2068,6 +2068,27 @@ impl Editor {
             let sender = bridge.sender();
             let process_id = callback_id.as_u64();
 
+            // Workspace Trust gates host spawns too. `spawnHostProcess`
+            // deliberately bypasses the authority spawner, so the choke-point
+            // guard never sees it — enforce the level here directly. Blocked
+            // fails every host spawn; Restricted refuses repo-local
+            // executables. Without this, Blocked wouldn't actually block
+            // everything.
+            if let Some(trust) = &self.authority.workspace_trust {
+                if let crate::services::workspace_trust::SpawnDecision::Deny(reason) =
+                    trust.decide(&command, effective_cwd.as_deref())
+                {
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                        process_id,
+                        stdout: String::new(),
+                        stderr: reason,
+                        exit_code: -1,
+                    });
+                    return;
+                }
+            }
+
             let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
             self.host_process_handles.insert(process_id, kill_tx);
 
