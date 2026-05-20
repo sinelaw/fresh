@@ -290,100 +290,154 @@ boundary — never on the open-folder path:
 > Activation — anything in the list above — requires the workspace to be
 > **trusted**.
 
-### Workspace Trust: one opt-in gate, default-deny
+### Workspace Trust: three levels, per project
 
-Trust is a single **per-workspace** decision, not a per-feature one. It is
-persisted via `getGlobalState`/`setGlobalState` keyed by the **canonicalized**
-workspace path (resolve symlinks; a path-spoof must not inherit another path's
-trust). Env managers, the C# project loader, build/restore commands, tasks, and
-any LSP launched with project-specified arguments all consult the *same* gate.
-This should be a small **core service** — e.g. `editor.isWorkspaceTrusted()` and
-`editor.requestWorkspaceTrust()` in the plugin API — that any plugin which would
-run repo-controlled content calls before doing so. The env-manager plugin is
-just one consumer; it must not invent a parallel notion of trust.
+Trust is a single **per-workspace** setting, not a per-feature one, persisted via
+`getGlobalState`/`setGlobalState` keyed by the **canonicalized** workspace path
+(resolve symlinks; a path-spoof must not inherit another path's trust). Env
+managers, the C# project loader, build/restore commands, tasks, and any LSP
+launched with project-specified arguments all consult the *same* setting. It is
+a small **core service** — e.g. `editor.workspaceTrustLevel()` and
+`editor.requestWorkspaceTrust()` in the plugin API — that any feature which
+would spawn or run repo-controlled content checks first. The env-manager plugin
+is just one consumer; it must not invent a parallel notion.
 
-**The default is "don't run."** A freshly opened, never-seen project is
-**untrusted**: it opens in a restricted mode where reading, editing, search,
-and syntax highlighting all work, but nothing that executes repo-controlled
-content runs. Trust is granted only by an explicit user action, and the safe
-choice is the default everywhere — including if the user just dismisses the
-prompt (Escape ⇒ stay untrusted).
+There are three levels:
+
+1. **Restricted — the default.** No repo-controlled code runs. Env managers do
+   **not** activate; C#-style project execution (restore/build, MSBuild targets,
+   analyzers/source generators, project-configured LSP, tasks) is suppressed;
+   spawns whose resolved executable lives inside the workspace are refused. But
+   **ordinary spawns still proceed** — with the plain, non-activated
+   environment. `git`, `rg`, and normal plugins keep working; only repo-controlled
+   execution is held back. This is the safe-but-usable default a freshly opened,
+   never-seen project gets (including if the user just dismisses the prompt).
+
+2. **Trusted — full execution.** Env managers activate and inject; the C# loader
+   and project tooling run; repo-relative executables are allowed. The user has
+   vouched for the project.
+
+3. **Blocked — no execution at all.** A hard lockdown: **every** spawn fails
+   immediately with an error — `spawnProcess`, `spawnHostProcess`, and every core
+   spawn path (LSP, formatter, exec'd file watchers) alike. For reading
+   genuinely hostile code with zero process execution of any kind. Strictly more
+   restrictive than Restricted, which still lets system tools run.
+
+The level is settable any time from the status-bar picker / a
+`Workspace: Set Trust Level` command and remembered per canonical path.
 
 ### The prompt
 
-When an untrusted workspace is opened **and it actually contains something that
-would execute** (a detected env file, a `.sln`/`.csproj`, repo-defined tasks,
-analyzers), a single one-shot `showActionPopup` (the devcontainer
-attach-prompt pattern) asks once. Don't prompt for a plain folder with nothing
-to gate — a popup on *every* open trains users to dismiss it. The prompt names
-what would run, so consent is *informed*:
+When a never-decided workspace is opened **and it actually contains something
+that would execute** (a detected env file, a `.sln`/`.csproj`, repo-defined
+tasks, analyzers), a single one-shot `showActionPopup` asks once. Don't prompt
+for a plain folder with nothing to gate — a popup on *every* open trains users
+to dismiss it. The prompt names what would run, so consent is *informed*, and
+the safe choice is the default:
 
 ```
 This project can run code on your machine through its tooling
-(found: .envrc, MyApp.csproj). Trust this folder?
+(found: .envrc, MyApp.csproj). How should Fresh treat it?
 
-  [ Don't run (default) ]   [ Trust this folder ]   [ Trust & remember ]
+  [ Restricted (default) ]   [ Trust this folder ]   [ Block all execution ]
+       remember? (·)                remember? (·)          remember? (·)
 ```
 
-- **Don't run** (default; also what Escape / dismiss does) → stay in restricted
-  mode this session; ask again next open.
-- **Trust this folder** → trust for this session only.
-- **Trust & remember** → persist trust for this canonical path; future opens
-  skip the prompt.
+- **Restricted** (default; also what Escape / dismiss does) → level 1.
+- **Trust this folder** → level 2.
+- **Block all execution** → level 3.
+- **remember** persists the chosen level for this canonical path; otherwise it
+  is session-only and the project is re-evaluated on next open.
 
-The decision is global to the project, so granting it once lets env activation,
-the C# loader, etc. all proceed without their own separate popups.
+The decision is global to the project, so choosing Trusted once lets env
+activation, the C# loader, etc. all proceed without their own separate popups.
 
 > **Why not always prompt / never prompt?** Prompting on every open is friction
 > and breeds reflexive "yes"; never prompting is the C# bug. Prompting only when
 > there is genuinely executable content present, once, and remembering the
 > answer, keeps the gate meaningful and rare.
 
+### What happens at a process spawn
+
+Because every primitive routes through the one `Authority` spawner, the trust
+level is enforced at that single choke-point — so it covers plugin
+`spawnProcess` *and* core Rust callers (LSP, formatter, watchers) identically,
+with no per-caller cooperation required:
+
+| Level | Repo-controlled exec (`.envrc`, analyzers, repo-relative binary) | Ordinary spawn (`git`, `rg`, system tool) | Env injection |
+|---|---|---|---|
+| **Restricted** (default) | Refused / suppressed | **Proceeds** | None (env never activated) |
+| **Trusted** | Runs | Proceeds | Active env injected |
+| **Blocked** | Fails with error | **Fails with error** | N/A — nothing spawns |
+
+Two layers implement the Restricted row, since the spawner can't always tell a
+repo-controlled spawn from a benign one:
+
+- **Choke-point backstop (automatic):** the spawner refuses any spawn whose
+  resolved executable path is inside the canonical workspace root
+  (`./.venv/bin/python`, `./node_modules/.bin/eslint`, `./scripts/build`). This
+  catches repo-placed binaries regardless of caller. Note that *not activating*
+  already keeps repo `bin/` off `PATH`, so a bare `python` can't silently
+  resolve into the repo — the backstop only has to catch explicit in-workspace
+  paths.
+- **Feature-level gate (explicit):** features that launch a *system* tool whose
+  identity or args are chosen by repo content (the C# loader picking `dotnet`
+  for a `.csproj`, a task runner, a project-configured LSP command) check
+  `workspaceTrustLevel()` themselves and degrade. The spawner can't infer this;
+  the feature declares it.
+
+> **Honest caveat.** The executable-path backstop is not a proof: even a system
+> tool can run repo-controlled content via config it auto-reads (`git` with a
+> repo-set `core.fsmonitor`/`core.pager`/hooks is the classic case). Restricted
+> reduces accidental exposure; the real protection is that repo-configurable
+> features degrade when not Trusted. **Blocked** is the only level that
+> guarantees zero spawning, for when that residual risk is unacceptable.
+
 ### Hard rules
 
-1. **No autorun from open-folder.** Activation — env, C# project load that runs
-   analyzers/restore, task execution, anything in §What counts as code execution
-   — never happens as a side effect of opening a file or directory, only from
-   explicit user action or pre-existing persisted trust for that exact canonical
-   path.
+1. **No autorun from open-folder.** Repo-controlled execution — env activation,
+   C# restore/analyzers, task execution, anything in §What counts as code
+   execution — never happens as a side effect of opening a file or directory,
+   only at the **Trusted** level for that exact canonical path (set explicitly or
+   remembered).
 2. **Trust and overrides never come from the repository.** All persisted state —
-   the trust decision, the provider/interpreter override, the `enabled` switch —
+   the trust level, the provider/interpreter override, the `enabled` switch —
    lives in user-global state keyed by canonical path (§Tier 3), so the repo
    cannot vouch for itself or pre-set an override. Dropping the committed
    project-config layer for this feature removes the self-authorization vector
-   entirely (a malicious repo has no Fresh file to plant `autoActivate: true`
-   in). The only thing read from the repo is the *standard* ecosystem files,
-   and reading them is passive; running them needs trust.
+   entirely (a malicious repo has no Fresh file to plant a trust level in). The
+   only thing read from the repo is the *standard* ecosystem files, and reading
+   them is passive; running them needs Trusted.
 3. **Surface the `PATH` risk.** When activation prepends a repo-local `bin/`,
    the info panel states plainly that subsequent tools resolve from inside the
    project, so a user auditing an untrusted repo understands the consequence.
-4. **Re-prompt on change of the trusted content.** If a trusted `.envrc` /
-   `mise.toml` / `activate` value changes on disk, drop to "blocked" and
+4. **Re-prompt on change of trusted content.** If a Trusted project's `.envrc` /
+   `mise.toml` / `activate` value changes on disk, drop back to Restricted and
    re-ask rather than silently running the new code (content-hash the trusted
    value, not just the path).
 5. **No execution to render UI.** The pill and picker must be fully populated
    from read-only sources; never run a binary just to label it.
 
-### Beyond env managers: the same gate for C# and the rest
+### Beyond env managers: the same levels for C# and the rest
 
 The reported C# issue — *opening a `.cs` file runs commands from the project* —
 is the same bug with a different trigger, and it gets the same fix. Loading a
 C# project is **not** passive: the language server (OmniSharp/Roslyn) runs
 `dotnet restore`/build, evaluates project-specified MSBuild targets, and — most
 dangerously — loads the project's **analyzers and source generators**, which are
-arbitrary code executed at design time. So in an untrusted workspace:
+arbitrary code executed at design time. So:
 
-- The C# LSP **does not start** (or starts in a restricted, analyzer-disabled
-  mode if Roslyn supports it), no restore/build runs, and project tasks don't
-  execute.
-- The status bar shows the same "restricted — trust to enable" affordance.
-- Granting trust (via the one shared prompt) starts the server normally.
+- **Restricted (default):** the C# LSP **does not start** (or starts in a
+  restricted, analyzer-disabled mode if Roslyn supports it); no restore/build
+  runs; project tasks don't execute. The rest of the editor works.
+- **Trusted:** the server starts normally.
+- **Blocked:** nothing C#-related spawns at all, same as everything else.
 
-The general rule for *every* plugin/feature that would run repo-controlled
-content: gate it on `isWorkspaceTrusted()`, degrade gracefully to a read-only
-experience when untrusted, and surface why. A dedicated core design doc for the
-Workspace Trust service is the right home for the full enumeration of gated
-behaviors; this section establishes the contract env managers rely on.
+The general rule for *every* feature that would run repo-controlled content:
+check `workspaceTrustLevel()`, degrade gracefully when not Trusted, and surface
+why. A dedicated core design doc for the Workspace Trust service is the right
+home for the full enumeration of gated behaviors; this section establishes the
+contract env managers rely on.
 
 ## Discoverability & feedback
 
