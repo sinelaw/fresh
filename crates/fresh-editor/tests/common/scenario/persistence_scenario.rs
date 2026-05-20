@@ -181,6 +181,25 @@ fn dispatch(
                 description: description.into(),
                 reason: format!("FsExternalEdit write {abs:?}: {e}"),
             })?;
+            // The editor's auto-revert path (`handle_file_changed`)
+            // only reloads when the file's mtime is STRICTLY newer
+            // than the mtime captured at open. On filesystems with
+            // coarse (1-second) mtime granularity, an open + external
+            // write landing in the same second leave equal mtimes and
+            // the revert is skipped — a real flake we hit under
+            // parallel CI load. The original e2e (`auto_revert.rs`)
+            // worked around this with a 2.1s real sleep before each
+            // write; here we instead push the mtime deterministically
+            // forward so the revert always fires, no sleeping.
+            let future = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+            std::fs::File::options()
+                .write(true)
+                .open(&abs)
+                .and_then(|f| f.set_modified(future))
+                .map_err(|e| ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("FsExternalEdit set mtime {abs:?}: {e}"),
+                })?;
             let abs_str = abs.to_string_lossy().to_string();
             harness.api_mut().notify_file_changed(&abs_str);
             Ok(())
