@@ -302,6 +302,19 @@ impl Editor {
     /// and `dispatch_modal_input` (handler routing) so the two cannot drift.
     pub(crate) fn popups_capture_keys(&self) -> bool {
         use crate::input::keybindings::KeyContext;
+        use crate::view::popup::PopupResolver;
+        // The workspace-trust prompt is an editor-wide modal shown at startup:
+        // it must own the keyboard regardless of which pane is focused.
+        // Opening a *directory* focuses the file-explorer pane, which would
+        // otherwise short-circuit below and leave the (rendered) prompt
+        // un-interactable.
+        let trust_prompt_up = self
+            .global_popups
+            .top()
+            .is_some_and(|p| p.focused && matches!(p.resolver, PopupResolver::WorkspaceTrust));
+        if trust_prompt_up {
+            return true;
+        }
         if matches!(self.active_window().key_context, KeyContext::FileExplorer) {
             return false;
         }

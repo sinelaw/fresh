@@ -124,10 +124,12 @@ impl Editor {
             }
 
             Some(PopupResolver::WorkspaceTrust) => {
+                // The trust prompt lives on the global stack; read its
+                // selection there (global-first, matching the resolver lookup).
                 let action_key = self
-                    .active_state()
-                    .popups
+                    .global_popups
                     .top()
+                    .or_else(|| self.active_state().popups.top())
                     .and_then(|p| p.selected_item())
                     .and_then(|item| item.data.clone());
                 self.hide_popup();

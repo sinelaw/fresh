@@ -384,17 +384,17 @@ pub fn workspace_has_executable_content(root: &Path) -> bool {
         "Pipfile",        // pipenv
         "poetry.lock",    // poetry
         // project manifests (their language servers run project code at load)
-        "Cargo.toml",        // rust-analyzer: build scripts, proc-macros
-        "go.mod",            // gopls
-        "package.json",      // ts/eslint, npm scripts
-        "pyproject.toml",    // python tooling
-        "pom.xml",           // jdtls / maven
-        "build.gradle",      // jdtls / gradle
-        "build.gradle.kts",  // gradle (kotlin dsl)
-        "CMakeLists.txt",    // clangd (compile_commands generation)
+        "Cargo.toml",            // rust-analyzer: build scripts, proc-macros
+        "go.mod",                // gopls
+        "package.json",          // ts/eslint, npm scripts
+        "pyproject.toml",        // python tooling
+        "pom.xml",               // jdtls / maven
+        "build.gradle",          // jdtls / gradle
+        "build.gradle.kts",      // gradle (kotlin dsl)
+        "CMakeLists.txt",        // clangd (compile_commands generation)
         "compile_commands.json", // clangd
-        "Gemfile",           // ruby
-        "composer.json",     // php
+        "Gemfile",               // ruby
+        "composer.json",         // php
     ];
     // Directories that hold a repo-local interpreter/toolchain.
     const DIR_MARKERS: &[&str] = &[".venv", "venv"];

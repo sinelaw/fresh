@@ -998,10 +998,13 @@ impl Editor {
         use crate::view::popup::{Popup, PopupContent, PopupKind, PopupResolver};
         use ratatui::style::Style;
 
-        // Don't stack a second copy if one is already up.
+        // Don't stack a second copy if one is already up. The prompt lives on
+        // the editor-level (global) stack so it renders regardless of which
+        // buffer is active — opening a directory makes the file-explorer /
+        // dashboard the active buffer, which would orphan a buffer-scoped
+        // popup and leave it unrendered.
         if self
-            .active_state()
-            .popups
+            .global_popups
             .top()
             .is_some_and(|p| matches!(p.resolver, PopupResolver::WorkspaceTrust))
         {
@@ -1058,16 +1061,7 @@ impl Editor {
             focus_key_hint: None,
         };
 
-        let buffer_id = self.active_buffer();
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.popups.show(popup);
-        }
+        self.global_popups.show(popup);
     }
 
     /// Dispatch the choice selected from the workspace-trust prompt.
