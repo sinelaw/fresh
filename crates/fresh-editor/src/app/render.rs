@@ -3,6 +3,53 @@ use super::*;
 use crate::config::FileExplorerSide;
 
 impl Editor {
+    /// Render the topmost global popup at its computed area and register its
+    /// click region in `global_popup_areas`. Shared by the generic
+    /// global-popup slot and the workspace-trust modal band so the area math
+    /// lives in exactly one place.
+    fn render_top_global_popup(
+        &mut self,
+        frame: &mut Frame,
+        size: ratatui::layout::Rect,
+        theme: &crate::view::theme::Theme,
+        hover_target: Option<&crate::app::HoverTarget>,
+    ) {
+        let Some(popup) = self.global_popups.top() else {
+            return;
+        };
+        let top_idx = self.global_popups.all().len() - 1;
+        let popup_area = popup.calculate_area(size, None);
+        let desc_height = popup.description_height();
+        let inner_area = if popup.bordered {
+            ratatui::layout::Rect {
+                x: popup_area.x + 1,
+                y: popup_area.y + 1 + desc_height,
+                width: popup_area.width.saturating_sub(2),
+                height: popup_area.height.saturating_sub(2 + desc_height),
+            }
+        } else {
+            ratatui::layout::Rect {
+                x: popup_area.x,
+                y: popup_area.y + desc_height,
+                width: popup_area.width,
+                height: popup_area.height.saturating_sub(desc_height),
+            }
+        };
+        let num_items = match &popup.content {
+            crate::view::popup::PopupContent::List { items, .. } => items.len(),
+            _ => 0,
+        };
+        let scroll_offset = popup.scroll_offset;
+        popup.render_with_hover(frame, popup_area, theme, hover_target);
+        self.active_chrome_mut().global_popup_areas.push((
+            top_idx,
+            popup_area,
+            inner_area,
+            scroll_offset,
+            num_items,
+        ));
+    }
+
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
         let _span = tracing::info_span!("render").entered();
@@ -1397,46 +1444,18 @@ impl Editor {
         // surface as the top is resolved — the alternative (drawing all at
         // the same BottomRight slot) makes them illegible.
         self.active_chrome_mut().global_popup_areas.clear();
-        if let Some(popup) = self.global_popups.top() {
-            // The workspace-trust prompt is a blocking modal: dim everything
-            // behind it so it can't be lost amongst dashboard/explorer chrome.
-            if matches!(
-                popup.resolver,
+        // The workspace-trust prompt is a blocking modal: it renders later in
+        // the dedicated modal z-band (alongside settings / wizard) on a dimmed
+        // backdrop, so it can't be lost amongst dashboard/explorer chrome.
+        // Everything else on the global stack renders here, above buffer content.
+        let top_is_trust_modal = self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
                 crate::view::popup::PopupResolver::WorkspaceTrust
-            ) {
-                crate::view::dimming::apply_dimming(frame, size);
-            }
-            let top_idx = self.global_popups.all().len() - 1;
-            let popup_area = popup.calculate_area(size, None);
-            let desc_height = popup.description_height();
-            let inner_area = if popup.bordered {
-                ratatui::layout::Rect {
-                    x: popup_area.x + 1,
-                    y: popup_area.y + 1 + desc_height,
-                    width: popup_area.width.saturating_sub(2),
-                    height: popup_area.height.saturating_sub(2 + desc_height),
-                }
-            } else {
-                ratatui::layout::Rect {
-                    x: popup_area.x,
-                    y: popup_area.y + desc_height,
-                    width: popup_area.width,
-                    height: popup_area.height.saturating_sub(desc_height),
-                }
-            };
-            let num_items = match &popup.content {
-                crate::view::popup::PopupContent::List { items, .. } => items.len(),
-                _ => 0,
-            };
-            let scroll_offset = popup.scroll_offset;
-            popup.render_with_hover(frame, popup_area, &theme_clone, hover_target.as_ref());
-            self.active_chrome_mut().global_popup_areas.push((
-                top_idx,
-                popup_area,
-                inner_area,
-                scroll_offset,
-                num_items,
-            ));
+            )
+        });
+        if !top_is_trust_modal {
+            self.render_top_global_popup(frame, size, &theme_clone, hover_target.as_ref());
         }
 
         // Render menu bar last so dropdown appears on top of all other content
@@ -1500,6 +1519,16 @@ impl Editor {
                 debug,
                 &*self.theme.read().unwrap(),
             );
+        }
+
+        // Render the workspace-trust prompt as a blocking modal in the same
+        // z-band as the settings / wizard modals: dim the whole frame, then
+        // draw the dialog on top. Placed here (above the generic global-popup
+        // slot and buffer chrome) so it has strict z-order parity with the
+        // other modals and can never be obscured by the dashboard/explorer.
+        if top_is_trust_modal {
+            crate::view::dimming::apply_dimming(frame, size);
+            self.render_top_global_popup(frame, size, &theme_clone, hover_target.as_ref());
         }
 
         if self.active_window_mut().menu_bar_visible {
