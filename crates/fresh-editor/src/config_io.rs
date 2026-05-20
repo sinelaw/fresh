@@ -941,6 +941,14 @@ impl DirectoryContext {
     /// directory per project — rather than one shared file — keeps concurrent
     /// `fresh` processes on different projects from contending over a single
     /// file.
+    ///
+    // TODO(workspace-state): consolidate the rest of a project's persistent
+    // state into this directory. Today the workspace snapshot still lives
+    // beside it as `workspaces/<encoded>.json`, and recovery/history live
+    // under their own `data_dir` subtrees. Migrate them to
+    // `project_state_dir(working_dir)/{workspace,recovery,history}.json` (with
+    // a one-time move of the legacy paths, falling back to read-old/write-new)
+    // so a project's full state is self-contained in one directory.
     pub fn project_state_dir(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
         let canonical = working_dir
             .canonicalize()
