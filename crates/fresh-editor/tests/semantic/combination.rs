@@ -1,86 +1,40 @@
 //! Combination meta-test — see `docs/internal/scenario-meta-testing.md`
 //! ("3. Combination with active reset").
 //!
-//! Several full `BufferScenario`s run on ONE long-lived harness with an
-//! *active reset* (`reset::reset_actions`, not a fresh harness) between
-//! them. Each scenario asserts its **own** expectations at its
-//! checkpoint — right after its actions, before the next reset — in
-//! every permutation of the order. A scenario that passes alone but
-//! fails after some predecessor means either the reset is incomplete
-//! or the scenario depends on ambient state a predecessor left behind:
-//! bugs the fresh-harness-per-test model can never surface.
+//! Real `BufferScenario`s from the canonical [`super::corpus`] run on
+//! ONE long-lived harness with an *active reset* (`reset::reset_actions`,
+//! not a fresh harness) between them. Each scenario asserts its **own**
+//! expectations at its checkpoint — right after its actions, before the
+//! next reset — in fixed and randomly-permuted orders. A scenario that
+//! passes alone but fails after some predecessor means either the reset
+//! is incomplete or the scenario depends on ambient state a predecessor
+//! left behind: bugs the fresh-harness-per-test model can't surface.
 //!
-//! Scope: buffer-layer scenarios (text/cursor/selection), `actions`
-//! only (no `events`). Undo log, modified flag, config, markers and
-//! clipboard are out of reset's reach, so workloads avoid them.
+//! Scope: the driver replays each scenario's `actions` (not `events`)
+//! on a default no-plugins harness (auto-close/indent off, so the
+//! reset's retyping is literal). So we take the corpus subset that is
+//! `actions`-only, default-language, default-behavior.
 
-use crate::common::scenario::buffer_scenario::{BufferScenario, CursorExpect};
+use crate::common::scenario::buffer_scenario::BufferScenario;
 use crate::common::scenario::property::run_scenarios_with_reset_between;
-use fresh::test_api::Action;
+use crate::semantic::corpus;
+use proptest::prelude::*;
 
-fn workloads() -> Vec<BufferScenario> {
-    use Action::*;
-    vec![
-        BufferScenario {
-            description: "append ! at end of line".into(),
-            initial_text: "hello world".into(),
-            actions: vec![MoveDocumentEnd, InsertChar('!')],
-            expected_text: "hello world!".into(),
-            expected_primary: CursorExpect::at(12),
-            expected_selection_text: Some(String::new()),
-            ..Default::default()
-        },
-        BufferScenario {
-            description: "newline + d at EOF".into(),
-            initial_text: "a\nb\nc".into(),
-            actions: vec![MoveDocumentEnd, InsertNewline, InsertChar('d')],
-            expected_text: "a\nb\nc\nd".into(),
-            expected_primary: CursorExpect::at(7),
-            expected_selection_text: Some(String::new()),
-            ..Default::default()
-        },
-        BufferScenario {
-            description: "select last two chars".into(),
-            initial_text: "abcde".into(),
-            actions: vec![MoveDocumentEnd, SelectLeft, SelectLeft],
-            expected_text: "abcde".into(),
-            expected_primary: CursorExpect::range(5, 3),
-            expected_selection_text: Some("de".into()),
-            ..Default::default()
-        },
-        BufferScenario {
-            description: "three-cursor prefix insert".into(),
-            initial_text: "aaa\nbbb\nccc".into(),
-            actions: vec![AddCursorBelow, AddCursorBelow, InsertChar('x')],
-            expected_text: "xaaa\nxbbb\nxccc".into(),
-            // Surviving-cursor positions after a multi-insert are an
-            // impl detail; the load-bearing claim is the text.
-            skip_cursor_check: true,
-            ..Default::default()
-        },
-        BufferScenario {
-            description: "select last CJK grapheme".into(),
-            initial_text: "你好世界".into(),
-            actions: vec![MoveDocumentEnd, SelectLeft],
-            expected_text: "你好世界".into(),
-            expected_primary: CursorExpect::range(12, 9),
-            expected_selection_text: Some("界".into()),
-            ..Default::default()
-        },
-        BufferScenario {
-            description: "type into empty buffer".into(),
-            initial_text: String::new(),
-            actions: vec![InsertChar('z'), InsertChar('y')],
-            expected_text: "zy".into(),
-            expected_primary: CursorExpect::at(2),
-            expected_selection_text: Some(String::new()),
-            ..Default::default()
-        },
-    ]
+/// Corpus scenarios the combination driver can faithfully replay.
+fn combination_scenarios() -> Vec<BufferScenario> {
+    corpus::buffer_scenarios()
+        .into_iter()
+        .filter(|s| {
+            s.events.is_empty()
+                && s.language.is_none()
+                && !s.behavior.auto_close
+                && !s.behavior.auto_indent
+                && !s.behavior.auto_surround
+        })
+        .collect()
 }
 
-/// Representative orders: forward, reverse, and a rotation. Each must
-/// satisfy every scenario's own assertions.
+/// Representative fixed orders: forward, reverse, and a rotation.
 fn orders(n: usize) -> Vec<Vec<usize>> {
     let fwd: Vec<usize> = (0..n).collect();
     let rev: Vec<usize> = (0..n).rev().collect();
@@ -88,18 +42,59 @@ fn orders(n: usize) -> Vec<Vec<usize>> {
     vec![fwd, rev, rot]
 }
 
+/// A random permutation of `0..n`, generated by sorting the indices by
+/// a random key. Always a valid permutation; reproducible via
+/// proptest's seed / regression file.
+fn permutation_of(n: usize) -> impl Strategy<Value = Vec<usize>> {
+    prop::collection::vec(any::<u64>(), n).prop_map(move |keys| {
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by_key(|&i| keys[i]);
+        order
+    })
+}
+
+fn assert_all_pass(scenarios: &[BufferScenario], order: &[usize]) -> Result<(), String> {
+    let results = run_scenarios_with_reset_between(scenarios, order);
+    for (slot, &i) in order.iter().enumerate() {
+        if let Err(f) = &results[slot] {
+            return Err(format!(
+                "scenario {i} ({:?}) failed its own assertion under order {order:?}: {f}",
+                scenarios[i].description
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
-fn combination_workloads_pass_their_own_assertions_under_reset() {
-    let scenarios = workloads();
+fn combination_corpus_passes_under_fixed_orders() {
+    let scenarios = combination_scenarios();
+    assert!(
+        !scenarios.is_empty(),
+        "no combination-eligible scenarios in corpus::buffer_scenarios()"
+    );
     for order in orders(scenarios.len()) {
-        let results = run_scenarios_with_reset_between(&scenarios, &order);
-        for (slot, &i) in order.iter().enumerate() {
-            if let Err(f) = &results[slot] {
-                panic!(
-                    "workload {i} ({:?}) failed its own assertion under order {order:?}: {f}",
-                    scenarios[i].description
-                );
-            }
+        if let Err(e) = assert_all_pass(&scenarios, &order) {
+            panic!("{e}");
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        .. ProptestConfig::default()
+    })]
+
+    /// Every corpus scenario satisfies its own assertions regardless of
+    /// what ran before it (random orders, active reset between).
+    #[test]
+    fn combination_corpus_passes_under_random_permutation(
+        order in permutation_of(combination_scenarios().len())
+    ) {
+        let scenarios = combination_scenarios();
+        if let Err(e) = assert_all_pass(&scenarios, &order) {
+            prop_assert!(false, "{}", e);
         }
     }
 }
