@@ -570,9 +570,12 @@ Remaining:
    container, because the devcontainer flow owns container env. Wiring the
    provider into `docker exec` (capture via `docker exec sh -lc`) is a small,
    optional follow-up if "activate a venv *inside* a devcontainer" is wanted.
-2. **Freshness wiring** — watch `.envrc`/`mise.toml`/`pyvenv.cfg`, invalidate the
-   capture cache eagerly, and restart the LSP on change (today the inputs-hash
-   cache re-captures lazily on the next spawn).
+2. **Auto file-watch (deferred by choice).** One-shot spawns are already fresh
+   by construction (the inputs-hash cache re-captures on the next spawn after an
+   input changes). A long-running server's env is fixed at spawn, so picking up
+   a changed `.envrc`/`mise.toml` is **user-triggered** via `Env: Reload`
+   (re-capture + restart) for now; auto-watching the input files and restarting
+   on save is a possible later refinement, intentionally not wired.
 3. **Polish** — info panel, the `env: ⚠` diagnostics path, multi-root.
 4. **Live SSH/agent smoke test** — the remote capture/apply paths are built on
    unit-tested pure builders but can't be exercised headlessly; they need a
@@ -581,9 +584,10 @@ Remaining:
 ## Open questions
 
 - **LSP restart on env change.** A running server's env can't change live, so a
-  changed `.envrc`/`mise.toml` means restarting the server. Debounce the watch
-  so a burst of edits doesn't thrash; consider a "reload" affordance instead of
-  auto-restarting under the user mid-task.
+  changed `.envrc`/`mise.toml` means restarting the server. Resolved for now as
+  a **user-triggered `Env: Reload`** (a "reload" affordance) rather than
+  auto-restarting under the user mid-task; if auto-watching is added later it
+  should debounce so a burst of saves doesn't thrash.
 - **Per-language vs whole-environment.** A project may want different toolchains
   per language (mise can express this). v1 treats the environment as one
   provider; per-language overrides via `registerLspServer` env are a later

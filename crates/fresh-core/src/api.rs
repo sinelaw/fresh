@@ -1082,6 +1082,12 @@ pub struct EditorStateSnapshot {
     /// `"trusted"` as "do not execute".
     #[serde(default)]
     pub workspace_trust_level: String,
+    /// Whether an environment is currently active (the env-manager has set a
+    /// recipe via `editor.setEnv`). Plugins read this via `editor.envActive()`
+    /// to reflect activation in the status bar and re-establish file watches
+    /// after the restart that activation triggers.
+    #[serde(default)]
+    pub env_active: bool,
     /// LSP diagnostics per file URI.
     /// Maps file URI string to Vec of diagnostics for that file.
     ///
@@ -1215,6 +1221,7 @@ impl EditorStateSnapshot {
             active_window_id: WindowId(1),
             authority_label: String::new(),
             workspace_trust_level: String::new(),
+            env_active: false,
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
             config: Arc::new(serde_json::Value::Null),

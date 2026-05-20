@@ -5,17 +5,19 @@
  *
  * Detects a project's environment manager (Python venv, direnv, mise) and
  * activates it by handing core an activation **snippet** via `editor.setEnv`.
- * Core captures the resulting environment on the active backend (local / SSH /
- * docker) and applies it to every editor-spawned process — language servers,
- * formatters, `spawnProcess`, the terminal.
+ * Core captures the resulting environment on the active backend (local / SSH)
+ * and applies it to every editor-spawned process — language servers,
+ * formatters, `spawnProcess`.
  *
  * Detection is passive (reads files only). Activation runs repo-controlled
  * code, so it is gated on Workspace Trust: the plugin only calls `setEnv` when
  * `editor.workspaceTrustLevel() === "trusted"` (and core enforces the same).
  *
- * This plugin holds no env vars and does no capture itself — it just picks the
- * right snippet. The snippet is the universal recipe; the named managers below
- * are auto-detected defaults, all overridable by the user.
+ * Freshness: one-shot spawns re-capture automatically when the env inputs
+ * change (core's cache is keyed on them). A long-running language server has
+ * its env fixed at spawn, so to pick up a changed `.envrc`/`mise.toml` the
+ * user runs **Env: Reload**, which re-captures and restarts servers. (Auto
+ * file-watching is intentionally not wired yet.)
  */
 
 const editor = getEditor();
@@ -39,9 +41,9 @@ function fileExists(p: string): boolean {
 
 /**
  * Detect the environment in the current workspace and return its activation
- * snippet, or null if none. These are the auto-detected default snippets;
- * direnv/mise need their exporters (they're prompt-hook driven), venv sources
- * its activate script, and anything else is a pure login shell / user snippet.
+ * snippet, or null if none. These are auto-detected default snippets; direnv
+ * and mise need their exporters (they're prompt-hook driven), venv sources its
+ * activate script, and anything else is a pure login shell / user snippet.
  */
 function detect(): Detected | null {
   const cwd = editor.getCwd();
@@ -77,6 +79,7 @@ function isTrusted(): boolean {
 
 // === Commands ===
 
+/** Activate (or, when already active, reload) the detected environment. */
 function activate(): void {
   if (!isTrusted()) {
     editor.setStatus(
@@ -90,9 +93,11 @@ function activate(): void {
     return;
   }
   // Core captures `snippet` on the active backend and applies it to every
-  // spawn; it restarts the editor so already-running tooling picks it up.
+  // spawn; it restarts so language servers re-spawn under the fresh env.
   editor.setEnv(det.snippet, editor.getCwd());
-  editor.setStatus(`Activating ${det.name} environment…`);
+  editor.setStatus(
+    `${editor.envActive() ? "Reloading" : "Activating"} ${det.name} environment…`,
+  );
 }
 registerHandler("env_activate_handler", activate);
 
@@ -105,7 +110,9 @@ registerHandler("env_use_system_handler", useSystem);
 function showStatus(): void {
   const det = detect();
   const trust = editor.workspaceTrustLevel() || "unavailable";
-  if (det) {
+  if (editor.envActive()) {
+    editor.setStatus(`Environment active${det ? ` (${det.name})` : ""}`);
+  } else if (det) {
     editor.setStatus(
       `Detected ${det.name} (trust: ${trust}). Run “Env: Activate” to use it.`,
     );
@@ -118,6 +125,11 @@ registerHandler("env_status_handler", showStatus);
 editor.registerCommand(
   "env_activate",
   "Env: Activate Detected Environment (venv / direnv / mise)",
+  "env_activate_handler",
+);
+editor.registerCommand(
+  "env_reload",
+  "Env: Reload Environment (re-capture after .envrc/mise.toml change)",
   "env_activate_handler",
 );
 editor.registerCommand(
@@ -137,9 +149,12 @@ function refreshStatus(): void {
   const bufferId = editor.getActiveBufferId();
   if (bufferId === 0) return;
   const det = detect();
-  const value = det
-    ? `${det.name}${isTrusted() ? "" : " (locked)"}`
-    : "system";
+  let value: string;
+  if (editor.envActive()) {
+    value = det ? `${det.name} ✓` : "active";
+  } else {
+    value = det ? `${det.name}${isTrusted() ? "" : " (locked)"}` : "system";
+  }
   editor.setStatusBarValue(bufferId, STATUS_TOKEN, value);
 }
 

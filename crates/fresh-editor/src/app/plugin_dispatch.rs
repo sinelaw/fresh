@@ -144,6 +144,7 @@ impl Editor {
         // run repo-controlled work can gate on it.
         snapshot.workspace_trust_level =
             self.authority.workspace_trust.level().as_str().to_string();
+        snapshot.env_active = self.authority.env_provider.is_active();
 
         // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without

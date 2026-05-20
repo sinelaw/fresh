@@ -1893,6 +1893,12 @@ interface EditorAPI {
 	*/
 	clearEnv(): void;
 	/**
+	* Whether an environment is currently active (a recipe was set via
+	* `setEnv`). Survives the restart `setEnv` triggers, so a plugin can
+	* re-establish its file watch and reflect activation after reloading.
+	*/
+	envActive(): boolean;
+	/**
 	* Join path components (variadic - accepts multiple string arguments)
 	* Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)
 	* 

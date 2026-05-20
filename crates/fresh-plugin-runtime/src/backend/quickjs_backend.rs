@@ -2036,6 +2036,17 @@ impl JsEditorApi {
             .unwrap_or_default()
     }
 
+    /// Whether an environment is currently active (set via `editor.setEnv`).
+    /// Exposed to JS as `editor.envActive()`. Lets the env-manager plugin
+    /// reflect activation and re-establish its file watch after the restart
+    /// that `setEnv` triggers.
+    pub fn env_active(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.env_active)
+            .unwrap_or(false)
+    }
+
     // === Path Operations ===
 
     /// Join path components (variadic - accepts multiple string arguments)
