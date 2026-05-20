@@ -1391,13 +1391,18 @@ fn connect_remote(
         channel.clone(),
         connection_string,
     ));
-    let process_spawner =
-        std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone(), trust.clone()));
+    let process_spawner = std::sync::Arc::new(remote::RemoteProcessSpawner::new(
+        channel.clone(),
+        env.clone(),
+        trust.clone(),
+    ));
     // LSP and other long-running servers run on the remote host: each gets
     // its own `ssh user@host …` subprocess (see RemoteLongRunningSpawner),
-    // rather than the old host-local fallback.
+    // rather than the old host-local fallback. Both remote spawners apply the
+    // live env provider, captured on the remote host.
     let long_running_spawner = std::sync::Arc::new(remote::RemoteLongRunningSpawner::new(
         reconnect_params.clone(),
+        env.clone(),
         trust.clone(),
     ));
 

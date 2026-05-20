@@ -549,20 +549,34 @@ Done:
   and `editor.workspaceTrustLevel()`.
 - **SSH LSP on the remote host** via `RemoteLongRunningSpawner` (closes the old
   Phase-L fallback), with PATH-aware `command_exists`.
-- **Native env application** in every spawner (local/ssh/docker), trust gated.
-- **`env-manager.ts`** Tier-1 plugin (detect + status pill + trust-gated
-  activate), currently still using the `setAuthority`/`local-with-env` path.
+- **`EnvProvider`** — the live recipe + on-demand `capture()` with the
+  inputs-hashed cache (`services::env_provider`, unit-tested), held as a
+  mandatory `Arc<EnvProvider>` on the `Authority`, born in `main.rs`.
+- **`editor.setEnv(snippet, dir?)` / `clearEnv()`** plugin ops — set/clear the
+  live recipe in place (Trusted-gated), restarting tooling; no `setAuthority`.
+  `SpawnerSpec::LocalWithEnv` retired.
+- **Capture wired for local *and* SSH.** Local spawners capture via
+  `$SHELL -lc`; the SSH spawners capture on the remote host (one-shot via the
+  agent's `exec`, long-running via a one-shot `ssh`), then apply: local via
+  `Command::envs`, SSH one-shot via an `env K=V …` wrapper, SSH long-running via
+  the `cd; … ; exec env …` remote script. `command_exists` honours the captured
+  `PATH` on both. So env-manager activation works **over SSH** by construction.
+- **`env-manager.ts`** migrated to detect → snippet → `setEnv`; capture lives in
+  core, so the plugin holds no env vars.
 
 Remaining:
-1. **`EnvProvider` + `setEnv`/`clearEnv`** — replace the static per-spawner env
-   field with the shared live provider and the universal `capture()`; expose the
-   plugin op. This is the change that makes env work over SSH and never go stale.
-   Retire `SpawnerSpec::LocalWithEnv`.
-2. **Migrate `env-manager.ts`** from `setAuthority(local-with-env)` to
-   `setEnv(snippet)`, with the default-snippet table + user-snippet override.
-3. **Freshness wiring** — watch `.envrc`/`mise.toml`/`pyvenv.cfg`, invalidate the
-   capture cache, and restart the LSP on change.
-4. **Polish** — info panel, the `env: ⚠` diagnostics path, multi-root.
+1. **Containers.** The docker spawner still applies only its `base_env` (the
+   devcontainer's `userEnvProbe`) — env-manager activation isn't routed into a
+   container, because the devcontainer flow owns container env. Wiring the
+   provider into `docker exec` (capture via `docker exec sh -lc`) is a small,
+   optional follow-up if "activate a venv *inside* a devcontainer" is wanted.
+2. **Freshness wiring** — watch `.envrc`/`mise.toml`/`pyvenv.cfg`, invalidate the
+   capture cache eagerly, and restart the LSP on change (today the inputs-hash
+   cache re-captures lazily on the next spawn).
+3. **Polish** — info panel, the `env: ⚠` diagnostics path, multi-root.
+4. **Live SSH/agent smoke test** — the remote capture/apply paths are built on
+   unit-tested pure builders but can't be exercised headlessly; they need a
+   real-host run.
 
 ## Open questions
 

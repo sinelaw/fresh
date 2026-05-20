@@ -409,16 +409,66 @@ impl ProcessSpawner for LocalProcessSpawner {
     }
 }
 
+/// Wrap `(command, args)` so the captured `env` is applied on a backend that
+/// passes an argv array (SSH agent / docker) rather than a shell string:
+/// `env K=V … command args…`. Empty env ⇒ unchanged. (`command` must not
+/// contain `=`, which `env` would mistake for an assignment — true for any
+/// program name.)
+fn env_wrap(env: &[(String, String)], command: &str, args: &[String]) -> (String, Vec<String>) {
+    if env.is_empty() {
+        return (command.to_string(), args.to_vec());
+    }
+    let mut wrapped = Vec::with_capacity(env.len() + 1 + args.len());
+    for (k, v) in env {
+        wrapped.push(format!("{k}={v}"));
+    }
+    wrapped.push(command.to_string());
+    wrapped.extend(args.iter().cloned());
+    ("env".to_string(), wrapped)
+}
+
 /// Remote process spawner via SSH agent
 pub struct RemoteProcessSpawner {
     channel: Arc<AgentChannel>,
+    env: Arc<EnvProvider>,
     trust: Arc<WorkspaceTrust>,
 }
 
 impl RemoteProcessSpawner {
-    /// Create a new remote process spawner gated by `trust`.
-    pub fn new(channel: Arc<AgentChannel>, trust: Arc<WorkspaceTrust>) -> Self {
-        Self { channel, trust }
+    /// Create a new remote process spawner gated by `trust`, applying the live
+    /// `env` provider (captured on the remote host) to every spawn.
+    pub fn new(
+        channel: Arc<AgentChannel>,
+        env: Arc<EnvProvider>,
+        trust: Arc<WorkspaceTrust>,
+    ) -> Self {
+        Self {
+            channel,
+            env,
+            trust,
+        }
+    }
+
+    /// Capture the active env on the *remote* host by running the provider's
+    /// script through the agent's raw `exec` (no env applied — recursion-free).
+    async fn captured_env(&self) -> Vec<(String, String)> {
+        let channel = self.channel.clone();
+        self.env
+            .current(move |script| async move {
+                let params = exec_params("sh", &["-lc".to_string(), script], None);
+                let (mut data_rx, _result) =
+                    channel.request_streaming("exec", params).await.ok()?;
+                let mut stdout = Vec::new();
+                while let Some(d) = data_rx.recv().await {
+                    if let Some(out) = d.get("out").and_then(|v| v.as_str()) {
+                        if let Ok(b) = decode_base64(out) {
+                            stdout.extend_from_slice(&b);
+                        }
+                    }
+                }
+                Some(String::from_utf8_lossy(&stdout).into_owned())
+            })
+            .await
     }
 }
 
@@ -431,7 +481,9 @@ impl ProcessSpawner for RemoteProcessSpawner {
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
         gate(&self.trust, &command, cwd.as_deref())?;
-        let params = exec_params(&command, &args, cwd.as_deref());
+        let captured = self.captured_env().await;
+        let (eff_cmd, eff_args) = env_wrap(&captured, &command, &args);
+        let params = exec_params(&eff_cmd, &eff_args, cwd.as_deref());
 
         // Use streaming request to get live output
         let (mut data_rx, result_rx) = self.channel.request_streaming("exec", params).await?;
@@ -826,28 +878,37 @@ fn build_ssh_args(
 /// instead of the host-local fallback.
 pub struct RemoteLongRunningSpawner {
     params: crate::services::remote::ConnectionParams,
-    env: Vec<(String, String)>,
+    env: Arc<EnvProvider>,
     trust: Arc<WorkspaceTrust>,
 }
 
 impl RemoteLongRunningSpawner {
-    /// Spawner for `params`, no injected env, gated by `trust`.
-    pub fn new(params: crate::services::remote::ConnectionParams, trust: Arc<WorkspaceTrust>) -> Self {
-        Self {
-            params,
-            env: Vec::new(),
-            trust,
-        }
-    }
-
-    /// Spawner that injects `env` (an activated environment snapshot) into
-    /// every remote child, gated by `trust`.
-    pub fn with_env(
+    /// Spawner for `params`, gated by `trust`, applying the live `env` provider
+    /// (captured on the remote host) to every server it launches.
+    pub fn new(
         params: crate::services::remote::ConnectionParams,
-        env: Vec<(String, String)>,
+        env: Arc<EnvProvider>,
         trust: Arc<WorkspaceTrust>,
     ) -> Self {
         Self { params, env, trust }
+    }
+
+    /// Capture the active env on the *remote* host: run the provider's script
+    /// through a one-shot `ssh … <script>` (raw — no env applied).
+    async fn captured_env(&self) -> Vec<(String, String)> {
+        let params = self.params.clone();
+        self.env
+            .current(move |script| async move {
+                let ssh_args = build_ssh_args(&params, &script);
+                let output = tokio::process::Command::new("ssh")
+                    .args(&ssh_args)
+                    .hide_window()
+                    .output()
+                    .await
+                    .ok()?;
+                Some(String::from_utf8_lossy(&output.stdout).into_owned())
+            })
+            .await
     }
 }
 
@@ -866,9 +927,9 @@ impl LongRunningSpawner for RemoteLongRunningSpawner {
         let cwd_str = cwd.map(|p| p.to_string_lossy().into_owned());
         gate(&self.trust, command, cwd_str.as_deref())?;
 
-        // Authority env first, then the per-call env so the caller wins on
-        // conflict (mirrors the local/docker layering).
-        let mut merged = self.env.clone();
+        // Captured (provider) env first, then the per-call env so the caller
+        // wins on conflict (mirrors the local layering).
+        let mut merged = self.captured_env().await;
         merged.extend(env);
 
         let remote = build_remote_exec(&merged, cwd_str.as_deref(), command, args);
@@ -891,7 +952,8 @@ impl LongRunningSpawner for RemoteLongRunningSpawner {
     }
 
     async fn command_exists(&self, command: &str) -> bool {
-        let remote = build_remote_command_exists(&self.env, command);
+        let captured = self.captured_env().await;
+        let remote = build_remote_command_exists(&captured, command);
         let ssh_args = build_ssh_args(&self.params, &remote);
         match tokio::process::Command::new("ssh")
             .args(&ssh_args)
