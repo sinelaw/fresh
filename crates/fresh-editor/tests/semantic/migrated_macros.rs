@@ -58,7 +58,7 @@
 //!
 //! This is the OPPOSITE of the intended atomic-undo semantics the
 //! original test name and comment describe — see
-//! FIXME(#2951) below. We pin the **observed** (defective)
+//! FIXME(#2062) below. We pin the **observed** (defective)
 //! granularity so the regression is documented and so a future
 //! grouping FIX is loud (it will require updating sub-scenarios
 //! B/C below), not silent.
@@ -317,7 +317,7 @@ fn migrated_macro_move_line_end_uses_current_line_length() {
 /// `InsertChar` lands as its own undo unit, so 3 Ctrl+Z's are
 /// needed to undo the replayed "abc".
 ///
-/// FIXME(#2951): macro replay should be a single undo unit. The
+/// FIXME(#2062): macro replay should be a single undo unit. The
 /// `play_macro` loop in `app/macro_actions.rs` forwards each
 /// recorded action through `handle_action` with no undo-group /
 /// BulkEdit bracketing, so undo is per-char instead of atomic.
@@ -351,7 +351,7 @@ fn migrated_macro_playback_appends_replay() {
     });
 
     // Sub-scenario B: one Undo removes one replayed char (per-char granularity).
-    // FIXME(#2951): macro replay should be a single undo unit — after the
+    // FIXME(#2062): macro replay should be a single undo unit — after the
     // grouping fix this single Undo should revert the WHOLE replay, leaving
     // "abc\n" (not "abc\nab").
     assert_buffer_scenario(BufferScenario {
@@ -374,7 +374,7 @@ fn migrated_macro_playback_appends_replay() {
 
     // Sub-scenario C: three Undos drain the rest of the replay,
     // leaving only the recording + the newline.
-    // FIXME(#2951): this scenario only exists because replay is per-char;
+    // FIXME(#2062): this scenario only exists because replay is per-char;
     // once macro replay is a single undo unit, one Undo (sub-scenario B)
     // suffices and this becomes redundant.
     assert_buffer_scenario(BufferScenario {

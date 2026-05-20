@@ -231,7 +231,7 @@ action, so one Undo reverts exactly one char. A 3-char macro
 replay therefore takes 3 Undos to fully revert.
 **Assessment:** This is a BUG — the actual per-char granularity
 is the OPPOSITE of the atomic-undo semantics the original test
-name and comment describe. Tracked as FIXME(#2951): macro replay
+name and comment describe. Tracked as FIXME(#2062): macro replay
 should be wrapped as a single undo unit. The current defective
 behaviour is pinned (documented, not endorsed) in
 `migrated_macros::migrated_macro_playback_appends_replay`
