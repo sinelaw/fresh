@@ -4,8 +4,11 @@
 //! Gated behind `FRESH_MUTATION=1`. For each `BufferScenario`, greedily
 //! drops actions while `check_buffer_scenario` still passes, and appends
 //! an advisory record when the minimal still-passing action sequence is
-//! shorter than the written one. A `minimal_len == 0` record means the
-//! expectation holds with **no actions** — a vacuous test.
+//! shorter than the written one. `minimal_len == 0` means the actions
+//! return to the initial state (no-op / idempotence / undo-to-original
+//! / round-trip). It is advisory only: minimization alone cannot tell a
+//! legitimate "this action is a no-op" assertion from a truly empty one
+//! — that distinction needs the validation/flip guard.
 //!
 //! Advisory only: this never fails a test. Read the report (JSONL) at
 //! `$FRESH_MUTATION_REPORT` (default `target/scenario-minimization.jsonl`).
@@ -84,17 +87,35 @@ fn report_path() -> std::path::PathBuf {
         .join("../../target/scenario-minimization.jsonl")
 }
 
+#[derive(serde::Serialize)]
+struct Record<'a> {
+    layer: &'a str,
+    /// `minimal_len == 0`: the actions net to the initial state. Not
+    /// proof of vacuity (see module docs) — advisory.
+    returns_to_initial: bool,
+    original_len: usize,
+    minimal_len: usize,
+    description: &'a str,
+    minimal_actions: &'a [Action],
+}
+
 fn write_record(s: &BufferScenario, minimal: &[Action]) {
     let path = report_path();
-    let minimal_actions: Vec<String> = minimal.iter().map(|a| format!("{a:?}")).collect();
-    let line = format!(
-        "{{\"layer\":\"buffer\",\"vacuous\":{},\"original_len\":{},\"minimal_len\":{},\"description\":{:?},\"minimal_actions\":{:?}}}\n",
-        minimal.is_empty(),
-        s.actions.len(),
-        minimal.len(),
-        s.description,
-        minimal_actions,
-    );
+    let rec = Record {
+        layer: "buffer",
+        returns_to_initial: minimal.is_empty(),
+        original_len: s.actions.len(),
+        minimal_len: minimal.len(),
+        description: &s.description,
+        minimal_actions: minimal,
+    };
+    let mut line = serde_json::to_string(&rec).unwrap_or_else(|e| {
+        format!(
+            "{{\"error\":\"serialize failed: {e}\",\"description\":{:?}}}",
+            s.description
+        )
+    });
+    line.push('\n');
     let _guard = REPORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
