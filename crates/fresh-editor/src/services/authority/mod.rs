@@ -255,6 +255,12 @@ pub struct Authority {
     /// URIs translate at the host/container boundary; local and SSH
     /// authorities leave it `None` and URIs flow through unchanged.
     pub path_translation: Option<PathTranslation>,
+    /// Workspace Trust state gating execution under this authority. Set by
+    /// [`Authority::with_trust`] (the server wraps every authority through
+    /// it before adoption); the base constructors leave it `None`. Shared by
+    /// `Arc` with the server so the command palette can read/change the
+    /// level. The same `Arc` also drives the guarding spawners.
+    pub workspace_trust: Option<Arc<crate::services::workspace_trust::WorkspaceTrust>>,
 }
 
 impl Authority {
@@ -269,6 +275,7 @@ impl Authority {
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,
+            workspace_trust: None,
         }
     }
 
@@ -293,6 +300,7 @@ impl Authority {
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,
+            workspace_trust: None,
         }
     }
 
@@ -318,8 +326,9 @@ impl Authority {
             )),
             long_running_spawner: Arc::new(TrustGuardedLongRunningSpawner::new(
                 self.long_running_spawner,
-                trust,
+                Arc::clone(&trust),
             )),
+            workspace_trust: Some(trust),
             ..self
         }
     }
@@ -392,6 +401,7 @@ impl Authority {
             terminal_wrapper,
             display_label: payload.display_label,
             path_translation,
+            workspace_trust: None,
         })
     }
 }

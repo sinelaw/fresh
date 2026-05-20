@@ -775,6 +775,11 @@ pub enum Action {
     CompositeNextHunk, // Navigate to the next hunk in a composite diff view
     CompositePrevHunk, // Navigate to the previous hunk in a composite diff view
 
+    // Workspace trust (per-project process-execution policy)
+    WorkspaceTrustTrust,    // Trust this workspace: allow all process execution
+    WorkspaceTrustRestrict, // Restrict: no repo-controlled execution (the safe default)
+    WorkspaceTrustBlock,    // Block: no process execution at all
+
     // No-op
     None,
 }
@@ -1188,6 +1193,10 @@ impl Action {
 
             "composite_next_hunk" => CompositeNextHunk,
             "composite_prev_hunk" => CompositePrevHunk,
+
+            "workspace_trust_trust" => WorkspaceTrustTrust,
+            "workspace_trust_restrict" => WorkspaceTrustRestrict,
+            "workspace_trust_block" => WorkspaceTrustBlock,
 
             "noop" => None,
 
@@ -2568,6 +2577,9 @@ impl KeybindingResolver {
             Action::OpenKeybindingEditor => "Keybinding Editor".into(),
             Action::CompositeNextHunk => t!("action.composite_next_hunk"),
             Action::CompositePrevHunk => t!("action.composite_prev_hunk"),
+            Action::WorkspaceTrustTrust => "Trust This Folder".into(),
+            Action::WorkspaceTrustRestrict => "Restrict This Folder".into(),
+            Action::WorkspaceTrustBlock => "Block Process Execution".into(),
             Action::None => t!("action.none"),
         }
         .to_string()

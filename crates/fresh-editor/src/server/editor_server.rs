@@ -197,16 +197,23 @@ impl EditorServer {
             .unwrap_or_else(crate::services::authority::Authority::local);
         let session_keepalive = config.session_keepalive.take();
 
-        // Workspace Trust. NOTE: started at `Trusted` so this enforcement
-        // infrastructure is behavior-preserving until the trust-granting
-        // prompt/UI lands; flipping the initial level to the safe
-        // `TrustLevel::Restricted` default is a one-line change here once
-        // users have a way to grant trust. The enforcement paths are
-        // covered by `workspace_trust`'s unit tests regardless.
-        let workspace_trust = Arc::new(crate::services::workspace_trust::WorkspaceTrust::new(
-            Some(config.working_dir.clone()),
-            crate::services::workspace_trust::TrustLevel::Trusted,
-        ));
+        // Workspace Trust. Decisions persist per-workspace in the user's
+        // config dir; any prior decision for this directory is honored.
+        // NOTE: the *fallback* when nothing is recorded is `Trusted`, so this
+        // remains behavior-preserving until the trust-granting prompt/UI
+        // lands; flipping the fallback to the safe `TrustLevel::Restricted`
+        // default is a one-line change here once users can grant trust.
+        let trust_store =
+            crate::services::workspace_trust::TrustStore::new(&config.dir_context.config_dir);
+        let initial_trust = trust_store
+            .level_for(&config.working_dir)
+            .unwrap_or(crate::services::workspace_trust::TrustLevel::Trusted);
+        let workspace_trust =
+            Arc::new(crate::services::workspace_trust::WorkspaceTrust::new_persistent(
+                Some(config.working_dir.clone()),
+                initial_trust,
+                trust_store,
+            ));
 
         Ok(Self {
             config,

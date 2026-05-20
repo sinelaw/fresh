@@ -882,6 +882,29 @@ impl Editor {
 
     /// Handle an action (for normal mode and command execution).
     /// Used by the app module internally and by the GUI module for native menu dispatch.
+    /// Change the current workspace's trust level and report it. The shared
+    /// `WorkspaceTrust` state (held on the authority) is updated in place and
+    /// persisted to disk; the guarding spawners read the new level live, so it
+    /// takes effect for subsequent spawns without an editor rebuild.
+    pub(crate) fn set_workspace_trust_level(
+        &mut self,
+        level: crate::services::workspace_trust::TrustLevel,
+    ) {
+        use crate::services::workspace_trust::TrustLevel;
+        let msg = if let Some(trust) = &self.authority.workspace_trust {
+            trust.set_level(level);
+            match level {
+                TrustLevel::Trusted => t!("trust.now_trusted"),
+                TrustLevel::Restricted => t!("trust.now_restricted"),
+                TrustLevel::Blocked => t!("trust.now_blocked"),
+            }
+            .to_string()
+        } else {
+            t!("trust.unavailable").to_string()
+        };
+        self.active_window_mut().status_message = Some(msg);
+    }
+
     pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
         use crate::input::keybindings::Action;
 
@@ -900,6 +923,21 @@ impl Editor {
             }
             Action::Detach => {
                 self.should_detach = true;
+            }
+            Action::WorkspaceTrustTrust => {
+                self.set_workspace_trust_level(
+                    crate::services::workspace_trust::TrustLevel::Trusted,
+                );
+            }
+            Action::WorkspaceTrustRestrict => {
+                self.set_workspace_trust_level(
+                    crate::services::workspace_trust::TrustLevel::Restricted,
+                );
+            }
+            Action::WorkspaceTrustBlock => {
+                self.set_workspace_trust_level(
+                    crate::services::workspace_trust::TrustLevel::Blocked,
+                );
             }
             Action::Save => {
                 // Check if buffer has a file path - if not, redirect to SaveAs

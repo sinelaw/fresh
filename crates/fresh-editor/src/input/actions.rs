@@ -2944,7 +2944,10 @@ pub fn action_to_events(
         | Action::AddRuler
         | Action::RemoveRuler
         | Action::CompositeNextHunk
-        | Action::CompositePrevHunk => return None,
+        | Action::CompositePrevHunk
+        | Action::WorkspaceTrustTrust
+        | Action::WorkspaceTrustRestrict
+        | Action::WorkspaceTrustBlock => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {
