@@ -3158,6 +3158,9 @@ impl Editor {
             .get_mut(&buffer_id)
         {
             state.show_cursors = show;
+            // The plugin now owns this buffer's cursor visibility; stop
+            // the widget runtime from overriding it on every repaint.
+            state.cursor_visibility_locked = true;
         } else {
             tracing::warn!("SetBufferShowCursors: buffer {:?} not found", buffer_id);
         }
@@ -3536,6 +3539,21 @@ impl Editor {
         entries: &[fresh_core::text_property::TextPropertyEntry],
         focus_cursor: Option<crate::widgets::FocusCursor>,
     ) {
+        // If the plugin has taken explicit control of this buffer's cursor
+        // (via `setBufferShowCursors`), the widget runtime must not touch
+        // its visibility or position — the plugin owns it. This lets a
+        // widget-panel pane be cursor-driven (e.g. git log's commit list)
+        // without each repaint clearing the cursor.
+        let locked = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.get(&buffer_id))
+            .map(|s| s.cursor_visibility_locked)
+            .unwrap_or(false);
+        if locked {
+            return;
+        }
+
         let absolute_byte = focus_cursor.map(|fc| {
             let row = fc.buffer_row as usize;
             let prefix: usize = entries.iter().take(row).map(|e| e.text.len()).sum();

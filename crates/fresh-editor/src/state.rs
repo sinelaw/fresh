@@ -180,6 +180,13 @@ pub struct EditorState {
     /// Can be set to false for virtual buffers like diagnostics panels
     pub show_cursors: bool,
 
+    /// Set once a plugin explicitly controls this buffer's cursor
+    /// visibility via `setBufferShowCursors`. When true, the widget
+    /// runtime stops overriding the cursor (`apply_widget_focus_cursor`
+    /// becomes a no-op for this buffer) — letting a widget-panel plugin
+    /// own its pane's cursor, e.g. git log's cursor-driven commit list.
+    pub cursor_visibility_locked: bool,
+
     /// Whether editing is disabled for this buffer (default false)
     /// When true, typing, deletion, cut/paste, undo/redo are blocked
     /// but navigation, selection, and copy are still allowed
@@ -285,6 +292,7 @@ impl EditorState {
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
+            cursor_visibility_locked: false,
             editing_disabled: false,
             scrollable: true,
             buffer_settings: BufferSettings::default(),
