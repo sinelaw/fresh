@@ -317,14 +317,24 @@ There are three levels:
    and project tooling run; repo-relative executables are allowed. The user has
    vouched for the project.
 
-3. **Blocked — no execution at all.** A hard lockdown: **every** spawn fails
-   immediately with an error — `spawnProcess`, `spawnHostProcess`, and every core
-   spawn path (LSP, formatter, exec'd file watchers) alike. For reading
-   genuinely hostile code with zero process execution of any kind. Strictly more
-   restrictive than Restricted, which still lets system tools run.
+3. **Blocked — nothing runs without per-spawn say-so.** A hard lockdown over
+   **every** spawn — `spawnProcess`, `spawnHostProcess`, and every core spawn
+   path (LSP, formatter, exec'd file watchers) alike. It has two behaviors,
+   chosen by the user:
+   - **Fail silently** (default for Blocked): every spawn errors immediately.
+     For reading genuinely hostile code with zero process execution.
+   - **Prompt each time:** every spawn pauses and asks before running, showing
+     the resolved executable, args, and cwd — `Allow once` / `Deny`
+     (deny behaves like fail). The strictest *interactive* mode: an audit lens
+     on exactly what a project tries to run, nothing executing without explicit
+     per-execution consent.
 
-The level is settable any time from the status-bar picker / a
-`Workspace: Set Trust Level` command and remembered per canonical path.
+   Both are strictly more restrictive than Restricted, which lets system tools
+   run unprompted.
+
+The level (and the Blocked sub-behavior) is settable any time from the
+status-bar picker / a `Workspace: Set Trust Level` command and remembered per
+canonical path.
 
 ### The prompt
 
@@ -368,7 +378,15 @@ with no per-caller cooperation required:
 |---|---|---|---|
 | **Restricted** (default) | Refused / suppressed | **Proceeds** | None (env never activated) |
 | **Trusted** | Runs | Proceeds | Active env injected |
-| **Blocked** | Fails with error | **Fails with error** | N/A — nothing spawns |
+| **Blocked / fail** | Fails with error | **Fails with error** | N/A — nothing spawns |
+| **Blocked / prompt** | `Allow once` / `Deny` per spawn | `Allow once` / `Deny` per spawn | None unless an allowed env step ran |
+
+Under **Blocked / prompt**, the call (plugin or core) blocks awaiting the
+decision; `Deny` returns the same error as Blocked / fail. Because LSP,
+formatters, and watchers spawn frequently, per-spawn prompting can flood — so
+this mode coalesces identical `(executable, args)` requests and offers
+`Allow for this session` on the prompt to suppress repeats of the same command.
+It is an audit/power-user mode, not a daily default.
 
 Two layers implement the Restricted row, since the spawner can't always tell a
 repo-controlled spawn from a benign one:
