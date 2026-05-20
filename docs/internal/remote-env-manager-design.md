@@ -77,37 +77,77 @@ complete, shipping precedent for nearly all of this: detect → prompt → captu
 login env → `setAuthority` → status-bar indicator → info panel → persist
 decisions per workspace across the restart.
 
-## Core model: an environment is an env snapshot injected into the Authority
+## Core model: one universal capture, a live provider, never a stored snapshot
 
-Do **not** model `venv`, `direnv`, and `mise` as three independent features.
-Model **one** concept:
+Do **not** model `venv`, `direnv`, and `mise` as three independent features, and
+do **not** bake a captured env into a stored snapshot. Two converged decisions:
 
-> An **active environment** is `{ label, interpreter_path?, env_vars }` produced
-> by a **provider** and injected into the active Authority's spawner(s).
+**1. One universal capture mechanism.** The active environment is produced by a
+single function — run a shell snippet in the project directory *on the active
+backend's host*, and capture the resulting environment delta:
 
-Because every backend primitive routes through the one Authority, injecting the
-env there makes the LSP, the integrated terminal, `spawnProcess`, and
-formatters consistent **by construction**. The classic failure — terminal and
-language server disagreeing about `PATH` — becomes structurally impossible:
-they read the same snapshot.
+```
+capture(host, snippet, dir) -> Vec<(String, String)>
+    // runs `$SHELL -lc 'cd <dir>; <snippet>; env -0'` through the active
+    // backend (local tokio / SSH agent / docker exec), diffs against a
+    // baseline, and returns the delta. The snippet's own stdout is parsed
+    // and discarded, so the captured value is clean.
+```
 
-### Providers
+There are no bespoke per-manager code paths. The only manager-specific
+knowledge is a tiny, **overridable default-snippet table** chosen by passive
+detection:
 
-Providers are tried in priority order (mirroring the live-grep provider
-registry pattern in `init_script.rs`):
+| Detected in project root | Default snippet |
+|--------------------------|-----------------|
+| `.envrc` (direnv) | `eval "$(direnv export bash)"` |
+| `mise.toml` / `.mise.toml` / `.tool-versions` | `eval "$(mise env -s bash)"` |
+| `.venv/` / `venv/` | `source <dir>/bin/activate` |
+| nothing, or user override | `` (empty ⇒ pure login shell) or a user snippet |
 
-| Provider | How the snapshot is produced |
-|----------|------------------------------|
-| `direnv` | `direnv export json` (after `direnv allow`) |
-| `mise` | `mise env --json` (or `mise env -s bash`) |
-| `venv` / `poetry` / `pipenv` | resolve the interpreter; prepend its `bin/` to `PATH`; set `VIRTUAL_ENV` |
-| `command` | user-supplied wrapper (`activate`); run it in a subshell, diff `env` |
-| `login-shell` (fallback) | `$SHELL -lic env` snapshot — catches `pyenv` and anything hooked into rc files |
+Why the table can't be dropped entirely: direnv and mise hook the shell
+**prompt** (`PROMPT_COMMAND` / `precmd`), which never fires in a non-interactive
+capture — so a blank login-shell capture silently misses them. That's why they
+ship dedicated exporters (`direnv export`, `mise env`); we just use those as the
+default snippets. Everything else — `pyenv`, `conda`, `asdf`, custom rc edits —
+*is* caught by the empty (login-shell) snippet, and anything exotic is a
+user-supplied snippet. So `LoginShell` (empty) and `Command(snippet)` are
+first-class universal catch-alls; the named managers are merely auto-filled
+defaults, not special cases.
 
-A provider yields a `Vec<(String, String)>` env delta. That delta is handed to
-`setAuthority` (the same field shape the docker authority already uses) for
-remote/container backends, or applied to the local spawner env for the local
-authority.
+**One active provider, no N-way merging.** Setups that compose (a `.envrc` that
+does `use flake` / `eval "$(mise activate)"`) are handled by the *outermost*
+manager: `direnv export` already returns the fully-composed result. We run one
+provider; we never merge several.
+
+**2. The provider is live, not a stored snapshot — and never goes stale.** The
+active environment is a *recipe* (`{ snippet, project_dir }`) held as a shared,
+interior-mutable handle on the `Authority` — exactly parallel to
+`Arc<WorkspaceTrust>` — and re-evaluated fresh against the active backend:
+
+- **One-shot spawns** (`spawnProcess`, formatters, find-in-files) re-evaluate
+  the recipe at spawn time. A cache keyed on a content-hash of the env inputs
+  (`.envrc`/`mise.toml`/`pyvenv.cfg`) skips re-running when nothing changed, but
+  correctness never depends on it — there is no stored vars blob to drift.
+- **Long-running servers (LSP)** capture the env at spawn. A running process's
+  environment *cannot* be refreshed live (OS-level fact), so "no staleness" for
+  the LSP means: watch the env inputs and **restart the server** with a fresh
+  capture when they change. The capture is always fresh; applying it to a live
+  server is inherently a restart.
+- **The integrated terminal** is a real login/interactive shell (its own
+  `TerminalWrapper`), so direnv/mise hooks fire natively on `cd` — fresh by
+  construction, and stdout noise is expected there.
+
+**Mechanism: a plugin op, not `setAuthority`.** Activation sets the live
+provider in place via `editor.setEnv(...)` / `clearEnv()` — *not* by rebuilding
+the authority. This is the only thing that works over SSH: a `setAuthority`
+payload is serializable JSON and **cannot carry the live SSH `AgentChannel`**,
+so it could never reconstruct a remote backend with env. `setAuthority` /
+`SpawnerSpec` remain for *backend selection* (devcontainer attach, SSH startup);
+env stops riding on them. Because every spawner already holds the active
+backend's handle, and the capture runs through that backend, the whole thing is
+**remote-correct by construction** — evaluation and execution always happen on
+the same host.
 
 ## The UX: three tiers of control (auto → glance → explicit)
 
@@ -170,10 +210,10 @@ Activating the pill (or the command `Env: Select Environment`) opens a
 └────────────────────────────────────────────────────────┘
 ```
 
-Selecting an entry rebuilds the Authority with that env snapshot (the existing
-`setAuthority` clean-restart path) — LSP and terminals come back already inside
-the environment. This is the TUI equivalent of VS Code's "click the interpreter
-in the status bar" quick-pick.
+Selecting an entry sets the live env provider via `editor.setEnv(...)` — no
+authority rebuild, no restart for one-shot tools; the LSP is restarted so it
+re-spawns inside the environment. This is the TUI equivalent of VS Code's
+"click the interpreter in the status bar" quick-pick.
 
 ### Tier 3 — Per-user overrides, stored outside the repo (full control)
 
@@ -193,12 +233,17 @@ per-workspace decisions, and the same store that holds the trust decision):
 // conceptual shape of the per-workspace record in user-global state
 {
   "enabled": true,                 // master switch for this workspace
-  "provider": "direnv",            // pin a provider, or "none" to force system
-  "interpreter": "/abs/.venv/bin/python", // manual interpreter override
-  "activate": "source .venv/bin/activate", // hand-typed wrapper (rare escape hatch)
+  "enabled": true,                 // master switch for this workspace
+  "snippet": "source .venv/bin/activate", // the capture recipe; "" = pure login
+                                   // shell; overrides the auto-detected default
   "applyToTerminal": true
 }
 ```
+
+The override is just the capture **snippet** (plus on/off) — the same recipe the
+universal capture runs. Leaving it unset uses the auto-detected default;
+setting it to `""` forces a pure login-shell capture; setting it to any shell
+snippet is the universal escape hatch for exotic/custom setups.
 
 Plus a **global default** (in the user's config, not per-workspace) to turn the
 whole feature on or off, or set it to "ask, never auto." Reached through the
@@ -215,38 +260,39 @@ it can be added later as an explicit, opt-in "save to project" action; it is
 deliberately **not** a default, and the threat-model rules below would then
 apply to it.
 
-## The login-shell baseline fix (two real gaps in Fresh today)
+## Remote: how the universal capture reaches the host
 
-For `direnv`/`mise`/`pyenv` to work over SSH at all, two core gaps must close.
-Both are pre-existing and also benefit plain remote editing and containers.
+For `direnv`/`mise`/`pyenv` to work over SSH, the capture and the spawn both
+have to happen *on the remote host*. The universal capture handles this by
+construction — it runs the snippet through the **active backend**, so on an SSH
+authority `capture()` issues `$SHELL -lc 'cd <dir>; <snippet>; env -0'` over the
+agent, and the captured env is injected into the (remote) spawns. No special
+"login shell mode" toggle on the agent is needed: the snippet *is* the login
+shell when that's what we want, and the snippet's stdout is parsed and
+discarded so the agent's `exec` stays clean.
 
-1. **Remote agent `exec` uses a bare `Popen`** — `remote/agent.py:~470`
-   (`subprocess.Popen([cmd] + args, cwd=cwd, …)`, no shell, no profile). The
-   SSH bootstrap is `python3 -u -c …` (`remote/connection.rs:~92`), which never
-   sources `~/.bashrc`/`~/.zshrc`. So remote `rg`/`git`/plugin spawns — and,
-   once routed, the LSP — never see direnv/mise hooks.
-   - **Fix:** add a per-authority "run through login shell" option so remote
-     exec becomes `$SHELL -lc -- <cmd>`. Opt-in, since it adds per-spawn
-     latency; the env-manager plugin prefers the *capture once, inject* path
-     (below) for hot paths and uses the login shell only for the snapshot.
+Two SSH gaps had to close for this, and both are now done:
 
-2. **`Authority::ssh` routes LSP to `LocalLongRunningSpawner` and injects no
-   env** — `authority/mod.rs:285` (documented "Phase L" gap: LSP over SSH still
-   spawns on the host). For remote venv'd Pyright/`ruff` to work, SSH needs:
-   - (a) an SSH-routed `long_running_spawner` (LSP runs on the remote host), and
-   - (b) the same `env: Vec<(String, String)>` injection the docker spawner
-     already has.
+1. **LSP must run on the remote host.** Previously `Authority::ssh` routed the
+   long-running spawner to the host-local `LocalLongRunningSpawner` (the old
+   "Phase L" gap). **Fixed:** `RemoteLongRunningSpawner` runs each server as its
+   own `ssh user@host <remote-cmd>` subprocess — a real local
+   `tokio::process::Child` whose piped stdio *is* the remote process's stdio
+   (the same trick Docker uses with the local `docker` CLI), so the LSP I/O
+   layer is untouched. It honours an injected `PATH` in `command_exists`, so a
+   remote venv's `pyright`/`ruff` is discoverable.
 
-   The env-manager plugin then captures the remote login env once
-   (`$SHELL -lic env` over the agent) and hands it to `setAuthority` — byte for
-   byte the `captureContainerLoginEnv` pattern in `devcontainer.ts`.
+2. **Remote spawns must carry the env.** **Fixed:** every spawner (local / SSH /
+   docker, one-shot + long-running) applies the active env via its transport's
+   native mechanism (`Command::envs` / `env K=V …` over ssh / `docker exec -e`).
+   The env itself comes from the live provider (above), captured on the remote
+   host — not from a `setAuthority` payload, which can't carry the live SSH
+   connection.
 
-The **integrated terminal is the easy case**: `TerminalWrapper`
-(`authority/mod.rs:99`) already supports login flags and a user shell override.
-Opening a remote terminal as `$SHELL -l -i` makes `cd`-triggered direnv/mise
-hooks fire natively, matching the manual experience. For non-hook managers
-(venv) the captured env is injected into the terminal's environment so it
-matches the editor.
+The **integrated terminal** is the easy case: its `TerminalWrapper`
+(`authority/mod.rs:99`) opens a real login/interactive shell, so `cd`-triggered
+direnv/mise hooks fire natively, matching the manual experience — fresh by
+construction, no capture needed there.
 
 ## Threat model & trust boundary
 
@@ -473,52 +519,61 @@ contract env managers rely on.
   pill goes `env: ⚠` and routes to the diagnostics panel — the opposite of the
   default "linter throws errors with no explanation."
 
-## Where it lives: a plugin, plus two core fixes
+## Where it lives: a thin plugin over a live core handle
 
-Tiers 1–3 compose primitives the devcontainer plugin already proves out, so the
-feature ships as a built-in **`env-manager.ts`** with no new core UI:
+The split is: **core owns the live env handle and applies it**; the
+**`env-manager.ts` plugin owns detection, the snippet defaults, and the UX**.
 
-- detect environments (`readDir`, `fileExists`, `readFile`)
-- run providers (`spawnProcess` / `spawnHostProcess`, `$SHELL -lic env`)
-- own a status-bar segment (`registerStatusBarElement` / `setStatusBarValue`)
-  and optionally drive the Remote Indicator (`setRemoteIndicatorState`)
-- offer pickers (`startPrompt` + `setPromptSuggestions`) and the trust popup
-  (`showActionPopup`)
-- inject the env via `setAuthority` and persist per-workspace decisions via
-  global state across the restart
+Core (`EnvProvider`, parallel to `WorkspaceTrust`):
+- a shared, interior-mutable provider on the `Authority`, set via the plugin op
+  `editor.setEnv(snippet)` / `clearEnv()` — never a `setAuthority` rebuild
+- `capture(host, snippet, dir)` runs through the active backend (local / SSH
+  agent / docker), with the inputs-hashed cache and clean-stdio parsing
+- every spawner reads the provider and applies the env via its native mechanism
 
-The **only** core work is the two SSH/login-shell fixes in the section above,
-both of which are pre-existing gaps that also improve container and plain remote
-workflows.
+Plugin (`env-manager.ts`, composing primitives the devcontainer plugin proves
+out):
+- passive detection (`fileExists`/`readFile`) → the default snippet table
+- the status-bar pill (`registerStatusBarElement`/`setStatusBarValue`),
+  pickers (`startPrompt`), trust prompt (`showActionPopup`)
+- gates activation on `editor.workspaceTrustLevel() === "trusted"`, then calls
+  `editor.setEnv(snippet)`
+- persists the per-user override (enabled / snippet) via `setGlobalState`
 
-## Implementation phases
+## Implementation status & phases
 
-1. **Local-only, plugin-only — with the trust gate from day one.** Auto-detect
-   venv/poetry (passive); status-bar pill + picker; the workspace-trust prompt;
-   inject env into the local authority's spawner and integrated terminal *only
-   after trust*. No core changes. The trust boundary (§Threat model) is not a
-   later add-on — activation executes repo-controlled code even for a plain
-   local venv, so it ships in the first increment.
-2. **direnv / mise providers.** Add `direnv export json` / `mise env --json`
-   and the `Reload` command, reusing the phase-1 trust gate. Still local.
-3. **Per-user overrides + info panel + diagnostics.** Tier 3 overrides
-   (enable/disable, pin provider/interpreter) in user-global state, plus the
-   visible-failure path.
-4. **SSH core fixes.** SSH-routed `long_running_spawner` + env injection in
-   `Authority::ssh`; the remote login-shell capture in the plugin. This is what
-   makes remote Pyright/`ruff` resolve against a remote venv/mise toolchain.
-5. **Polish.** Multi-root edge cases, interpreter version probing, terminal
-   login-shell wrapper for remote, caching the env snapshot per workspace.
+Done:
+- **Workspace Trust** end to end — enforcement at the spawner choke-point as a
+  *mandatory* `Arc<WorkspaceTrust>` field (no decorator, no `Option`), per-project
+  persistence, default-deny + prompt-on-open, three levels, host-spawn gating,
+  and `editor.workspaceTrustLevel()`.
+- **SSH LSP on the remote host** via `RemoteLongRunningSpawner` (closes the old
+  Phase-L fallback), with PATH-aware `command_exists`.
+- **Native env application** in every spawner (local/ssh/docker), trust gated.
+- **`env-manager.ts`** Tier-1 plugin (detect + status pill + trust-gated
+  activate), currently still using the `setAuthority`/`local-with-env` path.
+
+Remaining:
+1. **`EnvProvider` + `setEnv`/`clearEnv`** — replace the static per-spawner env
+   field with the shared live provider and the universal `capture()`; expose the
+   plugin op. This is the change that makes env work over SSH and never go stale.
+   Retire `SpawnerSpec::LocalWithEnv`.
+2. **Migrate `env-manager.ts`** from `setAuthority(local-with-env)` to
+   `setEnv(snippet)`, with the default-snippet table + user-snippet override.
+3. **Freshness wiring** — watch `.envrc`/`mise.toml`/`pyvenv.cfg`, invalidate the
+   capture cache, and restart the LSP on change.
+4. **Polish** — info panel, the `env: ⚠` diagnostics path, multi-root.
 
 ## Open questions
 
-- **Snapshot freshness.** direnv/mise env can change when `.envrc`/`mise.toml`
-  change. Watch those files (`watchPath`, as `git_statusbar.ts` watches `HEAD`)
-  and surface a "reload" affordance on the pill rather than auto-restarting the
-  editor under the user.
-- **Per-language vs whole-environment.** A single project may want different
-  toolchains per language (mise can express this). v1 treats the environment as
-  one snapshot; per-language overrides via `registerLspServer` env are a later
+- **LSP restart on env change.** A running server's env can't change live, so a
+  changed `.envrc`/`mise.toml` means restarting the server. Debounce the watch
+  so a burst of edits doesn't thrash; consider a "reload" affordance instead of
+  auto-restarting under the user mid-task.
+- **Per-language vs whole-environment.** A project may want different toolchains
+  per language (mise can express this). v1 treats the environment as one
+  provider; per-language overrides via `registerLspServer` env are a later
   extension once `LspServerPackConfig` grows an `env` field.
-- **Latency of login-shell capture over SSH.** Capture once at activation and
-  cache; only re-capture on explicit reload or watched-file change.
+- **Capture latency.** One-shot spawns re-evaluate; the inputs-hashed cache keeps
+  the common path free. If a pathological env source isn't a pure function of the
+  watched files, fall back to always-evaluate for correctness over speed.
