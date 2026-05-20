@@ -22,21 +22,34 @@
 //! either an `Action` (PageDown) or an `InputEvent::Mouse` (wheel,
 //! click, drag) — both routed through the production input path.
 //!
-//! ## Deferred (probes that have no `EditorTestApi` projection)
+//! ## Scrollbar-geometry probes (now migrated)
 //!
 //!   * `test_scrollbar_shows_scrollable_content_with_wrapped_lines` —
-//!     counts scrollbar thumb/track cells by colour via
-//!     `harness.get_cell_style()` + `editor().theme()`. No
-//!     `RenderSnapshot` equivalent for "scrollbar geometry".
-//!   * `test_scrollbar_thumb_drag_no_jump_on_start` — reads
-//!     `editor().get_split_areas()` for the thumb's row range and
-//!     `harness.top_line_number()` for the scroll position. Both
-//!     are renderer-internal; the test asserts on the relative
-//!     change in scroll position after a horizontal drag, which
-//!     can't be expressed against the snapshot today.
+//!     the original counted scrollbar thumb/track cells by colour.
+//!     The faithful claim ("the thumb does not fill the whole
+//!     track, i.e. content is scrollable") is now expressed via the
+//!     `LayoutScenario::expected_scrollbar_thumb_does_not_fill_track`
+//!     field, backed by the new
+//!     `EditorTestApi::primary_scrollbar_geometry` accessor.
+//!   * `test_scrollbar_thumb_drag_no_jump_on_start` — the original
+//!     read `get_split_areas()` for the thumb row and
+//!     `top_line_number()` for scroll position, then asserted a
+//!     horizontal-only thumb drag does NOT scroll. Now expressed
+//!     via the `MouseDragSpec::HorizontalOnPrimaryThumb` drag +
+//!     `LayoutScenario::expected_top_line_unchanged_across_drags`,
+//!     backed by `EditorTestApi::{top_line_number,
+//!     primary_scrollbar_geometry}`.
 //!
-//! Source: `tests/e2e/line_wrap_scroll_bugs.rs` (6 of 8 tests
-//! migrated; 2 deferred — file retained).
+//! ## DSL extensions added in this migration
+//!
+//!   * `EditorTestApi::top_line_number` and
+//!     `EditorTestApi::primary_scrollbar_geometry` accessors.
+//!   * `MouseDragSpec::HorizontalOnPrimaryThumb { left_by }`.
+//!   * `LayoutScenario::expected_scrollbar_thumb_does_not_fill_track`
+//!     and `LayoutScenario::expected_top_line_unchanged_across_drags`.
+//!
+//! Source: `tests/e2e/line_wrap_scroll_bugs.rs` (8 tests migrated;
+//! 0 deferred).
 
 use crate::common::scenario::context::{MouseButton, MouseEvent};
 use crate::common::scenario::input_event::InputEvent;
@@ -279,6 +292,79 @@ fn migrated_scrollbar_drag_with_multiline_file_one_long_line() {
         },
         ..Default::default()
     });
+}
+
+#[test]
+fn migrated_scrollbar_shows_scrollable_content_with_wrapped_lines() {
+    // Original: `test_scrollbar_shows_scrollable_content_with_wrapped_lines`.
+    // A single 1000-char logical line at width=60/height=20 with
+    // line_wrap=true wraps to ~20 visual rows, exceeding the
+    // viewport. The scrollbar thumb must therefore NOT fill the
+    // whole track — it must be a real, shorter-than-track thumb
+    // indicating scrollable content. Pre-fix, `scrollbar_line_counts`
+    // computed total_lines = 1 (logical), so the thumb filled the
+    // track ("nothing to scroll").
+    let long_line = "X".repeat(1000);
+    assert_layout_scenario(LayoutScenario {
+        description: "1000-char wrapped line: scrollbar thumb does not fill the track".into(),
+        initial_text: long_line,
+        width: TERMINAL_WIDTH_60,
+        height: TERMINAL_HEIGHT_20,
+        actions: vec![Action::MoveDocumentStart],
+        config_overrides: config_wrap_on(),
+        expected_scrollbar_thumb_does_not_fill_track: Some(true),
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_scrollbar_thumb_drag_no_jump_on_start() {
+    // Original: `test_scrollbar_thumb_drag_no_jump_on_start`. With
+    // a 100-line scrollable document scrolled ~30 lines down,
+    // pressing the scrollbar thumb and dragging PURELY HORIZONTALLY
+    // (same row) must NOT change the scroll position — the thumb
+    // must move relative to the click, not jump to centre on the
+    // mouse. Encoded as a `HorizontalOnPrimaryThumb` drag with
+    // `expected_top_line_unchanged_across_drags`.
+    let content: String = (1..=100)
+        .map(|i| format!("Line {} content here\n", i))
+        .collect();
+    let move_down_30: Vec<Action> = std::iter::repeat(Action::MoveDown).take(30).collect();
+    assert_layout_scenario(LayoutScenario {
+        description: "horizontal thumb drag does not change scroll position".into(),
+        initial_text: content,
+        width: TERMINAL_WIDTH_80,
+        height: TERMINAL_HEIGHT_24,
+        actions: move_down_30,
+        config_overrides: config_wrap_on(),
+        mouse_drags: vec![MouseDragSpec::HorizontalOnPrimaryThumb { left_by: 5 }],
+        expected_top_line_unchanged_across_drags: Some(true),
+        ..Default::default()
+    });
+}
+
+/// Anti-test: a non-scrollable buffer (a few short lines) must
+/// NOT report `thumb_does_not_fill_track` — the thumb fills the
+/// whole track because there's nothing to scroll. Proves the
+/// positive scrollbar-visibility claim depends on the content
+/// actually exceeding the viewport.
+#[test]
+fn anti_scrollbar_full_track_when_content_fits() {
+    let scenario = LayoutScenario {
+        description: "anti: tiny buffer ⇒ thumb fills track (not scrollable)".into(),
+        initial_text: "one\ntwo\nthree".into(),
+        width: TERMINAL_WIDTH_60,
+        height: TERMINAL_HEIGHT_20,
+        actions: vec![Action::MoveDocumentStart],
+        config_overrides: config_wrap_on(),
+        expected_scrollbar_thumb_does_not_fill_track: Some(true),
+        ..Default::default()
+    };
+    assert!(
+        check_layout_scenario(scenario).is_err(),
+        "anti-test: when the content fits the viewport the thumb fills the \
+         whole track, so 'thumb does not fill track' must be false"
+    );
 }
 
 /// Anti-test: drop the wheel-down events from

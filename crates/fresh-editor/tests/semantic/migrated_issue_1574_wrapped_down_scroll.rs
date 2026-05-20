@@ -42,15 +42,27 @@
 //! * `migrated_issue_1574_crlf_fixture_up_jump_lands_on_paragraph_end`
 //! * `migrated_issue_1574_ctrl_up_down_scroll_roundtrip_sweep`
 //!
-//! These are marked `#[ignore]` with a `// DEFERRED:` comment
-//! and a pointer to the e2e original. Re-enabling them needs
-//! either:
+//! These are marked `#[ignore]` (citing #2058). To avoid silently
+//! losing live coverage, the original e2e file is RESTORED at
+//! `tests/e2e/issue_1574_wrapped_down_scroll.rs` (re-added to
+//! `tests/e2e/mod.rs`) so these scenarios keep running until the
+//! declarative DSL can express them. Re-enabling the declarative
+//! stubs needs either:
 //!   1. A `LayoutScenario.actions_until: Vec<UntilPredicate>` DSL
 //!      extension that drives actions in a loop until a
-//!      predicate over the snapshot returns true, or
+//!      predicate over the snapshot returns true (the original
+//!      drives `loop { ctrl_up; if cursor_row_empty &&
+//!      para2_hidden { break } }` with mid-loop invariant checks),
+//!      or
 //!   2. Per-(width, height) lookup tables of the exact MoveDown
 //!      counts needed to park the cursor at the empty separator
 //!      at each terminal geometry.
+//!
+//! This was assessed as too large a framework surface to land
+//! faithfully in this session (the loops carry multi-outcome
+//! convergence rules and per-iteration invariants, not just a
+//! single terminating predicate), so the deferral-with-e2e-restore
+//! path is taken per the no-silent-gaps rule.
 //!
 //! ## DSL extensions added in this migration
 //!
@@ -67,7 +79,8 @@
 //!   values across `step_assertions` snapshots.
 //!
 //! Source: `tests/e2e/issue_1574_wrapped_down_scroll.rs`
-//! (3 of 7 tests migrated; 4 deferred; 1 anti-test).
+//! (2 of 7 tests migrated declaratively; 5 deferred — e2e source
+//! restored so coverage is not lost; 1 anti-test).
 
 use crate::common::scenario::layout_scenario::{
     assert_layout_scenario, LayoutScenario, ScenarioConfigOverrides, StepAssertion,
@@ -200,12 +213,12 @@ fn migrated_issue_1574_up_arrow_scrolling_invariants_rendered() {
 /// height) lookup tables of MoveDown counts) before this can be
 /// migrated faithfully. Source: `tests/e2e/issue_1574_wrapped_down_scroll.rs`.
 #[test]
-#[ignore = "deferred: needs actions_until DSL extension (see file docstring)"]
+#[ignore = "deferred: needs iterative-conditional actions_until DSL extension; e2e source restored at tests/e2e/issue_1574_wrapped_down_scroll.rs; #2058"]
 fn migrated_issue_1574_down_from_empty_line_at_bottom_lands_on_paragraph_start() {}
 
 /// DEFERRED: mirror of the down-jump test above; same reason.
 #[test]
-#[ignore = "deferred: needs actions_until DSL extension (see file docstring)"]
+#[ignore = "deferred: needs iterative-conditional actions_until DSL extension; e2e source restored at tests/e2e/issue_1574_wrapped_down_scroll.rs; #2058"]
 fn migrated_issue_1574_up_from_empty_line_at_top_lands_on_paragraph_end() {}
 
 /// DEFERRED: same shape as the down-jump variant but on a
@@ -214,12 +227,12 @@ fn migrated_issue_1574_up_from_empty_line_at_top_lands_on_paragraph_end() {}
 /// `LayoutScenario.initial_file` is already wired and tested by
 /// the walk-sweep tests above).
 #[test]
-#[ignore = "deferred: needs actions_until DSL extension (see file docstring)"]
+#[ignore = "deferred: needs iterative-conditional actions_until DSL extension; e2e source restored at tests/e2e/issue_1574_wrapped_down_scroll.rs; #2058"]
 fn migrated_issue_1574_crlf_fixture_down_jump_lands_on_paragraph_start() {}
 
 /// DEFERRED: Up-direction mirror of the CRLF down-jump.
 #[test]
-#[ignore = "deferred: needs actions_until DSL extension (see file docstring)"]
+#[ignore = "deferred: needs iterative-conditional actions_until DSL extension; e2e source restored at tests/e2e/issue_1574_wrapped_down_scroll.rs; #2058"]
 fn migrated_issue_1574_crlf_fixture_up_jump_lands_on_paragraph_end() {}
 
 /// DEFERRED: original walked Ctrl+Up / Ctrl+Down / Down at each
@@ -231,7 +244,7 @@ fn migrated_issue_1574_crlf_fixture_up_jump_lands_on_paragraph_end() {}
 /// snapshot (not currently in `RenderSnapshotExpect`) or
 /// `actions_until`.
 #[test]
-#[ignore = "deferred: needs predicate-step or actions_until DSL extension"]
+#[ignore = "deferred: needs predicate-step or actions_until DSL extension; e2e source restored at tests/e2e/issue_1574_wrapped_down_scroll.rs; #2058"]
 fn migrated_issue_1574_ctrl_up_down_scroll_roundtrip_sweep() {}
 
 // =====================================================================

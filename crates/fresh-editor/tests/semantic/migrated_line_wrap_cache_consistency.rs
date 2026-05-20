@@ -4,6 +4,13 @@
 //!
 //! ## Status: ALL positive tests deferred (no `EditorTestApi` projection)
 //!
+//! Because these five theorems have no declarative analogue, the
+//! original `tests/e2e/line_wrap_cache_consistency.rs` file is
+//! KEPT (not deleted) and still runs in the e2e suite — there is
+//! no silent coverage gap. This file adds a declarative wrap-on
+//! rendering guard on top, but does not replace the white-box
+//! cache-equality theorems.
+//!
 //! Every test in the original file probes internal cache state
 //! that has no `EditorTestApi` projection:
 //!

@@ -34,6 +34,15 @@ pub struct LayoutScenario {
     /// loading an on-disk fixture, e.g. CRLF round-trips).
     #[serde(default)]
     pub initial_file: Option<std::path::PathBuf>,
+    /// Additional on-disk files to open IN ORDER via the editor's
+    /// real `open_file` pipeline, after `initial_file` /
+    /// `initial_text` set up the first buffer. Each open after the
+    /// first creates a fresh `BufferViewState` — the regression
+    /// surface for issue #1181 (line-numbers config not honored on
+    /// the second buffer). The last path opened becomes the active
+    /// buffer at the final render. Empty ⇒ no extra opens.
+    #[serde(default)]
+    pub open_files: Vec<std::path::PathBuf>,
     pub width: u16,
     pub height: u16,
     pub actions: Vec<Action>,
@@ -205,6 +214,45 @@ pub struct LayoutScenario {
     /// render.
     #[serde(default)]
     pub remove_margin_annotations: Vec<String>,
+    /// Optional final assertion: the primary split's scrollbar
+    /// thumb does NOT fill the entire track (`thumb_extent <
+    /// scrollbar_height`) AND the thumb is non-degenerate
+    /// (`thumb_end > thumb_start`). `Some(true)` ⇒ assert the
+    /// content is scrollable (a real thumb shorter than the track,
+    /// indicating room to scroll). The load-bearing claim of the
+    /// wrapped-lines scrollbar-visibility test. `None` ⇒ skip.
+    #[serde(default)]
+    pub expected_scrollbar_thumb_does_not_fill_track: Option<bool>,
+    /// Optional final assertion: the viewport's top logical line
+    /// number is unchanged across the `mouse_drags` phase (captured
+    /// immediately before the drags run, compared immediately
+    /// after). `Some(true)` ⇒ assert no scroll occurred — used by
+    /// the thumb-horizontal-drag-no-jump regression. `None` ⇒ skip.
+    #[serde(default)]
+    pub expected_top_line_unchanged_across_drags: Option<bool>,
+    /// Declarative per-cell background-color assertions. Each entry
+    /// locates a rendered row by substring and asserts the ratatui
+    /// cell background at a given column equals the expected RGB.
+    /// Reads the live ratatui buffer (`harness.get_cell_style`),
+    /// the same observable the e2e virtual-line bg-fill test used.
+    /// `None` ⇒ skip.
+    #[serde(default)]
+    pub expected_cell_bg: Vec<CellBgExpect>,
+}
+
+/// One declarative cell-background assertion. See
+/// `LayoutScenario::expected_cell_bg`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CellBgExpect {
+    /// Locate the row whose rendered text contains this substring.
+    pub row_with_substring: String,
+    /// Column to probe within that row.
+    pub col: u16,
+    /// Expected background color as RGB. `Some((r,g,b))` ⇒ the
+    /// cell's bg must equal `Color::Rgb(r,g,b)`. `None` ⇒ the cell
+    /// must have NO explicit (non-default, non-reset) background —
+    /// used by anti-tests asserting the absence of a fill.
+    pub expected_rgb: Option<(u8, u8, u8)>,
 }
 
 /// Declarative virtual-line injection. Mirrors the parameter set
@@ -318,6 +366,15 @@ pub enum MouseDragSpec {
     /// from `harness.content_area_rows()`. Symbolic so scenario
     /// data doesn't need to know terminal geometry.
     VerticalScrollbarFullRange,
+    /// Press the primary split's scrollbar thumb at its midpoint
+    /// row, then drag PURELY HORIZONTALLY (left by `left_by`
+    /// columns, same row) and release. Mirrors the e2e
+    /// `test_scrollbar_thumb_drag_no_jump_on_start` reproduction:
+    /// a horizontal-only drag must not change the scroll position.
+    /// Thumb row is resolved at runtime from
+    /// `EditorTestApi::primary_scrollbar_geometry` + the scrollbar
+    /// rect's top, so scenario data doesn't hard-code geometry.
+    HorizontalOnPrimaryThumb { left_by: u16 },
 }
 
 /// Declarative popup injection. See `LayoutScenario::show_popup`.
@@ -388,6 +445,8 @@ pub struct ScenarioConfigOverrides {
     #[serde(default)]
     pub wrap_indent: Option<bool>,
     #[serde(default)]
+    pub line_numbers: Option<bool>,
+    #[serde(default)]
     pub show_horizontal_scrollbar: Option<bool>,
     #[serde(default)]
     pub show_vertical_scrollbar: Option<bool>,
@@ -398,6 +457,7 @@ impl ScenarioConfigOverrides {
     pub fn is_some(&self) -> bool {
         self.line_wrap.is_some()
             || self.wrap_indent.is_some()
+            || self.line_numbers.is_some()
             || self.show_horizontal_scrollbar.is_some()
             || self.show_vertical_scrollbar.is_some()
     }
@@ -410,6 +470,9 @@ impl ScenarioConfigOverrides {
         }
         if let Some(v) = self.wrap_indent {
             config.editor.wrap_indent = v;
+        }
+        if let Some(v) = self.line_numbers {
+            config.editor.line_numbers = v;
         }
         if let Some(v) = self.show_horizontal_scrollbar {
             config.editor.show_horizontal_scrollbar = v;
@@ -466,6 +529,19 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         harness.render().expect("initial render failed");
         None
     };
+
+    // Open any additional files in order via the real open_file
+    // pipeline. Each open after the first creates a fresh
+    // BufferViewState (the issue #1181 regression surface). A
+    // render settles layout after each open.
+    for path in &s.open_files {
+        harness
+            .open_file(path)
+            .unwrap_or_else(|e| panic!("open_file({}) failed: {e}", path.display()));
+        harness
+            .render()
+            .expect("render after open_files hop failed");
+    }
 
     // Declarative virtual-text seeding. Runs before any action /
     // event dispatch so the lines are present in the editor state
@@ -612,6 +688,14 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         )?;
     }
 
+    // Capture the top logical line BEFORE the mouse-drag phase so
+    // `expected_top_line_unchanged_across_drags` can compare.
+    let top_line_before_drags = if s.expected_top_line_unchanged_across_drags.is_some() {
+        Some(harness.api_mut().top_line_number())
+    } else {
+        None
+    };
+
     // Dispatch declarative mouse drags. Symbolic variants are
     // resolved against the harness's current content-area
     // geometry, so scenario data doesn't have to know layout
@@ -628,6 +712,21 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 let scrollbar_col = width.saturating_sub(1);
                 let (first, last) = harness.content_area_rows();
                 (scrollbar_col, first as u16, scrollbar_col, last as u16)
+            }
+            MouseDragSpec::HorizontalOnPrimaryThumb { left_by } => {
+                let scrollbar_col = width.saturating_sub(1);
+                let geom = harness
+                    .api_mut()
+                    .primary_scrollbar_geometry()
+                    .ok_or_else(|| ScenarioFailure::InputProjectionFailed {
+                        description: s.description.clone(),
+                        reason: "HorizontalOnPrimaryThumb: no scrollbar geometry cached".into(),
+                    })?;
+                let (thumb_start, thumb_end, _height, scrollbar_y) = geom;
+                let thumb_mid = (thumb_start + thumb_end) / 2;
+                let thumb_row = scrollbar_y + thumb_mid as u16;
+                let to_col = scrollbar_col.saturating_sub(*left_by);
+                (scrollbar_col, thumb_row, to_col, thumb_row)
             }
         };
         harness
@@ -916,6 +1015,92 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                     expected: format!("row({before:?}) < row({after:?})"),
                     actual: format!("before={b:?}, after={a:?}"),
                 });
+            }
+        }
+    }
+
+    if let Some(want_scrollable) = s.expected_scrollbar_thumb_does_not_fill_track {
+        let geom = harness.api_mut().primary_scrollbar_geometry();
+        let scrollable = match geom {
+            Some((thumb_start, thumb_end, scrollbar_height, _y)) => {
+                let extent = thumb_end.saturating_sub(thumb_start);
+                thumb_end > thumb_start && (extent as u16) < scrollbar_height
+            }
+            None => false,
+        };
+        if scrollable != want_scrollable {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "scrollbar_thumb_does_not_fill_track".into(),
+                expected: format!("scrollable={want_scrollable}"),
+                actual: format!("scrollable={scrollable} (geometry={geom:?})"),
+            });
+        }
+    }
+
+    if let Some(want_unchanged) = s.expected_top_line_unchanged_across_drags {
+        let before = top_line_before_drags.unwrap_or(0);
+        let after = harness.api_mut().top_line_number();
+        let unchanged = before == after;
+        if unchanged != want_unchanged {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "top_line_unchanged_across_drags".into(),
+                expected: format!("unchanged={want_unchanged}"),
+                actual: format!("before={before}, after={after}"),
+            });
+        }
+    }
+
+    for spec in &s.expected_cell_bg {
+        use ratatui::style::Color;
+        // Locate the row whose ratatui-buffer text contains the
+        // substring. Reading from the ratatui buffer (not vt100)
+        // keeps the row index aligned with `get_cell_style`.
+        let buffer = harness.buffer();
+        let height = buffer.area.height;
+        let mut hit_row: Option<u16> = None;
+        for y in 0..height {
+            if harness.get_row_text(y).contains(&spec.row_with_substring) {
+                hit_row = Some(y);
+                break;
+            }
+        }
+        let Some(row) = hit_row else {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: s.description.clone(),
+                field: "cell_bg".into(),
+                expected: format!("a row containing {:?}", spec.row_with_substring),
+                actual: "no row contained the substring".into(),
+            });
+        };
+        let actual_bg = harness.get_cell_style(spec.col, row).and_then(|st| st.bg);
+        match spec.expected_rgb {
+            Some((r, g, b)) => {
+                if actual_bg != Some(Color::Rgb(r, g, b)) {
+                    return Err(ScenarioFailure::SnapshotFieldMismatch {
+                        description: s.description.clone(),
+                        field: "cell_bg".into(),
+                        expected: format!(
+                            "cell ({},{row}) bg == Rgb({r},{g},{b}) (row contains {:?})",
+                            spec.col, spec.row_with_substring
+                        ),
+                        actual: format!("{actual_bg:?}"),
+                    });
+                }
+            }
+            None => {
+                if actual_bg.is_some() && actual_bg != Some(Color::Reset) {
+                    return Err(ScenarioFailure::SnapshotFieldMismatch {
+                        description: s.description.clone(),
+                        field: "cell_bg".into(),
+                        expected: format!(
+                            "cell ({},{row}) has no explicit bg (row contains {:?})",
+                            spec.col, spec.row_with_substring
+                        ),
+                        actual: format!("{actual_bg:?}"),
+                    });
+                }
             }
         }
     }

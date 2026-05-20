@@ -55,11 +55,15 @@
 //!   `expected_cursor_row_equals_content_first` — projects the
 //!   cursor-vs-gutter-width invariant into a declarative assertion
 //!   (wraps the `EditorTestApi::margin_left_total_width` accessor).
-//! - `LayoutScenario::config_overrides.line_numbers` would let us
-//!   set the line-numbers config; today the DSL exposes only
-//!   `line_wrap` / `wrap_indent` / scrollbar flags. For
-//!   `line_numbers=false` scenarios the runner dispatches
-//!   `Action::ToggleLineNumbers` from the default-on starting state.
+//! - `LayoutScenario::config_overrides.line_numbers` — sets the
+//!   line-numbers config flag declaratively (added for the issue
+//!   #1181 second-file regression; the issue #539 initial-buffer
+//!   scenario still uses `Action::ToggleLineNumbers` to also cover
+//!   the toggle dispatch path).
+//! - `LayoutScenario::open_files: Vec<PathBuf>` — opens additional
+//!   on-disk files in order via the real `open_file` pipeline after
+//!   the initial buffer, exercising the fresh-`BufferViewState`
+//!   path that issue #1181 regressed on.
 
 use crate::common::scenario::layout_scenario::{
     assert_layout_scenario, LayoutScenario, MarginAnnotationSpec,
@@ -151,15 +155,81 @@ fn migrated_initial_buffer_respects_line_numbers_config() {
 #[test]
 fn migrated_opened_file_respects_line_numbers_disabled_config() {
     // Original: `test_opened_file_respects_line_numbers_disabled_config`
-    // (issue #1181). Deferred: needs a way to open a SECOND file
-    // through the declarative scenario API. Today `LayoutScenario`
-    // accepts a single `initial_file`; opening a second file (the
-    // regression surface) would require either a multi-file
-    // scenario type or an `Action::OpenFile(path)`-like declarative
-    // hop. Both are bigger surfaces than this PR should land.
+    // (issue #1181). With `line_numbers = false`, opening a SECOND
+    // file must NOT show the line-number separator — the bug was
+    // that `BufferViewState::new()` hardcoded show_line_numbers=true,
+    // so a freshly-opened second buffer ignored the config.
     //
-    // Deferred: needs declarative "open a second file" hop in
-    // `LayoutScenario` (or an `Action::OpenFilePath`).
+    // Declarative form: `config_overrides.line_numbers = false`,
+    // `initial_file = file1` (replaces the empty buffer in-place),
+    // `open_files = [file2]` (creates the NEW BufferViewState — the
+    // regression surface). Final render asserts the separator is
+    // absent and file2's content is visible.
+    let file1 =
+        crate::common::fixtures::TestFixture::new("file1.txt", "File 1 line 1\nFile 1 line 2\n")
+            .expect("create file1");
+    let file2 =
+        crate::common::fixtures::TestFixture::new("file2.txt", "File 2 line 1\nFile 2 line 2\n")
+            .expect("create file2");
+    assert_layout_scenario(LayoutScenario {
+        description: "issue #1181: second opened file respects line_numbers=false".into(),
+        initial_text: String::new(),
+        initial_file: Some(file1.path.clone()),
+        open_files: vec![file2.path.clone()],
+        width: 80,
+        height: 24,
+        config_overrides: crate::common::scenario::layout_scenario::ScenarioConfigOverrides {
+            line_numbers: Some(false),
+            ..Default::default()
+        },
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                // Line-number separator must NOT appear on the
+                // second buffer.
+                RowMatch::NoRowContains(" \u{2502} ".into()),
+                // The second file's content must be visible.
+                RowMatch::AnyRowContains("File 2 line 1".into()),
+                RowMatch::AnyRowContains("File 2 line 2".into()),
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+}
+
+/// Anti-test: same two-file open, but WITHOUT disabling line
+/// numbers (default config = on). The second buffer must then
+/// show the ' │ ' separator — proving the positive test's
+/// "no separator on the second file" claim is gated on the
+/// `line_numbers = false` config being honored across opens.
+#[test]
+fn anti_opened_file_with_default_config_shows_line_number_separator() {
+    let file1 = crate::common::fixtures::TestFixture::new(
+        "anti_file1.txt",
+        "File 1 line 1\nFile 1 line 2\n",
+    )
+    .expect("create file1");
+    let file2 = crate::common::fixtures::TestFixture::new(
+        "anti_file2.txt",
+        "File 2 line 1\nFile 2 line 2\n",
+    )
+    .expect("create file2");
+    assert_layout_scenario(LayoutScenario {
+        description: "anti: default config ⇒ second opened file shows ' │ ' separator".into(),
+        initial_text: String::new(),
+        initial_file: Some(file1.path.clone()),
+        open_files: vec![file2.path.clone()],
+        width: 80,
+        height: 24,
+        expected_snapshot: RenderSnapshotExpect {
+            row_checks: vec![
+                RowMatch::AnyRowContains(" \u{2502} ".into()),
+                RowMatch::AnyRowContains("File 2 line 1".into()),
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 }
 
 #[test]

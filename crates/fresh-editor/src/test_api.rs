@@ -386,6 +386,25 @@ pub trait EditorTestApi {
 
     /// `margins.left_total_width()` of the active state, in cells.
     fn margin_left_total_width(&self) -> usize;
+
+    /// 1-indexed logical line number of the viewport's top byte —
+    /// the same observable the e2e scrollbar tests read via
+    /// `harness.top_line_number()`. Used to assert a scroll
+    /// position is (un)changed after a mouse interaction.
+    fn top_line_number(&mut self) -> usize;
+
+    /// Cached scrollbar geometry of the primary (first) split:
+    /// `(thumb_start, thumb_end, scrollbar_height, scrollbar_y)` —
+    /// thumb extent in scrollbar-row offsets, the track's height,
+    /// and the track's top terminal row. `None` ⇒ no split areas
+    /// cached (no render yet). `thumb_end > thumb_start` indicates
+    /// a non-degenerate thumb; `thumb_end - thumb_start <
+    /// scrollbar_height` indicates the content is scrollable (the
+    /// thumb does not fill the track) — the load-bearing claim of
+    /// `test_scrollbar_shows_scrollable_content_with_wrapped_lines`.
+    /// `scrollbar_y` lets a test resolve the thumb's terminal row
+    /// for a click/drag at the thumb midpoint.
+    fn primary_scrollbar_geometry(&self) -> Option<(usize, usize, u16, u16)>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -873,5 +892,21 @@ impl EditorTestApi for crate::app::Editor {
 
     fn margin_left_total_width(&self) -> usize {
         self.active_state().margins.left_total_width()
+    }
+
+    fn top_line_number(&mut self) -> usize {
+        let top_byte = self.active_viewport().top_byte;
+        self.active_state_mut().buffer.get_line_number(top_byte)
+    }
+
+    fn primary_scrollbar_geometry(&self) -> Option<(usize, usize, u16, u16)> {
+        let areas = self.get_split_areas();
+        let (_split, _buf, _content, scrollbar_rect, thumb_start, thumb_end) = areas.first()?;
+        Some((
+            *thumb_start,
+            *thumb_end,
+            scrollbar_rect.height,
+            scrollbar_rect.y,
+        ))
     }
 }

@@ -9,8 +9,9 @@
 //! semantic-test analogue is `Action::MoveDocumentEnd` (the action
 //! the production keybinding dispatches). The "rendered cursor row
 //! does not contain data substrings" claim is expressed via
-//! `RowMatch::NoRowContains` against the snapshot's
-//! `rendered_rows`. The "viewport scrolled close enough to doc end"
+//! `RowMatch::CursorRowDoesNotContain` against the snapshot's
+//! `rendered_rows`, located via the snapshot's `terminal_cursor`
+//! row index. The "viewport scrolled close enough to doc end"
 //! claim is expressed via `viewport_top_within_delta_of`.
 //!
 //! Source: `tests/e2e/ctrl_end_wrapped.rs` (3 tests + 3 anti-tests;
@@ -93,28 +94,17 @@ fn migrated_down_from_last_content_line_reaches_trailing_empty_line() {
     // Width 135 × height 37 is load-bearing (the bug only
     // manifests at this geometry, per the original e2e).
     //
-    // Per-row claim: the trailing empty line must be present
-    // somewhere on screen (no row containing the data-line
-    // substring "Entry 140" right at the cursor position). We
-    // express the cursor-row claim as: `NoRowContains` for each
-    // data substring would be too strict (early data rows are
-    // visible above the cursor). Instead, the cleanest declarative
-    // shape is:
-    //   1. Final viewport_top_byte must be within
-    //      `max_visible_bytes` of doc_end (proves scrolling
-    //      reached the end region).
-    //   2. The rendered output must include a row that does NOT
-    //      contain any data substring — i.e. the empty trailing
-    //      line is visible. We approximate this by asserting
-    //      `RowMatch::AnyRowContains("")` (trivially true) and
-    //      separately verifying via `viewport_top_within_delta_of`
-    //      that the viewport reached the end region. The full
-    //      cursor-row-text claim would need a
-    //      `RowMatch::CursorRowDoesNotContain` matcher — see
-    //      `render_snapshot.rs` for the existing matchers.
+    // Load-bearing claim (faithful to the e2e): the rendered row
+    // the cursor sits on must contain NONE of the data-line
+    // needles — i.e. the cursor lands on the empty trailing line,
+    // not on Entry-140 content. Expressed via
+    // `RowMatch::CursorRowDoesNotContain`, which locates the row
+    // at the snapshot's `terminal_cursor` and checks it contains
+    // none of the substrings.
     let content = make_csv_like_content_with_trailing_newline();
     let doc_end = content.len();
     let max_visible_bytes = 135usize * 37;
+    let needles: Vec<String> = DATA_LINE_NEEDLES.iter().map(|s| s.to_string()).collect();
     assert_layout_scenario(LayoutScenario {
         description: "Ctrl+End → Left → Down lands on trailing empty line (width 135×37)".into(),
         initial_text: content,
@@ -123,9 +113,10 @@ fn migrated_down_from_last_content_line_reaches_trailing_empty_line() {
         actions: vec![Action::MoveDocumentEnd, Action::MoveLeft, Action::MoveDown],
         config_overrides: wrap_overrides(),
         expected_snapshot: RenderSnapshotExpect {
-            // Cursor must end up at doc_end again (the trailing
-            // empty line). Viewport top must be within one screen
-            // of doc_end.
+            // The rendered cursor row must be the empty trailing
+            // line — none of the data-line needles may appear on it.
+            row_checks: vec![RowMatch::CursorRowDoesNotContain(needles)],
+            // Viewport top must be within one screen of doc_end.
             viewport_top_within_delta_of: Some((doc_end, max_visible_bytes)),
             viewport_top_byte_greater_than: Some(0),
             ..Default::default()
@@ -147,16 +138,10 @@ fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
     // dispatching the action directly.)
     //
     // The "rendered cursor row is not a tilde row" claim is
-    // expressed via `RowMatch::NoRowContains("~")` against the
-    // single screen row the cursor occupies. We assert the
-    // stronger global form: no visible content row may consist
-    // entirely of tildes around the cursor's row. Since the
-    // cursor row's exact index isn't pinnable from the DSL today
-    // without a `CursorRowDoesNotContain` matcher, we encode the
-    // post-toggle claim as: the cursor's logical byte position is
-    // still at doc_end (which forces the renderer to scroll the
-    // viewport to expose the trailing empty line, NOT a tilde
-    // row).
+    // expressed via `RowMatch::CursorRowDoesNotContain(["~"])`:
+    // the row the cursor sits on (located via `terminal_cursor`)
+    // must be the empty trailing line, NOT a tilde-filled
+    // past-EOF row.
     let content = make_csv_like_content_with_trailing_newline();
     let doc_end = content.len();
     // After ToggleLineWrap turns wrapping off, each visible row
@@ -173,6 +158,9 @@ fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
         actions: vec![Action::MoveDocumentEnd, Action::ToggleLineWrap],
         config_overrides: wrap_overrides(),
         expected_snapshot: RenderSnapshotExpect {
+            // The cursor row must be the trailing empty line, not a
+            // tilde row.
+            row_checks: vec![RowMatch::CursorRowDoesNotContain(vec!["~".into()])],
             viewport_top_within_delta_of: Some((doc_end, max_visible_bytes_no_wrap)),
             viewport_top_byte_greater_than: Some(0),
             ..Default::default()

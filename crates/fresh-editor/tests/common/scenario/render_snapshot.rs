@@ -236,6 +236,36 @@ pub enum RowMatch {
     ///
     /// Equivalently: no row may be a wrapped-continuation row.
     NoContinuationRows,
+    /// Faithful port of the line-wrap-full-visibility e2e check:
+    /// under `line_wrap = true`, every non-whitespace character of
+    /// every source line in `lines` (1-indexed by gutter line
+    /// number) must appear, in order, across that line's rendered
+    /// rows (its first visual row plus all wrap-continuation rows).
+    ///
+    /// Grouping mirrors the e2e `verify_all_chars_rendered`: rows
+    /// are segmented by the last gutter separator `│`; a row whose
+    /// gutter ends in a digit run starts a new source line; rows
+    /// with an empty (no-digit) gutter are wrap continuations of
+    /// the preceding line. Empty-buffer `~` marker rows (body
+    /// starting with `~` directly, no separator space) are skipped.
+    /// The final in-viewport group is skipped unless it's the last
+    /// fixture line (its trailing wrap segment may be below the
+    /// viewport). Whitespace is ignored on both sides — only
+    /// printable ASCII-graphic characters must be preserved across
+    /// a wrap.
+    ///
+    /// Requires a snapshot built with `extract_with_rendered_rows`.
+    AllCharsVisibleAcrossRows { lines: Vec<String> },
+    /// The rendered row the hardware cursor sits on (located via
+    /// the snapshot's `terminal_cursor` row index) must contain
+    /// NONE of the listed substrings. Faithful encoding of the
+    /// e2e "the rendered cursor row contains none of these
+    /// data-line needles" claim (e.g. after Ctrl+End on a wrapped
+    /// buffer, the cursor's row must be the empty trailing line,
+    /// not Entry-140 content / a tilde row). Requires a snapshot
+    /// built with `extract_with_rendered_rows` (so both
+    /// `terminal_cursor` and `rendered_rows` are populated).
+    CursorRowDoesNotContain(Vec<String>),
 }
 
 /// Hanging-indent check for popup line wrapping. Find the row
@@ -660,6 +690,98 @@ impl RenderSnapshotExpect {
                                 ),
                             ));
                         }
+                    }
+                }
+                RowMatch::AllCharsVisibleAcrossRows { lines } => {
+                    // Group rendered rows by gutter line number,
+                    // concatenating wrap-continuation rows, then
+                    // compare non-whitespace payloads to each source
+                    // line. Faithful port of the e2e
+                    // `verify_all_chars_rendered` grouping.
+                    let mut groups: Vec<(usize, String)> = Vec::new();
+                    let mut last_group_had_number = false;
+                    for row in &actual.rendered_rows {
+                        let Some(idx) = row.rfind('│') else {
+                            continue;
+                        };
+                        let gutter = &row[..idx];
+                        let body = &row[idx + '│'.len_utf8()..];
+                        let digits_rev: String = gutter
+                            .chars()
+                            .rev()
+                            .skip_while(|c| c.is_whitespace())
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect();
+                        let ln_opt: Option<usize> = if digits_rev.is_empty() {
+                            None
+                        } else {
+                            digits_rev.chars().rev().collect::<String>().parse().ok()
+                        };
+                        if body.starts_with('~') && ln_opt.is_none() {
+                            last_group_had_number = false;
+                            continue;
+                        }
+                        if let Some(ln) = ln_opt {
+                            groups.push((ln, body.to_string()));
+                            last_group_had_number = true;
+                        } else if last_group_had_number {
+                            if let Some(entry) = groups.last_mut() {
+                                entry.1.push_str(body);
+                            }
+                        }
+                    }
+                    let last_visible_ln_opt = groups.last().map(|g| g.0);
+                    for (ln, body) in &groups {
+                        let src_idx = ln.saturating_sub(1);
+                        let Some(src) = lines.get(src_idx) else {
+                            continue;
+                        };
+                        let is_last_in_viewport = last_visible_ln_opt == Some(*ln);
+                        let is_last_in_fixture = src_idx + 1 == lines.len();
+                        if is_last_in_viewport && !is_last_in_fixture {
+                            continue;
+                        }
+                        let src_nonws: String =
+                            src.chars().filter(|c| !c.is_whitespace()).collect();
+                        let rendered_nonws: String =
+                            body.chars().filter(|c| c.is_ascii_graphic()).collect();
+                        if src_nonws != rendered_nonws {
+                            return Some((
+                                "rendered_rows[AllCharsVisibleAcrossRows]",
+                                format!(
+                                    "source line {ln} non-ws chars present in order: {src_nonws:?}"
+                                ),
+                                format!("rendered non-ws: {rendered_nonws:?}; body={body:?}"),
+                            ));
+                        }
+                    }
+                }
+                RowMatch::CursorRowDoesNotContain(needles) => {
+                    // Locate the row the hardware cursor sits on via
+                    // the terminal-absolute cursor coordinate, which
+                    // indexes `rendered_rows` directly (same coord
+                    // system `cursor_cell_matches_buffer_char` uses).
+                    let Some((_, cursor_row)) = actual.terminal_cursor else {
+                        return Some((
+                            "rendered_rows[CursorRowDoesNotContain]",
+                            format!("cursor row contains none of {needles:?}"),
+                            "terminal_cursor = None (cursor hidden or cheap extract)".into(),
+                        ));
+                    };
+                    let row_text = actual
+                        .rendered_rows
+                        .get(cursor_row as usize)
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    if let Some(hit) = needles.iter().find(|n| row_text.contains(n.as_str())) {
+                        return Some((
+                            "rendered_rows[CursorRowDoesNotContain]",
+                            format!("cursor row {cursor_row} contains none of {needles:?}"),
+                            format!(
+                                "cursor row {cursor_row} contains {hit:?}: {:?}",
+                                row_text.trim()
+                            ),
+                        ));
                     }
                 }
                 RowMatch::NoContinuationRows => {
