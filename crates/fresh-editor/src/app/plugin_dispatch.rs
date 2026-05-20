@@ -957,9 +957,8 @@ impl Editor {
                     // Re-evaluate already-running tooling under the new env.
                     self.request_restart(self.working_dir.clone());
                 } else {
-                    self.active_window_mut().status_message = Some(
-                        "Workspace not trusted — cannot activate environment".to_string(),
-                    );
+                    self.active_window_mut().status_message =
+                        Some("Workspace not trusted — cannot activate environment".to_string());
                 }
             }
 
@@ -3336,9 +3335,8 @@ impl Editor {
                 // handles, so its spawners are gated and env'd identically.
                 let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
                 let env = std::sync::Arc::clone(&self.authority.env_provider);
-                match crate::services::authority::Authority::from_plugin_payload(
-                    parsed, trust, env,
-                ) {
+                match crate::services::authority::Authority::from_plugin_payload(parsed, trust, env)
+                {
                     Ok(auth) => {
                         tracing::info!("Plugin installed new authority");
                         self.install_authority(auth);

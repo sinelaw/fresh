@@ -1565,16 +1565,14 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     // now (rootless ⇒ allows everything, and nothing spawns yet); it's
     // re-anchored to the working dir + persisted level once those are known
     // below.
-    let workspace_trust = std::sync::Arc::new(
-        fresh::services::workspace_trust::WorkspaceTrust::new(
+    let workspace_trust =
+        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::new(
             None,
             fresh::services::workspace_trust::TrustLevel::Restricted,
-        ),
-    );
+        ));
     // Env provider is born alongside trust (inactive until the env-manager
     // plugin activates one via setEnv), shared into the authority's spawners.
-    let env_provider =
-        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive());
+    let env_provider = std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive());
 
     tracing::info!("Building startup authority...");
     let StartupAuthority {
@@ -2701,14 +2699,12 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
     // Workspace Trust born before the authority so the same Arc backs both
     // the authority's spawners and the server. Rootless until we know the
     // working dir below.
-    let workspace_trust = std::sync::Arc::new(
-        fresh::services::workspace_trust::WorkspaceTrust::new(
+    let workspace_trust =
+        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::new(
             None,
             fresh::services::workspace_trust::TrustLevel::Restricted,
-        ),
-    );
-    let env_provider =
-        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive());
+        ));
+    let env_provider = std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive());
 
     let StartupAuthority {
         authority,

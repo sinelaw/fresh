@@ -974,7 +974,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner() {
-        let spawner = LocalProcessSpawner::new(Arc::new(EnvProvider::inactive()), Arc::new(WorkspaceTrust::permissive()));
+        let spawner = LocalProcessSpawner::new(
+            Arc::new(EnvProvider::inactive()),
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         let result = spawner
             .spawn("echo".to_string(), vec!["hello".to_string()], None)
             .await
@@ -986,7 +989,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner_stdout_to_file() {
-        let spawner = LocalProcessSpawner::new(Arc::new(EnvProvider::inactive()), Arc::new(WorkspaceTrust::permissive()));
+        let spawner = LocalProcessSpawner::new(
+            Arc::new(EnvProvider::inactive()),
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         let tmp =
             std::env::temp_dir().join(format!("fresh-spawner-test-{}.out", std::process::id()));
         // Best-effort cleanup of any leftover from a previous run.
@@ -1020,7 +1026,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner_cancellable_kill() {
-        let spawner = LocalProcessSpawner::new(Arc::new(EnvProvider::inactive()), Arc::new(WorkspaceTrust::permissive()));
+        let spawner = LocalProcessSpawner::new(
+            Arc::new(EnvProvider::inactive()),
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
 
         // Start a sleep that would take 30s normally; fire kill after 100ms.
@@ -1061,7 +1070,10 @@ mod tests {
 
     #[tokio::test]
     async fn local_long_running_spawn_stdio_pipes_output() {
-        let spawner = LocalLongRunningSpawner::new(Arc::new(EnvProvider::inactive()), Arc::new(WorkspaceTrust::permissive()));
+        let spawner = LocalLongRunningSpawner::new(
+            Arc::new(EnvProvider::inactive()),
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         let mut child = spawner
             .spawn_stdio(
                 "sh",
@@ -1085,7 +1097,10 @@ mod tests {
 
     #[tokio::test]
     async fn local_long_running_command_exists_for_sh() {
-        let spawner = LocalLongRunningSpawner::new(Arc::new(EnvProvider::inactive()), Arc::new(WorkspaceTrust::permissive()));
+        let spawner = LocalLongRunningSpawner::new(
+            Arc::new(EnvProvider::inactive()),
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         assert!(spawner.command_exists("sh").await);
         assert!(
             !spawner

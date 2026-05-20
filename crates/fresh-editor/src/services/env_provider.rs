@@ -94,7 +94,10 @@ impl EnvProvider {
 
     /// The current activation snippet (for status / inspection).
     pub fn snippet(&self) -> String {
-        self.state.read().map(|s| s.snippet.clone()).unwrap_or_default()
+        self.state
+            .read()
+            .map(|s| s.snippet.clone())
+            .unwrap_or_default()
     }
 
     /// Resolve the active environment, capturing fresh when the env inputs have
@@ -227,7 +230,10 @@ mod tests {
     fn inactive_by_default_and_after_clear() {
         let p = EnvProvider::inactive();
         assert!(!p.is_active());
-        p.set("source .venv/bin/activate".into(), Some(PathBuf::from("/proj")));
+        p.set(
+            "source .venv/bin/activate".into(),
+            Some(PathBuf::from("/proj")),
+        );
         assert!(p.is_active());
         assert_eq!(p.snippet(), "source .venv/bin/activate");
         p.clear();
@@ -295,7 +301,10 @@ mod tests {
         };
 
         let v1 = p.current(|_s| run()).await;
-        assert_eq!(v1, vec![("FOO".into(), "bar".into()), ("PATH".into(), "/x".into())]);
+        assert_eq!(
+            v1,
+            vec![("FOO".into(), "bar".into()), ("PATH".into(), "/x".into())]
+        );
         // Second call with unchanged inputs hits the cache — no re-run.
         let v2 = p.current(|_s| run()).await;
         assert_eq!(v2, v1);

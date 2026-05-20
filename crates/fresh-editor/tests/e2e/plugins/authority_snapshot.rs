@@ -62,13 +62,12 @@ fn set_boot_authority_refreshes_plugin_state_snapshot() {
 
     // Install the container authority the same way main.rs does after
     // editor construction during the post-attach restart.
-    let authority =
-        Authority::from_plugin_payload(
-            devcontainer_authority_payload("Container:deadbeef"),
-            std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
-            std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
-        )
-        .unwrap();
+    let authority = Authority::from_plugin_payload(
+        devcontainer_authority_payload("Container:deadbeef"),
+        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
+    )
+    .unwrap();
     harness.editor_mut().set_boot_authority(authority);
 
     // The plugin state snapshot must now reflect the container
@@ -98,13 +97,12 @@ fn set_boot_authority_back_to_local_clears_plugin_state_snapshot_label() {
     // Swap to a container authority, then back to local. Each transition
     // must push through the snapshot, otherwise the plugin's decision
     // will lag by one restart.
-    let container =
-        Authority::from_plugin_payload(
-            devcontainer_authority_payload("Container:feedface"),
-            std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
-            std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
-        )
-        .unwrap();
+    let container = Authority::from_plugin_payload(
+        devcontainer_authority_payload("Container:feedface"),
+        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
+    )
+    .unwrap();
     harness.editor_mut().set_boot_authority(container);
     assert_eq!(
         snapshot_handle.read().unwrap().authority_label,

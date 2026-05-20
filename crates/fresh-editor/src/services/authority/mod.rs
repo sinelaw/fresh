@@ -350,8 +350,14 @@ impl Authority {
             Arc<dyn LongRunningSpawner>,
         ) = match payload.spawner {
             SpawnerSpec::Local => (
-                Arc::new(LocalProcessSpawner::new(Arc::clone(&env), Arc::clone(&trust))),
-                Arc::new(LocalLongRunningSpawner::new(Arc::clone(&env), Arc::clone(&trust))),
+                Arc::new(LocalProcessSpawner::new(
+                    Arc::clone(&env),
+                    Arc::clone(&trust),
+                )),
+                Arc::new(LocalLongRunningSpawner::new(
+                    Arc::clone(&env),
+                    Arc::clone(&trust),
+                )),
             ),
             SpawnerSpec::DockerExec {
                 container_id,
@@ -428,7 +434,10 @@ mod tests {
 
     #[test]
     fn local_authority_uses_host_shell_with_no_args() {
-        let auth = Authority::local(Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive()));
+        let auth = Authority::local(
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+        );
         assert!(!auth.terminal_wrapper.command.is_empty());
         assert!(auth.terminal_wrapper.args.is_empty());
         assert!(!auth.terminal_wrapper.manages_cwd);
@@ -444,7 +453,12 @@ mod tests {
             display_label: String::new(),
             path_translation: None,
         };
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("local payload is valid");
+        let auth = Authority::from_plugin_payload(
+            payload,
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+        )
+        .expect("local payload is valid");
         assert!(!auth.terminal_wrapper.command.is_empty());
         assert!(auth.terminal_wrapper.args.is_empty());
     }
@@ -472,7 +486,12 @@ mod tests {
         });
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("json matches payload schema");
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("docker payload is valid");
+        let auth = Authority::from_plugin_payload(
+            payload,
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+        )
+        .expect("docker payload is valid");
         assert_eq!(auth.terminal_wrapper.command, "docker");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "Container:abc123");
@@ -545,7 +564,12 @@ mod tests {
         });
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("manages_cwd is optional");
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("payload is valid");
+        let auth = Authority::from_plugin_payload(
+            payload,
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+        )
+        .expect("payload is valid");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "");
     }
@@ -627,7 +651,12 @@ mod tests {
             display_label: "Container:abc123".into(),
             path_translation: None,
         };
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("docker payload is valid");
+        let auth = Authority::from_plugin_payload(
+            payload,
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+        )
+        .expect("docker payload is valid");
         assert_eq!(auth.terminal_wrapper.command, "docker");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "Container:abc123");
@@ -687,8 +716,12 @@ mod tests {
         });
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("path_translation is accepted");
-        let auth =
-            Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("payload with translation is valid");
+        let auth = Authority::from_plugin_payload(
+            payload,
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+        )
+        .expect("payload with translation is valid");
         let pt = auth
             .path_translation
             .expect("authority carries the translation");

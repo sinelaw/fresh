@@ -351,7 +351,8 @@ impl TrustStore {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(&StoredTrust { level }).map_err(io::Error::other)?;
+        let json =
+            serde_json::to_string_pretty(&StoredTrust { level }).map_err(io::Error::other)?;
         let tmp = self
             .path
             .with_extension(format!("json.{}.tmp", std::process::id()));
@@ -406,11 +407,7 @@ pub fn workspace_has_executable_content(root: &Path) -> bool {
 /// shared one-liner every spawner impl calls at the top of each spawn method,
 /// so the Allow/Deny→error policy lives in exactly one place even though the
 /// *check site* is per-backend.
-pub fn gate(
-    trust: &WorkspaceTrust,
-    command: &str,
-    cwd: Option<&str>,
-) -> Result<(), SpawnError> {
+pub fn gate(trust: &WorkspaceTrust, command: &str, cwd: Option<&str>) -> Result<(), SpawnError> {
     match trust.decide(command, cwd) {
         SpawnDecision::Allow => Ok(()),
         SpawnDecision::Deny(reason) => Err(SpawnError::Process(reason)),
@@ -428,7 +425,10 @@ mod tests {
     #[test]
     fn trusted_allows_everything() {
         let t = trust("/home/u/proj", TrustLevel::Trusted);
-        assert_eq!(t.decide("/home/u/proj/.venv/bin/python", None), SpawnDecision::Allow);
+        assert_eq!(
+            t.decide("/home/u/proj/.venv/bin/python", None),
+            SpawnDecision::Allow
+        );
         assert_eq!(t.decide("rg", None), SpawnDecision::Allow);
     }
 
@@ -504,10 +504,7 @@ mod tests {
     #[test]
     fn restricted_without_root_allows() {
         let t = WorkspaceTrust::new(None, TrustLevel::Restricted);
-        assert_eq!(
-            t.decide("/anything/at/all", None),
-            SpawnDecision::Allow
-        );
+        assert_eq!(t.decide("/anything/at/all", None), SpawnDecision::Allow);
     }
 
     #[test]
@@ -532,7 +529,11 @@ mod tests {
 
     #[test]
     fn level_round_trips_through_u8() {
-        for lvl in [TrustLevel::Restricted, TrustLevel::Trusted, TrustLevel::Blocked] {
+        for lvl in [
+            TrustLevel::Restricted,
+            TrustLevel::Trusted,
+            TrustLevel::Blocked,
+        ] {
             assert_eq!(TrustLevel::from_u8(lvl.as_u8()), lvl);
         }
         // Unknown byte falls back to the safe default.

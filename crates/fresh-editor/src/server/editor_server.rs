@@ -670,7 +670,10 @@ impl EditorServer {
     /// first boot and after each rebuild.
     fn maybe_prompt_workspace_trust(&mut self) {
         let store = crate::services::workspace_trust::TrustStore::for_project_dir(
-            &self.config.dir_context.project_state_dir(&self.config.working_dir),
+            &self
+                .config
+                .dir_context
+                .project_state_dir(&self.config.working_dir),
         );
         if store.level().is_some() {
             return; // already decided for this project
@@ -734,7 +737,10 @@ impl EditorServer {
                 .set_root(Some(self.config.working_dir.clone()));
             self.workspace_trust.set_store(Some(
                 crate::services::workspace_trust::TrustStore::for_project_dir(
-                    &self.config.dir_context.project_state_dir(&self.config.working_dir),
+                    &self
+                        .config
+                        .dir_context
+                        .project_state_dir(&self.config.working_dir),
                 ),
             ));
             // New project ⇒ the old env recipe no longer applies; deactivate

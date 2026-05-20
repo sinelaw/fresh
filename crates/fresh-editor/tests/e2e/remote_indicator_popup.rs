@@ -239,15 +239,16 @@ fn test_remote_indicator_popup_connected_container_offers_show_build_logs() -> a
     // a container authority — same path main.rs takes after a
     // `devcontainer up` succeeds. Display label is what the popup
     // branch keys off (`is_container = label.starts_with("Container:")`).
-    let authority = Authority::from_plugin_payload(AuthorityPayload {
-        filesystem: FilesystemSpec::Local,
-        spawner: SpawnerSpec::Local,
-        terminal_wrapper: TerminalWrapperSpec::HostShell,
-        display_label: "Container:deadbeef".to_string(),
-        path_translation: None,
-    },
-    std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
-            std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
+    let authority = Authority::from_plugin_payload(
+        AuthorityPayload {
+            filesystem: FilesystemSpec::Local,
+            spawner: SpawnerSpec::Local,
+            terminal_wrapper: TerminalWrapperSpec::HostShell,
+            display_label: "Container:deadbeef".to_string(),
+            path_translation: None,
+        },
+        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
     )?;
     harness.editor_mut().set_boot_authority(authority);
 

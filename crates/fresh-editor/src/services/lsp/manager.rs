@@ -1024,7 +1024,12 @@ impl LspManager {
                      that skip set_boot_authority)",
                     language
                 );
-                std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::new(std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()), std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive())))
+                std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::new(
+                    std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+                    std::sync::Arc::new(
+                        crate::services::workspace_trust::WorkspaceTrust::permissive(),
+                    ),
+                ))
             }
         };
 
@@ -1153,7 +1158,12 @@ impl LspManager {
                 .as_ref()
                 .cloned()
                 .unwrap_or_else(|| {
-                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::new(std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()), std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive())))
+                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::new(
+                        std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+                        std::sync::Arc::new(
+                            crate::services::workspace_trust::WorkspaceTrust::permissive(),
+                        ),
+                    ))
                 });
 
         let mut spawned = Vec::new();
@@ -1481,7 +1491,12 @@ impl LspManager {
                 .as_ref()
                 .cloned()
                 .unwrap_or_else(|| {
-                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::new(std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()), std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive())))
+                    std::sync::Arc::new(crate::services::remote::LocalLongRunningSpawner::new(
+                        std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+                        std::sync::Arc::new(
+                            crate::services::workspace_trust::WorkspaceTrust::permissive(),
+                        ),
+                    ))
                 });
 
         let scope = if is_universal {
