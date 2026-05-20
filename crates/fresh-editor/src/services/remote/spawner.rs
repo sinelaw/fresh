@@ -1109,6 +1109,10 @@ mod tests {
         );
     }
 
+    // Unix-only: the local env capture runs the recipe through a POSIX login
+    // shell (`$SHELL -lc`, falling back to `/bin/sh`). On Windows there is no
+    // such shell, so capture intentionally no-ops — there's nothing to assert.
+    #[cfg(unix)]
     #[tokio::test]
     async fn local_spawner_applies_active_env_provider() {
         // Full local path: an active provider whose snippet exports a var →
