@@ -51,12 +51,14 @@ pub struct TrustDialogLayout {
 }
 
 /// Render the workspace-trust prompt centered in `area`, with `selected`
-/// (0=Trust, 1=Restricted, 2=Block) marked. Returns the click layout.
+/// (0=Trust, 1=Restricted, 2=Block) marked. `quit_hint` is the user's bound
+/// quit key (e.g. "Ctrl+Q"), shown on the Quit button. Returns the click layout.
 pub fn render_workspace_trust_dialog(
     frame: &mut Frame,
     area: Rect,
     selected: usize,
     path: &str,
+    quit_hint: Option<&str>,
     theme: &Theme,
 ) -> TrustDialogLayout {
     let width = DIALOG_WIDTH.min(area.width.saturating_sub(4));
@@ -193,7 +195,7 @@ pub fn render_workspace_trust_dialog(
 
     // Footer: separator + buttons.
     separator(frame, 16);
-    let (ok_rect, quit_rect) = render_buttons(frame, row_rect(17), theme, bg, fg);
+    let (ok_rect, quit_rect) = render_buttons(frame, row_rect(17), quit_hint, bg, fg);
     layout.ok = ok_rect;
     layout.quit = quit_rect;
 
@@ -203,12 +205,15 @@ pub fn render_workspace_trust_dialog(
 fn render_buttons(
     frame: &mut Frame,
     row: Rect,
-    _theme: &Theme,
+    quit_hint: Option<&str>,
     bg: ratatui::style::Color,
     fg: ratatui::style::Color,
 ) -> (Rect, Rect) {
-    let ok_label = "[ OK ]";
-    let quit_label = "[ Quit ]";
+    let ok_label = "[ OK ]".to_string();
+    let quit_label = match quit_hint {
+        Some(k) => format!("[ Quit ({k}) ]"),
+        None => "[ Quit ]".to_string(),
+    };
     let ok_w = ok_label.chars().count() as u16;
     let quit_w = quit_label.chars().count() as u16;
     // OK at ~1/4, Quit at ~3/4 of the row.

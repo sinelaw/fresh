@@ -1083,25 +1083,37 @@ impl Editor {
     }
 
     /// Keyboard handling for the workspace-trust modal. Returns `Some(Consumed)`
-    /// for every key (the modal swallows everything): arrows move the radio
-    /// selection, the mnemonics `T`/`K`/`B` select-and-confirm, `Enter`/`O`
-    /// confirm the current selection, `Q` quits the editor, and `Esc` is inert.
+    /// for every key (the modal swallows everything): arrows and the mnemonics
+    /// `T`/`K`/`B` move the radio selection (two-step — they don't confirm),
+    /// `Enter`/`O` confirm the current selection, the user's global quit key
+    /// quits the editor, and `Esc` is inert.
     pub(crate) fn handle_workspace_trust_key(
         &mut self,
         event: &crossterm::event::KeyEvent,
     ) -> Option<crate::input::handler::InputResult> {
         use crate::input::handler::InputResult;
+        use crate::input::keybindings::{Action, KeyContext};
         use crossterm::event::KeyCode;
+
+        // Quit is bound to whatever the user has mapped the global quit action
+        // to (default Ctrl+Q) — not a dialog-local key.
+        let resolved = self
+            .keybindings
+            .read()
+            .ok()
+            .map(|kb| kb.resolve(event, KeyContext::Normal));
+        if matches!(resolved, Some(Action::Quit) | Some(Action::ForceQuit)) {
+            self.hide_popup();
+            self.should_quit = true;
+            return Some(InputResult::Consumed);
+        }
+
         match event.code {
             KeyCode::Up => self.move_workspace_trust_selection(-1),
             KeyCode::Down => self.move_workspace_trust_selection(1),
-            KeyCode::Char('t') | KeyCode::Char('T') => self.confirm_workspace_trust(0),
-            KeyCode::Char('k') | KeyCode::Char('K') => self.confirm_workspace_trust(1),
-            KeyCode::Char('b') | KeyCode::Char('B') => self.confirm_workspace_trust(2),
-            KeyCode::Char('q') | KeyCode::Char('Q') => {
-                self.hide_popup();
-                self.should_quit = true;
-            }
+            KeyCode::Char('t') | KeyCode::Char('T') => self.set_workspace_trust_selection(0),
+            KeyCode::Char('k') | KeyCode::Char('K') => self.set_workspace_trust_selection(1),
+            KeyCode::Char('b') | KeyCode::Char('B') => self.set_workspace_trust_selection(2),
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('O') => {
                 self.confirm_workspace_trust(self.current_workspace_trust_selection());
             }
@@ -1109,6 +1121,16 @@ impl Editor {
             _ => {}
         }
         Some(InputResult::Consumed)
+    }
+
+    /// Set the radio selection to an absolute index (0=Trust, 1=Restricted,
+    /// 2=Block) without confirming.
+    fn set_workspace_trust_selection(&mut self, index: usize) {
+        if let Some(popup) = self.global_popups.top_mut() {
+            if let crate::view::popup::PopupContent::List { selected, .. } = &mut popup.content {
+                *selected = index.min(2);
+            }
+        }
     }
 
     /// The currently-highlighted radio index (0=Trust, 1=Restricted, 2=Block).
