@@ -96,13 +96,38 @@ fn migrated_typing_at_byte_zero_of_chinese_buffer_prepends() {
 #[test]
 fn migrated_cursor_right_steps_over_full_chinese_codepoint() {
     // Original: `test_cursor_right_with_chinese_characters`.
-    // From byte 0 of "你好世界" (12 bytes), one MoveRight → byte 3.
+    // From byte 0 of "你好世界" (4 chars, 12 bytes), each MoveRight
+    // steps over a full 3-byte codepoint: byte 3, 6, 9, 12. The
+    // original asserts all four positions, then verifies by typing
+    // "X" after two Rights → "你好X世界".
+    //
+    // BufferScenario pins final state only, so each position is a
+    // separate scenario; together they reproduce the per-Right
+    // assertions, and a fifth scenario reproduces the insert check.
+    for (rights, expected_byte) in [(1usize, 3usize), (2, 6), (3, 9), (4, 12)] {
+        let mut actions = vec![Action::MoveLineStart];
+        actions.extend(std::iter::repeat(Action::MoveRight).take(rights));
+        assert_buffer_scenario(BufferScenario {
+            description: format!("MoveRight ×{rights} on '你好世界' lands at byte {expected_byte}"),
+            initial_text: "你好世界".into(),
+            actions,
+            expected_text: "你好世界".into(),
+            expected_primary: CursorExpect::at(expected_byte),
+            ..Default::default()
+        });
+    }
+    // Insert verification: Home, Right ×2, type 'X' → "你好X世界".
     assert_buffer_scenario(BufferScenario {
-        description: "MoveRight from byte 0 of '你好世界' lands at byte 3".into(),
+        description: "Home + MoveRight ×2 + 'X' on '你好世界' yields '你好X世界'".into(),
         initial_text: "你好世界".into(),
-        actions: vec![Action::MoveLineStart, Action::MoveRight],
-        expected_text: "你好世界".into(),
-        expected_primary: CursorExpect::at(3),
+        actions: vec![
+            Action::MoveLineStart,
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::InsertChar('X'),
+        ],
+        expected_text: "你好X世界".into(),
+        expected_primary: CursorExpect::at(7), // byte 6 + 'X'
         ..Default::default()
     });
 }
@@ -110,14 +135,26 @@ fn migrated_cursor_right_steps_over_full_chinese_codepoint() {
 #[test]
 fn migrated_backspace_removes_full_chinese_codepoint() {
     // Original: `test_backspace_chinese_characters`.
-    // From end of "你好" (byte 6), DeleteBackward → buffer "你",
-    // cursor at 3.
+    // "你好": one DeleteBackward → "你", a second → "" (each
+    // removes a full 3-byte codepoint, not a single byte).
     assert_buffer_scenario(BufferScenario {
-        description: "DeleteBackward on CJK buffer removes full 3-byte codepoint".into(),
+        description: "DeleteBackward ×1 on '你好' removes full 3-byte '好' → '你'".into(),
         initial_text: "你好".into(),
         actions: vec![Action::MoveDocumentEnd, Action::DeleteBackward],
         expected_text: "你".into(),
         expected_primary: CursorExpect::at(3),
+        ..Default::default()
+    });
+    assert_buffer_scenario(BufferScenario {
+        description: "DeleteBackward ×2 on '你好' empties the buffer".into(),
+        initial_text: "你好".into(),
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::DeleteBackward,
+            Action::DeleteBackward,
+        ],
+        expected_text: String::new(),
+        expected_primary: CursorExpect::at(0),
         ..Default::default()
     });
 }
@@ -125,13 +162,25 @@ fn migrated_backspace_removes_full_chinese_codepoint() {
 #[test]
 fn migrated_delete_forward_removes_full_chinese_codepoint() {
     // Original: `test_delete_forward_chinese_characters`.
-    // From byte 0 of "你好", DeleteForward → buffer "好",
-    // cursor at 0.
+    // "你好" from byte 0: one DeleteForward → "好", a second → ""
+    // (each removes a full 3-byte codepoint).
     assert_buffer_scenario(BufferScenario {
-        description: "DeleteForward on CJK buffer removes full 3-byte codepoint".into(),
+        description: "DeleteForward ×1 on '你好' removes full 3-byte '你' → '好'".into(),
         initial_text: "你好".into(),
         actions: vec![Action::MoveLineStart, Action::DeleteForward],
         expected_text: "好".into(),
+        expected_primary: CursorExpect::at(0),
+        ..Default::default()
+    });
+    assert_buffer_scenario(BufferScenario {
+        description: "DeleteForward ×2 on '你好' empties the buffer".into(),
+        initial_text: "你好".into(),
+        actions: vec![
+            Action::MoveLineStart,
+            Action::DeleteForward,
+            Action::DeleteForward,
+        ],
+        expected_text: String::new(),
         expected_primary: CursorExpect::at(0),
         ..Default::default()
     });
@@ -140,14 +189,20 @@ fn migrated_delete_forward_removes_full_chinese_codepoint() {
 #[test]
 fn migrated_select_shift_right_chinese() {
     // Original: `test_selection_shift_right_chinese`.
-    // From byte 0, SelectRight ⇒ selects first CJK char (3 bytes).
+    // "你好世界", Home, Shift+Right selects the first 3-byte char
+    // (cursor at byte 3), then Backspace deletes the selection →
+    // "好世界".
     assert_buffer_scenario(BufferScenario {
-        description: "SelectRight from byte 0 of '你好' selects 3-byte first char".into(),
-        initial_text: "你好".into(),
-        actions: vec![Action::SelectRight],
-        expected_text: "你好".into(),
-        expected_primary: CursorExpect::range(0, 3),
-        expected_selection_text: Some("你".into()),
+        description: "SelectRight then DeleteBackward on '你好世界' yields '好世界'".into(),
+        initial_text: "你好世界".into(),
+        actions: vec![
+            Action::MoveLineStart,
+            Action::SelectRight,
+            Action::DeleteBackward,
+        ],
+        expected_text: "好世界".into(),
+        expected_primary: CursorExpect::at(0),
+        expected_selection_text: Some(String::new()),
         ..Default::default()
     });
 }
@@ -155,62 +210,71 @@ fn migrated_select_shift_right_chinese() {
 #[test]
 fn migrated_select_shift_left_chinese() {
     // Original: `test_selection_shift_left_chinese`.
-    // From end (byte 6), SelectLeft ⇒ selects last CJK char.
+    // "你好世界" from end (byte 12), Shift+Left selects the last
+    // 3-byte char (cursor at byte 9), then typing 'X' replaces the
+    // selection → "你好世X".
     assert_buffer_scenario(BufferScenario {
-        description: "SelectLeft from end of '你好' selects last 3-byte char".into(),
-        initial_text: "你好".into(),
-        actions: vec![Action::MoveDocumentEnd, Action::SelectLeft],
-        expected_text: "你好".into(),
-        expected_primary: CursorExpect::range(6, 3),
-        expected_selection_text: Some("好".into()),
+        description: "SelectLeft then type 'X' on '你好世界' yields '你好世X'".into(),
+        initial_text: "你好世界".into(),
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::SelectLeft,
+            Action::InsertChar('X'),
+        ],
+        expected_text: "你好世X".into(),
+        expected_primary: CursorExpect::at(10), // byte 9 + 'X'
+        expected_selection_text: Some(String::new()),
         ..Default::default()
     });
 }
 
-/// Anti-test: drops one `SelectRight` from
-/// `migrated_select_multiple_chinese_characters`. Without all
-/// four SelectRight presses, the selection range falls short of
-/// 0..12 — proves each SelectRight extends by exactly one
-/// 3-byte CJK grapheme.
+/// Anti-test: drops the final `DeleteBackward` from
+/// `migrated_select_multiple_chinese_characters`. Without the
+/// delete, the buffer is still "一二三四五", not "四五" — proving
+/// the delete (over a 3-char selection) is what removes the
+/// leading three CJK codepoints.
 #[test]
-fn anti_multibyte_dropping_select_right_yields_check_err() {
+fn anti_multibyte_dropping_select_delete_yields_check_err() {
     let scenario = BufferScenario {
-        description: "anti: one SelectRight dropped — selection ends at byte 9 not 12".into(),
-        initial_text: "你好世界".into(),
+        description: "anti: DeleteBackward dropped — buffer stays '一二三四五', not '四五'".into(),
+        initial_text: "一二三四五".into(),
         actions: vec![
+            Action::MoveLineStart,
             Action::SelectRight,
             Action::SelectRight,
             Action::SelectRight,
-            // 4th SelectRight removed.
+            // DeleteBackward removed.
         ],
-        expected_text: "你好世界".into(),
-        expected_primary: CursorExpect::range(0, 12),
-        expected_selection_text: Some("你好世界".into()),
+        expected_text: "四五".into(),
+        expected_primary: CursorExpect::at(0),
         ..Default::default()
     };
     assert!(
         check_buffer_scenario(scenario).is_err(),
-        "anti-test: with only 3 SelectRights the selection covers 9 bytes, \
-         not the full 12-byte range; the four-char selection cannot match"
+        "anti-test: without DeleteBackward the 3-char selection isn't removed; \
+         the buffer cannot become '四五'"
     );
 }
 
 #[test]
 fn migrated_select_multiple_chinese_characters() {
     // Original: `test_selection_multiple_chinese_characters`.
-    // 4 SelectRights from byte 0 of "你好世界" select all 4 chars.
+    // "一二三四五", Home, Shift+Right ×3 selects the first three
+    // CJK chars (cursor at byte 9), then Backspace deletes them →
+    // "四五".
     assert_buffer_scenario(BufferScenario {
-        description: "4 SelectRights select all 4 CJK chars".into(),
-        initial_text: "你好世界".into(),
+        description: "3 SelectRights + DeleteBackward on '一二三四五' yields '四五'".into(),
+        initial_text: "一二三四五".into(),
         actions: vec![
+            Action::MoveLineStart,
             Action::SelectRight,
             Action::SelectRight,
             Action::SelectRight,
-            Action::SelectRight,
+            Action::DeleteBackward,
         ],
-        expected_text: "你好世界".into(),
-        expected_primary: CursorExpect::range(0, 12),
-        expected_selection_text: Some("你好世界".into()),
+        expected_text: "四五".into(),
+        expected_primary: CursorExpect::at(0),
+        expected_selection_text: Some(String::new()),
         ..Default::default()
     });
 }

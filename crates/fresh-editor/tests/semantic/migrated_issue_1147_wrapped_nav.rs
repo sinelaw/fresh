@@ -9,17 +9,20 @@
 //! - **End key** stuck on the first visual segment instead of
 //!   advancing through subsequent wrapped segments.
 //!
-//! All scenarios are `LayoutScenario` data literals. Cursor-byte
-//! claims are expressed via `viewport_top_within_delta_of`
-//! (for the viewport-drift bound) and `viewport_top_byte_distinct_at_most`
-//! over step snapshots (for the "viewport scrolled at most once
-//! over N Up presses" invariant). The End-key advancement
-//! invariant is expressed by per-step `viewport_includes_byte`
-//! checks (the cursor must include the logical line-end byte by
-//! the final press).
+//! All scenarios are `LayoutScenario` data literals. The two
+//! viewport-stability tests (Up-arrow drift) use
+//! `viewport_top_byte_distinct_at_most` over step snapshots. The
+//! down-arrow and End-key traversal tests pin the actual cursor
+//! byte at each step via `RenderSnapshotExpect.cursor_byte` /
+//! `cursor_byte_in` plus the `cursor_byte_strictly_increases_across_steps`
+//! invariant — the same `harness.cursor_position()` observable the
+//! deleted e2e originals asserted on. The End-key tests drive the
+//! production `End` key through `InputEvent::SendKey` (not
+//! `Action::MoveLineEnd`, which is NOT equivalent on a wrapped
+//! line).
 //!
-//! Source: `tests/e2e/issue_1147_wrapped_line_nav.rs` (4 tests +
-//! 1 anti-test; 0 deferred).
+//! Source: `tests/e2e/issue_1147_wrapped_line_nav.rs` (deleted on
+//! this branch — these migrations are the sole coverage).
 
 use crate::common::scenario::input_event::{InputEvent, KeyMods, KeySpec};
 use crate::common::scenario::layout_scenario::{
