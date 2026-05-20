@@ -1526,10 +1526,30 @@ impl Editor {
         // draw the dialog on top. Placed here (above the generic global-popup
         // slot and buffer chrome) so it has strict z-order parity with the
         // other modals and can never be obscured by the dashboard/explorer.
-        if top_is_trust_modal {
+        let trust_layout = if top_is_trust_modal {
             crate::view::dimming::apply_dimming(frame, size);
-            self.render_top_global_popup(frame, size, &theme_clone, hover_target.as_ref());
-        }
+            let selected = self
+                .global_popups
+                .top()
+                .and_then(|p| match &p.content {
+                    crate::view::popup::PopupContent::List { selected, .. } => Some(*selected),
+                    _ => None,
+                })
+                .unwrap_or(1);
+            let path = self.working_dir.display().to_string();
+            Some(
+                crate::view::workspace_trust_dialog::render_workspace_trust_dialog(
+                    frame,
+                    size,
+                    selected,
+                    &path,
+                    &theme_clone,
+                ),
+            )
+        } else {
+            None
+        };
+        self.active_chrome_mut().workspace_trust_dialog = trust_layout;
 
         if self.active_window_mut().menu_bar_visible {
             // Pre-expand DynamicSubmenu items once per registry; without this

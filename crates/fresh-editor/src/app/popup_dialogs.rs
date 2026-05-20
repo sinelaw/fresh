@@ -1082,6 +1082,66 @@ impl Editor {
         self.set_workspace_trust_level(level);
     }
 
+    /// Keyboard handling for the workspace-trust modal. Returns `Some(Consumed)`
+    /// for every key (the modal swallows everything): arrows move the radio
+    /// selection, the mnemonics `T`/`K`/`B` select-and-confirm, `Enter`/`O`
+    /// confirm the current selection, `Q` quits the editor, and `Esc` is inert.
+    pub(crate) fn handle_workspace_trust_key(
+        &mut self,
+        event: &crossterm::event::KeyEvent,
+    ) -> Option<crate::input::handler::InputResult> {
+        use crate::input::handler::InputResult;
+        use crossterm::event::KeyCode;
+        match event.code {
+            KeyCode::Up => self.move_workspace_trust_selection(-1),
+            KeyCode::Down => self.move_workspace_trust_selection(1),
+            KeyCode::Char('t') | KeyCode::Char('T') => self.confirm_workspace_trust(0),
+            KeyCode::Char('k') | KeyCode::Char('K') => self.confirm_workspace_trust(1),
+            KeyCode::Char('b') | KeyCode::Char('B') => self.confirm_workspace_trust(2),
+            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                self.hide_popup();
+                self.should_quit = true;
+            }
+            KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('O') => {
+                self.confirm_workspace_trust(self.current_workspace_trust_selection());
+            }
+            // Esc and anything else: inert, but consumed (this is a modal).
+            _ => {}
+        }
+        Some(InputResult::Consumed)
+    }
+
+    /// The currently-highlighted radio index (0=Trust, 1=Restricted, 2=Block).
+    pub(crate) fn current_workspace_trust_selection(&self) -> usize {
+        self.global_popups
+            .top()
+            .and_then(|p| match &p.content {
+                crate::view::popup::PopupContent::List { selected, .. } => Some(*selected),
+                _ => None,
+            })
+            .unwrap_or(1)
+    }
+
+    /// Move the radio selection by `delta`, wrapping across the three options.
+    fn move_workspace_trust_selection(&mut self, delta: i32) {
+        if let Some(popup) = self.global_popups.top_mut() {
+            if let crate::view::popup::PopupContent::List { selected, .. } = &mut popup.content {
+                *selected = (((*selected as i32) + delta).rem_euclid(3)) as usize;
+            }
+        }
+    }
+
+    /// Record the trust decision for radio `index` and dismiss the modal.
+    pub(crate) fn confirm_workspace_trust(&mut self, index: usize) {
+        let key = match index {
+            0 => "trusted",
+            2 => "blocked",
+            _ => "restricted",
+        };
+        self.hide_popup();
+        self.handle_workspace_trust_action(key);
+    }
+
     /// Probe for a `devcontainer.json` under the current working
     /// directory. Mirrors the first two priorities of the devcontainer
     /// plugin's `findConfig()` so the Remote Indicator menu can decide

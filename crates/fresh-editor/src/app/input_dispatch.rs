@@ -260,6 +260,21 @@ impl Editor {
                 return Some(InputResult::Consumed);
             }
 
+            // The workspace-trust prompt is a bespoke modal with its own keys
+            // (mnemonics select-and-confirm, Q quits, Esc is inert). Intercept
+            // before the generic popup handler so list type-to-filter etc.
+            // never swallow them.
+            if self.global_popups.top().is_some_and(|p| {
+                matches!(
+                    p.resolver,
+                    crate::view::popup::PopupResolver::WorkspaceTrust
+                )
+            }) {
+                if let Some(result) = self.handle_workspace_trust_key(event) {
+                    return Some(result);
+                }
+            }
+
             // Editor-level (global) popups take precedence over buffer popups
             // so that plugin notifications stay focused even when the active
             // buffer owns its own popup stack.

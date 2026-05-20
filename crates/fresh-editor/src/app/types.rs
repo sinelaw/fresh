@@ -1189,6 +1189,8 @@ pub(crate) struct ChromeLayout {
     pub suggestions_scrollbar_rect: Option<Rect>,
     /// Settings modal layout for hit testing
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
+    /// Workspace-trust dialog click layout (radios + OK/Quit) for hit testing.
+    pub workspace_trust_dialog: Option<crate::view::workspace_trust_dialog::TrustDialogLayout>,
     /// Status bar area (row, x, width)
     pub status_bar_area: Option<(u16, u16, u16)>,
     /// Status bar LSP indicator area (row, start_col, end_col)

@@ -1417,6 +1417,9 @@ impl Editor {
         if let Some(r) = self.handle_click_popup_scrollbar(col, row) {
             return r;
         }
+        if let Some(r) = self.handle_click_workspace_trust_dialog(col, row) {
+            return r;
+        }
         if let Some(r) = self.handle_click_global_popups(col, row) {
             return r;
         }
@@ -1660,6 +1663,40 @@ impl Editor {
             popup.scroll_by(target_scroll - current_scroll as i32);
         }
         Some(Ok(()))
+    }
+
+    /// Handle clicks on the workspace-trust modal: a radio row selects + confirms
+    /// that option, [ OK ] confirms the current selection, [ Quit ] exits the
+    /// editor, and any other click inside the dialog is absorbed (it's modal).
+    fn handle_click_workspace_trust_dialog(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        let layout = self.active_chrome().workspace_trust_dialog.clone()?;
+        let hit = |r: ratatui::layout::Rect| in_rect(col, row, r);
+        if hit(layout.ok) {
+            let idx = self.current_workspace_trust_selection();
+            self.confirm_workspace_trust(idx);
+            return Some(Ok(()));
+        }
+        if hit(layout.quit) {
+            self.hide_popup();
+            self.should_quit = true;
+            return Some(Ok(()));
+        }
+        for (i, radio) in layout.radios.iter().enumerate() {
+            if hit(*radio) {
+                self.confirm_workspace_trust(i);
+                return Some(Ok(()));
+            }
+        }
+        // Absorb any other click within the dialog so it can't reach the
+        // buffer/dashboard behind this modal.
+        if hit(layout.dialog) {
+            return Some(Ok(()));
+        }
+        None
     }
 
     fn handle_click_global_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {

@@ -48,6 +48,7 @@ pub mod visual_row_index;
 // Settings module has internal gating (schema is WASM-compatible)
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod settings;
+pub mod workspace_trust_dialog;
 
 // Runtime-only modules (depend on app, state, config_io, input, or tree-sitter)
 #[cfg(feature = "runtime")]
