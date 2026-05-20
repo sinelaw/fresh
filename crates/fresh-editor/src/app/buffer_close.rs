@@ -42,6 +42,23 @@ impl Editor {
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
+        // Record that the user explicitly closed a buffer that contributes
+        // real workspace content (a terminal or a file-backed buffer). This
+        // lets `save_workspace` tell a deliberate "closed everything" quit
+        // apart from a Dashboard-only quit, so the issue #2027 guard does not
+        // resurrect a terminal/file the user just closed (terminal-reappears
+        // bug). Virtual buffers (Dashboard, plugin scratch) don't count.
+        let closing_real = self.active_window().terminal_buffers.contains_key(&id)
+            || self
+                .active_window()
+                .buffer_metadata
+                .get(&id)
+                .map(|m| !m.is_virtual())
+                .unwrap_or(false);
+        if closing_real {
+            self.closed_real_buffer_this_session = true;
+        }
+
         // Clear preview tracking if we're closing the current preview buffer.
         // This keeps `preview` from pointing at a freed buffer id.
         if let Some((_, preview_id)) = self.active_window().preview {
@@ -548,20 +565,47 @@ impl Editor {
                 self.set_status_message(t!("buffer.tab_closed").to_string());
             }
         } else {
-            // There are other viewports of this buffer - just remove from this split's tabs
-            if split_tabs.len() <= 1 {
-                // This is the only tab in this split - close the split
+            use crate::view::split::TabTarget;
+
+            // There are other viewports of this buffer — just remove it from
+            // this split's tabs. Use the full tab list (open_buffers), which
+            // includes group tabs (panels); `split_tabs`/`buffer_tab_ids_vec`
+            // omits groups, so relying on it here would tear the split down
+            // even when a group tab remains to fall back to (the "git log
+            // disappears" bug).
+            let targets: Vec<TabTarget> = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| vs.open_buffers.clone())
+                .unwrap_or_default();
+
+            let closing = TabTarget::Buffer(buffer_id);
+            let closing_idx = targets.iter().position(|t| *t == closing).unwrap_or(0);
+            let has_other_tab = targets.iter().any(|t| *t != closing);
+
+            if !has_other_tab {
+                // This is genuinely the only tab in this split — close it.
                 self.handle_close_split(split_id.into());
                 return true;
             }
 
-            // Find replacement buffer for this split
-            let current_idx = split_tabs
-                .iter()
-                .position(|&id| id == buffer_id)
-                .unwrap_or(0);
-            let replacement_idx = if current_idx > 0 { current_idx - 1 } else { 1 };
-            let replacement_buffer = split_tabs[replacement_idx];
+            // Pick the tab to activate after removal: the one before the
+            // closed tab (or the next one if we closed the first). This
+            // mirrors the previous buffer-only behaviour but can also land
+            // on a remaining group tab.
+            let replacement = if closing_idx > 0 {
+                targets[closing_idx - 1]
+            } else {
+                // First remaining target after the closed one.
+                *targets
+                    .iter()
+                    .find(|t| **t != closing)
+                    .expect("has_other_tab")
+            };
 
             // Remove buffer from this split's tabs
             if let Some(view_state) = self
@@ -574,12 +618,20 @@ impl Editor {
                 view_state.remove_buffer(buffer_id);
             }
 
-            // Update the split to show the replacement buffer
-            self.windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_manager_mut())
-                .expect("active window must have a populated split layout")
-                .set_split_buffer(split_id, replacement_buffer);
+            // Activate the replacement tab — either a sibling buffer or the
+            // remaining group panel.
+            match replacement {
+                TabTarget::Buffer(replacement_buffer) => {
+                    self.windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_manager_mut())
+                        .expect("active window must have a populated split layout")
+                        .set_split_buffer(split_id, replacement_buffer);
+                }
+                TabTarget::Group(group_leaf) => {
+                    self.activate_group_tab(split_id, group_leaf);
+                }
+            }
 
             self.set_status_message(t!("buffer.tab_closed").to_string());
         }

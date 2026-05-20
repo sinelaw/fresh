@@ -508,7 +508,10 @@ impl Editor {
         // quitting from a Dashboard-only tab silently wiped the user's
         // saved file list (see issue #2027). Genuinely-empty quits
         // (no buffers at all) still pass through and clear the file.
-        if workspace.has_no_real_content() && self.has_any_virtual_buffer() {
+        if workspace.has_no_real_content()
+            && self.has_any_virtual_buffer()
+            && !self.closed_real_buffer_this_session
+        {
             let on_disk = if let Some(ref session_name) = self.session_name {
                 Workspace::load_session(session_name, &self.working_dir)
                     .ok()

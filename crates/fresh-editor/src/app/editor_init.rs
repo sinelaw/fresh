@@ -235,6 +235,7 @@ impl Editor {
             should_quit: false,
             should_detach: false,
             session_mode: false,
+            closed_real_buffer_this_session: false,
             software_cursor_only: false,
             session_name: None,
             pending_escape_sequences: Vec::new(),
