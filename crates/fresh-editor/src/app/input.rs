@@ -956,6 +956,10 @@ impl Editor {
                     crate::services::workspace_trust::TrustLevel::Blocked,
                 );
             }
+            Action::WorkspaceTrustPrompt => {
+                // Voluntarily-opened: cancellable (Esc / Cancel just closes).
+                self.show_workspace_trust_popup(true);
+            }
             Action::Save => {
                 // Check if buffer has a file path - if not, redirect to SaveAs
                 if self.active_state().buffer.file_path().is_none() {

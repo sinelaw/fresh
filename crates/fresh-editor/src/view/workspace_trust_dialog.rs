@@ -1,9 +1,11 @@
 //! Workspace-trust prompt rendering.
 //!
-//! A bespoke security modal (radio group + descriptions + OK/Quit buttons),
-//! rendered on a dimmed backdrop in the modal z-band. The choice is forced:
-//! the user either picks a trust level and confirms, or quits the editor —
-//! there is no "cancel"/undecided outcome.
+//! A bespoke security modal (radio group + descriptions + an OK button and a
+//! secondary button), rendered on a dimmed backdrop in the modal z-band. As
+//! the mandatory open-time gate the secondary button is "Quit" (exit the
+//! editor) and there is no undecided outcome; when opened voluntarily from the
+//! command palette the secondary button is "Cancel" (close without changing
+//! the current level).
 
 use crate::view::theme::Theme;
 use ratatui::{
@@ -24,20 +26,19 @@ struct TrustOption {
 const OPTIONS: [TrustOption; 3] = [
     TrustOption {
         label: "[T]rust folder & Allow Tooling",
-        description: "Enables full LSP, scripts, and env manager.",
+        description: "Runs everything: language servers, build scripts, tasks, env activation.",
     },
     TrustOption {
         label: "[K]eep Restricted (Default)",
-        description: "Open as plain text; blocks repo-controlled code.",
+        description: "System tools (git, ripgrep, system python…) still run. Blocked: programs inside this folder, .env/.envrc/mise env activation, and language servers.",
     },
     TrustOption {
         label: "[B]lock All Execution",
-        description: "Hard sandbox; no background processes run at all.",
+        description: "Nothing runs — no system tools, language servers, scripts, or tasks.",
     },
 ];
 
-const DIALOG_WIDTH: u16 = 60;
-const INNER_ROWS: u16 = 18;
+const DIALOG_WIDTH: u16 = 68;
 
 /// Click-target rects produced by a render pass, consumed by mouse hit-testing.
 #[derive(Debug, Clone, Default)]
@@ -51,18 +52,58 @@ pub struct TrustDialogLayout {
 }
 
 /// Render the workspace-trust prompt centered in `area`, with `selected`
-/// (0=Trust, 1=Restricted, 2=Block) marked. `quit_hint` is the user's bound
-/// quit key (e.g. "Ctrl+Q"), shown on the Quit button. Returns the click layout.
+/// (0=Trust, 1=Restricted, 2=Block) marked. `secondary_label` is the right-hand
+/// button text (e.g. "Quit (Ctrl+Q)" at startup, "Cancel (Esc)" when invoked
+/// from the command palette). Returns the click layout.
 pub fn render_workspace_trust_dialog(
     frame: &mut Frame,
     area: Rect,
     selected: usize,
     path: &str,
-    quit_hint: Option<&str>,
+    secondary_label: &str,
     theme: &Theme,
 ) -> TrustDialogLayout {
     let width = DIALOG_WIDTH.min(area.width.saturating_sub(4));
-    let height = (INNER_ROWS + 2).min(area.height.saturating_sub(2));
+    let inner_w = width.saturating_sub(2);
+    let bg = theme.popup_bg;
+    let fg = theme.popup_text_fg;
+
+    // --- Build the row plan, wrapping descriptions, so we can size the dialog
+    //     to its content (no fixed height to drift out of sync). ---
+    enum Seg {
+        Header,
+        Sep,
+        Plain(String),
+        Path(String),
+        Radio(usize),
+        Desc(String),
+        Blank,
+        Buttons,
+    }
+    let desc_w = inner_w.saturating_sub(6).max(8) as usize;
+    let shown_path = truncate_middle(path, inner_w.saturating_sub(8).max(8) as usize);
+
+    let mut segs: Vec<Seg> = vec![
+        Seg::Header,
+        Seg::Sep,
+        Seg::Plain(" This project folder can execute arbitrary code:".to_string()),
+        Seg::Path(shown_path),
+        Seg::Blank,
+        Seg::Plain(" How would you like to proceed?".to_string()),
+        Seg::Blank,
+    ];
+    for (i, opt) in OPTIONS.iter().enumerate() {
+        segs.push(Seg::Radio(i));
+        for line in wrap_text(opt.description, desc_w) {
+            segs.push(Seg::Desc(line));
+        }
+        segs.push(Seg::Blank);
+    }
+    segs.push(Seg::Sep);
+    segs.push(Seg::Buttons);
+
+    let content_rows = segs.len() as u16;
+    let height = (content_rows + 2).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let dialog = Rect {
@@ -73,9 +114,6 @@ pub fn render_workspace_trust_dialog(
     };
 
     frame.render_widget(Clear, dialog);
-
-    let bg = theme.popup_bg;
-    let fg = theme.popup_text_fg;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.popup_border_fg).bg(bg))
@@ -91,8 +129,6 @@ pub fn render_workspace_trust_dialog(
         return layout;
     }
     let iw = inner.width;
-
-    // Helper: render one full-width line of text at inner row `r`.
     let row_rect = |r: u16| Rect {
         x: inner.x,
         y: inner.y + r,
@@ -107,97 +143,80 @@ pub fn render_workspace_trust_dialog(
             );
         }
     };
-    let separator = |frame: &mut Frame, r: u16| {
-        put(
-            frame,
-            r,
-            Line::from(Span::styled(
-                "─".repeat(iw as usize),
-                Style::default().fg(theme.popup_border_fg).bg(bg),
-            )),
-        );
-    };
 
-    // Header.
-    put(
-        frame,
-        0,
-        Line::from(vec![Span::styled(
-            " ⚠  SECURITY WARNING",
-            Style::default()
-                .fg(theme.status_warning_indicator_fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        )]),
-    );
-    separator(frame, 1);
-
-    // Body.
-    put(
-        frame,
-        2,
-        Line::from(Span::styled(
-            " This project folder can execute arbitrary code:",
-            Style::default().fg(fg).bg(bg),
-        )),
-    );
-    let avail = iw.saturating_sub(8) as usize; // " Path: " + margin
-    let shown_path = truncate_middle(path, avail.max(8));
-    put(
-        frame,
-        3,
-        Line::from(vec![
-            Span::styled(" Path: ", Style::default().fg(fg).bg(bg)),
-            Span::styled(
-                shown_path,
-                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+    for (r, seg) in segs.into_iter().enumerate() {
+        let r = r as u16;
+        if r >= inner.height {
+            break;
+        }
+        match seg {
+            Seg::Header => put(
+                frame,
+                r,
+                Line::from(Span::styled(
+                    " ⚠  SECURITY WARNING",
+                    Style::default()
+                        .fg(theme.status_warning_indicator_fg)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                )),
             ),
-        ]),
-    );
-    put(
-        frame,
-        5,
-        Line::from(Span::styled(
-            " How would you like to proceed?",
-            Style::default().fg(fg).bg(bg),
-        )),
-    );
-
-    // Radio options: each occupies a marker line (clickable) + a description.
-    let option_rows = [7u16, 10, 13];
-    for (i, opt) in OPTIONS.iter().enumerate() {
-        let r = option_rows[i];
-        let is_sel = i == selected;
-        let marker = if is_sel { "(*)" } else { "( )" };
-        let line_style = if is_sel {
-            Style::default()
-                .fg(theme.popup_selection_fg)
-                .bg(theme.popup_selection_bg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(fg).bg(bg)
-        };
-        // Pad the radio line to full inner width so the selection highlight
-        // spans the whole row.
-        let text = format!(" {marker} {}", opt.label);
-        let padded = pad_to(&text, iw as usize);
-        put(frame, r, Line::from(Span::styled(padded, line_style)));
-        put(
-            frame,
-            r + 1,
-            Line::from(Span::styled(
-                format!("      {}", opt.description),
-                Style::default().fg(fg).bg(bg).add_modifier(Modifier::DIM),
-            )),
-        );
-        layout.radios[i] = row_rect(r);
+            Seg::Sep => put(
+                frame,
+                r,
+                Line::from(Span::styled(
+                    "─".repeat(iw as usize),
+                    Style::default().fg(theme.popup_border_fg).bg(bg),
+                )),
+            ),
+            Seg::Plain(text) => put(
+                frame,
+                r,
+                Line::from(Span::styled(text, Style::default().fg(fg).bg(bg))),
+            ),
+            Seg::Path(p) => put(
+                frame,
+                r,
+                Line::from(vec![
+                    Span::styled(" Path: ", Style::default().fg(fg).bg(bg)),
+                    Span::styled(
+                        p,
+                        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+            ),
+            Seg::Radio(i) => {
+                let is_sel = i == selected;
+                let marker = if is_sel { "(*)" } else { "( )" };
+                let style = if is_sel {
+                    Style::default()
+                        .fg(theme.popup_selection_fg)
+                        .bg(theme.popup_selection_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(fg).bg(bg)
+                };
+                let text = pad_to(&format!(" {marker} {}", OPTIONS[i].label), iw as usize);
+                put(frame, r, Line::from(Span::styled(text, style)));
+                layout.radios[i] = row_rect(r);
+            }
+            Seg::Desc(line) => put(
+                frame,
+                r,
+                Line::from(Span::styled(
+                    format!("      {line}"),
+                    Style::default().fg(fg).bg(bg).add_modifier(Modifier::DIM),
+                )),
+            ),
+            Seg::Blank => {}
+            Seg::Buttons => {
+                let (ok_rect, sec_rect) =
+                    render_buttons(frame, row_rect(r), secondary_label, bg, fg);
+                layout.ok = ok_rect;
+                layout.quit = sec_rect;
+            }
+        }
     }
-
-    // Footer: separator + buttons.
-    separator(frame, 16);
-    let (ok_rect, quit_rect) = render_buttons(frame, row_rect(17), quit_hint, bg, fg);
-    layout.ok = ok_rect;
-    layout.quit = quit_rect;
 
     layout
 }
@@ -205,15 +224,12 @@ pub fn render_workspace_trust_dialog(
 fn render_buttons(
     frame: &mut Frame,
     row: Rect,
-    quit_hint: Option<&str>,
+    secondary_label: &str,
     bg: ratatui::style::Color,
     fg: ratatui::style::Color,
 ) -> (Rect, Rect) {
     let ok_label = "[ OK ]".to_string();
-    let quit_label = match quit_hint {
-        Some(k) => format!("[ Quit ({k}) ]"),
-        None => "[ Quit ]".to_string(),
-    };
+    let quit_label = format!("[ {secondary_label} ]");
     let ok_w = ok_label.chars().count() as u16;
     let quit_w = quit_label.chars().count() as u16;
     // OK at ~1/4, Quit at ~3/4 of the row.
@@ -246,6 +262,32 @@ fn render_buttons(
         quit_rect,
     );
     (ok_rect, quit_rect)
+}
+
+/// Greedy word-wrap `s` to lines of at most `width` columns (approximated by
+/// char count, which is exact for the ASCII copy used here).
+fn wrap_text(s: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for word in s.split_whitespace() {
+        if cur.is_empty() {
+            cur.push_str(word);
+        } else if cur.chars().count() + 1 + word.chars().count() <= width {
+            cur.push(' ');
+            cur.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 /// Right-pad `s` with spaces to `width` display columns (no truncation here;

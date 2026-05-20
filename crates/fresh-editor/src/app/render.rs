@@ -1537,19 +1537,27 @@ impl Editor {
                 })
                 .unwrap_or(1);
             let path = self.working_dir.display().to_string();
-            let quit_hint = self.keybindings.read().ok().and_then(|kb| {
-                kb.get_keybinding_for_action(
-                    &crate::input::keybindings::Action::Quit,
-                    crate::input::keybindings::KeyContext::Normal,
-                )
-            });
+            let secondary_label = if self.workspace_trust_prompt_cancellable {
+                "Cancel (Esc)".to_string()
+            } else {
+                let quit_hint = self.keybindings.read().ok().and_then(|kb| {
+                    kb.get_keybinding_for_action(
+                        &crate::input::keybindings::Action::Quit,
+                        crate::input::keybindings::KeyContext::Normal,
+                    )
+                });
+                match quit_hint {
+                    Some(k) => format!("Quit ({k})"),
+                    None => "Quit".to_string(),
+                }
+            };
             Some(
                 crate::view::workspace_trust_dialog::render_workspace_trust_dialog(
                     frame,
                     size,
                     selected,
                     &path,
-                    quit_hint.as_deref(),
+                    &secondary_label,
                     &theme_clone,
                 ),
             )

@@ -779,6 +779,7 @@ pub enum Action {
     WorkspaceTrustTrust,    // Trust this workspace: allow all process execution
     WorkspaceTrustRestrict, // Restrict: no repo-controlled execution (the safe default)
     WorkspaceTrustBlock,    // Block: no process execution at all
+    WorkspaceTrustPrompt,   // Open the workspace-trust dialog to change the level
 
     // No-op
     None,
@@ -1197,6 +1198,7 @@ impl Action {
             "workspace_trust_trust" => WorkspaceTrustTrust,
             "workspace_trust_restrict" => WorkspaceTrustRestrict,
             "workspace_trust_block" => WorkspaceTrustBlock,
+            "workspace_trust_prompt" => WorkspaceTrustPrompt,
 
             "noop" => None,
 
@@ -2580,6 +2582,7 @@ impl KeybindingResolver {
             Action::WorkspaceTrustTrust => "Trust This Folder".into(),
             Action::WorkspaceTrustRestrict => "Restrict This Folder".into(),
             Action::WorkspaceTrustBlock => "Block Process Execution".into(),
+            Action::WorkspaceTrustPrompt => "Workspace Trust…".into(),
             Action::None => t!("action.none"),
         }
         .to_string()

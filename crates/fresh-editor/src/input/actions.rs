@@ -2947,7 +2947,8 @@ pub fn action_to_events(
         | Action::CompositePrevHunk
         | Action::WorkspaceTrustTrust
         | Action::WorkspaceTrustRestrict
-        | Action::WorkspaceTrustBlock => return None,
+        | Action::WorkspaceTrustBlock
+        | Action::WorkspaceTrustPrompt => return None,
 
         // Block/rectangular selection actions
         Action::BlockSelectLeft => {

@@ -233,6 +233,7 @@ impl Editor {
             background_fade: crate::primitives::ansi_background::DEFAULT_BACKGROUND_FADE,
             clipboard: crate::services::clipboard::Clipboard::new(),
             should_quit: false,
+            workspace_trust_prompt_cancellable: false,
             should_detach: false,
             session_mode: false,
             software_cursor_only: false,

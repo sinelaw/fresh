@@ -984,7 +984,7 @@ impl Editor {
         if !crate::services::workspace_trust::workspace_has_executable_content(&self.working_dir) {
             return; // nothing whose trust matters here
         }
-        self.show_workspace_trust_popup();
+        self.show_workspace_trust_popup(false);
     }
 
     /// Show the workspace-trust prompt: a centered list asking how this
@@ -994,9 +994,11 @@ impl Editor {
     /// "Restricted" — dismissing with Escape leaves the project undecided
     /// (and re-asks next open), while selecting any row records the
     /// decision so the prompt stops appearing.
-    pub fn show_workspace_trust_popup(&mut self) {
+    pub fn show_workspace_trust_popup(&mut self, cancellable: bool) {
         use crate::view::popup::{Popup, PopupContent, PopupKind, PopupResolver};
         use ratatui::style::Style;
+
+        self.workspace_trust_prompt_cancellable = cancellable;
 
         // Don't stack a second copy if one is already up. The prompt lives on
         // the editor-level (global) stack so it renders regardless of which
@@ -1010,6 +1012,15 @@ impl Editor {
         {
             return;
         }
+
+        // Seed the radio selection from the project's current level so a
+        // command-palette invocation shows the active choice; at startup
+        // (undecided) this is the safe Restricted default.
+        let selected = match self.authority.workspace_trust.level() {
+            crate::services::workspace_trust::TrustLevel::Trusted => 0,
+            crate::services::workspace_trust::TrustLevel::Restricted => 1,
+            crate::services::workspace_trust::TrustLevel::Blocked => 2,
+        };
 
         let items = vec![
             crate::view::popup::PopupListItem::new("Trust this folder".to_string())
@@ -1042,11 +1053,7 @@ impl Editor {
             title: Some("This project can run code on your machine. Trust it?".to_string()),
             description: None,
             transient: false,
-            content: PopupContent::List {
-                items,
-                // Default focus on the safe "Keep restricted" choice.
-                selected: 1,
-            },
+            content: PopupContent::List { items, selected },
             position: crate::view::popup::PopupPosition::Centered,
             width: popup_width.clamp(40, 70),
             max_height: 10,
@@ -1095,17 +1102,23 @@ impl Editor {
         use crate::input::keybindings::{Action, KeyContext};
         use crossterm::event::KeyCode;
 
-        // Quit is bound to whatever the user has mapped the global quit action
-        // to (default Ctrl+Q) — not a dialog-local key.
-        let resolved = self
-            .keybindings
-            .read()
-            .ok()
-            .map(|kb| kb.resolve(event, KeyContext::Normal));
-        if matches!(resolved, Some(Action::Quit) | Some(Action::ForceQuit)) {
-            self.hide_popup();
-            self.should_quit = true;
-            return Some(InputResult::Consumed);
+        let cancellable = self.workspace_trust_prompt_cancellable;
+
+        // The mandatory open-time gate (not cancellable) binds its secondary
+        // action to the user's global quit key (default Ctrl+Q) and quits the
+        // editor. A voluntarily-opened prompt (cancellable) does not — Escape
+        // cancels it instead.
+        if !cancellable {
+            let resolved = self
+                .keybindings
+                .read()
+                .ok()
+                .map(|kb| kb.resolve(event, KeyContext::Normal));
+            if matches!(resolved, Some(Action::Quit) | Some(Action::ForceQuit)) {
+                self.hide_popup();
+                self.should_quit = true;
+                return Some(InputResult::Consumed);
+            }
         }
 
         match event.code {
@@ -1117,7 +1130,9 @@ impl Editor {
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('O') => {
                 self.confirm_workspace_trust(self.current_workspace_trust_selection());
             }
-            // Esc and anything else: inert, but consumed (this is a modal).
+            // Escape cancels a voluntarily-opened prompt; on the mandatory gate
+            // it (and every other key) is inert but still consumed (modal).
+            KeyCode::Esc if cancellable => self.hide_popup(),
             _ => {}
         }
         Some(InputResult::Consumed)

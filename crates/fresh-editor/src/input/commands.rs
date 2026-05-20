@@ -1400,25 +1400,12 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
-    // Workspace trust
+    // Workspace trust — a single command that opens the trust dialog; the
+    // dialog itself is where the level is chosen.
     CommandDef {
-        name_key: "cmd.workspace_trust_trust",
-        desc_key: "cmd.workspace_trust_trust_desc",
-        action: || Action::WorkspaceTrustTrust,
-        contexts: &[],
-        custom_contexts: &[],
-    },
-    CommandDef {
-        name_key: "cmd.workspace_trust_restrict",
-        desc_key: "cmd.workspace_trust_restrict_desc",
-        action: || Action::WorkspaceTrustRestrict,
-        contexts: &[],
-        custom_contexts: &[],
-    },
-    CommandDef {
-        name_key: "cmd.workspace_trust_block",
-        desc_key: "cmd.workspace_trust_block_desc",
-        action: || Action::WorkspaceTrustBlock,
+        name_key: "cmd.workspace_trust",
+        desc_key: "cmd.workspace_trust_desc",
+        action: || Action::WorkspaceTrustPrompt,
         contexts: &[],
         custom_contexts: &[],
     },

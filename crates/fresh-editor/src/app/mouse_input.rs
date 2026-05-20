@@ -1681,8 +1681,12 @@ impl Editor {
             return Some(Ok(()));
         }
         if hit(layout.quit) {
+            // Secondary button: Cancel (just close) for a voluntarily-opened
+            // prompt, Quit (exit the editor) for the mandatory open-time gate.
             self.hide_popup();
-            self.should_quit = true;
+            if !self.workspace_trust_prompt_cancellable {
+                self.should_quit = true;
+            }
             return Some(Ok(()));
         }
         for (i, radio) in layout.radios.iter().enumerate() {

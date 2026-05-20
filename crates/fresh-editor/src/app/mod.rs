@@ -449,6 +449,12 @@ pub struct Editor {
     /// Should the editor quit?
     should_quit: bool,
 
+    /// Whether the workspace-trust prompt currently on screen was opened
+    /// voluntarily (command palette) rather than as the mandatory open-time
+    /// gate. When `true` its secondary action is "Cancel" (just close); when
+    /// `false` it's "Quit" (exit the editor) and Escape is inert.
+    workspace_trust_prompt_cancellable: bool,
+
     /// Should the client detach (keep server running)?
     should_detach: bool,
 
