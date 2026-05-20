@@ -34,7 +34,6 @@
 //! interactive "prompt each time" sub-mode of Blocked, land alongside the
 //! trust-granting UI; this module is the enforcement core they build on.
 
-use std::collections::HashMap;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -101,13 +100,14 @@ pub struct WorkspaceTrust {
     /// path traverses a symlink, e.g. `/tmp` → `/private/tmp` on macOS).
     /// A spawn inside *either* counts as inside the workspace.
     roots: RwLock<Vec<PathBuf>>,
-    /// The workspace root as given (the persistence key). `None` when no
-    /// working directory is known.
+    /// The workspace root as given. `None` when no working directory is known.
     root: RwLock<Option<PathBuf>>,
     level: AtomicU8,
-    /// On-disk persistence. `None` for in-memory instances (e.g. tests);
-    /// when present, [`Self::set_level`] writes the decision through.
-    store: Option<TrustStore>,
+    /// On-disk persistence for *this* project (a per-project file). `None`
+    /// for in-memory instances (e.g. tests); when present, [`Self::set_level`]
+    /// writes the decision through. Swapped via [`Self::set_store`] when the
+    /// working directory changes.
+    store: RwLock<Option<TrustStore>>,
 }
 
 impl WorkspaceTrust {
@@ -116,8 +116,8 @@ impl WorkspaceTrust {
         Self::build(root, level, None)
     }
 
-    /// Build trust state backed by `store`, so [`Self::set_level`] persists
-    /// the decision keyed by the workspace path.
+    /// Build trust state backed by `store` (a per-project trust file), so
+    /// [`Self::set_level`] persists the decision for this workspace.
     pub fn new_persistent(root: Option<PathBuf>, level: TrustLevel, store: TrustStore) -> Self {
         Self::build(root, level, Some(store))
     }
@@ -127,7 +127,7 @@ impl WorkspaceTrust {
             roots: RwLock::new(compute_roots(root.clone())),
             root: RwLock::new(root),
             level: AtomicU8::new(level.as_u8()),
-            store,
+            store: RwLock::new(store),
         }
     }
 
@@ -141,33 +141,39 @@ impl WorkspaceTrust {
     /// persistent, the decision is written through to disk for this workspace.
     pub fn set_level(&self, level: TrustLevel) {
         self.level.store(level.as_u8(), Ordering::Relaxed);
-        if let Some(store) = &self.store {
-            if let Ok(root) = self.root.read() {
-                if let Some(root) = root.as_ref() {
-                    if let Err(e) = store.record(root, level) {
-                        tracing::warn!("workspace trust: failed to persist level: {e}");
-                    }
+        if let Ok(store) = self.store.read() {
+            if let Some(store) = store.as_ref() {
+                if let Err(e) = store.record(level) {
+                    tracing::warn!("workspace trust: failed to persist level: {e}");
                 }
             }
         }
     }
 
-    /// Update the workspace root after a working-directory change. The trust
-    /// level is per-path, so a persistent instance re-adopts the new path's
-    /// stored decision (leaving the current level unchanged if none exists).
+    /// Update the workspace root after a working-directory change. Only the
+    /// containment roots move here; the per-project store is swapped
+    /// separately via [`Self::set_store`] (the caller knows the new project's
+    /// state directory).
     pub fn set_root(&self, root: Option<PathBuf>) {
         if let Ok(mut guard) = self.roots.write() {
             *guard = compute_roots(root.clone());
         }
         if let Ok(mut guard) = self.root.write() {
-            *guard = root.clone();
+            *guard = root;
         }
-        if let Some(store) = &self.store {
-            if let Some(root) = root.as_ref() {
-                if let Some(level) = store.level_for(root) {
-                    self.level.store(level.as_u8(), Ordering::Relaxed);
-                }
+    }
+
+    /// Point persistence at a new project's trust store and adopt that
+    /// project's stored level (if any). Called on a working-directory change,
+    /// since trust is per-project. Passing `None` detaches persistence.
+    pub fn set_store(&self, store: Option<TrustStore>) {
+        if let Some(store) = &store {
+            if let Some(level) = store.level() {
+                self.level.store(level.as_u8(), Ordering::Relaxed);
             }
+        }
+        if let Ok(mut guard) = self.store.write() {
+            *guard = store;
         }
     }
 
@@ -278,66 +284,61 @@ fn path_is_within(candidate: &Path, root: &Path) -> bool {
     candidate == root || candidate.starts_with(root)
 }
 
-/// On-disk persistence of trust decisions, keyed by canonical workspace path.
+/// Serialized form of one project's trust decision. A struct (rather than a
+/// bare enum) leaves room to record more per-decision metadata later without
+/// breaking the file format.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StoredTrust {
+    level: TrustLevel,
+}
+
+/// On-disk persistence of *one* project's trust decision: a small JSON file
+/// (`trust.json`) inside that project's state directory
+/// (`<data_dir>/workspaces/<encoded-path>/`).
 ///
-/// A single small JSON map at `<config_dir>/workspace-trust.json`, e.g.
-/// `{ "/home/u/proj": "trusted", "/home/u/other": "blocked" }`. This is a
-/// core-owned file — trust is a per-user security decision and must never
-/// live inside the repository (a repo could otherwise vouch for itself).
+/// One file per project — not a shared map — so concurrent `fresh` processes
+/// on different projects never contend over the same file. Trust is a
+/// per-user security decision and lives in the user's data dir, never inside
+/// the repository (a repo must not be able to vouch for itself).
 #[derive(Debug, Clone)]
 pub struct TrustStore {
     path: PathBuf,
 }
 
 impl TrustStore {
-    /// Store rooted at `<config_dir>/workspace-trust.json`.
-    pub fn new(config_dir: &Path) -> Self {
+    /// Trust file for the project whose state lives in `project_state_dir`
+    /// (see `DirectoryContext::project_state_dir`).
+    pub fn for_project_dir(project_state_dir: &Path) -> Self {
         Self {
-            path: config_dir.join("workspace-trust.json"),
+            path: project_state_dir.join("trust.json"),
         }
     }
 
-    /// The persisted level for `workspace`, if any has been recorded.
-    pub fn level_for(&self, workspace: &Path) -> Option<TrustLevel> {
-        self.load().get(&canonical_key(workspace)).copied()
+    /// The persisted level for this project, if one has been recorded.
+    pub fn level(&self) -> Option<TrustLevel> {
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        // A corrupt file is treated as "no decision" rather than crashing;
+        // the next write rewrites it cleanly.
+        serde_json::from_str::<StoredTrust>(&text)
+            .ok()
+            .map(|s| s.level)
     }
 
-    /// Record `level` for `workspace`, persisting the whole map atomically
-    /// (write to a temp file, then rename).
-    pub fn record(&self, workspace: &Path, level: TrustLevel) -> io::Result<()> {
-        let mut map = self.load();
-        map.insert(canonical_key(workspace), level);
-        self.save(&map)
-    }
-
-    fn load(&self) -> HashMap<String, TrustLevel> {
-        match std::fs::read_to_string(&self.path) {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-            // Missing file (first run) or unreadable → empty map. A
-            // corrupt file is treated as empty rather than crashing the
-            // editor; the next write rewrites it cleanly.
-            Err(_) => HashMap::new(),
-        }
-    }
-
-    fn save(&self, map: &HashMap<String, TrustLevel>) -> io::Result<()> {
+    /// Record `level` for this project, written atomically (a pid-tagged temp
+    /// file, then rename, so a half-written file is never observed and two
+    /// processes don't clobber each other's temp).
+    pub fn record(&self, level: TrustLevel) -> io::Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(map).map_err(io::Error::other)?;
-        let tmp = self.path.with_extension("json.tmp");
+        let json = serde_json::to_string_pretty(&StoredTrust { level }).map_err(io::Error::other)?;
+        let tmp = self
+            .path
+            .with_extension(format!("json.{}.tmp", std::process::id()));
         std::fs::write(&tmp, json.as_bytes())?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
     }
-}
-
-/// Stable persistence key for a workspace path: canonicalized when possible
-/// (so symlinked spellings of the same directory share a decision), else
-/// lexically normalized.
-fn canonical_key(p: &Path) -> String {
-    let canonical = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    lexical_normalize(&canonical).to_string_lossy().into_owned()
 }
 
 /// Wraps a [`ProcessSpawner`] so every one-shot spawn is gated by trust.
@@ -566,56 +567,67 @@ mod tests {
     }
 
     #[test]
-    fn store_round_trips_level_per_path() {
+    fn store_round_trips_level_for_one_project() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = TrustStore::new(tmp.path());
-        let ws = tmp.path().join("proj");
-        std::fs::create_dir_all(&ws).unwrap();
+        let proj_dir = tmp.path().join("a/b/proj");
+        let store = TrustStore::for_project_dir(&proj_dir);
 
-        assert_eq!(store.level_for(&ws), None);
-        store.record(&ws, TrustLevel::Trusted).unwrap();
-        assert_eq!(store.level_for(&ws), Some(TrustLevel::Trusted));
+        assert_eq!(store.level(), None);
+        store.record(TrustLevel::Trusted).unwrap();
+        assert_eq!(store.level(), Some(TrustLevel::Trusted));
         // Overwrite wins.
-        store.record(&ws, TrustLevel::Blocked).unwrap();
-        assert_eq!(store.level_for(&ws), Some(TrustLevel::Blocked));
-        // A different workspace is independent.
-        let other = tmp.path().join("other");
-        std::fs::create_dir_all(&other).unwrap();
-        assert_eq!(store.level_for(&other), None);
+        store.record(TrustLevel::Blocked).unwrap();
+        assert_eq!(store.level(), Some(TrustLevel::Blocked));
+        // The file lives inside the project's own state directory.
+        assert!(proj_dir.join("trust.json").exists());
+    }
+
+    #[test]
+    fn separate_projects_use_separate_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = TrustStore::for_project_dir(&tmp.path().join("a"));
+        let b = TrustStore::for_project_dir(&tmp.path().join("b"));
+        a.record(TrustLevel::Trusted).unwrap();
+        // b is untouched by a's write — no shared file.
+        assert_eq!(a.level(), Some(TrustLevel::Trusted));
+        assert_eq!(b.level(), None);
     }
 
     #[test]
     fn set_level_persists_through_store() {
         let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("proj");
-        std::fs::create_dir_all(&ws).unwrap();
+        let proj_dir = tmp.path().join("proj");
         let wt = WorkspaceTrust::new_persistent(
-            Some(ws.clone()),
+            Some(proj_dir.clone()),
             TrustLevel::Restricted,
-            TrustStore::new(tmp.path()),
+            TrustStore::for_project_dir(&proj_dir),
         );
         wt.set_level(TrustLevel::Trusted);
-        // A fresh store sees the decision written to disk.
+        // A fresh store reading the project's file sees the decision.
         assert_eq!(
-            TrustStore::new(tmp.path()).level_for(&ws),
+            TrustStore::for_project_dir(&proj_dir).level(),
             Some(TrustLevel::Trusted)
         );
     }
 
     #[test]
-    fn set_root_adopts_persisted_level_for_new_dir() {
+    fn set_store_adopts_new_projects_persisted_level() {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path().join("a");
         let b = tmp.path().join("b");
-        std::fs::create_dir_all(&a).unwrap();
-        std::fs::create_dir_all(&b).unwrap();
-        let store = TrustStore::new(tmp.path());
-        store.record(&b, TrustLevel::Blocked).unwrap();
+        TrustStore::for_project_dir(&b)
+            .record(TrustLevel::Blocked)
+            .unwrap();
 
-        let wt = WorkspaceTrust::new_persistent(Some(a.clone()), TrustLevel::Trusted, store);
+        let wt = WorkspaceTrust::new_persistent(
+            Some(a.clone()),
+            TrustLevel::Trusted,
+            TrustStore::for_project_dir(&a),
+        );
         assert_eq!(wt.level(), TrustLevel::Trusted);
-        // Switching to a dir with a stored decision adopts it.
+        // Switching to project b adopts b's stored decision.
         wt.set_root(Some(b.clone()));
+        wt.set_store(Some(TrustStore::for_project_dir(&b)));
         assert_eq!(wt.level(), TrustLevel::Blocked);
     }
 

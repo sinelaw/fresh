@@ -934,6 +934,21 @@ impl DirectoryContext {
         self.data_dir.join("workspaces")
     }
 
+    /// Per-project state directory: all persistent state for one workspace
+    /// lives under here (workspace trust today; room for more). Keyed by the
+    /// canonicalized working directory (so symlinked spellings of the same
+    /// project share state) under the shared `workspaces/` location. Using a
+    /// directory per project — rather than one shared file — keeps concurrent
+    /// `fresh` processes on different projects from contending over a single
+    /// file.
+    pub fn project_state_dir(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
+        let canonical = working_dir
+            .canonicalize()
+            .unwrap_or_else(|_| working_dir.to_path_buf());
+        self.workspaces_dir()
+            .join(crate::workspace::encode_path_for_filename(&canonical))
+    }
+
     /// Get the history file path for a specific prompt type
     /// This is the generic method used by prompt_histories HashMap.
     /// history_name can be: "search", "replace", "goto_line", "plugin:custom_name", etc.

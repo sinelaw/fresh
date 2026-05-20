@@ -203,10 +203,11 @@ impl EditorServer {
         // remains behavior-preserving until the trust-granting prompt/UI
         // lands; flipping the fallback to the safe `TrustLevel::Restricted`
         // default is a one-line change here once users can grant trust.
-        let trust_store =
-            crate::services::workspace_trust::TrustStore::new(&config.dir_context.config_dir);
+        let trust_store = crate::services::workspace_trust::TrustStore::for_project_dir(
+            &config.dir_context.project_state_dir(&config.working_dir),
+        );
         let initial_trust = trust_store
-            .level_for(&config.working_dir)
+            .level()
             .unwrap_or(crate::services::workspace_trust::TrustLevel::Trusted);
         let workspace_trust =
             Arc::new(crate::services::workspace_trust::WorkspaceTrust::new_persistent(
@@ -702,10 +703,16 @@ impl EditorServer {
         if let Some(dir) = new_working_dir {
             tracing::info!("Rebuild: switching working dir to {}", dir.display());
             self.config.working_dir = dir;
-            // Re-anchor the trust root to the new workspace; the chosen
-            // level carries over (it lives on the same shared state).
+            // Re-anchor trust to the new workspace: move the containment
+            // root and repoint persistence at the new project's trust file,
+            // adopting that project's stored decision.
             self.workspace_trust
                 .set_root(Some(self.config.working_dir.clone()));
+            self.workspace_trust.set_store(Some(
+                crate::services::workspace_trust::TrustStore::for_project_dir(
+                    &self.config.dir_context.project_state_dir(&self.config.working_dir),
+                ),
+            ));
         }
         if let Some(auth) = new_authority {
             tracing::info!(
