@@ -86,6 +86,12 @@ pub struct EditorServer {
     /// connected the whole time. Starts as
     /// `config.startup_authority.unwrap_or_else(Authority::local)`.
     current_authority: crate::services::authority::Authority,
+    /// Workspace Trust state, gating process execution. Held here (not on
+    /// the `Editor`) so the chosen level survives editor rebuilds. Shared
+    /// by `Arc` into the authority's guarding spawners on every build via
+    /// `Authority::with_trust`; its root is updated when the working
+    /// directory changes.
+    workspace_trust: Arc<crate::services::workspace_trust::WorkspaceTrust>,
     /// Keepalive bundle paired with the startup authority — held for
     /// the server's lifetime so SSH runtimes, reconnect tasks, and
     /// similar resources outlive the editor rebuilds that happen on
@@ -191,6 +197,17 @@ impl EditorServer {
             .unwrap_or_else(crate::services::authority::Authority::local);
         let session_keepalive = config.session_keepalive.take();
 
+        // Workspace Trust. NOTE: started at `Trusted` so this enforcement
+        // infrastructure is behavior-preserving until the trust-granting
+        // prompt/UI lands; flipping the initial level to the safe
+        // `TrustLevel::Restricted` default is a one-line change here once
+        // users have a way to grant trust. The enforcement paths are
+        // covered by `workspace_trust`'s unit tests regardless.
+        let workspace_trust = Arc::new(crate::services::workspace_trust::WorkspaceTrust::new(
+            Some(config.working_dir.clone()),
+            crate::services::workspace_trust::TrustLevel::Trusted,
+        ));
+
         Ok(Self {
             config,
             listener,
@@ -204,6 +221,7 @@ impl EditorServer {
             next_wait_id: 1,
             waiting_clients: std::collections::HashMap::new(),
             current_authority,
+            workspace_trust,
             session_keepalive,
         })
     }
@@ -548,7 +566,15 @@ impl EditorServer {
         )
         .map_err(|e| io::Error::other(format!("Failed to create editor: {}", e)))?;
 
-        editor.set_boot_authority(self.current_authority.clone());
+        // Gate every authority-routed spawn (terminal, LSP, plugin
+        // spawnProcess, formatters, find-in-files) through Workspace Trust.
+        // Wrapping here — the single seam both first-boot and rebuild pass
+        // through — covers all downstream consumers with no per-caller code.
+        editor.set_boot_authority(
+            self.current_authority
+                .clone()
+                .with_trust(Arc::clone(&self.workspace_trust)),
+        );
 
         // Auto-load init.ts via the same pipeline as the non-server entry point.
         editor.load_init_script(self.config.init_enabled);
@@ -669,6 +695,10 @@ impl EditorServer {
         if let Some(dir) = new_working_dir {
             tracing::info!("Rebuild: switching working dir to {}", dir.display());
             self.config.working_dir = dir;
+            // Re-anchor the trust root to the new workspace; the chosen
+            // level carries over (it lives on the same shared state).
+            self.workspace_trust
+                .set_root(Some(self.config.working_dir.clone()));
         }
         if let Some(auth) = new_authority {
             tracing::info!(

@@ -296,6 +296,34 @@ impl Authority {
         }
     }
 
+    /// Wrap this authority's one-shot and long-running spawners with the
+    /// Workspace Trust guard. Every spawn that routes through the authority
+    /// (integrated terminal, LSP, plugin `spawnProcess`, formatters,
+    /// find-in-files) is then gated by `trust`'s level. Idempotent in spirit:
+    /// the server calls it once per editor build, against the fresh authority.
+    ///
+    /// The filesystem, terminal wrapper, label, and path translation are left
+    /// untouched — trust gates *execution*, not file reads.
+    pub fn with_trust(
+        self,
+        trust: Arc<crate::services::workspace_trust::WorkspaceTrust>,
+    ) -> Self {
+        use crate::services::workspace_trust::{
+            TrustGuardedLongRunningSpawner, TrustGuardedProcessSpawner,
+        };
+        Self {
+            process_spawner: Arc::new(TrustGuardedProcessSpawner::new(
+                self.process_spawner,
+                Arc::clone(&trust),
+            )),
+            long_running_spawner: Arc::new(TrustGuardedLongRunningSpawner::new(
+                self.long_running_spawner,
+                trust,
+            )),
+            ..self
+        }
+    }
+
     /// Build an authority from a plugin payload (the data carried by the
     /// `editor.setAuthority(...)` op). All translation from "kind +
     /// params" to concrete `Arc<dyn …>` lives here and nowhere else.

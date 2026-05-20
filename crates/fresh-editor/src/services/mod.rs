@@ -32,3 +32,4 @@ pub mod terminal_title;
 pub mod time_source;
 pub mod tracing_setup;
 pub mod warning_log;
+pub mod workspace_trust;
