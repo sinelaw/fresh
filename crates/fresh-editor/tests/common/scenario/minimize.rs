@@ -72,9 +72,20 @@ pub(crate) fn report(s: &BufferScenario) {
     }
 }
 
+/// Resolve the report path. `cargo test` runs the binary with cwd set
+/// to the package dir (`crates/fresh-editor`), so a cwd-relative
+/// `target/...` would point at a nonexistent dir; resolve the workspace
+/// `target/` at compile time via `CARGO_MANIFEST_DIR` instead.
+fn report_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("FRESH_MUTATION_REPORT") {
+        return std::path::PathBuf::from(p);
+    }
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/scenario-minimization.jsonl")
+}
+
 fn write_record(s: &BufferScenario, minimal: &[Action]) {
-    let path = std::env::var("FRESH_MUTATION_REPORT")
-        .unwrap_or_else(|_| "target/scenario-minimization.jsonl".to_string());
+    let path = report_path();
     let minimal_actions: Vec<String> = minimal.iter().map(|a| format!("{a:?}")).collect();
     let line = format!(
         "{{\"layer\":\"buffer\",\"vacuous\":{},\"original_len\":{},\"minimal_len\":{},\"description\":{:?},\"minimal_actions\":{:?}}}\n",
@@ -85,11 +96,21 @@ fn write_record(s: &BufferScenario, minimal: &[Action]) {
         minimal_actions,
     );
     let _guard = REPORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
     {
-        let _ = f.write_all(line.as_bytes());
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(line.as_bytes()) {
+                eprintln!("minimize: failed writing report to {}: {e}", path.display());
+            }
+        }
+        // Loud on failure — a silently-swallowed write is how the
+        // cwd-relative-path bug hid for a whole corpus run.
+        Err(e) => eprintln!("minimize: cannot open report {}: {e}", path.display()),
     }
 }
