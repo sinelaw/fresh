@@ -296,6 +296,13 @@ construction, no capture needed there.
 
 ## Threat model & trust boundary
 
+> The trust *levels* below describe the original three-state gate. A proposed
+> evolution replaces the syntactic "Restricted" middle with a **sandboxed
+> execution** model (run untrusted projects in an ad-hoc container instead of
+> trying to classify which spawns are safe) — see
+> `workspace-trust-sandbox-design.md`. This section still describes the
+> enforcement contract env-manager relies on.
+
 **Precedent that motivates this section.** A reported issue: *"simply opening a
 `.cs` file can cause Fresh to execute commands from an attacker-controlled C#
 project."* The root cause of that class of bug is treating *opening a folder* as
