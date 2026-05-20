@@ -200,7 +200,16 @@ fn dispatch(
                     description: description.into(),
                     reason: format!("FsExternalEdit set mtime {abs:?}: {e}"),
                 })?;
-            let abs_str = abs.to_string_lossy().to_string();
+            // `handle_file_changed` matches open buffers by their
+            // stored `file_path()`, which the open path canonicalizes
+            // (symlink-resolved). On macOS the temp root is under the
+            // `/var -> /private/var` symlink, so `abs` (built from the
+            // raw temp path) would NOT equal the canonical buffer path
+            // and no buffer would match — the revert would silently
+            // never fire. Canonicalize before notifying so the path
+            // matches on every platform.
+            let canonical = std::fs::canonicalize(&abs).unwrap_or(abs);
+            let abs_str = canonical.to_string_lossy().to_string();
             harness.api_mut().notify_file_changed(&abs_str);
             Ok(())
         }
@@ -210,9 +219,12 @@ fn dispatch(
             // on-disk content matches the buffer; the auto-revert
             // path must NOT clear the undo log" (issue #191
             // follow-up). The path comes in as scenario-relative, so
-            // resolve under the temp root.
+            // resolve under the temp root. Canonicalize so it matches
+            // the buffer's symlink-resolved `file_path()` on macOS
+            // (see the FsExternalEdit arm above).
             let abs = relative_under(root, path);
-            let abs_str = abs.to_string_lossy().to_string();
+            let canonical = std::fs::canonicalize(&abs).unwrap_or(abs);
+            let abs_str = canonical.to_string_lossy().to_string();
             harness.api_mut().notify_file_changed(&abs_str);
             Ok(())
         }
