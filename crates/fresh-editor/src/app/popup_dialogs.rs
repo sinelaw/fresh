@@ -999,6 +999,8 @@ impl Editor {
         use ratatui::style::Style;
 
         self.workspace_trust_prompt_cancellable = cancellable;
+        self.workspace_trust_markers =
+            crate::services::workspace_trust::executable_content_markers(&self.working_dir);
 
         // Don't stack a second copy if one is already up. The prompt lives on
         // the editor-level (global) stack so it renders regardless of which

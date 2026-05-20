@@ -30,7 +30,7 @@ const OPTIONS: [TrustOption; 3] = [
     },
     TrustOption {
         label: "[K]eep Restricted (Default)",
-        description: "System tools (git, ripgrep, system python…) still run. Blocked: programs inside this folder, .env/.envrc/mise env activation, and language servers.",
+        description: "Runs system tools found on your PATH (git, ripgrep, the system python). Blocks: executables & scripts located inside this project (e.g. ./gradlew, .venv/bin/python, node_modules/.bin/*), env activation (.env/.envrc/mise), and language servers.",
     },
     TrustOption {
         label: "[B]lock All Execution",
@@ -52,14 +52,17 @@ pub struct TrustDialogLayout {
 }
 
 /// Render the workspace-trust prompt centered in `area`, with `selected`
-/// (0=Trust, 1=Restricted, 2=Block) marked. `secondary_label` is the right-hand
-/// button text (e.g. "Quit (Ctrl+Q)" at startup, "Cancel (Esc)" when invoked
-/// from the command palette). Returns the click layout.
+/// (0=Trust, 1=Restricted, 2=Block) marked. `triggers` is a comma-separated
+/// list of the marker files/dirs that caused the prompt (shown as a "Detected:"
+/// line; pass "" to omit). `secondary_label` is the right-hand button text
+/// (e.g. "Quit (Ctrl+Q)" at startup, "Cancel (Esc)" from the palette). Returns
+/// the click layout.
 pub fn render_workspace_trust_dialog(
     frame: &mut Frame,
     area: Rect,
     selected: usize,
     path: &str,
+    triggers: &str,
     secondary_label: &str,
     theme: &Theme,
 ) -> TrustDialogLayout {
@@ -74,6 +77,7 @@ pub fn render_workspace_trust_dialog(
         Header,
         Sep,
         Plain(String),
+        Dim(String),
         Path(String),
         Radio(usize),
         Desc(String),
@@ -88,10 +92,20 @@ pub fn render_workspace_trust_dialog(
         Seg::Sep,
         Seg::Plain(" This project folder can execute arbitrary code:".to_string()),
         Seg::Path(shown_path),
-        Seg::Blank,
-        Seg::Plain(" How would you like to proceed?".to_string()),
-        Seg::Blank,
     ];
+    // Why the prompt fired: the marker files/dirs we detected.
+    if !triggers.is_empty() {
+        let lines = wrap_text(
+            &format!("Detected: {triggers}"),
+            inner_w.saturating_sub(2).max(8) as usize,
+        );
+        for line in lines {
+            segs.push(Seg::Dim(format!(" {line}")));
+        }
+    }
+    segs.push(Seg::Blank);
+    segs.push(Seg::Plain(" How would you like to proceed?".to_string()));
+    segs.push(Seg::Blank);
     for (i, opt) in OPTIONS.iter().enumerate() {
         segs.push(Seg::Radio(i));
         for line in wrap_text(opt.description, desc_w) {
@@ -173,6 +187,14 @@ pub fn render_workspace_trust_dialog(
                 frame,
                 r,
                 Line::from(Span::styled(text, Style::default().fg(fg).bg(bg))),
+            ),
+            Seg::Dim(text) => put(
+                frame,
+                r,
+                Line::from(Span::styled(
+                    text,
+                    Style::default().fg(fg).bg(bg).add_modifier(Modifier::DIM),
+                )),
             ),
             Seg::Path(p) => put(
                 frame,

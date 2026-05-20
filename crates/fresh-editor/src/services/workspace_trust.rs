@@ -387,6 +387,15 @@ impl TrustStore {
 /// project is what lets the user enable its tooling. A folder with none of
 /// these is plain text/docs — nothing to gate, no prompt.
 pub fn workspace_has_executable_content(root: &Path) -> bool {
+    !executable_content_markers(root).is_empty()
+}
+
+/// The specific marker files/dirs in `root` that make it "executable content"
+/// (see [`workspace_has_executable_content`]). Returned so the trust prompt can
+/// tell the user *why* it appeared (e.g. ".envrc, .venv, App.sln"). Shallow,
+/// passive scan — never runs anything. Order is roughly env-managers, then
+/// repo-local toolchains, then devcontainer, then .NET project files.
+pub fn executable_content_markers(root: &Path) -> Vec<String> {
     // Files that drive env activation or whose project loader runs code.
     const FILE_MARKERS: &[&str] = &[
         // env managers
@@ -412,26 +421,43 @@ pub fn workspace_has_executable_content(root: &Path) -> bool {
     // Directories that hold a repo-local interpreter/toolchain.
     const DIR_MARKERS: &[&str] = &[".venv", "venv"];
 
-    if FILE_MARKERS.iter().any(|m| root.join(m).is_file()) {
-        return true;
+    let mut found = Vec::new();
+
+    for m in FILE_MARKERS {
+        if root.join(m).is_file() {
+            found.push((*m).to_string());
+        }
     }
-    if DIR_MARKERS.iter().any(|m| root.join(m).is_dir()) {
-        return true;
+    for m in DIR_MARKERS {
+        if root.join(m).is_dir() {
+            found.push((*m).to_string());
+        }
+    }
+    // Dev container: reopening / building it runs code.
+    if root
+        .join(".devcontainer")
+        .join("devcontainer.json")
+        .is_file()
+        || root.join(".devcontainer.json").is_file()
+    {
+        found.push("devcontainer.json".to_string());
     }
     // C# / .NET: loading a project runs restore/build and design-time
     // analyzers/source-generators, so a solution or project file at the root
-    // is executable content.
+    // is executable content. Report the actual file name(s).
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 if matches!(ext, "sln" | "csproj" | "fsproj") {
-                    return true;
+                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                        found.push(name.to_string());
+                    }
                 }
             }
         }
     }
-    false
+    found
 }
 
 /// Map a trust decision for `command` (with the child's `cwd`) onto a spawn
@@ -698,5 +724,36 @@ mod tests {
         std::fs::create_dir_all(&dotnet).unwrap();
         std::fs::write(dotnet.join("App.csproj"), "<Project/>\n").unwrap();
         assert!(workspace_has_executable_content(&dotnet));
+    }
+
+    #[test]
+    fn executable_content_markers_lists_what_triggered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join(".envrc"), "use flake\n").unwrap();
+        std::fs::write(root.join("mise.toml"), "[tools]\n").unwrap();
+        std::fs::create_dir_all(root.join(".venv")).unwrap();
+        std::fs::create_dir_all(root.join(".devcontainer")).unwrap();
+        std::fs::write(root.join(".devcontainer").join("devcontainer.json"), "{}\n").unwrap();
+        std::fs::write(root.join("App.csproj"), "<Project/>\n").unwrap();
+
+        let markers = executable_content_markers(root);
+        for expected in [
+            ".envrc",
+            "mise.toml",
+            ".venv",
+            "devcontainer.json",
+            "App.csproj",
+        ] {
+            assert!(
+                markers.iter().any(|m| m == expected),
+                "expected '{expected}' in {markers:?}"
+            );
+        }
+
+        // A plain folder reports nothing.
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(executable_content_markers(&empty).is_empty());
     }
 }

@@ -1537,6 +1537,7 @@ impl Editor {
                 })
                 .unwrap_or(1);
             let path = self.working_dir.display().to_string();
+            let triggers = self.workspace_trust_markers.join(", ");
             let secondary_label = if self.workspace_trust_prompt_cancellable {
                 "Cancel (Esc)".to_string()
             } else {
@@ -1557,6 +1558,7 @@ impl Editor {
                     size,
                     selected,
                     &path,
+                    &triggers,
                     &secondary_label,
                     &theme_clone,
                 ),

@@ -234,6 +234,7 @@ impl Editor {
             clipboard: crate::services::clipboard::Clipboard::new(),
             should_quit: false,
             workspace_trust_prompt_cancellable: false,
+            workspace_trust_markers: Vec::new(),
             should_detach: false,
             session_mode: false,
             software_cursor_only: false,

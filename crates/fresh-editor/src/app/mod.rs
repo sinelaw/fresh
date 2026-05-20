@@ -455,6 +455,11 @@ pub struct Editor {
     /// `false` it's "Quit" (exit the editor) and Escape is inert.
     workspace_trust_prompt_cancellable: bool,
 
+    /// The marker files/dirs that triggered the workspace-trust prompt (e.g.
+    /// `.envrc`, `.venv`, `App.sln`), captured when the prompt is shown so the
+    /// dialog can tell the user why it appeared.
+    workspace_trust_markers: Vec<String>,
+
     /// Should the client detach (keep server running)?
     should_detach: bool,
 
