@@ -298,20 +298,20 @@ impl Authority {
     /// is left empty — the status bar falls back to the filesystem's own
     /// `remote_connection_info()` which knows how to annotate disconnect.
     ///
-    /// `long_running_spawner` defaults to the local implementation for
-    /// now; Phase L of the dev-container gap plan adds an SSH-routed
-    /// variant so LSP runs on the remote host. Until then, LSP over SSH
-    /// still spawns on the host — a pre-existing limitation the plan
-    /// documents but defers.
+    /// `long_running_spawner` is an SSH-routed spawner
+    /// ([`RemoteLongRunningSpawner`](crate::services::remote::RemoteLongRunningSpawner)),
+    /// so LSP servers run on the remote host rather than the host-local
+    /// fallback that earlier versions used.
     pub fn ssh(
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         process_spawner: Arc<dyn ProcessSpawner>,
+        long_running_spawner: Arc<dyn LongRunningSpawner>,
         trust: Arc<WorkspaceTrust>,
     ) -> Self {
         Self {
             filesystem,
             process_spawner,
-            long_running_spawner: Arc::new(LocalLongRunningSpawner::new(Arc::clone(&trust))),
+            long_running_spawner,
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,

@@ -1391,6 +1391,13 @@ fn connect_remote(
     ));
     let process_spawner =
         std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone(), trust.clone()));
+    // LSP and other long-running servers run on the remote host: each gets
+    // its own `ssh user@host …` subprocess (see RemoteLongRunningSpawner),
+    // rather than the old host-local fallback.
+    let long_running_spawner = std::sync::Arc::new(remote::RemoteLongRunningSpawner::new(
+        reconnect_params.clone(),
+        trust.clone(),
+    ));
 
     // Spawn background reconnect task on the runtime.
     // We need a runtime context for tokio::spawn inside spawn_reconnect_task.
@@ -1406,6 +1413,7 @@ fn connect_remote(
         authority: fresh::services::authority::Authority::ssh(
             filesystem,
             process_spawner,
+            long_running_spawner,
             trust.clone(),
         ),
         remote_session: Some(RemoteSession {

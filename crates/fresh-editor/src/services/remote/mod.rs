@@ -32,7 +32,7 @@ pub use protocol::{
 };
 pub use spawner::{
     LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
-    RemoteProcessSpawner, SpawnError, SpawnResult, StdioChild,
+    RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError, SpawnResult, StdioChild,
 };
 
 /// The Python agent source code, embedded at compile time.

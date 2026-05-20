@@ -708,6 +708,196 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
     }
 }
 
+/// POSIX shell single-quote: wrap in `'…'`, escaping embedded quotes as
+/// `'\''`. Safe to splice into a remote command string.
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Build the remote shell command for a long-running process:
+/// `[cd <cwd> && ]exec env K=V… <command> <args…>` (all shell-quoted).
+/// `exec` replaces the login shell so the server *is* the SSH channel's
+/// process — EOF/kill propagate to it directly. `env` applies the injected
+/// environment then execs the real binary.
+fn build_remote_exec(
+    env: &[(String, String)],
+    cwd: Option<&str>,
+    command: &str,
+    args: &[String],
+) -> String {
+    let mut s = String::new();
+    if let Some(dir) = cwd {
+        s.push_str("cd ");
+        s.push_str(&shell_quote(dir));
+        s.push_str(" && ");
+    }
+    s.push_str("exec ");
+    if !env.is_empty() {
+        s.push_str("env ");
+        for (k, v) in env {
+            s.push_str(k);
+            s.push('=');
+            s.push_str(&shell_quote(v));
+            s.push(' ');
+        }
+    }
+    s.push_str(&shell_quote(command));
+    for a in args {
+        s.push(' ');
+        s.push_str(&shell_quote(a));
+    }
+    s
+}
+
+/// Build the remote command for an existence probe. `command -v` is a shell
+/// builtin (not a binary), so the env is applied via `export` assignments
+/// rather than the `env` binary.
+fn build_remote_command_exists(env: &[(String, String)], command: &str) -> String {
+    let mut s = String::new();
+    for (k, v) in env {
+        s.push_str("export ");
+        s.push_str(k);
+        s.push('=');
+        s.push_str(&shell_quote(v));
+        s.push_str("; ");
+    }
+    s.push_str("command -v ");
+    s.push_str(&shell_quote(command));
+    s.push_str(" >/dev/null 2>&1");
+    s
+}
+
+/// Assemble the `ssh` argv: connection options, `user@host`, then the single
+/// remote command string (ssh concatenates trailing args with spaces, so the
+/// command must already be one shell-quoted string). Mirrors the options the
+/// agent connection uses.
+fn build_ssh_args(
+    params: &crate::services::remote::ConnectionParams,
+    remote_cmd: &str,
+) -> Vec<String> {
+    let mut a = vec![
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+    ];
+    if let Some(port) = params.port {
+        a.push("-p".to_string());
+        a.push(port.to_string());
+    }
+    if let Some(ref identity) = params.identity_file {
+        a.push("-i".to_string());
+        a.push(identity.to_string_lossy().into_owned());
+    }
+    a.push(format!("{}@{}", params.user, params.host));
+    a.push(remote_cmd.to_string());
+    a
+}
+
+/// Long-running spawner over SSH: each LSP server (or tool agent) gets its own
+/// `ssh user@host <remote-cmd>` subprocess, whose piped stdio *is* the remote
+/// process's stdio. Returning a real local [`tokio::process::Child`] (the ssh
+/// client) means the LSP I/O layer talks to ordinary `ChildStdin`/`ChildStdout`
+/// with no awareness it's remote — the same trick the Docker spawner uses with
+/// the local `docker` CLI.
+///
+/// This opens a separate SSH connection per server rather than multiplexing
+/// through the agent: the agent's one-shot `exec` can't keep a process alive
+/// with writable stdin, and abstracting `StdioChild` / the whole LSP I/O layer
+/// over the agent channel would be a far larger change. The tradeoff is extra
+/// SSH connections; the win is LSP that actually runs on the remote host
+/// instead of the host-local fallback.
+pub struct RemoteLongRunningSpawner {
+    params: crate::services::remote::ConnectionParams,
+    env: Vec<(String, String)>,
+    trust: Arc<WorkspaceTrust>,
+}
+
+impl RemoteLongRunningSpawner {
+    /// Spawner for `params`, no injected env, gated by `trust`.
+    pub fn new(params: crate::services::remote::ConnectionParams, trust: Arc<WorkspaceTrust>) -> Self {
+        Self {
+            params,
+            env: Vec::new(),
+            trust,
+        }
+    }
+
+    /// Spawner that injects `env` (an activated environment snapshot) into
+    /// every remote child, gated by `trust`.
+    pub fn with_env(
+        params: crate::services::remote::ConnectionParams,
+        env: Vec<(String, String)>,
+        trust: Arc<WorkspaceTrust>,
+    ) -> Self {
+        Self { params, env, trust }
+    }
+}
+
+#[async_trait::async_trait]
+impl LongRunningSpawner for RemoteLongRunningSpawner {
+    async fn spawn_stdio(
+        &self,
+        command: &str,
+        args: &[String],
+        env: Vec<(String, String)>,
+        cwd: Option<&Path>,
+        _limits: Option<&ProcessLimits>,
+    ) -> Result<StdioChild, SpawnError> {
+        // Host-side process limits don't reach a remote process (the local
+        // PID is the ssh client), so `_limits` is ignored — same as Docker.
+        let cwd_str = cwd.map(|p| p.to_string_lossy().into_owned());
+        gate(&self.trust, command, cwd_str.as_deref())?;
+
+        // Authority env first, then the per-call env so the caller wins on
+        // conflict (mirrors the local/docker layering).
+        let mut merged = self.env.clone();
+        merged.extend(env);
+
+        let remote = build_remote_exec(&merged, cwd_str.as_deref(), command, args);
+        let ssh_args = build_ssh_args(&self.params, &remote);
+
+        let mut cmd = tokio::process::Command::new("ssh");
+        cmd.args(&ssh_args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .hide_window()
+            .kill_on_drop(true);
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| SpawnError::Process(e.to_string()))?;
+        // `spawned_locally = false`: the local PID is the ssh client, not the
+        // remote server, so host-only resource controls skip themselves.
+        Ok(StdioChild::from_tokio_child(child, false))
+    }
+
+    async fn command_exists(&self, command: &str) -> bool {
+        let remote = build_remote_command_exists(&self.env, command);
+        let ssh_args = build_ssh_args(&self.params, &remote);
+        match tokio::process::Command::new("ssh")
+            .args(&ssh_args)
+            .hide_window()
+            .output()
+            .await
+        {
+            Ok(output) => output.status.success(),
+            Err(_) => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,5 +1098,65 @@ mod tests {
         let plain = LocalLongRunningSpawner::new(Arc::new(WorkspaceTrust::permissive()));
         assert!(!plain.command_exists("fresh-fake-tool-xyz").await);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // --- RemoteLongRunningSpawner command builders (pure, no SSH needed) ---
+
+    #[test]
+    fn shell_quote_wraps_and_escapes() {
+        assert_eq!(shell_quote("abc"), "'abc'");
+        assert_eq!(shell_quote("a b/c"), "'a b/c'");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn build_remote_exec_with_cwd_and_env() {
+        let env = vec![("VIRTUAL_ENV".to_string(), "/proj/.venv".to_string())];
+        let s = build_remote_exec(&env, Some("/proj dir"), "python", &["x.py".to_string()]);
+        assert_eq!(
+            s,
+            "cd '/proj dir' && exec env VIRTUAL_ENV='/proj/.venv' 'python' 'x.py'"
+        );
+    }
+
+    #[test]
+    fn build_remote_exec_minimal() {
+        assert_eq!(build_remote_exec(&[], None, "gopls", &[]), "exec 'gopls'");
+    }
+
+    #[test]
+    fn build_remote_command_exists_exports_env() {
+        let env = vec![("PATH".to_string(), "/proj/.venv/bin:/usr/bin".to_string())];
+        assert_eq!(
+            build_remote_command_exists(&env, "pyright"),
+            "export PATH='/proj/.venv/bin:/usr/bin'; command -v 'pyright' >/dev/null 2>&1"
+        );
+    }
+
+    #[test]
+    fn build_ssh_args_full() {
+        let params = crate::services::remote::ConnectionParams {
+            user: "u".into(),
+            host: "h".into(),
+            port: Some(2222),
+            identity_file: Some(std::path::PathBuf::from("/k")),
+        };
+        let a = build_ssh_args(&params, "echo hi");
+        let expected: Vec<String> = [
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "BatchMode=yes",
+            "-p",
+            "2222",
+            "-i",
+            "/k",
+            "u@h",
+            "echo hi",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(a, expected);
     }
 }
