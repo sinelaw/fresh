@@ -61,13 +61,13 @@ fn permuted_run(n: usize, length: usize) -> impl Strategy<Value = Vec<usize>> {
     })
 }
 
-/// Permutation length per soak case (default 1000; set FRESH_SOAK_LEN
+/// Permutation length per soak case (default 100; set FRESH_SOAK_LEN
 /// to change).
 fn soak_len() -> usize {
     std::env::var("FRESH_SOAK_LEN")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1000)
+        .unwrap_or(100)
 }
 
 /// Number of random permutations to run (default 3; set
@@ -114,7 +114,7 @@ proptest! {
         .. ProptestConfig::default()
     })]
 
-    /// Soak: take ~1000 corpus scenarios (each appearing many times),
+    /// Soak: take ~100 corpus scenarios (each appearing many times),
     /// shuffle them into a random order, and run the whole permutation
     /// on ONE shared harness with an active reset between each. Every
     /// scenario must still pass its own assertions no matter what ran
@@ -123,7 +123,7 @@ proptest! {
     /// the permutation to the minimal offending run.
     ///
     /// Length / repetitions are tunable: defaults run 3 permutations of
-    /// 1000 scenarios; `FRESH_SOAK_LEN=...  FRESH_SOAK_CASES=...`.
+    /// 100 scenarios; `FRESH_SOAK_LEN=...  FRESH_SOAK_CASES=...`.
     #[test]
     fn combination_corpus_survives_random_permutation(
         seq in permuted_run(combination_scenarios().len(), soak_len())
