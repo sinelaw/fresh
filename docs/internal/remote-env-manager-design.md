@@ -290,38 +290,62 @@ boundary — never on the open-folder path:
 > Activation — anything in the list above — requires the workspace to be
 > **trusted**.
 
-Trust is a per-workspace decision, persisted via
-`getGlobalState`/`setGlobalState` keyed by the **canonicalized** workspace path
-(resolve symlinks; a path-spoof must not inherit another path's trust). It is a
-single workspace-trust gate, not a per-env-manager one — consistent with the
-direction the C# issue points (one trust model for "may this project's content
-run," covering LSP launch args, build/restore commands, and env managers
-alike). The env-manager plugin consumes that trust state; it should not invent
-a parallel notion.
+### Workspace Trust: one opt-in gate, default-deny
+
+Trust is a single **per-workspace** decision, not a per-feature one. It is
+persisted via `getGlobalState`/`setGlobalState` keyed by the **canonicalized**
+workspace path (resolve symlinks; a path-spoof must not inherit another path's
+trust). Env managers, the C# project loader, build/restore commands, tasks, and
+any LSP launched with project-specified arguments all consult the *same* gate.
+This should be a small **core service** — e.g. `editor.isWorkspaceTrusted()` and
+`editor.requestWorkspaceTrust()` in the plugin API — that any plugin which would
+run repo-controlled content calls before doing so. The env-manager plugin is
+just one consumer; it must not invent a parallel notion of trust.
+
+**The default is "don't run."** A freshly opened, never-seen project is
+**untrusted**: it opens in a restricted mode where reading, editing, search,
+and syntax highlighting all work, but nothing that executes repo-controlled
+content runs. Trust is granted only by an explicit user action, and the safe
+choice is the default everywhere — including if the user just dismisses the
+prompt (Escape ⇒ stay untrusted).
 
 ### The prompt
 
-When an environment is detected in an untrusted workspace, a one-shot
-`showActionPopup` (the devcontainer attach-prompt pattern) offers the
-three-way choice, and names the concrete code that would run so consent is
-*informed*:
+When an untrusted workspace is opened **and it actually contains something that
+would execute** (a detected env file, a `.sln`/`.csproj`, repo-defined tasks,
+analyzers), a single one-shot `showActionPopup` (the devcontainer
+attach-prompt pattern) asks once. Don't prompt for a plain folder with nothing
+to gate — a popup on *every* open trains users to dismiss it. The prompt names
+what would run, so consent is *informed*:
 
 ```
-direnv: .envrc found in this project. Loading it runs the project's shell code.
-  [ Allow & activate ]   [ Not now ]   [ Never for this project ]
+This project can run code on your machine through its tooling
+(found: .envrc, MyApp.csproj). Trust this folder?
+
+  [ Don't run (default) ]   [ Trust this folder ]   [ Trust & remember ]
 ```
 
-- **Allow & activate** → trust the workspace, activate, persist the decision.
-- **Not now** → session-only; re-asks on the next open (the in-memory
-  `dismissedThisSession` flag, like devcontainer).
-- **Never for this project** → persist a deny so the pill stays passive and
-  silent.
+- **Don't run** (default; also what Escape / dismiss does) → stay in restricted
+  mode this session; ask again next open.
+- **Trust this folder** → trust for this session only.
+- **Trust & remember** → persist trust for this canonical path; future opens
+  skip the prompt.
+
+The decision is global to the project, so granting it once lets env activation,
+the C# loader, etc. all proceed without their own separate popups.
+
+> **Why not always prompt / never prompt?** Prompting on every open is friction
+> and breeds reflexive "yes"; never prompting is the C# bug. Prompting only when
+> there is genuinely executable content present, once, and remembering the
+> answer, keeps the gate meaningful and rare.
 
 ### Hard rules
 
-1. **No autorun from open-folder.** Activation never happens as a side effect of
-   opening a file or directory, only from explicit user action or
-   pre-existing persisted trust for that exact canonical path.
+1. **No autorun from open-folder.** Activation — env, C# project load that runs
+   analyzers/restore, task execution, anything in §What counts as code execution
+   — never happens as a side effect of opening a file or directory, only from
+   explicit user action or pre-existing persisted trust for that exact canonical
+   path.
 2. **Trust and overrides never come from the repository.** All persisted state —
    the trust decision, the provider/interpreter override, the `enabled` switch —
    lives in user-global state keyed by canonical path (§Tier 3), so the repo
@@ -339,6 +363,27 @@ direnv: .envrc found in this project. Loading it runs the project's shell code.
    value, not just the path).
 5. **No execution to render UI.** The pill and picker must be fully populated
    from read-only sources; never run a binary just to label it.
+
+### Beyond env managers: the same gate for C# and the rest
+
+The reported C# issue — *opening a `.cs` file runs commands from the project* —
+is the same bug with a different trigger, and it gets the same fix. Loading a
+C# project is **not** passive: the language server (OmniSharp/Roslyn) runs
+`dotnet restore`/build, evaluates project-specified MSBuild targets, and — most
+dangerously — loads the project's **analyzers and source generators**, which are
+arbitrary code executed at design time. So in an untrusted workspace:
+
+- The C# LSP **does not start** (or starts in a restricted, analyzer-disabled
+  mode if Roslyn supports it), no restore/build runs, and project tasks don't
+  execute.
+- The status bar shows the same "restricted — trust to enable" affordance.
+- Granting trust (via the one shared prompt) starts the server normally.
+
+The general rule for *every* plugin/feature that would run repo-controlled
+content: gate it on `isWorkspaceTrusted()`, degrade gracefully to a read-only
+experience when untrusted, and surface why. A dedicated core design doc for the
+Workspace Trust service is the right home for the full enumeration of gated
+behaviors; this section establishes the contract env managers rely on.
 
 ## Discoverability & feedback
 
