@@ -1398,6 +1398,14 @@ impl Editor {
         // the same BottomRight slot) makes them illegible.
         self.active_chrome_mut().global_popup_areas.clear();
         if let Some(popup) = self.global_popups.top() {
+            // The workspace-trust prompt is a blocking modal: dim everything
+            // behind it so it can't be lost amongst dashboard/explorer chrome.
+            if matches!(
+                popup.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            ) {
+                crate::view::dimming::apply_dimming(frame, size);
+            }
             let top_idx = self.global_popups.all().len() - 1;
             let popup_area = popup.calculate_area(size, None);
             let desc_height = popup.description_height();
