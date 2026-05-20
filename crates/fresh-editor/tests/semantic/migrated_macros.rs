@@ -115,7 +115,9 @@ fn migrated_macro_record_and_play_last_via_prompt() {
 #[test]
 fn migrated_macro_record_and_play_last_via_toggle_action() {
     assert_buffer_scenario(BufferScenario {
-        description: "ToggleMacroRecording('0') start/stop bracket records 'hello'; PlayLastMacro replays".into(),
+        description:
+            "ToggleMacroRecording('0') start/stop bracket records 'hello'; PlayLastMacro replays"
+                .into(),
         initial_text: String::new(),
         actions: vec![
             Action::ToggleMacroRecording('0'),
@@ -258,7 +260,8 @@ fn migrated_play_last_macro_when_none_recorded() {
 #[test]
 fn migrated_macro_move_line_end_uses_current_line_length() {
     assert_buffer_scenario(BufferScenario {
-        description: "MoveLineEnd during macro replay consults current line length, not stale cache".into(),
+        description:
+            "MoveLineEnd during macro replay consults current line length, not stale cache".into(),
         initial_text: String::new(),
         actions: vec![
             // Record "ab" + MoveLeft + "." + MoveLineEnd + "!"
@@ -372,8 +375,8 @@ fn migrated_macro_playback_appends_replay() {
 #[test]
 fn anti_no_recording_means_play_last_is_inert() {
     assert_buffer_scenario(BufferScenario {
-        description:
-            "anti: PlayLastMacro with no prior recording must not change the buffer".into(),
+        description: "anti: PlayLastMacro with no prior recording must not change the buffer"
+            .into(),
         initial_text: String::new(),
         actions: vec![
             Action::InsertChar('h'),

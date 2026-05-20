@@ -111,7 +111,10 @@ pub enum InputEvent {
     /// `Shift+Backspace` (issue #1588). Action-level dispatch
     /// bypasses `normalize_key`, so it can't detect regressions
     /// there.
-    SendKey { code: KeySpec, modifiers: KeyMods },
+    SendKey {
+        code: KeySpec,
+        modifiers: KeyMods,
+    },
 
     // ── Temporal scenarios (Phase 10) ─────────────────────────────
     AdvanceClock(Duration),
@@ -132,7 +135,9 @@ pub enum InputEvent {
     /// `FsExternalEdit` which writes-then-notifies. The path is
     /// resolved relative to the scenario's temp root, matching the
     /// `FsExternalEdit` convention.
-    EditorFileChangedReaction { path: String },
+    EditorFileChangedReaction {
+        path: String,
+    },
 
     // ── Inline assertions (used by step-walking persistence flows) ─
     /// Pin the buffer text mid-stream. Lets persistence scenarios
@@ -161,7 +166,9 @@ pub enum InputEvent {
     /// through the production key handler. Used defensively to clear
     /// a prompt pre-populated with the buffer's current path before
     /// `PromptFillText` types in the new path.
-    PromptBackspace { count: usize },
+    PromptBackspace {
+        count: usize,
+    },
     /// Type literal characters into the active prompt via
     /// `EditorTestHarness::type_text`, which routes each char
     /// through `handle_key` (so prompt input handlers see them).
@@ -171,7 +178,9 @@ pub enum InputEvent {
     /// temp root, which is only known at runtime. Save-As prompts
     /// need an absolute path; without this variant the scenario
     /// data would have to embed a per-run absolute path.
-    PromptFillTempPath { rel: String },
+    PromptFillTempPath {
+        rel: String,
+    },
     /// Confirm the active prompt with Enter, routed through the
     /// production key handler so the prompt receives the same
     /// `handle_key` it would in production.
@@ -189,9 +198,13 @@ pub enum InputEvent {
     /// the handle is resolved from the scenario context. Mirrors the
     /// `n` / `]` keybinding semantics that
     /// `composite_next_hunk_active` exposes.
-    CompositeNextHunk { count: u16 },
+    CompositeNextHunk {
+        count: u16,
+    },
     /// Companion of `CompositeNextHunk` — jumps back. `p` / `[`.
-    CompositePrevHunk { count: u16 },
+    CompositePrevHunk {
+        count: u16,
+    },
     /// Force-materialize composite view state for all visible splits
     /// without rendering. Mirrors `Editor::flush_layout`; lets a
     /// scenario reach hunk-nav state before the first frame paints.
@@ -206,10 +219,14 @@ pub enum InputEvent {
     /// that point equal the slot's recording. Used by tests like
     /// "scrolling on the left pane and the right pane produces the
     /// same view" that need to compare two grids.
-    RecordRenderedRows { slot: u32 },
+    RecordRenderedRows {
+        slot: u32,
+    },
     /// Assert that the current rendered rows equal the rows
     /// previously stored under `slot` (via `RecordRenderedRows`).
-    AssertRenderedRowsMatch { slot: u32 },
+    AssertRenderedRowsMatch {
+        slot: u32,
+    },
 }
 
 impl From<fresh::test_api::Action> for InputEvent {

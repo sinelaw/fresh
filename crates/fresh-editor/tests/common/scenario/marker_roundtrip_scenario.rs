@@ -128,9 +128,7 @@ fn default_true() -> bool {
     true
 }
 
-pub fn check_marker_roundtrip_scenario(
-    s: MarkerRoundtripScenario,
-) -> Result<(), ScenarioFailure> {
+pub fn check_marker_roundtrip_scenario(s: MarkerRoundtripScenario) -> Result<(), ScenarioFailure> {
     let mut harness = if s.disable_auto_features {
         // Re-create the harness config the e2e tests use: auto_indent
         // and auto_close off so single-edit ops are unaffected by
@@ -218,9 +216,7 @@ pub fn check_marker_roundtrip_scenario(
                 if &actual != expected {
                     return Err(ScenarioFailure::WorkspaceStateMismatch {
                         description: format!("{}: step {i}", s.description),
-                        field: format!(
-                            "marker_positions({symbol:?}) matches slot {slot:?}"
-                        ),
+                        field: format!("marker_positions({symbol:?}) matches slot {slot:?}"),
                         expected: format!("{expected:?}"),
                         actual: format!("{actual:?}"),
                     });
@@ -231,13 +227,14 @@ pub fn check_marker_roundtrip_scenario(
                 saved_text.insert(slot.clone(), text);
             }
             MarkerStep::AssertTextMatchSaved { slot } => {
-                let expected = saved_text.get(slot).ok_or_else(|| {
-                    ScenarioFailure::BufferTextMismatch {
-                        description: format!("{}: step {i}", s.description),
-                        expected: format!("previously saved slot {slot:?}"),
-                        actual: "slot was never saved".into(),
-                    }
-                })?;
+                let expected =
+                    saved_text
+                        .get(slot)
+                        .ok_or_else(|| ScenarioFailure::BufferTextMismatch {
+                            description: format!("{}: step {i}", s.description),
+                            expected: format!("previously saved slot {slot:?}"),
+                            actual: "slot was never saved".into(),
+                        })?;
                 let actual = harness.api_mut().buffer_text();
                 if &actual != expected {
                     return Err(ScenarioFailure::BufferTextMismatch {

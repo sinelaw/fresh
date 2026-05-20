@@ -1552,7 +1552,10 @@ impl EditorTestHarness {
     /// (Phase 8 / TerminalIoScenario).
     pub fn vt100_cursor_position(&self) -> Option<(u16, u16)> {
         let (row, col) = self.vt100_parser.screen().cursor_position();
-        eprintln!("[DEBUG vt100_cursor_position] raw=(row={row}, col={col}), bounds=({}x{})", self.term_height, self.term_width);
+        eprintln!(
+            "[DEBUG vt100_cursor_position] raw=(row={row}, col={col}), bounds=({}x{})",
+            self.term_height, self.term_width
+        );
         if row >= self.term_height || col >= self.term_width {
             None
         } else {

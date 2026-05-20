@@ -135,8 +135,7 @@ impl RenderSnapshot {
         let observed_cursor = harness.render_observing_cursor().ok().flatten();
         let _ = harness.render_real();
         let screen = harness.vt100_screen_to_string();
-        let rendered_rows: Vec<String> =
-            screen.split('\n').map(|s| s.to_string()).collect();
+        let rendered_rows: Vec<String> = screen.split('\n').map(|s| s.to_string()).collect();
         let terminal_cursor = observed_cursor;
         let api = harness.api_mut();
         let cursor_byte = api.primary_caret().position;
@@ -228,10 +227,7 @@ pub enum RowMatch {
     /// guard: with a 10-space hanging indent and a 35-col
     /// terminal, every full continuation must hold >= 10 chars,
     /// not the buggy ~7.
-    ContinuationRowsMinContentWidth {
-        min: usize,
-        skip_last: bool,
-    },
+    ContinuationRowsMinContentWidth { min: usize, skip_last: bool },
     /// For every row that contains the gutter separator `│`, the
     /// gutter area (text BEFORE the last `│`) must have no ASCII
     /// digit. Used in anti-tests to assert that NO continuation
@@ -538,10 +534,7 @@ impl RenderSnapshotExpect {
                         return Some((
                             "rendered_rows[AnyRowContainsAny]",
                             format!("some row contains any of {substrings:?}"),
-                            format!(
-                                "none of {} rows contained any",
-                                actual.rendered_rows.len()
-                            ),
+                            format!("none of {} rows contained any", actual.rendered_rows.len()),
                         ));
                     }
                 }
@@ -576,9 +569,7 @@ impl RenderSnapshotExpect {
                         if leading < *lo {
                             return Some((
                                 "rendered_rows[ContentRowLeadingSpaces.min]",
-                                format!(
-                                    "content row {nth_content_row} leading spaces >= {lo}"
-                                ),
+                                format!("content row {nth_content_row} leading spaces >= {lo}"),
                                 format!("got {leading} leading spaces; content={after:?}"),
                             ));
                         }
@@ -587,9 +578,7 @@ impl RenderSnapshotExpect {
                         if leading > *hi {
                             return Some((
                                 "rendered_rows[ContentRowLeadingSpaces.max]",
-                                format!(
-                                    "content row {nth_content_row} leading spaces <= {hi}"
-                                ),
+                                format!("content row {nth_content_row} leading spaces <= {hi}"),
                                 format!("got {leading} leading spaces; content={after:?}"),
                             ));
                         }
@@ -614,11 +603,7 @@ impl RenderSnapshotExpect {
                         if trimmed.is_empty() {
                             continue;
                         }
-                        widths.push((
-                            i,
-                            trimmed.chars().count(),
-                            trimmed.to_string(),
-                        ));
+                        widths.push((i, trimmed.chars().count(), trimmed.to_string()));
                     }
                     if widths.is_empty() {
                         return Some((
@@ -632,9 +617,7 @@ impl RenderSnapshotExpect {
                     } else {
                         widths.len()
                     };
-                    for (idx, (row_i, width, sample)) in
-                        widths[..check_up_to].iter().enumerate()
-                    {
+                    for (idx, (row_i, width, sample)) in widths[..check_up_to].iter().enumerate() {
                         if *width < *min {
                             return Some((
                                 "rendered_rows[ContinuationRowsMinContentWidth]",
@@ -664,10 +647,7 @@ impl RenderSnapshotExpect {
                         return Some((
                             "rendered_rows[NoContinuationRows]",
                             "no continuation rows".into(),
-                            format!(
-                                "row {i} is a continuation: {:?}",
-                                content.trim()
-                            ),
+                            format!("row {i} is a continuation: {:?}", content.trim()),
                         ));
                     }
                 }
@@ -681,7 +661,11 @@ impl RenderSnapshotExpect {
                     "rendered_rows empty (built with cheap extract)".into(),
                 ));
             }
-            let expected_byte = actual.buffer_text.as_bytes().get(actual.cursor_byte).copied();
+            let expected_byte = actual
+                .buffer_text
+                .as_bytes()
+                .get(actual.cursor_byte)
+                .copied();
             let expected_char = expected_byte.map(|b| b as char);
             // Only enforce on printable, non-whitespace chars — the
             // original e2e parity contract: at EOL / on whitespace,
@@ -743,8 +727,7 @@ impl RenderSnapshotExpect {
                 ));
             }
             let continuation_row = actual.rendered_rows.iter().find(|r| {
-                r.contains(&check.continuation_substring)
-                    && !r.contains(&check.anchor_substring)
+                r.contains(&check.continuation_substring) && !r.contains(&check.anchor_substring)
             });
             let Some(cont) = continuation_row else {
                 return Some((
@@ -774,18 +757,14 @@ impl RenderSnapshotExpect {
                         "continuation has >= {} leading spaces (anchor={:?})",
                         check.min_leading_spaces, check.anchor_substring
                     ),
-                    format!(
-                        "got {leading} leading spaces; continuation = {cont:?}"
-                    ),
+                    format!("got {leading} leading spaces; continuation = {cont:?}"),
                 ));
             }
         }
         if let Some(rect) = &self.hardware_cursor_hidden_or_outside_rect {
             if let Some((cx, cy)) = actual.hardware_cursor {
-                let inside = cx >= rect.x
-                    && cx < rect.x + rect.w
-                    && cy >= rect.y
-                    && cy < rect.y + rect.h;
+                let inside =
+                    cx >= rect.x && cx < rect.x + rect.w && cy >= rect.y && cy < rect.y + rect.h;
                 if inside {
                     return Some((
                         "hardware_cursor_hidden_or_outside_rect",

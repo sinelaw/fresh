@@ -390,7 +390,9 @@ fn migrated_marker_roundtrip_through_interleaved_single_and_bulk_edits() {
         steps: vec![
             // Capture base state.
             MarkerStep::AssertText("aa\nbb".into()),
-            MarkerStep::SaveText { slot: "base".into() },
+            MarkerStep::SaveText {
+                slot: "base".into(),
+            },
             MarkerStep::SaveMarkers {
                 symbol: MARKER.into(),
                 slot: "base".into(),
@@ -424,7 +426,9 @@ fn migrated_marker_roundtrip_through_interleaved_single_and_bulk_edits() {
             },
             // Undo step 1 (single) → back to base.
             MarkerStep::Undo,
-            MarkerStep::AssertTextMatchSaved { slot: "base".into() },
+            MarkerStep::AssertTextMatchSaved {
+                slot: "base".into(),
+            },
             MarkerStep::AssertMarkersMatchSaved {
                 symbol: MARKER.into(),
                 slot: "base".into(),

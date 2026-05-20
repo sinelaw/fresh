@@ -9,9 +9,7 @@
 //! cover the e2e cases collectively rather than 1:1.
 
 use crate::common::scenario::context::{NamedBuffer, WorkspaceContext};
-use crate::common::scenario::observable::{
-    ActivePathExpect, BufferPathsExpect, WorkspaceExpect,
-};
+use crate::common::scenario::observable::{ActivePathExpect, BufferPathsExpect, WorkspaceExpect};
 use crate::common::scenario::workspace_scenario::{assert_workspace_scenario, WorkspaceScenario};
 
 #[test]

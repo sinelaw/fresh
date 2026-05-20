@@ -72,8 +72,7 @@ fn migrated_typing_appears_in_grid_after_render_real() {
 #[test]
 fn anti_terminal_io_dropping_insert_char_yields_no_abc_in_grid() {
     let scenario = LayoutScenario {
-        description:
-            "anti: without InsertChar, the vt100 grid must NOT contain 'ABC'".into(),
+        description: "anti: without InsertChar, the vt100 grid must NOT contain 'ABC'".into(),
         initial_text: String::new(),
         width: 60,
         height: 12,

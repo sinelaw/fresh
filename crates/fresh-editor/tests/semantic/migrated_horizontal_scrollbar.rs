@@ -231,10 +231,7 @@ fn migrated_config_show_horizontal_scrollbar_false_lets_bottom_row_show_content(
         // that buffer content reaches the bottom — preserve that
         // verbatim via the row matcher.
         expected_snapshot: RenderSnapshotExpect {
-            row_checks: vec![RowMatch::AnyRowContainsAny(vec![
-                "Line".into(),
-                "X".into(),
-            ])],
+            row_checks: vec![RowMatch::AnyRowContainsAny(vec!["Line".into(), "X".into()])],
             ..Default::default()
         },
         ..Default::default()
@@ -276,7 +273,8 @@ fn migrated_horizontal_scrollbar_in_split_view_keeps_first_line_visible() {
 #[test]
 fn anti_horizontal_scrollbar_with_config_off_is_absent_on_bottom_row() {
     assert_layout_scenario(LayoutScenario {
-        description: "anti: show_horizontal_scrollbar=false + short content ⇒ no bottom-row scrollbar".into(),
+        description:
+            "anti: show_horizontal_scrollbar=false + short content ⇒ no bottom-row scrollbar".into(),
         initial_text: "short line a\nshort line b\nshort line c\n".into(),
         width: 80,
         height: 24,

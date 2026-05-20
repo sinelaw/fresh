@@ -116,9 +116,7 @@ fn migrated_down_from_last_content_line_reaches_trailing_empty_line() {
     let doc_end = content.len();
     let max_visible_bytes = 135usize * 37;
     assert_layout_scenario(LayoutScenario {
-        description:
-            "Ctrl+End → Left → Down lands on trailing empty line (width 135×37)"
-                .into(),
+        description: "Ctrl+End → Left → Down lands on trailing empty line (width 135×37)".into(),
         initial_text: content,
         width: 135,
         height: 37,
@@ -168,8 +166,7 @@ fn migrated_ctrl_end_then_disable_line_wrap_cursor_row() {
     // within ~3× max_visible_bytes-with-wrap-on of doc_end.
     let max_visible_bytes_no_wrap = 135usize * 37 * 3;
     assert_layout_scenario(LayoutScenario {
-        description:
-            "Ctrl+End then ToggleLineWrap keeps cursor on trailing empty line".into(),
+        description: "Ctrl+End then ToggleLineWrap keeps cursor on trailing empty line".into(),
         initial_text: content,
         width: 135,
         height: 37,
@@ -231,8 +228,7 @@ fn anti_down_from_last_content_line_without_down_stays_on_data_row() {
     // Encode the inverse claim via `RowMatch::AnyRowContains` for
     // a data substring that must remain visible.
     let scenario = LayoutScenario {
-        description: "anti: no Down ⇒ cursor stays on data row (Entry-140 content visible)"
-            .into(),
+        description: "anti: no Down ⇒ cursor stays on data row (Entry-140 content visible)".into(),
         initial_text: content,
         width: 135,
         height: 37,
@@ -265,9 +261,8 @@ fn anti_disable_line_wrap_without_ctrl_end_leaves_cursor_at_top() {
     let content = make_csv_like_content_with_trailing_newline();
     let doc_end = content.len();
     assert_layout_scenario(LayoutScenario {
-        description:
-            "anti: no Ctrl+End ⇒ cursor stays near top of buffer (viewport_top_byte = 0)"
-                .into(),
+        description: "anti: no Ctrl+End ⇒ cursor stays near top of buffer (viewport_top_byte = 0)"
+            .into(),
         initial_text: content,
         width: 135,
         height: 37,

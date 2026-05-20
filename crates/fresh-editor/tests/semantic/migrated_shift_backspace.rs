@@ -37,8 +37,8 @@ use crate::common::scenario::input_event::{InputEvent, KeyMods, KeySpec};
 #[test]
 fn migrated_shift_backspace_deletes_one_char_via_key_handler() {
     assert_buffer_scenario(BufferScenario {
-        description:
-            "Shift+Backspace from the production key path deletes one char (issue #1588)".into(),
+        description: "Shift+Backspace from the production key path deletes one char (issue #1588)"
+            .into(),
         initial_text: "hello".into(),
         actions: vec![fresh::test_api::Action::MoveDocumentEnd],
         events: vec![

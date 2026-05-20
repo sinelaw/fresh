@@ -183,4 +183,3 @@ fn migrated_save_then_external_edit_then_check_external_wins_on_disk() {
         },
     });
 }
-

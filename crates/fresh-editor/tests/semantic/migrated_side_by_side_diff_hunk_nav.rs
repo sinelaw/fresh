@@ -144,9 +144,7 @@ fn migrated_hunk_navigation_shows_context_above() {
         width: 120,
         height: 40,
         composite_buffer: Some(multi_hunk_spec()),
-        events: vec![
-            InputEvent::CompositeNextHunk { count: 2 },
-        ],
+        events: vec![InputEvent::CompositeNextHunk { count: 2 }],
         expected_snapshot: RenderSnapshotExpect {
             // The hunk's MODIFIED text must be visible AND at least
             // one of the pre-hunk context lines (54-57) must be on
@@ -211,7 +209,13 @@ fn migrated_initial_focus_hunk_is_consumed_after_first_render() {
     let mut spec = multi_hunk_spec();
     spec.initial_focus_hunk = Some(2);
     let events: Vec<InputEvent> = (0..50)
-        .map(|_| InputEvent::Mouse(MouseEvent::Wheel { row: 20, col: 60, dy: 1 }))
+        .map(|_| {
+            InputEvent::Mouse(MouseEvent::Wheel {
+                row: 20,
+                col: 60,
+                dy: 1,
+            })
+        })
         .collect();
     assert_layout_scenario(LayoutScenario {
         description: "initial_focus_hunk is one-shot; scrolling back leaves Line 1 visible".into(),

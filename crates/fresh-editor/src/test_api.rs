@@ -669,7 +669,10 @@ impl EditorTestApi for crate::app::Editor {
                 // of its namespaces via `get_indicator_position` for the
                 // existence check plus a namespace-membership test.
                 if margins.get_indicator_position(id).is_some()
-                    && margins.namespaces_for_marker(id).iter().any(|n| n == symbol)
+                    && margins
+                        .namespaces_for_marker(id)
+                        .iter()
+                        .any(|n| n == symbol)
                 {
                     Some(start)
                 } else {
@@ -707,22 +710,16 @@ impl EditorTestApi for crate::app::Editor {
             "text".to_string(),
             true,
         );
-        self.set_virtual_buffer_content(
-            old_buffer_id,
-            vec![TextPropertyEntry::text(old_content)],
-        )
-        .expect("seed OLD virtual buffer");
+        self.set_virtual_buffer_content(old_buffer_id, vec![TextPropertyEntry::text(old_content)])
+            .expect("seed OLD virtual buffer");
 
         let new_buffer_id = self.active_window_mut().create_virtual_buffer(
             "NEW".to_string(),
             "text".to_string(),
             true,
         );
-        self.set_virtual_buffer_content(
-            new_buffer_id,
-            vec![TextPropertyEntry::text(new_content)],
-        )
-        .expect("seed NEW virtual buffer");
+        self.set_virtual_buffer_content(new_buffer_id, vec![TextPropertyEntry::text(new_content)])
+            .expect("seed NEW virtual buffer");
 
         let sources = vec![
             SourcePane::new(old_buffer_id, "OLD", false).with_style(PaneStyle::old_diff()),
@@ -761,7 +758,9 @@ impl EditorTestApi for crate::app::Editor {
     fn composite_initial_focus_hunk_on(&self, composite_handle: usize) -> Option<usize> {
         use crate::model::event::BufferId;
         let id = BufferId(composite_handle);
-        self.active_window().get_composite(id).and_then(|c| c.initial_focus_hunk)
+        self.active_window()
+            .get_composite(id)
+            .and_then(|c| c.initial_focus_hunk)
     }
 
     fn composite_next_hunk_active_on(&mut self, composite_handle: usize) -> bool {
@@ -799,7 +798,9 @@ impl EditorTestApi for crate::app::Editor {
         let pos = match placement {
             "above" | "Above" | "LineAbove" => VirtualTextPosition::LineAbove,
             "below" | "Below" | "LineBelow" => VirtualTextPosition::LineBelow,
-            other => panic!("seed_virtual_line: unsupported placement {other:?}; want 'above' or 'below'"),
+            other => panic!(
+                "seed_virtual_line: unsupported placement {other:?}; want 'above' or 'below'"
+            ),
         };
         let mut style = Style::default();
         if let Some((r, g, b)) = fg {
@@ -831,7 +832,9 @@ impl EditorTestApi for crate::app::Editor {
         use crate::view::virtual_text::VirtualTextNamespace;
         let ns = VirtualTextNamespace::from_string(namespace.to_string());
         let state = self.active_state_mut();
-        state.virtual_texts.clear_namespace(&mut state.marker_list, &ns);
+        state
+            .virtual_texts
+            .clear_namespace(&mut state.marker_list, &ns);
     }
 
     fn add_margin_annotation(

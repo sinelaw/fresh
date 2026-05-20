@@ -315,8 +315,7 @@ fn migrated_side_by_side_diff_scroll_to_later_content() {
 #[test]
 fn anti_side_by_side_diff_without_wheel_scroll_keeps_line_1_visible() {
     let scenario = LayoutScenario {
-        description:
-            "anti: without wheel scroll-down, Line 1 must NOT have been hidden".into(),
+        description: "anti: without wheel scroll-down, Line 1 must NOT have been hidden".into(),
         width: 120,
         height: 40,
         composite_buffer: Some(diff_spec(100, 5)),

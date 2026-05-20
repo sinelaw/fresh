@@ -109,13 +109,7 @@ fn config_wrap_on() -> ScenarioConfigOverrides {
 /// dispatched through the editor's real `handle_mouse` path.
 fn wheel_down_events(count: usize, col: u16, row: u16) -> Vec<InputEvent> {
     (0..count)
-        .map(|_| {
-            InputEvent::Mouse(MouseEvent::Wheel {
-                col,
-                row,
-                dy: -1,
-            })
-        })
+        .map(|_| InputEvent::Mouse(MouseEvent::Wheel { col, row, dy: -1 }))
         .collect()
 }
 
@@ -135,8 +129,7 @@ fn migrated_mouse_wheel_scrolls_wrapped_content() {
     // active viewport regardless of cell coordinates as long as the
     // editor consumes them.
     assert_layout_scenario(LayoutScenario {
-        description: "20× wheel-down on wrapped 1600-char line: later content visible"
-            .into(),
+        description: "20× wheel-down on wrapped 1600-char line: later content visible".into(),
         initial_text: striped_long_line(),
         width: TERMINAL_WIDTH_60,
         height: TERMINAL_HEIGHT_20,
@@ -170,9 +163,7 @@ fn migrated_scrollbar_drag_with_wrapped_lines() {
         config_overrides: config_wrap_on(),
         mouse_drags: vec![MouseDragSpec::VerticalScrollbarFullRange],
         expected_snapshot: RenderSnapshotExpect {
-            row_checks: vec![
-                RowMatch::AnyRowContains("HHHH".into()),
-            ],
+            row_checks: vec![RowMatch::AnyRowContains("HHHH".into())],
             ..Default::default()
         },
         ..Default::default()

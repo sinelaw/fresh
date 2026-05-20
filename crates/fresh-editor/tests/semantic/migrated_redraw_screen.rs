@@ -58,8 +58,7 @@ fn migrated_redraw_screen_action_requests_full_redraw() {
 #[test]
 fn migrated_redraw_screen_visible_in_command_palette() {
     assert_layout_scenario(LayoutScenario {
-        description: "Command palette filter 'redraw' surfaces the Redraw Screen entry"
-            .into(),
+        description: "Command palette filter 'redraw' surfaces the Redraw Screen entry".into(),
         initial_text: String::new(),
         width: 100,
         height: 24,

@@ -284,13 +284,13 @@ fn dispatch(
         }
         InputEvent::PromptFillTempPath { rel } => {
             let abs = relative_under(root, rel);
-            let abs_str =
-                abs.to_str()
-                    .ok_or_else(|| ScenarioFailure::InputProjectionFailed {
-                        description: description.into(),
-                        reason: format!("temp path {abs:?} is not valid UTF-8"),
-                    })?
-                    .to_string();
+            let abs_str = abs
+                .to_str()
+                .ok_or_else(|| ScenarioFailure::InputProjectionFailed {
+                    description: description.into(),
+                    reason: format!("temp path {abs:?} is not valid UTF-8"),
+                })?
+                .to_string();
             harness
                 .type_text(&abs_str)
                 .map_err(|e| ScenarioFailure::InputProjectionFailed {

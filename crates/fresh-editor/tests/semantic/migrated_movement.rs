@@ -111,7 +111,9 @@ fn migrated_up_from_line_below_empty_lands_on_empty_line() {
     // the empty line at byte 7 and land at byte 0 ("Line 1");
     // the fix ensures Up lands at byte 7 (the empty line).
     assert_buffer_scenario(BufferScenario {
-        description: "Down/Down/Up: cursor at byte 8 then Up must land at byte 7 (empty line), not byte 0".into(),
+        description:
+            "Down/Down/Up: cursor at byte 8 then Up must land at byte 7 (empty line), not byte 0"
+                .into(),
         initial_text: "Line 1\n\nLine 3\n".into(),
         actions: vec![Action::MoveDown, Action::MoveDown, Action::MoveUp],
         expected_text: "Line 1\n\nLine 3\n".into(),

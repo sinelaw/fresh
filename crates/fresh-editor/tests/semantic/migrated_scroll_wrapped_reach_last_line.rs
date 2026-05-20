@@ -471,8 +471,7 @@ fn migrated_bug2_scrollbar_drag_reaches_last_line_of_word_wrapped_buffer() {
 /// buffer accidentally fitting on screen.
 #[test]
 fn anti_bug2_without_mouse_wheel_marker_never_visible() {
-    let mut harness =
-        EditorTestHarness::with_config(80, 16, config_with_wrap()).expect("harness");
+    let mut harness = EditorTestHarness::with_config(80, 16, config_with_wrap()).expect("harness");
     let content = build_bug2_buffer();
     let fixture = harness.load_buffer_from_text(&content).expect("load");
     std::mem::forget(fixture);
@@ -500,8 +499,7 @@ fn anti_bug2_without_mouse_wheel_marker_never_visible() {
 /// gated on the actual scroll mechanism running.
 #[test]
 fn anti_bug1_without_scroll_marker_not_on_last_row() {
-    let mut harness =
-        EditorTestHarness::with_config(80, 16, config_with_wrap()).expect("harness");
+    let mut harness = EditorTestHarness::with_config(80, 16, config_with_wrap()).expect("harness");
     let line_chars = (80usize).saturating_sub(10) * 16;
     let content = build_bug1_buffer(line_chars.max(200), 5);
     let fixture = harness.load_buffer_from_text(&content).expect("load");

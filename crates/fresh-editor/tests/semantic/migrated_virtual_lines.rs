@@ -56,7 +56,13 @@ use crate::common::scenario::layout_scenario::{
 use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 use fresh::test_api::Action;
 
-fn vt(byte_offset: usize, text: &str, position: VirtualTextPositionSpec, namespace: &str, priority: i32) -> VirtualTextSpec {
+fn vt(
+    byte_offset: usize,
+    text: &str,
+    position: VirtualTextPositionSpec,
+    namespace: &str,
+    priority: i32,
+) -> VirtualTextSpec {
     VirtualTextSpec {
         byte_offset,
         text: text.into(),
@@ -131,7 +137,13 @@ fn migrated_multiple_virtual_lines_same_position_all_visible() {
         height: 24,
         initial_virtual_texts: vec![
             vt(0, "First Header", VirtualTextPositionSpec::Above, "test", 0),
-            vt(0, "Second Header", VirtualTextPositionSpec::Above, "test", 10),
+            vt(
+                0,
+                "Second Header",
+                VirtualTextPositionSpec::Above,
+                "test",
+                10,
+            ),
         ],
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![
@@ -156,8 +168,20 @@ fn migrated_clear_namespace_pre_clear_both_visible() {
         width: 80,
         height: 24,
         initial_virtual_texts: vec![
-            vt(0, "Git Blame Header", VirtualTextPositionSpec::Above, "git-blame", 0),
-            vt(0, "LSP Diagnostic", VirtualTextPositionSpec::Above, "lsp", 0),
+            vt(
+                0,
+                "Git Blame Header",
+                VirtualTextPositionSpec::Above,
+                "git-blame",
+                0,
+            ),
+            vt(
+                0,
+                "LSP Diagnostic",
+                VirtualTextPositionSpec::Above,
+                "lsp",
+                0,
+            ),
         ],
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![
@@ -180,8 +204,20 @@ fn migrated_clear_namespace_only_clears_targeted_namespace() {
         width: 80,
         height: 24,
         initial_virtual_texts: vec![
-            vt(0, "Git Blame Header", VirtualTextPositionSpec::Above, "git-blame", 0),
-            vt(0, "LSP Diagnostic", VirtualTextPositionSpec::Above, "lsp", 0),
+            vt(
+                0,
+                "Git Blame Header",
+                VirtualTextPositionSpec::Above,
+                "git-blame",
+                0,
+            ),
+            vt(
+                0,
+                "LSP Diagnostic",
+                VirtualTextPositionSpec::Above,
+                "lsp",
+                0,
+            ),
         ],
         clear_virtual_text_namespaces: vec!["git-blame".into()],
         expected_snapshot: RenderSnapshotExpect {
@@ -205,13 +241,7 @@ fn migrated_virtual_lines_have_no_gutter_line_number() {
         initial_text: "Line 1\nLine 2\nLine 3".into(),
         width: 80,
         height: 24,
-        initial_virtual_texts: vec![vt(
-            7,
-            "VIRTUAL",
-            VirtualTextPositionSpec::Above,
-            "test",
-            0,
-        )],
+        initial_virtual_texts: vec![vt(7, "VIRTUAL", VirtualTextPositionSpec::Above, "test", 0)],
         expected_virtual_rows_no_digit_gutter: vec!["VIRTUAL".into()],
         ..Default::default()
     });
@@ -228,8 +258,8 @@ fn migrated_virtual_line_marker_tracks_edits_above_anchor() {
     // The pre-edit sanity from the original e2e is split into the
     // companion scenario below to keep each test single-shot.
     assert_layout_scenario(LayoutScenario {
-        description:
-            "after insert at start, virtual line still renders above BBB with NEW LINE".into(),
+        description: "after insert at start, virtual line still renders above BBB with NEW LINE"
+            .into(),
         initial_text: "AAA\nBBB\nCCC".into(),
         width: 80,
         height: 24,
@@ -299,8 +329,20 @@ fn migrated_virtual_lines_above_and_below_render_in_order() {
         width: 80,
         height: 24,
         initial_virtual_texts: vec![
-            vt(0, "=== ABOVE ===", VirtualTextPositionSpec::Above, "test", 0),
-            vt(0, "=== BELOW ===", VirtualTextPositionSpec::Below, "test", 0),
+            vt(
+                0,
+                "=== ABOVE ===",
+                VirtualTextPositionSpec::Above,
+                "test",
+                0,
+            ),
+            vt(
+                0,
+                "=== BELOW ===",
+                VirtualTextPositionSpec::Below,
+                "test",
+                0,
+            ),
         ],
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![
@@ -404,8 +446,20 @@ fn anti_clear_namespace_without_clear_keeps_both_visible() {
         width: 80,
         height: 24,
         initial_virtual_texts: vec![
-            vt(0, "Git Blame Header", VirtualTextPositionSpec::Above, "git-blame", 0),
-            vt(0, "LSP Diagnostic", VirtualTextPositionSpec::Above, "lsp", 0),
+            vt(
+                0,
+                "Git Blame Header",
+                VirtualTextPositionSpec::Above,
+                "git-blame",
+                0,
+            ),
+            vt(
+                0,
+                "LSP Diagnostic",
+                VirtualTextPositionSpec::Above,
+                "lsp",
+                0,
+            ),
         ],
         // No clear_virtual_text_namespaces — load-bearing step dropped.
         expected_snapshot: RenderSnapshotExpect {

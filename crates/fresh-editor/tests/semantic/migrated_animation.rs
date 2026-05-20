@@ -116,11 +116,7 @@ fn migrated_next_buffer_kicks_off_a_slide_animation() {
     harness
         .wait_until(|h| !h.editor().active_window().animations.is_active())
         .unwrap();
-    let baseline = harness
-        .editor()
-        .active_window()
-        .animations
-        .total_started();
+    let baseline = harness.editor().active_window().animations.total_started();
 
     // Switch to the previous tab. The Editor should start a
     // horizontal slide (prev → from the left).
@@ -137,9 +133,7 @@ fn migrated_next_buffer_kicks_off_a_slide_animation() {
         .wait_until(|h| !h.editor().active_window().animations.is_active())
         .unwrap();
     assert!(
-        harness
-            .screen_to_string()
-            .contains("ALPHA_BUFFER_CONTENT"),
+        harness.screen_to_string().contains("ALPHA_BUFFER_CONTENT"),
         "after tab-switch animation settles, alpha buffer should be \
          visible — screen:\n{}",
         harness.screen_to_string()
@@ -286,11 +280,7 @@ fn migrated_tab_switch_from_group_to_file_animates() {
     harness
         .wait_until(|h| !h.editor().active_window().animations.is_active())
         .unwrap();
-    let baseline = harness
-        .editor()
-        .active_window()
-        .animations
-        .total_started();
+    let baseline = harness.editor().active_window().animations.total_started();
 
     // Cycle to the previous tab: group → file. Before the fix,
     // total_started never incremented and the wait never returned.
@@ -303,9 +293,7 @@ fn migrated_tab_switch_from_group_to_file_animates() {
         .wait_until(|h| !h.editor().active_window().animations.is_active())
         .unwrap();
     assert!(
-        harness
-            .screen_to_string()
-            .contains("FILE_BUFFER_CONTENT"),
+        harness.screen_to_string().contains("FILE_BUFFER_CONTENT"),
         "after tab-switch animation settles, file buffer should be \
          visible — screen:\n{}",
         harness.screen_to_string()
@@ -342,11 +330,7 @@ fn cursor_jump_long_move_test(cursor_jump_enabled: bool) -> u64 {
         .wait_until(|h| !h.editor().active_window().animations.is_active())
         .unwrap();
 
-    let baseline = harness
-        .editor()
-        .active_window()
-        .animations
-        .total_started();
+    let baseline = harness.editor().active_window().animations.total_started();
 
     // Long jump: top → end of buffer.
     harness
@@ -410,22 +394,14 @@ fn anti_no_tab_switch_means_total_started_stays_at_baseline() {
     harness
         .wait_until(|h| !h.editor().active_window().animations.is_active())
         .unwrap();
-    let baseline = harness
-        .editor()
-        .active_window()
-        .animations
-        .total_started();
+    let baseline = harness.editor().active_window().animations.total_started();
 
     // No prev_buffer() / next_buffer() here — that's the
     // load-bearing step we drop.
     harness.render().unwrap();
     harness.render().unwrap();
 
-    let after = harness
-        .editor()
-        .active_window()
-        .animations
-        .total_started();
+    let after = harness.editor().active_window().animations.total_started();
     assert_eq!(
         after, baseline,
         "anti: without a prev_buffer()/next_buffer() call, \
@@ -466,21 +442,13 @@ fn anti_cursor_jump_without_long_move_does_not_advance_counter() {
         .wait_until(|h| !h.editor().active_window().animations.is_active())
         .unwrap();
 
-    let baseline = harness
-        .editor()
-        .active_window()
-        .animations
-        .total_started();
+    let baseline = harness.editor().active_window().animations.total_started();
 
     // No Ctrl+End jump here — only two render ticks.
     harness.render().unwrap();
     harness.render().unwrap();
 
-    let after = harness
-        .editor()
-        .active_window()
-        .animations
-        .total_started();
+    let after = harness.editor().active_window().animations.total_started();
     assert_eq!(
         after, baseline,
         "anti: without the long Ctrl+End jump, the cursor-jump \

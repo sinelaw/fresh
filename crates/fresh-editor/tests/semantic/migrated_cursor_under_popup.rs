@@ -108,9 +108,7 @@ fn migrated_hardware_cursor_is_hidden_when_popup_covers_it() {
         }),
         expected_snapshot: RenderSnapshotExpect {
             // Sanity: popup is actually on screen.
-            row_checks: vec![RowMatch::AnyRowContains(
-                "I cover the cursor".into(),
-            )],
+            row_checks: vec![RowMatch::AnyRowContains("I cover the cursor".into())],
             hardware_cursor_hidden_or_outside_rect: Some(HardwareCursorRect {
                 // Anchor mirrors the popup origin computed by the
                 // runner. Typing "hello world" puts the cursor at

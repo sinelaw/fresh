@@ -142,9 +142,8 @@ fn trial(
 #[test]
 fn migrated_line_wrap_all_lines_visible_across_widths_and_sidebar() {
     let lines = interesting_lines();
-    let fixture =
-        TestFixture::new("line_wrap_visibility_semantic.txt", &lines.join("\n"))
-            .expect("create fixture");
+    let fixture = TestFixture::new("line_wrap_visibility_semantic.txt", &lines.join("\n"))
+        .expect("create fixture");
 
     // Sample widths that bracket each sentinel-token's length on
     // both sides, so the wrap boundary lands at a variety of
@@ -176,9 +175,8 @@ fn migrated_line_wrap_all_lines_visible_across_widths_and_sidebar() {
 #[test]
 fn anti_line_wrap_disabled_loses_tail_sentinels_off_screen() {
     let lines = interesting_lines();
-    let fixture =
-        TestFixture::new("line_wrap_visibility_anti.txt", &lines.join("\n"))
-            .expect("create fixture");
+    let fixture = TestFixture::new("line_wrap_visibility_anti.txt", &lines.join("\n"))
+        .expect("create fixture");
 
     let scenario = LayoutScenario {
         description: "anti: line_wrap=false on 40-col viewport ⇒ tail '>LN006' off-screen".into(),

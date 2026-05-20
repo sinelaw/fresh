@@ -36,7 +36,12 @@ fn click(row: u16, col: u16) -> InputEvent {
 /// because the range is sensitive to whether SelectLine's caret
 /// lands at the leading-newline or trailing-newline position, and
 /// the load-bearing claim is "the line text is selected".
-fn triple_click_at(description: &str, initial_text: &str, row: u16, expected_selection: &str) -> BufferScenario {
+fn triple_click_at(
+    description: &str,
+    initial_text: &str,
+    row: u16,
+    expected_selection: &str,
+) -> BufferScenario {
     BufferScenario {
         description: description.into(),
         initial_text: initial_text.into(),
@@ -126,8 +131,7 @@ fn migrated_double_click_selects_word_not_line() {
 fn anti_triple_click_dropping_third_click_does_not_select_full_line() {
     let row = CONTENT_FIRST_ROW;
     assert_buffer_scenario(BufferScenario {
-        description:
-            "anti: two clicks (no third) yield SelectWord ('line'), NOT SelectLine".into(),
+        description: "anti: two clicks (no third) yield SelectWord ('line'), NOT SelectLine".into(),
         initial_text: "First line here\nSecond line here\nThird line here\n".into(),
         events: vec![click(row, 12), click(row, 12)],
         expected_text: "First line here\nSecond line here\nThird line here\n".into(),

@@ -132,10 +132,7 @@ const SELECT_WORD_GRAPHEME_WORDS: &[&str] = &[
 /// `word`. Used to spell out the expected cursor position before
 /// SelectWord runs.
 fn byte_offset_of_grapheme(word: &str, grapheme_idx: usize) -> usize {
-    word.graphemes(true)
-        .take(grapheme_idx)
-        .map(str::len)
-        .sum()
+    word.graphemes(true).take(grapheme_idx).map(str::len).sum()
 }
 
 /// Build the positive scenario for `(word, grapheme_idx)`. The

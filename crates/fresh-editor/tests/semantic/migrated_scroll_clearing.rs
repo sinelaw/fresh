@@ -69,8 +69,7 @@ use fresh::test_api::Action;
 /// indentation on line 3 and a recognisable tail marker
 /// `lfs_mirror_extend`).
 fn scroll_test_file_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/scroll_test_file.txt")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scroll_test_file.txt")
 }
 
 fn many<T: Clone>(item: T, n: usize) -> Vec<T> {
@@ -157,11 +156,7 @@ fn migrated_tab_indicator_visible_on_tab_prefixed_line() {
         initial_file: Some(scroll_test_file_path()),
         width: 80,
         height: 24,
-        actions: vec![
-            Action::MoveDown,
-            Action::MoveDown,
-            Action::MoveLineStart,
-        ],
+        actions: vec![Action::MoveDown, Action::MoveDown, Action::MoveLineStart],
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![RowMatch::AnyRowContains("→".into())],
             ..Default::default()

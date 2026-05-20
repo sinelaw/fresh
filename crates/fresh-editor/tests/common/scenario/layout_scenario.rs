@@ -14,7 +14,9 @@
 //!   per-field constraints; unset fields wildcard-match.
 
 use crate::common::harness::EditorTestHarness;
-use crate::common::scenario::context::{MouseButton as CtxMouseButton, MouseEvent as CtxMouseEvent};
+use crate::common::scenario::context::{
+    MouseButton as CtxMouseButton, MouseEvent as CtxMouseEvent,
+};
 use crate::common::scenario::failure::ScenarioFailure;
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::observable::Observable;
@@ -442,9 +444,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 .set_composite_initial_focus_hunk_on(handle, hunk);
         }
         if !spec.skip_initial_render {
-            harness
-                .render()
-                .expect("composite initial render failed");
+            harness.render().expect("composite initial render failed");
         }
         Some(handle)
     } else {
@@ -546,7 +546,9 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 let api: &mut dyn EditorTestApi = harness.api_mut();
                 api.dispatch_seq(slice);
             }
-            harness.render().expect("render between step assertions failed");
+            harness
+                .render()
+                .expect("render between step assertions failed");
             dispatched_up_to = want_inclusive;
         }
         let snapshot = extract_snapshot(&mut harness);
@@ -709,11 +711,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 description: s.description.clone(),
                 field: "viewport_top_byte_distinct_at_most".into(),
                 expected: format!("<= {max_distinct} distinct value(s)"),
-                actual: format!(
-                    "{} distinct value(s): {:?}",
-                    sorted.len(),
-                    sorted
-                ),
+                actual: format!("{} distinct value(s): {:?}", sorted.len(), sorted),
             });
         }
     }
@@ -754,9 +752,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 description: s.description.clone(),
                 field: "initial_focus_hunk_consumed".into(),
                 expected: want_consumed.to_string(),
-                actual: format!(
-                    "consumed={actually_consumed} (initial_focus_hunk = {actual:?})"
-                ),
+                actual: format!("consumed={actually_consumed} (initial_focus_hunk = {actual:?})"),
             });
         }
     }
@@ -856,16 +852,11 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
             });
         }
         for line in matching_rows {
-            if line
-                .trim_start()
-                .starts_with(|c: char| c.is_ascii_digit())
-            {
+            if line.trim_start().starts_with(|c: char| c.is_ascii_digit()) {
                 return Err(ScenarioFailure::SnapshotFieldMismatch {
                     description: s.description.clone(),
                     field: "virtual_rows_no_digit_gutter".into(),
-                    expected: format!(
-                        "row containing {substring:?} does not start with digit"
-                    ),
+                    expected: format!("row containing {substring:?} does not start with digit"),
                     actual: format!("row starts with digit: {line:?}"),
                 });
             }

@@ -6,9 +6,7 @@
 
 use crate::common::scenario::context::{NamedBuffer, WorkspaceContext};
 use crate::common::scenario::input_event::InputEvent;
-use crate::common::scenario::observable::{
-    ActivePathExpect, BufferPathsExpect, WorkspaceExpect,
-};
+use crate::common::scenario::observable::{ActivePathExpect, BufferPathsExpect, WorkspaceExpect};
 use crate::common::scenario::workspace_scenario::{
     assert_workspace_scenario, check_workspace_scenario, WorkspaceScenario,
 };

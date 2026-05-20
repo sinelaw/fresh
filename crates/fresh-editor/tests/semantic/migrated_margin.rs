@@ -124,8 +124,8 @@ fn migrated_initial_buffer_respects_line_numbers_config() {
     // on) and dispatches `Action::ToggleLineNumbers` to flip the
     // flag — same dispatch path the e2e palette flow funnels into.
     assert_layout_scenario(LayoutScenario {
-        description:
-            "issue #539: line_numbers=false ⇒ no ' │ ' separator; typing still visible".into(),
+        description: "issue #539: line_numbers=false ⇒ no ' │ ' separator; typing still visible"
+            .into(),
         initial_text: String::new(),
         width: 80,
         height: 24,
@@ -489,7 +489,11 @@ fn migrated_line_numbers_after_three_page_downs() {
         initial_text: lines(200),
         width: 80,
         height: 24,
-        actions: vec![Action::MovePageDown, Action::MovePageDown, Action::MovePageDown],
+        actions: vec![
+            Action::MovePageDown,
+            Action::MovePageDown,
+            Action::MovePageDown,
+        ],
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![RowMatch::AnyRowContainsAny(
                 (60u32..=70).map(|n| format!("  {n} \u{2502}")).collect(),
