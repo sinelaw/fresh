@@ -79,6 +79,15 @@ pub struct LayoutScenario {
     /// `expected_top_byte`.
     #[serde(default)]
     pub expected_snapshot: RenderSnapshotExpect,
+    /// Optional assertion on the rendered state immediately after
+    /// setup (initial render / composite build) but BEFORE any
+    /// `actions` are dispatched. `step_assertions` can only observe
+    /// state *after* `actions[k]`, so this is the only hook for
+    /// "before the first action, the screen looks like X" claims —
+    /// e.g. "with wrap on, both markers are visible; after the
+    /// toggle the tail marker is gone". `None` ⇒ skip.
+    #[serde(default)]
+    pub initial_assertion: Option<RenderSnapshotExpect>,
     /// Per-step expectations for multi-step / cross-state claims.
     /// Each entry `{ after_action_index, expect }` is asserted after
     /// dispatching `actions[0..=after_action_index]` and rendering.
@@ -501,6 +510,15 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     };
     // Composite-buffer scenarios build their own buffer set; the
     // `initial_text` / `initial_file` paths are skipped.
+    // When a composite scenario requests `skip_initial_render`, the
+    // contract is "no view state has been materialized yet" — the
+    // runner must NOT sneak in a render before events, or it would
+    // defeat flush-layout tests that observe the pre-flush state.
+    let suppress_pre_events_render = s
+        .composite_buffer
+        .as_ref()
+        .map(|spec| spec.skip_initial_render)
+        .unwrap_or(false);
     let composite_handle: Option<usize> = if let Some(spec) = &s.composite_buffer {
         let handle = harness.api_mut().create_side_by_side_diff(
             &spec.name,
@@ -604,6 +622,22 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         }
     };
 
+    // Initial-state assertion: the screen as it stands after setup
+    // (initial render / composite build / open_files) but BEFORE any
+    // `actions` are dispatched. This is the only hook for
+    // "before the first action, the screen looks like X" claims.
+    if let Some(initial) = &s.initial_assertion {
+        let snapshot = extract_snapshot(&mut harness);
+        if let Some((field, expected, actual)) = initial.check_against(&snapshot) {
+            return Err(ScenarioFailure::SnapshotFieldMismatch {
+                description: format!("{} [initial_assertion, before any action]", s.description),
+                field: field.to_string(),
+                expected,
+                actual,
+            });
+        }
+    }
+
     // Per-step assertions: dispatch up to and including
     // `after_action_index`, render, and check `expect`. Steps are
     // applied in their original order; after the last step we
@@ -665,7 +699,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     // rendered first, otherwise the first event operates on stale
     // layout (e.g. End jumps straight to the logical line end
     // instead of walking visual segments).
-    if !s.events.is_empty() {
+    if !s.events.is_empty() && !suppress_pre_events_render {
         harness
             .render()
             .expect("render between action phase and events failed");
@@ -1201,6 +1235,22 @@ fn dispatch_layout_event(
             harness
                 .render()
                 .expect("render after CompositePrevHunk failed");
+            Ok(())
+        }
+        InputEvent::AssertCompositeNextHunkActive { expected } => {
+            let handle = composite_handle.ok_or_else(|| ScenarioFailure::InputProjectionFailed {
+                description: description.into(),
+                reason: "AssertCompositeNextHunkActive requires composite_buffer to be set".into(),
+            })?;
+            let got = harness.api_mut().composite_next_hunk_active_on(handle);
+            if got != *expected {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: description.into(),
+                    field: "composite_next_hunk_active".into(),
+                    expected: format!("{expected}"),
+                    actual: format!("{got}"),
+                });
+            }
             Ok(())
         }
         InputEvent::FlushLayout => {

@@ -27,9 +27,12 @@
 //!      subsequent user scroll is not snapped back to the focus
 //!      hunk.
 //!   7. Without `flush_layout` before the first render, a single
-//!      `composite_next_hunk_active` call does not advance the
-//!      viewport (no view state to mutate). With `flush_layout`
-//!      first, the hunk becomes visible after the next render.
+//!      `composite_next_hunk_active` call returns `false` (no view
+//!      state to mutate) — asserted on the boolean return value via
+//!      `AssertCompositeNextHunkActive`. With `flush_layout` first
+//!      the call returns `true` and the hunk becomes visible after
+//!      the next render. (Original split into negative + positive
+//!      halves, matching the original test's two `assert!`s.)
 //!   8. `flush_layout` + multiple `composite_next_hunk_active`
 //!      calls let a test reach hunk 3 before the first render — the
 //!      full imperative alternative to `initial_focus_hunk`.
@@ -233,13 +236,40 @@ fn migrated_initial_focus_hunk_is_consumed_after_first_render() {
 }
 
 #[test]
+fn migrated_no_flush_layout_hunk_nav_returns_false() {
+    // Original: `test_flush_layout_enables_hunk_nav_before_render`
+    // (the NEGATIVE half). With a composite buffer switched in but
+    // never rendered (`skip_initial_render`), the composite view
+    // state isn't materialized, so `composite_next_hunk_active`
+    // returns `false` — there is nothing to navigate. This is the
+    // exact assertion the original made (`assert!(!result_without_flush)`).
+    //
+    // We assert on the boolean return value, NOT on rendered text:
+    // hunk 1 sits at line 20 and a 40-row viewport anchored at the
+    // buffer top would already show it, so "MODIFIED in hunk 1"
+    // absence would be a false/unreliable proxy for "navigation
+    // failed".
+    let mut spec = multi_hunk_spec();
+    spec.skip_initial_render = true;
+    assert_layout_scenario(LayoutScenario {
+        description: "no flush_layout ⇒ composite_next_hunk_active returns false".into(),
+        width: 120,
+        height: 40,
+        composite_buffer: Some(spec),
+        events: vec![InputEvent::AssertCompositeNextHunkActive { expected: false }],
+        ..Default::default()
+    });
+}
+
+#[test]
 fn migrated_flush_layout_enables_hunk_nav_before_render() {
-    // Original: `test_flush_layout_enables_hunk_nav_before_render`.
-    // Without `FlushLayout` before the first render, the composite
-    // view state isn't materialized, so `CompositeNextHunk` can't
-    // mutate it — after the final render hunk 1's MODIFIED text
-    // must NOT be on screen. (Compare with the companion test
-    // below where FlushLayout DOES make it visible.)
+    // Original: `test_flush_layout_enables_hunk_nav_before_render`
+    // (the POSITIVE half). After `FlushLayout` materializes the
+    // composite view state, `composite_next_hunk_active` returns
+    // `true` and a subsequent render shows hunk 1's MODIFIED text.
+    // The boolean assertion mirrors the original's
+    // `assert!(result_with_flush)`; the rendered-text check mirrors
+    // its post-render `screen.contains("MODIFIED in hunk 1")`.
     let mut spec = multi_hunk_spec();
     spec.skip_initial_render = true;
     assert_layout_scenario(LayoutScenario {
@@ -249,7 +279,11 @@ fn migrated_flush_layout_enables_hunk_nav_before_render() {
         composite_buffer: Some(spec),
         events: vec![
             InputEvent::FlushLayout,
-            InputEvent::CompositeNextHunk { count: 1 },
+            // This call both asserts the boolean is `true` AND
+            // advances to hunk 1; the runner's final render then
+            // paints it, so the row check below sees the MODIFIED
+            // text.
+            InputEvent::AssertCompositeNextHunkActive { expected: true },
         ],
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![RowMatch::AnyRowContains("MODIFIED in hunk 1".into())],
@@ -404,6 +438,36 @@ fn anti_keybinding_n_without_press_keeps_hunk_off_screen() {
     assert!(
         check_layout_scenario(scenario).is_err(),
         "anti-test: without 'n', hunk 2 must NOT be visible"
+    );
+}
+
+/// Anti-test for the flush-layout pair: ADD the `FlushLayout` the
+/// negative test deliberately omits, but keep asserting the boolean
+/// is `false`. With the view state materialized the call returns
+/// `true`, so the `expected: false` assertion must fail. This proves
+/// two things at once: (1) the boolean assertion in
+/// `migrated_no_flush_layout_hunk_nav_returns_false` is load-bearing
+/// (it would not pass with flush), and (2) `FlushLayout` is not a
+/// no-op — if it were, this scenario would wrongly pass.
+#[test]
+fn anti_flush_layout_flips_hunk_nav_to_true() {
+    let mut spec = multi_hunk_spec();
+    spec.skip_initial_render = true;
+    let scenario = LayoutScenario {
+        description: "anti: with flush_layout, composite_next_hunk_active is true (not false)"
+            .into(),
+        width: 120,
+        height: 40,
+        composite_buffer: Some(spec),
+        events: vec![
+            InputEvent::FlushLayout,
+            InputEvent::AssertCompositeNextHunkActive { expected: false },
+        ],
+        ..Default::default()
+    };
+    assert!(
+        check_layout_scenario(scenario).is_err(),
+        "anti-test: after FlushLayout the call returns true, so asserting false must fail"
     );
 }
 

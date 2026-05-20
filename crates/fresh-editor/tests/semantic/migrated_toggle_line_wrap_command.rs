@@ -29,10 +29,13 @@
 //!      a continuation row that holds the marker).
 //!
 //! Source: `tests/e2e/toggle_line_wrap_command.rs` (2 tests
-//! migrated + 1 anti-test; no tests deferred).
+//! migrated + 2 anti-tests; no tests deferred). The wrap-OFF test
+//! pins the before-toggle state (both markers visible) via
+//! `initial_assertion` and the after-toggle state (END-MARKER gone)
+//! via `expected_snapshot`.
 
 use crate::common::scenario::layout_scenario::{
-    assert_layout_scenario, LayoutScenario, ScenarioConfigOverrides, StepAssertion,
+    assert_layout_scenario, check_layout_scenario, LayoutScenario, ScenarioConfigOverrides,
 };
 use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
 use fresh::test_api::Action;
@@ -77,15 +80,21 @@ fn migrated_toggle_line_wrap_off_actually_unwraps_buffer() {
             ..Default::default()
         },
         actions: vec![Action::ToggleLineWrap],
-        // Step 0: before the toggle, both BEGIN- and END-MARKER are
-        // visible (the wrap put the tail on a continuation row).
-        // Asserted as a step at index 0 ⇒ check BEFORE dispatching
-        // actions[0]. But step_assertions index 0 = "after action 0"
-        // — to capture the BEFORE state we set a `step_assertions`
-        // run BEFORE Toggle? The runner has no "before action 0"
-        // hook; instead we lean on the symmetric anti-test (which
-        // runs with no toggle) to pin the BEFORE state, and use the
-        // FINAL expectation to pin the AFTER state.
+        // BEFORE the toggle: wrap is ON, so the long line's tail wraps
+        // onto a continuation row and BOTH markers are visible. This
+        // is the load-bearing precondition — without it the AFTER
+        // check (END-MARKER gone) could pass vacuously if the marker
+        // were never on screen to begin with.
+        initial_assertion: Some(RenderSnapshotExpect {
+            row_checks: vec![
+                RowMatch::AnyRowContains("BEGIN-MARKER".into()),
+                RowMatch::AnyRowContains("END-MARKER".into()),
+            ],
+            ..Default::default()
+        }),
+        // AFTER the toggle: wrap is OFF, the tail no longer wraps, so
+        // END-MARKER sits past the right edge and disappears while
+        // BEGIN-MARKER stays.
         expected_snapshot: RenderSnapshotExpect {
             row_checks: vec![
                 RowMatch::AnyRowContains("BEGIN-MARKER".into()),
@@ -93,12 +102,6 @@ fn migrated_toggle_line_wrap_off_actually_unwraps_buffer() {
             ],
             ..Default::default()
         },
-        // Belt-and-braces: pin the BEFORE state via a no-op action
-        // step. We dispatch `[NoOp, ToggleLineWrap]` and observe
-        // after action 0 (NoOp) that both markers are visible, then
-        // observe after action 1 (Toggle) via the final expectation.
-        // Action::Noop exists in the alphabet and is a true no-op.
-        step_assertions: vec![],
         ..Default::default()
     });
 }
@@ -163,8 +166,36 @@ fn anti_toggle_line_wrap_without_action_keeps_end_marker_visible() {
     });
 }
 
-// Silence the unused `StepAssertion` import — kept in scope so a
-// future before-action-0 step expectation can be added without
-// reshuffling imports.
-#[allow(dead_code)]
-fn _ensure_step_assertion_in_scope(_: StepAssertion) {}
+/// Anti-test: prove the `initial_assertion` hook is actually
+/// evaluated (and the before-toggle precondition is load-bearing).
+/// With wrap ON, END-MARKER IS on screen before the toggle, so an
+/// `initial_assertion` that claims END-MARKER is absent must fail.
+/// If the runner silently ignored `initial_assertion`, this scenario
+/// would wrongly pass — the `is_err()` check guards against that.
+#[test]
+fn anti_initial_assertion_false_before_toggle_claim_fails() {
+    let (_keepalive, path) = long_line_temp_file();
+    let scenario = LayoutScenario {
+        description: "anti: claiming END-MARKER absent before toggle (wrap on) must fail".into(),
+        initial_file: Some(path),
+        width: WIDTH,
+        height: HEIGHT,
+        config_overrides: ScenarioConfigOverrides {
+            line_wrap: Some(true),
+            ..Default::default()
+        },
+        actions: vec![Action::ToggleLineWrap],
+        initial_assertion: Some(RenderSnapshotExpect {
+            // FALSE claim: with wrap on, END-MARKER is visible.
+            row_checks: vec![RowMatch::NoRowContains("END-MARKER".into())],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert!(
+        check_layout_scenario(scenario).is_err(),
+        "anti-test: before the toggle (wrap on) END-MARKER is visible, so a \
+         NoRowContains(END-MARKER) initial_assertion must fail — proving the \
+         hook is evaluated and the before-toggle precondition is enforced"
+    );
+}

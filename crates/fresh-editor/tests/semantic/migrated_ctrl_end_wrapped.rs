@@ -58,7 +58,7 @@ const DATA_LINE_NEEDLES: &[&str] = &[
 
 #[test]
 fn migrated_ctrl_end_under_wrap_scrolls_viewport_near_doc_end() {
-    // Original: `test_ctrl_end_under_wrap_scrolls_viewport_near_doc_end`.
+    // Original: `test_ctrl_end_viewport_scrolls_to_show_cursor_line`.
     // Ctrl+End (= Action::MoveDocumentEnd) must scroll the viewport
     // close enough to doc_end that the cursor's byte falls within
     // ~one screen's worth of bytes. `viewport_top_within_delta_of`

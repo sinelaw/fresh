@@ -205,6 +205,18 @@ pub enum InputEvent {
     CompositePrevHunk {
         count: u16,
     },
+    /// Dispatch a single `composite_next_hunk_active` on the
+    /// scenario's composite buffer and assert its boolean return
+    /// value equals `expected`. This is the load-bearing observable
+    /// for the flush-layout test: before `FlushLayout` materializes
+    /// the composite view state the call returns `false` (nothing to
+    /// navigate); after it returns `true`. Asserting on the rendered
+    /// text instead would be unreliable — with the viewport at the
+    /// buffer top, an early hunk can already be on screen, so absence
+    /// of the hunk text does not prove the navigation failed.
+    AssertCompositeNextHunkActive {
+        expected: bool,
+    },
     /// Force-materialize composite view state for all visible splits
     /// without rendering. Mirrors `Editor::flush_layout`; lets a
     /// scenario reach hunk-nav state before the first frame paints.
