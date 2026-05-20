@@ -25,6 +25,7 @@ pub mod input_event;
 pub mod key_dispatch;
 pub mod minimize;
 pub mod observable;
+pub mod reset;
 
 // ── Phase 2: Layout (real, naive wrap shadow) ───────────────────────
 pub mod layout_scenario;

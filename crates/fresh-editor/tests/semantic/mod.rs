@@ -4,6 +4,7 @@
 pub mod action_shapes;
 pub mod auto_pairs;
 pub mod case_conversion;
+pub mod combination;
 pub mod corpus;
 pub mod corpus_dump;
 pub mod duplicate_line;
@@ -91,6 +92,7 @@ pub mod multicursor;
 pub mod phase_proofs;
 pub mod properties;
 pub mod regressions;
+pub mod reset_isolation;
 pub mod save_state;
 pub mod scenario_shapes;
 pub mod select_to_paragraph;

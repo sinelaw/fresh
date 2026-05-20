@@ -44,14 +44,50 @@ pub fn evaluate_actions(initial_text: &str, actions: &[Action]) -> BufferState {
     let _fixture = harness
         .load_buffer_from_text(initial_text)
         .expect("load_buffer_from_text failed");
+    harness.api_mut().dispatch_seq(actions);
+    observe(&mut harness)
+}
+
+/// Read the pure-state observable from a live harness.
+pub fn observe(harness: &mut EditorTestHarness) -> BufferState {
     let api = harness.api_mut();
-    api.dispatch_seq(actions);
     BufferState {
         buffer_text: api.buffer_text(),
         primary: api.primary_caret(),
         all_carets: api.carets(),
         selection_text: api.selection_text(),
     }
+}
+
+/// Combination driver: run several `(initial_text, actions)` workloads
+/// on ONE long-lived harness, applying `reset::reset_actions(initial)`
+/// before each so the previous workload's text/cursor/selection is
+/// reversed (an *active* reset, not a fresh harness). Returns the
+/// observed state after each workload, in `order`.
+///
+/// Comparing these against the per-workload fresh-harness baseline is
+/// what tests isolation: a mismatch means either the reset is
+/// incomplete or a workload secretly depends on ambient state left by
+/// a predecessor — neither of which a fresh-harness-per-test can
+/// surface.
+pub fn run_with_reset_between(
+    workloads: &[(&str, Vec<Action>)],
+    order: &[usize],
+) -> Vec<BufferState> {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24)
+        .expect("EditorTestHarness::with_temp_project failed");
+    harness
+        .load_buffer_from_text("")
+        .expect("seed empty buffer failed");
+    let mut out = Vec::with_capacity(order.len());
+    for &i in order {
+        let (initial_text, actions) = &workloads[i];
+        let mut seq = crate::common::scenario::reset::reset_actions(initial_text);
+        seq.extend(actions.iter().cloned());
+        harness.api_mut().dispatch_seq(&seq);
+        out.push(observe(&mut harness));
+    }
+    out
 }
 
 /// Safe action subset. Any action listed here is expected to:
