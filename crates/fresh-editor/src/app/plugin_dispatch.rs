@@ -4506,6 +4506,37 @@ impl Editor {
         self.handle_widget_select_move_for_key(panel_id, &focus_key, delta);
     }
 
+    /// Set a `List` widget's selected index to an absolute item index,
+    /// preserving its scroll offset, and repaint. Used by the click
+    /// path: a row click only produces a `select` hit and — unlike
+    /// keyboard nav via [`handle_widget_select_move_for_key`] — does
+    /// not move the host-owned selection. Without this the highlight
+    /// would not follow a click and a subsequent Up/Down would resume
+    /// from the stale index.
+    pub(super) fn set_widget_list_selected_index(
+        &mut self,
+        panel_id: u64,
+        widget_key: &str,
+        index: i32,
+    ) {
+        if let Some(panel) = self.widget_registry.get_mut(panel_id) {
+            let prev_scroll = match panel.instance_states.get(widget_key) {
+                Some(crate::widgets::WidgetInstanceState::List { scroll_offset, .. }) => {
+                    *scroll_offset
+                }
+                _ => 0,
+            };
+            panel.instance_states.insert(
+                widget_key.to_string(),
+                crate::widgets::WidgetInstanceState::List {
+                    scroll_offset: prev_scroll,
+                    selected_index: index,
+                },
+            );
+        }
+        self.rerender_widget_panel(panel_id);
+    }
+
     /// Same as [`handle_widget_select_move`] but targets an explicit
     /// `List` widget key instead of the panel's focused widget. Used
     /// by the picker-style smart-key dispatch — `Up`/`Down` on a

@@ -256,6 +256,21 @@ impl Editor {
                         handled_specially = true;
                     }
                 }
+                // List row click: the host owns the List's selected
+                // index, but a click only yields a `select` hit and —
+                // unlike keyboard nav — doesn't move that selection.
+                // Sync it (and repaint) so the highlight follows the
+                // click and a later Up/Down resumes from the clicked
+                // row. We still fall through to fire the `select` event
+                // so plugins can refresh dependent panes.
+                if hit.widget_kind == "list" && hit.event_type == "select" {
+                    if let (Some(list_key), Some(idx)) = (
+                        hit.payload.get("list_key").and_then(|v| v.as_str()),
+                        hit.payload.get("index").and_then(|v| v.as_i64()),
+                    ) {
+                        self.set_widget_list_selected_index(panel_id, list_key, idx as i32);
+                    }
+                }
                 if !handled_specially
                     && self
                         .plugin_manager

@@ -876,6 +876,11 @@ fn render_collected(
                     payload: json!({
                         "index": i as i64,
                         "key": item_key,
+                        // The List's own spec key, so a click handler can
+                        // update the host-owned selection instance state
+                        // (keyed by this) — the item key in `key` is not
+                        // enough to find the widget. Null for keyless lists.
+                        "list_key": list_key.as_deref(),
                     }),
                     event_type: "select",
                 });

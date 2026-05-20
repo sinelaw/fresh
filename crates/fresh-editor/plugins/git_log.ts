@@ -300,6 +300,11 @@ function detailFooter(hash: string): string {
   return editor.t("status.commit_ready", { hash });
 }
 
+/** Stable widget key for the log List. The host keys selection +
+ * scroll instance state off this; the plugin re-pins selection
+ * through it after click/keyboard `select` events. */
+const LOG_LIST_KEY = "git-log-list";
+
 function renderLog(): void {
   if (state.logPanel === null) return;
   // List takes the per-row entries directly. selectedIndex: -1 on the
@@ -321,7 +326,7 @@ function renderLog(): void {
       // scroll handle viewport. Revisit if commit lists grow into the
       // tens of thousands.
       visibleRows: Math.max(1, state.commits.length),
-      key: "git-log-list",
+      key: LOG_LIST_KEY,
     }),
   );
 }
@@ -652,9 +657,10 @@ async function show_git_log(): Promise<void> {
 
   renderToolbar();
   renderLog();
-  // List widget's instance state is the source of truth for selection;
-  // no buffer-cursor positioning needed (the renderer auto-scrolls so
-  // the selected row stays visible).
+  // List widget's instance state is the source of truth for selection.
+  // The selected row is kept in view by `scrollBufferToLine` from
+  // `on_log_select` as the user navigates; the initial selection (0) is
+  // already at the top so no scroll is needed here.
   await refreshDetail();
 
   editor.on("resize", on_git_log_resize);
@@ -1122,6 +1128,17 @@ async function on_log_select(idx: number): Promise<void> {
   if (!state.isOpen) return;
   if (idx === state.selectedIndex) return;
   state.selectedIndex = idx;
+
+  // The List renders every commit row directly into the panel buffer
+  // (visibleRows == commits.length), so the host's intra-widget
+  // auto-scroll never fires — the buffer's own viewport has to follow
+  // the selection. Scroll the row into view on every select, whether it
+  // came from keyboard nav or a row click. (The host owns the selection
+  // highlight and updates it for both nav and clicks; this only handles
+  // the viewport.)
+  if (state.logBufferId !== null) {
+    editor.scrollBufferToLine(state.logBufferId, idx);
+  }
 
   const commit = state.commits[state.selectedIndex];
   if (commit) {
