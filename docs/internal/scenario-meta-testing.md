@@ -121,6 +121,33 @@ clear selection
 Both are bugs the fresh-harness model can never surface — which is the
 entire reason for using an active reset instead of a fresh harness.
 
+### Same evaluation semantics as the canonical runner
+
+The combination driver (`run_scenarios_with_reset_between`) MUST evaluate
+a scenario the same way `check_buffer_scenario` does — no render — and
+share the assertion logic (`assert_buffer_expectations`). The two paths
+differ ONLY in harness lifetime: fresh-per-call in `check_buffer_scenario`,
+one shared harness + active reset in combination. Any other divergence
+(e.g. one renders and the other doesn't) makes the same `BufferScenario`
+value mean two different things and is a bug.
+
+This was learned the hard way: two corpus scenarios using `MoveDown` /
+`MoveLineEnd` / `SelectLineEnd` failed in combination. The wrong fix was
+to make combination render; the right fix is that **those actions are
+layout-dependent** — they resolve against the rendered line structure and
+**silently no-op in the no-render `BufferScenario` world** (cursor never
+moves, no selection forms). They don't belong in the buffer corpus; they
+were moved to `LayoutScenario` (which renders), and combination was kept
+no-render.
+
+Eventual goal: **unify all runners / scenario executors.** Each scenario
+type should have ONE evaluation path; drivers (regression, combination,
+proptest, shadow) reuse it and differ only along an explicit axis (harness
+lifetime, generated vs fixed inputs, live vs shadow). `check_buffer_scenario`
+and the combination driver already share `assert_buffer_expectations`;
+the next step is a shared `run_buffer_actions(harness, &[Action])` so the
+dispatch half is shared too.
+
 ## Build order
 
 1. Minimization on `BufferScenario` (self-contained; no reset needed) →
@@ -137,3 +164,10 @@ entire reason for using an active reset instead of a fresh harness.
 - Extending combination beyond the buffer layer would need a richer
   reset (history/config/markers) — revisit only if the buffer-layer
   results prove valuable.
+- **Guardrail:** the no-render buffer runner *silently* no-ops on
+  layout-dependent actions (`MoveDown`, `MoveLineEnd`, `SelectLineEnd`,
+  …) instead of rejecting them — which is how a layout-dependent
+  scenario slipped into the buffer corpus. `check_buffer_scenario`
+  should loudly reject those actions ("layout-dependent; use
+  LayoutScenario") so the mistake fails clearly instead of producing a
+  confusing cursor mismatch.
