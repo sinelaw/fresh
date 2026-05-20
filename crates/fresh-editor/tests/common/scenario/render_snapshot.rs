@@ -280,6 +280,19 @@ pub struct RenderSnapshotExpect {
     pub gutter_width: Option<u16>,
     #[serde(default)]
     pub visible_byte_range: Option<(usize, usize)>,
+    /// Primary cursor byte position must equal this value exactly.
+    /// The snapshot's `cursor_byte` is `primary_caret().position`,
+    /// so this is the same observable the e2e originals assert via
+    /// `harness.cursor_position()`.
+    #[serde(default)]
+    pub cursor_byte: Option<usize>,
+    /// Primary cursor byte position must lie in this inclusive
+    /// range `[lo, hi]`. Used for "cursor stays within line N's
+    /// wrapped visual rows" claims (issue #1147) where the exact
+    /// byte depends on wrap geometry but the line's byte span is
+    /// known.
+    #[serde(default)]
+    pub cursor_byte_in: Option<(usize, usize)>,
     /// The cursor's logical byte position (the snapshot's
     /// `viewport.top_byte`-anchored window via `visible_byte_range`)
     /// must include this byte. Used for "after Ctrl+End the doc
@@ -464,6 +477,24 @@ impl RenderSnapshotExpect {
                     "visible_byte_range",
                     format!("{want:?}"),
                     format!("{:?}", actual.viewport.visible_byte_range),
+                ));
+            }
+        }
+        if let Some(want) = self.cursor_byte {
+            if want != actual.cursor_byte {
+                return Some((
+                    "cursor_byte",
+                    want.to_string(),
+                    actual.cursor_byte.to_string(),
+                ));
+            }
+        }
+        if let Some((lo, hi)) = self.cursor_byte_in {
+            if actual.cursor_byte < lo || actual.cursor_byte > hi {
+                return Some((
+                    "cursor_byte_in",
+                    format!("[{lo},{hi}]"),
+                    actual.cursor_byte.to_string(),
                 ));
             }
         }

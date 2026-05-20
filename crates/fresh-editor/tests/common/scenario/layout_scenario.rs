@@ -90,6 +90,14 @@ pub struct LayoutScenario {
     /// the caller controls exactly which points are observed.
     #[serde(default)]
     pub viewport_top_byte_distinct_at_most: Option<usize>,
+    /// Cross-step invariant: the primary cursor's byte position
+    /// must strictly increase across the `step_assertions`
+    /// snapshots (in their original order). Encodes the
+    /// "each press advances the cursor" claim of issue #1147's
+    /// End-key and Down-arrow wrapped-segment-traversal tests,
+    /// where the bug was the cursor getting stuck (no advance).
+    #[serde(default)]
+    pub cursor_byte_strictly_increases_across_steps: bool,
     /// One-shot "redraw-screen" flag assertion: when `Some(want)`,
     /// the runner checks
     /// `EditorTestApi::take_full_redraw_request_for_tests()` against
@@ -531,6 +539,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
     step_assertions.sort_by_key(|sa| sa.after_action_index);
 
     let mut top_byte_observations: Vec<usize> = Vec::new();
+    let mut cursor_byte_observations: Vec<usize> = Vec::new();
 
     for step in &step_assertions {
         let want_inclusive = step.after_action_index + 1;
@@ -553,6 +562,7 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         }
         let snapshot = extract_snapshot(&mut harness);
         top_byte_observations.push(snapshot.viewport.top_byte);
+        cursor_byte_observations.push(snapshot.cursor_byte);
         if let Some((field, expected, actual)) = step.expect.check_against(&snapshot) {
             return Err(ScenarioFailure::SnapshotFieldMismatch {
                 description: format!(
@@ -571,6 +581,18 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
         let remaining = &s.actions[dispatched_up_to..];
         let api: &mut dyn EditorTestApi = harness.api_mut();
         api.dispatch_seq(remaining);
+    }
+
+    // Settle layout after the action phase before any input events
+    // run. Layout-dependent key handlers (e.g. the End key's
+    // per-visual-segment traversal) need the post-action layout
+    // rendered first, otherwise the first event operates on stale
+    // layout (e.g. End jumps straight to the logical line end
+    // instead of walking visual segments).
+    if !s.events.is_empty() {
+        harness
+            .render()
+            .expect("render between action phase and events failed");
     }
 
     // Dispatch declarative input events (mouse, hunk-nav, etc.)
@@ -713,6 +735,19 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 expected: format!("<= {max_distinct} distinct value(s)"),
                 actual: format!("{} distinct value(s): {:?}", sorted.len(), sorted),
             });
+        }
+    }
+
+    if s.cursor_byte_strictly_increases_across_steps {
+        for win in cursor_byte_observations.windows(2) {
+            if win[1] <= win[0] {
+                return Err(ScenarioFailure::SnapshotFieldMismatch {
+                    description: s.description.clone(),
+                    field: "cursor_byte_strictly_increases_across_steps".into(),
+                    expected: "each step's cursor_byte > previous step's".into(),
+                    actual: format!("observed cursor bytes: {cursor_byte_observations:?}"),
+                });
+            }
         }
     }
 
@@ -945,7 +980,17 @@ fn dispatch_layout_event(
                 .map_err(|e| ScenarioFailure::InputProjectionFailed {
                     description: description.into(),
                     reason: format!("send_key({code:?}, {modifiers:?}): {e}"),
-                })
+                })?;
+            // Render after each key so layout-dependent handlers
+            // (e.g. the End key's per-visual-segment traversal on a
+            // wrapped line) observe fresh layout state between
+            // successive keypresses, exactly as the real event loop
+            // does. Without this, back-to-back End presses collapse
+            // to a single logical-line-end jump.
+            harness
+                .render()
+                .expect("render after SendKey event failed");
+            Ok(())
         }
         InputEvent::CompositeNextHunk { count } => {
             let handle = composite_handle.ok_or_else(|| ScenarioFailure::InputProjectionFailed {

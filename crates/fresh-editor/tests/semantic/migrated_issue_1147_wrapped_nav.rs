@@ -21,6 +21,7 @@
 //! Source: `tests/e2e/issue_1147_wrapped_line_nav.rs` (4 tests +
 //! 1 anti-test; 0 deferred).
 
+use crate::common::scenario::input_event::{InputEvent, KeyMods, KeySpec};
 use crate::common::scenario::layout_scenario::{
     assert_layout_scenario, LayoutScenario, StepAssertion,
 };
@@ -115,121 +116,166 @@ fn migrated_issue_1147_up_arrow_does_not_drift_viewport_at_end_of_wrapped_file()
 #[test]
 fn migrated_issue_1147_down_arrow_traverses_wrapped_visual_lines() {
     // Original: `test_issue_1147_down_arrow_should_traverse_wrapped_visual_lines`.
-    // Cursor at the start of line 24 (a line that wraps to several
-    // visual rows). One Down press must keep the cursor *within*
-    // line 24 (advancing one visual row), not skip directly to
-    // line 25. A second Down should still be inside line 24.
+    // Ctrl+Home, then Ctrl+G 24 lands the cursor at the start of
+    // line 24 (a line that wraps to several visual rows). Each
+    // Down press must keep the cursor *within* line 24 — bytes
+    // [line_24_start, line_25_start) — advancing one visual row,
+    // not skipping straight to line 25. The bug skipped to line 25
+    // (or beyond) on the first Down.
+    //
+    // Faithful to the e2e cursor-byte assertions: after GotoLine
+    // the cursor is exactly line_24_start; after each Down it is
+    // in [line_24_start, line_25_start-1]; and the two Downs make
+    // strictly forward progress.
     let content = make_issue_1147_content();
-    let _line_24_start = line_start_byte(&content, 24);
-    let _line_25_start = line_start_byte(&content, 25);
-    // Cursor must lie in [line_24_start, line_25_start) after each
-    // Down. The DSL doesn't expose cursor byte directly; the
-    // declarative observable that captures this is "viewport
-    // top_byte stayed pinned" — because the cursor traversing
-    // line 24's wrapped rows must not scroll the viewport (line
-    // 24 fits inside the visible area). If the bug fired (Down
-    // skipped to line 25 or further), the viewport would either
-    // scroll or the cursor would land past line 24's wrapped
-    // span. We bound `viewport_top_byte_distinct_at_most: Some(1)`
-    // across the GotoLine + 2 Down step snapshots — under the
-    // bug, the viewport would scroll between Down presses to
-    // chase the cursor jumping past line 24.
+    let line_24_start = line_start_byte(&content, 24);
+    let line_25_start = line_start_byte(&content, 25);
+    // "within line 24" = [line_24_start, line_25_start - 1] (the
+    // byte before line 25's start, which is line 24's trailing
+    // boundary). The original asserts pos < line_25_start.
+    let within_line_24 = (line_24_start, line_25_start - 1);
+
     let actions = vec![
+        Action::MoveDocumentStart, // mirror the e2e Ctrl+Home
         Action::GotoLine,
         Action::InsertChar('2'),
         Action::InsertChar('4'),
-        Action::PromptConfirm,
-        Action::MoveDown,
-        Action::MoveDown,
+        Action::PromptConfirm, // index 4: cursor at line_24_start
+        Action::MoveDown,      // index 5: 1st Down
+        Action::MoveDown,      // index 6: 2nd Down
     ];
-
-    // The load-bearing per-step claim from the e2e is that the
-    // *cursor byte* stays within [line_24_start, line_25_start)
-    // after each MoveDown. We express that by per-step row checks:
-    // after each Down the rendered cursor must be on a row whose
-    // text is line-24 content (not line-25 content). Use
-    // `RowMatch::NoRowContains` of a substring unique to line 25.
-    // Line 25's content starts with "Line 25 - this line is
-    // extremely long ...". Picking "Line 25 -" as the substring
-    // we forbid on the cursor row.
-    //
-    // The per-step shape requires hardware cursor row info from
-    // `RenderSnapshotExpect`. We use a hybrid: snapshot top_byte
-    // each step and bound distinct top_byte values to 1 (viewport
-    // never scrolls between the two Downs because line 24 stays
-    // visible).
-    let step_assertions: Vec<StepAssertion> = (3..=5)
-        .map(|i| StepAssertion {
-            after_action_index: i,
-            expect: RenderSnapshotExpect::default(),
-        })
-        .collect();
+    let step_assertions = vec![
+        StepAssertion {
+            after_action_index: 4,
+            expect: RenderSnapshotExpect {
+                cursor_byte: Some(line_24_start),
+                ..Default::default()
+            },
+        },
+        StepAssertion {
+            after_action_index: 5,
+            expect: RenderSnapshotExpect {
+                cursor_byte_in: Some(within_line_24),
+                ..Default::default()
+            },
+        },
+        StepAssertion {
+            after_action_index: 6,
+            expect: RenderSnapshotExpect {
+                cursor_byte_in: Some(within_line_24),
+                ..Default::default()
+            },
+        },
+    ];
     assert_layout_scenario(LayoutScenario {
-        description: "Down ×2 from start of wrapped line 24 stays inside line 24".into(),
+        description: "Down ×2 from start of wrapped line 24 stays inside line 24 and advances"
+            .into(),
         initial_text: content,
         width: 80,
         height: 25,
         actions,
         step_assertions,
-        // Cursor stays inside line 24's wrapped span ⇒ viewport
-        // never scrolls past it. Distinct top_byte values across
-        // GotoLine completion + 2 Downs = 1.
-        viewport_top_byte_distinct_at_most: Some(1),
+        // GotoLine → line_24_start, 1st Down → further, 2nd Down →
+        // further still: strictly increasing cursor byte (the e2e's
+        // `pos_after_second_down > pos_after_first_down` claim,
+        // generalised across the GotoLine baseline too).
+        cursor_byte_strictly_increases_across_steps: true,
         ..Default::default()
     });
 }
 
-#[test]
-fn migrated_issue_1147_end_key_advances_through_wrapped_visual_segments() {
-    // Original: `test_issue_1147_end_key_advances_through_wrapped_segments`.
-    // Claim subset: pressing End on a wrapped line must eventually
-    // reach the *logical* end of the line, not stick at the end of
-    // the first visual segment.
-    let content = make_issue_1147_content();
-    let _line_24_start = line_start_byte(&content, 24);
-    let _line_25_start = line_start_byte(&content, 25);
-
-    // GotoLine 24 + 6 End presses. Pre-fix the cursor stuck at
-    // the end of the first visual segment and the viewport never
-    // advanced. We approximate the cursor-reached claim via per-
-    // step `viewport_top_byte_distinct_at_most`: each End press
-    // either advances or no-ops at the logical end; under the
-    // bug, top_byte stays pinned (1 distinct value) because the
-    // cursor never moves past visual segment 1. The fix produces
-    // a small number (≤ 3) of distinct top_byte values across
-    // the 6 End presses — but with width 80 / height 25 / line
-    // 24 already centered in the viewport, the End traversal
-    // doesn't necessarily scroll at all. So the strongest
-    // assertion we can make declaratively without exposing
-    // cursor byte is "viewport_top_byte_distinct_at_most: 3"
-    // (cap the scrolling spread — under the bug the cursor
-    // wouldn't move, so this is permissive but the *positive*
-    // claim is captured by Asserting the runner completes the 6
-    // End presses without error — see the issue_1147 e2e for
-    // the cursor-byte advancement guarantee).
-    let mut actions = vec![
-        Action::GotoLine,
-        Action::InsertChar('2'),
-        Action::InsertChar('4'),
-        Action::PromptConfirm,
-    ];
-    actions.extend(std::iter::repeat(Action::MoveLineEnd).take(6));
-    let step_assertions: Vec<StepAssertion> = (4..actions.len())
-        .map(|i| StepAssertion {
-            after_action_index: i,
-            expect: RenderSnapshotExpect::default(),
-        })
-        .collect();
-    assert_layout_scenario(LayoutScenario {
-        description: "End ×6 on wrapped line 24 advances cursor to logical line end".into(),
-        initial_text: content,
+/// Build a scenario that goes to the start of line 26 and presses
+/// the `End` KEY `num_end_presses` times, asserting the cursor's
+/// final byte is `expected_cursor_byte`.
+///
+/// The original e2e uses `KeyCode::End` via `send_key`. We mirror
+/// that exactly with `InputEvent::SendKey { code: End }` rather
+/// than `Action::MoveLineEnd` — the two are NOT equivalent on a
+/// wrapped line: the production End-key handler walks visual
+/// segments and then reaches the logical line end, whereas
+/// `Action::MoveLineEnd` stalls at the second segment. Faithfully
+/// reproducing issue #1147 requires the key path.
+fn end_key_scenario(num_end_presses: usize, expected_cursor_byte: usize) -> LayoutScenario {
+    LayoutScenario {
+        description: format!(
+            "GotoLine 26 + End key ×{num_end_presses} → cursor byte {expected_cursor_byte}"
+        ),
+        initial_text: make_issue_1147_content(),
         width: 80,
         height: 25,
-        actions,
-        step_assertions,
-        viewport_top_byte_distinct_at_most: Some(3),
+        actions: vec![
+            Action::GotoLine,
+            Action::InsertChar('2'),
+            Action::InsertChar('6'),
+            Action::PromptConfirm,
+        ],
+        events: std::iter::repeat(InputEvent::SendKey {
+            code: KeySpec::End,
+            modifiers: KeyMods::NONE,
+        })
+        .take(num_end_presses)
+        .collect(),
+        expected_snapshot: RenderSnapshotExpect {
+            cursor_byte: Some(expected_cursor_byte),
+            ..Default::default()
+        },
         ..Default::default()
-    });
+    }
+}
+
+// Issue #1147 Bug #3: the End key on a wrapped line must advance
+// through each visual segment and ultimately reach the *logical*
+// line end, instead of getting stuck on the first visual segment.
+// Line 26 is the last line (no trailing newline) and wraps to four
+// visual segments in an 80-col terminal; its logical end is the end
+// of the buffer. The exact per-segment byte offsets are pinned so a
+// regression that stalls End on any earlier segment is caught.
+//
+// Original: `test_issue_1147_end_key_should_advance_through_wrapped_segments`
+// (asserted pos_after_1st < pos_after_2nd < pos_after_3rd, each
+// strictly within line 26, then reaches line_26_end).
+
+#[test]
+fn migrated_issue_1147_end_key_first_press_lands_on_first_visual_segment_end() {
+    assert_layout_scenario(end_key_scenario(1, 1402));
+}
+
+#[test]
+fn migrated_issue_1147_end_key_second_press_advances_past_first_segment() {
+    // The load-bearing "not stuck" claim: End #2 (1471) is strictly
+    // past End #1 (1402) and still short of the logical line end.
+    assert_layout_scenario(end_key_scenario(2, 1471));
+}
+
+#[test]
+fn migrated_issue_1147_end_key_third_press_advances_again() {
+    assert_layout_scenario(end_key_scenario(3, 1541));
+}
+
+#[test]
+fn migrated_issue_1147_end_key_reaches_logical_line_end() {
+    // Four presses reach line 26's logical end (= end of buffer,
+    // 1586); a fifth/sixth press stays put. We assert the
+    // logical-end byte after six presses — under the bug the
+    // cursor would have stuck at 1402 and never reached 1586.
+    let content_len = make_issue_1147_content().len();
+    assert_layout_scenario(end_key_scenario(6, content_len));
+}
+
+/// Anti-test: a SINGLE End press cannot reach the logical line end
+/// (1586) on this multiply-wrapped line — it lands on the first
+/// visual segment (1402). If `end_key_scenario(1, 1586)` somehow
+/// passed, the End key would be jumping straight to the logical end
+/// (regressing the visual-segment traversal). The runner must
+/// return Err.
+#[test]
+fn anti_issue_1147_single_end_press_does_not_reach_logical_end() {
+    use crate::common::scenario::layout_scenario::check_layout_scenario;
+    let content_len = make_issue_1147_content().len();
+    assert!(
+        check_layout_scenario(end_key_scenario(1, content_len)).is_err(),
+        "anti: one End press lands on the first visual segment, not the logical line end"
+    );
 }
 
 #[test]
