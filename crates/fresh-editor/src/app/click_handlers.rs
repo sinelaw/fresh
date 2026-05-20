@@ -263,12 +263,20 @@ impl Editor {
                 // click and a later Up/Down resumes from the clicked
                 // row. We still fall through to fire the `select` event
                 // so plugins can refresh dependent panes.
+                //
+                // The fired event reports the List's *spec* key (the
+                // per-item key stays in `payload.key`), so click and
+                // keyboard nav deliver an identical `widget_key` — a
+                // plugin gating its handler on the list key works for
+                // both. (Keyboard nav fires the list key via
+                // `handle_widget_select_move_for_key`.)
+                let mut event_widget_key = hit.widget_key.clone();
                 if hit.widget_kind == "list" && hit.event_type == "select" {
-                    if let (Some(list_key), Some(idx)) = (
-                        hit.payload.get("list_key").and_then(|v| v.as_str()),
-                        hit.payload.get("index").and_then(|v| v.as_i64()),
-                    ) {
-                        self.set_widget_list_selected_index(panel_id, list_key, idx as i32);
+                    if let Some(list_key) = hit.payload.get("list_key").and_then(|v| v.as_str()) {
+                        event_widget_key = list_key.to_string();
+                        if let Some(idx) = hit.payload.get("index").and_then(|v| v.as_i64()) {
+                            self.set_widget_list_selected_index(panel_id, list_key, idx as i32);
+                        }
                     }
                 }
                 if !handled_specially
@@ -282,7 +290,7 @@ impl Editor {
                         "widget_event",
                         HookArgs::WidgetEvent {
                             panel_id,
-                            widget_key: hit.widget_key.clone(),
+                            widget_key: event_widget_key,
                             event_type: hit.event_type.to_string(),
                             payload: hit.payload.clone(),
                         },

@@ -4091,6 +4091,29 @@ mod tests {
     }
 
     #[test]
+    fn list_hit_payload_carries_list_key() {
+        // The click handler needs the List's *spec* key to update the
+        // host-owned selection (instance state is keyed by it) and to
+        // report a `widget_key` consistent with keyboard nav. The
+        // per-item key alone (in `payload.key`) can't identify the
+        // widget, so every list hit must carry `list_key`.
+        let spec = make_list(-1, 10, 2, Some("mylist"));
+        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].payload["list_key"], "mylist");
+        assert_eq!(hits[1].payload["list_key"], "mylist");
+    }
+
+    #[test]
+    fn list_hit_payload_list_key_is_null_when_keyless() {
+        // A keyless List has no instance state to update, so the click
+        // handler must be able to tell (null) and skip the sync.
+        let spec = make_list(-1, 10, 1, None);
+        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        assert!(hits[0].payload["list_key"].is_null());
+    }
+
+    #[test]
     fn list_with_missing_key_emits_empty_widget_key() {
         let spec = WidgetSpec::List {
             items: vec![TextPropertyEntry::text("a"), TextPropertyEntry::text("b")],

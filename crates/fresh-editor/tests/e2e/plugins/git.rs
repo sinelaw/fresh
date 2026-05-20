@@ -1397,6 +1397,178 @@ fn test_git_log_down_arrow_progresses_through_commits() {
         .unwrap();
 }
 
+/// 0-based screen row of the first line containing `needle`, or panic
+/// (dumping the screen) if absent. Used to locate a specific log row
+/// before clicking it.
+fn screen_row_of(harness: &EditorTestHarness, needle: &str) -> u16 {
+    let screen = harness.screen_to_string();
+    for (i, line) in screen.lines().enumerate() {
+        if line.contains(needle) {
+            return i as u16;
+        }
+    }
+    panic!("'{needle}' not found on screen:\n{screen}");
+}
+
+/// Regression (Bug 1): navigating the commit list with the keyboard must
+/// scroll the log pane's viewport so the selected row stays visible. The
+/// List renders every commit row into the panel buffer (`visibleRows ==
+/// commits.length`), so the widget's intra-window auto-scroll never fires
+/// — the plugin scrolls the buffer itself (`scrollBufferToLine`) on each
+/// `select`. Without that, the selection moves off-screen and the viewport
+/// stays pinned at the newest commit.
+#[test]
+fn test_git_log_keyboard_scroll_follows_selection() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+
+    // Enough commits that the list can't fit in the viewport. Each gets
+    // a uniquely-numbered subject so we can tell which rows are on screen.
+    let total = 30;
+    for i in 1..=total {
+        let name = format!("scrollfile{i:02}.txt");
+        repo.create_file(&name, "x");
+        repo.git_add(&[&name]);
+        repo.git_commit(&format!("scrollcommit-{i:02}"));
+    }
+
+    repo.setup_git_log_plugin();
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // Short terminal so the 30 commits clearly overflow the log pane.
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        24,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("switch pane"))
+        .unwrap();
+
+    // HEAD (scrollcommit-30) is selected and its row sits at the top of
+    // the pane — visible before any scrolling.
+    assert!(
+        harness.screen_to_string().contains("scrollcommit-30"),
+        "newest commit's row should be visible at the top on open"
+    );
+
+    // Walk the selection all the way to the oldest commit.
+    for _ in 0..(total - 1) {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+
+    // Selection reached the bottom (status updates synchronously on each
+    // `select`, independent of the async detail fetch).
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains(&format!("Commit {total}/{total}"))
+        })
+        .unwrap();
+
+    // Inspect only the log pane — the column left of the vertical split
+    // divider. The detail pane on the right shows the *previously opened*
+    // commit's diff (its `git show` is async and lags the synchronous
+    // selection), so a whole-screen match would spuriously find the
+    // newest commit's subject there.
+    let screen = harness.screen_to_string();
+    let log_pane: String = screen
+        .lines()
+        .map(|l| l.split('│').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // The discriminating check: the newest commit's row must have
+    // scrolled off the top. If the viewport never followed the selection
+    // (the bug), it stays pinned at the top and this row is still here.
+    assert!(
+        !log_pane.contains("scrollcommit-30"),
+        "log viewport did not scroll to follow the selection — newest \
+         commit still visible after navigating to the oldest:\n{screen}"
+    );
+    // And the oldest commit's row is now visible at the bottom.
+    assert!(
+        log_pane.contains("scrollcommit-01"),
+        "oldest commit's row should be visible after scrolling to it:\n{screen}"
+    );
+}
+
+/// Regression (Bug 2): clicking a commit row must move the host-owned List
+/// selection, not just fire a one-off event. Before the fix a click only
+/// updated the detail pane; the selection index stayed put, so a following
+/// Up/Down resumed from the old position instead of the clicked row.
+#[test]
+fn test_git_log_mouse_click_updates_selection_for_keyboard_nav() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+
+    // Six commits, each with a uniquely-named file so the detail pane
+    // unambiguously identifies the selected commit.
+    for i in 1..=6 {
+        let name = format!("clickfile{i:02}.txt");
+        repo.create_file(&name, "x");
+        repo.git_add(&[&name]);
+        repo.git_commit(&format!("clickcommit-{i:02}"));
+    }
+
+    repo.setup_git_log_plugin();
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+    // On open HEAD (clickcommit-06, index 0) is selected.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("clickfile06.txt"))
+        .unwrap();
+
+    // Click the third row from the top: clickcommit-04 (index 2). It is
+    // not the selected commit, so its subject appears only in the log
+    // pane — a stable click target.
+    let row = screen_row_of(&harness, "clickcommit-04");
+    harness.mouse_click(10, row).unwrap();
+
+    // The click moved the selection to index 2: status shows 3/6 and the
+    // detail pane switches to that commit's file.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Commit 3/6") && s.contains("clickfile04.txt")
+        })
+        .unwrap();
+
+    // Now press Down once. If the click updated the host selection,
+    // navigation continues from index 2 → index 3 (clickcommit-03). If it
+    // didn't, Down would resume from the stale index 0 → index 1
+    // (clickcommit-05) and this assertion fails.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Commit 4/6") && s.contains("clickfile03.txt")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("clickfile05.txt"),
+        "Down after click resumed from the stale top selection instead of \
+         the clicked row:\n{screen}"
+    );
+}
+
 /// Regression: pressing Enter on a diff line in the commit details panel
 /// opens the file at that commit. Closing the file-view and pressing Enter
 /// again on a diff line must also work — it previously failed with
