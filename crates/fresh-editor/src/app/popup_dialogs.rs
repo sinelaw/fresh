@@ -999,6 +999,7 @@ impl Editor {
         use ratatui::style::Style;
 
         self.workspace_trust_prompt_cancellable = cancellable;
+        self.workspace_trust_scroll = 0;
         self.workspace_trust_markers =
             crate::services::workspace_trust::executable_content_markers(&self.working_dir);
 

@@ -52,6 +52,18 @@ impl Editor {
             return Ok(false);
         }
 
+        // The workspace-trust modal captures every mouse event: clicks act on
+        // its controls (and are otherwise absorbed), the wheel scrolls it. None
+        // of it may leak to the buffer behind (which would move the cursor).
+        if self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )
+        }) {
+            return self.handle_workspace_trust_mouse(mouse_event);
+        }
+
         // Cancel LSP rename prompt on any mouse interaction
         let mut needs_render = false;
         if let Some(ref prompt) = self.active_window_mut().prompt {
@@ -1417,9 +1429,6 @@ impl Editor {
         if let Some(r) = self.handle_click_popup_scrollbar(col, row) {
             return r;
         }
-        if let Some(r) = self.handle_click_workspace_trust_dialog(col, row) {
-            return r;
-        }
         if let Some(r) = self.handle_click_global_popups(col, row) {
             return r;
         }
@@ -1665,42 +1674,51 @@ impl Editor {
         Some(Ok(()))
     }
 
-    /// Handle clicks on the workspace-trust modal: a radio row selects + confirms
-    /// that option, [ OK ] confirms the current selection, [ Quit ] exits the
-    /// editor, and any other click inside the dialog is absorbed (it's modal).
-    fn handle_click_workspace_trust_dialog(
+    /// Handle every mouse event while the workspace-trust modal is up. Left
+    /// clicks act on its controls (radio rows select + confirm; [ OK ] confirms
+    /// the current selection; the secondary button cancels or quits); the wheel
+    /// scrolls an overflowing dialog. Everything else is absorbed so nothing
+    /// reaches the buffer behind the modal.
+    fn handle_workspace_trust_mouse(
         &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let layout = self.active_chrome().workspace_trust_dialog.clone()?;
-        let hit = |r: ratatui::layout::Rect| in_rect(col, row, r);
-        if hit(layout.ok) {
-            let idx = self.current_workspace_trust_selection();
-            self.confirm_workspace_trust(idx);
-            return Some(Ok(()));
-        }
-        if hit(layout.quit) {
-            // Secondary button: Cancel (just close) for a voluntarily-opened
-            // prompt, Quit (exit the editor) for the mandatory open-time gate.
-            self.hide_popup();
-            if !self.workspace_trust_prompt_cancellable {
-                self.should_quit = true;
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let col = mouse_event.column;
+        let row = mouse_event.row;
+        let layout = self.active_chrome().workspace_trust_dialog.clone();
+
+        match mouse_event.kind {
+            MouseEventKind::ScrollUp => {
+                self.workspace_trust_scroll = self.workspace_trust_scroll.saturating_sub(2);
             }
-            return Some(Ok(()));
-        }
-        for (i, radio) in layout.radios.iter().enumerate() {
-            if hit(*radio) {
-                self.confirm_workspace_trust(i);
-                return Some(Ok(()));
+            MouseEventKind::ScrollDown => {
+                let max = layout.as_ref().map(|l| l.max_scroll).unwrap_or(0);
+                self.workspace_trust_scroll = (self.workspace_trust_scroll + 2).min(max);
             }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(layout) = layout {
+                    let hit = |r: ratatui::layout::Rect| in_rect(col, row, r);
+                    if hit(layout.ok) {
+                        let idx = self.current_workspace_trust_selection();
+                        self.confirm_workspace_trust(idx);
+                    } else if hit(layout.quit) {
+                        // Secondary: Cancel (close) when voluntarily opened,
+                        // Quit (exit the editor) for the mandatory open-time gate.
+                        self.hide_popup();
+                        if !self.workspace_trust_prompt_cancellable {
+                            self.should_quit = true;
+                        }
+                    } else if let Some(i) = layout.radios.iter().position(|r| hit(*r)) {
+                        self.confirm_workspace_trust(i);
+                    }
+                    // else: click on the dialog body or dimmed backdrop — absorb.
+                }
+            }
+            // Drag / move / release / right-click / horizontal scroll: absorb.
+            _ => {}
         }
-        // Absorb any other click within the dialog so it can't reach the
-        // buffer/dashboard behind this modal.
-        if hit(layout.dialog) {
-            return Some(Ok(()));
-        }
-        None
+        Ok(true)
     }
 
     fn handle_click_global_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {

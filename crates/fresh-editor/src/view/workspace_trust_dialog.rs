@@ -46,9 +46,13 @@ pub struct TrustDialogLayout {
     /// Outer dialog rect (borders included) — absorbs stray clicks.
     pub dialog: Rect,
     /// The radio line for each option (index matches the selection index).
+    /// A zero-area rect means that row is currently scrolled out of view.
     pub radios: [Rect; 3],
     pub ok: Rect,
     pub quit: Rect,
+    /// Maximum scroll offset (rows) — 0 when the dialog fits. Mouse-wheel
+    /// handling clamps the scroll offset to this.
+    pub max_scroll: u16,
 }
 
 /// Render the workspace-trust prompt centered in `area`, with `selected`
@@ -64,6 +68,7 @@ pub fn render_workspace_trust_dialog(
     path: &str,
     triggers: &str,
     secondary_label: &str,
+    scroll: u16,
     theme: &Theme,
 ) -> TrustDialogLayout {
     let width = DIALOG_WIDTH.min(area.width.saturating_sub(4));
@@ -158,9 +163,21 @@ pub fn render_workspace_trust_dialog(
         }
     };
 
-    for (r, seg) in segs.into_iter().enumerate() {
-        let r = r as u16;
-        if r >= inner.height {
+    // Scroll window: when the content is taller than the inner area (small
+    // terminal), render the slice [scroll, scroll+visible) and show a scrollbar.
+    let visible = inner.height;
+    let content_rows = segs.len() as u16;
+    let max_scroll = content_rows.saturating_sub(visible);
+    let scroll = scroll.min(max_scroll);
+    layout.max_scroll = max_scroll;
+
+    for (lr, seg) in segs.into_iter().enumerate() {
+        let lr = lr as u16;
+        if lr < scroll {
+            continue;
+        }
+        let r = lr - scroll;
+        if r >= visible {
             break;
         }
         match seg {
@@ -238,6 +255,23 @@ pub fn render_workspace_trust_dialog(
                 layout.quit = sec_rect;
             }
         }
+    }
+
+    // Scrollbar in the right-most inner column when the dialog overflows.
+    if max_scroll > 0 {
+        let track = Rect {
+            x: inner.x + iw.saturating_sub(1),
+            y: inner.y,
+            width: 1,
+            height: visible,
+        };
+        let state = crate::view::ui::scrollbar::ScrollbarState::new(
+            content_rows as usize,
+            visible as usize,
+            scroll as usize,
+        );
+        let colors = crate::view::ui::scrollbar::ScrollbarColors::from_theme(theme);
+        crate::view::ui::scrollbar::render_scrollbar(frame, track, &state, &colors);
     }
 
     layout

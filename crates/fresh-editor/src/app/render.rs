@@ -1560,6 +1560,7 @@ impl Editor {
                     &path,
                     &triggers,
                     &secondary_label,
+                    self.workspace_trust_scroll,
                     &theme_clone,
                 ),
             )

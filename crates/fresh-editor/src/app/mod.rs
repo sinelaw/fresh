@@ -460,6 +460,10 @@ pub struct Editor {
     /// dialog can tell the user why it appeared.
     workspace_trust_markers: Vec<String>,
 
+    /// Scroll offset (in rows) for the workspace-trust dialog when it's too
+    /// tall for the terminal. Driven by the mouse wheel; clamped in render.
+    workspace_trust_scroll: u16,
+
     /// Should the client detach (keep server running)?
     should_detach: bool,
 
