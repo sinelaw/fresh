@@ -86,9 +86,26 @@ pub fn run_scenarios_with_reset_between(
     let mut out = Vec::with_capacity(order.len());
     for &i in order {
         let s = &scenarios[i];
-        let mut seq = crate::common::scenario::reset::reset_actions(&s.initial_text);
-        seq.extend(s.actions.iter().cloned());
-        harness.api_mut().dispatch_seq(&seq);
+        // Active reset (logical ops) in bulk, then render so layout
+        // exists before the scenario's actions run. The real event
+        // loop renders a frame before every keystroke; that is what
+        // lets layout-dependent moves (MoveDown / MoveLineEnd /
+        // SelectLineEnd) resolve. Render after each action too, so the
+        // next action sees fresh layout — exactly like LayoutScenario.
+        harness
+            .api_mut()
+            .dispatch_seq(&crate::common::scenario::reset::reset_actions(
+                &s.initial_text,
+            ));
+        harness
+            .render()
+            .expect("combination: render after reset failed");
+        for a in &s.actions {
+            harness.api_mut().dispatch(a.clone());
+            harness
+                .render()
+                .expect("combination: render after action failed");
+        }
         out.push(assert_buffer_expectations(&mut harness, s));
     }
     out

@@ -102,23 +102,17 @@ pub fn buffer_scenarios() -> Vec<BufferScenario> {
             ..Default::default()
         },
         BufferScenario {
-            description: "MoveDocumentEnd then InsertNewline appends a blank line".into(),
+            description: "MoveDown then MoveLineEnd lands at end of the second line".into(),
             initial_text: "ab\ncde".into(),
-            actions: vec![Action::MoveDocumentEnd, Action::InsertNewline],
-            expected_text: "ab\ncde\n".into(),
-            expected_primary: CursorExpect::at(7),
+            actions: vec![Action::MoveDown, Action::MoveLineEnd],
+            expected_text: "ab\ncde".into(),
+            expected_primary: CursorExpect::at(6),
             ..Default::default()
         },
         BufferScenario {
-            description: "SelectRight x5 selects the first word across no boundary".into(),
+            description: "SelectLineEnd selects to the end of the first line".into(),
             initial_text: "hello\nworld".into(),
-            actions: vec![
-                Action::SelectRight,
-                Action::SelectRight,
-                Action::SelectRight,
-                Action::SelectRight,
-                Action::SelectRight,
-            ],
+            actions: vec![Action::SelectLineEnd],
             expected_text: "hello\nworld".into(),
             expected_primary: CursorExpect::range(0, 5),
             expected_selection_text: Some("hello".into()),
