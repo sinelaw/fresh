@@ -38,6 +38,7 @@
     "diagnostics_panel.ts",
     "diff_nav.ts",
     "elixir-lsp.ts",
+    "env-manager.ts",
     "erlang-lsp.ts",
     "find_references.ts",
     "flash.ts",

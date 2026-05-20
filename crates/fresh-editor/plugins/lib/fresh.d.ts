@@ -1212,6 +1212,16 @@ type AuthorityFilesystem = {
 type AuthoritySpawner = {
 	kind: "local";
 } | {
+	/**
+	* Spawn on the host, injecting `env` into every child (one-shot,
+	* LSP/long-running, and the command_exists probe). How an environment
+	* manager (venv / direnv / mise) activates: install the captured
+	* environment — notably a PATH whose bin/ holds the project's tools — so
+	* language servers, formatters, and spawnProcess all see it.
+	*/
+	kind: "local-with-env";
+	env?: [string, string][];
+} | {
 	kind: "docker-exec";
 	container_id: string;
 	user?: string | null;
