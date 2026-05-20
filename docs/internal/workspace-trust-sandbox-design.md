@@ -232,6 +232,99 @@ build a bespoke Windows sandbox; the honest options on locked-down Windows are
 "gate on host" or "Block." (A future, heavier option — a microVM such as
 Firecracker, or gVisor — is out of scope and also Linux/KVM-bound.)
 
+## Remote (SSH) + Sandboxed: the composition problem
+
+Running an editor against an SSH host *and* sandboxing untrusted code means the
+container must come up **on the remote host** (where the repo lives), not on the
+user's local machine. The current `Authority` model does not support this, and
+it's worth being precise about why.
+
+### What the code does today
+
+- An `Authority` holds **one** `process_spawner` and **one**
+  `long_running_spawner` (`authority/mod.rs:245`). They are chosen exclusively:
+  an SSH authority wires the SSH-routed spawners; a container authority wires
+  the docker-exec spawners. There is no nesting and no decorator — the spawner
+  is a single `Arc<dyn ProcessSpawner>`.
+- `DockerExecSpawner` runs `Command::new("docker")` directly
+  (`docker_spawner.rs:141`, `:256`, `:285`). It builds `docker exec …` argv and
+  executes it **on whatever host the editor process runs on** — i.e. always the
+  *local* docker daemon. There is no transport seam.
+- `spawnHostProcess` — the op the devcontainer plugin uses to run
+  `devcontainer up` (bring the container up) — hardcodes a local
+  `TokioCommand::new(&command)` and deliberately *bypasses the active authority*
+  (`plugin_dispatch.rs:2076`, `:2127`). So container **lifecycle** is local-only
+  as well.
+
+So an SSH authority + DockerExec spawner can't be expressed: the docker spawner
+would talk to the *local* daemon, whose containers can't see the remote
+filesystem, while the SSH filesystem points at the remote host. The two
+backends are mutually exclusive, not stackable.
+
+### Three ways to enable it
+
+**Option A — transport-agnostic docker spawner (compose over the active backend; recommended).**
+Refactor `DockerExecSpawner`/`DockerLongRunningSpawner` to delegate the *actual
+run* to an `inner: Arc<dyn ProcessSpawner>` (and inner long-running) instead of
+calling `Command::new("docker")`. The docker spawner's job becomes pure argv
+rewriting — `(cmd, args, cwd)` → `("docker", ["exec", …], None)` — and it hands
+that to `inner`. Then:
+- `inner = LocalProcessSpawner` → container on the local daemon (today's behavior).
+- `inner = RemoteProcessSpawner` (the SSH agent) → the agent runs `docker exec`
+  **on the remote host**, so the container lives remote-side. This reuses the
+  existing remote `exec` path and the `StdioChild`-over-SSH plumbing the LSP
+  already relies on (`remote/spawner.rs`), so the long-running/`docker exec -i`
+  case works the same way.
+
+This keeps the single-spawner `Authority` contract intact — the composition is
+internal to *building* the spawner, not a new field. It is the most
+Fresh-idiomatic shape (a spawner decorator over the existing trait objects).
+
+Two concrete blockers to fix alongside it:
+1. **Container lifecycle must run remote-side.** `devcontainer up` / `docker
+   run` currently go through `spawnHostProcess`, which is hardwired local.
+   Either route lifecycle through the active authority's spawner, or redefine
+   "host process" to mean *the backend's host* (the remote under SSH) rather
+   than the local machine. The latter is the cleaner mental model and fixes a
+   latent inconsistency regardless of sandboxing.
+2. **Path translation gains a layer.** Today `PathTranslation` is a single
+   host↔remote pair (`authority/mod.rs:67`). With SSH the editor's "host" paths
+   are *already* remote-host paths (the FS is the SSH FS), so the container case
+   is remote-host-path ↔ container-mount-path — likely still a single
+   translation, but the derivation changes (the mount source is a remote path,
+   resolved by the remote daemon). This needs to be worked through so LSP URIs
+   still round-trip.
+
+**Option B — `DOCKER_HOST=ssh://user@host` / docker context (local CLI, remote daemon).**
+Keep the docker spawner running the *local* `docker` CLI but point it at the
+remote daemon over SSH via `DOCKER_HOST`/a docker context. Smallest change to
+the spawner itself, but: it requires a local docker CLI *and* local→remote
+daemon SSH access (a different, sometimes awkward setup than the agent), the
+workspace must still live remote-side (the daemon resolves bind mounts there),
+and it introduces a *second* remoting mechanism parallel to the agent. Weaker
+fit with the existing architecture; reasonable only if Option A's refactor is
+too large to take on now.
+
+**Option C — run the editor/agent itself on the remote (no nesting at all).**
+If `fresh` runs *on* the remote host (the user runs it there, or a remote agent
+process hosts the editor), then "local sandbox" on that machine *is* remote
+sandbox from the user's point of view — docker is local to the agent and Option
+A's local path just works. This sidesteps composition entirely but is a
+different deployment model (editor-on-server vs editor-local-acting-on-remote).
+Worth keeping in mind: for some remote workflows it is strictly simpler than
+nesting, and it may already be a supported mode.
+
+### Recommendation
+
+Pursue **Option A**: make the docker spawner transport-agnostic by composing it
+over the active authority's spawner, and redefine container *lifecycle* to
+target the backend's host. It reuses the SSH agent exec + `StdioChild`-over-SSH
+machinery, preserves the single-spawner `Authority` contract, and the two
+blockers (remote lifecycle, path-translation layering) are tractable and worth
+fixing on their own merits. Treat **Option C** as the pragmatic fallback for
+deployments where the editor already runs remote-side, and **Option B** only if
+A can't be scheduled.
+
 ## Security caveats (do not oversell)
 
 - **A container is not a hard security boundary.** Kernel exploits, daemon
@@ -284,8 +377,10 @@ already proved out (`crates/fresh-editor/plugins/devcontainer.ts`,
 - **Build-cache sharing.** A per-project container-local cache is safe; sharing
   host caches is not. Is per-project cache duplication an acceptable disk cost,
   or do we want a Sandboxed-only shared cache volume isolated from host/Trusted?
-- **Remote (SSH) + Sandboxed.** Does the container run on the remote host (via
-  the remote's Docker) or not at all? Probably "use the remote's runtime if
-  present, else fall back" — mirrors the local logic on the far side.
+- **Remote (SSH) + Sandboxed.** Analyzed in its own section above — the
+  recommendation is Option A (transport-agnostic docker spawner composed over
+  the active backend). Remaining sub-question: when the remote host has *no*
+  container runtime, fall back to the remote host-gate or Blocked, mirroring the
+  local no-runtime logic on the far side.
 - **Async prompt/allow-once plumbing** for the no-runtime host-gate fallback is
   the prerequisite the enforcement module flags as unbuilt.
