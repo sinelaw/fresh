@@ -66,7 +66,6 @@ pub mod issue_2031_next_prev_window;
 pub mod issue_2035_preview_renders_buffer_groups;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
-pub mod issue_terminal_reopens_after_close;
 pub mod suspend_process;
 
 pub mod keybinding_editor;
