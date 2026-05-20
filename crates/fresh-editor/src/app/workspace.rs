@@ -508,10 +508,13 @@ impl Editor {
         // quitting from a Dashboard-only tab silently wiped the user's
         // saved file list (see issue #2027). Genuinely-empty quits
         // (no buffers at all) still pass through and clear the file.
-        if workspace.has_no_real_content()
-            && self.has_any_virtual_buffer()
-            && !self.closed_real_buffer_this_session
-        {
+        //
+        // The protection is for FILE/unnamed content only. Terminals are
+        // live runtime state: once the user closes a restored terminal, the
+        // on-disk terminal entry is stale, so a terminal-only on-disk
+        // workspace must NOT block this save — otherwise the closed terminal
+        // is resurrected on the next restart (terminal-reappears bug).
+        if workspace.has_no_real_content() && self.has_any_virtual_buffer() {
             let on_disk = if let Some(ref session_name) = self.session_name {
                 Workspace::load_session(session_name, &self.working_dir)
                     .ok()
@@ -520,10 +523,10 @@ impl Editor {
                 Workspace::load(&self.working_dir).ok().flatten()
             };
             if let Some(existing) = on_disk {
-                if !existing.has_no_real_content() {
+                if !existing.has_no_preservable_content() {
                     tracing::info!(
                         "Skipping workspace save: only virtual buffers are open, \
-                         on-disk workspace already has real content"
+                         on-disk workspace already has preservable file content"
                     );
                     return Ok(());
                 }

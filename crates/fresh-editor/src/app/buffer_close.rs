@@ -42,23 +42,6 @@ impl Editor {
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
-        // Record that the user explicitly closed a buffer that contributes
-        // real workspace content (a terminal or a file-backed buffer). This
-        // lets `save_workspace` tell a deliberate "closed everything" quit
-        // apart from a Dashboard-only quit, so the issue #2027 guard does not
-        // resurrect a terminal/file the user just closed (terminal-reappears
-        // bug). Virtual buffers (Dashboard, plugin scratch) don't count.
-        let closing_real = self.active_window().terminal_buffers.contains_key(&id)
-            || self
-                .active_window()
-                .buffer_metadata
-                .get(&id)
-                .map(|m| !m.is_virtual())
-                .unwrap_or(false);
-        if closing_real {
-            self.closed_real_buffer_this_session = true;
-        }
-
         // Clear preview tracking if we're closing the current preview buffer.
         // This keeps `preview` from pointing at a freed buffer id.
         if let Some((_, preview_id)) = self.active_window().preview {

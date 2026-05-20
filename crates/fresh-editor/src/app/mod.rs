@@ -455,14 +455,6 @@ pub struct Editor {
     /// Running in session/server mode (use hardware cursor only, no REVERSED style)
     session_mode: bool,
 
-    /// Set once the user explicitly closes a buffer that contributes real
-    /// workspace content (a terminal or a file-backed buffer). When set, an
-    /// otherwise-empty workspace snapshot at save time reflects a deliberate
-    /// close rather than a Dashboard-only quit, so `save_workspace` is
-    /// allowed to overwrite the on-disk workspace (see the issue #2027 guard,
-    /// which must NOT preserve a stale terminal/file the user just closed).
-    closed_real_buffer_this_session: bool,
-
     /// Backend does not render a hardware cursor — always use software cursor indicators.
     software_cursor_only: bool,
 

@@ -800,6 +800,22 @@ impl Workspace {
             && self.split_states.values().all(|s| s.open_tabs.is_empty())
     }
 
+    /// `true` when this snapshot has no file/unnamed content that a
+    /// Dashboard-only quit should preserve. Unlike [`Self::has_no_real_content`],
+    /// terminals do NOT count as preservable: a terminal is live runtime
+    /// state, so once the user closes it the on-disk entry is stale and must
+    /// not block `save_workspace` from writing the now-empty snapshot (which
+    /// would otherwise resurrect the closed terminal on the next restart).
+    pub fn has_no_preservable_content(&self) -> bool {
+        self.external_files.is_empty()
+            && self.unnamed_buffers.is_empty()
+            && self.split_states.values().all(|s| {
+                s.open_tabs
+                    .iter()
+                    .all(|t| matches!(t, SerializedTabRef::Terminal(_)))
+            })
+    }
+
     /// Save workspace to file using atomic write (temp file + rename)
     ///
     /// This ensures the workspace file is never left in a corrupted state:
