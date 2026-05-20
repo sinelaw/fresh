@@ -57,10 +57,37 @@ fn migrated_select_down_extends_to_next_line() {
     });
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// `test_select_up_down_reversal`: each intermediate selection state is
+// pinned by its own single-shot scenario. The original starts on line 2
+// ("Line 1\nLine 2\nLine 3\nLine 4\n", MoveDown to byte 7), grows the
+// selection down two lines, then shrinks it back up across the anchor.
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn migrated_select_down_twice_selects_two_lines() {
+    // Original step 1: from line 2, SelectDown × 2 grows the
+    // selection to "Line 2\nLine 3\n" (anchor 7, cursor 21).
+    assert_buffer_scenario(BufferScenario {
+        description: "SelectDown ×2 from line 2 selects 'Line 2\\nLine 3\\n'".into(),
+        initial_text: "Line 1\nLine 2\nLine 3\nLine 4\n".into(),
+        actions: vec![
+            Action::MoveDown, // cursor at byte 7 (line 2)
+            Action::SelectDown,
+            Action::SelectDown,
+        ],
+        expected_text: "Line 1\nLine 2\nLine 3\nLine 4\n".into(),
+        // Anchor at byte 7 (line 2), cursor at byte 21 (line 4).
+        expected_primary: CursorExpect::range(7, 21),
+        expected_selection_text: Some("Line 2\nLine 3\n".into()),
+        ..Default::default()
+    });
+}
+
 #[test]
 fn migrated_select_down_then_up_shrinks_selection() {
-    // Original: `test_select_up_down_reversal`. From line 2,
-    // SelectDown × 2 then SelectUp reduces selection by one line.
+    // Original step 2: one SelectUp shrinks the selection back to a
+    // single line "Line 2\n".
     assert_buffer_scenario(BufferScenario {
         description: "SelectDown ×2 then SelectUp shrinks selection by one line".into(),
         initial_text: "Line 1\nLine 2\nLine 3\nLine 4\n".into(),
@@ -74,6 +101,31 @@ fn migrated_select_down_then_up_shrinks_selection() {
         // Anchor at byte 7 (line 2), cursor at byte 14 (line 3).
         expected_primary: CursorExpect::range(7, 14),
         expected_selection_text: Some("Line 2\n".into()),
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_select_up_to_anchor_collapses_selection() {
+    // Original step 3: a SECOND SelectUp returns the caret to the
+    // anchor (byte 7), collapsing the selection. The original
+    // documents this as the at/past-anchor case; the caret lands
+    // back where the selection started, so the selection is empty
+    // (the anchor stays pinned at byte 7 with position == anchor).
+    assert_buffer_scenario(BufferScenario {
+        description: "SelectDown ×2 then SelectUp ×2 returns to anchor and collapses".into(),
+        initial_text: "Line 1\nLine 2\nLine 3\nLine 4\n".into(),
+        actions: vec![
+            Action::MoveDown, // cursor at byte 7 (line 2)
+            Action::SelectDown,
+            Action::SelectDown,
+            Action::SelectUp,
+            Action::SelectUp,
+        ],
+        expected_text: "Line 1\nLine 2\nLine 3\nLine 4\n".into(),
+        // Caret back at the anchor (byte 7); selection empty.
+        expected_primary: CursorExpect::range(7, 7),
+        expected_selection_text: Some(String::new()),
         ..Default::default()
     });
 }

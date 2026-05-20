@@ -1,11 +1,39 @@
 //! Partial migration of `tests/e2e/indent_dedent.rs` — covers the
 //! basic single-line / multi-line Tab + Shift-Tab cases in
-//! spaces-mode. The e2e file has 16 tests; this migration covers
-//! the 5 most-fundamental cases. The remaining 11 cases (partial
-//! selection, tab-character files, mixed indentation, multi-cursor
-//! indent, smart backspace, issue #1304 boundary tests) are
-//! tracked in #2058 and remain guarded by the still-extant e2e
-//! file.
+//! spaces-mode. The e2e file has 23 tests; this migration covers
+//! 5 of them (the 5 most-fundamental cases):
+//!   - test_tab_indent_single_line_spaces
+//!   - test_tab_indent_multiple_lines_spaces
+//!   - test_shift_tab_dedent_single_line_spaces
+//!   - test_shift_tab_dedent_multiple_lines_spaces
+//!   - test_shift_tab_dedent_no_indentation
+//!
+//! The remaining 18 cases are NOT migrated and remain guarded by
+//! the still-extant e2e file (tracked in #2058):
+//!   - Partial / boundary selection:
+//!       test_tab_indent_partial_selection_spaces,
+//!       test_tab_indent_does_not_indent_line_at_selection_boundary,
+//!       test_shift_tab_dedent_does_not_dedent_line_at_selection_boundary
+//!   - Tab-character files:
+//!       test_tab_indent_with_tab_character,
+//!       test_tab_indent_multiple_lines_with_tabs,
+//!       test_shift_tab_dedent_with_tab_character,
+//!       test_shift_tab_dedent_multiple_lines_with_tabs
+//!   - Dedent amount / mixed:
+//!       test_shift_tab_dedent_fewer_spaces,
+//!       test_shift_tab_dedent_mixed_indentation
+//!   - Selection-preservation group:
+//!       test_tab_preserves_selection,
+//!       test_shift_tab_preserves_selection,
+//!       test_multiple_indent_dedent_preserves_selection,
+//!       test_dedent_moves_cursor_without_selection
+//!   - Multi-cursor:
+//!       test_multicursor_indent_with_selections
+//!   - Smart backspace:
+//!       test_smart_backspace_dedent_spaces,
+//!       test_smart_backspace_dedent_tabs,
+//!       test_smart_backspace_normal_after_text,
+//!       test_smart_backspace_partial_indent
 //!
 //! Originals open a real file, send `Tab` / `Shift+Tab`, assert on
 //! buffer content. Scenario equivalent: load_buffer_from_text +

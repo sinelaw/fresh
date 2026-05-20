@@ -125,7 +125,8 @@ fn migrated_multi_cursor_typing_distributes_across_lines() {
 #[test]
 fn migrated_multi_cursor_undo_atomic_full() {
     // Original: `test_multi_cursor_undo_atomic`. 3 chars typed
-    // across 3 cursors = 3 undo units (one per char).
+    // across 3 cursors = 3 undo units (one per char): undoing 3×
+    // returns to the base buffer.
     assert_trace_scenario(TraceScenario {
         description: "3 chars × 3 cursors = 3 undo units (vectorisation transparent to history)"
             .into(),
@@ -140,6 +141,35 @@ fn migrated_multi_cursor_undo_atomic_full() {
         ],
         expected_text: "xyzaaa\nxyzbbb\nxyzccc\nddd".into(),
         undo_count: 3,
+    });
+
+    // Second half of the original: after undoing 3× back to base,
+    // redoing 3× restores the full multi-cursor edit. `TraceScenario`
+    // only models the forward+undo half, so the redo-restoration is
+    // pinned with a `BufferScenario` whose action list inlines the
+    // Undo ×3 + Redo ×3 cycle and asserts the restored text. The
+    // original asserts buffer content only (not cursor state) through
+    // the cycle, so `skip_cursor_check` is set.
+    assert_buffer_scenario(BufferScenario {
+        description: "Undo ×3 then Redo ×3 restores the 3-cursor 'xyz' edit".into(),
+        initial_text: "aaa\nbbb\nccc\nddd".into(),
+        actions: vec![
+            Action::MoveDocumentStart,
+            Action::AddCursorBelow,
+            Action::AddCursorBelow,
+            Action::InsertChar('x'),
+            Action::InsertChar('y'),
+            Action::InsertChar('z'),
+            Action::Undo,
+            Action::Undo,
+            Action::Undo,
+            Action::Redo,
+            Action::Redo,
+            Action::Redo,
+        ],
+        expected_text: "xyzaaa\nxyzbbb\nxyzccc\nddd".into(),
+        skip_cursor_check: true,
+        ..Default::default()
     });
 }
 

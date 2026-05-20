@@ -9,9 +9,32 @@ use crate::common::scenario::observable::FsState;
 use crate::common::scenario::persistence_scenario::{
     assert_persistence_scenario, check_persistence_scenario, write_then_save, PersistenceScenario,
 };
-use fresh::test_api::Action;
+use crate::common::scenario::property::BufferState;
+use fresh::test_api::{Action, Caret};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+/// Build the expected post-revert `BufferState`: a single caret at
+/// `position`, no selection, buffer text `text`. Used by the
+/// external-edit scenarios to pin that auto-revert (the runner's
+/// `notify_file_changed` after `FsExternalEdit`) actually reloaded
+/// the editor buffer from the new disk content — mirroring the
+/// `assert_buffer_content(new_content)` claims in the original
+/// `tests/e2e/auto_revert.rs`.
+fn reverted_buffer(text: &str, position: usize) -> BufferState {
+    BufferState {
+        buffer_text: text.to_string(),
+        primary: Caret {
+            position,
+            anchor: None,
+        },
+        all_carets: vec![Caret {
+            position,
+            anchor: None,
+        }],
+        selection_text: String::new(),
+    }
+}
 
 #[test]
 fn migrated_save_persists_typed_text() {
@@ -67,6 +90,42 @@ fn anti_persistence_dropping_fs_external_edit_yields_check_err() {
     );
 }
 
+/// Anti-test making the auto-revert `expected_buffer` assertion in
+/// `migrated_external_edit_visible_to_other_processes` load-bearing.
+/// With the `FsExternalEdit` dropped, no external write + notify
+/// happens, so the buffer is never reverted and still reads "v1".
+/// The expected reverted buffer "v2" therefore cannot match — proving
+/// the positive test's `expected_buffer` is genuinely pinning the
+/// auto-revert reload, not a coincidence.
+#[test]
+fn anti_persistence_dropping_fs_external_edit_buffer_does_not_revert() {
+    let mut files = BTreeMap::new();
+    files.insert(
+        PathBuf::from("a.txt"),
+        VirtualFile {
+            content: "v1".into(),
+            mode: None,
+            mtime_unix_secs: None,
+        },
+    );
+    let scenario = PersistenceScenario {
+        description: "anti: no FsExternalEdit — buffer stays 'v1', cannot equal reverted 'v2'"
+            .into(),
+        initial_fs: VirtualFs { files },
+        initial_open: "a.txt".into(),
+        events: vec![],
+        expected_buffer: Some(reverted_buffer("v2", 0)),
+        expected_fs: FsState {
+            expected_files: std::iter::once(("a.txt".into(), "v1".into())).collect(),
+        },
+    };
+    assert!(
+        check_persistence_scenario(scenario).is_err(),
+        "anti-test: without the FsExternalEdit event the buffer is never auto-reverted; \
+         it stays 'v1' and cannot match the expected reverted 'v2'"
+    );
+}
+
 #[test]
 fn migrated_external_edit_visible_to_other_processes() {
     let mut files = BTreeMap::new();
@@ -79,14 +138,20 @@ fn migrated_external_edit_visible_to_other_processes() {
         },
     );
     assert_persistence_scenario(PersistenceScenario {
-        description: "FsExternalEdit replaces on-disk content for other observers".into(),
+        description:
+            "FsExternalEdit replaces on-disk content AND the open buffer auto-reverts to it".into(),
         initial_fs: VirtualFs { files },
         initial_open: "a.txt".into(),
         events: vec![InputEvent::FsExternalEdit {
             path: PathBuf::from("a.txt"),
             content: "v2".into(),
         }],
-        expected_buffer: None,
+        // The buffer was unmodified, so `handle_file_changed`
+        // auto-reverts it to the new disk content "v2" (cursor
+        // resets to byte 0). This mirrors
+        // `tests/e2e/auto_revert.rs::test_auto_revert_multiple_external_edits`'s
+        // `assert_buffer_content(new_content)` claim.
+        expected_buffer: Some(reverted_buffer("v2", 0)),
         expected_fs: FsState {
             expected_files: std::iter::once(("a.txt".into(), "v2".into())).collect(),
         },
@@ -95,10 +160,10 @@ fn migrated_external_edit_visible_to_other_processes() {
 
 #[test]
 fn migrated_external_edit_after_save_persists_until_buffer_resaves() {
-    // Save once, an external process clobbers the file. We don't
-    // assert what happens on the next editor save — that's an
-    // auto-revert / conflict-detection behavior with non-trivial
-    // semantics. We only assert the external write *did* land on
+    // Type 'A', Save (buffer now clean), then an external process
+    // clobbers the file. Because the buffer is unmodified after
+    // Save, the external edit + notify auto-reverts it to the new
+    // disk content "external". The external write also lands on
     // disk, which is what other observers would see.
     let mut files = BTreeMap::new();
     files.insert(
@@ -110,7 +175,9 @@ fn migrated_external_edit_after_save_persists_until_buffer_resaves() {
         },
     );
     assert_persistence_scenario(PersistenceScenario {
-        description: "FsExternalEdit lands on disk regardless of editor's save state".into(),
+        description:
+            "After Save, FsExternalEdit lands on disk AND auto-reverts the clean buffer to it"
+                .into(),
         initial_fs: VirtualFs { files },
         initial_open: "race.txt".into(),
         events: vec![
@@ -122,7 +189,11 @@ fn migrated_external_edit_after_save_persists_until_buffer_resaves() {
                 content: "external".into(),
             },
         ],
-        expected_buffer: None,
+        // Post-Save the buffer was "startA" and clean; the external
+        // edit reverts it to "external". The active-buffer revert
+        // path preserves the cursor (byte 6, where 'A' left it),
+        // clamped within the new content.
+        expected_buffer: Some(reverted_buffer("external", 6)),
         expected_fs: FsState {
             expected_files: std::iter::once(("race.txt".into(), "external".into())).collect(),
         },

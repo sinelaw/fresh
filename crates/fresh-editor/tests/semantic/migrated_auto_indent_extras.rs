@@ -79,6 +79,39 @@ fn migrated_go_function_indent_uses_tab() {
 }
 
 #[test]
+fn migrated_indent_with_selection_deletes_first() {
+    // Original: `test_indent_with_selection_deletes_first`. With an
+    // active selection inside `fn main() {old text}`, pressing Enter
+    // first DELETES the selected "old text", then auto-indents the
+    // fresh line — yielding `fn main() {\n    }` with the cursor
+    // parked on the 4-space-indented middle line.
+    let initial = "fn main() {old text}";
+    let mut actions = vec![Action::MoveDocumentStart];
+    // Move to byte 11 (just after the `{`).
+    for _ in 0..11 {
+        actions.push(Action::MoveRight);
+    }
+    // Select the 8-byte "old text" run.
+    for _ in 0..8 {
+        actions.push(Action::SelectRight);
+    }
+    actions.push(Action::InsertNewline);
+
+    assert_buffer_scenario(BufferScenario {
+        description: "Enter on a selection deletes the selection first, then auto-indents".into(),
+        initial_text: initial.into(),
+        language: Some("test.rs".into()),
+        behavior: auto_indent(),
+        actions,
+        // Selection deleted; line split with a 4-space indent.
+        expected_text: "fn main() {\n    }".into(),
+        // Cursor parked after `{` + "\n" + 4 spaces = byte 16.
+        expected_primary: CursorExpect::at(16),
+        ..Default::default()
+    });
+}
+
+#[test]
 fn migrated_bracket_expansion_rust_function() {
     // Original: `test_bracket_expansion_rust_function` (issue #629).
     // Cursor between `{` and `}`, Enter ⇒ three-line expansion:

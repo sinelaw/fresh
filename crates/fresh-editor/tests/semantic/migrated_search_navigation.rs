@@ -1,4 +1,4 @@
-//! Faithful migrations of `tests/e2e/search_navigation_after_move.rs`
+//! Partial migration of `tests/e2e/search_navigation_after_move.rs`
 //! (issue #1305): Find Next / Find Previous must navigate relative
 //! to the *current cursor position*, not to the last visited match
 //! index.
@@ -7,6 +7,20 @@
 //! per-char `Action::InsertChar` into the prompt +
 //! `Action::PromptConfirm`) followed by buffer cursor moves and
 //! `Action::FindNext` / `Action::FindPrevious`. No mocks.
+//!
+//! The e2e source has 5 tests; this file covers 2 of them
+//! (find_next and find_previous after a small-buffer move). The
+//! remaining 3 are NOT migrated and stay guarded by the still-extant
+//! e2e file (tracked in #2058):
+//!   - test_find_next_and_previous_after_ctrl_end — the original
+//!     stale-index regression: after Ctrl+End, FindNext then
+//!     FindPrevious on a 30-line buffer must step relative to the
+//!     post-move cursor, not the last visited match index.
+//!   - test_find_next_respects_cursor_position_large_file — uses a
+//!     >1MB file to exercise the large-file search path (large-file
+//!     mode is not configurable via BufferScenario).
+//!   - test_find_previous_from_end_of_large_file_issue_1305 — a >3MB
+//!     file with NEEDLEs near EOF; same large-file-mode gap.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, check_buffer_scenario, repeat, BufferScenario, CursorExpect,
@@ -66,10 +80,13 @@ fn migrated_find_next_respects_cursor_position_after_move() {
 #[test]
 fn migrated_find_previous_respects_cursor_position_after_move() {
     // Original: `test_find_previous_respects_cursor_position_after_move`
-    // (simplified to one direction). Search → land on match 1.
-    // MoveDocumentEnd → cursor at end of file. FindPrevious must
-    // jump to match 3 (the last NEEDLE), the nearest before the
-    // current cursor.
+    // (phase 1 of two). Search → land on match 1. MoveDocumentEnd →
+    // cursor at end of file. FindPrevious must jump to match 3 (the
+    // last NEEDLE), the nearest before the current cursor. The
+    // original's phase 2 (the load-bearing stale-index case —
+    // FindPrevious from line 6 must land on match 2, not skip to a
+    // stale index) is reproduced separately in
+    // `migrated_find_previous_lands_on_match_before_cursor` below.
     let match1 = NEEDLE_FILE.find("NEEDLE").unwrap();
     let match3 = {
         let m2 = NEEDLE_FILE[match1 + 1..].find("NEEDLE").unwrap() + match1 + 1;
@@ -87,6 +104,32 @@ fn migrated_find_previous_respects_cursor_position_after_move() {
         actions,
         expected_text: NEEDLE_FILE.into(),
         expected_primary: CursorExpect::at(match3),
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_find_previous_lands_on_match_before_cursor() {
+    // Original: `test_find_previous_respects_cursor_position_after_move`
+    // (phase 2 — the stale-index regression). Search → land on
+    // match 1 (line 2). MoveDown ×4 puts the cursor on line 6 —
+    // past match 2 (line 5), before match 3 (line 8). FindPrevious
+    // must jump to match 2 (the nearest match before the cursor),
+    // NOT to a stale index relative to the last-visited match.
+    let match1 = NEEDLE_FILE.find("NEEDLE").unwrap();
+    let match2 = NEEDLE_FILE[match1 + 1..].find("NEEDLE").unwrap() + match1 + 1;
+
+    let mut actions = search_for("NEEDLE");
+    actions.extend(repeat(Action::MoveDown, 4));
+    actions.push(Action::FindPrevious);
+
+    assert_buffer_scenario(BufferScenario {
+        description:
+            "Issue #1305: FindPrevious from line 6 jumps to match 2 (nearest before cursor)".into(),
+        initial_text: NEEDLE_FILE.into(),
+        actions,
+        expected_text: NEEDLE_FILE.into(),
+        expected_primary: CursorExpect::at(match2),
         ..Default::default()
     });
 }

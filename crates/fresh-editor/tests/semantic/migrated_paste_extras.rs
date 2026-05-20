@@ -22,6 +22,17 @@
 //! paste preload, prompt-paste, column-mode) remain guarded by
 //! tests/e2e/paste.rs and are not migratable in this shape —
 //! tracked in #2058 as a coverage gap.
+//!
+//! The 4 multi-cursor / multi-selection paste cases
+//! (`test_paste_with_multiple_cursors`,
+//! `test_paste_replaces_multiple_selections`,
+//! `test_multi_cursor_paste_undo_is_atomic`,
+//! `test_paste_with_selection_undo_is_atomic`) ALSO preload the
+//! clipboard in the e2e originals, but their load-bearing claims
+//! (paste inserts at every cursor / replaces every selection /
+//! is undone atomically) do not depend on the clipboard payload
+//! being external. They are migrated below as Copy-from-buffer
+//! round-trips, so they are NOT part of the gap above.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, check_buffer_scenario, repeat, BufferScenario, CursorExpect,
@@ -147,6 +158,157 @@ fn migrated_paste_replaces_selection_round_trip() {
         // After replacement: cursor at byte 17 (end of inserted
         // 'universe' — replacement bumps cursor to end of insert).
         expected_primary: CursorExpect::at(17),
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_paste_with_multiple_cursors_inserts_at_each() {
+    // Related to `test_paste_with_multiple_cursors`. The e2e
+    // preloads "X" via set_clipboard_for_test and pastes at 3
+    // cursors to get "Xaaa\nXbbb\nXccc". Honoring the
+    // no-back-doors directive, this reshape Copies a single "a"
+    // from the buffer instead of preloading "X", then pastes at
+    // 3 cursors. Load-bearing claim is identical: a single-line
+    // clipboard is inserted at EVERY cursor (no column-paste
+    // distribution), so each of the 3 lines gains the clipboard
+    // text at its start.
+    let actions = vec![
+        Action::MoveDocumentStart,
+        Action::SelectRight, // select "a"
+        Action::Copy,
+        Action::MoveLineStart, // collapse selection back to line start
+        Action::AddCursorBelow,
+        Action::AddCursorBelow,
+        Action::Paste,
+    ];
+
+    assert_buffer_scenario(BufferScenario {
+        description: "Paste with 3 cursors inserts the single-line clipboard at each line start"
+            .into(),
+        initial_text: "aaa\nbbb\nccc".into(),
+        actions,
+        // "a" inserted at the start of every line.
+        expected_text: "aaaa\nabbb\naccc".into(),
+        // Three cursors survive; their final byte positions are an
+        // implementation detail of the multi-cursor paste.
+        expected_primary: CursorExpect::at(0),
+        skip_cursor_check: true,
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_paste_replaces_multiple_selections() {
+    // Related to `test_paste_replaces_multiple_selections`. The
+    // e2e preloads "XXX" and replaces three "foo" selections (via
+    // Ctrl+D / AddCursorNextMatch) to get "XXX bar XXX baz XXX".
+    // This reshape Copies the existing 3-byte "bar" from the
+    // buffer instead of preloading "XXX". Load-bearing claim is
+    // identical: pasting over multiple selections replaces EACH
+    // selection with the clipboard text.
+    let actions = vec![
+        Action::MoveDocumentStart,
+        // Move to byte 4 (start of "bar").
+        Action::MoveRight,
+        Action::MoveRight,
+        Action::MoveRight,
+        Action::MoveRight,
+        // Select "bar" and Copy.
+        Action::SelectRight,
+        Action::SelectRight,
+        Action::SelectRight,
+        Action::Copy,
+        // Select the first "foo".
+        Action::MoveDocumentStart,
+        Action::SelectRight,
+        Action::SelectRight,
+        Action::SelectRight,
+        // Add cursors at the next two "foo" matches.
+        Action::AddCursorNextMatch,
+        Action::AddCursorNextMatch,
+        Action::Paste,
+    ];
+
+    assert_buffer_scenario(BufferScenario {
+        description: "Paste over 3 selections replaces each with the clipboard text".into(),
+        initial_text: "foo bar foo baz foo".into(),
+        actions,
+        // Every "foo" replaced by the copied "bar".
+        expected_text: "bar bar bar baz bar".into(),
+        expected_primary: CursorExpect::at(0),
+        skip_cursor_check: true,
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_multi_cursor_paste_undo_is_atomic() {
+    // Related to `test_multi_cursor_paste_undo_is_atomic`. Same
+    // Copy-from-buffer reshape as
+    // `migrated_paste_with_multiple_cursors_inserts_at_each`,
+    // plus a single Undo. The load-bearing claim — one Undo step
+    // reverses the entire multi-cursor paste — is faithful.
+    let actions = vec![
+        Action::MoveDocumentStart,
+        Action::SelectRight,
+        Action::Copy,
+        Action::MoveLineStart,
+        Action::AddCursorBelow,
+        Action::AddCursorBelow,
+        Action::Paste,
+        Action::Undo,
+    ];
+
+    assert_buffer_scenario(BufferScenario {
+        description: "Single Undo reverses an entire multi-cursor paste atomically".into(),
+        initial_text: "aaa\nbbb\nccc".into(),
+        actions,
+        // Buffer fully restored to its pre-paste state.
+        expected_text: "aaa\nbbb\nccc".into(),
+        expected_primary: CursorExpect::at(0),
+        skip_cursor_check: true,
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_paste_with_selection_undo_is_atomic() {
+    // Related to `test_paste_with_selection_undo_is_atomic`. The
+    // e2e preloads "universe" and pastes over a "world" selection,
+    // then asserts one Undo restores "world" (undoing both the
+    // delete and the insert). This reshape Copies the 5-byte
+    // "hello" from the buffer to replace the "world" selection,
+    // then Undo. The load-bearing claim — a select-replacing
+    // paste is undone atomically by a single Undo — is faithful.
+    let actions = vec![
+        Action::MoveDocumentStart,
+        // Select "hello" and Copy.
+        Action::SelectRight,
+        Action::SelectRight,
+        Action::SelectRight,
+        Action::SelectRight,
+        Action::SelectRight,
+        Action::Copy,
+        // Collapse to EOL, then select "world".
+        Action::MoveLineEnd,
+        Action::SelectLeft,
+        Action::SelectLeft,
+        Action::SelectLeft,
+        Action::SelectLeft,
+        Action::SelectLeft,
+        Action::Paste,
+        Action::Undo,
+    ];
+
+    assert_buffer_scenario(BufferScenario {
+        description: "Single Undo restores the replaced selection after a paste".into(),
+        initial_text: "hello world".into(),
+        actions,
+        // "world" restored by the single Undo.
+        expected_text: "hello world".into(),
+        expected_primary: CursorExpect::at(0),
+        skip_cursor_check: true,
         ..Default::default()
     });
 }

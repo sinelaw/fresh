@@ -74,14 +74,87 @@ fn migrated_home_end_navigation() {
 
 #[test]
 fn migrated_multiline_navigation_up_down() {
-    // 3-line buffer; from end, MoveUp lands on line 2 end.
+    // Original: `test_multiline_editing` (tests/e2e/movement.rs).
+    // 3-line buffer "Line 1\nLine 2\nLine 3"; from end (byte 20):
+    //   Up   -> byte 13 (end of Line 2)
+    //   Up   -> byte 6  (end of Line 1)
+    //   Down -> byte 13 (end of Line 2)
+    //   Home -> byte 7  (start of Line 2, after "Line 1\n")
+    // BufferScenario pins final state only, so each intermediate
+    // byte target is its own single-shot scenario; the insertion
+    // step is reproduced separately below.
+
+    // From end, one Up lands at end of Line 2 (byte 13).
     assert_buffer_scenario(BufferScenario {
-        description: "MoveUp from end of line 3 jumps to end of line 2".into(),
+        description: "MoveUp from end of line 3 jumps to end of line 2 (byte 13)".into(),
         initial_text: "Line 1\nLine 2\nLine 3".into(),
         actions: vec![Action::MoveDocumentEnd, Action::MoveUp],
         expected_text: "Line 1\nLine 2\nLine 3".into(),
         // "Line 1\n" (7) + "Line 2" (6) = 13.
         expected_primary: CursorExpect::at(13),
+        ..Default::default()
+    });
+
+    // A second Up lands at end of Line 1 (byte 6).
+    assert_buffer_scenario(BufferScenario {
+        description: "MoveUp ×2 from end of line 3 jumps to end of line 1 (byte 6)".into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        actions: vec![Action::MoveDocumentEnd, Action::MoveUp, Action::MoveUp],
+        expected_text: "Line 1\nLine 2\nLine 3".into(),
+        expected_primary: CursorExpect::at(6),
+        ..Default::default()
+    });
+
+    // Down from end of Line 1 returns to end of Line 2 (byte 13).
+    assert_buffer_scenario(BufferScenario {
+        description: "MoveUp ×2 then MoveDown returns to end of line 2 (byte 13)".into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::MoveUp,
+            Action::MoveUp,
+            Action::MoveDown,
+        ],
+        expected_text: "Line 1\nLine 2\nLine 3".into(),
+        expected_primary: CursorExpect::at(13),
+        ..Default::default()
+    });
+
+    // Home from end of Line 2 jumps to start of Line 2 (byte 7).
+    assert_buffer_scenario(BufferScenario {
+        description: "...then Home jumps to start of line 2 (byte 7)".into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::MoveUp,
+            Action::MoveUp,
+            Action::MoveDown,
+            Action::MoveLineStart,
+        ],
+        expected_text: "Line 1\nLine 2\nLine 3".into(),
+        expected_primary: CursorExpect::at(7),
+        ..Default::default()
+    });
+
+    // Load-bearing insertion: typing ">>> " at start of Line 2
+    // yields "Line 1\n>>> Line 2\nLine 3" with cursor at byte 11.
+    assert_buffer_scenario(BufferScenario {
+        description: "typing '>>> ' at start of line 2 yields 'Line 1\\n>>> Line 2\\nLine 3'"
+            .into(),
+        initial_text: "Line 1\nLine 2\nLine 3".into(),
+        actions: vec![
+            Action::MoveDocumentEnd,
+            Action::MoveUp,
+            Action::MoveUp,
+            Action::MoveDown,
+            Action::MoveLineStart,
+            Action::InsertChar('>'),
+            Action::InsertChar('>'),
+            Action::InsertChar('>'),
+            Action::InsertChar(' '),
+        ],
+        expected_text: "Line 1\n>>> Line 2\nLine 3".into(),
+        expected_primary: CursorExpect::at(11),
         ..Default::default()
     });
 }

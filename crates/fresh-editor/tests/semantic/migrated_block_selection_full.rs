@@ -65,55 +65,27 @@ fn migrated_block_select_down_three_times_extends_through_lines() {
     });
 }
 
-#[test]
-fn migrated_block_select_then_type_inserts_at_each_cursor() {
-    // Original: `test_block_select_then_type`. After
-    // BlockSelectDown creates a multi-cursor block, typing
-    // inserts at each cursor position.
-    //
-    // E2e:
-    //   type "line1 text\nline2 text"  (cursor at byte 21)
-    //   Ctrl+Home → byte 0
-    //   Right ×5 → byte 5
-    //   Alt+Shift+Down → block-select to col 5 of line 2
-    //   type "X" at each cursor
-    //
-    // Result: "line1X text\nline2X text".
-    assert_buffer_scenario(BufferScenario {
-        description: "BlockSelectDown + InsertChar inserts at each cursor".into(),
-        initial_text: "line1 text\nline2 text".into(),
-        actions: vec![
-            Action::MoveDocumentStart,
-            Action::MoveRight,
-            Action::MoveRight,
-            Action::MoveRight,
-            Action::MoveRight,
-            Action::MoveRight,
-            Action::BlockSelectDown,
-            Action::InsertChar('X'),
-        ],
-        expected_text: "line1X text\nline2X text".into(),
-        // Two cursors, both advanced past inserted X.
-        // Primary on line 2 at byte 18 (= "line1X text\n" = 12,
-        // then "line2X" = 6 → 18).
-        expected_primary: CursorExpect::at(18),
-        expected_extra_cursors: vec![CursorExpect::at(6)],
-        expected_selection_text: Some("".into()),
-        ..Default::default()
-    });
-}
+// NOTE: `test_block_select_then_type` is NOT migrated here — it is
+// faithfully covered by
+// `migrated_block_selection_extras::migrated_block_select_then_type_clears_selection`
+// (buffer "aaaa\nbbbb\ncccc", BlockSelectDown + BlockSelectRight ×2 +
+// InsertChar('X'), asserting cleared selection). A previously-present
+// scenario in this file claimed to migrate it but used an invented
+// buffer "line1 text\nline2 text" + a different action sequence; it
+// was a synthesized duplicate of the BlockSelectDown coverage already
+// pinned by `migrated_block_select_down_creates_selection` below, so
+// it was removed as redundant/mislabeled.
 
 /// Anti-test: drops `BlockSelectDown` from
-/// `migrated_block_select_then_type_inserts_at_each_cursor`.
-/// Without it, only one cursor exists and InsertChar('X') lands
-/// on line 1 only, so the expected
-/// "line1X text\nline2X text" cannot match.
+/// `migrated_block_select_down_creates_selection`. Without it the
+/// primary cursor stays collapsed at byte 6 (no anchor), so the
+/// expected backward/forward range 6..22 cannot match.
 #[test]
 fn anti_block_selection_dropping_block_select_down_yields_check_err() {
     let scenario = BufferScenario {
-        description: "anti: BlockSelectDown dropped — only one cursor, X inserts on line 1 only"
+        description: "anti: BlockSelectDown dropped — cursor stays collapsed at byte 6, no range"
             .into(),
-        initial_text: "line1 text\nline2 text".into(),
+        initial_text: "line1 text here\nline2 text here\nline3 text here".into(),
         actions: vec![
             Action::MoveDocumentStart,
             Action::MoveRight,
@@ -121,17 +93,17 @@ fn anti_block_selection_dropping_block_select_down_yields_check_err() {
             Action::MoveRight,
             Action::MoveRight,
             Action::MoveRight,
-            Action::InsertChar('X'),
+            Action::MoveRight,
         ],
-        expected_text: "line1X text\nline2X text".into(),
-        expected_primary: CursorExpect::at(18),
-        expected_extra_cursors: vec![CursorExpect::at(6)],
-        expected_selection_text: Some("".into()),
+        expected_text: "line1 text here\nline2 text here\nline3 text here".into(),
+        // Same expectation as the real test, but without the
+        // BlockSelectDown there is no selection range to match.
+        expected_primary: CursorExpect::range(6, 22),
         ..Default::default()
     };
     assert!(
         check_buffer_scenario(scenario).is_err(),
-        "anti-test: without BlockSelectDown no secondary cursor exists, \
-         so X cannot be inserted on line 2 simultaneously"
+        "anti-test: without BlockSelectDown the cursor stays collapsed at byte 6, \
+         so the 6..22 selection range cannot match"
     );
 }

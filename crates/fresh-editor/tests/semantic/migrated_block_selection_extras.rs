@@ -51,14 +51,22 @@ fn migrated_block_select_right_from_byte_0() {
 
 #[test]
 fn migrated_block_select_left_from_byte_1() {
-    // Original: `test_block_select_all_directions` (Left branch).
+    // Original: `test_block_select_all_directions` (Left branch):
+    // Ctrl+Home, Right ×2 (cursor at byte 2), Alt+Shift+Left. The
+    // original only asserts `has_selection()`; the scenario pins the
+    // exact byte range the editor produces.
     assert_buffer_scenario(BufferScenario {
-        description: "BlockSelectLeft from byte 1 selects 1 char backward".into(),
+        description: "BlockSelectLeft from byte 2 selects 1 char backward (range 1..2)".into(),
         initial_text: "aaaa\nbbbb\ncccc".into(),
-        actions: vec![Action::MoveRight, Action::BlockSelectLeft],
+        actions: vec![
+            Action::MoveRight,
+            Action::MoveRight,
+            Action::BlockSelectLeft,
+        ],
         expected_text: "aaaa\nbbbb\ncccc".into(),
-        // Backward selection: cursor at 0, anchor at 1.
-        expected_primary: CursorExpect::range(1, 0),
+        // Backward selection: anchor at byte 2, cursor moved left to
+        // byte 1.
+        expected_primary: CursorExpect::range(2, 1),
         expected_selection_text: Some("a".into()),
         ..Default::default()
     });

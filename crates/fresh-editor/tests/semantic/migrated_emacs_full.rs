@@ -12,6 +12,14 @@
 //!     mark_mode`, `test_ctrl_g_cancels_mark_mode` — need a
 //!     `deselect_on_move` projection on EditorTestApi to assert
 //!     mark-mode cancellation.
+//!
+//! Not duplicated here:
+//!   - `test_set_mark_then_regular_move_creates_selection` is
+//!     already faithfully covered by
+//!     `emacs_actions.rs::theorem_set_mark_then_move_extends_selection`
+//!     (buffer "hello world", SetMark, MoveRight ×5, selection
+//!     "hello", cursor 5). A drifted copy previously lived here
+//!     ("hello", MoveRight ×3) and was removed as redundant.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, check_buffer_scenario, BufferScenario, CursorExpect,
@@ -143,24 +151,4 @@ fn anti_emacs_transpose_chars_dropping_action_yields_check_err() {
         "anti-test: without TransposeChars the buffer stays 'abc'; \
          the swapped 'acb' result cannot appear"
     );
-}
-
-#[test]
-fn migrated_set_mark_then_move_extends_selection() {
-    // Original: `test_set_mark_then_regular_move_creates_selection`.
-    // After SetMark + MoveRight ×3, selection covers bytes 0..3.
-    assert_buffer_scenario(BufferScenario {
-        description: "SetMark + 3 MoveRights selects bytes 0..3".into(),
-        initial_text: "hello".into(),
-        actions: vec![
-            Action::SetMark,
-            Action::MoveRight,
-            Action::MoveRight,
-            Action::MoveRight,
-        ],
-        expected_text: "hello".into(),
-        expected_primary: CursorExpect::range(0, 3),
-        expected_selection_text: Some("hel".into()),
-        ..Default::default()
-    });
 }

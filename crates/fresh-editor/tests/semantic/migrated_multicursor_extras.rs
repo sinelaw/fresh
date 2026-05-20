@@ -149,6 +149,66 @@ fn migrated_remove_secondary_cursors_returns_to_original_position() {
     });
 }
 
+#[test]
+fn migrated_add_cursor_next_match_from_bare_cursor_selects_whole_word() {
+    // Original: `test_ctrl_d_finds_next_match` (first Ctrl+D). With
+    // NO pre-existing selection, the FIRST AddCursorNextMatch must
+    // itself select the whole word under the caret rather than
+    // adding a second cursor. (The implementation returns
+    // `AddCursorResult::WordSelected` and updates the primary cursor
+    // to span the word — see
+    // `src/input/multi_cursor.rs::add_cursor_at_next_match` and
+    // `src/app/clipboard.rs::add_cursor_at_next_match`.)
+    //
+    //   Buffer:  "foo bar foo baz foo"
+    //   Start :  bare cursor at byte 0 (start of "foo")
+    //   After AddCursorNextMatch (once):
+    //       single cursor, selection = "foo" (anchor 0, position 3)
+    let initial = "foo bar foo baz foo";
+    assert_buffer_scenario(BufferScenario {
+        description: "First AddCursorNextMatch from a bare cursor selects the whole word 'foo'"
+            .into(),
+        initial_text: initial.into(),
+        // MoveLineStart mirrors the original's Home press; the caret
+        // already sits at byte 0, then the single Ctrl+D fires.
+        actions: vec![Action::MoveLineStart, Action::AddCursorNextMatch],
+        expected_text: initial.into(),
+        // word_start = 0, word_end = 3 ⇒ forward selection of "foo".
+        expected_primary: CursorExpect::range(0, 3),
+        // Still a single cursor — no second match added yet.
+        expected_extra_cursors: vec![],
+        expected_selection_text: Some("foo".into()),
+        ..Default::default()
+    });
+}
+
+/// Anti-test for the bare-cursor word-select: without the
+/// `AddCursorNextMatch` dispatch the caret stays collapsed at byte
+/// 0 with no selection, so the "whole word 'foo' is selected"
+/// expectation cannot be satisfied. Proves the word-select
+/// semantics come from the action, not from any pre-existing state.
+#[test]
+fn anti_add_cursor_next_match_from_bare_cursor_dropping_action_yields_check_err() {
+    let initial = "foo bar foo baz foo";
+    let scenario = BufferScenario {
+        description: "anti: bare-cursor AddCursorNextMatch dropped — word 'foo' not selected"
+            .into(),
+        initial_text: initial.into(),
+        // Drop the AddCursorNextMatch; only MoveLineStart remains.
+        actions: vec![Action::MoveLineStart],
+        expected_text: initial.into(),
+        // Same expectation as the real test (selection of "foo"),
+        // which cannot hold with a collapsed caret at byte 0.
+        expected_primary: CursorExpect::range(0, 3),
+        expected_selection_text: Some("foo".into()),
+        ..Default::default()
+    };
+    assert!(
+        check_buffer_scenario(scenario).is_err(),
+        "anti-test: with no AddCursorNextMatch the bare cursor never selects the word 'foo'"
+    );
+}
+
 /// Anti-test: drops the `AddCursorNextMatch`. Without the action
 /// only the first selection exists, so the
 /// `expected_extra_cursors` list (one entry) cannot be filled.
