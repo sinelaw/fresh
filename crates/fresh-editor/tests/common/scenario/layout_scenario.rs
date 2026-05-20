@@ -1183,7 +1183,7 @@ fn dispatch_layout_event(
     composite_handle: Option<usize>,
     recorded_rows: &mut std::collections::HashMap<u32, Vec<String>>,
 ) -> Result<(), ScenarioFailure> {
-    use crate::common::scenario::buffer_scenario::{key_mods_to_crossterm, key_spec_to_crossterm};
+    use crate::common::scenario::key_dispatch::send_key_event;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     match ev {
         InputEvent::Action(a) => {
@@ -1192,14 +1192,7 @@ fn dispatch_layout_event(
             Ok(())
         }
         InputEvent::SendKey { code, modifiers } => {
-            let cc = key_spec_to_crossterm(*code);
-            let mm = key_mods_to_crossterm(*modifiers);
-            harness
-                .send_key(cc, mm)
-                .map_err(|e| ScenarioFailure::InputProjectionFailed {
-                    description: description.into(),
-                    reason: format!("send_key({code:?}, {modifiers:?}): {e}"),
-                })?;
+            send_key_event(harness, *code, *modifiers, description)?;
             // Render after each key so layout-dependent handlers
             // (e.g. the End key's per-visual-segment traversal on a
             // wrapped line) observe fresh layout state between

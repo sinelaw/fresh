@@ -12,7 +12,8 @@
 
 use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::failure::ScenarioFailure;
-use crate::common::scenario::input_event::{InputEvent, KeyMods, KeySpec};
+use crate::common::scenario::input_event::InputEvent;
+use crate::common::scenario::key_dispatch::send_key_event;
 use fresh::test_api::{Action, Caret};
 
 /// Expected state of one cursor.
@@ -344,45 +345,6 @@ fn behavior_is_default(b: BehaviorFlags) -> bool {
     !b.auto_close && !b.auto_indent && !b.auto_surround
 }
 
-/// Project a `KeySpec` onto the matching `crossterm::event::KeyCode`.
-/// Lives next to the runner so the data module (`input_event.rs`)
-/// doesn't have to depend on crossterm.
-pub(crate) fn key_spec_to_crossterm(code: KeySpec) -> crossterm::event::KeyCode {
-    use crossterm::event::KeyCode;
-    match code {
-        KeySpec::Char(c) => KeyCode::Char(c),
-        KeySpec::Backspace => KeyCode::Backspace,
-        KeySpec::Enter => KeyCode::Enter,
-        KeySpec::Left => KeyCode::Left,
-        KeySpec::Right => KeyCode::Right,
-        KeySpec::Up => KeyCode::Up,
-        KeySpec::Down => KeyCode::Down,
-        KeySpec::Home => KeyCode::Home,
-        KeySpec::End => KeyCode::End,
-        KeySpec::PageUp => KeyCode::PageUp,
-        KeySpec::PageDown => KeyCode::PageDown,
-        KeySpec::Tab => KeyCode::Tab,
-        KeySpec::BackTab => KeyCode::BackTab,
-        KeySpec::Delete => KeyCode::Delete,
-        KeySpec::Insert => KeyCode::Insert,
-        KeySpec::Esc => KeyCode::Esc,
-    }
-}
-
-pub(crate) fn key_mods_to_crossterm(m: KeyMods) -> crossterm::event::KeyModifiers {
-    let mut out = crossterm::event::KeyModifiers::NONE;
-    if m.ctrl {
-        out |= crossterm::event::KeyModifiers::CONTROL;
-    }
-    if m.shift {
-        out |= crossterm::event::KeyModifiers::SHIFT;
-    }
-    if m.alt {
-        out |= crossterm::event::KeyModifiers::ALT;
-    }
-    out
-}
-
 /// Translate a single `InputEvent` for the buffer-scenario runner.
 ///
 /// The runner accepts `Action` (dispatched through `EditorTestApi`)
@@ -403,14 +365,7 @@ fn dispatch_buffer_event(
             Ok(())
         }
         InputEvent::SendKey { code, modifiers } => {
-            let cc = key_spec_to_crossterm(*code);
-            let mm = key_mods_to_crossterm(*modifiers);
-            harness
-                .send_key(cc, mm)
-                .map_err(|e| ScenarioFailure::InputProjectionFailed {
-                    description: description.into(),
-                    reason: format!("send_key({code:?}, {modifiers:?}): {e}"),
-                })
+            send_key_event(harness, *code, *modifiers, description)
         }
         InputEvent::Mouse(crate::common::scenario::context::MouseEvent::Click {
             row,

@@ -22,6 +22,7 @@ pub mod trace_scenario;
 // ── Composable architecture (this PR) ───────────────────────────────
 pub mod context;
 pub mod input_event;
+pub mod key_dispatch;
 pub mod observable;
 
 // ── Phase 2: Layout (real, naive wrap shadow) ───────────────────────
