@@ -58,6 +58,10 @@ pub struct EditorServerConfig {
     /// and the server. Mandatory: every spawner holds it, so there's no
     /// ungated path. Tests pass `Arc::new(WorkspaceTrust::permissive())`.
     pub workspace_trust: Arc<crate::services::workspace_trust::WorkspaceTrust>,
+    /// Live environment provider, created by the caller (`main.rs`) before the
+    /// startup authority so the same `Arc` backs the authority's spawners and
+    /// the server. Tests pass `Arc::new(EnvProvider::inactive())`.
+    pub env_provider: Arc<crate::services::env_provider::EnvProvider>,
     /// Opaque handle kept alive for the server's lifetime alongside
     /// `startup_authority`.  SSH authorities back this with the Tokio
     /// runtime, the `SshConnection`, and the reconnect task — dropping
@@ -97,6 +101,8 @@ pub struct EditorServer {
     /// `Authority::with_trust`; its root is updated when the working
     /// directory changes.
     workspace_trust: Arc<crate::services::workspace_trust::WorkspaceTrust>,
+    /// Live env provider, shared into the authority's spawners across rebuilds.
+    env_provider: Arc<crate::services::env_provider::EnvProvider>,
     /// Keepalive bundle paired with the startup authority — held for
     /// the server's lifetime so SSH runtimes, reconnect tasks, and
     /// similar resources outlive the editor rebuilds that happen on
@@ -200,13 +206,17 @@ impl EditorServer {
         // server just keeps a handle so rebuilds can re-anchor it on a
         // working-dir change and the prompt can read it.
         let workspace_trust = Arc::clone(&config.workspace_trust);
+        let env_provider = Arc::clone(&config.env_provider);
 
         // Move the startup authority + its keepalive off the config —
         // they are consumed once and belong to the server from here on.
         // A missing startup authority defaults to a local one carrying the
-        // same trust handle.
+        // same trust + env handles.
         let current_authority = config.startup_authority.take().unwrap_or_else(|| {
-            crate::services::authority::Authority::local(Arc::clone(&workspace_trust))
+            crate::services::authority::Authority::local(
+                Arc::clone(&workspace_trust),
+                Arc::clone(&env_provider),
+            )
         });
         let session_keepalive = config.session_keepalive.take();
 
@@ -224,6 +234,7 @@ impl EditorServer {
             waiting_clients: std::collections::HashMap::new(),
             current_authority,
             workspace_trust,
+            env_provider,
             session_keepalive,
         })
     }
@@ -726,6 +737,9 @@ impl EditorServer {
                     &self.config.dir_context.project_state_dir(&self.config.working_dir),
                 ),
             ));
+            // New project ⇒ the old env recipe no longer applies; deactivate
+            // and let the env-manager plugin re-detect for the new workspace.
+            self.env_provider.clear();
         }
         if let Some(auth) = new_authority {
             tracing::info!(

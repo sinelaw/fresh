@@ -703,9 +703,10 @@ impl Editor {
         // throwaway placeholder carries one.)
         let authority = crate::services::authority::Authority {
             filesystem: Arc::clone(&filesystem),
-            ..crate::services::authority::Authority::local(Arc::new(
-                crate::services::workspace_trust::WorkspaceTrust::permissive(),
-            ))
+            ..crate::services::authority::Authority::local(
+                Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+                Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+            )
         };
         let process_spawner = Arc::clone(&authority.process_spawner);
 

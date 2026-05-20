@@ -1336,12 +1336,13 @@ struct StartupAuthority {
 fn create_startup_authority(
     remote_info: &Option<RemoteLocation>,
     trust: &std::sync::Arc<fresh::services::workspace_trust::WorkspaceTrust>,
+    env: &std::sync::Arc<fresh::services::env_provider::EnvProvider>,
 ) -> AnyhowResult<StartupAuthority> {
     if let Some(remote) = remote_info {
-        connect_remote(remote, trust)
+        connect_remote(remote, trust, env)
     } else {
         Ok(StartupAuthority {
-            authority: fresh::services::authority::Authority::local(trust.clone()),
+            authority: fresh::services::authority::Authority::local(trust.clone(), env.clone()),
             remote_session: None,
         })
     }
@@ -1351,6 +1352,7 @@ fn create_startup_authority(
 fn connect_remote(
     remote: &RemoteLocation,
     trust: &std::sync::Arc<fresh::services::workspace_trust::WorkspaceTrust>,
+    env: &std::sync::Arc<fresh::services::env_provider::EnvProvider>,
 ) -> AnyhowResult<StartupAuthority> {
     // Create a Tokio runtime for the SSH connection
     let rt = tokio::runtime::Runtime::new()
@@ -1415,6 +1417,7 @@ fn connect_remote(
             process_spawner,
             long_running_spawner,
             trust.clone(),
+            env.clone(),
         ),
         remote_session: Some(RemoteSession {
             _connection: connection,
@@ -1563,12 +1566,16 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
             fresh::services::workspace_trust::TrustLevel::Restricted,
         ),
     );
+    // Env provider is born alongside trust (inactive until the env-manager
+    // plugin activates one via setEnv), shared into the authority's spawners.
+    let env_provider =
+        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive());
 
     tracing::info!("Building startup authority...");
     let StartupAuthority {
         authority,
         remote_session,
-    } = create_startup_authority(&remote_info, &workspace_trust)?;
+    } = create_startup_authority(&remote_info, &workspace_trust, &env_provider)?;
     tracing::info!("Startup authority ready");
 
     let mut working_dir = None;
@@ -2695,11 +2702,13 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
             fresh::services::workspace_trust::TrustLevel::Restricted,
         ),
     );
+    let env_provider =
+        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive());
 
     let StartupAuthority {
         authority,
         remote_session,
-    } = create_startup_authority(&remote_info, &workspace_trust)?;
+    } = create_startup_authority(&remote_info, &workspace_trust, &env_provider)?;
 
     // Working directory: local cwd by default; remote path when the
     // daemon was spawned with an `--ssh-url`.  Config layering is
@@ -2750,6 +2759,7 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         init_enabled: !args.no_init,
         startup_authority,
         workspace_trust,
+        env_provider,
         session_keepalive,
     };
 

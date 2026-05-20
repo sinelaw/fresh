@@ -66,6 +66,7 @@ fn set_boot_authority_refreshes_plugin_state_snapshot() {
         Authority::from_plugin_payload(
             devcontainer_authority_payload("Container:deadbeef"),
             std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+            std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
         )
         .unwrap();
     harness.editor_mut().set_boot_authority(authority);
@@ -101,6 +102,7 @@ fn set_boot_authority_back_to_local_clears_plugin_state_snapshot_label() {
         Authority::from_plugin_payload(
             devcontainer_authority_payload("Container:feedface"),
             std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+            std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
         )
         .unwrap();
     harness.editor_mut().set_boot_authority(container);
@@ -109,9 +111,10 @@ fn set_boot_authority_back_to_local_clears_plugin_state_snapshot_label() {
         "Container:feedface"
     );
 
-    harness.editor_mut().set_boot_authority(Authority::local(std::sync::Arc::new(
-        fresh::services::workspace_trust::WorkspaceTrust::permissive(),
-    )));
+    harness.editor_mut().set_boot_authority(Authority::local(
+        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
+    ));
     assert_eq!(
         snapshot_handle.read().unwrap().authority_label,
         "",

@@ -46,6 +46,9 @@ fn make_server_config(
         workspace_trust: std::sync::Arc::new(
             fresh::services::workspace_trust::WorkspaceTrust::permissive(),
         ),
+        env_provider: std::sync::Arc::new(
+            fresh::services::env_provider::EnvProvider::inactive(),
+        ),
         session_keepalive: None,
     }
 }

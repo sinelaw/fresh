@@ -3528,6 +3528,20 @@ pub enum PluginCommand {
     /// restart.
     ClearAuthority,
 
+    /// Activate an environment: set the live env provider's recipe (an
+    /// activation shell `snippet` run in `dir`). Re-evaluated on demand on the
+    /// active backend and applied to every spawn — no authority rebuild. Only
+    /// honored when the workspace is Trusted (it runs repo-controlled code).
+    SetEnv {
+        snippet: String,
+        #[serde(default)]
+        dir: Option<String>,
+    },
+
+    /// Deactivate the environment — clear the live provider so spawns use the
+    /// inherited environment again.
+    ClearEnv,
+
     /// Override the Remote Indicator's displayed state for the rest
     /// of the current editor session (until a restart, or until the
     /// plugin sends another override / `ClearRemoteIndicatorState`).

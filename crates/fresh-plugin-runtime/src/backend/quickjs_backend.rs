@@ -5583,6 +5583,22 @@ impl JsEditorApi {
         let _ = self.command_sender.send(PluginCommand::ClearAuthority);
     }
 
+    /// Activate an environment: set the live env recipe (`snippet` run in
+    /// `dir`). Applied to every spawn, re-evaluated on demand — no restart.
+    /// Honored only when the workspace is Trusted.
+    #[plugin_api(js_name = "setEnv")]
+    pub fn set_env(&self, snippet: String, dir: Option<String>) {
+        let _ = self
+            .command_sender
+            .send(PluginCommand::SetEnv { snippet, dir });
+    }
+
+    /// Deactivate the environment — spawns return to the inherited env.
+    #[plugin_api(js_name = "clearEnv")]
+    pub fn clear_env(&self) {
+        let _ = self.command_sender.send(PluginCommand::ClearEnv);
+    }
+
     /// Override the Remote Indicator's displayed state. Plugins call
     /// this to surface lifecycle transitions that the authority layer
     /// doesn't know about yet — "Connecting" while `devcontainer up`

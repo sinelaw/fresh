@@ -247,6 +247,7 @@ fn test_remote_indicator_popup_connected_container_offers_show_build_logs() -> a
         path_translation: None,
     },
     std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+            std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
     )?;
     harness.editor_mut().set_boot_authority(authority);
 

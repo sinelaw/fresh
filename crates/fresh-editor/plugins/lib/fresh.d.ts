@@ -1212,16 +1212,6 @@ type AuthorityFilesystem = {
 type AuthoritySpawner = {
 	kind: "local";
 } | {
-	/**
-	* Spawn on the host, injecting `env` into every child (one-shot,
-	* LSP/long-running, and the command_exists probe). How an environment
-	* manager (venv / direnv / mise) activates: install the captured
-	* environment — notably a PATH whose bin/ holds the project's tools — so
-	* language servers, formatters, and spawnProcess all see it.
-	*/
-	kind: "local-with-env";
-	env?: [string, string][];
-} | {
 	kind: "docker-exec";
 	container_id: string;
 	user?: string | null;
@@ -1884,6 +1874,24 @@ interface EditorAPI {
 	* `"trusted"` as "do not execute".
 	*/
 	workspaceTrustLevel(): "restricted" | "trusted" | "blocked" | "";
+	/**
+	* Activate an environment by setting the live env recipe: an activation
+	* shell `snippet` (e.g. `eval "$(direnv export bash)"`,
+	* `source .venv/bin/activate`, or `""` for a pure login shell) run in
+	* `dir` (defaults to the workspace). It is re-evaluated on demand on the
+	* active backend and applied to every spawn — language servers,
+	* formatters, `spawnProcess` — so they see the project environment. No
+	* authority rebuild; the LSP is restarted to pick it up.
+	*
+	* Honored only when `workspaceTrustLevel() === "trusted"` (it runs
+	* repo-controlled code). Call `clearEnv()` to deactivate.
+	*/
+	setEnv(snippet: string, dir?: string): void;
+	/**
+	* Deactivate the environment set by `setEnv` — spawns return to the
+	* inherited environment.
+	*/
+	clearEnv(): void;
 	/**
 	* Join path components (variadic - accepts multiple string arguments)
 	* Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)

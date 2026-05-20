@@ -605,6 +605,7 @@ mod integration_tests {
             init_enabled: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+            env_provider: std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
             session_keepalive: None,
         };
 
@@ -774,6 +775,7 @@ mod integration_tests {
             init_enabled: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+            env_provider: std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
             session_keepalive: None,
         };
 
@@ -950,6 +952,7 @@ mod integration_tests {
             init_enabled: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+            env_provider: std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
             session_keepalive: None,
         };
 
@@ -1298,6 +1301,7 @@ mod integration_tests {
             init_enabled: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+            env_provider: std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
             session_keepalive: None,
         };
 
@@ -1350,7 +1354,7 @@ mod integration_tests {
                 display_label: "Container:deadbeef".into(),
                 path_translation: None,
             };
-            let new_auth = Authority::from_plugin_payload(payload, std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()))
+            let new_auth = Authority::from_plugin_payload(payload, std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()), std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()))
                 .map_err(|e| format!("from_plugin_payload: {e}"))?;
 
             // Capture the pre-rebuild editor's address.  We can't
@@ -1427,6 +1431,7 @@ mod integration_tests {
             init_enabled: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+            env_provider: std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
             session_keepalive: None,
         };
 
@@ -1514,7 +1519,7 @@ mod integration_tests {
             path_translation: None,
         };
         let startup_auth =
-            Authority::from_plugin_payload(payload, std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive())).expect("docker payload is valid");
+            Authority::from_plugin_payload(payload, std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()), std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("docker payload is valid");
 
         // Sentinel for the keepalive: flipped to `true` when the
         // wrapper is dropped.  While the server holds it, the flag
@@ -1538,6 +1543,7 @@ mod integration_tests {
             init_enabled: false,
             startup_authority: Some(startup_auth),
             workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+            env_provider: std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
             session_keepalive: Some(keepalive),
         };
 

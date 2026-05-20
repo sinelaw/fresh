@@ -19,11 +19,12 @@
 //!
 //! ## Construction
 //!
-//! - `Authority::local(trust)` — host filesystem + host spawner + host shell.
-//!   Always available; the editor boots with this. Trust is mandatory.
-//! - `Authority::ssh(filesystem, spawner, trust)` — used by the
-//!   `fresh user@host:path` startup flow.
-//! - `Authority::from_plugin_payload(payload, trust)` — built from the
+//! - `Authority::local(trust, env)` — host filesystem + host spawner + host
+//!   shell. Always available; the editor boots with this. Trust + env are
+//!   mandatory shared handles.
+//! - `Authority::ssh(filesystem, spawner, long_running, trust, env)` — used by
+//!   the `fresh user@host:path` startup flow.
+//! - `Authority::from_plugin_payload(payload, trust, env)` — built from the
 //!   `editor.setAuthority(...)` plugin op. The payload is a tagged shape
 //!   (filesystem kind + spawner kind + terminal wrapper + label); it stays
 //!   small and additive so we can grow new kinds without breaking the
@@ -182,19 +183,12 @@ pub enum FilesystemSpec {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SpawnerSpec {
     /// Spawn on the host. Equivalent to `LocalProcessSpawner`.
+    ///
+    /// Environment-manager activation is *not* expressed here — env is a live
+    /// provider set via `editor.setEnv` (see `services::env_provider`), not a
+    /// backend rebuilt from a payload. `SpawnerSpec` is only for choosing the
+    /// backend (local vs container).
     Local,
-    /// Spawn on the host, but inject `env` into every child (one-shot
-    /// spawns, LSP/long-running, and the `command_exists` probe). This is
-    /// how an environment manager (venv / direnv / mise) activates: a plugin
-    /// captures the environment's variables — notably a `PATH` whose `bin/`
-    /// holds the project's interpreter and tools — and installs them here so
-    /// the editor's language servers, formatters, and `spawnProcess` calls
-    /// all see the same environment the user's shell would. Order is
-    /// preserved; per-call env layers on top.
-    LocalWithEnv {
-        #[serde(default)]
-        env: Vec<(String, String)>,
-    },
     /// Run via `docker exec` against a long-lived container. The plugin
     /// manages the container lifecycle (e.g. via `editor.spawnHostProcess`
     /// to invoke `devcontainer up`) and hands us the container id once it
@@ -274,6 +268,11 @@ pub struct Authority {
     /// palette / prompt mutate the level through it and every spawner sees it
     /// live. A spawner literally cannot be built without it.
     pub workspace_trust: Arc<WorkspaceTrust>,
+    /// Live environment provider (the activated venv/direnv/mise recipe) gating
+    /// what env every spawn carries — shared, mutated in place via the
+    /// `setEnv`/`clearEnv` plugin ops, never a stored snapshot. Same `Arc` the
+    /// server owns; born in `main.rs` alongside trust.
+    pub env_provider: Arc<crate::services::env_provider::EnvProvider>,
 }
 
 impl Authority {
@@ -281,15 +280,25 @@ impl Authority {
     /// spawner, host shell wrapper, gated by `trust`. The editor starts
     /// here on every startup; SSH or plugin-installed authorities replace
     /// it later (carrying the same `trust`).
-    pub fn local(trust: Arc<WorkspaceTrust>) -> Self {
+    pub fn local(
+        trust: Arc<WorkspaceTrust>,
+        env: Arc<crate::services::env_provider::EnvProvider>,
+    ) -> Self {
         Self {
             filesystem: Arc::new(StdFileSystem),
-            process_spawner: Arc::new(LocalProcessSpawner::new(Arc::clone(&trust))),
-            long_running_spawner: Arc::new(LocalLongRunningSpawner::new(Arc::clone(&trust))),
+            process_spawner: Arc::new(LocalProcessSpawner::new(
+                Arc::clone(&env),
+                Arc::clone(&trust),
+            )),
+            long_running_spawner: Arc::new(LocalLongRunningSpawner::new(
+                Arc::clone(&env),
+                Arc::clone(&trust),
+            )),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,
             workspace_trust: trust,
+            env_provider: env,
         }
     }
 
@@ -307,6 +316,7 @@ impl Authority {
         process_spawner: Arc<dyn ProcessSpawner>,
         long_running_spawner: Arc<dyn LongRunningSpawner>,
         trust: Arc<WorkspaceTrust>,
+        env: Arc<crate::services::env_provider::EnvProvider>,
     ) -> Self {
         Self {
             filesystem,
@@ -316,6 +326,7 @@ impl Authority {
             display_label: String::new(),
             path_translation: None,
             workspace_trust: trust,
+            env_provider: env,
         }
     }
 
@@ -326,6 +337,7 @@ impl Authority {
     pub fn from_plugin_payload(
         payload: AuthorityPayload,
         trust: Arc<WorkspaceTrust>,
+        env: Arc<crate::services::env_provider::EnvProvider>,
     ) -> Result<Self, AuthorityPayloadError> {
         let filesystem: Arc<dyn FileSystem + Send + Sync> = match payload.filesystem {
             FilesystemSpec::Local => Arc::new(StdFileSystem),
@@ -338,12 +350,8 @@ impl Authority {
             Arc<dyn LongRunningSpawner>,
         ) = match payload.spawner {
             SpawnerSpec::Local => (
-                Arc::new(LocalProcessSpawner::new(Arc::clone(&trust))),
-                Arc::new(LocalLongRunningSpawner::new(Arc::clone(&trust))),
-            ),
-            SpawnerSpec::LocalWithEnv { env } => (
-                Arc::new(LocalProcessSpawner::with_env(env.clone(), Arc::clone(&trust))),
-                Arc::new(LocalLongRunningSpawner::with_env(env, Arc::clone(&trust))),
+                Arc::new(LocalProcessSpawner::new(Arc::clone(&env), Arc::clone(&trust))),
+                Arc::new(LocalLongRunningSpawner::new(Arc::clone(&env), Arc::clone(&trust))),
             ),
             SpawnerSpec::DockerExec {
                 container_id,
@@ -398,6 +406,7 @@ impl Authority {
             display_label: payload.display_label,
             path_translation,
             workspace_trust: trust,
+            env_provider: env,
         })
     }
 }
@@ -419,7 +428,7 @@ mod tests {
 
     #[test]
     fn local_authority_uses_host_shell_with_no_args() {
-        let auth = Authority::local(Arc::new(WorkspaceTrust::permissive()));
+        let auth = Authority::local(Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive()));
         assert!(!auth.terminal_wrapper.command.is_empty());
         assert!(auth.terminal_wrapper.args.is_empty());
         assert!(!auth.terminal_wrapper.manages_cwd);
@@ -435,7 +444,7 @@ mod tests {
             display_label: String::new(),
             path_translation: None,
         };
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("local payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("local payload is valid");
         assert!(!auth.terminal_wrapper.command.is_empty());
         assert!(auth.terminal_wrapper.args.is_empty());
     }
@@ -463,7 +472,7 @@ mod tests {
         });
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("json matches payload schema");
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("docker payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("docker payload is valid");
         assert_eq!(auth.terminal_wrapper.command, "docker");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "Container:abc123");
@@ -536,7 +545,7 @@ mod tests {
         });
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("manages_cwd is optional");
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("payload is valid");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "");
     }
@@ -618,7 +627,7 @@ mod tests {
             display_label: "Container:abc123".into(),
             path_translation: None,
         };
-        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("docker payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("docker payload is valid");
         assert_eq!(auth.terminal_wrapper.command, "docker");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "Container:abc123");
@@ -679,7 +688,7 @@ mod tests {
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("path_translation is accepted");
         let auth =
-            Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("payload with translation is valid");
+            Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive()), Arc::new(crate::services::env_provider::EnvProvider::inactive())).expect("payload with translation is valid");
         let pt = auth
             .path_translation
             .expect("authority carries the translation");

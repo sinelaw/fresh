@@ -432,7 +432,8 @@ impl Editor {
         // Reuse the editor's live trust handle so the restored local authority
         // is gated by the same workspace-trust state.
         let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
-        self.install_authority(crate::services::authority::Authority::local(trust));
+        let env = std::sync::Arc::clone(&self.authority.env_provider);
+        self.install_authority(crate::services::authority::Authority::local(trust, env));
     }
 
     /// Take the queued authority (if any). Called by `main.rs` on

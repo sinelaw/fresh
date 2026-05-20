@@ -944,6 +944,32 @@ impl Editor {
                 self.clear_authority();
             }
 
+            PluginCommand::SetEnv { snippet, dir } => {
+                // Activation runs repo-controlled code, so it's only honored in
+                // a Trusted workspace — defense in depth even though the plugin
+                // already gates on `workspaceTrustLevel()`.
+                use crate::services::workspace_trust::TrustLevel;
+                if self.authority.workspace_trust.level() == TrustLevel::Trusted {
+                    self.authority
+                        .env_provider
+                        .set(snippet, dir.map(std::path::PathBuf::from));
+                    // Re-evaluate already-running tooling under the new env.
+                    self.request_restart(self.working_dir.clone());
+                } else {
+                    self.active_window_mut().status_message = Some(
+                        "Workspace not trusted — cannot activate environment".to_string(),
+                    );
+                }
+            }
+
+            PluginCommand::ClearEnv => {
+                let was_active = self.authority.env_provider.is_active();
+                self.authority.env_provider.clear();
+                if was_active {
+                    self.request_restart(self.working_dir.clone());
+                }
+            }
+
             PluginCommand::SetRemoteIndicatorState { state } => {
                 self.handle_set_remote_indicator_state(state);
             }
@@ -3305,10 +3331,13 @@ impl Editor {
         // in services::authority::AuthorityPayload so core stays ignorant of backend kinds.
         match serde_json::from_value::<crate::services::authority::AuthorityPayload>(payload) {
             Ok(parsed) => {
-                // The new authority shares the editor's live trust handle, so
-                // its spawners are gated by the same level.
+                // The new authority shares the editor's live trust + env
+                // handles, so its spawners are gated and env'd identically.
                 let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
-                match crate::services::authority::Authority::from_plugin_payload(parsed, trust) {
+                let env = std::sync::Arc::clone(&self.authority.env_provider);
+                match crate::services::authority::Authority::from_plugin_payload(
+                    parsed, trust, env,
+                ) {
                     Ok(auth) => {
                         tracing::info!("Plugin installed new authority");
                         self.install_authority(auth);
