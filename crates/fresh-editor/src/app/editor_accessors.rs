@@ -429,7 +429,10 @@ impl Editor {
     /// semantics as `install_authority` — the caller never observes a
     /// half-transitioned editor.
     pub fn clear_authority(&mut self) {
-        self.install_authority(crate::services::authority::Authority::local());
+        // Reuse the editor's live trust handle so the restored local authority
+        // is gated by the same workspace-trust state.
+        let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
+        self.install_authority(crate::services::authority::Authority::local(trust));
     }
 
     /// Take the queued authority (if any). Called by `main.rs` on

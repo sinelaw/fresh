@@ -697,9 +697,15 @@ impl Editor {
         // SSH startup and plugins replace it via `install_authority`
         // after their async work is done. The supplied `filesystem`
         // overrides the local default to support tests that mock IO.
+        // Placeholder authority with a permissive trust; the server installs
+        // the real trust-carrying authority via `set_boot_authority` before
+        // anything spawns. (Trust is mandatory on every authority, so even the
+        // throwaway placeholder carries one.)
         let authority = crate::services::authority::Authority {
             filesystem: Arc::clone(&filesystem),
-            ..crate::services::authority::Authority::local()
+            ..crate::services::authority::Authority::local(Arc::new(
+                crate::services::workspace_trust::WorkspaceTrust::permissive(),
+            ))
         };
         let process_spawner = Arc::clone(&authority.process_spawner);
 

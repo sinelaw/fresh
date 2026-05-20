@@ -245,7 +245,9 @@ fn test_remote_indicator_popup_connected_container_offers_show_build_logs() -> a
         terminal_wrapper: TerminalWrapperSpec::HostShell,
         display_label: "Container:deadbeef".to_string(),
         path_translation: None,
-    })?;
+    },
+    std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+    )?;
     harness.editor_mut().set_boot_authority(authority);
 
     harness.editor_mut().show_remote_indicator_popup();

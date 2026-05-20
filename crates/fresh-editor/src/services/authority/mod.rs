@@ -19,11 +19,11 @@
 //!
 //! ## Construction
 //!
-//! - `Authority::local()` — host filesystem + host spawner + host shell
-//!   wrapped without args. Always available; the editor boots with this.
-//! - `Authority::ssh(filesystem, spawner, display_label)` — used by the
+//! - `Authority::local(trust)` — host filesystem + host spawner + host shell.
+//!   Always available; the editor boots with this. Trust is mandatory.
+//! - `Authority::ssh(filesystem, spawner, trust)` — used by the
 //!   `fresh user@host:path` startup flow.
-//! - `Authority::from_plugin_payload(payload)` — built from the
+//! - `Authority::from_plugin_payload(payload, trust)` — built from the
 //!   `editor.setAuthority(...)` plugin op. The payload is a tagged shape
 //!   (filesystem kind + spawner kind + terminal wrapper + label); it stays
 //!   small and additive so we can grow new kinds without breaking the
@@ -38,6 +38,7 @@ use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
     LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
 };
+use crate::services::workspace_trust::WorkspaceTrust;
 
 /// Plugin-supplied form of the host↔remote workspace mapping. Plugins
 /// build this from their own knowledge (e.g. the devcontainer plugin
@@ -267,27 +268,28 @@ pub struct Authority {
     /// URIs translate at the host/container boundary; local and SSH
     /// authorities leave it `None` and URIs flow through unchanged.
     pub path_translation: Option<PathTranslation>,
-    /// Workspace Trust state gating execution under this authority. Set by
-    /// [`Authority::with_trust`] (the server wraps every authority through
-    /// it before adoption); the base constructors leave it `None`. Shared by
-    /// `Arc` with the server so the command palette can read/change the
-    /// level. The same `Arc` also drives the guarding spawners.
-    pub workspace_trust: Option<Arc<crate::services::workspace_trust::WorkspaceTrust>>,
+    /// Workspace Trust state gating execution under this authority — mandatory,
+    /// passed into every constructor and held by each spawner (no optional, no
+    /// post-hoc wrapping). It's the same `Arc` the server owns, so the command
+    /// palette / prompt mutate the level through it and every spawner sees it
+    /// live. A spawner literally cannot be built without it.
+    pub workspace_trust: Arc<WorkspaceTrust>,
 }
 
 impl Authority {
     /// Default boot-time authority: host filesystem, host process
-    /// spawner, host shell wrapper. The editor starts here on every
-    /// startup; SSH or plugin-installed authorities replace it later.
-    pub fn local() -> Self {
+    /// spawner, host shell wrapper, gated by `trust`. The editor starts
+    /// here on every startup; SSH or plugin-installed authorities replace
+    /// it later (carrying the same `trust`).
+    pub fn local(trust: Arc<WorkspaceTrust>) -> Self {
         Self {
             filesystem: Arc::new(StdFileSystem),
-            process_spawner: Arc::new(LocalProcessSpawner::default()),
-            long_running_spawner: Arc::new(LocalLongRunningSpawner::default()),
+            process_spawner: Arc::new(LocalProcessSpawner::new(Arc::clone(&trust))),
+            long_running_spawner: Arc::new(LocalLongRunningSpawner::new(Arc::clone(&trust))),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,
-            workspace_trust: None,
+            workspace_trust: trust,
         }
     }
 
@@ -304,51 +306,27 @@ impl Authority {
     pub fn ssh(
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         process_spawner: Arc<dyn ProcessSpawner>,
+        trust: Arc<WorkspaceTrust>,
     ) -> Self {
         Self {
             filesystem,
             process_spawner,
-            long_running_spawner: Arc::new(LocalLongRunningSpawner::default()),
+            long_running_spawner: Arc::new(LocalLongRunningSpawner::new(Arc::clone(&trust))),
             terminal_wrapper: TerminalWrapper::host_shell(),
             display_label: String::new(),
             path_translation: None,
-            workspace_trust: None,
-        }
-    }
-
-    /// Wrap this authority's one-shot and long-running spawners with the
-    /// Workspace Trust guard. Every spawn that routes through the authority
-    /// (integrated terminal, LSP, plugin `spawnProcess`, formatters,
-    /// find-in-files) is then gated by `trust`'s level. Idempotent in spirit:
-    /// the server calls it once per editor build, against the fresh authority.
-    ///
-    /// The filesystem, terminal wrapper, label, and path translation are left
-    /// untouched — trust gates *execution*, not file reads.
-    pub fn with_trust(
-        self,
-        trust: Arc<crate::services::workspace_trust::WorkspaceTrust>,
-    ) -> Self {
-        use crate::services::workspace_trust::{
-            TrustGuardedLongRunningSpawner, TrustGuardedProcessSpawner,
-        };
-        Self {
-            process_spawner: Arc::new(TrustGuardedProcessSpawner::new(
-                self.process_spawner,
-                Arc::clone(&trust),
-            )),
-            long_running_spawner: Arc::new(TrustGuardedLongRunningSpawner::new(
-                self.long_running_spawner,
-                Arc::clone(&trust),
-            )),
-            workspace_trust: Some(trust),
-            ..self
+            workspace_trust: trust,
         }
     }
 
     /// Build an authority from a plugin payload (the data carried by the
-    /// `editor.setAuthority(...)` op). All translation from "kind +
-    /// params" to concrete `Arc<dyn …>` lives here and nowhere else.
-    pub fn from_plugin_payload(payload: AuthorityPayload) -> Result<Self, AuthorityPayloadError> {
+    /// `editor.setAuthority(...)` op), gated by `trust` (the editor passes its
+    /// live trust handle so the new authority shares it). All translation from
+    /// "kind + params" to concrete `Arc<dyn …>` lives here and nowhere else.
+    pub fn from_plugin_payload(
+        payload: AuthorityPayload,
+        trust: Arc<WorkspaceTrust>,
+    ) -> Result<Self, AuthorityPayloadError> {
         let filesystem: Arc<dyn FileSystem + Send + Sync> = match payload.filesystem {
             FilesystemSpec::Local => Arc::new(StdFileSystem),
         };
@@ -360,12 +338,12 @@ impl Authority {
             Arc<dyn LongRunningSpawner>,
         ) = match payload.spawner {
             SpawnerSpec::Local => (
-                Arc::new(LocalProcessSpawner::default()),
-                Arc::new(LocalLongRunningSpawner::default()),
+                Arc::new(LocalProcessSpawner::new(Arc::clone(&trust))),
+                Arc::new(LocalLongRunningSpawner::new(Arc::clone(&trust))),
             ),
             SpawnerSpec::LocalWithEnv { env } => (
-                Arc::new(LocalProcessSpawner::with_env(env.clone())),
-                Arc::new(LocalLongRunningSpawner::with_env(env)),
+                Arc::new(LocalProcessSpawner::with_env(env.clone(), Arc::clone(&trust))),
+                Arc::new(LocalLongRunningSpawner::with_env(env, Arc::clone(&trust))),
             ),
             SpawnerSpec::DockerExec {
                 container_id,
@@ -379,6 +357,7 @@ impl Authority {
                         user.clone(),
                         workspace.clone(),
                         env.clone(),
+                        Arc::clone(&trust),
                     ),
                 ),
                 Arc::new(
@@ -387,6 +366,7 @@ impl Authority {
                         user,
                         workspace,
                         env,
+                        Arc::clone(&trust),
                     ),
                 ),
             ),
@@ -417,7 +397,7 @@ impl Authority {
             terminal_wrapper,
             display_label: payload.display_label,
             path_translation,
-            workspace_trust: None,
+            workspace_trust: trust,
         })
     }
 }
@@ -439,7 +419,7 @@ mod tests {
 
     #[test]
     fn local_authority_uses_host_shell_with_no_args() {
-        let auth = Authority::local();
+        let auth = Authority::local(Arc::new(WorkspaceTrust::permissive()));
         assert!(!auth.terminal_wrapper.command.is_empty());
         assert!(auth.terminal_wrapper.args.is_empty());
         assert!(!auth.terminal_wrapper.manages_cwd);
@@ -455,7 +435,7 @@ mod tests {
             display_label: String::new(),
             path_translation: None,
         };
-        let auth = Authority::from_plugin_payload(payload).expect("local payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("local payload is valid");
         assert!(!auth.terminal_wrapper.command.is_empty());
         assert!(auth.terminal_wrapper.args.is_empty());
     }
@@ -483,7 +463,7 @@ mod tests {
         });
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("json matches payload schema");
-        let auth = Authority::from_plugin_payload(payload).expect("docker payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("docker payload is valid");
         assert_eq!(auth.terminal_wrapper.command, "docker");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "Container:abc123");
@@ -556,7 +536,7 @@ mod tests {
         });
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("manages_cwd is optional");
-        let auth = Authority::from_plugin_payload(payload).expect("payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("payload is valid");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "");
     }
@@ -638,7 +618,7 @@ mod tests {
             display_label: "Container:abc123".into(),
             path_translation: None,
         };
-        let auth = Authority::from_plugin_payload(payload).expect("docker payload is valid");
+        let auth = Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("docker payload is valid");
         assert_eq!(auth.terminal_wrapper.command, "docker");
         assert!(auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "Container:abc123");
@@ -699,7 +679,7 @@ mod tests {
         let payload: AuthorityPayload =
             serde_json::from_value(json).expect("path_translation is accepted");
         let auth =
-            Authority::from_plugin_payload(payload).expect("payload with translation is valid");
+            Authority::from_plugin_payload(payload, Arc::new(WorkspaceTrust::permissive())).expect("payload with translation is valid");
         let pt = auth
             .path_translation
             .expect("authority carries the translation");

@@ -892,10 +892,7 @@ impl Editor {
         level: crate::services::workspace_trust::TrustLevel,
     ) {
         use crate::services::workspace_trust::TrustLevel;
-        let Some(trust) = &self.authority.workspace_trust else {
-            self.active_window_mut().status_message = Some(t!("trust.unavailable").to_string());
-            return;
-        };
+        let trust = &self.authority.workspace_trust;
         let changed = trust.level() != level;
         trust.set_level(level);
         let msg = match level {

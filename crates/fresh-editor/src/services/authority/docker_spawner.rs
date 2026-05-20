@@ -9,6 +9,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::process::Command;
@@ -17,6 +18,7 @@ use crate::services::process_hidden::HideWindow;
 use crate::services::remote::{
     LongRunningSpawner, ProcessSpawner, SpawnError, SpawnResult, StdioChild,
 };
+use crate::services::workspace_trust::{gate, WorkspaceTrust};
 
 /// Spawn processes inside a long-lived Docker container via `docker exec`.
 ///
@@ -32,6 +34,7 @@ pub(crate) struct DockerExecSpawner {
     user: Option<String>,
     workspace: Option<String>,
     base_env: Vec<(String, String)>,
+    trust: Arc<WorkspaceTrust>,
 }
 
 impl DockerExecSpawner {
@@ -40,25 +43,34 @@ impl DockerExecSpawner {
         user: Option<String>,
         workspace: Option<String>,
         base_env: Vec<(String, String)>,
+        trust: Arc<WorkspaceTrust>,
     ) -> Self {
         Self {
             container_id,
             user,
             workspace,
             base_env,
+            trust,
         }
     }
 
-    /// Test helper — `with_env` with an empty base env. Production
-    /// always knows whether it has a `userEnvProbe` capture or not, so
-    /// the explicit form is what `from_plugin_payload` calls.
+    /// Test helper — `with_env` with an empty base env and a permissive
+    /// trust. Production always knows whether it has a `userEnvProbe`
+    /// capture or not, so the explicit form is what `from_plugin_payload`
+    /// calls.
     #[cfg(test)]
     pub(crate) fn new(
         container_id: String,
         user: Option<String>,
         workspace: Option<String>,
     ) -> Self {
-        Self::with_env(container_id, user, workspace, Vec::new())
+        Self::with_env(
+            container_id,
+            user,
+            workspace,
+            Vec::new(),
+            Arc::new(WorkspaceTrust::permissive()),
+        )
     }
 }
 
@@ -122,6 +134,7 @@ impl ProcessSpawner for DockerExecSpawner {
         args: Vec<String>,
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
+        gate(&self.trust, &command, cwd.as_deref())?;
         let cwd_path = cwd.as_deref().map(Path::new);
         let docker_args = self.build_exec_args(&command, &args, cwd_path, false, &[]);
 
@@ -177,9 +190,10 @@ impl DockerLongRunningSpawner {
         user: Option<String>,
         workspace: Option<String>,
         base_env: Vec<(String, String)>,
+        trust: Arc<WorkspaceTrust>,
     ) -> Self {
         Self {
-            inner: DockerExecSpawner::with_env(container_id, user, workspace, base_env),
+            inner: DockerExecSpawner::with_env(container_id, user, workspace, base_env, trust),
         }
     }
 
@@ -190,7 +204,13 @@ impl DockerLongRunningSpawner {
         user: Option<String>,
         workspace: Option<String>,
     ) -> Self {
-        Self::with_env(container_id, user, workspace, Vec::new())
+        Self::with_env(
+            container_id,
+            user,
+            workspace,
+            Vec::new(),
+            Arc::new(WorkspaceTrust::permissive()),
+        )
     }
 }
 
@@ -204,6 +224,11 @@ impl LongRunningSpawner for DockerLongRunningSpawner {
         cwd: Option<&Path>,
         limits: Option<&crate::types::ProcessLimits>,
     ) -> Result<StdioChild, SpawnError> {
+        gate(
+            &self.inner.trust,
+            command,
+            cwd.map(|p| p.to_string_lossy()).as_deref(),
+        )?;
         // Docker authorities can't meaningfully enforce host-side
         // resource limits: a cgroup attached to the `docker` CLI PID
         // doesn't govern the container-side server, and `setrlimit`
@@ -340,6 +365,7 @@ mod tests {
                 ("PATH".into(), "/home/vscode/.local/bin:/usr/bin".into()),
                 ("LANG".into(), "C.UTF-8".into()),
             ],
+            Arc::new(WorkspaceTrust::permissive()),
         );
         let args = sp.build_exec_args("pylsp", &[], None, false, &[]);
         let abc_pos = args
@@ -377,6 +403,7 @@ mod tests {
             None,
             None,
             vec![("PATH".into(), "/base".into())],
+            Arc::new(WorkspaceTrust::permissive()),
         );
         let extra = vec![("PATH".into(), "/override".into())];
         let args = sp.build_exec_args("ls", &[], None, false, &extra);

@@ -141,14 +141,9 @@ impl Editor {
         snapshot.authority_label = self.authority.display_label.clone();
 
         // Surface the active project's Workspace Trust level so plugins that
-        // run repo-controlled work can gate on it. Empty when no guarded
-        // authority is installed.
-        snapshot.workspace_trust_level = self
-            .authority
-            .workspace_trust
-            .as_ref()
-            .map(|t| t.level().as_str().to_string())
-            .unwrap_or_default();
+        // run repo-controlled work can gate on it.
+        snapshot.workspace_trust_level =
+            self.authority.workspace_trust.level().as_str().to_string();
 
         // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without
@@ -2084,19 +2079,19 @@ impl Editor {
             // fails every host spawn; Restricted refuses repo-local
             // executables. Without this, Blocked wouldn't actually block
             // everything.
-            if let Some(trust) = &self.authority.workspace_trust {
-                if let crate::services::workspace_trust::SpawnDecision::Deny(reason) =
-                    trust.decide(&command, effective_cwd.as_deref())
-                {
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = sender.send(AsyncMessage::PluginProcessOutput {
-                        process_id,
-                        stdout: String::new(),
-                        stderr: reason,
-                        exit_code: -1,
-                    });
-                    return;
-                }
+            if let crate::services::workspace_trust::SpawnDecision::Deny(reason) = self
+                .authority
+                .workspace_trust
+                .decide(&command, effective_cwd.as_deref())
+            {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = sender.send(AsyncMessage::PluginProcessOutput {
+                    process_id,
+                    stdout: String::new(),
+                    stderr: reason,
+                    exit_code: -1,
+                });
+                return;
             }
 
             let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
@@ -3310,7 +3305,10 @@ impl Editor {
         // in services::authority::AuthorityPayload so core stays ignorant of backend kinds.
         match serde_json::from_value::<crate::services::authority::AuthorityPayload>(payload) {
             Ok(parsed) => {
-                match crate::services::authority::Authority::from_plugin_payload(parsed) {
+                // The new authority shares the editor's live trust handle, so
+                // its spawners are gated by the same level.
+                let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
+                match crate::services::authority::Authority::from_plugin_payload(parsed, trust) {
                     Ok(auth) => {
                         tracing::info!("Plugin installed new authority");
                         self.install_authority(auth);

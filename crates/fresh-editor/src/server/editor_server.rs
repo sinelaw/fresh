@@ -53,6 +53,11 @@ pub struct EditorServerConfig {
     /// the daemon boots already attached to the remote host.  Plugins
     /// can still replace this post-boot via `setAuthority`.
     pub startup_authority: Option<crate::services::authority::Authority>,
+    /// Workspace Trust handle, created by the caller (`main.rs`) before the
+    /// startup authority so the same `Arc` backs both the authority's spawners
+    /// and the server. Mandatory: every spawner holds it, so there's no
+    /// ungated path. Tests pass `Arc::new(WorkspaceTrust::permissive())`.
+    pub workspace_trust: Arc<crate::services::workspace_trust::WorkspaceTrust>,
     /// Opaque handle kept alive for the server's lifetime alongside
     /// `startup_authority`.  SSH authorities back this with the Tokio
     /// runtime, the `SshConnection`, and the reconnect task — dropping
@@ -189,29 +194,21 @@ impl EditorServer {
             tracing::warn!("Failed to write PID file: {}", e);
         }
 
+        // Workspace Trust is born in `main.rs` (already rooted at the working
+        // dir, store attached, persisted level loaded) and threaded in via the
+        // config — the same `Arc` the startup authority's spawners hold. The
+        // server just keeps a handle so rebuilds can re-anchor it on a
+        // working-dir change and the prompt can read it.
+        let workspace_trust = Arc::clone(&config.workspace_trust);
+
         // Move the startup authority + its keepalive off the config —
         // they are consumed once and belong to the server from here on.
-        let current_authority = config
-            .startup_authority
-            .take()
-            .unwrap_or_else(crate::services::authority::Authority::local);
+        // A missing startup authority defaults to a local one carrying the
+        // same trust handle.
+        let current_authority = config.startup_authority.take().unwrap_or_else(|| {
+            crate::services::authority::Authority::local(Arc::clone(&workspace_trust))
+        });
         let session_keepalive = config.session_keepalive.take();
-
-        // Workspace Trust. Decisions persist per-project; any prior decision
-        // for this directory is honored, and a never-decided project falls
-        // back to the safe `TrustLevel::Restricted` default. The
-        // trust-granting prompt is surfaced after the editor is built (see
-        // `maybe_prompt_workspace_trust`).
-        let trust_store = crate::services::workspace_trust::TrustStore::for_project_dir(
-            &config.dir_context.project_state_dir(&config.working_dir),
-        );
-        let initial_trust = trust_store.level().unwrap_or_default();
-        let workspace_trust =
-            Arc::new(crate::services::workspace_trust::WorkspaceTrust::new_persistent(
-                Some(config.working_dir.clone()),
-                initial_trust,
-                trust_store,
-            ));
 
         Ok(Self {
             config,
@@ -571,15 +568,9 @@ impl EditorServer {
         )
         .map_err(|e| io::Error::other(format!("Failed to create editor: {}", e)))?;
 
-        // Gate every authority-routed spawn (terminal, LSP, plugin
-        // spawnProcess, formatters, find-in-files) through Workspace Trust.
-        // Wrapping here — the single seam both first-boot and rebuild pass
-        // through — covers all downstream consumers with no per-caller code.
-        editor.set_boot_authority(
-            self.current_authority
-                .clone()
-                .with_trust(Arc::clone(&self.workspace_trust)),
-        );
+        // The authority already carries the shared trust handle (every
+        // spawner holds it), so adoption needs no extra wrapping.
+        editor.set_boot_authority(self.current_authority.clone());
 
         // Auto-load init.ts via the same pipeline as the non-server entry point.
         editor.load_init_script(self.config.init_enabled);

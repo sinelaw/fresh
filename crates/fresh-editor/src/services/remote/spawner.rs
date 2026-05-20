@@ -19,6 +19,7 @@ use crate::services::process_hidden::HideWindow;
 use crate::services::process_limits::PostSpawnAction;
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{decode_base64, exec_params};
+use crate::services::workspace_trust::{gate, WorkspaceTrust};
 use crate::types::ProcessLimits;
 use std::path::Path;
 use std::process::ExitStatus;
@@ -117,16 +118,24 @@ pub trait ProcessSpawner: Send + Sync {
 /// onto every child's environment (under the inherited process env) — this is
 /// how an activated environment manager (venv / direnv / mise) injects its
 /// captured variables into one-shot spawns. Empty for the plain default.
-#[derive(Default)]
 pub struct LocalProcessSpawner {
     env: Vec<(String, String)>,
+    trust: Arc<WorkspaceTrust>,
 }
 
 impl LocalProcessSpawner {
+    /// Plain local spawner (no injected env) gated by `trust`.
+    pub fn new(trust: Arc<WorkspaceTrust>) -> Self {
+        Self {
+            env: Vec::new(),
+            trust,
+        }
+    }
+
     /// Spawner that injects `env` into every child (e.g. an activated
-    /// environment-manager snapshot).
-    pub fn with_env(env: Vec<(String, String)>) -> Self {
-        Self { env }
+    /// environment-manager snapshot), gated by `trust`.
+    pub fn with_env(env: Vec<(String, String)>, trust: Arc<WorkspaceTrust>) -> Self {
+        Self { env, trust }
     }
 
     fn apply_env(&self, cmd: &mut tokio::process::Command) {
@@ -144,6 +153,7 @@ impl ProcessSpawner for LocalProcessSpawner {
         args: Vec<String>,
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
+        gate(&self.trust, &command, cwd.as_deref())?;
         let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&args);
         self.apply_env(&mut cmd);
@@ -179,6 +189,7 @@ impl ProcessSpawner for LocalProcessSpawner {
         use std::process::Stdio;
         use tokio::io::AsyncReadExt;
 
+        gate(&self.trust, &command, cwd.as_deref())?;
         let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&args);
         self.apply_env(&mut cmd);
@@ -298,6 +309,7 @@ impl ProcessSpawner for LocalProcessSpawner {
         use std::process::Stdio;
         use tokio::io::AsyncWriteExt;
 
+        gate(&self.trust, &command, cwd.as_deref())?;
         let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&args);
         self.apply_env(&mut cmd);
@@ -386,12 +398,13 @@ impl ProcessSpawner for LocalProcessSpawner {
 /// Remote process spawner via SSH agent
 pub struct RemoteProcessSpawner {
     channel: Arc<AgentChannel>,
+    trust: Arc<WorkspaceTrust>,
 }
 
 impl RemoteProcessSpawner {
-    /// Create a new remote process spawner
-    pub fn new(channel: Arc<AgentChannel>) -> Self {
-        Self { channel }
+    /// Create a new remote process spawner gated by `trust`.
+    pub fn new(channel: Arc<AgentChannel>, trust: Arc<WorkspaceTrust>) -> Self {
+        Self { channel, trust }
     }
 }
 
@@ -403,6 +416,7 @@ impl ProcessSpawner for RemoteProcessSpawner {
         args: Vec<String>,
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
+        gate(&self.trust, &command, cwd.as_deref())?;
         let params = exec_params(&command, &args, cwd.as_deref());
 
         // Use streaming request to get live output
@@ -613,17 +627,25 @@ pub trait LongRunningSpawner: Send + Sync {
 /// their own implementation without any LSP-side awareness. Applies
 /// any `ProcessLimits` passed in via the same machinery the
 /// pre-refactor LSP code used (`apply_to_command` + `apply_to_child`).
-#[derive(Default)]
 pub struct LocalLongRunningSpawner {
     env: Vec<(String, String)>,
+    trust: Arc<WorkspaceTrust>,
 }
 
 impl LocalLongRunningSpawner {
+    /// Plain local long-running spawner (no injected env) gated by `trust`.
+    pub fn new(trust: Arc<WorkspaceTrust>) -> Self {
+        Self {
+            env: Vec::new(),
+            trust,
+        }
+    }
+
     /// Spawner that injects `env` (e.g. an activated environment-manager
     /// snapshot) under each long-running child's environment. Per-call env
     /// from `spawn_stdio` is layered on top, so it overrides on conflict.
-    pub fn with_env(env: Vec<(String, String)>) -> Self {
-        Self { env }
+    pub fn with_env(env: Vec<(String, String)>, trust: Arc<WorkspaceTrust>) -> Self {
+        Self { env, trust }
     }
 }
 
@@ -637,6 +659,11 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
         cwd: Option<&Path>,
         limits: Option<&ProcessLimits>,
     ) -> Result<StdioChild, SpawnError> {
+        gate(
+            &self.trust,
+            command,
+            cwd.map(|p| p.to_string_lossy()).as_deref(),
+        )?;
         let mut cmd = tokio::process::Command::new(command);
         cmd.args(args)
             // Authority env first, then the per-call env so the caller wins.
@@ -688,7 +715,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner() {
-        let spawner = LocalProcessSpawner::default();
+        let spawner = LocalProcessSpawner::new(Arc::new(WorkspaceTrust::permissive()));
         let result = spawner
             .spawn("echo".to_string(), vec!["hello".to_string()], None)
             .await
@@ -700,7 +727,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner_stdout_to_file() {
-        let spawner = LocalProcessSpawner::default();
+        let spawner = LocalProcessSpawner::new(Arc::new(WorkspaceTrust::permissive()));
         let tmp =
             std::env::temp_dir().join(format!("fresh-spawner-test-{}.out", std::process::id()));
         // Best-effort cleanup of any leftover from a previous run.
@@ -734,7 +761,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_spawner_cancellable_kill() {
-        let spawner = LocalProcessSpawner::default();
+        let spawner = LocalProcessSpawner::new(Arc::new(WorkspaceTrust::permissive()));
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
 
         // Start a sleep that would take 30s normally; fire kill after 100ms.
@@ -775,7 +802,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_long_running_spawn_stdio_pipes_output() {
-        let spawner = LocalLongRunningSpawner::default();
+        let spawner = LocalLongRunningSpawner::new(Arc::new(WorkspaceTrust::permissive()));
         let mut child = spawner
             .spawn_stdio(
                 "sh",
@@ -799,7 +826,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_long_running_command_exists_for_sh() {
-        let spawner = LocalLongRunningSpawner::default();
+        let spawner = LocalLongRunningSpawner::new(Arc::new(WorkspaceTrust::permissive()));
         assert!(spawner.command_exists("sh").await);
         assert!(
             !spawner
@@ -810,8 +837,10 @@ mod tests {
 
     #[tokio::test]
     async fn local_spawner_injects_env() {
-        let spawner =
-            LocalProcessSpawner::with_env(vec![("FRESH_ENV_TEST".into(), "hi-from-env".into())]);
+        let spawner = LocalProcessSpawner::with_env(
+            vec![("FRESH_ENV_TEST".into(), "hi-from-env".into())],
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         let result = spawner
             .spawn(
                 "sh".into(),
@@ -827,10 +856,13 @@ mod tests {
     #[tokio::test]
     async fn local_long_running_layers_authority_env_under_call_env() {
         // Authority env supplies A and B; the per-call env overrides B.
-        let spawner = LocalLongRunningSpawner::with_env(vec![
-            ("FRESH_A".into(), "auth".into()),
-            ("FRESH_B".into(), "auth".into()),
-        ]);
+        let spawner = LocalLongRunningSpawner::with_env(
+            vec![
+                ("FRESH_A".into(), "auth".into()),
+                ("FRESH_B".into(), "auth".into()),
+            ],
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         let mut child = spawner
             .spawn_stdio(
                 "sh",
@@ -868,10 +900,12 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let spawner =
-            LocalLongRunningSpawner::with_env(vec![("PATH".into(), tmp.to_string_lossy().into())]);
+        let spawner = LocalLongRunningSpawner::with_env(
+            vec![("PATH".into(), tmp.to_string_lossy().into())],
+            Arc::new(WorkspaceTrust::permissive()),
+        );
         assert!(spawner.command_exists("fresh-fake-tool-xyz").await);
-        let plain = LocalLongRunningSpawner::default();
+        let plain = LocalLongRunningSpawner::new(Arc::new(WorkspaceTrust::permissive()));
         assert!(!plain.command_exists("fresh-fake-tool-xyz").await);
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -604,6 +604,7 @@ mod integration_tests {
             plugins_enabled: false,
             init_enabled: false,
             startup_authority: None,
+            workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
             session_keepalive: None,
         };
 
@@ -772,6 +773,7 @@ mod integration_tests {
             plugins_enabled: false,
             init_enabled: false,
             startup_authority: None,
+            workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
             session_keepalive: None,
         };
 
@@ -947,6 +949,7 @@ mod integration_tests {
             plugins_enabled: false,
             init_enabled: false,
             startup_authority: None,
+            workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
             session_keepalive: None,
         };
 
@@ -1294,6 +1297,7 @@ mod integration_tests {
             plugins_enabled: false,
             init_enabled: false,
             startup_authority: None,
+            workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
             session_keepalive: None,
         };
 
@@ -1346,7 +1350,7 @@ mod integration_tests {
                 display_label: "Container:deadbeef".into(),
                 path_translation: None,
             };
-            let new_auth = Authority::from_plugin_payload(payload)
+            let new_auth = Authority::from_plugin_payload(payload, std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()))
                 .map_err(|e| format!("from_plugin_payload: {e}"))?;
 
             // Capture the pre-rebuild editor's address.  We can't
@@ -1422,6 +1426,7 @@ mod integration_tests {
             plugins_enabled: false,
             init_enabled: false,
             startup_authority: None,
+            workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
             session_keepalive: None,
         };
 
@@ -1509,7 +1514,7 @@ mod integration_tests {
             path_translation: None,
         };
         let startup_auth =
-            Authority::from_plugin_payload(payload).expect("docker payload is valid");
+            Authority::from_plugin_payload(payload, std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive())).expect("docker payload is valid");
 
         // Sentinel for the keepalive: flipped to `true` when the
         // wrapper is dropped.  While the server holds it, the flag
@@ -1532,6 +1537,7 @@ mod integration_tests {
             plugins_enabled: false,
             init_enabled: false,
             startup_authority: Some(startup_auth),
+            workspace_trust: std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
             session_keepalive: Some(keepalive),
         };
 

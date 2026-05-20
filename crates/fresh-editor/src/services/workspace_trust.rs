@@ -41,12 +41,9 @@
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
-use crate::services::remote::{
-    LongRunningSpawner, ProcessSpawner, SpawnError, SpawnResult, StdioChild,
-};
-use crate::types::ProcessLimits;
+use crate::services::remote::SpawnError;
 
 /// Per-workspace trust level.
 ///
@@ -134,6 +131,13 @@ impl WorkspaceTrust {
     /// [`Self::set_level`] persists the decision for this workspace.
     pub fn new_persistent(root: Option<PathBuf>, level: TrustLevel, store: TrustStore) -> Self {
         Self::build(root, level, Some(store))
+    }
+
+    /// A permissive, in-memory trust with no workspace root — every spawn is
+    /// allowed. Used as the placeholder authority before the real trust is
+    /// installed at boot, and by tests/fixtures that don't exercise gating.
+    pub fn permissive() -> Self {
+        Self::new(None, TrustLevel::Trusted)
     }
 
     fn build(root: Option<PathBuf>, level: TrustLevel, store: Option<TrustStore>) -> Self {
@@ -397,98 +401,19 @@ pub fn workspace_has_executable_content(root: &Path) -> bool {
     false
 }
 
-/// Wraps a [`ProcessSpawner`] so every one-shot spawn is gated by trust.
-pub struct TrustGuardedProcessSpawner {
-    inner: Arc<dyn ProcessSpawner>,
-    trust: Arc<WorkspaceTrust>,
-}
-
-impl TrustGuardedProcessSpawner {
-    pub fn new(inner: Arc<dyn ProcessSpawner>, trust: Arc<WorkspaceTrust>) -> Self {
-        Self { inner, trust }
-    }
-
-    fn gate(&self, command: &str, cwd: Option<&str>) -> Result<(), SpawnError> {
-        match self.trust.decide(command, cwd) {
-            SpawnDecision::Allow => Ok(()),
-            SpawnDecision::Deny(reason) => Err(SpawnError::Process(reason)),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl ProcessSpawner for TrustGuardedProcessSpawner {
-    async fn spawn(
-        &self,
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-    ) -> Result<SpawnResult, SpawnError> {
-        self.gate(&command, cwd.as_deref())?;
-        self.inner.spawn(command, args, cwd).await
-    }
-
-    async fn spawn_to_file(
-        &self,
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-        stdout_to: PathBuf,
-    ) -> Result<SpawnResult, SpawnError> {
-        self.gate(&command, cwd.as_deref())?;
-        self.inner.spawn_to_file(command, args, cwd, stdout_to).await
-    }
-
-    async fn spawn_cancellable(
-        &self,
-        command: String,
-        args: Vec<String>,
-        cwd: Option<String>,
-        stdout_to: Option<PathBuf>,
-        kill_rx: tokio::sync::oneshot::Receiver<()>,
-    ) -> Result<SpawnResult, SpawnError> {
-        self.gate(&command, cwd.as_deref())?;
-        self.inner
-            .spawn_cancellable(command, args, cwd, stdout_to, kill_rx)
-            .await
-    }
-}
-
-/// Wraps a [`LongRunningSpawner`] so every LSP/tool spawn is gated by trust.
-pub struct TrustGuardedLongRunningSpawner {
-    inner: Arc<dyn LongRunningSpawner>,
-    trust: Arc<WorkspaceTrust>,
-}
-
-impl TrustGuardedLongRunningSpawner {
-    pub fn new(inner: Arc<dyn LongRunningSpawner>, trust: Arc<WorkspaceTrust>) -> Self {
-        Self { inner, trust }
-    }
-}
-
-#[async_trait::async_trait]
-impl LongRunningSpawner for TrustGuardedLongRunningSpawner {
-    async fn spawn_stdio(
-        &self,
-        command: &str,
-        args: &[String],
-        env: Vec<(String, String)>,
-        cwd: Option<&Path>,
-        limits: Option<&ProcessLimits>,
-    ) -> Result<StdioChild, SpawnError> {
-        let cwd_str = cwd.map(|p| p.to_string_lossy().into_owned());
-        match self.trust.decide(command, cwd_str.as_deref()) {
-            SpawnDecision::Allow => {}
-            SpawnDecision::Deny(reason) => return Err(SpawnError::Process(reason)),
-        }
-        self.inner.spawn_stdio(command, args, env, cwd, limits).await
-    }
-
-    async fn command_exists(&self, command: &str) -> bool {
-        // Existence probing is read-only — it doesn't run repo content — so
-        // it isn't gated. (For local authorities this is `which::which`,
-        // not a spawn at all.)
-        self.inner.command_exists(command).await
+/// Map a trust decision for `command` (with the child's `cwd`) onto a spawn
+/// result: `Ok(())` to proceed, or an `Err` carrying the deny reason. The
+/// shared one-liner every spawner impl calls at the top of each spawn method,
+/// so the Allow/Deny→error policy lives in exactly one place even though the
+/// *check site* is per-backend.
+pub fn gate(
+    trust: &WorkspaceTrust,
+    command: &str,
+    cwd: Option<&str>,
+) -> Result<(), SpawnError> {
+    match trust.decide(command, cwd) {
+        SpawnDecision::Allow => Ok(()),
+        SpawnDecision::Deny(reason) => Err(SpawnError::Process(reason)),
     }
 }
 

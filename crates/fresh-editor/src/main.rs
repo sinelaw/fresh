@@ -1335,19 +1335,23 @@ struct StartupAuthority {
 /// the TS plugin handles it post-boot via `editor.setAuthority(...)`.
 fn create_startup_authority(
     remote_info: &Option<RemoteLocation>,
+    trust: &std::sync::Arc<fresh::services::workspace_trust::WorkspaceTrust>,
 ) -> AnyhowResult<StartupAuthority> {
     if let Some(remote) = remote_info {
-        connect_remote(remote)
+        connect_remote(remote, trust)
     } else {
         Ok(StartupAuthority {
-            authority: fresh::services::authority::Authority::local(),
+            authority: fresh::services::authority::Authority::local(trust.clone()),
             remote_session: None,
         })
     }
 }
 
 /// Establish SSH connection to remote host and return `Authority::ssh`.
-fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<StartupAuthority> {
+fn connect_remote(
+    remote: &RemoteLocation,
+    trust: &std::sync::Arc<fresh::services::workspace_trust::WorkspaceTrust>,
+) -> AnyhowResult<StartupAuthority> {
     // Create a Tokio runtime for the SSH connection
     let rt = tokio::runtime::Runtime::new()
         .context("Failed to create Tokio runtime for remote connection")?;
@@ -1385,7 +1389,8 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<StartupAuthority> {
         channel.clone(),
         connection_string,
     ));
-    let process_spawner = std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone()));
+    let process_spawner =
+        std::sync::Arc::new(remote::RemoteProcessSpawner::new(channel.clone(), trust.clone()));
 
     // Spawn background reconnect task on the runtime.
     // We need a runtime context for tokio::spawn inside spawn_reconnect_task.
@@ -1398,7 +1403,11 @@ fn connect_remote(remote: &RemoteLocation) -> AnyhowResult<StartupAuthority> {
     // falls back to `filesystem.remote_connection_info()`, which knows
     // how to annotate the disconnect state.
     Ok(StartupAuthority {
-        authority: fresh::services::authority::Authority::ssh(filesystem, process_spawner),
+        authority: fresh::services::authority::Authority::ssh(
+            filesystem,
+            process_spawner,
+            trust.clone(),
+        ),
         remote_session: Some(RemoteSession {
             _connection: connection,
             _runtime: rt,
@@ -1535,11 +1544,23 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     // Devcontainer detection is intentionally NOT done here — it moved
     // into the devcontainer TS plugin so container attach runs
     // post-boot (see `plugins/devcontainer.ts` and principle 8).
+    // Workspace Trust is born here — before the startup authority — so the
+    // same Arc backs the authority's spawners and the server. Rootless for
+    // now (rootless ⇒ allows everything, and nothing spawns yet); it's
+    // re-anchored to the working dir + persisted level once those are known
+    // below.
+    let workspace_trust = std::sync::Arc::new(
+        fresh::services::workspace_trust::WorkspaceTrust::new(
+            None,
+            fresh::services::workspace_trust::TrustLevel::Restricted,
+        ),
+    );
+
     tracing::info!("Building startup authority...");
     let StartupAuthority {
         authority,
         remote_session,
-    } = create_startup_authority(&remote_info)?;
+    } = create_startup_authority(&remote_info, &workspace_trust)?;
     tracing::info!("Startup authority ready");
 
     let mut working_dir = None;
@@ -1574,6 +1595,14 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     };
 
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+
+    // Re-anchor trust to this project now that the working dir is known.
+    workspace_trust.set_root(Some(effective_working_dir.clone()));
+    workspace_trust.set_store(Some(
+        fresh::services::workspace_trust::TrustStore::for_project_dir(
+            &dir_context.project_state_dir(&effective_working_dir),
+        ),
+    ));
 
     let mut config = if let Some(config_path) = &args.config {
         // Explicit config file overrides layered system
@@ -2649,10 +2678,20 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         None => None,
     };
 
+    // Workspace Trust born before the authority so the same Arc backs both
+    // the authority's spawners and the server. Rootless until we know the
+    // working dir below.
+    let workspace_trust = std::sync::Arc::new(
+        fresh::services::workspace_trust::WorkspaceTrust::new(
+            None,
+            fresh::services::workspace_trust::TrustLevel::Restricted,
+        ),
+    );
+
     let StartupAuthority {
         authority,
         remote_session,
-    } = create_startup_authority(&remote_info)?;
+    } = create_startup_authority(&remote_info, &workspace_trust)?;
 
     // Working directory: local cwd by default; remote path when the
     // daemon was spawned with an `--ssh-url`.  Config layering is
@@ -2666,6 +2705,15 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
     eprintln!("[server] Working directory: {:?}", working_dir);
 
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
+
+    // Re-anchor trust to this project: its persisted level (if any) is
+    // adopted, else the safe Restricted default.
+    workspace_trust.set_root(Some(working_dir.clone()));
+    workspace_trust.set_store(Some(
+        fresh::services::workspace_trust::TrustStore::for_project_dir(
+            &dir_context.project_state_dir(&working_dir),
+        ),
+    ));
 
     // Load editor config
     eprintln!("[server] Loading editor config...");
@@ -2693,6 +2741,7 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         plugins_enabled: !args.no_plugins,
         init_enabled: !args.no_init,
         startup_authority,
+        workspace_trust,
         session_keepalive,
     };
 
