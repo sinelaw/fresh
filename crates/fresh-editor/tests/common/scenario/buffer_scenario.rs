@@ -336,6 +336,7 @@ pub fn check_buffer_scenario(s: BufferScenario) -> Result<(), ScenarioFailure> {
 /// `assert!` text — so `#[should_panic(expected = "…")]` meta-tests
 /// continue to work.
 pub fn assert_buffer_scenario(s: BufferScenario) {
+    crate::common::scenario::minimize::report(&s);
     if let Err(f) = check_buffer_scenario(s) {
         panic!("{f}");
     }

@@ -23,6 +23,7 @@ pub mod trace_scenario;
 pub mod context;
 pub mod input_event;
 pub mod key_dispatch;
+pub mod minimize;
 pub mod observable;
 
 // ── Phase 2: Layout (real, naive wrap shadow) ───────────────────────
