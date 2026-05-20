@@ -6,6 +6,17 @@ model. The enforcement core (`crates/fresh-editor/src/services/workspace_trust.r
 and per-project persistence already exist; this doc specifies the level *semantics*
 we want to grow into and the cross-platform constraints that shape them.
 
+> **Current state (WIP, intentional):** the auto trust prompt on open is
+> **temporarily disabled**, and undecided workspaces default to **Trusted**
+> (full execution) — see `Editor::maybe_prompt_workspace_trust` in
+> `crates/fresh-editor/src/app/popup_dialogs.rs`. This restores pre-Workspace-Trust
+> behavior so the surrounding work can merge while the trust UX is redesigned
+> around the sandboxed-execution model below. The enforcement core, persistence,
+> and the manual `Workspace: Set Trust Level` command are untouched, and an
+> explicitly recorded decision is still honored — so re-enabling the gate is a
+> one-function revert. Re-enabling (with the sandbox model) is tracked as the
+> follow-up this doc specifies.
+
 ## The reframe: from classification to containment
 
 Workspace Trust gates one thing: a freshly-opened project may contain

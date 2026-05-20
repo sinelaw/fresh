@@ -975,16 +975,24 @@ impl Editor {
     /// nothing to gate. Called from every editor-startup path (in-process run
     /// and the session server) so the prompt fires regardless of launch mode.
     pub fn maybe_prompt_workspace_trust(&mut self) {
+        // WIP: the auto trust prompt is temporarily disabled and undecided
+        // workspaces default to Trusted (full execution), so the editor
+        // behaves as it did before Workspace Trust landed. This unblocks
+        // merging the surrounding work while the trust UX is redesigned around
+        // a sandboxed-execution model — see
+        // `docs/internal/workspace-trust-sandbox-design.md`. A decision the
+        // user explicitly recorded is still honored; only the prompt-on-open
+        // is suppressed. The manual `Workspace: Set Trust Level` command and
+        // the enforcement core are untouched, so this is a one-line revert.
         let store = crate::services::workspace_trust::TrustStore::for_project_dir(
             &self.dir_context.project_state_dir(&self.working_dir),
         );
         if store.is_decided() {
-            return; // already decided for this project
+            return; // respect a decision the user already recorded
         }
-        if !crate::services::workspace_trust::workspace_has_executable_content(&self.working_dir) {
-            return; // nothing whose trust matters here
-        }
-        self.show_workspace_trust_popup(false);
+        self.authority
+            .workspace_trust
+            .set_level(crate::services::workspace_trust::TrustLevel::Trusted);
     }
 
     /// Show the workspace-trust prompt: a centered list asking how this
