@@ -1074,6 +1074,14 @@ pub struct EditorStateSnapshot {
     /// attached" without having to track state across editor restarts.
     #[serde(default)]
     pub authority_label: String,
+    /// Current Workspace Trust level for the active project: `"restricted"`,
+    /// `"trusted"`, or `"blocked"`. Empty when trust state is unavailable
+    /// (e.g. the default local authority before a guarded one is installed).
+    /// Plugins that run repo-controlled work read this via
+    /// `editor.workspaceTrustLevel()` and should treat anything other than
+    /// `"trusted"` as "do not execute".
+    #[serde(default)]
+    pub workspace_trust_level: String,
     /// LSP diagnostics per file URI.
     /// Maps file URI string to Vec of diagnostics for that file.
     ///
@@ -1206,6 +1214,7 @@ impl EditorStateSnapshot {
             windows: Vec::new(),
             active_window_id: WindowId(1),
             authority_label: String::new(),
+            workspace_trust_level: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
             config: Arc::new(serde_json::Value::Null),

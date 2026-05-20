@@ -81,6 +81,16 @@ impl TrustLevel {
             TrustLevel::Blocked => 2,
         }
     }
+
+    /// Stable lowercase name, matching the serde representation. Used to
+    /// surface the level to plugins via the state snapshot.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrustLevel::Restricted => "restricted",
+            TrustLevel::Trusted => "trusted",
+            TrustLevel::Blocked => "blocked",
+        }
+    }
 }
 
 /// Outcome of consulting [`WorkspaceTrust::decide`].

@@ -1864,6 +1864,17 @@ interface EditorAPI {
 	*/
 	getAuthorityLabel(): string;
 	/**
+	* Current Workspace Trust level for the active project:
+	* `"restricted"`, `"trusted"`, or `"blocked"` (empty `""` when trust
+	* state is unavailable, e.g. the default local authority).
+	*
+	* Trust is a per-project, user-granted decision. Plugins that run
+	* repo-controlled work (env activation, project tooling, repo-local
+	* binaries) MUST gate on this and treat anything other than
+	* `"trusted"` as "do not execute".
+	*/
+	workspaceTrustLevel(): "restricted" | "trusted" | "blocked" | "";
+	/**
 	* Join path components (variadic - accepts multiple string arguments)
 	* Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)
 	* 

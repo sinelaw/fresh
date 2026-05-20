@@ -2025,6 +2025,17 @@ impl JsEditorApi {
             .unwrap_or_default()
     }
 
+    /// Current Workspace Trust level for the active project: `"restricted"`,
+    /// `"trusted"`, or `"blocked"` (empty when unavailable). Exposed to JS as
+    /// `editor.workspaceTrustLevel()`. Plugins that run repo-controlled work
+    /// should treat anything other than `"trusted"` as "do not execute".
+    pub fn workspace_trust_level(&self) -> String {
+        self.state_snapshot
+            .read()
+            .map(|s| s.workspace_trust_level.clone())
+            .unwrap_or_default()
+    }
+
     // === Path Operations ===
 
     /// Join path components (variadic - accepts multiple string arguments)

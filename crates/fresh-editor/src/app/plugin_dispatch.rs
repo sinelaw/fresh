@@ -140,6 +140,16 @@ impl Editor {
         // lockstep with the canonical seat.
         snapshot.authority_label = self.authority.display_label.clone();
 
+        // Surface the active project's Workspace Trust level so plugins that
+        // run repo-controlled work can gate on it. Empty when no guarded
+        // authority is installed.
+        snapshot.workspace_trust_level = self
+            .authority
+            .workspace_trust
+            .as_ref()
+            .map(|t| t.level().as_str().to_string())
+            .unwrap_or_default();
+
         // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without
         // a separate notification path. Sorted by id for
