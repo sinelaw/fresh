@@ -2726,7 +2726,7 @@ impl Editor {
                         self.config.editor.wrap_indent,
                         self.active_window()
                             .resolve_wrap_column_for_buffer(buffer_id),
-                        self.config.editor.rulers.clone(),
+                        self.active_window().resolve_rulers_for_buffer(buffer_id),
                     );
                     // Override with plugin-requested show_line_numbers
                     view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;

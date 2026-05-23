@@ -129,6 +129,7 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.active_window().resolve_rulers_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -144,7 +145,7 @@ impl Editor {
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
+                rulers,
             );
         }
 
@@ -380,6 +381,7 @@ impl crate::app::window::Window {
         let active_split = mgr.active_split();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.resolve_rulers_for_buffer(buffer_id);
         let cfg = self.config().editor.clone();
         let terminal_width = self.terminal_width;
         let terminal_height = self.terminal_height;
@@ -396,7 +398,7 @@ impl crate::app::window::Window {
                 line_wrap,
                 cfg.wrap_indent,
                 wrap_column,
-                cfg.rulers.clone(),
+                rulers,
             );
         } else {
             let mut view_state =
@@ -407,7 +409,7 @@ impl crate::app::window::Window {
                 line_wrap,
                 cfg.wrap_indent,
                 wrap_column,
-                cfg.rulers,
+                rulers,
             );
             self.split_view_states_mut()
                 .expect("active window must have a populated split layout")

@@ -904,6 +904,7 @@ mod tests {
                 show_whitespace_tabs: true,
                 line_wrap: None,
                 wrap_column: None,
+                rulers: None,
                 page_view: None,
                 page_width: None,
                 use_tabs: None,

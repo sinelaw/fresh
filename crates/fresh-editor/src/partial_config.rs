@@ -505,6 +505,7 @@ pub struct PartialLanguageConfig {
     pub show_whitespace_tabs: Option<bool>,
     pub line_wrap: Option<bool>,
     pub wrap_column: Option<Option<usize>>,
+    pub rulers: Option<Option<Vec<usize>>>,
     pub page_view: Option<bool>,
     pub page_width: Option<Option<usize>>,
     pub use_tabs: Option<bool>,
@@ -529,6 +530,7 @@ impl Merge for PartialLanguageConfig {
             .merge_from(&other.show_whitespace_tabs);
         self.line_wrap.merge_from(&other.line_wrap);
         self.wrap_column.merge_from(&other.wrap_column);
+        self.rulers.merge_from(&other.rulers);
         self.page_view.merge_from(&other.page_view);
         self.page_width.merge_from(&other.page_width);
         self.use_tabs.merge_from(&other.use_tabs);
@@ -976,6 +978,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             show_whitespace_tabs: Some(cfg.show_whitespace_tabs),
             line_wrap: cfg.line_wrap,
             wrap_column: Some(cfg.wrap_column),
+            rulers: Some(cfg.rulers.clone()),
             page_view: cfg.page_view,
             page_width: Some(cfg.page_width),
             use_tabs: cfg.use_tabs,
@@ -1010,6 +1013,7 @@ impl PartialLanguageConfig {
                 .unwrap_or(defaults.show_whitespace_tabs),
             line_wrap: self.line_wrap.or(defaults.line_wrap),
             wrap_column: self.wrap_column.unwrap_or(defaults.wrap_column),
+            rulers: self.rulers.unwrap_or_else(|| defaults.rulers.clone()),
             page_view: self.page_view.or(defaults.page_view),
             page_width: self.page_width.unwrap_or(defaults.page_width),
             use_tabs: self.use_tabs.or(defaults.use_tabs),
@@ -1285,6 +1289,7 @@ impl Default for LanguageConfig {
             show_whitespace_tabs: true,
             line_wrap: None,
             wrap_column: None,
+            rulers: None,
             page_view: None,
             page_width: None,
             use_tabs: None,

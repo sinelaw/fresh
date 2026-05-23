@@ -1735,7 +1735,8 @@ impl Editor {
                             self.config.editor.wrap_indent,
                             self.active_window()
                                 .resolve_wrap_column_for_buffer(second_buffer_id),
-                            self.config.editor.rulers.clone(),
+                            self.active_window()
+                                .resolve_rulers_for_buffer(second_buffer_id),
                         );
                         self.windows
                             .get_mut(&self.active_window)

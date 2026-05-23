@@ -1257,6 +1257,19 @@
           "minimum": 0,
           "default": null
         },
+        "rulers": {
+          "description": "Vertical ruler columns for this language.\nIf not specified (`null`), falls back to the global `editor.rulers` setting.\nSet to an empty array (`[]`) to disable rulers for this language even when\nthey are configured globally.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "default": null
+        },
         "page_view": {
           "description": "Whether to automatically enable page view (compose mode) for this language.\nPage view provides a document-style layout with centered content,\nconcealed formatting markers, and intelligent word wrapping.\nIf not specified (`null`), page view is not auto-activated.",
           "type": [

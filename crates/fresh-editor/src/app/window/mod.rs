@@ -2435,6 +2435,7 @@ impl Window {
         let target_split = self.preferred_split_for_file();
         let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
         let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.resolve_rulers_for_buffer(buffer_id);
         // Snapshot config values before taking the mutable view-states borrow
         // so the closure body doesn't have to re-borrow `self`.
         let cfg = self.config().editor.clone();
@@ -2451,7 +2452,7 @@ impl Window {
                 line_wrap,
                 cfg.wrap_indent,
                 wrap_column,
-                cfg.rulers,
+                rulers,
             );
         }
 

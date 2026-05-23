@@ -500,6 +500,104 @@ fn test_add_then_remove_ruler_bad_then_good_input() {
     );
 }
 
+/// Test that a language-specific ruler override applies to files of that language.
+#[test]
+fn test_language_specific_rulers_override_global() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![10]; // global ruler at 10
+                                     // Rust files get rulers at 30 and 50 instead.
+    let rust_lang = config
+        .languages
+        .get_mut("rust")
+        .expect("rust language config must exist by default");
+    rust_lang.rulers = Some(vec![30, 50]);
+
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text_named("test.rs", &"X".repeat(80))
+        .unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let gw = gutter_width(&harness);
+
+    assert!(
+        has_ruler_bg(&harness, gw + 30, row),
+        "Rust file should have ruler at col 30 (language override)"
+    );
+    assert!(
+        has_ruler_bg(&harness, gw + 50, row),
+        "Rust file should have ruler at col 50 (language override)"
+    );
+    assert!(
+        !has_ruler_bg(&harness, gw + 10, row),
+        "Rust file should NOT inherit global ruler at col 10"
+    );
+}
+
+/// Test that a text file (no language-specific override) falls back to global rulers.
+#[test]
+fn test_unmatched_language_falls_back_to_global_rulers() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![12];
+    // Override rust only — leave the rest alone.
+    config
+        .languages
+        .get_mut("rust")
+        .expect("rust language config must exist by default")
+        .rulers = Some(vec![42]);
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text_named("notes.txt", &"X".repeat(60))
+        .unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let gw = gutter_width(&harness);
+
+    assert!(
+        has_ruler_bg(&harness, gw + 12, row),
+        "Text file should fall back to the global ruler at col 12"
+    );
+    assert!(
+        !has_ruler_bg(&harness, gw + 42, row),
+        "Text file must not adopt rust's ruler override"
+    );
+}
+
+/// Test that setting rulers to an empty list for a language disables rulers
+/// for that language even when configured globally.
+#[test]
+fn test_language_empty_rulers_disables_global() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![10, 20];
+    config
+        .languages
+        .get_mut("rust")
+        .expect("rust language config must exist by default")
+        .rulers = Some(Vec::new());
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text_named("test.rs", &"X".repeat(60))
+        .unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, _) = harness.content_area_rows();
+    let row = content_first_row as u16;
+    let gw = gutter_width(&harness);
+
+    for col in [10u16, 20] {
+        assert!(
+            !has_ruler_bg(&harness, gw + col, row),
+            "Rust file must not show any ruler when language override is empty (col {col})"
+        );
+    }
+}
+
 /// Test adding a ruler at column 0 doesn't add a ruler.
 #[test]
 fn test_add_ruler_zero_column() {

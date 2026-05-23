@@ -489,7 +489,7 @@ impl Editor {
                     self.config.editor.wrap_indent,
                     self.active_window()
                         .resolve_wrap_column_for_buffer(buffer_id),
-                    self.config.editor.rulers.clone(),
+                    self.active_window().resolve_rulers_for_buffer(buffer_id),
                 );
 
                 // Copy cursor position from source split's view state

@@ -412,6 +412,7 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.active_window().resolve_rulers_for_buffer(buffer_id);
         let page_view = self.active_window().resolve_page_view_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
@@ -429,7 +430,7 @@ impl Editor {
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
+                rulers.clone(),
             );
             // Auto-activate page view if configured for this language
             if let Some(page_width) = page_view {
@@ -575,6 +576,7 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.active_window().resolve_rulers_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -590,7 +592,7 @@ impl Editor {
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
+                rulers.clone(),
             );
         }
 
@@ -762,6 +764,7 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.active_window().resolve_rulers_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -777,7 +780,7 @@ impl Editor {
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
+                rulers.clone(),
             );
         }
 
@@ -1020,6 +1023,7 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.active_window().resolve_rulers_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -1035,7 +1039,7 @@ impl Editor {
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
+                rulers.clone(),
             );
         }
 

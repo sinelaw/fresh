@@ -2345,7 +2345,7 @@ impl Editor {
                 self.config.editor.wrap_indent,
                 self.active_window()
                     .resolve_wrap_column_for_buffer(buffer_id),
-                self.config.editor.rulers.clone(),
+                self.active_window().resolve_rulers_for_buffer(buffer_id),
             );
             let mut loaded_buffers = std::collections::HashSet::new();
             // Whether this *first* preview buffer was newly loaded.

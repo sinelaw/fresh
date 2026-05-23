@@ -204,7 +204,7 @@ impl Editor {
             let wrap_column = self
                 .active_window()
                 .resolve_wrap_column_for_buffer(buffer_id);
-            let rulers = self.config.editor.rulers.clone();
+            let rulers = self.active_window().resolve_rulers_for_buffer(buffer_id);
             if let Some(view_state) = self
                 .windows
                 .get_mut(&self.active_window)
@@ -250,7 +250,7 @@ impl Editor {
                         self.config.editor.wrap_indent,
                         self.active_window()
                             .resolve_wrap_column_for_buffer(buffer_id),
-                        self.config.editor.rulers.clone(),
+                        self.active_window().resolve_rulers_for_buffer(buffer_id),
                     );
                     view_state.ensure_buffer_state(buffer_id).show_line_numbers = false;
                     self.windows
@@ -1570,7 +1570,7 @@ impl Editor {
                                 self.config.editor.wrap_indent,
                                 self.active_window()
                                     .resolve_wrap_column_for_buffer(buffer_id),
-                                self.config.editor.rulers.clone(),
+                                self.active_window().resolve_rulers_for_buffer(buffer_id),
                             );
                             // Terminals don't wrap — keep escape
                             // sequences intact, mirroring the regular

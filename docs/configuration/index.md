@@ -59,7 +59,7 @@ Nested objects are **deep-merged** field by field. Each field follows the same "
 The `languages` map uses **deep merging with field-level override**:
 - Entries from all layers are combined (you can add new languages at any layer)
 - For the same language key, individual fields are merged (not replaced entirely)
-- Editor settings including `line_wrap`, `wrap_column`, `page_view`, and `page_width` can be set per-language — e.g. wrap Markdown at 80 columns while leaving code unwrapped
+- Editor settings including `line_wrap`, `wrap_column`, `rulers`, `page_view`, and `page_width` can be set per-language — e.g. wrap Markdown at 80 columns while leaving code unwrapped, or show a column-100 ruler only in Rust files. Setting `"rulers": []` for a language opts out of any globally-configured rulers.
 
 **Example:** Extending built-in Rust settings in your project:
 ```json

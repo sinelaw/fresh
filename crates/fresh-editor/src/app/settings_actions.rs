@@ -169,7 +169,21 @@ impl Editor {
             lsp.set_universal_configs(universal_servers);
         }
 
-        // Propagate editor config to all split and buffer view states
+        // Propagate editor config to all split and buffer view states.
+        // Resolve rulers per buffer so language-specific overrides survive
+        // a settings change.
+        let resolved_rulers: std::collections::HashMap<crate::model::event::BufferId, Vec<usize>> =
+            self.active_window()
+                .buffers
+                .iter()
+                .map(|(buffer_id, state)| {
+                    (
+                        *buffer_id,
+                        crate::app::buffer_config_resolve::rulers(&state.language, &self.config),
+                    )
+                })
+                .collect();
+        let fallback_rulers = self.config.editor.rulers.clone();
         for view_state in self
             .windows
             .get_mut(&self.active_window)
@@ -178,8 +192,11 @@ impl Editor {
             .values_mut()
         {
             view_state.show_line_numbers = self.config.editor.line_numbers;
-            for buf_state in view_state.keyed_states.values_mut() {
-                buf_state.rulers = self.config.editor.rulers.clone();
+            for (buffer_id, buf_state) in view_state.keyed_states.iter_mut() {
+                buf_state.rulers = resolved_rulers
+                    .get(buffer_id)
+                    .cloned()
+                    .unwrap_or_else(|| fallback_rulers.clone());
             }
         }
 

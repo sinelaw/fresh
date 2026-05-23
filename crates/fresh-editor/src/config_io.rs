@@ -101,7 +101,7 @@ fn set_json_pointer(root: &mut Value, pointer: &str, value: Value) {
 }
 
 /// Remove a value at a JSON pointer path.
-fn remove_json_pointer(root: &mut Value, pointer: &str) {
+pub(crate) fn remove_json_pointer(root: &mut Value, pointer: &str) {
     if pointer.is_empty() || pointer == "/" {
         return;
     }

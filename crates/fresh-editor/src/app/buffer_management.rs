@@ -45,6 +45,14 @@ impl crate::app::window::Window {
         }
     }
 
+    /// Resolve the effective vertical rulers for a buffer, considering language overrides.
+    pub(crate) fn resolve_rulers_for_buffer(&self, buffer_id: BufferId) -> Vec<usize> {
+        match self.buffers.get(&buffer_id) {
+            Some(state) => buffer_config_resolve::rulers(&state.language, self.config()),
+            None => self.config().editor.rulers.clone(),
+        }
+    }
+
     /// Get the preferred split for opening a file.
     /// If the active split has no label, use it (normal case).
     /// Otherwise find an unlabeled leaf so files don't open in labeled splits (e.g., sidebars).
@@ -569,6 +577,7 @@ impl Editor {
         let wrap_column = self
             .active_window()
             .resolve_wrap_column_for_buffer(buffer_id);
+        let rulers = self.active_window().resolve_rulers_for_buffer(buffer_id);
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -582,7 +591,7 @@ impl Editor {
                 line_wrap,
                 self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
+                rulers,
             );
         }
 

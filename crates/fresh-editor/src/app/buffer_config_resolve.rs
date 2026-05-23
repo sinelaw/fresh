@@ -33,6 +33,20 @@ pub(crate) fn wrap_column(language: &str, config: &Config) -> Option<usize> {
     config.editor.wrap_column
 }
 
+/// Effective vertical-ruler columns for a buffer with the given language.
+///
+/// Returns the language-specific `rulers` list if explicitly set (even when
+/// empty — that's the way to opt out of global rulers per-language).
+/// Falls back to the global `editor.rulers` otherwise.
+pub(crate) fn rulers(language: &str, config: &Config) -> Vec<usize> {
+    if let Some(lang_config) = config.languages.get(language) {
+        if let Some(rulers) = lang_config.rulers.as_ref() {
+            return rulers.clone();
+        }
+    }
+    config.editor.rulers.clone()
+}
+
 /// Effective `page_view` width for a buffer with the given language.
 ///
 /// The outer `Option` distinguishes "page view disabled" (`None`) from
@@ -122,6 +136,43 @@ mod tests {
         let mut config = config_with("markdown", lang);
         config.editor.page_width = Some(80);
         assert_eq!(page_view("markdown", &config), Some(Some(72)));
+    }
+
+    #[test]
+    fn rulers_language_override_wins_over_global() {
+        let mut lang = LanguageConfig::default();
+        lang.rulers = Some(vec![100, 120]);
+        let mut config = config_with("rust", lang);
+        config.editor.rulers = vec![80];
+
+        assert_eq!(rulers("rust", &config), vec![100, 120]);
+    }
+
+    #[test]
+    fn rulers_falls_back_to_global_when_language_unset() {
+        let mut config = Config::default();
+        config.editor.rulers = vec![80];
+        // No entry for "rust" at all.
+        assert_eq!(rulers("rust", &config), vec![80]);
+    }
+
+    #[test]
+    fn rulers_falls_back_to_global_when_language_has_none() {
+        let lang = LanguageConfig::default(); // rulers = None
+        let mut config = config_with("rust", lang);
+        config.editor.rulers = vec![80];
+        assert_eq!(rulers("rust", &config), vec![80]);
+    }
+
+    #[test]
+    fn rulers_empty_language_override_disables_global() {
+        // Setting `rulers: []` in a language config is the way to opt
+        // out of globally-configured rulers for that language.
+        let mut lang = LanguageConfig::default();
+        lang.rulers = Some(Vec::new());
+        let mut config = config_with("markdown", lang);
+        config.editor.rulers = vec![80, 120];
+        assert!(rulers("markdown", &config).is_empty());
     }
 
     #[test]

@@ -967,6 +967,13 @@ impl SettingsState {
     pub fn apply_changes(&self, config: &Config) -> Result<Config, serde_json::Error> {
         let mut config_value = serde_json::to_value(config)?;
 
+        // Deletions must run before set-changes so the in-memory config mirrors
+        // what `save_changes_to_layer` writes to disk. Without this, clearing
+        // (e.g.) a per-language override in the Settings UI persisted to disk
+        // but left the running editor with the stale value until restart.
+        for path in &self.pending_deletions {
+            crate::config_io::remove_json_pointer(&mut config_value, path);
+        }
         for (path, value) in &self.pending_changes {
             // `pointer_mut` only succeeds when the path already exists,
             // which is the common case (most settings are statically
@@ -2968,6 +2975,38 @@ mod tests {
 
         state.discard_changes();
         assert!(!state.has_changes());
+    }
+
+    #[test]
+    fn apply_changes_processes_pending_deletions() {
+        // Regression: clearing a per-language override via the Settings UI must
+        // propagate to the in-memory Config so the running editor falls back to
+        // the global value without a restart.
+        let mut config = test_config();
+        config.editor.rulers = vec![80];
+        let lang = config
+            .languages
+            .get_mut("rust")
+            .expect("default Config should register rust language");
+        lang.rulers = Some(vec![100, 120]);
+
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+        state
+            .pending_deletions
+            .insert("/languages/rust/rulers".to_string());
+
+        let applied = state.apply_changes(&config).expect("apply_changes");
+        assert_eq!(
+            applied
+                .languages
+                .get("rust")
+                .and_then(|l| l.rulers.as_ref()),
+            None,
+            "deletion should clear the per-language ruler override in-memory \
+             so downstream resolution falls back to the global ruler"
+        );
+        // Sanity: the global value the resolver would fall back to is unchanged.
+        assert_eq!(applied.editor.rulers, vec![80]);
     }
 
     #[test]
