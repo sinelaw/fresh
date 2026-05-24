@@ -596,13 +596,6 @@ impl Window {
 }
 
 impl Editor {
-    /// Editor-side thin wrapper. Delegates to the active window. New code
-    /// on `impl Window` should call `Window::resolved_terminal_wrapper`
-    /// directly.
-    pub(crate) fn resolved_terminal_wrapper(&self) -> TerminalWrapper {
-        self.active_window().resolved_terminal_wrapper()
-    }
-
     /// Spawn a new PTY-backed terminal session in the active window
     /// using its `root` as cwd. Editor-side thin wrapper; per-window
     /// body lives in `Window::spawn_terminal_session`.

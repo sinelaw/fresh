@@ -22,9 +22,22 @@ impl Editor {
     /// the on-disk content, the server is left on a stale base and every
     /// position it returns is offset by the net byte delta.
     pub(crate) fn sync_lsp_after_recovery_replay(&mut self, buffer_id: BufferId) {
+        self.sync_lsp_after_recovery_replay_for(self.active_window, buffer_id);
+    }
+
+    /// As [`Self::sync_lsp_after_recovery_replay`] but targets a specific
+    /// window's buffer + LSP, so the workspace-restore path can replay
+    /// hot-exit changes into a non-active window without an active-window
+    /// flip.
+    pub(crate) fn sync_lsp_after_recovery_replay_for(
+        &mut self,
+        id: fresh_core::WindowId,
+        buffer_id: BufferId,
+    ) {
         let Some(text) = self
-            .buffers()
-            .get(&buffer_id)
+            .windows
+            .get(&id)
+            .and_then(|w| w.buffers.get(&buffer_id))
             .and_then(|state| state.buffer.to_string())
         else {
             return;
@@ -34,8 +47,9 @@ impl Editor {
             range_length: None,
             text,
         };
-        self.active_window_mut()
-            .send_lsp_changes_for_buffer(buffer_id, vec![full_change]);
+        if let Some(w) = self.windows.get_mut(&id) {
+            w.send_lsp_changes_for_buffer(buffer_id, vec![full_change]);
+        }
     }
 
     /// Start the recovery session (call on editor startup after recovery check)

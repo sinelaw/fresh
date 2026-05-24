@@ -218,10 +218,12 @@ In order of leverage (✅ = landed on this branch):
 4. ✅ **Derive `working_dir` from `active_window().root`** (§2) — the
    field is deleted; the boot invariant is unconditional; the two
    batch-workspace functions no longer flip a `working_dir` copy.
-5. 🟡 **Workspace capture/restore off the active-window flip** (§10) —
-   capture moved onto `Window` (done); restore stays editor-coupled
-   (opens files via `Editor::open_file`/LSP) and is parameterized by
-   `WindowId` to drop the flip (remaining).
+5. ✅ **Workspace capture/restore off the active-window flip** (§10) —
+   the `open_file` core moved onto `Window`, so both capture and restore
+   are window-scoped: `Window::capture_workspace` +
+   `Window::apply_workspace_layout` + the `Window::from_workspace`
+   factory. `with_active_window` and every `self.active_window = …` write
+   in the save/restore path are deleted.
 6. ⬜ **Unify the restore path** (§6) — first-run vs restart vs harness.
 
 Net effect on the branch/state matrix (✅ already realized):
@@ -229,7 +231,7 @@ Net effect on the branch/state matrix (✅ already realized):
 - ✅ `working_dir` vs `active_window().root` divergence → unrepresentable.
 - ✅ id-1 fallback collision special-case → gone.
 - ✅ explorer "first-init sticky at working_dir" hazard → gone.
-- ⬜ active-window-flip dance in workspace save/restore → §10.
+- ✅ active-window-flip dance in workspace save/restore → gone (§10).
 - ⬜ two restore implementations → one (§6).
 
 ---
@@ -259,68 +261,80 @@ helpers). To save/restore a *non-active* window, the two batch functions
 temporarily flip the global `active_window` pointer. That flip is a
 window-scoped operation faked with editor-global state.
 
-### Finding: capture is window-pure, restore is editor-coupled
+### Finding: both capture AND restore are now window-scoped ✅
 
-Implementation surfaced an asymmetry:
+The original implementation surfaced an asymmetry — capture was
+window-pure but restore reached into `Editor::open_file` (LSP attach,
+buffer allocation, grammar/syntax). That made a `Window::from_workspace`
+constructor look impossible **as long as `open_file` stayed on `Editor`.**
 
-- **Capture (save) is pure window-read.** ✅ Moved:
-  `Window::capture_workspace(&self) -> Workspace` reads only the window's
-  own state + `self.resources` (no editor reach). `Editor::capture_workspace`
+That condition has since been removed. The `open_file` core
+(`open_file_no_focus` / `open_file_for_preview` /
+`open_file_no_focus_inner`) plus its window-local helpers
+(`notify_lsp_file_opened`, `watch_file`) were moved onto `impl Window`
+(rooted at `self.root` / `self.resources`); `Editor::open_file` is now a
+thin active-window **focus** wrapper. With the file-open core
+window-scoped, the whole restore path moved onto `Window` too:
+
+- **Capture (save):** `Window::capture_workspace(&self) -> Workspace`
+  (reads only window state + `self.resources`). `Editor::capture_workspace`
   delegates and injects the editor-global `plugin_global_state`.
 
-- **Restore (apply) is editor-coupled and CANNOT be a pure `Window`
-  constructor.** Restoring opens files via
-  `open_workspace_files → open_file_internal → Editor::open_file`, which
-  pulls in **LSP attach, buffer allocation, grammar/syntax** — all
-  editor-level (LSP is editor-spawned, per-window). A
-  `Window::from_workspace(...)` constructor would require relocating the
-  whole file-open subsystem onto `Window`, which is out of scope and not
-  desirable. So **there is no `from_workspace` constructor.**
+- **Restore (apply):** `Window::apply_workspace_layout(&mut self, ws,
+  unnamed_buffer_map, session_name) -> path_to_buffer` does every
+  window-local step (search options, prompt histories, file-explorer
+  settings, `open_workspace_files`/`restore_external_files` via
+  `open_file_no_focus`, read-only flags, terminals, the split tree +
+  per-split view state, bookmarks, orphan cleanup, restore summary). The
+  ~14 helpers it calls are all `impl Window` methods now.
 
-### Revised restore-side plan: parameterize by `WindowId` (no flip)
+- **`Window::from_workspace(id, label, root, resources, ws) -> Window`
+  IS the realized factory** (`Window::new(...)` → `seed_initial_layout()`
+  → `apply_workspace_layout(...)`). `restore_workspace_for` uses it to
+  build a never-seeded shell from disk.
 
-`apply_workspace` / `try_restore_workspace` stay on `Editor` but take an
-explicit target window instead of implicitly using the active one — that
-removes the active-pointer flip without moving the file-open machinery:
+### Realized restore-side design: window factory, no flip
+
+`save_workspace_for` / `restore_workspace_for` take an explicit target
+window and operate on `windows[id]` directly — **the `with_active_window`
+active-pointer flip is deleted** (along with every `self.active_window =
+…` write in the save/restore path):
 
 ```rust
-impl Window { pub(crate) fn capture_workspace(&self) -> Workspace; }   // DONE
+impl Window {
+    pub(crate) fn capture_workspace(&self) -> Workspace;                                  // DONE
+    pub(crate) fn apply_workspace_layout(&mut self, ws, unnamed_map, session) -> PathMap; // DONE
+    pub(crate) fn from_workspace(id, label, root, resources, ws) -> Window;               // DONE
+}
 
 impl Editor {
-    pub fn save_workspace_for(&mut self, id: WindowId) -> Result<(), WorkspaceError>;     // windows[id].capture_workspace() + disk + plugin_global
-    pub fn restore_workspace_for(&mut self, id: WindowId) -> Result<bool, WorkspaceError>; // apply into windows[id] via editor services
-    // existing names become thin active-window wrappers:
+    pub fn save_workspace_for(&mut self, id: WindowId) -> Result<(), WorkspaceError>;      // windows[id].capture_workspace() + disk + plugin_global
+    pub fn restore_workspace_for(&mut self, id: WindowId) -> Result<bool, WorkspaceError>; // apply into windows[id]; no flip
+    // existing names are thin active-window wrappers:
     pub fn save_workspace(&mut self)        -> Result<(), WorkspaceError> { self.save_workspace_for(self.active_window) }
     pub fn try_restore_workspace(&mut self) -> Result<bool, WorkspaceError> { self.restore_workspace_for(self.active_window) }
-    // batch ops become plain loops — the active_window flip is deleted:
+    // batch ops are plain loops — the active_window flip is gone:
     pub fn save_all_windows_workspaces(&mut self) -> Result<(), WorkspaceError>;
     pub fn restore_inactive_window_workspaces(&mut self);
 }
 ```
 
-`restore_workspace_for(id)` threads `id` through the ~12 window-scoped
-restore helpers (`open_workspace_files`, `restore_split_node`,
-`restore_external_files`, `restore_terminals_from_workspace`,
-`restore_bookmarks_from_workspace`, `restore_file_explorer_settings`,
-`restore_search_options`, `restore_prompt_histories`,
-`apply_read_only_flags`, `clean_orphaned_buffers`, `log_restore_summary`,
-view-state restore) — changing `self.active_window()/active_window_mut()`
-to `self.windows.get(&id)/get_mut(&id)`. The editor-global steps
-(`restore_config_overrides`, `plugin_global_state`,
-`restore_hot_exit_changes`/`restore_unnamed_buffers` via `recovery_service`,
-the `buffer_activated` hook) stay where they are.
+The genuinely editor-global steps stay on `Editor::restore_workspace_for`
+as thin pre/post-steps around the window layout call:
+`restore_config_overrides` (mutates the shared `Config`),
+`plugin_global_state` assignment, hot-exit recovery
+(`restore_unnamed_buffers` before the layout so the split tree can
+reference the restored buffers, `restore_hot_exit_changes` after) via
+`recovery_service` — both parameterized by `id`, no flip — and, for the
+**active window only**, the post-restore plugin snapshot +
+`buffer_activated` (background restores must NOT fire focus side-effects).
 
-### Acceptance
-- Round-trip property test (committed: `orchestrator_workspace_roundtrip`)
-  stays green — that is the de-risking gate.
-- `save_all_windows_workspaces` / `restore_inactive_window_workspaces`
-  contain **no** `self.active_window = …` writes.
-- All existing `orchestrator_bringup_*` specs stay green.
-
-### Status / why the rest is deferred
-Save side (capture → `Window`) is **done**. The restore-side
-`WindowId`-parameterization removes the last flip but has **no
-correctness payoff** (post-§2 the flip is transient and restored) and
-threads an id through ~12 behavior-sensitive helpers. It's safe to do
-incrementally now that the round-trip property test guards it; deferred
-only by appetite for churn, not by risk of a missing safety net.
+### Acceptance — met
+- `with_active_window` and every `self.active_window = …` write in the
+  workspace save/restore path are **gone**.
+- `restore_workspace_for(id)` opens files into `windows[id]` with no flip.
+- `Window::from_workspace` exists and is used by restore;
+  `Editor::open_file` is a thin focus wrapper.
+- Round-trip property test (`orchestrator_workspace_roundtrip`) +
+  `orchestrator_bringup_*` + persistence/e2e file-open specs stay green;
+  `cargo fmt` + `cargo check` clean.
