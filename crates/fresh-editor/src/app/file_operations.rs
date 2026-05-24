@@ -960,223 +960,28 @@ impl Editor {
 
     /// Notify LSP server about a newly opened file
     /// Handles language detection, spawning LSP clients, and sending didOpen notifications
+    ///
+    /// Thin delegator: the LSP-notify core lives on `impl Window` (it
+    /// reads only the window's own `lsp` / `buffers` /
+    /// `diagnostic_result_ids` + `self.resources`). Editor callers
+    /// forward to the active window.
     pub(crate) fn notify_lsp_file_opened(
         &mut self,
         path: &Path,
         buffer_id: BufferId,
         metadata: &mut BufferMetadata,
     ) {
-        // Get language from buffer state
-        let Some(language) = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-            .map(|s| s.language.clone())
-        else {
-            tracing::debug!("No buffer state for file: {}", path.display());
-            return;
-        };
-
-        let Some(uri) = metadata.file_uri().cloned() else {
-            tracing::warn!(
-                "No URI in metadata for file: {} (failed to compute absolute path)",
-                path.display()
-            );
-            return;
-        };
-
-        // Check file size
-        let file_size = self
-            .authority
-            .filesystem
-            .metadata(path)
-            .ok()
-            .map(|m| m.size)
-            .unwrap_or(0);
-        if file_size > self.config.editor.large_file_threshold_bytes {
-            let reason = format!("File too large ({} bytes)", file_size);
-            tracing::debug!(
-                "Skipping LSP for large file: {} ({})",
-                path.display(),
-                reason
-            );
-            metadata.disable_lsp(reason);
-            return;
-        }
-
-        // Get text before borrowing lsp
-        let text = match self
-            .buffers()
-            .get(&buffer_id)
-            .and_then(|state| state.buffer.to_string())
-        {
-            Some(t) => t,
-            None => {
-                tracing::debug!("Buffer not fully loaded for LSP notification");
-                return;
-            }
-        };
-
-        let enable_inlay_hints = self.config.editor.enable_inlay_hints;
-        let previous_result_id = self
-            .active_window()
-            .diagnostic_result_ids
-            .get(uri.as_str())
-            .cloned();
-
-        // Get buffer line count and version for inlay hints
-        let (last_line, last_char, buffer_version) = self
-            .buffers()
-            .get(&buffer_id)
-            .map(|state| {
-                let line_count = state.buffer.line_count().unwrap_or(1000);
-                (
-                    line_count.saturating_sub(1) as u32,
-                    10000u32,
-                    state.buffer.version(),
-                )
-            })
-            .unwrap_or((999, 10000, 0));
-
-        // Now borrow lsp and do all LSP operations
-        let __active_id = self.active_window;
-        let Some(__win) = self.windows.get_mut(&__active_id) else {
-            tracing::debug!("No LSP manager available");
-            return;
-        };
-        let Some(lsp) = __win.lsp.as_mut() else {
-            tracing::debug!("No LSP manager available");
-            return;
-        };
-        let __next_id = &mut __win.next_lsp_request_id;
-
-        tracing::debug!("LSP manager available for file: {}", path.display());
-        tracing::debug!(
-            "Detected language: {} for file: {}",
-            language,
-            path.display()
-        );
-        tracing::debug!("Using URI from metadata: {}", uri.as_str());
-        tracing::debug!("Attempting to spawn LSP client for language: {}", language);
-
-        match lsp.try_spawn(&language, Some(path)) {
-            LspSpawnResult::Spawned => {
-                // Send didOpen to ALL server handles for this language,
-                // not just the first one.  With multiple servers configured
-                // (e.g. error-server + warning-server) each needs to know
-                // about the open document.
-                for sh in lsp.get_handles_mut(&language) {
-                    tracing::info!("Sending didOpen to LSP '{}' for: {}", sh.name, uri.as_str());
-                    if let Err(e) =
-                        sh.handle
-                            .did_open(uri.as_uri().clone(), text.clone(), language.clone())
-                    {
-                        tracing::warn!("Failed to send didOpen to LSP '{}': {}", sh.name, e);
-                    } else {
-                        metadata.lsp_opened_with.insert(sh.handle.id());
-                    }
-                }
-
-                // Route each follow-up request through capability-aware
-                // routing so we never send an optional method to a server
-                // that didn't advertise it. On a cold spawn the capability
-                // check returns `None` (capabilities aren't known until the
-                // `initialize` response arrives); the `LspInitialized`
-                // handler replays these requests once capabilities land.
-                if let Some(sh) =
-                    lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
-                {
-                    let request_id = {
-                        let id = *__next_id;
-                        *__next_id += 1;
-                        id
-                    };
-                    if let Err(e) = sh.handle.document_diagnostic(
-                        request_id,
-                        uri.as_uri().clone(),
-                        previous_result_id,
-                    ) {
-                        tracing::debug!("Failed to request pull diagnostics: {}", e);
-                    } else {
-                        tracing::info!(
-                            "Requested pull diagnostics for {} (request_id={})",
-                            uri.as_str(),
-                            request_id
-                        );
-                    }
-                }
-
-                if enable_inlay_hints {
-                    if let Some(sh) =
-                        lsp.handle_for_feature_mut(&language, crate::types::LspFeature::InlayHints)
-                    {
-                        let request_id = {
-                            let id = *__next_id;
-                            *__next_id += 1;
-                            id
-                        };
-
-                        if let Err(e) = sh.handle.inlay_hints(
-                            request_id,
-                            uri.as_uri().clone(),
-                            0,
-                            0,
-                            last_line,
-                            last_char,
-                        ) {
-                            tracing::debug!("Failed to request inlay hints: {}", e);
-                        } else {
-                            self.active_window_mut()
-                                .pending_inlay_hints_requests
-                                .insert(
-                                    request_id,
-                                    super::InlayHintsRequest {
-                                        buffer_id,
-                                        version: buffer_version,
-                                    },
-                                );
-                            tracing::info!(
-                                "Requested inlay hints for {} (request_id={})",
-                                uri.as_str(),
-                                request_id
-                            );
-                        }
-                    }
-                }
-
-                // Schedule folding range refresh
-                self.active_window_mut()
-                    .schedule_folding_ranges_refresh(buffer_id);
-            }
-            LspSpawnResult::NotAutoStart => {
-                tracing::debug!(
-                    "LSP for {} not auto-starting (auto_start=false). Click the LSP indicator to start manually.",
-                    language
-                );
-            }
-            LspSpawnResult::NotConfigured => {
-                tracing::debug!("No LSP server configured for language: {}", language);
-            }
-            LspSpawnResult::Disabled => {
-                tracing::debug!("LSP disabled in config for language: {}", language);
-            }
-            LspSpawnResult::Failed => {
-                tracing::warn!("Failed to spawn LSP client for language: {}", language);
-            }
-        }
+        self.active_window_mut()
+            .notify_lsp_file_opened(path, buffer_id, metadata);
     }
 
     /// Record a file's modification time (called when opening files)
-    /// This is used by the polling-based auto-revert to detect external changes
+    /// This is used by the polling-based auto-revert to detect external changes.
+    ///
+    /// Thin delegator: `watch_file` is window-local (records into the
+    /// active window's `file_mod_times`); forwards to the active window.
     pub(crate) fn watch_file(&mut self, path: &Path) {
-        // Record current modification time for polling
-        if let Ok(metadata) = self.authority.filesystem.metadata(path) {
-            if let Some(mtime) = metadata.modified {
-                self.file_mod_times_mut().insert(path.to_path_buf(), mtime);
-            }
-        }
+        self.active_window_mut().watch_file(path);
     }
 
     /// Notify LSP that a file's contents changed (e.g., after revert)
@@ -1569,4 +1374,212 @@ pub(crate) fn load_gitignore_via_fs(fs: &dyn FileSystem, explorer: &mut FileTree
         }
     };
     explorer.load_gitignore_from_bytes(dir, &bytes, meta.modified);
+}
+
+impl crate::app::window::Window {
+    /// Notify this window's LSP servers about a newly opened file.
+    ///
+    /// Window-scoped: reads only the window's own `lsp`, `buffers`,
+    /// `diagnostic_result_ids`, and `self.resources.{authority,config}`.
+    /// Handles language detection, spawning LSP clients, and sending
+    /// didOpen notifications + follow-up pull-diagnostics / inlay-hints.
+    pub(crate) fn notify_lsp_file_opened(
+        &mut self,
+        path: &Path,
+        buffer_id: BufferId,
+        metadata: &mut BufferMetadata,
+    ) {
+        // Get language from buffer state
+        let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
+            tracing::debug!("No buffer state for file: {}", path.display());
+            return;
+        };
+
+        let Some(uri) = metadata.file_uri().cloned() else {
+            tracing::warn!(
+                "No URI in metadata for file: {} (failed to compute absolute path)",
+                path.display()
+            );
+            return;
+        };
+
+        // Check file size
+        let file_size = self
+            .resources
+            .authority
+            .filesystem
+            .metadata(path)
+            .ok()
+            .map(|m| m.size)
+            .unwrap_or(0);
+        if file_size > self.resources.config.editor.large_file_threshold_bytes {
+            let reason = format!("File too large ({} bytes)", file_size);
+            tracing::debug!(
+                "Skipping LSP for large file: {} ({})",
+                path.display(),
+                reason
+            );
+            metadata.disable_lsp(reason);
+            return;
+        }
+
+        // Get text before borrowing lsp
+        let text = match self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.to_string())
+        {
+            Some(t) => t,
+            None => {
+                tracing::debug!("Buffer not fully loaded for LSP notification");
+                return;
+            }
+        };
+
+        let enable_inlay_hints = self.resources.config.editor.enable_inlay_hints;
+        let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
+
+        // Get buffer line count and version for inlay hints
+        let (last_line, last_char, buffer_version) = self
+            .buffers
+            .get(&buffer_id)
+            .map(|state| {
+                let line_count = state.buffer.line_count().unwrap_or(1000);
+                (
+                    line_count.saturating_sub(1) as u32,
+                    10000u32,
+                    state.buffer.version(),
+                )
+            })
+            .unwrap_or((999, 10000, 0));
+
+        // Now borrow lsp and do all LSP operations
+        let Some(lsp) = self.lsp.as_mut() else {
+            tracing::debug!("No LSP manager available");
+            return;
+        };
+        let __next_id = &mut self.next_lsp_request_id;
+
+        tracing::debug!("LSP manager available for file: {}", path.display());
+        tracing::debug!(
+            "Detected language: {} for file: {}",
+            language,
+            path.display()
+        );
+        tracing::debug!("Using URI from metadata: {}", uri.as_str());
+        tracing::debug!("Attempting to spawn LSP client for language: {}", language);
+
+        match lsp.try_spawn(&language, Some(path)) {
+            LspSpawnResult::Spawned => {
+                // Send didOpen to ALL server handles for this language,
+                // not just the first one.  With multiple servers configured
+                // (e.g. error-server + warning-server) each needs to know
+                // about the open document.
+                for sh in lsp.get_handles_mut(&language) {
+                    tracing::info!("Sending didOpen to LSP '{}' for: {}", sh.name, uri.as_str());
+                    if let Err(e) =
+                        sh.handle
+                            .did_open(uri.as_uri().clone(), text.clone(), language.clone())
+                    {
+                        tracing::warn!("Failed to send didOpen to LSP '{}': {}", sh.name, e);
+                    } else {
+                        metadata.lsp_opened_with.insert(sh.handle.id());
+                    }
+                }
+
+                // Route each follow-up request through capability-aware
+                // routing so we never send an optional method to a server
+                // that didn't advertise it. On a cold spawn the capability
+                // check returns `None` (capabilities aren't known until the
+                // `initialize` response arrives); the `LspInitialized`
+                // handler replays these requests once capabilities land.
+                if let Some(sh) =
+                    lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
+                {
+                    let request_id = {
+                        let id = *__next_id;
+                        *__next_id += 1;
+                        id
+                    };
+                    if let Err(e) = sh.handle.document_diagnostic(
+                        request_id,
+                        uri.as_uri().clone(),
+                        previous_result_id,
+                    ) {
+                        tracing::debug!("Failed to request pull diagnostics: {}", e);
+                    } else {
+                        tracing::info!(
+                            "Requested pull diagnostics for {} (request_id={})",
+                            uri.as_str(),
+                            request_id
+                        );
+                    }
+                }
+
+                if enable_inlay_hints {
+                    if let Some(sh) =
+                        lsp.handle_for_feature_mut(&language, crate::types::LspFeature::InlayHints)
+                    {
+                        let request_id = {
+                            let id = *__next_id;
+                            *__next_id += 1;
+                            id
+                        };
+
+                        if let Err(e) = sh.handle.inlay_hints(
+                            request_id,
+                            uri.as_uri().clone(),
+                            0,
+                            0,
+                            last_line,
+                            last_char,
+                        ) {
+                            tracing::debug!("Failed to request inlay hints: {}", e);
+                        } else {
+                            self.pending_inlay_hints_requests.insert(
+                                request_id,
+                                super::InlayHintsRequest {
+                                    buffer_id,
+                                    version: buffer_version,
+                                },
+                            );
+                            tracing::info!(
+                                "Requested inlay hints for {} (request_id={})",
+                                uri.as_str(),
+                                request_id
+                            );
+                        }
+                    }
+                }
+
+                // Schedule folding range refresh
+                self.schedule_folding_ranges_refresh(buffer_id);
+            }
+            LspSpawnResult::NotAutoStart => {
+                tracing::debug!(
+                    "LSP for {} not auto-starting (auto_start=false). Click the LSP indicator to start manually.",
+                    language
+                );
+            }
+            LspSpawnResult::NotConfigured => {
+                tracing::debug!("No LSP server configured for language: {}", language);
+            }
+            LspSpawnResult::Disabled => {
+                tracing::debug!("LSP disabled in config for language: {}", language);
+            }
+            LspSpawnResult::Failed => {
+                tracing::warn!("Failed to spawn LSP client for language: {}", language);
+            }
+        }
+    }
+
+    /// Record a file's modification time (called when opening files).
+    /// Window-local: records into this window's own `file_mod_times`.
+    pub(crate) fn watch_file(&mut self, path: &Path) {
+        if let Ok(metadata) = self.resources.authority.filesystem.metadata(path) {
+            if let Some(mtime) = metadata.modified {
+                self.file_mod_times.insert(path.to_path_buf(), mtime);
+            }
+        }
+    }
 }

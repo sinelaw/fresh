@@ -48,7 +48,7 @@ impl Editor {
             .and_then(|s| s.buffer.file_path())
             .is_some();
 
-        let buffer_id = self.open_file_no_focus(path)?;
+        let buffer_id = self.active_window_mut().open_file_no_focus(path)?;
 
         // Check if this was an already-open buffer or a new one
         // For already-open buffers, just switch to them
@@ -135,335 +135,19 @@ impl Editor {
     /// but does not change the active buffer. Useful for opening files in background tabs.
     ///
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
+    ///
+    /// Thin delegator: the open-file core lives on `impl Window` (rooted
+    /// at the window's own `root` / `resources`). The editor forwards to
+    /// the active window.
     pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
-        self.open_file_no_focus_inner(path, true)
+        self.active_window_mut().open_file_no_focus(path)
     }
 
     /// Open a file without switching focus AND without ever
-    /// repurposing the active "no name" buffer.
-    ///
-    /// `open_file_no_focus`'s `replace_current` heuristic reuses the
-    /// initial empty unnamed buffer for the *first* file the user
-    /// opens — convenient for the normal "fresh launch → open file"
-    /// flow. The Live Grep floating overlay's preview pane needs the
-    /// opposite: the user's current buffer (often the empty unnamed
-    /// scratch) must stay untouched as preview cycles through
-    /// results. This variant always allocates a fresh BufferId so the
-    /// background buffer never gets repurposed.
+    /// repurposing the active "no name" buffer. Thin delegator to the
+    /// active window's `Window::open_file_for_preview`.
     pub(super) fn open_file_for_preview(&mut self, path: &Path) -> anyhow::Result<BufferId> {
-        self.open_file_no_focus_inner(path, false)
-    }
-
-    fn open_file_no_focus_inner(
-        &mut self,
-        path: &Path,
-        allow_replace_empty: bool,
-    ) -> anyhow::Result<BufferId> {
-        // Fail fast if the remote connection is down — don't attempt I/O that
-        // would either timeout or return confusing errors.
-        if !self.authority.filesystem.is_remote_connected() {
-            anyhow::bail!(
-                "Cannot open file: remote connection lost ({})",
-                self.authority
-                    .filesystem
-                    .remote_connection_info()
-                    .unwrap_or("unknown host")
-            );
-        }
-
-        // Resolve relative paths against appropriate base directory
-        // For remote mode, use the remote home directory; for local, use working_dir
-        let base_dir = if self.authority.filesystem.remote_connection_info().is_some() {
-            self.authority
-                .filesystem
-                .home_dir()
-                .unwrap_or_else(|_| self.working_dir().to_path_buf())
-        } else {
-            self.working_dir().to_path_buf()
-        };
-
-        let resolved_path = if path.is_relative() {
-            base_dir.join(path)
-        } else {
-            path.to_path_buf()
-        };
-
-        // Determine if we're opening a non-existent file (for creating new files)
-        // Use filesystem trait method to support remote files
-        let file_exists = self.authority.filesystem.exists(&resolved_path);
-
-        // Save the user-visible (non-canonicalized) path for language detection.
-        // Glob patterns in language config should match the path as the user sees it,
-        // not the canonical path (e.g., on macOS /var -> /private/var symlinks).
-        let display_path = resolved_path.clone();
-
-        // Canonicalize the path to resolve symlinks and normalize path components
-        // This ensures consistent path representation throughout the editor
-        // For non-existent files, we need to canonicalize the parent directory and append the filename
-        let canonical_path = if file_exists {
-            self.authority
-                .filesystem
-                .canonicalize(&resolved_path)
-                .unwrap_or_else(|_| resolved_path.clone())
-        } else {
-            // For non-existent files, canonicalize parent dir and append filename
-            if let Some(parent) = resolved_path.parent() {
-                let canonical_parent = if parent.as_os_str().is_empty() {
-                    // No parent means just a filename, use base dir
-                    base_dir.clone()
-                } else {
-                    self.authority
-                        .filesystem
-                        .canonicalize(parent)
-                        .unwrap_or_else(|_| parent.to_path_buf())
-                };
-                if let Some(filename) = resolved_path.file_name() {
-                    canonical_parent.join(filename)
-                } else {
-                    resolved_path
-                }
-            } else {
-                resolved_path
-            }
-        };
-        let path = canonical_path.as_path();
-
-        // Check if the path is a directory (after following symlinks via canonicalize)
-        // Directories cannot be opened as files in the editor
-        // Use filesystem trait method to support remote files
-        if self.authority.filesystem.is_dir(path).unwrap_or(false) {
-            anyhow::bail!(t!("buffer.cannot_open_directory"));
-        }
-
-        // Check if file is already open - return existing buffer without switching
-        let already_open = self
-            .buffers()
-            .iter()
-            .find(|(_, state)| state.buffer.file_path() == Some(path))
-            .map(|(id, _)| *id);
-
-        if let Some(id) = already_open {
-            return Ok(id);
-        }
-
-        // If the current buffer is empty and unmodified, replace it instead of creating a new one
-        // Note: Don't replace composite buffers (they appear empty but are special views).
-        // Suppressed when `allow_replace_empty` is false — see
-        // `open_file_for_preview` for the rationale.
-        let replace_current = allow_replace_empty && {
-            let current_state = self
-                .windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .get(&self.active_buffer())
-                .unwrap();
-            !current_state.is_composite_buffer
-                && current_state.buffer.is_empty()
-                && !current_state.buffer.is_modified()
-                && current_state.buffer.file_path().is_none()
-        };
-
-        let buffer_id = if replace_current {
-            // Reuse the current empty buffer
-            self.active_buffer()
-        } else {
-            // Create new buffer for this file
-            let id = self.alloc_buffer_id();
-            id
-        };
-
-        // Create the editor state - either load from file or create empty buffer
-        tracing::info!(
-            "[SYNTAX DEBUG] open_file_no_focus: path={:?}, extension={:?}, catalog={}",
-            path,
-            path.extension(),
-            self.grammar_registry.catalog().len(),
-        );
-        let mut state = if file_exists {
-            // Load from canonical path (for I/O and dedup), detect language from
-            // display path (for glob pattern matching against user-visible names).
-            let buffer = crate::model::buffer::Buffer::load_from_file(
-                &canonical_path,
-                self.config.editor.large_file_threshold_bytes as usize,
-                Arc::clone(&self.authority.filesystem),
-            )?;
-            let first_line = buffer.first_line_lossy();
-            let detected =
-                crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
-                    &display_path,
-                    first_line.as_deref(),
-                    &self.grammar_registry,
-                    &self.config.languages,
-                    self.config.default_language.as_deref(),
-                );
-            EditorState::from_buffer_with_language(buffer, detected)
-        } else {
-            // File doesn't exist - create empty buffer with the file path set
-            EditorState::new_with_path(
-                self.config.editor.large_file_threshold_bytes as usize,
-                Arc::clone(&self.authority.filesystem),
-                path.to_path_buf(),
-            )
-        };
-        // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
-
-        // Check if the buffer contains binary content
-        let is_binary = state.buffer.is_binary();
-        if is_binary {
-            // Make binary buffers read-only
-            state.editing_disabled = true;
-            tracing::info!("Detected binary file: {}", path.display());
-        }
-
-        // Set whitespace visibility, use_tabs, and tab_size based on language config
-        // with fallback to global editor config for tab_size
-        // Use the buffer's stored language (already set by from_file_with_languages)
-        let mut whitespace =
-            crate::config::WhitespaceVisibility::from_editor_config(&self.config.editor);
-        state.buffer_settings.auto_close = self.config.editor.auto_close;
-        state.buffer_settings.auto_surround = self.config.editor.auto_surround;
-        if let Some(lang_config) = self.config.languages.get(&state.language) {
-            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
-            state.buffer_settings.use_tabs =
-                lang_config.use_tabs.unwrap_or(self.config.editor.use_tabs);
-            // Use language-specific tab_size if set, otherwise fall back to global
-            state.buffer_settings.tab_size =
-                lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
-            // Auto close: language override (only if globally enabled)
-            if state.buffer_settings.auto_close {
-                if let Some(lang_auto_close) = lang_config.auto_close {
-                    state.buffer_settings.auto_close = lang_auto_close;
-                }
-            }
-            // Auto surround: language override (only if globally enabled)
-            if state.buffer_settings.auto_surround {
-                if let Some(lang_auto_surround) = lang_config.auto_surround {
-                    state.buffer_settings.auto_surround = lang_auto_surround;
-                }
-            }
-        } else {
-            state.buffer_settings.tab_size = self.config.editor.tab_size;
-            state.buffer_settings.use_tabs = self.config.editor.use_tabs;
-        }
-        state.buffer_settings.whitespace = whitespace;
-
-        // Apply line_numbers default from config
-        state
-            .margins
-            .configure_for_line_numbers(self.config.editor.line_numbers);
-
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .insert(buffer_id, state);
-        self.active_window_mut()
-            .event_logs
-            .insert(buffer_id, crate::model::event::EventLog::new());
-
-        // Create metadata for this buffer
-        let mut metadata = super::types::BufferMetadata::with_file(
-            path.to_path_buf(),
-            &display_path,
-            self.working_dir(),
-            self.authority.path_translation.as_ref(),
-        );
-
-        // Mark binary files in metadata and disable LSP
-        if is_binary {
-            metadata.binary = true;
-            metadata.read_only = true;
-            metadata.disable_lsp(t!("buffer.binary_file").to_string());
-        }
-
-        // Check if the file is read-only on disk (filesystem permissions)
-        if file_exists && !metadata.read_only && !self.authority.filesystem.is_writable(path) {
-            metadata.read_only = true;
-        }
-
-        // Mark read-only files (library, binary, or filesystem-readonly) as editing-disabled
-        if metadata.read_only {
-            if let Some(state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present")
-                .get_mut(&buffer_id)
-            {
-                state.editing_disabled = true;
-            }
-        }
-
-        // Notify LSP about the newly opened file (skip for binary files)
-        if !is_binary {
-            self.notify_lsp_file_opened(path, buffer_id, &mut metadata);
-        }
-
-        // Store metadata for this buffer
-        self.active_window_mut()
-            .buffer_metadata
-            .insert(buffer_id, metadata);
-
-        // Add buffer to the preferred split's tabs (but don't switch to it)
-        // Uses preferred_split_for_file() to avoid opening in labeled splits (e.g., sidebars)
-        let target_split = self.active_window().preferred_split_for_file();
-        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
-        let wrap_column = self
-            .active_window()
-            .resolve_wrap_column_for_buffer(buffer_id);
-        let page_view = self.active_window().resolve_page_view_for_buffer(buffer_id);
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
-            view_state.add_buffer(buffer_id);
-            // Initialize per-buffer view state for the new buffer with config defaults
-            let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
-                line_wrap,
-                self.config.editor.wrap_indent,
-                wrap_column,
-                self.config.editor.rulers.clone(),
-            );
-            // Auto-activate page view if configured for this language
-            if let Some(page_width) = page_view {
-                buf_state.activate_page_view(page_width);
-            }
-        }
-
-        // Restore global file state (scroll/cursor position) if available
-        // This persists file positions across projects and editor instances
-        self.active_window_mut()
-            .restore_global_file_state(buffer_id, path, target_split);
-
-        // Emit control event
-        self.emit_event(
-            crate::model::control_event::events::FILE_OPENED.name,
-            serde_json::json!({
-                "path": path.display().to_string(),
-                "buffer_id": buffer_id.0
-            }),
-        );
-
-        // Track file for auto-revert and conflict detection
-        self.watch_file(path);
-
-        // Fire AfterFileOpen hook for plugins
-        self.plugin_manager.read().unwrap().run_hook(
-            "after_file_open",
-            crate::services::plugins::hooks::HookArgs::AfterFileOpen {
-                buffer_id,
-                path: path.to_path_buf(),
-            },
-        );
-
-        Ok(buffer_id)
+        self.active_window_mut().open_file_for_preview(path)
     }
 
     // `open_local_file` lives on `impl Window` — call it via
@@ -1038,6 +722,348 @@ impl Editor {
                 self.config.editor.rulers.clone(),
             );
         }
+
+        Ok(buffer_id)
+    }
+}
+
+impl crate::app::window::Window {
+    /// Open a file without switching focus to it.
+    ///
+    /// Window-scoped core of the open-file path: creates a new buffer
+    /// for the file (or returns the existing buffer id if already open)
+    /// without changing the active buffer. Rooted at this window's own
+    /// `root` / `resources` so it can open files directly into a
+    /// non-active window (e.g. workspace restore) with no active-window
+    /// flip. If the file doesn't exist, creates an unsaved buffer with
+    /// that filename.
+    pub fn open_file_no_focus(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        self.open_file_no_focus_inner(path, true)
+    }
+
+    /// Open a file without switching focus AND without ever
+    /// repurposing the active "no name" buffer.
+    ///
+    /// `open_file_no_focus`'s `replace_current` heuristic reuses the
+    /// initial empty unnamed buffer for the *first* file the user
+    /// opens — convenient for the normal "fresh launch → open file"
+    /// flow. The Live Grep floating overlay's preview pane needs the
+    /// opposite: the user's current buffer (often the empty unnamed
+    /// scratch) must stay untouched as preview cycles through
+    /// results. This variant always allocates a fresh BufferId so the
+    /// background buffer never gets repurposed.
+    pub(crate) fn open_file_for_preview(&mut self, path: &Path) -> anyhow::Result<BufferId> {
+        self.open_file_no_focus_inner(path, false)
+    }
+
+    fn open_file_no_focus_inner(
+        &mut self,
+        path: &Path,
+        allow_replace_empty: bool,
+    ) -> anyhow::Result<BufferId> {
+        // Fail fast if the remote connection is down — don't attempt I/O that
+        // would either timeout or return confusing errors.
+        if !self.resources.authority.filesystem.is_remote_connected() {
+            anyhow::bail!(
+                "Cannot open file: remote connection lost ({})",
+                self.resources
+                    .authority
+                    .filesystem
+                    .remote_connection_info()
+                    .unwrap_or("unknown host")
+            );
+        }
+
+        // Resolve relative paths against appropriate base directory.
+        // For remote mode, use the remote home directory; for local, use
+        // this window's root.
+        let base_dir = if self
+            .resources
+            .authority
+            .filesystem
+            .remote_connection_info()
+            .is_some()
+        {
+            self.resources
+                .authority
+                .filesystem
+                .home_dir()
+                .unwrap_or_else(|_| self.root.clone())
+        } else {
+            self.root.clone()
+        };
+
+        let resolved_path = if path.is_relative() {
+            base_dir.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        // Determine if we're opening a non-existent file (for creating new files)
+        // Use filesystem trait method to support remote files
+        let file_exists = self.resources.authority.filesystem.exists(&resolved_path);
+
+        // Save the user-visible (non-canonicalized) path for language detection.
+        // Glob patterns in language config should match the path as the user sees it,
+        // not the canonical path (e.g., on macOS /var -> /private/var symlinks).
+        let display_path = resolved_path.clone();
+
+        // Canonicalize the path to resolve symlinks and normalize path components
+        // This ensures consistent path representation throughout the editor
+        // For non-existent files, we need to canonicalize the parent directory and append the filename
+        let canonical_path = if file_exists {
+            self.resources
+                .authority
+                .filesystem
+                .canonicalize(&resolved_path)
+                .unwrap_or_else(|_| resolved_path.clone())
+        } else {
+            // For non-existent files, canonicalize parent dir and append filename
+            if let Some(parent) = resolved_path.parent() {
+                let canonical_parent = if parent.as_os_str().is_empty() {
+                    // No parent means just a filename, use base dir
+                    base_dir.clone()
+                } else {
+                    self.resources
+                        .authority
+                        .filesystem
+                        .canonicalize(parent)
+                        .unwrap_or_else(|_| parent.to_path_buf())
+                };
+                if let Some(filename) = resolved_path.file_name() {
+                    canonical_parent.join(filename)
+                } else {
+                    resolved_path
+                }
+            } else {
+                resolved_path
+            }
+        };
+        let path = canonical_path.as_path();
+
+        // Check if the path is a directory (after following symlinks via canonicalize)
+        // Directories cannot be opened as files in the editor
+        // Use filesystem trait method to support remote files
+        if self
+            .resources
+            .authority
+            .filesystem
+            .is_dir(path)
+            .unwrap_or(false)
+        {
+            anyhow::bail!(t!("buffer.cannot_open_directory"));
+        }
+
+        // Check if file is already open - return existing buffer without switching
+        let already_open = self
+            .buffers
+            .iter()
+            .find(|(_, state)| state.buffer.file_path() == Some(path))
+            .map(|(id, _)| *id);
+
+        if let Some(id) = already_open {
+            return Ok(id);
+        }
+
+        // If the current buffer is empty and unmodified, replace it instead of creating a new one
+        // Note: Don't replace composite buffers (they appear empty but are special views).
+        // Suppressed when `allow_replace_empty` is false — see
+        // `open_file_for_preview` for the rationale.
+        let replace_current = allow_replace_empty && {
+            let current_state = self.buffers.get(&self.active_buffer()).unwrap();
+            !current_state.is_composite_buffer
+                && current_state.buffer.is_empty()
+                && !current_state.buffer.is_modified()
+                && current_state.buffer.file_path().is_none()
+        };
+
+        let buffer_id = if replace_current {
+            // Reuse the current empty buffer
+            self.active_buffer()
+        } else {
+            // Create new buffer for this file
+            self.alloc_buffer_id()
+        };
+
+        // Create the editor state - either load from file or create empty buffer
+        tracing::info!(
+            "[SYNTAX DEBUG] open_file_no_focus: path={:?}, extension={:?}, catalog={}",
+            path,
+            path.extension(),
+            self.resources.grammar_registry.catalog().len(),
+        );
+        let mut state = if file_exists {
+            // Load from canonical path (for I/O and dedup), detect language from
+            // display path (for glob pattern matching against user-visible names).
+            let buffer = crate::model::buffer::Buffer::load_from_file(
+                &canonical_path,
+                self.resources.config.editor.large_file_threshold_bytes as usize,
+                Arc::clone(&self.resources.authority.filesystem),
+            )?;
+            let first_line = buffer.first_line_lossy();
+            let detected =
+                crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                    &display_path,
+                    first_line.as_deref(),
+                    &self.resources.grammar_registry,
+                    &self.resources.config.languages,
+                    self.resources.config.default_language.as_deref(),
+                );
+            EditorState::from_buffer_with_language(buffer, detected)
+        } else {
+            // File doesn't exist - create empty buffer with the file path set
+            EditorState::new_with_path(
+                self.resources.config.editor.large_file_threshold_bytes as usize,
+                Arc::clone(&self.resources.authority.filesystem),
+                path.to_path_buf(),
+            )
+        };
+        // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
+
+        // Check if the buffer contains binary content
+        let is_binary = state.buffer.is_binary();
+        if is_binary {
+            // Make binary buffers read-only
+            state.editing_disabled = true;
+            tracing::info!("Detected binary file: {}", path.display());
+        }
+
+        // Set whitespace visibility, use_tabs, and tab_size based on language config
+        // with fallback to global editor config for tab_size
+        // Use the buffer's stored language (already set by from_file_with_languages)
+        let mut whitespace =
+            crate::config::WhitespaceVisibility::from_editor_config(&self.resources.config.editor);
+        state.buffer_settings.auto_close = self.resources.config.editor.auto_close;
+        state.buffer_settings.auto_surround = self.resources.config.editor.auto_surround;
+        if let Some(lang_config) = self.resources.config.languages.get(&state.language) {
+            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
+            state.buffer_settings.use_tabs = lang_config
+                .use_tabs
+                .unwrap_or(self.resources.config.editor.use_tabs);
+            // Use language-specific tab_size if set, otherwise fall back to global
+            state.buffer_settings.tab_size = lang_config
+                .tab_size
+                .unwrap_or(self.resources.config.editor.tab_size);
+            // Auto close: language override (only if globally enabled)
+            if state.buffer_settings.auto_close {
+                if let Some(lang_auto_close) = lang_config.auto_close {
+                    state.buffer_settings.auto_close = lang_auto_close;
+                }
+            }
+            // Auto surround: language override (only if globally enabled)
+            if state.buffer_settings.auto_surround {
+                if let Some(lang_auto_surround) = lang_config.auto_surround {
+                    state.buffer_settings.auto_surround = lang_auto_surround;
+                }
+            }
+        } else {
+            state.buffer_settings.tab_size = self.resources.config.editor.tab_size;
+            state.buffer_settings.use_tabs = self.resources.config.editor.use_tabs;
+        }
+        state.buffer_settings.whitespace = whitespace;
+
+        // Apply line_numbers default from config
+        state
+            .margins
+            .configure_for_line_numbers(self.resources.config.editor.line_numbers);
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        // Create metadata for this buffer
+        let mut metadata = crate::app::types::BufferMetadata::with_file(
+            path.to_path_buf(),
+            &display_path,
+            &self.root,
+            self.resources.authority.path_translation.as_ref(),
+        );
+
+        // Mark binary files in metadata and disable LSP
+        if is_binary {
+            metadata.binary = true;
+            metadata.read_only = true;
+            metadata.disable_lsp(t!("buffer.binary_file").to_string());
+        }
+
+        // Check if the file is read-only on disk (filesystem permissions)
+        if file_exists
+            && !metadata.read_only
+            && !self.resources.authority.filesystem.is_writable(path)
+        {
+            metadata.read_only = true;
+        }
+
+        // Mark read-only files (library, binary, or filesystem-readonly) as editing-disabled
+        if metadata.read_only {
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.editing_disabled = true;
+            }
+        }
+
+        // Notify LSP about the newly opened file (skip for binary files)
+        if !is_binary {
+            self.notify_lsp_file_opened(path, buffer_id, &mut metadata);
+        }
+
+        // Store metadata for this buffer
+        self.buffer_metadata.insert(buffer_id, metadata);
+
+        // Add buffer to the preferred split's tabs (but don't switch to it)
+        // Uses preferred_split_for_file() to avoid opening in labeled splits (e.g., sidebars)
+        let target_split = self.preferred_split_for_file();
+        let line_wrap = self.resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self.resolve_wrap_column_for_buffer(buffer_id);
+        let page_view = self.resolve_page_view_for_buffer(buffer_id);
+        // Snapshot config values before taking the mutable view-states borrow
+        // so the closure body doesn't have to re-borrow `self.resources`.
+        let cfg = self.resources.config.editor.clone();
+        if let Some(view_state) = self
+            .split_view_states_mut()
+            .expect("active window must have a populated split layout")
+            .get_mut(&target_split)
+        {
+            view_state.add_buffer(buffer_id);
+            // Initialize per-buffer view state for the new buffer with config defaults
+            let buf_state = view_state.ensure_buffer_state(buffer_id);
+            buf_state.apply_config_defaults(
+                cfg.line_numbers,
+                cfg.highlight_current_line,
+                line_wrap,
+                cfg.wrap_indent,
+                wrap_column,
+                cfg.rulers,
+            );
+            // Auto-activate page view if configured for this language
+            if let Some(page_width) = page_view {
+                buf_state.activate_page_view(page_width);
+            }
+        }
+
+        // Restore global file state (scroll/cursor position) if available
+        // This persists file positions across projects and editor instances
+        self.restore_global_file_state(buffer_id, path, target_split);
+
+        // Emit control event
+        self.resources.event_broadcaster.emit_named(
+            crate::model::control_event::events::FILE_OPENED.name,
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "buffer_id": buffer_id.0
+            }),
+        );
+
+        // Track file for auto-revert and conflict detection
+        self.watch_file(path);
+
+        // Fire AfterFileOpen hook for plugins
+        self.resources.plugin_manager.read().unwrap().run_hook(
+            "after_file_open",
+            crate::services::plugins::hooks::HookArgs::AfterFileOpen {
+                buffer_id,
+                path: path.to_path_buf(),
+            },
+        );
 
         Ok(buffer_id)
     }
