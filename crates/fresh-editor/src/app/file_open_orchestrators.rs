@@ -103,11 +103,15 @@ impl Editor {
             .get(&buffer_id)
             .map(|s| s.buffer.is_binary())
             .unwrap_or(false);
+        let is_epub = crate::model::buffer::epub::is_epub_path(path);
 
-        // Show appropriate status message for binary vs regular files
+        // Show appropriate status message for binary vs EPUB vs regular files
         if is_binary {
             self.active_window_mut().status_message =
                 Some(t!("buffer.opened_binary", name = display_name).to_string());
+        } else if is_epub {
+            self.active_window_mut().status_message =
+                Some(t!("buffer.opened_epub", name = display_name).to_string());
         } else {
             self.active_window_mut().status_message =
                 Some(t!("buffer.opened", name = display_name).to_string());
@@ -227,6 +231,7 @@ impl Editor {
             }
         };
         let path = canonical_path.as_path();
+        let is_epub = crate::model::buffer::epub::is_epub_path(path);
 
         // Check if the path is a directory (after following symlinks via canonicalize)
         // Directories cannot be opened as files in the editor
@@ -289,14 +294,21 @@ impl Editor {
                 Arc::clone(&self.authority.filesystem),
             )?;
             let first_line = buffer.first_line_lossy();
-            let detected =
+            let detected = if is_epub {
+                crate::primitives::detected_language::DetectedLanguage::from_syntax_name(
+                    "Markdown",
+                    &self.grammar_registry,
+                    &self.config.languages,
+                ).unwrap_or_else(crate::primitives::detected_language::DetectedLanguage::plain_text)
+            } else {
                 crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
                     &display_path,
                     first_line.as_deref(),
                     &self.grammar_registry,
                     &self.config.languages,
                     self.config.default_language.as_deref(),
-                );
+                )
+            };
             EditorState::from_buffer_with_language(buffer, detected)
         } else {
             // File doesn't exist - create empty buffer with the file path set
@@ -308,12 +320,12 @@ impl Editor {
         };
         // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
 
-        // Check if the buffer contains binary content
+        // Check if the buffer contains binary content or is an EPUB
         let is_binary = state.buffer.is_binary();
-        if is_binary {
-            // Make binary buffers read-only
+        if is_binary || is_epub {
+            // Make binary or EPUB buffers read-only
             state.editing_disabled = true;
-            tracing::info!("Detected binary file: {}", path.display());
+            tracing::info!("Detected read-only file (binary: {}, EPUB: {}): {}", is_binary, is_epub, path.display());
         }
 
         // Set whitespace visibility, use_tabs, and tab_size based on language config
@@ -370,11 +382,16 @@ impl Editor {
             self.authority.path_translation.as_ref(),
         );
 
-        // Mark binary files in metadata and disable LSP
-        if is_binary {
-            metadata.binary = true;
+        // Mark binary or EPUB files in metadata and disable LSP
+        if is_binary || is_epub {
+            metadata.binary = is_binary;
             metadata.read_only = true;
-            metadata.disable_lsp(t!("buffer.binary_file").to_string());
+            let reason = if is_epub {
+                t!("buffer.epub_file").to_string()
+            } else {
+                t!("buffer.binary_file").to_string()
+            };
+            metadata.disable_lsp(reason);
         }
 
         // Check if the file is read-only on disk (filesystem permissions)

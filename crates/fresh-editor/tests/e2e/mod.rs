@@ -25,6 +25,7 @@ pub mod dock_panel_routing;
 pub mod document_model;
 pub mod emacs_actions;
 pub mod encoding;
+pub mod epub;
 pub mod explorer_bugs;
 pub mod explorer_context_menu;
 pub mod explorer_menu;

@@ -24,6 +24,7 @@ pub mod format;
 pub mod persistence;
 pub mod save;
 pub mod search;
+pub mod epub;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
 pub use persistence::Persistence;
@@ -391,6 +392,10 @@ impl TextBuffer {
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
 
+        if epub::is_epub_path(path) {
+            return Self::load_epub_file(path, fs);
+        }
+
         // Get file size to determine loading strategy
         let metadata = fs.metadata(path)?;
         let file_size = metadata.size as usize;
@@ -409,6 +414,20 @@ impl TextBuffer {
             Self::load_small_file(path, fs)
         }
     }
+
+    fn load_epub_file(path: &Path, fs: Arc<dyn FileSystem + Send + Sync>) -> anyhow::Result<Self> {
+        let contents = fs.read_file(path)?;
+        let extracted_text = epub::extract_epub_text(&contents)?;
+
+        let mut buffer = Self::from_str(&extracted_text, 0, fs);
+        buffer.persistence.set_file_path(path.to_path_buf());
+        buffer.persistence.clear_modified();
+        buffer.file_kind.set_large_file(false);
+        buffer.file_kind.set_binary(false);
+        buffer.format.set_default_encoding(Encoding::Utf8);
+        Ok(buffer)
+    }
+
 
     /// Load a text buffer from a file with a specific encoding (no auto-detection).
     pub fn load_from_file_with_encoding<P: AsRef<Path>>(
