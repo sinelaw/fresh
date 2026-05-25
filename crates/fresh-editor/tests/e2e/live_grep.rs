@@ -1174,7 +1174,9 @@ fn test_live_grep_overlay_is_mouse_modal() {
     harness
         .wait_until(|h| h.screen_to_string().contains("Live Grep"))
         .unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     assert!(
         harness.screen_to_string().contains("Live grep:"),

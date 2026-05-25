@@ -699,6 +699,9 @@ impl Editor {
                     prompt.toolbar_widget = spec;
                 }
             }
+            PluginCommand::ToggleOverlayToolbarWidget { key } => {
+                self.toggle_overlay_toolbar_widget(&key);
+            }
             PluginCommand::SetPromptSelectedIndex { index } => {
                 if let Some(prompt) = &mut self.active_window_mut().prompt {
                     let len = prompt.suggestions.len();

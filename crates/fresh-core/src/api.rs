@@ -2748,6 +2748,13 @@ pub enum PluginCommand {
     /// prompts.
     SetPromptToolbar { spec: Option<WidgetSpec> },
 
+    /// Flip a toolbar toggle in the floating-overlay prompt by its widget
+    /// `key`. The host owns the toggle's checked state: it updates the spec in
+    /// place and emits a `widget_event` so the plugin can react (re-run its
+    /// search, etc.). Lets a plugin's Alt+… shortcut funnel through the same
+    /// host path as a click or Space on the focused toggle.
+    ToggleOverlayToolbarWidget { key: String },
+
     /// Override the currently-highlighted suggestion row in the
     /// open prompt. Clamped to the suggestion list's bounds; out-
     /// of-range indices snap to the last row. No-op when there is

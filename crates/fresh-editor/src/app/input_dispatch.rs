@@ -698,18 +698,60 @@ impl Editor {
         true
     }
 
-    /// Fire the focused toolbar control's action (its widget key is the action
-    /// name, e.g. `live_grep_toggle_files`). The plugin handler flips the
-    /// scope and re-sends the toolbar spec; focus stays put.
+    /// Fire the focused toolbar control's toggle. The host owns the checked
+    /// state, so this flips it and emits a `widget_event` (see
+    /// `toggle_overlay_toolbar_widget`); the plugin reacts.
     fn activate_focused_overlay_toggle(&mut self) {
         let key = self
             .active_window()
             .prompt
             .as_ref()
             .and_then(|p| p.toolbar_focus.clone());
-        if let Some(action) = key {
-            let _ = self.handle_action(Action::PluginAction(action));
+        if let Some(key) = key {
+            self.toggle_overlay_toolbar_widget(&key);
         }
+    }
+
+    /// Flip the `checked` state of the overlay toolbar's toggle with `key`
+    /// (host-owned widget state) and emit a `widget_event` so the plugin can
+    /// react (e.g. re-run the search). Shared by mouse clicks, Space/Enter on
+    /// the focused toggle, and the `toggleOverlayToolbarWidget` plugin API —
+    /// one host path for every way a toggle can change.
+    pub(crate) fn toggle_overlay_toolbar_widget(&mut self, key: &str) {
+        if key.is_empty() {
+            return;
+        }
+        let new_checked = {
+            let Some(prompt) = self.active_window_mut().prompt.as_mut() else {
+                return;
+            };
+            let Some(spec) = prompt.toolbar_widget.as_mut() else {
+                return;
+            };
+            let cur = match crate::widgets::find_widget_by_key(spec, key) {
+                Some(fresh_core::api::WidgetSpec::Toggle { checked, .. }) => *checked,
+                _ => return,
+            };
+            let nv = !cur;
+            crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
+            nv
+        };
+        #[cfg(feature = "plugins")]
+        {
+            let pm = self.plugin_manager.read().unwrap();
+            if pm.has_hook_handlers("widget_event") {
+                pm.run_hook(
+                    "widget_event",
+                    crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                        panel_id: 0,
+                        widget_key: key.to_string(),
+                        event_type: "toggle".to_string(),
+                        payload: serde_json::json!({ "checked": new_checked }),
+                    },
+                );
+            }
+        }
+        let _ = new_checked;
     }
 
     /// Handle a key for the overlay's toolbar focus ring. Returns

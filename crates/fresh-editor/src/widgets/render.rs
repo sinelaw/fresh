@@ -3219,8 +3219,7 @@ fn assemble_wrapped_row(
     let mut row: u32 = 0;
     // Hits for the current (not-yet-flushed) line, with byte offsets already
     // shifted but buffer_row not yet stamped (set when the line is started).
-    let flush = |acc: &mut Option<TextPropertyEntry>,
-                 entries: &mut Vec<TextPropertyEntry>| {
+    let flush = |acc: &mut Option<TextPropertyEntry>, entries: &mut Vec<TextPropertyEntry>| {
         if let Some(mut merged) = acc.take() {
             ensure_trailing_newline(&mut merged);
             entries.push(merged);
@@ -4056,7 +4055,7 @@ mod tests {
                     key: Some("hb".into()),
                 },
                 WidgetSpec::Row {
-            wrap: false,
+                    wrap: false,
                     children: vec![
                         WidgetSpec::Toggle {
                             checked: false,

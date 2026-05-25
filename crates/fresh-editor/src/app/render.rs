@@ -2517,8 +2517,7 @@ impl Editor {
             .unwrap_or(false);
         // Chrome around the result list: frame border (2) + input (1) +
         // separator (1) + optional toolbar (1) + optional full-width footer (1).
-        let chrome_rows: usize =
-            4 + usize::from(toolbar_visible) + usize::from(footer_visible);
+        let chrome_rows: usize = 4 + usize::from(toolbar_visible) + usize::from(footer_visible);
         let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(chrome_rows);
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             prompt.ensure_selected_visible_within(suggestions_visible_rows);

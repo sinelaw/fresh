@@ -4183,6 +4183,17 @@ impl JsEditorApi {
             .is_ok())
     }
 
+    /// Toggle a floating-overlay toolbar control by its widget `key`. The host
+    /// owns the toggle's checked state, flips it, and emits a `widget_event`
+    /// the plugin can listen for. Lets a plugin route its own Alt+… shortcut
+    /// through the same host path as a click / Space on the toggle.
+    #[qjs(rename = "toggleOverlayToolbarWidget")]
+    pub fn toggle_overlay_toolbar_widget(&self, key: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::ToggleOverlayToolbarWidget { key })
+            .is_ok()
+    }
+
     /// Override the currently-highlighted suggestion row in the
     /// open prompt. The editor clamps `index` to the suggestion
     /// list's bounds and the renderer scrolls it into view on

@@ -1503,10 +1503,10 @@ impl Editor {
 
         // A floating-overlay prompt is mouse-modal: its own targets (result
         // list, scrollbar) were handled above. A click on a toolbar control
-        // fires that control's action (its widget key is the action name);
-        // anything else — the input row, separator, preview pane, empty
-        // space, or a click outside the frame — is swallowed here so it never
-        // reaches the buffer and moves its cursor.
+        // toggles it through the host (which emits a widget_event); anything
+        // else — the input row, separator, preview pane, empty space, or a
+        // click outside the frame — is swallowed here so it never reaches the
+        // buffer and moves its cursor.
         if self.overlay_prompt_active() {
             let hit = self
                 .active_chrome()
@@ -1514,13 +1514,14 @@ impl Editor {
                 .iter()
                 .find(|(_, r)| in_rect(col, row, *r))
                 .map(|(k, _)| k.clone());
-            if let Some(action_name) = hit {
+            if let Some(widget_key) = hit {
                 // Move keyboard focus to the clicked control so Tab continues
-                // from here, then fire its action.
+                // from here, then flip it through the host (which emits a
+                // widget_event for the plugin).
                 if let Some(p) = self.active_window_mut().prompt.as_mut() {
-                    p.toolbar_focus = Some(action_name.clone());
+                    p.toolbar_focus = Some(widget_key.clone());
                 }
-                self.handle_action(crate::input::keybindings::Action::PluginAction(action_name))?;
+                self.toggle_overlay_toolbar_widget(&widget_key);
             }
             return Ok(());
         }

@@ -233,7 +233,7 @@ function buildToolbarSpec(): WidgetSpec {
   SCOPES.forEach((s, i) => {
     if (i > 0) children.push(spacer(2));
     const parts: WidgetSpec[] = [
-      toggle(scopeEnabled[s.id], editor.t(s.labelKey), { key: s.action }),
+      toggle(scopeEnabled[s.id], editor.t(s.labelKey), { key: s.id }),
     ];
     const accel = editor.getKeybindingLabel(s.action, "prompt");
     if (accel) {
@@ -816,23 +816,31 @@ async function search(query: string): Promise<GrepMatch[]> {
   return results;
 }
 
-// Toggle a single scope on/off, re-run the search, and reflect the new
-// state in the toolbar. No-ops unless our overlay is the active prompt
-// (these bindings live in the shared `prompt` context).
-function toggleScope(id: ScopeId): void {
-  if (!overlayActive) return;
-  scopeEnabled[id] = !scopeEnabled[id];
-  updateOverlayTitle(cachedSelected ?? null);
+// Scope toggling is host-owned: the host flips the toggle's checked state
+// (on click, Space on the focused toggle, or the Alt+… shortcuts below) and
+// emits a `widget_event`; we react here by syncing the scope set and
+// re-running the search. We never re-send the toolbar spec on a toggle — the
+// host already updated the checkbox visual.
+editor.on("widget_event", (args) => {
+  if (!overlayActive || args.event_type !== "toggle") return;
+  const def = SCOPES.find((s) => s.id === args.widget_key);
+  if (!def) return;
+  const payload = args.payload as { checked?: boolean } | undefined;
+  scopeEnabled[def.id] = payload?.checked ?? !scopeEnabled[def.id];
+  // The footer's provider line depends on the file scopes; refresh it.
+  editor.setPromptFooter(buildFooterSegments(cachedSelected ?? null));
   void finder.refresh();
-  const label = editor.t(SCOPES.find((s) => s.id === id)!.labelKey);
-  editor.setStatus(`Search: ${label} ${scopeEnabled[id] ? "on" : "off"}`);
-}
+  editor.setStatus(`Search: ${editor.t(def.labelKey)} ${scopeEnabled[def.id] ? "on" : "off"}`);
+});
 
+// The per-scope Alt+… shortcuts (and palette entries) just route through the
+// host toggle path, so click / Space / shortcut all converge on the same
+// widget_event above. The action's keybinding label is what the toolbar
+// shows as each toggle's inline accelerator.
 for (const s of SCOPES) {
-  registerHandler(s.action, () => toggleScope(s.id));
-  // registerCommand inserts the handler into the registered-actions
-  // table so the host's execute_action path (and the command palette)
-  // can find it — registerHandler alone only sets a globalThis fn.
+  registerHandler(s.action, () => {
+    editor.toggleOverlayToolbarWidget(s.id);
+  });
   editor.registerCommand(`%cmd.${s.action}`, `%cmd.${s.action}_desc`, s.action, null);
 }
 

@@ -2495,6 +2495,14 @@ interface EditorAPI {
 	*/
 	setPromptToolbar(spec: WidgetSpec | null): boolean;
 	/**
+	* Toggle a floating-overlay toolbar control by its widget `key`. The host
+	* owns the toggle's checked state, flips it in place, and emits a
+	* `widget_event` (`event_type: "toggle"`, payload `{ checked }`). Use this
+	* to route a plugin's own keyboard shortcut through the same host path as
+	* a click or Space on the toggle, then react in your `widget_event` handler.
+	*/
+	toggleOverlayToolbarWidget(key: string): boolean;
+	/**
 	* Override the currently-highlighted suggestion row in the
 	* open prompt. The editor clamps `index` to the suggestion
 	* list's bounds and the renderer scrolls it into view on
