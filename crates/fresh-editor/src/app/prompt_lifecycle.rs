@@ -900,6 +900,13 @@ impl Editor {
                     | PromptType::SetEncoding
                     | PromptType::SetLineEnding
                     | PromptType::Plugin { .. }
+                    // Resume re-opens Live Grep as a core-driven
+                    // PromptType::LiveGrep whose suggestions carry the
+                    // match location in `value`. Resolve to the selected
+                    // suggestion's value here, while the prompt still
+                    // exists — the confirm handler runs after the prompt
+                    // is taken and can no longer look it up.
+                    | PromptType::LiveGrep
             ) {
                 // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {

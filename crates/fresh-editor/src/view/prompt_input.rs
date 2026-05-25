@@ -145,6 +145,7 @@ impl InputHandler for Prompt {
                                 self.prompt_type,
                                 crate::view::prompt::PromptType::Plugin { .. }
                                     | crate::view::prompt::PromptType::QuickOpen
+                                    | crate::view::prompt::PromptType::LiveGrep
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
@@ -189,6 +190,7 @@ impl InputHandler for Prompt {
                                 self.prompt_type,
                                 crate::view::prompt::PromptType::Plugin { .. }
                                     | crate::view::prompt::PromptType::QuickOpen
+                                    | crate::view::prompt::PromptType::LiveGrep
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {

@@ -207,22 +207,15 @@ impl Editor {
             }
             PromptType::LiveGrep => {
                 // Confirm navigates to the selected suggestion's
-                // file:line:col. Suggestions for LiveGrep prompts pack
-                // location info into the suggestion text using the
-                // standard "path:line:col" format used elsewhere
-                // (parse_path_line_col).
+                // file:line:col. `confirm_prompt` has already resolved
+                // `input` to the selected suggestion's `value` (which
+                // packs the location in the standard "path:line:col"
+                // format), so parse it directly. (The prompt itself has
+                // been taken by `confirm_prompt` and can no longer be
+                // read here — relying on `self.prompt` made Resume open
+                // the raw query as a file path.)
                 use crate::input::quick_open::parse_path_line_col;
-                let target = if let Some(idx) = selected_index {
-                    self.active_window()
-                        .prompt
-                        .as_ref()
-                        .and_then(|p| p.suggestions.get(idx))
-                        .map(|s| s.value.clone().unwrap_or_else(|| s.text.clone()))
-                        .unwrap_or_else(|| input.clone())
-                } else {
-                    input.clone()
-                };
-                let (path_str, line, column) = parse_path_line_col(&target);
+                let (path_str, line, column) = parse_path_line_col(&input);
                 if !path_str.is_empty() {
                     let expanded = expand_tilde(&path_str);
                     let resolved = if expanded.is_absolute() {
