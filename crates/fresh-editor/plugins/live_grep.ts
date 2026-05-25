@@ -194,11 +194,14 @@ interface ModeDef {
   key: string;
   /** i18n key for the toggle label. */
   labelKey: string;
+  /** Plugin action a keybinding resolves to (drives the inline accelerator
+   *  and the Alt+… shortcut, like the scope toggles). */
+  action: string;
 }
 
 const MODES: ModeDef[] = [
-  { id: "word", key: "mode_word", labelKey: "mode.word" },
-  { id: "regex", key: "mode_regex", labelKey: "mode.regex" },
+  { id: "word", key: "mode_word", labelKey: "mode.word", action: "live_grep_toggle_word" },
+  { id: "regex", key: "mode_regex", labelKey: "mode.regex", action: "live_grep_toggle_regex" },
 ];
 
 const searchModes: Record<ModeId, boolean> = {
@@ -328,7 +331,14 @@ function buildToolbarSpec(): WidgetSpec {
   const modes: WidgetSpec[] = [spacer(1), prefix(editor.t("label.match"))];
   MODES.forEach((m) => {
     modes.push(spacer(2));
-    modes.push(toggle(searchModes[m.id], editor.t(m.labelKey), { key: m.key }));
+    const parts: WidgetSpec[] = [
+      toggle(searchModes[m.id], editor.t(m.labelKey), { key: m.key }),
+    ];
+    const accel = editor.getKeybindingLabel(m.action, "prompt");
+    if (accel) {
+      parts.push(raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])]));
+    }
+    modes.push(row(...parts));
   });
 
   return col(wrappingRow(...sources), wrappingRow(...modes));
@@ -936,15 +946,22 @@ editor.on("widget_event", (args) => {
   editor.setStatus(`Search: ${label} ${on ? "on" : "off"}`);
 });
 
-// The per-scope Alt+… shortcuts (and palette entries) just route through the
+// The per-toggle Alt+… shortcuts (and palette entries) just route through the
 // host toggle path, so click / Space / shortcut all converge on the same
 // widget_event above. The action's keybinding label is what the toolbar
-// shows as each toggle's inline accelerator.
+// shows as each toggle's inline accelerator. Sources are keyed by scope id;
+// modes by their widget key.
 for (const s of SCOPES) {
   registerHandler(s.action, () => {
     editor.toggleOverlayToolbarWidget(s.id);
   });
   editor.registerCommand(`%cmd.${s.action}`, `%cmd.${s.action}_desc`, s.action, null);
+}
+for (const m of MODES) {
+  registerHandler(m.action, () => {
+    editor.toggleOverlayToolbarWidget(m.key);
+  });
+  editor.registerCommand(`%cmd.${m.action}`, `%cmd.${m.action}_desc`, m.action, null);
 }
 
 // Shared open flow for both fresh start and resume. `initialQuery`

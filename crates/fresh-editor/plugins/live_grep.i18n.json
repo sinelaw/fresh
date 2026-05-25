@@ -31,7 +31,11 @@
     "label.search_in": "Search in: ",
     "label.match": "Match: ",
     "mode.word": "Word",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Search: Toggle Whole Word",
+    "cmd.live_grep_toggle_word_desc": "Match whole words only",
+    "cmd.live_grep_toggle_regex": "Search: Toggle Regex",
+    "cmd.live_grep_toggle_regex_desc": "Interpret the query as a regular expression"
   },
   "cs": {
     "cmd.live_grep": "Live Grep (Hledat v souborech)",
@@ -65,7 +69,11 @@
     "label.search_in": "Hledat v: ",
     "label.match": "Shoda: ",
     "mode.word": "Slovo",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Hledání: Přepnout celá slova",
+    "cmd.live_grep_toggle_word_desc": "Hledat pouze celá slova",
+    "cmd.live_grep_toggle_regex": "Hledání: Přepnout regulární výraz",
+    "cmd.live_grep_toggle_regex_desc": "Interpretovat dotaz jako regulární výraz"
   },
   "de": {
     "cmd.live_grep": "Live Grep (Suche in Dateien)",
@@ -99,7 +107,11 @@
     "label.search_in": "Suchen in: ",
     "label.match": "Treffer: ",
     "mode.word": "Wort",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Suche: Ganzes Wort umschalten",
+    "cmd.live_grep_toggle_word_desc": "Nur ganze Wörter abgleichen",
+    "cmd.live_grep_toggle_regex": "Suche: Regex umschalten",
+    "cmd.live_grep_toggle_regex_desc": "Die Abfrage als regulären Ausdruck interpretieren"
   },
   "es": {
     "cmd.live_grep": "Grep en Vivo (Buscar en Archivos)",
@@ -133,7 +145,11 @@
     "label.search_in": "Buscar en: ",
     "label.match": "Coincidencia: ",
     "mode.word": "Palabra",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Búsqueda: Alternar palabra completa",
+    "cmd.live_grep_toggle_word_desc": "Coincidir solo palabras completas",
+    "cmd.live_grep_toggle_regex": "Búsqueda: Alternar regex",
+    "cmd.live_grep_toggle_regex_desc": "Interpretar la consulta como una expresión regular"
   },
   "fr": {
     "cmd.live_grep": "Grep en Direct (Rechercher dans les Fichiers)",
@@ -167,7 +183,11 @@
     "label.search_in": "Rechercher dans : ",
     "label.match": "Correspondance : ",
     "mode.word": "Mot",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Recherche : Basculer le mot entier",
+    "cmd.live_grep_toggle_word_desc": "Ne correspondre qu'aux mots entiers",
+    "cmd.live_grep_toggle_regex": "Recherche : Basculer le regex",
+    "cmd.live_grep_toggle_regex_desc": "Interpréter la requête comme une expression régulière"
   },
   "it": {
     "cmd.live_grep": "Live Grep (Cerca nei file)",
@@ -201,7 +221,11 @@
     "label.search_in": "Cerca in: ",
     "label.match": "Corrispondenza: ",
     "mode.word": "Parola",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Ricerca: Attiva/disattiva parola intera",
+    "cmd.live_grep_toggle_word_desc": "Trova solo parole intere",
+    "cmd.live_grep_toggle_regex": "Ricerca: Attiva/disattiva regex",
+    "cmd.live_grep_toggle_regex_desc": "Interpreta la query come espressione regolare"
   },
   "ja": {
     "cmd.live_grep": "Live Grep (ファイル内検索)",
@@ -235,7 +259,11 @@
     "label.search_in": "検索対象: ",
     "label.match": "一致: ",
     "mode.word": "単語",
-    "mode.regex": "正規表現"
+    "mode.regex": "正規表現",
+    "cmd.live_grep_toggle_word": "検索: 単語単位を切り替え",
+    "cmd.live_grep_toggle_word_desc": "単語単位でのみ一致させる",
+    "cmd.live_grep_toggle_regex": "検索: 正規表現を切り替え",
+    "cmd.live_grep_toggle_regex_desc": "クエリを正規表現として解釈する"
   },
   "ko": {
     "cmd.live_grep": "라이브 Grep (파일에서 찾기)",
@@ -269,7 +297,11 @@
     "label.search_in": "검색 대상: ",
     "label.match": "일치: ",
     "mode.word": "단어",
-    "mode.regex": "정규식"
+    "mode.regex": "정규식",
+    "cmd.live_grep_toggle_word": "검색: 단어 단위 전환",
+    "cmd.live_grep_toggle_word_desc": "전체 단어만 일치",
+    "cmd.live_grep_toggle_regex": "검색: 정규식 전환",
+    "cmd.live_grep_toggle_regex_desc": "쿼리를 정규식으로 해석"
   },
   "pt-BR": {
     "cmd.live_grep": "Grep ao Vivo (Buscar em Arquivos)",
@@ -303,7 +335,11 @@
     "label.search_in": "Pesquisar em: ",
     "label.match": "Correspondência: ",
     "mode.word": "Palavra",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Pesquisa: Alternar palavra inteira",
+    "cmd.live_grep_toggle_word_desc": "Corresponder apenas palavras inteiras",
+    "cmd.live_grep_toggle_regex": "Pesquisa: Alternar regex",
+    "cmd.live_grep_toggle_regex_desc": "Interpretar a consulta como expressão regular"
   },
   "ru": {
     "cmd.live_grep": "Live Grep (Поиск в файлах)",
@@ -337,7 +373,11 @@
     "label.search_in": "Искать в: ",
     "label.match": "Совпадение: ",
     "mode.word": "Слово",
-    "mode.regex": "Рег. выр."
+    "mode.regex": "Рег. выр.",
+    "cmd.live_grep_toggle_word": "Поиск: переключить целые слова",
+    "cmd.live_grep_toggle_word_desc": "Искать только целые слова",
+    "cmd.live_grep_toggle_regex": "Поиск: переключить регулярное выражение",
+    "cmd.live_grep_toggle_regex_desc": "Интерпретировать запрос как регулярное выражение"
   },
   "th": {
     "cmd.live_grep": "Live Grep (ค้นหาในไฟล์)",
@@ -371,7 +411,11 @@
     "label.search_in": "ค้นหาใน: ",
     "label.match": "การจับคู่: ",
     "mode.word": "คำ",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "ค้นหา: สลับทั้งคำ",
+    "cmd.live_grep_toggle_word_desc": "จับคู่เฉพาะทั้งคำ",
+    "cmd.live_grep_toggle_regex": "ค้นหา: สลับ Regex",
+    "cmd.live_grep_toggle_regex_desc": "ตีความคำค้นหาเป็นนิพจน์ทั่วไป"
   },
   "uk": {
     "cmd.live_grep": "Live Grep (Пошук у файлах)",
@@ -405,7 +449,11 @@
     "label.search_in": "Шукати в: ",
     "label.match": "Збіг: ",
     "mode.word": "Слово",
-    "mode.regex": "Рег. вираз"
+    "mode.regex": "Рег. вираз",
+    "cmd.live_grep_toggle_word": "Пошук: перемкнути цілі слова",
+    "cmd.live_grep_toggle_word_desc": "Шукати лише цілі слова",
+    "cmd.live_grep_toggle_regex": "Пошук: перемкнути регулярний вираз",
+    "cmd.live_grep_toggle_regex_desc": "Інтерпретувати запит як регулярний вираз"
   },
   "vi": {
     "cmd.live_grep": "Live Grep (Tìm trong tệp)",
@@ -439,7 +487,11 @@
     "label.search_in": "Tìm trong: ",
     "label.match": "Khớp: ",
     "mode.word": "Từ",
-    "mode.regex": "Regex"
+    "mode.regex": "Regex",
+    "cmd.live_grep_toggle_word": "Tìm kiếm: Bật/tắt nguyên từ",
+    "cmd.live_grep_toggle_word_desc": "Chỉ khớp nguyên từ",
+    "cmd.live_grep_toggle_regex": "Tìm kiếm: Bật/tắt regex",
+    "cmd.live_grep_toggle_regex_desc": "Diễn giải truy vấn như một biểu thức chính quy"
   },
   "zh-CN": {
     "cmd.live_grep": "实时 Grep (文件内搜索)",
@@ -473,6 +525,10 @@
     "label.search_in": "搜索范围: ",
     "label.match": "匹配: ",
     "mode.word": "单词",
-    "mode.regex": "正则"
+    "mode.regex": "正则",
+    "cmd.live_grep_toggle_word": "搜索：切换全字匹配",
+    "cmd.live_grep_toggle_word_desc": "仅匹配完整单词",
+    "cmd.live_grep_toggle_regex": "搜索：切换正则",
+    "cmd.live_grep_toggle_regex_desc": "将查询解释为正则表达式"
   }
 }

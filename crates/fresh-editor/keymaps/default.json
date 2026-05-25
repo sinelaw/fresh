@@ -1856,6 +1856,22 @@
       "action": "live_grep_toggle_diagnostics",
       "args": {},
       "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Whole word' match mode. Mnemonic: 'o' for wOrd ('w' is taken by toggle_search_whole_word in the find prompt).",
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_word",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Regex' match mode (on by default). Mnemonic: 'g' for reGex ('r' is taken by toggle_search_regex in the find prompt).",
+      "key": "g",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_regex",
+      "args": {},
+      "when": "prompt"
     }
   ]
 }
