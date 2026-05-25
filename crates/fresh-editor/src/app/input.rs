@@ -1315,75 +1315,26 @@ impl Editor {
                 }
             }
             Action::ResumeLiveGrep => {
-                // Re-open Live Grep with the cached query and the
-                // suggestions snapshot — does NOT re-run ripgrep
-                // (issue #1796: "restore / re-show without re-running
-                // the search"). If no cache exists, fall through to a
-                // fresh Live Grep invocation.
-                let cached = self.active_window_mut().live_grep_last_state.clone();
-                match cached {
-                    Some(state) if state.cached_results.as_ref().is_some_and(|r| !r.is_empty()) => {
-                        let results = state.cached_results.unwrap_or_default();
-                        // Map cached GrepMatch records back into prompt
-                        // Suggestions. The text is "file:line", the
-                        // value carries "file:line:column" for the
-                        // PromptType::LiveGrep confirm handler.
-                        let suggestions: Vec<crate::input::commands::Suggestion> = results
-                            .into_iter()
-                            .map(|m| {
-                                let label = format!("{}:{}", m.file, m.line);
-                                let value = format!("{}:{}:{}", m.file, m.line, m.column);
-                                let mut s = crate::input::commands::Suggestion::new(label);
-                                s.description = Some(m.content);
-                                s.value = Some(value);
-                                s
-                            })
-                            .collect();
-                        // Build the prompt directly so we can seed
-                        // input + selection + suggestions in one shot.
-                        // Label string mirrors the live_grep plugin's
-                        // i18n bundle. Resume is core-driven (no
-                        // plugin), so we hardcode rather than route
-                        // through plugin-scoped translations.
-                        let mut prompt = crate::view::prompt::Prompt::with_suggestions(
-                            "Live grep: ".to_string(),
-                            PromptType::LiveGrep,
-                            suggestions,
-                        );
-                        prompt.input = state.query;
-                        prompt.cursor_pos = prompt.input.len();
-                        if let Some(idx) = state.selected_index {
-                            if idx < prompt.suggestions.len() {
-                                prompt.selected_suggestion = Some(idx);
+                // Resume runs the *same* flow as a fresh Live Grep — the
+                // plugin's `resume_live_grep` re-opens the identical overlay
+                // (toolbar, scopes, footer) seeded with the last query. No
+                // bespoke core overlay; "resume" is just "start" with
+                // prepopulated data.
+                #[cfg(feature = "plugins")]
+                {
+                    let result = self
+                        .plugin_manager
+                        .read()
+                        .unwrap()
+                        .execute_action_async("resume_live_grep");
+                    if let Some(result) = result {
+                        match result {
+                            Ok(receiver) => {
+                                self.pending_plugin_actions
+                                    .push(("resume_live_grep".to_string(), receiver));
                             }
-                        }
-                        prompt.suggestions_set_for_input = Some(prompt.input.clone());
-                        // Render Resume in the floating overlay too.
-                        prompt.overlay = true;
-                        self.active_window_mut().prompt = Some(prompt);
-                    }
-                    _ => {
-                        // No cache — kick off a fresh Live Grep.
-                        #[cfg(feature = "plugins")]
-                        {
-                            let result = self
-                                .plugin_manager
-                                .read()
-                                .unwrap()
-                                .execute_action_async("start_live_grep");
-                            if let Some(result) = result {
-                                match result {
-                                    Ok(receiver) => {
-                                        self.pending_plugin_actions
-                                            .push(("start_live_grep".to_string(), receiver));
-                                    }
-                                    Err(e) => {
-                                        self.set_status_message(format!(
-                                            "Live Grep unavailable: {}",
-                                            e
-                                        ));
-                                    }
-                                }
+                            Err(e) => {
+                                self.set_status_message(format!("Live Grep unavailable: {}", e));
                             }
                         }
                     }

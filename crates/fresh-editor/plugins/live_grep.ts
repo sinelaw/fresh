@@ -32,7 +32,7 @@
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
-import { raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
+import { col, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
 
 const editor = getEditor();
 
@@ -69,6 +69,14 @@ export interface SearchOpts {
    *  `git-grep` honour this; other built-ins (ag/ack/grep) currently
    *  ignore it and always search their default set. */
   includeIgnored?: boolean;
+  /** When true, match whole words only (rg `-w`, git-grep/grep `-w`).
+   *  Providers should add the appropriate flag. */
+  wholeWord?: boolean;
+  /** When true (the default), the query is a regular expression; when
+   *  false, it's a literal/fixed string the provider must escape (rg
+   *  `-F`, git-grep/grep `-F`). Custom providers should honour this so
+   *  the query is interpreted consistently with the toolbar toggle. */
+  regex?: boolean;
 }
 
 /** A registered Live Grep backend. */
@@ -167,6 +175,79 @@ const scopeEnabled: Record<ScopeId, boolean> = {
 // screen.
 let overlayActive = false;
 
+// The most recent query, so Resume can re-open the *same* flow with it
+// pre-filled (rather than a bespoke cached-results overlay).
+let lastQuery = "";
+
+// ── Search modes ──────────────────────────────────────────────────
+//
+// Separate from *where* we search (scopes): these control *how* the
+// query is interpreted, and are threaded to every provider (and the
+// JS-side scopes) so each can escape/format it correctly. `regex` is
+// on by default (matches the historical rg/git-grep behaviour);
+// `wholeWord` is off.
+type ModeId = "word" | "regex";
+
+interface ModeDef {
+  id: ModeId;
+  /** Stable widget key for the toolbar toggle. */
+  key: string;
+  /** i18n key for the toggle label. */
+  labelKey: string;
+}
+
+const MODES: ModeDef[] = [
+  { id: "word", key: "mode_word", labelKey: "mode.word" },
+  { id: "regex", key: "mode_regex", labelKey: "mode.regex" },
+];
+
+const searchModes: Record<ModeId, boolean> = {
+  word: false,
+  regex: true,
+};
+
+/** A compiled matcher for the JS-side scopes (buffers, diagnostics).
+ *  Returns the 1-based column of the first match on a line, or -1. */
+type LineMatcher = (line: string) => number;
+
+/** Build a line matcher honouring the current `searchModes`. Smart-case:
+ *  case-insensitive unless the query has an uppercase letter. An invalid
+ *  regex matches nothing (the provider scopes surface the rg/grep error;
+ *  the JS scopes just contribute no rows). */
+function buildLineMatcher(query: string): LineMatcher {
+  const smartCaseInsensitive = query === query.toLowerCase();
+  if (searchModes.regex) {
+    const flags = smartCaseInsensitive ? "i" : "";
+    const pattern = searchModes.word ? `\\b(?:${query})\\b` : query;
+    let re: RegExp;
+    try {
+      re = new RegExp(pattern, flags);
+    } catch {
+      return () => -1;
+    }
+    return (line) => {
+      const m = re.exec(line);
+      return m ? m.index + 1 : -1;
+    };
+  }
+  // Literal (fixed-string) matching.
+  const needle = smartCaseInsensitive ? query.toLowerCase() : query;
+  const isWord = (ch: string) => /[A-Za-z0-9_]/.test(ch);
+  return (line) => {
+    const hay = smartCaseInsensitive ? line.toLowerCase() : line;
+    let from = 0;
+    for (;;) {
+      const idx = hay.indexOf(needle, from);
+      if (idx < 0) return -1;
+      if (!searchModes.word) return idx + 1;
+      const before = idx > 0 ? hay[idx - 1] : "";
+      const after = idx + needle.length < hay.length ? hay[idx + needle.length] : "";
+      if (!isWord(before) && !isWord(after)) return idx + 1;
+      from = idx + 1;
+    }
+  };
+}
+
 // ── Registry ──────────────────────────────────────────────────────
 
 const providers: LiveGrepProvider[] = [];
@@ -224,14 +305,16 @@ function unregisterProvider(name: string): boolean {
 // the keybinding-hint colour, so the affordance sits at the control rather
 // than in a footer list.
 function buildToolbarSpec(): WidgetSpec {
-  // Each scope is a nested non-wrapping row — an atomic group of
-  // `toggle + accelerator` — so the wrapping parent never splits a label
-  // from its `Alt+…` hint across lines. The parent wraps at group
-  // boundaries; the spacer(2) separators between groups are dropped when
-  // they'd lead a wrapped line.
-  const children: WidgetSpec[] = [spacer(1)];
-  SCOPES.forEach((s, i) => {
-    if (i > 0) children.push(spacer(2));
+  // Two stacked rows: the search *sources* ("Search in: …") and the search
+  // *modes* ("Match: …"). Each toggle is a nested non-wrapping row — an
+  // atomic group of `toggle + accelerator` — so the wrapping parent never
+  // splits a label from its `Alt+…` hint across lines.
+  const prefix = (text: string): WidgetSpec =>
+    raw([styledRow([{ text, style: { fg: "ui.popup_border_fg" } }])]);
+
+  const sources: WidgetSpec[] = [spacer(1), prefix(editor.t("label.search_in"))];
+  SCOPES.forEach((s) => {
+    sources.push(spacer(2));
     const parts: WidgetSpec[] = [
       toggle(scopeEnabled[s.id], editor.t(s.labelKey), { key: s.id }),
     ];
@@ -239,9 +322,16 @@ function buildToolbarSpec(): WidgetSpec {
     if (accel) {
       parts.push(raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])]));
     }
-    children.push(row(...parts));
+    sources.push(row(...parts));
   });
-  return wrappingRow(...children);
+
+  const modes: WidgetSpec[] = [spacer(1), prefix(editor.t("label.match"))];
+  MODES.forEach((m) => {
+    modes.push(spacer(2));
+    modes.push(toggle(searchModes[m.id], editor.t(m.labelKey), { key: m.key }));
+  });
+
+  return col(wrappingRow(...sources), wrappingRow(...modes));
 }
 
 // Footer: the active provider, the truncation indicator, and the
@@ -324,7 +414,7 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored }) => {
+  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex }) => {
     const args = [
       "--line-number",
       "--column",
@@ -336,6 +426,8 @@ registerProvider({
       // on, `.git` internals are never what the user is looking for.
       "-g", "!.git",
     ];
+    if (regex === false) args.push("--fixed-strings");
+    if (wholeWord) args.push("--word-regexp");
     if (includeIgnored) {
       // Search ignored *and* hidden files (dotfiles). `.git` stays
       // excluded via the glob above.
@@ -365,24 +457,22 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults }) => {
-    const r = await editor.spawnProcess(
-      "ag",
-      [
-        "--column",
-        "--numbers",
-        "--nogroup",
-        "--nocolor",
-        "--smart-case",
-        "--ignore", ".git",
-        "--ignore", "node_modules",
-        "--ignore", "target",
-        "--ignore", "*.lock",
-        "--",
-        query,
-      ],
-      cwd
-    );
+  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
+    const args = [
+      "--column",
+      "--numbers",
+      "--nogroup",
+      "--nocolor",
+      "--smart-case",
+      "--ignore", ".git",
+      "--ignore", "node_modules",
+      "--ignore", "target",
+      "--ignore", "*.lock",
+    ];
+    if (regex === false) args.push("--literal");
+    if (wholeWord) args.push("--word-regexp");
+    args.push("--", query);
+    const r = await editor.spawnProcess("ag", args, cwd);
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
@@ -413,8 +503,12 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults, includeIgnored }) => {
+  search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex }) => {
     const args = ["grep", "-n", "--column", "-I"];
+    // Default git-grep is basic regex; use extended when regex is on, or
+    // fixed-strings when it's off so the query is matched literally.
+    args.push(regex === false ? "-F" : "-E");
+    if (wholeWord) args.push("-w");
     if (includeIgnored) {
       // Widen beyond tracked files: include untracked, and stop
       // honouring the standard ignore files so `.gitignore`d content
@@ -445,18 +539,12 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults }) => {
-    const r = await editor.spawnProcess(
-      "ack",
-      [
-        "--nocolor",
-        "--column",
-        "--smart-case",
-        "--",
-        query,
-      ],
-      cwd
-    );
+  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
+    const args = ["--nocolor", "--column", "--smart-case"];
+    if (regex === false) args.push("--literal");
+    if (wholeWord) args.push("--word-regexp");
+    args.push("--", query);
+    const r = await editor.spawnProcess("ack", args, cwd);
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
@@ -485,21 +573,18 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults }) => {
-    const r = await editor.spawnProcess(
-      "grep",
-      [
-        "-rn",
-        "-I",
-        "--exclude-dir=.git",
-        "--exclude-dir=node_modules",
-        "--exclude-dir=target",
-        "--",
-        query,
-        ".",
-      ],
-      cwd
-    );
+  search: async (query, { cwd, maxResults, wholeWord, regex }) => {
+    const args = [
+      "-rn",
+      "-I",
+      "--exclude-dir=.git",
+      "--exclude-dir=node_modules",
+      "--exclude-dir=target",
+    ];
+    args.push(regex === false ? "-F" : "-E");
+    if (wholeWord) args.push("-w");
+    args.push("--", query, ".");
+    const r = await editor.spawnProcess("grep", args, cwd);
     if (r.exit_code === 0 || r.exit_code === 1) {
       // grep emits `path:line:content` (no column). parseGrepOutput's
       // 3-field fallback handles the missing column (defaults to 1).
@@ -658,24 +743,27 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
   const cwd = editor.getCwd();
   let raw: GrepMatch[] = [];
   try {
-    const r = await editor.spawnProcess(
-      "rg",
-      [
-        "--line-number", "--column", "--no-heading", "--color=never",
-        "--smart-case", "--text", `--max-count=${limit}`,
-        // Only the rendered `.txt` backing files — not the raw `.log`
-        // replay logs, which would double every hit.
-        "-g", "*.txt",
-        "--", query, dir,
-      ],
-      cwd
-    );
+    const rgArgs = [
+      "--line-number", "--column", "--no-heading", "--color=never",
+      "--smart-case", "--text", `--max-count=${limit}`,
+      // Only the rendered `.txt` backing files — not the raw `.log`
+      // replay logs, which would double every hit.
+      "-g", "*.txt",
+    ];
+    if (searchModes.regex === false) rgArgs.push("--fixed-strings");
+    if (searchModes.word) rgArgs.push("--word-regexp");
+    rgArgs.push("--", query, dir);
+    const r = await editor.spawnProcess("rg", rgArgs, cwd);
     if (r.exit_code === 0) {
       raw = parseGrepOutput(r.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
     } else if (r.exit_code !== 1) {
       // rg missing or path error → fall back to grep (-a: treat the
       // ANSI-laden logs as text rather than skipping them as binary).
-      const g = await editor.spawnProcess("grep", ["-rn", "-a", "--include=*.txt", "--", query, dir], cwd);
+      const gArgs = ["-rn", "-a", "--include=*.txt"];
+      gArgs.push(searchModes.regex === false ? "-F" : "-E");
+      if (searchModes.word) gArgs.push("-w");
+      gArgs.push("--", query, dir);
+      const g = await editor.spawnProcess("grep", gArgs, cwd);
       if (g.exit_code === 0) {
         raw = parseGrepOutput(g.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
       }
@@ -697,7 +785,7 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
 async function searchOpenBuffers(query: string, limit: number): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
   const out: GrepMatch[] = [];
-  const needle = query.toLowerCase();
+  const matchCol = buildLineMatcher(query);
   for (const b of editor.listBuffers()) {
     if (out.length >= limit) break;
     if (b.is_virtual || !b.path || !b.modified) continue;
@@ -710,9 +798,9 @@ async function searchOpenBuffers(query: string, limit: number): Promise<GrepMatc
     }
     const lines = text.split("\n");
     for (let i = 0; i < lines.length && out.length < limit; i++) {
-      const col = lines[i].toLowerCase().indexOf(needle);
-      if (col >= 0) {
-        out.push({ file: b.path, line: i + 1, column: col + 1, content: lines[i], source: "buffers" });
+      const col = matchCol(lines[i]);
+      if (col > 0) {
+        out.push({ file: b.path, line: i + 1, column: col, content: lines[i], source: "buffers" });
       }
     }
   }
@@ -734,10 +822,10 @@ function severityLabel(sev: number | null | undefined): string {
 function searchDiagnostics(query: string, limit: number): GrepMatch[] {
   if (limit <= 0) return [];
   const out: GrepMatch[] = [];
-  const needle = query.toLowerCase();
+  const matchCol = buildLineMatcher(query);
   for (const d of editor.getAllDiagnostics()) {
     if (out.length >= limit) break;
-    if (!d.message.toLowerCase().includes(needle)) continue;
+    if (matchCol(d.message) <= 0) continue;
     const file = d.uri.startsWith("file://") ? decodeURIComponent(d.uri.slice("file://".length)) : d.uri;
     out.push({
       file,
@@ -762,6 +850,8 @@ async function searchFiles(query: string): Promise<GrepMatch[] | null> {
       cwd: editor.getCwd(),
       maxResults: MAX_RESULTS,
       includeIgnored: scopeEnabled.ignored,
+      wholeWord: searchModes.word,
+      regex: searchModes.regex,
     });
     return results.map((m) => ({ ...m, source: "files" as const }));
   } catch (e) {
@@ -774,6 +864,7 @@ async function searchFiles(query: string): Promise<GrepMatch[] | null> {
 // capped, tagged result list. Order is files → buffers → diagnostics
 // so the most common hits lead.
 async function search(query: string): Promise<GrepMatch[]> {
+  lastQuery = query;
   const wasTruncated = lastSearchTruncated;
   const results: GrepMatch[] = [];
   const remaining = () => MAX_RESULTS - results.length;
@@ -823,14 +914,26 @@ async function search(query: string): Promise<GrepMatch[]> {
 // host already updated the checkbox visual.
 editor.on("widget_event", (args) => {
   if (!overlayActive || args.event_type !== "toggle") return;
-  const def = SCOPES.find((s) => s.id === args.widget_key);
-  if (!def) return;
   const payload = args.payload as { checked?: boolean } | undefined;
-  scopeEnabled[def.id] = payload?.checked ?? !scopeEnabled[def.id];
+  const scope = SCOPES.find((s) => s.id === args.widget_key);
+  const mode = MODES.find((m) => m.key === args.widget_key);
+  let label: string;
+  let on: boolean;
+  if (scope) {
+    on = payload?.checked ?? !scopeEnabled[scope.id];
+    scopeEnabled[scope.id] = on;
+    label = editor.t(scope.labelKey);
+  } else if (mode) {
+    on = payload?.checked ?? !searchModes[mode.id];
+    searchModes[mode.id] = on;
+    label = editor.t(mode.labelKey);
+  } else {
+    return;
+  }
   // The footer's provider line depends on the file scopes; refresh it.
   editor.setPromptFooter(buildFooterSegments(cachedSelected ?? null));
   void finder.refresh();
-  editor.setStatus(`Search: ${editor.t(def.labelKey)} ${scopeEnabled[def.id] ? "on" : "off"}`);
+  editor.setStatus(`Search: ${label} ${on ? "on" : "off"}`);
 });
 
 // The per-scope Alt+… shortcuts (and palette entries) just route through the
@@ -844,7 +947,10 @@ for (const s of SCOPES) {
   editor.registerCommand(`%cmd.${s.action}`, `%cmd.${s.action}_desc`, s.action, null);
 }
 
-function start_live_grep(): void {
+// Shared open flow for both fresh start and resume. `initialQuery`
+// pre-fills the input (Resume passes the last query) — Resume is just the
+// same flow with prepopulated data, no bespoke overlay.
+function openLiveGrep(initialQuery: string): void {
   overlayActive = true;
   finder.prompt({
     title: editor.t("prompt.live_grep"),
@@ -855,6 +961,7 @@ function start_live_grep(): void {
       minQueryLength: 2,
     },
     floatingOverlay: true,
+    ...(initialQuery ? { initialQuery } : {}),
   });
   // Pre-populate the overlay's frame title with the cached
   // provider name (if any) before the user types — avoids the
@@ -869,7 +976,28 @@ function start_live_grep(): void {
     void selectProvider();
   }
 }
+
+function start_live_grep(): void {
+  openLiveGrep("");
+}
 registerHandler("start_live_grep", start_live_grep);
+
+// Resume: identical flow, just seeded with the last query so the user
+// picks up where they left off — same overlay, same toolbar, same scopes.
+function resume_live_grep(): void {
+  openLiveGrep(lastQuery);
+}
+registerHandler("resume_live_grep", resume_live_grep);
+// Register the action→plugin-context mapping so the core `resume_live_grep`
+// action (Alt+R / the built-in "Resume Live Grep" palette command) resolves
+// to this handler. A never-activated custom context keeps it out of the
+// palette so it doesn't duplicate the core entry.
+editor.registerCommand(
+  "Live Grep: Resume (internal)",
+  "",
+  "resume_live_grep",
+  "live-grep-internal"
+);
 
 editor.registerCommand(
   "%cmd.live_grep",

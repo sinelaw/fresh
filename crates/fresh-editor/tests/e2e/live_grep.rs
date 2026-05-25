@@ -635,10 +635,13 @@ fn test_resume_live_grep_replay_skips_empty_cache() {
     );
 }
 
-/// Companion test: when there *is* a real cached state (non-empty
-/// query and non-empty results), Resume must restore it.
+/// Resume runs the *same* flow as a fresh Live Grep (via the plugin's
+/// `resume_live_grep`), seeded with the last query — it no longer builds a
+/// bespoke core overlay from the Rust-side cache. In this minimal harness no
+/// plugins are loaded, so Resume opens no prompt even when a cache exists;
+/// that absence is the regression guard against the old bespoke path.
 #[test]
-fn test_resume_live_grep_restores_real_cached_state() {
+fn test_resume_live_grep_routes_through_plugin_not_core_cache() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     harness
@@ -660,8 +663,9 @@ fn test_resume_live_grep_restores_real_cached_state() {
         .dispatch_action_for_tests(Action::ResumeLiveGrep);
     assert_eq!(
         harness.editor().prompt_input(),
-        Some("cached_query"),
-        "Resume with a real cached state must restore the prior query"
+        None,
+        "Resume must route through the plugin flow, not seed a bespoke core \
+         overlay from the Rust cache (no plugins loaded here, so no prompt opens)"
     );
 }
 
@@ -988,145 +992,6 @@ fn test_live_grep_preview_wraps_long_lines() {
         "preview must wrap the long match line so both the mid-line marker \
          and the end token are visible; without wrapping the start scrolls \
          off. Screen:\n{screen}"
-    );
-}
-
-/// Build a temp project, seed the Resume cache with `matches` under
-/// `query`, then dispatch `ResumeLiveGrep` to re-open the overlay from
-/// the cache (no plugin / no grep — the core replay path). Returns the
-/// harness (overlay open) plus the `TempDir` guard.
-fn open_resumed_live_grep(
-    files: &[(&str, &str)],
-    query: &str,
-    matches: &[(&str, usize, usize, &str)],
-    selected: Option<usize>,
-) -> (EditorTestHarness, tempfile::TempDir) {
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let project_root = temp_dir.path().join("project_root");
-    fs::create_dir(&project_root).unwrap();
-    for (name, content) in files {
-        fs::write(project_root.join(name), content).unwrap();
-    }
-    let start_file = project_root.join("start.txt");
-    fs::write(&start_file, "start\n").unwrap();
-
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(200, 44, Default::default(), project_root)
-            .unwrap();
-    harness.open_file(&start_file).unwrap();
-    harness.render().unwrap();
-
-    let cached_results = matches
-        .iter()
-        .map(|(file, line, column, content)| GrepMatch {
-            file: file.to_string(),
-            line: *line,
-            column: *column,
-            content: content.to_string(),
-        })
-        .collect();
-    harness
-        .editor_mut()
-        .set_live_grep_last_state_for_tests(Some(LiveGrepLastState {
-            query: query.to_string(),
-            selected_index: selected,
-            cached_results: Some(cached_results),
-            cached_at: None,
-            last_results_snapshot_id: None,
-        }));
-    harness
-        .editor_mut()
-        .dispatch_action_for_tests(Action::ResumeLiveGrep);
-    harness.render().unwrap();
-
-    (harness, temp_dir)
-}
-
-/// Resume bug A: navigating the *resumed* Live Grep overlay must not
-/// overwrite the filter query. The resumed prompt is `PromptType::LiveGrep`
-/// whose suggestions carry the match location (`path:line:col`) in their
-/// `value`; arrow-key navigation syncs the input to that value, so the
-/// query box turns into a file path. After the next confirm that path is
-/// re-cached, so subsequent resumes show the path instead of the query.
-#[test]
-fn test_resume_live_grep_navigation_preserves_query() {
-    let files = &[("aaa.txt", "match in aaa\n"), ("bbb.txt", "match in bbb\n")];
-    let (mut harness, _tmp) = open_resumed_live_grep(
-        files,
-        "menu_bg",
-        &[
-            ("aaa.txt", 1, 1, "match in aaa"),
-            ("bbb.txt", 1, 1, "match in bbb"),
-        ],
-        Some(0),
-    );
-
-    assert!(
-        harness.screen_to_string().contains("Live grep: menu_bg"),
-        "resumed overlay should show the original query; got:\n{}",
-        harness.screen_to_string()
-    );
-
-    // Arrow down to the second result.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    assert!(
-        harness.screen_to_string().contains("Live grep: menu_bg"),
-        "navigating the resumed overlay must keep the query in the filter \
-         box; pre-fix it synced the input to the selected result's \
-         path:line:col. Input row:\n{}",
-        harness
-            .screen_to_string()
-            .lines()
-            .find(|l| l.contains("Live grep:"))
-            .unwrap_or("")
-    );
-}
-
-/// Resume bug B: pressing Enter on a resumed Live Grep result must open
-/// the selected match's file, not a file named after the query. Pre-fix,
-/// `confirm_prompt` took the prompt before the `LiveGrep` confirm handler
-/// read `self.prompt.suggestions[idx]`, so the lookup failed and it fell
-/// back to opening the raw query string as a path (creating an empty
-/// buffer named e.g. "menu_bg").
-#[test]
-fn test_resume_live_grep_enter_opens_selected_result() {
-    // The match line carries a unique marker so we can tell the real file
-    // opened (marker visible in the editor) from the bogus query-named
-    // buffer (empty).
-    let files = &[("aaa.txt", "RESUMEMATCHCONTENT_A unique line\n")];
-    let (mut harness, _tmp) = open_resumed_live_grep(
-        files,
-        "menu_bg",
-        &[("aaa.txt", 1, 1, "RESUMEMATCHCONTENT_A unique line")],
-        Some(0),
-    );
-
-    assert!(
-        harness.screen_to_string().contains("Live grep: menu_bg"),
-        "precondition: resumed overlay shows the query; got:\n{}",
-        harness.screen_to_string()
-    );
-
-    // Confirm the selected result.
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    // The overlay closes on confirm in both the buggy and fixed cases —
-    // wait for that (deterministic) rather than for content that the bug
-    // never produces, so the test fails fast instead of timing out.
-    harness
-        .wait_until(|h| !h.screen_to_string().contains("Live grep:"))
-        .unwrap();
-
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains("RESUMEMATCHCONTENT_A"),
-        "Enter on a resumed result must open the match file (aaa.txt) so its \
-         content is visible; pre-fix the confirm handler couldn't read the \
-         (already-taken) prompt's suggestions and fell back to opening the \
-         raw query 'menu_bg' as a path, leaving an empty buffer. Screen:\n{screen}"
     );
 }
 
