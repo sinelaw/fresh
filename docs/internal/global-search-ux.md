@@ -470,16 +470,29 @@ Known limitations / follow-ups:
   terminal. Fine for "find it"; focusing the live terminal is a refinement.
 - Toggles only work in the live overlay, not the `Resume` (cached) overlay.
 
-### Retention gotcha discovered (blocks naive §8 step 1)
+### Closed-terminal retention — LANDED
 
 Backing files are named by terminal id: `<data_dir>/terminals/<encoded-cwd>/
 fresh-terminal-<id>.txt`. Terminal ids restart per session, so simply
 *not deleting* the file on close would let a new terminal with the same id
-**clobber** a retained log from a prior session. Retention therefore must
-either (a) rename the file to a unique name on close (e.g. append
-`closed-<epoch>`), or (b) key files by a monotonic/session-unique id, and
-record the survivors in the index manifest. Do **not** land "skip the
-`remove_file`" on its own.
+**clobber** a retained log from a prior session.
+
+Implemented in `buffer_close.rs`: on terminal close the rendered backing
+file is **renamed** to `fresh-terminal-<id>-closed-<epoch_ms>.txt` (instead
+of deleted), which is collision-free against future same-id terminals. The
+raw `.log` is still deleted. A count-bounded GC
+(`gc_retained_terminal_backings`, currently `MAX_RETAINED = 200` per dir)
+prunes the oldest retained files, ordering by the epoch embedded in the
+filename so it needs no filesystem metadata. The Terminals scope already
+globs `*.txt`, so retained logs are searchable with no plugin change —
+verified end-to-end: open terminal → produce scrollback → close → Universal
+Search finds the hit in the `-closed-` file.
+
+Retention is currently unconditional (the chosen "on by default" stance).
+Follow-ups: a config toggle to disable, a "purge terminal history" command,
+age/size-based GC limits, and the per-cwd `listTerminalLogs()` host API
+(§8) so the scope can scope to the current project and show friendly
+titles instead of raw paths.
 
 ## 11. Open questions
 

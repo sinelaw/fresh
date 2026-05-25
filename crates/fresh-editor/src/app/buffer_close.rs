@@ -68,15 +68,17 @@ impl Editor {
             // Close the terminal process
             self.active_window_mut().terminal_manager.close(terminal_id);
 
-            // Clean up backing/rendering file
+            // Retain the rendered backing file so its scrollback stays
+            // searchable after close (Universal Search "Terminals" scope).
+            // Rename rather than leave in place: backing files are named
+            // by terminal id, which restarts per session, so a future
+            // same-id terminal would otherwise clobber this log.
             let backing_file = self
                 .active_window_mut()
                 .terminal_backing_files
                 .remove(&terminal_id);
             if let Some(ref path) = backing_file {
-                // Best-effort cleanup of temporary terminal files.
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = self.authority.filesystem.remove_file(path);
+                self.retain_closed_terminal_backing(path);
             }
             // Clean up raw log file
             if let Some(log_file) = self
@@ -1091,5 +1093,57 @@ impl Editor {
 
         // Clear the flag
         self.active_window_mut().in_navigation = false;
+    }
+
+    /// Retain a closed terminal's rendered backing file so its scrollback
+    /// stays searchable (Universal Search "Terminals" scope). Renames it to
+    /// a unique `<stem>-closed-<epoch_ms>.txt` so a future terminal that
+    /// reuses the same id can't clobber it, then bounds the retained set.
+    /// Best-effort throughout — a failure just means that log isn't kept.
+    fn retain_closed_terminal_backing(&self, path: &std::path::Path) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            return;
+        };
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        let epoch_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let retained = parent.join(format!("{stem}-closed-{epoch_ms}.txt"));
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = self.authority.filesystem.rename(path, &retained);
+        self.gc_retained_terminal_backings(parent);
+    }
+
+    /// Prune the oldest retained (`-closed-`) terminal backing files in a
+    /// directory so they don't grow without bound. Ordering uses the epoch
+    /// embedded in the filename, so it needs no filesystem metadata. Live
+    /// backing files (no `-closed-` marker) are never touched.
+    fn gc_retained_terminal_backings(&self, dir: &std::path::Path) {
+        const MAX_RETAINED: usize = 200;
+        let Ok(entries) = self.authority.filesystem.read_dir(dir) else {
+            return;
+        };
+        let mut retained: Vec<(u128, std::path::PathBuf)> = entries
+            .into_iter()
+            .filter_map(|e| {
+                let rest = e.name.strip_suffix(".txt")?;
+                let idx = rest.rfind("-closed-")?;
+                let epoch: u128 = rest[idx + "-closed-".len()..].parse().ok()?;
+                Some((epoch, e.path))
+            })
+            .collect();
+        if retained.len() <= MAX_RETAINED {
+            return;
+        }
+        retained.sort_by_key(|(epoch, _)| *epoch);
+        let remove_count = retained.len() - MAX_RETAINED;
+        for (_, p) in retained.into_iter().take(remove_count) {
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = self.authority.filesystem.remove_file(&p);
+        }
     }
 }
