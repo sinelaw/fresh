@@ -2171,18 +2171,18 @@ impl Editor {
                     prompt.suggestions.get(idx)
                 })
                 .map(|s| {
-                    // Suggestions emitted by the Finder library use `value`
-                    // as an opaque index; the parseable label lives in
-                    // `text`. Resume-replay is the inverse: `value` carries
-                    // the full path:line:col triple.
-                    let from_text = parse_path_line_col(&s.text);
-                    if !from_text.0.is_empty() && from_text.1.is_some() {
-                        from_text
-                    } else if let Some(v) = s.value.as_deref() {
-                        parse_path_line_col(v)
-                    } else {
-                        from_text
+                    // `value` is the authoritative `path:line:col` for the
+                    // result. We must not rely on parsing the user-facing
+                    // label (`text`), which may carry source badges (e.g.
+                    // "[term]") that make it unparseable as a path. Only fall
+                    // back to the label when `value` is absent/unparseable.
+                    if let Some(v) = s.value.as_deref() {
+                        let from_value = parse_path_line_col(v);
+                        if !from_value.0.is_empty() && from_value.1.is_some() {
+                            return from_value;
+                        }
                     }
+                    parse_path_line_col(&s.text)
                 })
         };
         // No selectable result (empty list, no selection, or an

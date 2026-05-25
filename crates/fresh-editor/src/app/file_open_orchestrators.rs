@@ -756,6 +756,20 @@ impl crate::app::window::Window {
         self.open_file_no_focus_inner(path, false)
     }
 
+    /// True if `path` resolves to a location under the app data dir.
+    /// Both sides are canonicalized so a symlinked home (e.g. macOS
+    /// `/var` → `/private/var`) doesn't defeat the prefix check.
+    fn path_under_data_dir(&self, path: &Path) -> bool {
+        let data_dir = &self.resources.dir_context.data_dir;
+        let canonical_data = self
+            .resources
+            .authority
+            .filesystem
+            .canonicalize(data_dir)
+            .unwrap_or_else(|_| data_dir.clone());
+        path.starts_with(&canonical_data)
+    }
+
     fn open_file_no_focus_inner(
         &mut self,
         path: &Path,
@@ -926,6 +940,14 @@ impl crate::app::window::Window {
             // Make binary buffers read-only
             state.editing_disabled = true;
             tracing::info!("Detected binary file: {}", path.display());
+        }
+
+        // Files under the app data dir (e.g. terminal scrollback backing
+        // files surfaced by Universal Search) are internal artifacts the
+        // user is inspecting, not editing — open them read-only so an
+        // accidental keystroke can't corrupt persisted state.
+        if self.path_under_data_dir(&canonical_path) {
+            state.editing_disabled = true;
         }
 
         // Set whitespace visibility, use_tabs, and tab_size based on language config

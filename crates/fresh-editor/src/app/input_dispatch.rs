@@ -804,9 +804,17 @@ impl Editor {
                 self.activate_focused_overlay_toggle();
                 Some(InputResult::Consumed)
             }
-            // Typing any other character returns focus to the query input,
-            // then falls through so the character is inserted as usual.
-            KeyCode::Char(_) if focused => {
+            // Navigating the result list (or typing) returns focus to the
+            // query input, then falls through so the navigation / character
+            // insertion happens — and Enter afterwards opens the highlighted
+            // result rather than re-activating a control.
+            KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Char(_)
+                if focused =>
+            {
                 if let Some(p) = self.active_window_mut().prompt.as_mut() {
                     p.toolbar_focus = None;
                 }

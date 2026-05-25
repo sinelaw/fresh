@@ -903,7 +903,15 @@ export class Finder<T> {
       (entry, i) => ({
         text: entry.label,
         description: entry.description,
-        value: `${i}`,
+        // The preview pane uses `value` as the authoritative
+        // `path:line:col` for the result. We must not rely on parsing the
+        // user-facing label, which may carry source badges (e.g. "[term]")
+        // that make the label unparseable as a path.
+        value: entry.location
+          ? `${entry.location.file}:${entry.location.line}:${
+            entry.location.column ?? 1
+          }`
+          : `${i}`,
         disabled: false,
       })
     );

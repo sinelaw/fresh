@@ -1,5 +1,70 @@
 use crate::common::harness::EditorTestHarness;
+use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
 use tempfile::TempDir;
+
+/// Files under the app data dir (e.g. terminal scrollback backing files
+/// surfaced by Universal Search) open read-only so a stray keystroke can't
+/// corrupt persisted state.
+#[test]
+fn test_file_under_data_dir_is_read_only() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // A terminal-scrollback-like text file living under the data dir.
+    let scrollback = dir_context.data_dir.join("terminals").join("session.txt");
+    std::fs::create_dir_all(scrollback.parent().unwrap()).unwrap();
+    std::fs::write(&scrollback, "line one\nline two\n").unwrap();
+
+    // Working dir is a sibling project root, distinct from the data dir.
+    let project = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        100,
+        24,
+        Config::default(),
+        project,
+        dir_context,
+    )
+    .unwrap();
+    harness.open_file(&scrollback).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.editor().active_window().is_editing_disabled(),
+        "File under data dir should open read-only"
+    );
+}
+
+/// A normal text file outside the data dir stays editable — the read-only
+/// rule is scoped to data-dir artifacts, not all `.txt` files.
+#[test]
+fn test_file_outside_data_dir_is_editable() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let project = temp_dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let notes = project.join("notes.txt");
+    std::fs::write(&notes, "editable content\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        100,
+        24,
+        Config::default(),
+        project,
+        dir_context,
+    )
+    .unwrap();
+    harness.open_file(&notes).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.editor().active_window().is_editing_disabled(),
+        "File outside data dir should remain editable"
+    );
+}
 
 /// Test that PNG files are detected as binary and opened in read-only mode
 #[test]
