@@ -32,7 +32,7 @@
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
-import { col, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
+import { button, col, raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
 
 const editor = getEditor();
 
@@ -343,46 +343,48 @@ function buildToolbarSpec(provider: LiveGrepProvider | null): WidgetSpec {
   });
 
   const rows: WidgetSpec[] = [wrappingRow(...sources), wrappingRow(...modes)];
-  const metaSegs = buildMetaSegments(provider);
-  if (metaSegs.length > 0) {
-    rows.push(raw([styledRow(metaSegs)]));
-  }
+  const metaRow = buildMetaRow(provider);
+  if (metaRow) rows.push(metaRow);
   return col(...rows);
 }
 
-// Meta row (beneath the toggles): the active provider, the truncation
-// indicator, and the action hints that have no on-screen control to attach
-// to (provider-cycle, save-matches). Per-control accelerators live on the
-// toggles themselves (see buildToolbarSpec).
-function buildMetaSegments(provider: LiveGrepProvider | null): StyledText[] {
-  const sepStyle = { fg: "ui.popup_border_fg" };
+// Meta row (beneath the toggles): the active provider as a focusable/clickable
+// button (cycles backends) with its Alt+P accelerator inline, plus the
+// truncation indicator and the save-matches hint as text. Returns null when
+// there's nothing to show.
+function buildMetaRow(provider: LiveGrepProvider | null): WidgetSpec | null {
   const hintStyle = { fg: "ui.help_key_fg" };
-  const segs: StyledText[] = [];
-  const push = (parts: StyledText[]) => {
-    if (segs.length > 0) segs.push({ text: " · ", style: sepStyle });
-    segs.push(...parts);
-  };
-  // Only surface the grep provider when a file-backed scope is on — it's
-  // irrelevant when searching only buffers/terminals/diagnostics.
+  const sepStyle = { fg: "ui.popup_border_fg" };
+  const parts: WidgetSpec[] = [];
+
+  // Provider button — only when a file-backed scope is on (irrelevant when
+  // searching only buffers/terminals/diagnostics). The button is keyed
+  // "provider"; activating it (click / Space / Alt+P) cycles the backend.
   if (provider && (scopeEnabled.files || scopeEnabled.ignored)) {
-    push([{ text: "Provider: " }, { text: provider.name, style: { bold: true } }]);
+    parts.push(raw([styledRow([{ text: "Provider: ", style: sepStyle }])]));
+    parts.push(button(provider.name, { key: "provider" }));
+    const pAccel = editor.getKeybindingLabel("cycle_live_grep_provider", "prompt");
+    if (pAccel) {
+      parts.push(raw([styledRow([{ text: ` ${pAccel}`, style: hintStyle }])]));
+    }
   }
+
+  // Trailing text: truncation indicator + save-matches hint.
+  const tail: StyledText[] = [];
   if (lastSearchTruncated) {
-    push([{ text: `${MAX_RESULTS}+ matches` }]);
+    tail.push({ text: `${MAX_RESULTS}+ matches` });
   }
-  const pushHint = (key: string | null, label: string) => {
-    if (!key) return;
-    push([{ text: key, style: hintStyle }, { text: ` ${label}` }]);
-  };
-  pushHint(
-    editor.getKeybindingLabel("cycle_live_grep_provider", "prompt"),
-    "switch grep provider"
-  );
-  pushHint(
-    editor.getKeybindingLabel("live_grep_export_quickfix", "prompt"),
-    "save matches"
-  );
-  return segs;
+  const saveKey = editor.getKeybindingLabel("live_grep_export_quickfix", "prompt");
+  if (saveKey) {
+    if (tail.length > 0) tail.push({ text: " · ", style: sepStyle });
+    tail.push({ text: saveKey, style: hintStyle }, { text: " save matches" });
+  }
+  if (tail.length > 0) {
+    if (parts.length > 0) tail.unshift({ text: " · ", style: sepStyle });
+    parts.push(raw([styledRow(tail)]));
+  }
+
+  return parts.length > 0 ? row(...parts) : null;
 }
 
 // Refresh the overlay chrome: the scope toolbar (header band) and the footer
@@ -929,7 +931,13 @@ async function search(query: string): Promise<GrepMatch[]> {
 // emits a `widget_event`; we react here by syncing the scope/mode set,
 // refreshing the meta row, and re-running the search.
 editor.on("widget_event", (args) => {
-  if (!overlayActive || args.event_type !== "toggle") return;
+  if (!overlayActive) return;
+  // The provider button (click / Space / Alt+P) cycles the search backend.
+  if (args.event_type === "activate" && args.widget_key === "provider") {
+    void cycleProvider();
+    return;
+  }
+  if (args.event_type !== "toggle") return;
   const payload = args.payload as { checked?: boolean } | undefined;
   const scope = SCOPES.find((s) => s.id === args.widget_key);
   const mode = MODES.find((m) => m.key === args.widget_key);

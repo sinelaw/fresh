@@ -712,29 +712,40 @@ impl Editor {
         }
     }
 
-    /// Flip the `checked` state of the overlay toolbar's toggle with `key`
-    /// (host-owned widget state) and emit a `widget_event` so the plugin can
-    /// react (e.g. re-run the search). Shared by mouse clicks, Space/Enter on
-    /// the focused toggle, and the `toggleOverlayToolbarWidget` plugin API —
-    /// one host path for every way a toggle can change.
+    /// Activate the overlay toolbar control with `key` and emit a
+    /// `widget_event` so the plugin can react. For a `Toggle` the host owns
+    /// the checked state — it flips it in place and emits `toggle`
+    /// (`{checked}`). For a `Button` it emits `activate` (`{}`). Shared by
+    /// mouse clicks, Space/Enter on the focused control, and the
+    /// `toggleOverlayToolbarWidget` plugin API — one host path for every way
+    /// a control can be triggered.
     pub(crate) fn toggle_overlay_toolbar_widget(&mut self, key: &str) {
         if key.is_empty() {
             return;
         }
-        let new_checked = {
+        // Resolve what event to emit, flipping a toggle's checked state in
+        // place. `None` → the key isn't a toggle/button (no-op).
+        let event: Option<(&'static str, serde_json::Value)> = {
             let Some(prompt) = self.active_window_mut().prompt.as_mut() else {
                 return;
             };
             let Some(spec) = prompt.toolbar_widget.as_mut() else {
                 return;
             };
-            let cur = match crate::widgets::find_widget_by_key(spec, key) {
-                Some(fresh_core::api::WidgetSpec::Toggle { checked, .. }) => *checked,
-                _ => return,
-            };
-            let nv = !cur;
-            crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
-            nv
+            match crate::widgets::find_widget_by_key(spec, key) {
+                Some(fresh_core::api::WidgetSpec::Toggle { checked, .. }) => {
+                    let nv = !*checked;
+                    crate::widgets::set_toggle_checked_in_spec(spec, key, nv);
+                    Some(("toggle", serde_json::json!({ "checked": nv })))
+                }
+                Some(fresh_core::api::WidgetSpec::Button { .. }) => {
+                    Some(("activate", serde_json::json!({})))
+                }
+                _ => None,
+            }
+        };
+        let Some((event_type, payload)) = event else {
+            return;
         };
         #[cfg(feature = "plugins")]
         {
@@ -745,13 +756,16 @@ impl Editor {
                     crate::services::plugins::hooks::HookArgs::WidgetEvent {
                         panel_id: 0,
                         widget_key: key.to_string(),
-                        event_type: "toggle".to_string(),
-                        payload: serde_json::json!({ "checked": new_checked }),
+                        event_type: event_type.to_string(),
+                        payload,
                     },
                 );
             }
         }
-        let _ = new_checked;
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = (event_type, payload);
+        }
     }
 
     /// Handle a key for the overlay's toolbar focus ring. Returns
