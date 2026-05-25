@@ -317,6 +317,7 @@ mod tests {
     #[test]
     fn find_widget_by_key_recurses_into_row() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![toggle_with_key("a"), toggle_with_key("b")],
             key: None,
         };

@@ -416,7 +416,8 @@ fn render_collected(
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     match spec {
-        WidgetSpec::Row { children, .. } => {
+        WidgetSpec::Row { children, wrap, .. } => {
+            let wrap = *wrap;
             // Two-pass layout for Row:
             //  1. Walk children, render each. Track flex spacers
             //     by index in the accumulator; their text starts
@@ -538,6 +539,13 @@ fn render_collected(
                     &mut embeds,
                     &mut scroll_regions,
                 );
+            } else if wrap {
+                // Wrapping path: greedily pack inline pieces onto lines no
+                // wider than `panel_width`; a piece that doesn't fit starts a
+                // new line (pieces are never split). Each piece's hits get
+                // their byte offset shifted by the line-so-far and their
+                // `buffer_row` set to the line index.
+                assemble_wrapped_row(row_pieces, panel_width, &mut entries, &mut hits);
             } else {
                 // Compute flex sizing.
                 let inline_natural: usize = row_pieces
@@ -3166,6 +3174,69 @@ fn pad_or_truncate_line(line: &str, target: usize) -> String {
     }
 }
 
+/// Assemble a wrapping Row: pack inline pieces onto lines no wider than
+/// `panel_width` (display columns), starting a new line when the next piece
+/// would overflow. Pieces are never split, so wrap logical groups in a
+/// nested non-wrapping Row to keep them intact. A whitespace-only piece (a
+/// separator spacer) at the start of a fresh line is dropped so wrapped lines
+/// don't begin with stray indentation. `Flex` spacers are ignored in the
+/// wrap path (flex distribution is meaningless across reflowed lines).
+fn assemble_wrapped_row(
+    pieces: Vec<RowPiece>,
+    panel_width: u32,
+    entries: &mut Vec<TextPropertyEntry>,
+    hits: &mut Vec<HitArea>,
+) {
+    use crate::primitives::display_width::str_width;
+    let max_w = panel_width as usize;
+    let mut acc: Option<TextPropertyEntry> = None;
+    let mut row: u32 = 0;
+    // Hits for the current (not-yet-flushed) line, with byte offsets already
+    // shifted but buffer_row not yet stamped (set when the line is started).
+    let flush = |acc: &mut Option<TextPropertyEntry>,
+                 entries: &mut Vec<TextPropertyEntry>| {
+        if let Some(mut merged) = acc.take() {
+            ensure_trailing_newline(&mut merged);
+            entries.push(merged);
+        }
+    };
+    for piece in pieces {
+        let RowPiece::Inline {
+            mut entry,
+            hits: child_hits,
+            ..
+        } = piece
+        else {
+            // Flex / Block: ignored in the wrap path.
+            continue;
+        };
+        let is_blank = entry.text.trim().is_empty();
+        let piece_w = str_width(&entry.text);
+        let acc_w = acc.as_ref().map(|e| str_width(&e.text)).unwrap_or(0);
+        // Overflow → start a new line first.
+        if acc.is_some() && acc_w + piece_w > max_w {
+            flush(&mut acc, entries);
+            row += 1;
+        }
+        // Drop a separator spacer that would lead a fresh line.
+        if acc.is_none() && is_blank {
+            continue;
+        }
+        let shift = acc.as_ref().map(|e| e.text.len()).unwrap_or(0);
+        for mut h in child_hits {
+            h.byte_start += shift;
+            h.byte_end += shift;
+            h.buffer_row = row;
+            hits.push(h);
+        }
+        match acc.as_mut() {
+            Some(merged) => merge_inline(merged, &mut entry),
+            None => acc = Some(entry),
+        }
+    }
+    flush(&mut acc, entries);
+}
+
 /// Merge `next` into `merged` for the inline-row collapse path.
 /// `next`'s overlays are byte-shifted to account for the merged
 /// text length so far.
@@ -3652,6 +3723,7 @@ mod tests {
     #[test]
     fn flex_spacer_fills_remaining_row_width() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
                     checked: false,
@@ -3691,6 +3763,7 @@ mod tests {
     #[test]
     fn flex_spacer_with_no_leftover_collapses_to_zero() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
                     checked: false,
@@ -3720,6 +3793,7 @@ mod tests {
     #[test]
     fn spacer_in_row_pads_with_spaces() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
                     checked: false,
@@ -3750,6 +3824,7 @@ mod tests {
     #[test]
     fn row_collapses_inline_children_with_shifted_overlays() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::HintBar {
                     entries: vec![HintEntry {
@@ -3823,6 +3898,7 @@ mod tests {
     #[test]
     fn disabled_button_omits_hit_area_and_skips_tabbable() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Button {
                     label: "Archive".into(),
@@ -3877,6 +3953,7 @@ mod tests {
     #[test]
     fn row_inline_collapse_shifts_hit_byte_offsets() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
                     checked: true,
@@ -3953,6 +4030,7 @@ mod tests {
                     key: Some("hb".into()),
                 },
                 WidgetSpec::Row {
+            wrap: false,
                     children: vec![
                         WidgetSpec::Toggle {
                             checked: false,
@@ -4008,6 +4086,7 @@ mod tests {
     #[test]
     fn first_render_focuses_first_tabbable() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
                     checked: false,
@@ -4032,6 +4111,7 @@ mod tests {
     #[test]
     fn render_preserves_focus_key_across_re_renders() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
                     checked: false,
@@ -4070,6 +4150,7 @@ mod tests {
     #[test]
     fn focused_widget_renders_with_focused_styling() {
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
                     checked: false,
@@ -5513,6 +5594,7 @@ mod tests {
             key: None,
         };
         let spec = WidgetSpec::Row {
+            wrap: false,
             children: vec![left, right],
             key: None,
         };

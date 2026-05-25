@@ -32,7 +32,7 @@
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
-import { raw, row, spacer, styledRow, toggle } from "./lib/widgets.ts";
+import { raw, row, spacer, styledRow, toggle, wrappingRow } from "./lib/widgets.ts";
 
 const editor = getEditor();
 
@@ -224,20 +224,24 @@ function unregisterProvider(name: string): boolean {
 // the keybinding-hint colour, so the affordance sits at the control rather
 // than in a footer list.
 function buildToolbarSpec(): WidgetSpec {
+  // Each scope is a nested non-wrapping row — an atomic group of
+  // `toggle + accelerator` — so the wrapping parent never splits a label
+  // from its `Alt+…` hint across lines. The parent wraps at group
+  // boundaries; the spacer(2) separators between groups are dropped when
+  // they'd lead a wrapped line.
   const children: WidgetSpec[] = [spacer(1)];
-  let first = true;
-  for (const s of SCOPES) {
-    if (!first) children.push(spacer(2));
-    first = false;
-    children.push(toggle(scopeEnabled[s.id], editor.t(s.labelKey), { key: s.action }));
+  SCOPES.forEach((s, i) => {
+    if (i > 0) children.push(spacer(2));
+    const parts: WidgetSpec[] = [
+      toggle(scopeEnabled[s.id], editor.t(s.labelKey), { key: s.action }),
+    ];
     const accel = editor.getKeybindingLabel(s.action, "prompt");
     if (accel) {
-      children.push(
-        raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])])
-      );
+      parts.push(raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])]));
     }
-  }
-  return row(...children);
+    children.push(row(...parts));
+  });
+  return wrappingRow(...children);
 }
 
 // Footer: the active provider, the truncation indicator, and the

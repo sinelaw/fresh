@@ -1416,6 +1416,14 @@ pub enum WidgetSpec {
         children: Vec<WidgetSpec>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
+        /// When true, children that don't fit on one line reflow onto
+        /// additional lines (growing the row's height) instead of being
+        /// truncated. Children are never split — wrap happens at child
+        /// boundaries — so wrap a logical group (e.g. a toggle + its
+        /// accelerator) in a nested non-wrapping `Row` to keep it intact.
+        /// Ignored when the row contains multi-line (block) children.
+        #[serde(default)]
+        wrap: bool,
     },
     /// Vertical layout: children stacked top-to-bottom.
     Col {

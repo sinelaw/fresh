@@ -60,6 +60,14 @@ export function row(...children: WidgetSpec[]): WidgetSpec {
   return { kind: "row", children };
 }
 
+/** Horizontal layout that **wraps**: children that don't fit on one line
+ * reflow onto additional lines (growing the row's height) instead of being
+ * truncated. Children are never split, so wrap a logical group (e.g. a
+ * toggle + its accelerator) in a nested `row(...)` to keep it intact. */
+export function wrappingRow(...children: WidgetSpec[]): WidgetSpec {
+  return { kind: "row", children, wrap: true };
+}
+
 /** Vertical layout. Children stacked top-to-bottom. */
 export function col(...children: WidgetSpec[]): WidgetSpec {
   return { kind: "col", children };
