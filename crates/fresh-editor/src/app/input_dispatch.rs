@@ -231,6 +231,14 @@ impl Editor {
                 return Some(result);
             }
 
+            // Universal Search overlay focus ring: Tab/Shift+Tab move focus
+            // between the query input and the scope toggles; Space/Enter
+            // activate the focused toggle. Intercepted before the prompt's own
+            // input handling so Tab doesn't fall through to other behaviour.
+            if let Some(result) = self.handle_overlay_toolbar_key(event) {
+                return Some(result);
+            }
+
             if let Some(ref mut prompt) = self.active_window_mut().prompt {
                 let result = prompt.dispatch_input(event, &mut ctx);
                 // Only return and process deferred actions if the prompt handled the input
@@ -628,6 +636,127 @@ impl Editor {
                     }
                 }
             }
+        }
+    }
+
+    /// Ordered toggle keys of the active overlay's widget toolbar (render
+    /// order). Drives the focus ring. Empty when there's no toolbar.
+    fn overlay_toolbar_keys(&self) -> Vec<String> {
+        self.active_chrome()
+            .prompt_toolbar_hits
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
+    /// Advance (or retreat) the overlay focus ring: input → toggle0 → … →
+    /// toggleN → input. No-op (returns false) unless an overlay prompt with a
+    /// toolbar is active.
+    fn cycle_overlay_focus(&mut self, forward: bool) -> bool {
+        if !self.overlay_prompt_active() {
+            return false;
+        }
+        let has_toolbar = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.toolbar_widget.is_some());
+        if !has_toolbar {
+            return false;
+        }
+        let keys = self.overlay_toolbar_keys();
+        if keys.is_empty() {
+            return false;
+        }
+        let cur = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .and_then(|p| p.toolbar_focus.clone());
+        // Ring includes the input as the `None` slot.
+        let next: Option<String> = match cur {
+            None => Some(if forward {
+                keys[0].clone()
+            } else {
+                keys[keys.len() - 1].clone()
+            }),
+            Some(k) => match keys.iter().position(|x| x == &k) {
+                Some(i) if forward => keys.get(i + 1).cloned(), // None past the end → input
+                Some(i) => {
+                    if i == 0 {
+                        None
+                    } else {
+                        keys.get(i - 1).cloned()
+                    }
+                }
+                None => None, // stale key → input
+            },
+        };
+        if let Some(p) = self.active_window_mut().prompt.as_mut() {
+            p.toolbar_focus = next;
+        }
+        true
+    }
+
+    /// Fire the focused toolbar control's action (its widget key is the action
+    /// name, e.g. `live_grep_toggle_files`). The plugin handler flips the
+    /// scope and re-sends the toolbar spec; focus stays put.
+    fn activate_focused_overlay_toggle(&mut self) {
+        let key = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .and_then(|p| p.toolbar_focus.clone());
+        if let Some(action) = key {
+            let _ = self.handle_action(Action::PluginAction(action));
+        }
+    }
+
+    /// Handle a key for the overlay's toolbar focus ring. Returns
+    /// `Some(Consumed)` when it owns the key, `None` to let normal prompt
+    /// handling proceed (also resets focus to the input when the user starts
+    /// typing, so typing always edits the query).
+    fn handle_overlay_toolbar_key(&mut self, event: &KeyEvent) -> Option<InputResult> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        if !self.overlay_prompt_active() {
+            return None;
+        }
+        let has_toolbar = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.toolbar_widget.is_some());
+        if !has_toolbar {
+            return None;
+        }
+        let focused = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.toolbar_focus.is_some());
+        let shift = event.modifiers.contains(KeyModifiers::SHIFT);
+        match event.code {
+            KeyCode::BackTab => {
+                self.cycle_overlay_focus(false);
+                Some(InputResult::Consumed)
+            }
+            KeyCode::Tab => {
+                self.cycle_overlay_focus(!shift);
+                Some(InputResult::Consumed)
+            }
+            KeyCode::Char(' ') | KeyCode::Enter if focused => {
+                self.activate_focused_overlay_toggle();
+                Some(InputResult::Consumed)
+            }
+            // Typing any other character returns focus to the query input,
+            // then falls through so the character is inserted as usual.
+            KeyCode::Char(_) if focused => {
+                if let Some(p) = self.active_window_mut().prompt.as_mut() {
+                    p.toolbar_focus = None;
+                }
+                None
+            }
+            _ => None,
         }
     }
 }

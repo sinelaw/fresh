@@ -255,6 +255,11 @@ pub struct Prompt {
     /// controls are themed and clickable. Plugin-controlled via
     /// `editor.setPromptToolbar(spec)`. No effect on non-overlay prompts.
     pub toolbar_widget: Option<fresh_core::api::WidgetSpec>,
+    /// Overlay focus ring position: `None` = the query input is focused
+    /// (typing edits the query, the caret shows there); `Some(key)` = that
+    /// toolbar control is focused (Space/Enter toggles it, it renders
+    /// highlighted). Tab/Shift+Tab cycle input → toggles → input.
+    pub toolbar_focus: Option<String>,
 }
 
 /// Maximum number of suggestion rows shown at once. Mirrors the cap used by
@@ -283,6 +288,7 @@ impl Prompt {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             toolbar_widget: None,
+            toolbar_focus: None,
         }
     }
 
@@ -318,6 +324,7 @@ impl Prompt {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             toolbar_widget: None,
+            toolbar_focus: None,
         }
     }
 
@@ -372,6 +379,7 @@ impl Prompt {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             toolbar_widget: None,
+            toolbar_focus: None,
         }
     }
 

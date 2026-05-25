@@ -2629,12 +2629,13 @@ impl Editor {
         // than styled text. `render_spec` is stateless here (empty prior
         // state / no focus key): a `Toggle`'s checked-ness lives in the spec,
         // and click-to-toggle is routed by key (no registry needed).
+        let toolbar_focus_key = prompt.toolbar_focus.as_deref().unwrap_or("");
         let toolbar_widget_out: Option<crate::widgets::RenderOutput> =
             prompt.toolbar_widget.as_ref().map(|spec| {
-                crate::widgets::render_spec(
+                crate::widgets::render_spec_no_autofocus(
                     spec,
                     &std::collections::HashMap::new(),
-                    "",
+                    toolbar_focus_key,
                     inner.width as u32,
                 )
             });
@@ -2740,11 +2741,14 @@ impl Editor {
         ]);
         frame.render_widget(Paragraph::new(line).style(input_style), input_row);
 
-        // Cursor position on the input row.
+        // Cursor position on the input row — only when the input is focused.
+        // When a toolbar control owns focus, the highlighted toggle is the
+        // focus indicator and the input caret would be misleading.
+        let input_focused = prompt.toolbar_focus.is_none();
         let cursor_x = (str_width(&prompt.message)
             + str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]))
             as u16;
-        if cursor_x < input_row.width {
+        if input_focused && cursor_x < input_row.width {
             frame.set_cursor_position((input_row.x + cursor_x, input_row.y));
         }
 

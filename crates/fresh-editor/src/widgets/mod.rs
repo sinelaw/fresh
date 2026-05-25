@@ -24,4 +24,7 @@ pub use actions::{
     tree_parent_index,
 };
 pub use registry::{HitArea, PanelId, WidgetInstanceState, WidgetPanelState, WidgetRegistry};
-pub use render::{render_spec, EmbedRect, FocusCursor, OverlayRow, RenderOutput, ScrollRegion};
+pub use render::{
+    render_spec, render_spec_no_autofocus, EmbedRect, FocusCursor, OverlayRow, RenderOutput,
+    ScrollRegion,
+};

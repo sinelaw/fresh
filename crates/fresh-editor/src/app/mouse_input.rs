@@ -1515,6 +1515,11 @@ impl Editor {
                 .find(|(_, r)| in_rect(col, row, *r))
                 .map(|(k, _)| k.clone());
             if let Some(action_name) = hit {
+                // Move keyboard focus to the clicked control so Tab continues
+                // from here, then fire its action.
+                if let Some(p) = self.active_window_mut().prompt.as_mut() {
+                    p.toolbar_focus = Some(action_name.clone());
+                }
                 self.handle_action(crate::input::keybindings::Action::PluginAction(action_name))?;
             }
             return Ok(());

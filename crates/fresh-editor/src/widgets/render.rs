@@ -216,6 +216,30 @@ pub fn render_spec(
     prev_focus_key: &str,
     panel_width: u32,
 ) -> RenderOutput {
+    render_spec_inner(spec, prev, prev_focus_key, panel_width, true)
+}
+
+/// Like [`render_spec`] but does **not** fall back to focusing the first
+/// tabbable widget when `focus_key` matches none. Use this when the host owns
+/// the focus ring and a state of "no widget focused" is meaningful — e.g. the
+/// search overlay, where focus can rest on the input (no toggle highlighted)
+/// rather than always on a toolbar control. Pass `""` for no focus.
+pub fn render_spec_no_autofocus(
+    spec: &WidgetSpec,
+    prev: &HashMap<String, WidgetInstanceState>,
+    focus_key: &str,
+    panel_width: u32,
+) -> RenderOutput {
+    render_spec_inner(spec, prev, focus_key, panel_width, false)
+}
+
+fn render_spec_inner(
+    spec: &WidgetSpec,
+    prev: &HashMap<String, WidgetInstanceState>,
+    prev_focus_key: &str,
+    panel_width: u32,
+    auto_focus_first: bool,
+) -> RenderOutput {
     // Walk the spec to collect tabbable keys, then resolve the
     // active focus key. This must happen before the entry pass so
     // that widget arms know whether they're focused.
@@ -223,8 +247,10 @@ pub fn render_spec(
     collect_tabbable(spec, &mut tabbable);
     let focus_key = if !prev_focus_key.is_empty() && tabbable.iter().any(|k| k == prev_focus_key) {
         prev_focus_key.to_string()
-    } else {
+    } else if auto_focus_first {
         tabbable.first().cloned().unwrap_or_default()
+    } else {
+        String::new()
     };
 
     let mut next_state = HashMap::new();
