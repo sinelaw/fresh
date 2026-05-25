@@ -382,7 +382,6 @@ function buildMetaSegments(provider: LiveGrepProvider | null): StyledText[] {
     editor.getKeybindingLabel("live_grep_export_quickfix", "prompt"),
     "save matches"
   );
-  if (segs.length > 0) segs.unshift({ text: " " });
   return segs;
 }
 
