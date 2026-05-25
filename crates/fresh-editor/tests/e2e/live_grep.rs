@@ -995,6 +995,40 @@ fn test_live_grep_preview_wraps_long_lines() {
     );
 }
 
+/// Issue #5: non-file scopes (terminals, diagnostics, buffers) carry a
+/// source badge in the result-list label — e.g. `[term] …` — which makes
+/// the label unparseable as a `path:line:col`. The authoritative location
+/// lives in the suggestion's `value`. The overlay preview must use `value`,
+/// not the user-facing label; pre-fix it parsed the badge-prefixed label,
+/// resolved a bogus path, and rendered an empty preview for terminal-only
+/// results.
+#[test]
+fn test_live_grep_preview_uses_value_not_badged_label() {
+    // The real backing file the preview should load. Its context marker
+    // only ever appears in the preview pane.
+    let files = &[("scrollback.txt", "TERMPREVIEWMARKER\nmatch line here\n")];
+    let (mut harness, _tmp) = open_live_grep_overlay(files, Default::default());
+
+    // Mirror a terminal-scope suggestion: the label is badge-prefixed (so
+    // parsing it as a path fails / points nowhere), while `value` holds the
+    // authoritative relative path:line:col.
+    {
+        let prompt = harness.editor_mut().prompt_mut().unwrap();
+        prompt.suggestions = vec![Suggestion::new("[term] not-a-real-file.txt:1".to_string())
+            .with_value("scrollback.txt:2:1".to_string())];
+        prompt.selected_suggestion = Some(0);
+    }
+    harness.render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains("TERMPREVIEWMARKER"),
+        "preview must load the file named by the suggestion's `value`, not \
+         the badge-prefixed label; pre-fix it parsed `[term] …` into a bogus \
+         path and rendered an empty preview. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// The floating-overlay search prompt must be **mouse-modal**: clicks on its
 /// chrome (input row, toolbar, separator, empty body) — and right-clicks and
 /// double-clicks — must never reach the buffer behind it and move its cursor.
