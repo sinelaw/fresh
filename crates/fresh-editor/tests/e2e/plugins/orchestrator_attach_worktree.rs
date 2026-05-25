@@ -498,3 +498,119 @@ fn bulk_delete_removes_selected_worktrees() {
             )
         });
 }
+
+/// Build a repo with `n` linked worktrees `feat-1..feat-n`, plus the
+/// orchestrator plugin installed. Used to overflow the session list so
+/// it grows a scrollbar.
+fn set_up_repo_with_many_worktrees(n: usize) -> (tempfile::TempDir, PathBuf) {
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("mainrepo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.name", "Test User"]);
+    git(&repo, &["config", "user.email", "test@example.com"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("file.txt"), "hello\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
+    git(&repo, &["commit", "-qm", "init"]);
+    for i in 1..=n {
+        let branch = format!("feat-{i}");
+        git(&repo, &["branch", &branch]);
+        let wt = root.join(format!("wt-{i}"));
+        git(&repo, &["worktree", "add", wt.to_str().unwrap(), &branch]);
+    }
+    let plugins_dir = repo.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+    (temp, repo)
+}
+
+/// The set of `feat-N` labels currently rendered in the Sessions
+/// list column (the left pane). At open, nothing is selected so the
+/// preview pane shows the base session — `feat-` only appears in the
+/// list rows.
+fn visible_feats(screen: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for line in screen.lines() {
+        // Each "feat-<n>" token followed by a space/non-digit.
+        let mut rest = line;
+        while let Some(pos) = rest.find("feat-") {
+            let after = &rest[pos + "feat-".len()..];
+            let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !digits.is_empty() {
+                out.insert(format!("feat-{digits}"));
+            }
+            rest = &after[digits.len().max(1).min(after.len())..];
+        }
+    }
+    out
+}
+
+/// A long session list grows a draggable scrollbar; clicking near the
+/// bottom of its track scrolls the list (the canonical `ScrollbarMouse`
+/// press path), surfacing rows that were hidden at the top. Runs in a
+/// short terminal so the ~16 rows overflow the visible height.
+#[test]
+fn scrollbar_click_scrolls_the_session_list() {
+    let (_temp, repo) = set_up_repo_with_many_worktrees(15);
+    // 24 rows ⇒ list visible height well under the 16 rows, so it
+    // overflows and a scrollbar is drawn.
+    let mut harness = EditorTestHarness::with_working_dir(160, 24, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    open_orchestrator_dialog(&mut harness);
+    // Wait for the discovery scan to fold in the on-disk worktrees,
+    // and for the screen to settle, so the full set is present before
+    // we snapshot.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().matches("· on-disk").count() >= 5)
+        .unwrap();
+
+    let before = visible_feats(&harness.screen_to_string());
+    assert!(
+        !before.is_empty(),
+        "expected discovered feat- rows.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Locate the Sessions box: its top-border `╮` marks the right
+    // edge; the scrollbar sits in the column just inside it. Click one
+    // row above the box's bottom border — the bottom of the track.
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+    let top_border_row = lines
+        .iter()
+        .position(|l| l.contains("╭─ Sessions"))
+        .expect("Sessions box top border");
+    let border_col = lines[top_border_row]
+        .chars()
+        .position(|c| c == '╮')
+        .expect("Sessions box right corner");
+    let bottom_border_row = lines
+        .iter()
+        .skip(top_border_row + 1)
+        .position(|l| l.contains('╰'))
+        .map(|p| p + top_border_row + 1)
+        .expect("Sessions box bottom border");
+    // Scrollbar column = just inside the right border; click row =
+    // last track row (just above the bottom border).
+    let sb_col = (border_col.saturating_sub(1)) as u16;
+    let click_row = (bottom_border_row.saturating_sub(1)) as u16;
+
+    harness.mouse_click(sb_col, click_row).unwrap();
+    harness
+        .wait_until(|h| visible_feats(&h.screen_to_string()) != before)
+        .unwrap_or_else(|_| {
+            panic!(
+                "clicking the scrollbar track (col {sb_col}, row {click_row}) should \
+                 scroll the session list to a different set of rows.\n\
+                 before={:?}\nScreen:\n{}",
+                before,
+                harness.screen_to_string()
+            )
+        });
+}

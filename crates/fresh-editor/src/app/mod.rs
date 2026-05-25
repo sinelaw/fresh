@@ -963,9 +963,33 @@ pub(crate) struct FloatingWidgetState {
     /// widget without reflowing the rest of the panel when
     /// they show or hide.
     pub overlays: Vec<crate::widgets::OverlayRow>,
+    /// Scrollable `List` widgets that overflowed, with the geometry
+    /// the draw pass uses to paint a scrollbar. Refreshed on every
+    /// render alongside `entries`/`embeds`.
+    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
+    /// Screen-space scrollbar tracks computed at the last draw — used
+    /// by the mouse hit-test to start/continue a scrollbar drag. One
+    /// per overflowing list.
+    pub scrollbar_tracks: Vec<WidgetScrollbarTrack>,
+    /// Shared press/drag/release state for the panel's list
+    /// scrollbars (the canonical `ScrollbarMouse`).
+    pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
+    /// `list_key` of the scrollbar currently being drag-scrolled.
+    pub scrollbar_drag_key: Option<String>,
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
+}
+
+/// A list scrollbar's screen rect + scroll state, captured at draw
+/// time so mouse press/drag can hit-test and drive `ScrollbarMouse`.
+#[derive(Debug, Clone)]
+pub(crate) struct WidgetScrollbarTrack {
+    pub list_key: String,
+    pub rect: ratatui::layout::Rect,
+    pub total: usize,
+    pub visible: usize,
+    pub scroll: usize,
 }
 
 /// A file that should be opened after the TUI starts

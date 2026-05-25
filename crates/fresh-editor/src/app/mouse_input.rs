@@ -179,6 +179,7 @@ impl Editor {
                 }
 
                 // Stop dragging and clear drag state
+                self.release_widget_scrollbar();
                 self.active_window_mut().mouse_state.dragging_scrollbar = None;
                 self.active_window_mut().mouse_state.drag_start_row = None;
                 self.active_window_mut().mouse_state.drag_start_top_byte = None;
@@ -2358,6 +2359,12 @@ impl Editor {
 
     /// Handle mouse drag event
     pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        // Floating-panel list scrollbar drag takes precedence — the
+        // modal panel owns the input channel while it's up.
+        if self.try_widget_scrollbar_drag(row) {
+            let _ = col;
+            return Ok(());
+        }
         // If dragging scrollbar, update scroll position
         if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
             // Snapshot split_areas so we don't borrow `self.active_layout()` and
@@ -3446,9 +3453,121 @@ impl Editor {
         self.handle_widget_panel_wheel(super::FLOATING_PANEL_BUFFER_ID, delta)
     }
 
+    /// Try to start a floating-panel list scrollbar drag. Returns
+    /// true if the press landed on a scrollbar track (so the caller
+    /// skips row hit-testing — the bar overlaps the list's rightmost
+    /// column). Reuses the canonical `ScrollbarMouse`/`ScrollbarState`.
+    fn try_widget_scrollbar_press(&mut self, col: u16, row: u16) -> bool {
+        use crate::view::ui::scrollbar::ScrollbarState;
+        let (panel_id, tracks) = match self.floating_widget_panel.as_ref() {
+            Some(fwp) => (fwp.panel_id, fwp.scrollbar_tracks.clone()),
+            None => return false,
+        };
+        for t in &tracks {
+            let state = ScrollbarState::new(t.total, t.visible, t.scroll);
+            let pressed = self
+                .floating_widget_panel
+                .as_mut()
+                .and_then(|fwp| fwp.scrollbar_mouse.press(state, t.rect, col, row));
+            if let Some(new_offset) = pressed {
+                if let Some(fwp) = self.floating_widget_panel.as_mut() {
+                    fwp.scrollbar_drag_key = Some(t.list_key.clone());
+                }
+                self.apply_widget_scroll(panel_id, &t.list_key, new_offset, t.visible);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Continue an in-flight floating-panel scrollbar drag. Returns
+    /// true if a drag is active (the press captured a `list_key`).
+    fn try_widget_scrollbar_drag(&mut self, row: u16) -> bool {
+        use crate::view::ui::scrollbar::ScrollbarState;
+        let (panel_id, key) = match self.floating_widget_panel.as_ref() {
+            Some(fwp) => match &fwp.scrollbar_drag_key {
+                Some(k) => (fwp.panel_id, k.clone()),
+                None => return false,
+            },
+            None => return false,
+        };
+        // The track geometry for the dragged list (its rect may have
+        // shifted if the panel re-rendered between events).
+        let track = self.floating_widget_panel.as_ref().and_then(|fwp| {
+            fwp.scrollbar_tracks
+                .iter()
+                .find(|t| t.list_key == key)
+                .cloned()
+        });
+        let Some(t) = track else {
+            return false;
+        };
+        let state = ScrollbarState::new(t.total, t.visible, t.scroll);
+        let new_offset = self
+            .floating_widget_panel
+            .as_mut()
+            .and_then(|fwp| fwp.scrollbar_mouse.drag(state, t.rect, row));
+        if let Some(off) = new_offset {
+            self.apply_widget_scroll(panel_id, &key, off, t.visible);
+        }
+        true
+    }
+
+    /// End any in-flight floating-panel scrollbar drag.
+    pub(super) fn release_widget_scrollbar(&mut self) {
+        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+            fwp.scrollbar_mouse.release();
+            fwp.scrollbar_drag_key = None;
+        }
+    }
+
+    /// Apply a host-driven scroll to a panel list (scrollbar press /
+    /// drag): update the registry's instance state, re-render, and —
+    /// when the list has a live selection that moved into the new
+    /// window — notify the plugin so its own selection mirror +
+    /// preview stay in sync with the thumb.
+    fn apply_widget_scroll(
+        &mut self,
+        panel_id: u64,
+        list_key: &str,
+        new_offset: usize,
+        visible: usize,
+    ) {
+        let moved_sel = self.widget_registry.set_list_scroll(
+            panel_id,
+            list_key,
+            new_offset as u32,
+            visible as u32,
+        );
+        self.rerender_widget_panel(panel_id);
+        if let Some(sel) = moved_sel {
+            if self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .has_hook_handlers("widget_event")
+            {
+                self.plugin_manager.read().unwrap().run_hook(
+                    "widget_event",
+                    crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                        panel_id,
+                        widget_key: list_key.to_string(),
+                        event_type: "select".to_string(),
+                        payload: serde_json::json!({ "index": sel as i64 }),
+                    },
+                );
+            }
+        }
+    }
+
     /// `handle_editor_click` uses; clicks outside the rect are
     /// swallowed without dismissing the panel.
     fn handle_floating_widget_click(&mut self, col: u16, row: u16) {
+        // Scrollbar press wins over row hit-testing (the bar overlaps
+        // the list's rightmost column).
+        if self.try_widget_scrollbar_press(col, row) {
+            return;
+        }
         let (panel_id, inner) = match self.floating_widget_panel.as_ref() {
             Some(fwp) => match fwp.last_inner_rect {
                 Some(rect) => (fwp.panel_id, rect),

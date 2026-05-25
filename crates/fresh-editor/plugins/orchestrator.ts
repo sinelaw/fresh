@@ -1216,45 +1216,18 @@ function buildConfirmPane(
 }
 
 // The dedicated bulk selection bar (Layout B). Shown in place of the
-// per-session preview when two or more rows are checked: lists the
-// selected sessions (flagging the ones a destructive action can't
-// touch) and offers Stop / Archive / Delete over the whole batch
-// plus a Clear-selection button. Each action's count is the number of
-// *eligible* members; an action with no eligible members is disabled.
+// per-session preview when two or more rows are checked. The bulk
+// action buttons sit at the *top* of the pane; the list of affected
+// sessions renders below as a scrollable `list` widget (so a long
+// selection scrolls — keyboard, wheel, and the draggable scrollbar —
+// rather than overflowing the pane). Each action's count is the
+// number of *eligible* members; an action with no eligible members is
+// disabled.
 function buildBulkPane(): WidgetSpec {
   const sel = selectedSessions();
   const stopN = eligibleSelected("stop").length;
   const archiveN = eligibleSelected("archive").length;
   const deleteN = eligibleSelected("delete").length;
-
-  const entries: TextPropertyEntry[] = [];
-  const cap = openDialog?.listVisibleRows ?? MIN_LIST_ROWS;
-  for (const id of sel.slice(0, cap)) {
-    const ss = orchestratorSessions.get(id)!;
-    const rowParts: StyledSegment[] = [
-      { text: `  ${ss.label}` },
-    ];
-    // Flag rows a destructive bulk action will skip so the count
-    // discrepancy is self-explanatory.
-    if (id === 1) {
-      rowParts.push({ text: "  · base (protected)", style: { fg: "ui.menu_disabled_fg", italic: true } });
-    } else if (!ss.discovered && (countSiblingsAtRoot(ss.root) > 1 || ss.sharedWorktree)) {
-      rowParts.push({ text: "  · shared worktree", style: { fg: "ui.menu_disabled_fg", italic: true } });
-    } else if (ss.discovered) {
-      rowParts.push({ text: "  · on-disk worktree", style: { fg: "ui.menu_disabled_fg", italic: true } });
-    }
-    entries.push(styledRow(rowParts));
-  }
-  if (sel.length > cap) {
-    entries.push(
-      styledRow([
-        {
-          text: `  … and ${sel.length - cap} more`,
-          style: { fg: "ui.menu_disabled_fg", italic: true },
-        },
-      ]),
-    );
-  }
 
   const inflight = openDialog?.bulkInFlight ?? null;
   const actionRow = inflight
@@ -1289,12 +1262,53 @@ function buildBulkPane(): WidgetSpec {
         button("Clear", { key: "bulk-clear" }),
       );
 
+  // Affected-sessions list. Flag the rows a destructive action will
+  // skip so the count discrepancy explains itself.
+  const items: TextPropertyEntry[] = sel.map((id) => {
+    const ss = orchestratorSessions.get(id)!;
+    const rowParts: StyledSegment[] = [{ text: `  ${ss.label}` }];
+    if (id === 1) {
+      rowParts.push({
+        text: "  · base (protected)",
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      });
+    } else if (!ss.discovered && (countSiblingsAtRoot(ss.root) > 1 || ss.sharedWorktree)) {
+      rowParts.push({
+        text: "  · shared worktree",
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      });
+    } else if (ss.discovered) {
+      rowParts.push({
+        text: "  · on-disk worktree",
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      });
+    }
+    return styledRow(rowParts);
+  });
+  const itemKeys = sel.map((id) => `bulksel-${id}`);
+  // Match the preview pane's height: content = action row (1) +
+  // spacer (1) + list, and the embed pane reserves `listVisibleRows
+  // + 4` for its body — so the list takes that height and the two
+  // panes' bottom borders line up.
+  const listRows = Math.max(3, (openDialog?.listVisibleRows ?? MIN_LIST_ROWS) + 4);
+
   return labeledSection({
     label: `Bulk actions — ${sel.length} selected`,
     child: col(
-      { kind: "raw", entries },
-      spacer(0),
       actionRow,
+      spacer(0),
+      list({
+        items,
+        itemKeys,
+        // Display-only: no highlighted row, and out of the Tab cycle
+        // (focus belongs on the action buttons). Up/Down still scroll
+        // it via the host's smart-key forwarding, and the scrollbar
+        // drags it.
+        selectedIndex: -1,
+        visibleRows: listRows,
+        focusable: false,
+        key: "bulk-list",
+      }),
     ),
   });
 }

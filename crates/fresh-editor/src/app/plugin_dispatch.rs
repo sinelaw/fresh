@@ -3710,6 +3710,7 @@ impl Editor {
         let entries = out_pieces.entries;
         let embeds = out_pieces.embeds;
         let overlays = out_pieces.overlays;
+        let scroll_regions = out_pieces.scroll_regions;
         if self
             .widget_registry
             .update_side_effects(
@@ -3731,6 +3732,7 @@ impl Editor {
                     fwp.focus_cursor = focus_cursor;
                     fwp.embeds = embeds;
                     fwp.overlays = overlays;
+                    fwp.scroll_regions = scroll_regions;
                 }
             }
             return;
@@ -5595,6 +5597,10 @@ impl Editor {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
+            scroll_regions: Vec::new(),
+            scrollbar_tracks: Vec::new(),
+            scrollbar_mouse: Default::default(),
+            scrollbar_drag_key: None,
             last_inner_rect: None,
         });
         let prev = std::collections::HashMap::new();
@@ -5605,6 +5611,7 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
+        let scroll_regions = out.scroll_regions;
         self.widget_registry.mount(
             panel_id,
             FLOATING_PANEL_BUFFER_ID,
@@ -5619,6 +5626,7 @@ impl Editor {
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
+            fwp.scroll_regions = scroll_regions;
         }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
@@ -5655,6 +5663,7 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
+        let scroll_regions = out.scroll_regions;
         if self
             .widget_registry
             .update(
@@ -5678,6 +5687,7 @@ impl Editor {
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
+            fwp.scroll_regions = scroll_regions;
         }
     }
 

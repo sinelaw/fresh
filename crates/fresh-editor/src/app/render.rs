@@ -3493,7 +3493,7 @@ impl Editor {
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
-        let (width_pct, height_pct, entries, focus_cursor, embeds, overlays) =
+        let (width_pct, height_pct, entries, focus_cursor, embeds, overlays, scroll_regions) =
             match self.floating_widget_panel.as_ref() {
                 Some(fwp) => (
                     fwp.width_pct,
@@ -3502,6 +3502,7 @@ impl Editor {
                     fwp.focus_cursor,
                     fwp.embeds.clone(),
                     fwp.overlays.clone(),
+                    fwp.scroll_regions.clone(),
                 ),
                 None => return,
             };
@@ -3595,6 +3596,51 @@ impl Editor {
         }
         self.preview_window_id = saved_preview;
 
+        // Paint a draggable scrollbar over the rightmost column of each
+        // overflowing list, reusing the canonical `render_scrollbar` /
+        // `ScrollbarState` (same path as the keybinding editor &
+        // settings dialog). Record each track's screen rect + state so
+        // the mouse handlers can hit-test press/drag against it.
+        let mut scrollbar_tracks: Vec<super::WidgetScrollbarTrack> = Vec::new();
+        {
+            use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+            let colors = ScrollbarColors::from_theme(&theme);
+            for region in &scroll_regions {
+                // Scrollbar column = right edge of the list's column,
+                // clamped inside the panel. Height = visible rows,
+                // clamped to the panel bottom.
+                let sb_x = inner
+                    .x
+                    .saturating_add(region.col_in_row as u16)
+                    .saturating_add((region.width_cols.saturating_sub(1)) as u16)
+                    .min(inner.x + inner.width.saturating_sub(1));
+                let sb_y = inner.y.saturating_add(region.buffer_row as u16);
+                if sb_y >= inner.y + inner.height {
+                    continue;
+                }
+                let max_h = inner.y + inner.height - sb_y;
+                let sb_h = (region.height_rows as u16).min(max_h);
+                if sb_h == 0 {
+                    continue;
+                }
+                let sb_rect = ratatui::layout::Rect {
+                    x: sb_x,
+                    y: sb_y,
+                    width: 1,
+                    height: sb_h,
+                };
+                let state = ScrollbarState::new(region.total, region.visible, region.scroll);
+                render_scrollbar(frame, sb_rect, &state, &colors);
+                scrollbar_tracks.push(super::WidgetScrollbarTrack {
+                    list_key: region.list_key.clone(),
+                    rect: sb_rect,
+                    total: region.total,
+                    visible: region.visible,
+                    scroll: region.scroll,
+                });
+            }
+        }
+
         // Paint overlay rows AFTER the main entries + embeds. Each
         // overlay row sits on top of whatever's at its
         // `buffer_row` (the row it would have occupied if it
@@ -3654,6 +3700,7 @@ impl Editor {
 
         if let Some(fwp) = self.floating_widget_panel.as_mut() {
             fwp.last_inner_rect = Some(inner);
+            fwp.scrollbar_tracks = scrollbar_tracks;
         }
     }
 

@@ -149,6 +149,10 @@ pub struct RenderOutput {
     /// widget without reflowing the rest of the layout when it
     /// shows or hides.
     pub overlays: Vec<OverlayRow>,
+    /// Scrollable `List` widgets that overflowed their visible height,
+    /// with the geometry + state the host needs to paint and drag a
+    /// scrollbar. Empty for lists that fit.
+    pub scroll_regions: Vec<ScrollRegion>,
 }
 
 /// One row produced by an `Overlay` widget. `buffer_row` is the
@@ -175,6 +179,26 @@ pub struct EmbedRect {
     pub col_in_row: u32,
     pub width_cols: u32,
     pub height_rows: u32,
+}
+
+/// A scrollable `List` widget's geometry + scroll state, surfaced so
+/// the host can paint a draggable scrollbar over the list's rightmost
+/// column and hit-test mouse press/drag against it. Threaded through
+/// the compositor (Row/Col/Section) identically to [`EmbedRect`] —
+/// `buffer_row`/`col_in_row` are panel-relative display coordinates.
+/// `width_cols` spans the list's column so `col_in_row + width_cols -
+/// 1` is the scrollbar column; `height_rows` is the visible track
+/// height. `total`/`visible`/`scroll` feed `ScrollbarState`.
+#[derive(Debug, Clone)]
+pub struct ScrollRegion {
+    pub list_key: String,
+    pub buffer_row: u32,
+    pub col_in_row: u32,
+    pub width_cols: u32,
+    pub height_rows: u32,
+    pub total: usize,
+    pub visible: usize,
+    pub scroll: usize,
 }
 
 /// Render a spec to a [`RenderOutput`].
@@ -204,7 +228,7 @@ pub fn render_spec(
     };
 
     let mut next_state = HashMap::new();
-    let (entries, hits, focus_cursor, embeds, overlays) =
+    let (entries, hits, focus_cursor, embeds, overlays, scroll_regions) =
         render_collected(spec, prev, &mut next_state, &focus_key, panel_width);
     RenderOutput {
         entries,
@@ -215,6 +239,7 @@ pub fn render_spec(
         focus_cursor,
         embeds,
         overlays,
+        scroll_regions,
     }
 }
 
@@ -277,6 +302,8 @@ enum RowPiece {
         /// pinned to that row. Rare but worth carrying through
         /// rather than dropping.
         embeds: Vec<EmbedRect>,
+        /// Scroll regions propagated up from this inline child.
+        scroll_regions: Vec<ScrollRegion>,
     },
     Block {
         /// Allocated column width for the zip path. May differ
@@ -292,6 +319,9 @@ enum RowPiece {
         /// own row 0; the zip pass shifts row by `starting_row`
         /// and byte_in_row by the block's `byte_shift`.
         embeds: Vec<EmbedRect>,
+        /// Scroll regions propagated up from this block child,
+        /// shifted by the zip pass identically to `embeds`.
+        scroll_regions: Vec<ScrollRegion>,
     },
     Flex,
 }
@@ -375,6 +405,7 @@ fn render_collected(
     Option<FocusCursor>,
     Vec<EmbedRect>,
     Vec<OverlayRow>,
+    Vec<ScrollRegion>,
 ) {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut hits: Vec<HitArea> = Vec::new();
@@ -383,6 +414,7 @@ fn render_collected(
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
+    let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
     match spec {
         WidgetSpec::Row { children, .. } => {
             // Two-pass layout for Row:
@@ -448,8 +480,14 @@ fn render_collected(
                     continue;
                 }
                 let child_panel_width = per_child_width[idx];
-                let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
-                    render_collected(child, prev, next_state, focus_key, child_panel_width);
+                let (
+                    child_entries,
+                    child_hits,
+                    child_focus,
+                    child_embeds,
+                    child_overlays,
+                    child_scroll,
+                ) = render_collected(child, prev, next_state, focus_key, child_panel_width);
                 // Rows can host overlays in principle (e.g. a
                 // tooltip on a button); forward them up without
                 // a row-offset adjustment — Row pieces all sit
@@ -471,6 +509,7 @@ fn render_collected(
                         hits: child_hits,
                         focus_cursor: child_focus,
                         embeds: child_embeds,
+                        scroll_regions: child_scroll,
                     });
                 } else {
                     row_pieces.push(RowPiece::Block {
@@ -479,6 +518,7 @@ fn render_collected(
                         hits: child_hits,
                         focus_cursor: child_focus,
                         embeds: child_embeds,
+                        scroll_regions: child_scroll,
                     });
                 }
             }
@@ -496,6 +536,7 @@ fn render_collected(
                     &mut hits,
                     &mut focus_cursor,
                     &mut embeds,
+                    &mut scroll_regions,
                 );
             } else {
                 // Compute flex sizing.
@@ -532,6 +573,7 @@ fn render_collected(
                             hits: child_hits,
                             focus_cursor: child_focus,
                             embeds: child_embeds,
+                            scroll_regions: child_scroll,
                         } => {
                             let inline_shift = match acc.as_ref() {
                                 Some(e) => e.text.len(),
@@ -555,6 +597,10 @@ fn render_collected(
                                 // rare).
                                 emb.col_in_row += inline_shift as u32;
                                 embeds.push(emb);
+                            }
+                            for mut sr in child_scroll {
+                                sr.col_in_row += inline_shift as u32;
+                                scroll_regions.push(sr);
                             }
                             match acc.as_mut() {
                                 Some(merged) => merge_inline(merged, &mut entry),
@@ -611,8 +657,14 @@ fn render_collected(
                 // afterwards without pushing the rest of the
                 // col downward.
                 let is_overlay = matches!(child, WidgetSpec::Overlay { .. });
-                let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
-                    render_collected(child, prev, next_state, focus_key, panel_width);
+                let (
+                    child_entries,
+                    child_hits,
+                    child_focus,
+                    child_embeds,
+                    child_overlays,
+                    child_scroll,
+                ) = render_collected(child, prev, next_state, focus_key, panel_width);
                 let row_offset = entries.len() as u32;
                 if is_overlay {
                     // Promote the overlay child's regular
@@ -651,6 +703,10 @@ fn render_collected(
                         emb.buffer_row += row_offset;
                         embeds.push(emb);
                     }
+                    for mut sr in child_scroll {
+                        sr.buffer_row += row_offset;
+                        scroll_regions.push(sr);
+                    }
                     continue;
                 }
                 for mut h in child_hits {
@@ -664,6 +720,10 @@ fn render_collected(
                 for mut emb in child_embeds {
                     emb.buffer_row += row_offset;
                     embeds.push(emb);
+                }
+                for mut sr in child_scroll {
+                    sr.buffer_row += row_offset;
+                    scroll_regions.push(sr);
                 }
                 overlays.extend(child_overlays.into_iter().map(|mut o| {
                     o.buffer_row += row_offset;
@@ -901,6 +961,28 @@ fn render_collected(
                 };
                 ensure_trailing_newline(&mut padding);
                 entries.push(padding);
+            }
+
+            // Surface a scroll region for the host to paint a draggable
+            // scrollbar when the list overflows its visible height. The
+            // region is panel-relative-from-this-render: buffer_row 0 is
+            // the first list row, col 0 the list's left edge; the
+            // compositor (Row/Col/Section) offsets both as it places the
+            // list. The scrollbar lives in the rightmost column
+            // (`col_in_row + width_cols - 1`).
+            if total > visible {
+                if let Some(k) = list_key.as_deref() {
+                    scroll_regions.push(ScrollRegion {
+                        list_key: k.to_string(),
+                        buffer_row: 0,
+                        col_in_row: 0,
+                        width_cols: panel_width,
+                        height_rows: visible,
+                        total: total as usize,
+                        visible: visible as usize,
+                        scroll: scroll as usize,
+                    });
+                }
             }
         }
         WidgetSpec::Tree {
@@ -1426,8 +1508,14 @@ fn render_collected(
             // Inner area: 1 column of border + 1 column of
             // padding on each side ⇒ 4 columns of chrome.
             let inner_width = panel_width.saturating_sub(4).max(1);
-            let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
-                render_collected(child, prev, next_state, focus_key, inner_width);
+            let (
+                child_entries,
+                child_hits,
+                child_focus,
+                child_embeds,
+                child_overlays,
+                child_scroll,
+            ) = render_collected(child, prev, next_state, focus_key, inner_width);
             // Shift child overlays by 1 to account for the top
             // border row this section emits — the child authored
             // its anchors relative to its own row 0 (e.g. anchor 1
@@ -1486,6 +1574,15 @@ fn render_collected(
                 emb.buffer_row += 1;
                 emb.col_in_row += prefix_cols;
                 embeds.push(emb);
+            }
+            for mut sr in child_scroll {
+                sr.buffer_row += 1;
+                sr.col_in_row += prefix_cols;
+                // The section padded the child to `inner_width`, so the
+                // scroll region's usable width is the inner width (not
+                // the child's requested width).
+                sr.width_cols = inner_width;
+                scroll_regions.push(sr);
             }
 
             entries.push(render_section_bottom_border(total_cols));
@@ -1552,8 +1649,14 @@ fn render_collected(
             // flow through unchanged. This keeps the
             // Overlay-as-root case (no enclosing Col) sane:
             // it just renders inline.
-            let (child_entries, child_hits, child_focus, child_embeds, child_overlays) =
-                render_collected(child, prev, next_state, focus_key, panel_width);
+            let (
+                child_entries,
+                child_hits,
+                child_focus,
+                child_embeds,
+                child_overlays,
+                child_scroll,
+            ) = render_collected(child, prev, next_state, focus_key, panel_width);
             entries.extend(child_entries);
             hits.extend(child_hits);
             if focus_cursor.is_none() {
@@ -1561,9 +1664,17 @@ fn render_collected(
             }
             embeds.extend(child_embeds);
             overlays.extend(child_overlays);
+            scroll_regions.extend(child_scroll);
         }
     }
-    (entries, hits, focus_cursor, embeds, overlays)
+    (
+        entries,
+        hits,
+        focus_cursor,
+        embeds,
+        overlays,
+        scroll_regions,
+    )
 }
 
 // =========================================================================
@@ -3153,6 +3264,7 @@ fn zip_row_blocks(
     out_hits: &mut Vec<HitArea>,
     out_focus_cursor: &mut Option<FocusCursor>,
     out_embeds: &mut Vec<EmbedRect>,
+    out_scroll: &mut Vec<ScrollRegion>,
 ) {
     let starting_row = out_entries.len() as u32;
     let _ = panel_width;
@@ -3180,6 +3292,7 @@ fn zip_row_blocks(
                     hits,
                     focus_cursor,
                     embeds: inline_embeds,
+                    scroll_regions: inline_scroll,
                 } => {
                     let inline_cols = entry.text.chars().count();
                     let byte_shift = text.len();
@@ -3197,6 +3310,12 @@ fn zip_row_blocks(
                                 width_cols: emb.width_cols,
                                 height_rows: emb.height_rows,
                             });
+                        }
+                        for sr in inline_scroll {
+                            let mut sr = sr.clone();
+                            sr.buffer_row += starting_row;
+                            sr.col_in_row += col_shift;
+                            out_scroll.push(sr);
                         }
                         for overlay in &entry.inline_overlays {
                             overlays.push(InlineOverlay {
@@ -3235,6 +3354,7 @@ fn zip_row_blocks(
                     hits,
                     focus_cursor,
                     embeds: block_embeds,
+                    scroll_regions: block_scroll,
                 } => {
                     let block_w = *column_width as usize;
                     let byte_shift = text.len();
@@ -3254,6 +3374,12 @@ fn zip_row_blocks(
                                 width_cols: emb.width_cols,
                                 height_rows: emb.height_rows,
                             });
+                        }
+                        for sr in block_scroll {
+                            let mut sr = sr.clone();
+                            sr.buffer_row += starting_row;
+                            sr.col_in_row += col_shift;
+                            out_scroll.push(sr);
                         }
                     }
                     if let Some(line) = entries.get(row_idx) {
