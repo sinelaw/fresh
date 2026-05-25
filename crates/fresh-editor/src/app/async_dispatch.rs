@@ -42,7 +42,21 @@ impl Editor {
         for window in self.windows.values() {
             messages.extend(window.bridge.try_recv_all());
         }
-        let needs_render = !messages.is_empty();
+        // A render is only warranted if a message can actually change the
+        // screen. A `DelayComplete` just resolves a debounced
+        // `editor.delay()` callback in the plugin runtime; on its own it
+        // paints nothing. Any visual outcome of the resumed plugin code
+        // arrives as a follow-up plugin *command* and is caught by
+        // `process_plugin_commands`'s `has_visual_commands` check below (or
+        // on the next tick). Forcing a render for the bare completion made
+        // live_diff's per-keystroke debounce repaint the screen with no
+        // change — invisible locally, but real lag over serial (#2100).
+        let needs_render = messages.iter().any(|m| {
+            !matches!(
+                m,
+                AsyncMessage::Plugin(fresh_core::api::PluginAsyncMessage::DelayComplete { .. })
+            )
+        });
         tracing::trace!(
             async_message_count = messages.len(),
             "received async messages"
