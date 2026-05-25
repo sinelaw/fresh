@@ -263,10 +263,12 @@ interface OpenDialogState {
   // refresh. Bulk mode (the dedicated selection bar) engages once
   // two or more rows are checked.
   selectedIds: Set<number>;
-  // `true` hides the discovered on-disk `[○]` worktree rows from
-  // the list — the per-project filter checkbox below the scope
-  // control. Remembered across opens via `lastHideDiscovered`.
-  hideDiscovered: boolean;
+  // `true` shows the discovered on-disk worktree rows in the list.
+  // The "Show all worktrees" checkbox below the scope control toggles
+  // it (Alt+T / `orchestrator_toggle_worktrees`). Defaults to false
+  // (worktrees hidden) — discovery is opt-in. Remembered across opens
+  // via `lastShowWorktrees`.
+  showWorktrees: boolean;
   // Progress marker for an in-flight *bulk* action. While set, the
   // selection bar shows "Archiving 2/3…" and its buttons are
   // hidden so a second Enter can't re-fire mid-batch. Cleared when
@@ -327,9 +329,10 @@ let openPanel: FloatingWidgetPanel | null = null;
 // updates this and the next open honours it.
 let lastOpenScope: "current" | "all" = "all";
 // Remembered across opens, like `lastOpenScope`: whether the
-// discovered on-disk worktree rows are hidden. Defaults to false
-// (worktrees shown) so the discovery feature is visible by default.
-let lastHideDiscovered = false;
+// discovered on-disk worktree rows are shown. Defaults to false
+// (worktrees hidden) — surfacing them is opt-in via "Show all
+// worktrees" (Alt+T).
+let lastShowWorktrees = false;
 const OPEN_MODE = "orchestrator-open";
 
 // =============================================================================
@@ -557,12 +560,12 @@ function projectLabel(key: string): string {
 function filterSessions(needle: string): number[] {
   reconcileSessions();
   const scope = openDialog?.scope ?? "current";
-  const hideDiscovered = openDialog?.hideDiscovered ?? false;
+  const showWorktrees = openDialog?.showWorktrees ?? false;
   const cur = currentProjectKey();
   let allIds = Array.from(orchestratorSessions.keys());
-  // Per-project filter checkbox: drop the on-disk worktree rows
-  // entirely when the user has hidden them.
-  if (hideDiscovered) {
+  // "Show all worktrees" is opt-in: by default the discovered on-disk
+  // worktree rows are filtered out.
+  if (!showWorktrees) {
     allIds = allIds.filter((id) => !orchestratorSessions.get(id)!.discovered);
   }
 
@@ -668,7 +671,7 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
   const checkbox = {
     text: isChecked ? "[x] " : "[ ] ",
     style: isChecked
-      ? { fg: "ui.tab_active_fg", bold: true }
+      ? { fg: "ui.help_key_fg", bold: true }
       : { fg: "ui.menu_disabled_fg" },
   };
 
@@ -677,7 +680,7 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
     {
       text: s.label,
       style: isActive
-        ? { fg: "ui.tab_active_fg", bold: true }
+        ? { fg: "ui.help_key_fg", bold: true }
         : isDiscovered
         ? { fg: "ui.menu_disabled_fg" }
         : undefined,
@@ -745,7 +748,7 @@ function buildPreviewEntries(
     {
       text: stateText,
       style: isActive
-        ? { fg: "ui.tab_active_fg", bold: true }
+        ? { fg: "ui.help_key_fg", bold: true }
         : { fg: "ui.menu_disabled_fg" },
     },
     { text: "  " },
@@ -1413,16 +1416,23 @@ function buildOpenSpec(): WidgetSpec {
     flexSpacer(),
   );
   // Per-project filter checkbox, on its own row under the Project
-  // control: hides the discovered on-disk `[○]` worktree rows. A
-  // button (not a Toggle) so it activates on Enter/click — Space is
-  // claimed mode-wide for row selection. Inert while a confirm
-  // prompt is up.
-  const hideWorktrees = openDialog.hideDiscovered;
+  // control: opt-in toggle that surfaces the discovered on-disk
+  // worktree rows. A `toggle` (single `[ ]`/`[v]` — no double
+  // bracket) that's clickable and bound to Alt+T
+  // (`orchestrator_toggle_worktrees`, rebindable). The label carries
+  // the live keybinding hint, mirroring the Project control's
+  // "(Alt+P)". Inert while a confirm prompt is up.
+  const worktreeKey = editor.getKeybindingLabel(
+    "orchestrator_toggle_worktrees",
+    OPEN_MODE,
+  );
+  const worktreeLabel = worktreeKey
+    ? `Show all worktrees   (${worktreeKey})`
+    : "Show all worktrees";
   const worktreeFilterRow = row(
-    button(
-      `${hideWorktrees ? "[x]" : "[ ]"} Hide on-disk worktrees`,
-      { key: openDialog.pendingConfirm !== null ? undefined : "worktree-hide" },
-    ),
+    toggle(openDialog.showWorktrees, worktreeLabel, {
+      key: openDialog.pendingConfirm !== null ? undefined : "worktree-show",
+    }),
     flexSpacer(),
   );
 
@@ -1626,7 +1636,7 @@ function openControlRoom(): void {
     // control / Alt+P updates it for next time.
     scope: lastOpenScope,
     selectedIds: new Set<number>(),
-    hideDiscovered: lastHideDiscovered,
+    showWorktrees: lastShowWorktrees,
     bulkInFlight: null,
   };
   openDialog.filteredIds = filterSessions("");
@@ -2223,6 +2233,10 @@ editor.defineMode(
     // filter while the picker is open; session names don't contain
     // spaces, so that's acceptable.
     ["Space", "orchestrator_toggle_select"],
+    // Alt+T toggles "Show all worktrees" — the opt-in filter that
+    // surfaces discovered on-disk worktree rows. Rebindable, same as
+    // the scope toggle.
+    ["M-t", "orchestrator_toggle_worktrees"],
   ],
   true,
   true,
@@ -2288,6 +2302,31 @@ function toggleScope(): void {
 }
 
 registerHandler("orchestrator_toggle_scope", toggleScope);
+
+// Flip "Show all worktrees" — reveal/hide the discovered on-disk
+// worktree rows. Preserves the highlighted row across the re-filter
+// where possible; drops now-hidden discovered rows from the bulk
+// selection. Shared by the Alt+T chord and the checkbox click.
+function toggleShowWorktrees(): void {
+  if (!openDialog) return;
+  openDialog.showWorktrees = !openDialog.showWorktrees;
+  lastShowWorktrees = openDialog.showWorktrees;
+  // Hiding worktrees shouldn't leave them lingering in the selection.
+  if (!openDialog.showWorktrees) {
+    for (const id of [...openDialog.selectedIds]) {
+      if (orchestratorSessions.get(id)?.discovered) {
+        openDialog.selectedIds.delete(id);
+      }
+    }
+  }
+  const prevId = openDialog.filteredIds[openDialog.selectedIndex];
+  openDialog.filteredIds = filterSessions(openDialog.filter.value);
+  const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
+  openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
+  refreshOpenDialog();
+}
+
+registerHandler("orchestrator_toggle_worktrees", toggleShowWorktrees);
 
 // =============================================================================
 // New-session floating form
@@ -4123,18 +4162,10 @@ editor.on("widget_event", (e) => {
       refreshOpenDialog();
       return;
     }
-    if (e.event_type === "activate" && e.widget_key === "worktree-hide") {
-      openDialog.hideDiscovered = !openDialog.hideDiscovered;
-      lastHideDiscovered = openDialog.hideDiscovered;
-      // A hidden discovered row shouldn't linger in the selection.
-      if (openDialog.hideDiscovered) {
-        for (const id of [...openDialog.selectedIds]) {
-          if (orchestratorSessions.get(id)?.discovered) {
-            openDialog.selectedIds.delete(id);
-          }
-        }
-      }
-      refreshOpenDialog();
+    if (e.event_type === "toggle" && e.widget_key === "worktree-show") {
+      // The toggle widget reports the new checked state; route through
+      // the shared flip so the Alt+T chord and the click stay in sync.
+      toggleShowWorktrees();
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "stop") {

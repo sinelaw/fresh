@@ -156,6 +156,22 @@ fn open_orchestrator_dialog(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
+/// Discovered on-disk worktrees are hidden by default; flip the "Show
+/// all worktrees" toggle on via its Alt+T chord so the worktree-
+/// dependent assertions have rows to find. Idempotent — a no-op when
+/// the toggle already reads checked (`[v]`).
+fn ensure_worktrees_shown(harness: &mut EditorTestHarness) {
+    if harness
+        .screen_to_string()
+        .contains("[ ] Show all worktrees")
+    {
+        harness
+            .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+            .unwrap();
+        harness.tick_and_render().ok();
+    }
+}
+
 fn open_new_session_form(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -206,6 +222,7 @@ fn open_dialog_discovers_existing_worktree() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
 
     // The discovered worktree row carries the `· on-disk` tag and its
     // branch name. The async per-project `git worktree list` scan
@@ -235,6 +252,7 @@ fn discovered_worktree_preview_offers_open() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
     harness
         .wait_until(|h| h.screen_to_string().contains("· on-disk"))
         .unwrap();
@@ -274,6 +292,7 @@ fn diving_discovered_worktree_attaches_managed_session() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
     // Discovered worktrees now sort *after* the live sessions, so the
     // `· on-disk` row isn't the default selection. Wait for it, then
     // move the highlight down onto it (Down routes to the list even
@@ -296,6 +315,7 @@ fn diving_discovered_worktree_attaches_managed_session() {
     // Reopen the dialog. The worktree is now a live session, so the
     // discovery scan no longer surfaces it as a `· on-disk` row.
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
@@ -362,6 +382,7 @@ fn discovered_rows_sort_after_live_sessions() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
     harness
         .wait_until(|h| h.screen_to_string().contains("· on-disk"))
         .unwrap();
@@ -395,6 +416,7 @@ fn space_selects_rows_and_shows_bulk_bar() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
     // Wait for both discovered worktrees to land.
     harness
         .wait_until(|h| {
@@ -441,6 +463,7 @@ fn bulk_delete_removes_selected_worktrees() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
@@ -563,6 +586,7 @@ fn scrollbar_click_scrolls_the_session_list() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
     // Wait for the discovery scan to fold in the on-disk worktrees,
     // and for the screen to settle, so the full set is present before
     // we snapshot.
@@ -614,6 +638,72 @@ fn scrollbar_click_scrolls_the_session_list() {
                  scroll the session list to a different set of rows.\n\
                  before={:?}\nScreen:\n{}",
                 before,
+                harness.screen_to_string()
+            )
+        });
+}
+
+/// On-disk worktrees are hidden by default; the "Show all worktrees"
+/// checkbox (unchecked at open) reveals them, and its Alt+T chord
+/// toggles it. Verifies the inverted default + rebindable keybinding.
+#[test]
+fn worktrees_hidden_by_default_until_show_toggled() {
+    let (_temp, repo, _wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    // NB: open WITHOUT `ensure_worktrees_shown` — we're testing the
+    // default-hidden state here.
+    open_orchestrator_dialog(&mut harness);
+
+    // The toggle renders unchecked (`[ ]`), and no on-disk row shows.
+    assert!(
+        harness
+            .screen_to_string()
+            .contains("[ ] Show all worktrees"),
+        "the worktree toggle should default to unchecked.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    // Give the discovery scan time to run; it finds the worktree but
+    // the filter keeps it hidden while the toggle is off.
+    harness
+        .wait_until(|h| h.editor().session_count() >= 1)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("· on-disk"),
+        "discovered worktrees must stay hidden while the toggle is off.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Alt+T (the rebindable `orchestrator_toggle_worktrees`) reveals
+    // them, and the toggle flips to checked.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("· on-disk") && s.contains("[v] Show all worktrees")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "Alt+T should reveal the on-disk worktree and check the toggle.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Alt+T again hides them.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("· on-disk"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "Alt+T again should hide the on-disk worktree.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
