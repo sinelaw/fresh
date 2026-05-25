@@ -69,7 +69,6 @@ run_privileged() {
 install_macos() {
     if check_cmd brew; then
         log_info "macOS detected. Installing via Homebrew..."
-        brew tap "${REPO_OWNER}/${REPO_NAME}"
         brew install "${BIN_NAME}"
     else
         log_warn "Homebrew not found."
