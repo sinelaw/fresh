@@ -247,10 +247,32 @@ interface OpenDialogState {
   // anchor it needs.
   originalActiveSession: number;
   // When non-null, the preview pane swaps to a confirmation
-  // panel for the named action against the named session id.
-  // Cleared on Cancel or after the action completes.
+  // panel for the named action against the listed session ids.
+  // A single-element `ids` is the per-row Stop/Archive/Delete
+  // path; a multi-element `ids` is a bulk action over the
+  // checkbox selection. Cleared on Cancel or after the action
+  // completes.
   pendingConfirm:
-    | { action: "stop" | "archive" | "delete"; sessionId: number }
+    | { action: "stop" | "archive" | "delete"; ids: number[] }
+    | null;
+  // Rows the user has checkbox-selected (Space, or click) for a
+  // bulk Stop/Archive/Delete. Holds session ids — positive for
+  // live windows, negative for discovered on-disk worktrees
+  // (which bulk-delete via `git worktree remove`). Survives filter
+  // and scope changes; pruned against the live set on every
+  // refresh. Bulk mode (the dedicated selection bar) engages once
+  // two or more rows are checked.
+  selectedIds: Set<number>;
+  // `true` hides the discovered on-disk `[○]` worktree rows from
+  // the list — the per-project filter checkbox below the scope
+  // control. Remembered across opens via `lastHideDiscovered`.
+  hideDiscovered: boolean;
+  // Progress marker for an in-flight *bulk* action. While set, the
+  // selection bar shows "Archiving 2/3…" and its buttons are
+  // hidden so a second Enter can't re-fire mid-batch. Cleared when
+  // the batch finishes.
+  bulkInFlight:
+    | { action: "stop" | "archive" | "delete"; total: number; done: number }
     | null;
   // Rows the embed reserves and rows the sessions list shows.
   // Captured once at dialog-open from the editor's viewport so
@@ -304,6 +326,10 @@ let openPanel: FloatingWidgetPanel | null = null;
 // showing every session; flipping it with the Project control / Alt+P
 // updates this and the next open honours it.
 let lastOpenScope: "current" | "all" = "all";
+// Remembered across opens, like `lastOpenScope`: whether the
+// discovered on-disk worktree rows are hidden. Defaults to false
+// (worktrees shown) so the discovery feature is visible by default.
+let lastHideDiscovered = false;
 const OPEN_MODE = "orchestrator-open";
 
 // =============================================================================
@@ -531,12 +557,23 @@ function projectLabel(key: string): string {
 function filterSessions(needle: string): number[] {
   reconcileSessions();
   const scope = openDialog?.scope ?? "current";
+  const hideDiscovered = openDialog?.hideDiscovered ?? false;
   const cur = currentProjectKey();
-  const allIds = Array.from(orchestratorSessions.keys());
+  let allIds = Array.from(orchestratorSessions.keys());
+  // Per-project filter checkbox: drop the on-disk worktree rows
+  // entirely when the user has hidden them.
+  if (hideDiscovered) {
+    allIds = allIds.filter((id) => !orchestratorSessions.get(id)!.discovered);
+  }
 
-  // Sort by (current-project-first, then id) so an "all" view
-  // groups the current project's sessions at the top and other
-  // projects' sessions below in a stable order.
+  const isDisc = (id: number): number =>
+    orchestratorSessions.get(id)!.discovered ? 1 : 0;
+
+  // Sort by (current-project-first, project, live-before-discovered,
+  // then id) so an "all" view groups the current project's sessions
+  // at the top and other projects' below, and within each project the
+  // pre-existing live sessions come first with the discovered on-disk
+  // worktrees listed after them.
   const byProjectThenId = (a: number, b: number): number => {
     const sa = orchestratorSessions.get(a)!;
     const sb = orchestratorSessions.get(b)!;
@@ -546,6 +583,9 @@ function filterSessions(needle: string): number[] {
     const ka = projectKeyOf(sa);
     const kb = projectKeyOf(sb);
     if (ka !== kb) return ka < kb ? -1 : 1;
+    const da = isDisc(a);
+    const db = isDisc(b);
+    if (da !== db) return da - db;
     return a - b;
   };
 
@@ -572,7 +612,13 @@ function filterSessions(needle: string): number[] {
       matches.push({ id, score: 2, len: label.length });
     }
   }
-  matches.sort((a, b) => a.score - b.score || a.len - b.len || a.id - b.id);
+  // Live sessions before discovered worktrees at equal relevance, so
+  // the on-disk rows still trail the real sessions in search results.
+  matches.sort(
+    (a, b) =>
+      a.score - b.score || isDisc(a.id) - isDisc(b.id) || a.len - b.len ||
+      a.id - b.id,
+  );
   return matches.map((m) => m.id);
 }
 
@@ -590,7 +636,9 @@ function sessionsColumnHeader(): WidgetSpec {
     entries: [
       styledRow([
         {
-          text: "ID".padEnd(LIST_ID_W) + "NAME".padEnd(LIST_NAME_W) + "PROJECT",
+          // 4-space lead aligns under the per-row `[ ] ` checkbox.
+          text: "    " + "ID".padEnd(LIST_ID_W) + "NAME".padEnd(LIST_NAME_W) +
+            "PROJECT",
           style: { fg: "ui.menu_disabled_fg" },
         },
       ]),
@@ -611,12 +659,24 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
   const isActive = id === activeId;
   const isBase = id === 1;
   const isDiscovered = !!s.discovered;
+  const isChecked = openDialog?.selectedIds.has(id) ?? false;
+
+  // Leading multi-select checkbox. `[x]` when this row is in the
+  // bulk selection, `[ ]` otherwise — toggled with Space (the
+  // rebindable `orchestrator_toggle_select`) or a click.
+  const checkbox = {
+    text: isChecked ? "[x] " : "[ ] ",
+    style: isChecked
+      ? { fg: "ui.tab_active_fg", bold: true }
+      : { fg: "ui.menu_disabled_fg" },
+  };
 
   // Discovered (on-disk, unopened) worktrees have no window id —
   // render a `[○]` glyph instead of the synthetic negative id so
   // the row reads as "available to open", not "session #-2".
   const idText = (isDiscovered ? "[○]" : `[${id}]`).padEnd(LIST_ID_W);
   const entries: { text: string; style?: Record<string, unknown> }[] = [
+    checkbox,
     {
       text: idText,
       style: isActive
@@ -749,6 +809,72 @@ function countSiblingsAtRoot(root: string): number {
   return n;
 }
 
+// =============================================================================
+// Multi-select / bulk actions
+//
+// The user checkbox-selects rows (Space — the rebindable
+// `orchestrator_toggle_select` — or a click). Once two or more rows
+// are checked the preview pane swaps to the bulk selection bar
+// (`buildBulkPane`) offering Stop / Archive / Delete over the whole
+// set, with a single confirmation for the batch. Rows ineligible for
+// a given action (the base session; live sessions sharing a worktree)
+// are skipped, and each button's count reflects only the eligible
+// members.
+// =============================================================================
+
+type BulkAction = "stop" | "archive" | "delete";
+
+// Checked ids that still resolve to a known session, in the dialog's
+// current display order (so the bulk bar lists them the way the list
+// shows them). Selection persists across filter/scope changes, so an
+// id can be checked while filtered out of view — those still count.
+function selectedSessions(): number[] {
+  if (!openDialog) return [];
+  const order = openDialog.filteredIds;
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const id of order) {
+    if (openDialog.selectedIds.has(id) && orchestratorSessions.has(id)) {
+      out.push(id);
+      seen.add(id);
+    }
+  }
+  // Checked-but-filtered-out rows, appended in id order so the count
+  // stays honest even when a search hides part of the selection.
+  for (const id of openDialog.selectedIds) {
+    if (!seen.has(id) && orchestratorSessions.has(id)) out.push(id);
+  }
+  return out;
+}
+
+// Is `id` a legal target for `action`? Base session is never
+// touched. Stop only applies to live windows. Archive/Delete apply
+// to discovered worktrees (removable on disk) and to live sessions
+// that own their worktree outright (not shared with siblings or the
+// project root).
+function bulkEligible(action: BulkAction, id: number): boolean {
+  const s = orchestratorSessions.get(id);
+  if (!s) return false;
+  if (id === 1) return false;
+  if (action === "stop") return !s.discovered && id > 0;
+  if (s.discovered) return true;
+  const sharesRoot = countSiblingsAtRoot(s.root) > 1 || s.sharedWorktree;
+  return !sharesRoot;
+}
+
+function eligibleSelected(action: BulkAction): number[] {
+  return selectedSessions().filter((id) => bulkEligible(action, id));
+}
+
+// Drop checked ids whose session has vanished (closed window,
+// pruned worktree) so the selection can't grow stale references.
+function pruneSelection(): void {
+  if (!openDialog) return;
+  for (const id of [...openDialog.selectedIds]) {
+    if (!orchestratorSessions.has(id)) openDialog.selectedIds.delete(id);
+  }
+}
+
 // Blank-row separator used inside the Sessions column between
 // the filter, the new-session button, and the list.
 function sessionsSeparator(): WidgetSpec {
@@ -771,10 +897,10 @@ function maxListRowsForScreen(): number {
   const panelH = Math.floor(h * 0.9);
   // Chrome that isn't list rows: panel borders (2) + title (1) +
   // spacer (1) + footer (1) + sessions-section borders (2) +
-  // column chrome above the list (New + Project + Filter +
-  // separator + header = 5) = 12. Floor at MIN_LIST_ROWS so a tiny
-  // terminal still shows something.
-  return Math.max(MIN_LIST_ROWS, panelH - 12);
+  // column chrome above the list (New + Project + Worktree-filter +
+  // Filter + separator + header = 6) = 13. Floor at MIN_LIST_ROWS so
+  // a tiny terminal still shows something.
+  return Math.max(MIN_LIST_ROWS, panelH - 13);
 }
 
 // Compose the right-hand preview pane. Normally it shows info
@@ -819,130 +945,28 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       ),
     });
   }
-  if (openDialog?.pendingConfirm && s && openDialog.pendingConfirm.sessionId === s.id) {
-    const action = openDialog.pendingConfirm.action;
-    if (action === "stop") {
-      return labeledSection({
-        label: "Confirm Stop",
-        child: col(
-          {
-            kind: "raw",
-            entries: [
-              styledRow([
-                {
-                  text: `Stop session [${s.id}] ${s.label}?`,
-                  style: { bold: true },
-                },
-              ]),
-              styledRow([{ text: "" }]),
-              styledRow([{ text: "This will:" }]),
-              styledRow([{ text: "  • send SIGTERM to all session processes" }]),
-              styledRow([{ text: "  • SIGKILL after a short grace period" }]),
-              styledRow([{ text: "" }]),
-              styledRow([{ text: "The worktree and session record remain." }]),
-            ],
-          },
-          spacer(0),
-          row(
-            flexSpacer(),
-            button("Cancel", { key: "confirm-cancel" }),
-            spacer(2),
-            button("Confirm Stop", {
-              intent: "danger",
-              key: "confirm-stop",
-            }),
-          ),
-        ),
-      });
-    }
-    if (action === "archive") {
-      return labeledSection({
-        label: "Confirm Archive",
-        child: col(
-          {
-            kind: "raw",
-            entries: [
-              styledRow([
-                {
-                  text: `Archive session [${s.id}] ${s.label}?`,
-                  style: { bold: true },
-                },
-              ]),
-              styledRow([{ text: "" }]),
-              styledRow([{ text: "This will:" }]),
-              styledRow([{ text: "  • SIGKILL all session processes" }]),
-              styledRow([{ text: "  • close the editor session" }]),
-              styledRow([{ text: "  • move the worktree to .archived/" }]),
-              styledRow([{ text: "" }]),
-              styledRow([{ text: "Reversible via Unarchive." }]),
-            ],
-          },
-          spacer(0),
-          row(
-            flexSpacer(),
-            button("Cancel", { key: "confirm-cancel" }),
-            spacer(2),
-            button("Confirm Archive", {
-              intent: "danger",
-              key: "confirm-archive",
-            }),
-          ),
-        ),
-      });
-    }
-    if (action === "delete") {
-      return labeledSection({
-        label: "Confirm Delete",
-        child: col(
-          {
-            kind: "raw",
-            entries: [
-              styledRow([
-                {
-                  text: `Delete session [${s.id}] ${s.label}?`,
-                  style: { bold: true },
-                },
-              ]),
-              styledRow([{ text: "" }]),
-              styledRow([{ text: "This will:" }]),
-              styledRow([{ text: "  • stop all session processes" }]),
-              styledRow([{ text: "  • run `git worktree remove`" }]),
-              styledRow([{ text: "  • drop the session record" }]),
-              styledRow([{ text: "" }]),
-              styledRow([
-                {
-                  text: "Uncommitted changes will be lost.",
-                  style: {
-                    fg: "ui.status_error_indicator_fg",
-                    bold: true,
-                  },
-                },
-              ]),
-            ],
-          },
-          spacer(0),
-          row(
-            flexSpacer(),
-            button("Cancel", { key: "confirm-cancel" }),
-            spacer(2),
-            button("Confirm Delete", {
-              intent: "danger",
-              key: "confirm-delete",
-            }),
-          ),
-        ),
-      });
-    }
+  // Confirmation panel — single-row Stop/Archive/Delete or a bulk
+  // batch. Independent of the cursor row: the confirmed ids live in
+  // `pendingConfirm`, so it renders whenever a confirm is pending.
+  if (openDialog?.pendingConfirm) {
+    return buildConfirmPane(openDialog.pendingConfirm);
+  }
+  // Bulk selection bar: two or more rows checked (or a bulk action
+  // in flight) → operate on the whole batch rather than the cursor
+  // row.
+  if (selectedSessions().length >= 2 || openDialog?.bulkInFlight) {
+    return buildBulkPane();
   }
   // Match the sessions column's content height so the two panes'
   // bottom borders land on the same row. Sessions column inside its
-  // borders = New (1) + Project (1) + Filter (1) + separator (1) +
-  // header (1) + list (listVisibleRows) = listVisibleRows + 5.
-  // Preview inside its borders = button row (1) + spacer (1) +
-  // embedRows, so embedRows must equal listVisibleRows + 3. When
-  // details ARE shown, two info rows + a spacer eat three more
-  // lines — `_DETAILS_CHROME_ROWS` accounts for that.
-  const totalEmbedBase = (openDialog?.listVisibleRows ?? MIN_LIST_ROWS) + 3;
+  // borders = New (1) + Project (1) + Worktree-filter (1) +
+  // Filter (1) + separator (1) + header (1) + list (listVisibleRows)
+  // = listVisibleRows + 6. Preview inside its borders = button
+  // row (1) + spacer (1) + embedRows, so embedRows must equal
+  // listVisibleRows + 4. When details ARE shown, two info rows + a
+  // spacer eat three more lines — `_DETAILS_CHROME_ROWS` accounts
+  // for that.
+  const totalEmbedBase = (openDialog?.listVisibleRows ?? MIN_LIST_ROWS) + 4;
   const detailsOn = openDialog?.showDetails ?? false;
   const _DETAILS_CHROME_ROWS = 3; // 2 info rows + 1 spacer
   const embedRows = Math.max(
@@ -1080,6 +1104,204 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   });
 }
 
+// The per-action bullet lines shown in the confirmation panel.
+// `delete` adds a separate red "uncommitted changes" line in the
+// caller because it needs distinct styling.
+function confirmActionLines(action: BulkAction): string[] {
+  switch (action) {
+    case "stop":
+      return [
+        "  • send SIGTERM to all session processes",
+        "  • SIGKILL after a short grace period",
+        "",
+        "The worktree and session record remain.",
+      ];
+    case "archive":
+      return [
+        "  • SIGKILL all session processes",
+        "  • close the editor session",
+        "  • move the worktree to .archived/",
+        "",
+        "Reversible via Unarchive.",
+      ];
+    case "delete":
+      return [
+        "  • stop all session processes",
+        "  • run `git worktree remove`",
+        "  • drop the session record",
+      ];
+  }
+}
+
+// Confirmation panel for a Stop/Archive/Delete over one or many
+// sessions. A single id renders the familiar per-session prompt; two
+// or more render a batch prompt that lists the targets. The Confirm
+// button reuses the same `confirm-<action>` key the single path
+// always used, so the existing widget_event handlers fire for both —
+// they read `pendingConfirm.ids`.
+function buildConfirmPane(
+  confirm: { action: BulkAction; ids: number[] },
+): WidgetSpec {
+  const { action, ids } = confirm;
+  const cap = action[0].toUpperCase() + action.slice(1);
+  const existing = ids.filter((id) => orchestratorSessions.has(id));
+  const bulk = existing.length > 1;
+  const tagOf = (id: number): string =>
+    orchestratorSessions.get(id)?.discovered ? "[○]" : `[${id}]`;
+  const entries: TextPropertyEntry[] = [];
+  if (bulk) {
+    entries.push(
+      styledRow([
+        { text: `${cap} these ${existing.length} sessions?`, style: { bold: true } },
+      ]),
+      styledRow([{ text: "" }]),
+    );
+    for (const id of existing.slice(0, 8)) {
+      const ss = orchestratorSessions.get(id)!;
+      entries.push(styledRow([{ text: `  ${tagOf(id)} ${ss.label}` }]));
+    }
+    if (existing.length > 8) {
+      entries.push(
+        styledRow([
+          {
+            text: `  … and ${existing.length - 8} more`,
+            style: { fg: "ui.menu_disabled_fg", italic: true },
+          },
+        ]),
+      );
+    }
+  } else {
+    const id = existing[0];
+    const ss = id !== undefined ? orchestratorSessions.get(id) : undefined;
+    entries.push(
+      styledRow([
+        {
+          text: `${cap} session ${id !== undefined ? tagOf(id) : ""} ${ss?.label ?? ""}?`,
+          style: { bold: true },
+        },
+      ]),
+    );
+  }
+  entries.push(
+    styledRow([{ text: "" }]),
+    styledRow([{ text: bulk ? "For each session this will:" : "This will:" }]),
+  );
+  for (const line of confirmActionLines(action)) {
+    entries.push(styledRow([{ text: line }]));
+  }
+  if (action === "delete") {
+    entries.push(
+      styledRow([{ text: "" }]),
+      styledRow([
+        {
+          text: "Uncommitted changes will be lost.",
+          style: { fg: "ui.status_error_indicator_fg", bold: true },
+        },
+      ]),
+    );
+  }
+  return labeledSection({
+    label: bulk ? `Confirm ${cap} — ${existing.length} sessions` : `Confirm ${cap}`,
+    child: col(
+      { kind: "raw", entries },
+      spacer(0),
+      row(
+        flexSpacer(),
+        button("Cancel", { key: "confirm-cancel" }),
+        spacer(2),
+        button(`Confirm ${cap}`, { intent: "danger", key: `confirm-${action}` }),
+      ),
+    ),
+  });
+}
+
+// The dedicated bulk selection bar (Layout B). Shown in place of the
+// per-session preview when two or more rows are checked: lists the
+// selected sessions (flagging the ones a destructive action can't
+// touch) and offers Stop / Archive / Delete over the whole batch
+// plus a Clear-selection button. Each action's count is the number of
+// *eligible* members; an action with no eligible members is disabled.
+function buildBulkPane(): WidgetSpec {
+  const sel = selectedSessions();
+  const stopN = eligibleSelected("stop").length;
+  const archiveN = eligibleSelected("archive").length;
+  const deleteN = eligibleSelected("delete").length;
+  const tagOf = (id: number): string =>
+    orchestratorSessions.get(id)?.discovered ? "[○]" : `[${id}]`;
+
+  const entries: TextPropertyEntry[] = [];
+  const cap = openDialog?.listVisibleRows ?? MIN_LIST_ROWS;
+  for (const id of sel.slice(0, cap)) {
+    const ss = orchestratorSessions.get(id)!;
+    const rowParts: StyledSegment[] = [
+      { text: `  ${tagOf(id)} `, style: { fg: "ui.help_key_fg" } },
+      { text: ss.label },
+    ];
+    // Flag rows a destructive bulk action will skip so the count
+    // discrepancy is self-explanatory.
+    if (id === 1) {
+      rowParts.push({ text: "  · base (protected)", style: { fg: "ui.menu_disabled_fg", italic: true } });
+    } else if (!ss.discovered && (countSiblingsAtRoot(ss.root) > 1 || ss.sharedWorktree)) {
+      rowParts.push({ text: "  · shared worktree", style: { fg: "ui.menu_disabled_fg", italic: true } });
+    } else if (ss.discovered) {
+      rowParts.push({ text: "  · on-disk worktree", style: { fg: "ui.menu_disabled_fg", italic: true } });
+    }
+    entries.push(styledRow(rowParts));
+  }
+  if (sel.length > cap) {
+    entries.push(
+      styledRow([
+        {
+          text: `  … and ${sel.length - cap} more`,
+          style: { fg: "ui.menu_disabled_fg", italic: true },
+        },
+      ]),
+    );
+  }
+
+  const inflight = openDialog?.bulkInFlight ?? null;
+  const actionRow = inflight
+    ? row(
+        {
+          kind: "raw",
+          entries: [
+            styledRow([
+              {
+                text: `${inflight.action[0].toUpperCase()}${inflight.action.slice(1)}ing ${inflight.done}/${inflight.total}…`,
+                style: { fg: "ui.menu_disabled_fg", italic: true },
+              },
+            ]),
+          ],
+        },
+        flexSpacer(),
+      )
+    : row(
+        button(`Stop (${stopN})`, { key: "bulk-stop", disabled: stopN === 0 }),
+        spacer(2),
+        button(`Archive (${archiveN})`, {
+          key: "bulk-archive",
+          disabled: archiveN === 0,
+        }),
+        spacer(2),
+        button(`Delete (${deleteN})`, {
+          intent: "danger",
+          key: "bulk-delete",
+          disabled: deleteN === 0,
+        }),
+        flexSpacer(),
+        button("Clear", { key: "bulk-clear" }),
+      );
+
+  return labeledSection({
+    label: `Bulk actions — ${sel.length} selected`,
+    child: col(
+      { kind: "raw", entries },
+      spacer(0),
+      actionRow,
+    ),
+  });
+}
+
 function buildOpenSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
@@ -1179,6 +1401,19 @@ function buildOpenSpec(): WidgetSpec {
     scopeButton,
     flexSpacer(),
   );
+  // Per-project filter checkbox, on its own row under the Project
+  // control: hides the discovered on-disk `[○]` worktree rows. A
+  // button (not a Toggle) so it activates on Enter/click — Space is
+  // claimed mode-wide for row selection. Inert while a confirm
+  // prompt is up.
+  const hideWorktrees = openDialog.hideDiscovered;
+  const worktreeFilterRow = row(
+    button(
+      `${hideWorktrees ? "[x]" : "[ ]"} Hide on-disk worktrees`,
+      { key: openDialog.pendingConfirm !== null ? undefined : "worktree-hide" },
+    ),
+    flexSpacer(),
+  );
 
   return col(
     {
@@ -1233,6 +1468,7 @@ function buildOpenSpec(): WidgetSpec {
             flexSpacer(),
           ),
           projectControlRow,
+          worktreeFilterRow,
           filterInput,
           sessionsSeparator(),
           sessionsColumnHeader(),
@@ -1272,6 +1508,11 @@ function buildOpenSpec(): WidgetSpec {
       hintBar([
         { keys: "↑↓", label: "nav" },
         { keys: "Enter", label: "dive" },
+        {
+          keys: editor.getKeybindingLabel("orchestrator_toggle_select", OPEN_MODE) ||
+            "Space",
+          label: "select",
+        },
         {
           keys: scopeKey || "⌥P",
           label: scope === "current" ? "all projects" : "current only",
@@ -1332,6 +1573,7 @@ function clearDialogError(): void {
 
 function refreshOpenDialog(): void {
   if (!openPanel || !openDialog) return;
+  pruneSelection();
   openDialog.filteredIds = filterSessions(openDialog.filter.value);
   // Clamp the selection into range so a fresh filter or a
   // session vanishing under us doesn't leave us pointing past
@@ -1372,6 +1614,9 @@ function openControlRoom(): void {
     // Restore the last-used scope (defaults to "all"); the Project
     // control / Alt+P updates it for next time.
     scope: lastOpenScope,
+    selectedIds: new Set<number>(),
+    hideDiscovered: lastHideDiscovered,
+    bulkInFlight: null,
   };
   openDialog.filteredIds = filterSessions("");
   const activeIdx = openDialog.filteredIds.indexOf(activeId);
@@ -1410,33 +1655,27 @@ function closeOpenDialog(): void {
   editor.setEditorMode(null);
 }
 
-// Stop every process the highlighted session owns. Sends
-// SIGTERM first via the host's `signalWindow` (which fans
-// out through the window's process-group tracker), then
-// follows up with SIGKILL after a short grace period so
-// ill-behaved agents that ignore SIGTERM still get reaped.
-// The session record stays put — Stop only kills processes,
-// it doesn't touch the worktree or the editor session.
-function stopSelectedSession(): void {
-  if (!openDialog) return;
-  const id = openDialog.filteredIds[openDialog.selectedIndex];
-  if (typeof id !== "number" || id <= 0) return;
-  if (id === 1) {
-    setDialogError("cannot stop the base session");
-    refreshOpenDialog();
-    return;
-  }
+// Stop every process one session owns. Sends SIGTERM first via the
+// host's `signalWindow` (which fans out through the window's
+// process-group tracker), then follows up with SIGKILL after a short
+// grace period so ill-behaved agents that ignore SIGTERM still get
+// reaped. The session record stays put — Stop only kills processes,
+// it doesn't touch the worktree or the editor session. Returns false
+// for ids it can't stop (base session, discovered worktrees with no
+// live window).
+function stopOne(id: number): boolean {
+  const s = orchestratorSessions.get(id);
+  if (!s || id <= 0 || id === 1 || s.discovered) return false;
   editor.signalWindow(id, "SIGTERM");
-  // SIGKILL fallback for agents that ignore SIGTERM. The
-  // host's signalWindow is idempotent on already-exited
-  // process groups, so the second call is safe whether or
-  // not the first one took. QuickJS has no `setTimeout`;
-  // the host exposes `editor.delay(ms)` as the asynchronous
+  // SIGKILL fallback for agents that ignore SIGTERM. The host's
+  // signalWindow is idempotent on already-exited process groups, so
+  // the second call is safe whether or not the first one took.
+  // QuickJS has no `setTimeout`; `editor.delay(ms)` is the async
   // sleep primitive, which we kick off but don't await.
   void editor.delay(2000).then(() => {
     editor.signalWindow(id, "SIGKILL");
   });
-  editor.setStatus(`Orchestrator: stop signal sent to session [${id}]`);
+  return true;
 }
 
 // ---------------------------------------------------------------------
@@ -1519,136 +1758,97 @@ function pickNextActiveSession(excludeId: number): number {
   return 1;
 }
 
-// Archive flow: stop all processes (SIGKILL — archive is a
-// "I'm done with this for now" action, no graceful teardown
-// needed since the worktree stays on disk), close the editor
-// session, move the worktree to the `.archived/` graveyard,
-// and append a manifest entry so a future Unarchive flow can
-// reverse it.
-async function archiveSelectedSession(explicitId?: number): Promise<void> {
-  if (!openDialog) return;
-  // Prefer the explicit id from the confirm path. Otherwise read
-  // the currently selected row — used by the legacy direct-call
-  // entry points. Once the row is hidden synchronously after
-  // confirm, `filteredIds[selectedIndex]` no longer points at the
-  // session being archived (it shifts to whatever is now under
-  // the cursor).
-  const id = typeof explicitId === "number"
-    ? explicitId
-    : openDialog.filteredIds[openDialog.selectedIndex];
-  // Clear the in-flight marker so the preview pane stops showing
-  // "Archiving…" if the operation refuses or fails. After
-  // `closeWindow` succeeds the row is gone from `listWindows()`
-  // anyway, so clearing then is harmless.
-  const clearInFlight = () => {
-    if (
-      openDialog?.inFlight && typeof id === "number" &&
-      openDialog.inFlight.sessionId === id
-    ) {
-      openDialog.inFlight = null;
-      refreshOpenDialog();
+// Resolve the *main* repo root a session's worktree belongs to, so
+// `git worktree move/remove` runs from a stable directory (never from
+// inside the tree being moved/removed). Prefers the canonical
+// `projectPath` recorded at create/discovery time, falling back to
+// resolving from the worktree itself.
+async function worktreeRepoRoot(s: AgentSession): Promise<string | null> {
+  if (s.projectPath) {
+    const r = await resolveCanonicalRepoRoot(s.projectPath);
+    if (r) return r;
+  }
+  return await resolveCanonicalRepoRoot(s.root);
+}
+
+interface LifecycleResult {
+  ok: boolean;
+  err?: string;
+  repoRoot?: string;
+}
+
+// Archive a single session: SIGKILL its processes (archive is a
+// "done with this for now" action — no graceful teardown needed since
+// the worktree stays on disk), close the editor session, move the
+// worktree to the `.archived/` graveyard, and append a manifest
+// entry so Unarchive can reverse it. Handles both live sessions and
+// discovered on-disk worktrees (the latter have no window to close).
+// Does NOT trigger sync — the caller batches one sync per repo after
+// the whole run.
+async function archiveOne(id: number): Promise<LifecycleResult> {
+  const s = orchestratorSessions.get(id);
+  if (!s) return { ok: false, err: "session gone" };
+  if (id === 1) return { ok: false, err: "cannot archive the base session" };
+  const repoRoot = await worktreeRepoRoot(s);
+  if (!repoRoot) return { ok: false, err: "not a git repository" };
+
+  // Live session: close_window refuses to close the active window, so
+  // switch away first, then SIGKILL the process group (so pty
+  // children release worktree locks) and close the editor session.
+  if (!s.discovered && id > 0) {
+    if (id === editor.activeWindow()) {
+      editor.setActiveWindow(pickNextActiveSession(id));
     }
-  };
-  if (typeof id !== "number" || id <= 0) return;
-  if (id === 1) {
-    setDialogError("cannot archive the base session");
-    clearInFlight();
-    return;
-  }
-  // close_window refuses to close the active window; swap to a
-  // different session first. The pick prefers something already
-  // in the dialog's current filter, falls back to the base
-  // session — both always exist (base is undeletable, and we'd
-  // have nothing to archive without at least one session).
-  if (id === editor.activeWindow()) {
-    editor.setActiveWindow(pickNextActiveSession(id));
-  }
-  const session = orchestratorSessions.get(id);
-  if (!session) {
-    clearInFlight();
-    return;
+    editor.signalWindow(id, "SIGKILL");
+    editor.closeWindow(id);
+    // Brief settle so the filesystem reflects the pty's exit before
+    // we move the worktree out from under it.
+    await editor.delay(250);
   }
 
-  // Resolve the repo root from cwd (the user is in the
-  // umbrella session's tree).
-  const cwd = editor.getCwd();
-  const top = await spawnCollect(
-    "git",
-    ["rev-parse", "--show-toplevel"],
-    cwd,
-  );
-  if (top.exit_code !== 0) {
-    editor.setStatus("Orchestrator: archive failed — not a git repository");
-    clearInFlight();
-    return;
-  }
-  const repoRoot = (top.stdout || "").trim();
-
-  // SIGKILL the session's process group so the pty children
-  // release any locks on the worktree, then close the editor
-  // session. closeWindow already kills the pty via the child
-  // killer; signaling first via the window-level pg tracker
-  // catches stray subprocesses outside the pty.
-  editor.signalWindow(id, "SIGKILL");
-  editor.closeWindow(id);
-
-  // Brief settle so the filesystem reflects the pty's exit
-  // before we move the worktree out from under it.
-  await editor.delay(250);
-
-  // git worktree move keeps git's internal bookkeeping
-  // consistent (the new path stays registered as a worktree).
   const archivedRoot = editor.pathJoin(
     editor.getDataDir(),
     "orchestrator",
     slugify(repoRoot),
     ".archived",
-    session.label,
+    s.label,
   );
   const parent = editor.pathDirname(archivedRoot);
   if (!editor.createDir(parent)) {
-    editor.setStatus(
-      `Orchestrator: archive failed — could not create ${parent}`,
-    );
-    clearInFlight();
-    return;
+    return { ok: false, err: `could not create ${parent}`, repoRoot };
   }
+  // git worktree move keeps git's internal bookkeeping consistent
+  // (the new path stays registered as a worktree).
   const moveRes = await spawnCollect(
     "git",
-    ["-C", repoRoot, "worktree", "move", session.root, archivedRoot],
+    ["-C", repoRoot, "worktree", "move", s.root, archivedRoot],
     repoRoot,
   );
   if (moveRes.exit_code !== 0) {
-    editor.setStatus(
-      `Orchestrator: worktree move failed: ${
-        lastNonEmptyLine(moveRes.stderr) || "unknown error"
-      }`,
-    );
-    clearInFlight();
-    return;
+    return {
+      ok: false,
+      err: lastNonEmptyLine(moveRes.stderr) || "worktree move failed",
+      repoRoot,
+    };
   }
 
-  // Append manifest entry. The branch info is best-effort:
-  // we assume Orchestrator's convention of branch==label (set in
-  // the new-session form) until a session knows its branch
-  // separately.
   const manifest = loadArchiveManifest(repoRoot);
   manifest.sessions.push({
-    label: session.label,
+    label: s.label,
     root: archivedRoot,
-    original_root: session.root,
-    branch: session.label,
+    original_root: s.root,
+    branch: s.branch || s.label,
     archived_at: new Date().toISOString(),
   });
-  if (!saveArchiveManifest(repoRoot, manifest)) {
-    editor.setStatus(
-      "Orchestrator: archived, but failed to write archived.json",
-    );
-  } else {
-    editor.setStatus(`Orchestrator: archived [${id}] ${session.label}`);
+  saveArchiveManifest(repoRoot, manifest);
+
+  // A discovered row has no window_closed hook to drop it — remove it
+  // from the model directly.
+  if (s.discovered) {
+    orchestratorSessions.delete(id);
+    discoveredIdByPath.delete(s.root);
   }
-  clearInFlight();
-  triggerSyncAsync(repoRoot);
+  return { ok: true, repoRoot };
 }
 
 // ---------------------------------------------------------------------
@@ -1851,86 +2051,135 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
   };
 }
 
-// Delete flow: stop processes (SIGKILL), close the editor
-// session, then `git worktree remove --force` to drop the
-// worktree from disk. If the session was archived (manifest
-// entry exists), the manifest entry is dropped too. No
-// recovery after this point.
-async function deleteConfirmedSession(): Promise<void> {
-  if (!openDialog || !openDialog.pendingConfirm) return;
-  const { sessionId: id } = openDialog.pendingConfirm;
-  openDialog.pendingConfirm = null;
-  // Clear the in-flight marker on early failure. Mirrors the
-  // pattern in `archiveSelectedSession` — the confirm-delete
-  // handler set `inFlight` before kicking off this async work,
-  // and any path that aborts before `closeWindow` needs to undo
-  // it so the "Deleting…" overlay disappears.
-  const clearInFlight = () => {
-    if (openDialog?.inFlight && openDialog.inFlight.sessionId === id) {
-      openDialog.inFlight = null;
-      refreshOpenDialog();
+// Delete a single session: stop processes (SIGKILL), close the
+// editor session, then `git worktree remove --force` to drop the
+// worktree from disk. If the session was archived (manifest entry
+// exists), the manifest entry is dropped too. Handles discovered
+// on-disk worktrees (no window to close). No recovery after this
+// point. Does NOT trigger sync — the caller batches it.
+async function deleteOne(id: number): Promise<LifecycleResult> {
+  const s = orchestratorSessions.get(id);
+  if (!s) return { ok: false, err: "session gone" };
+  if (id === 1) return { ok: false, err: "cannot delete the base session" };
+  const repoRoot = await worktreeRepoRoot(s);
+  if (!repoRoot) return { ok: false, err: "not a git repository" };
+
+  if (!s.discovered && id > 0) {
+    // close_window refuses to close the active window, so swap away.
+    if (id === editor.activeWindow()) {
+      editor.setActiveWindow(pickNextActiveSession(id));
     }
-  };
-  const session = orchestratorSessions.get(id);
-  if (!session) {
-    clearInFlight();
-    return;
-  }
-  // Same auto-switch as archive — close_window refuses to close
-  // the active window, so swap to a different session first.
-  if (id === editor.activeWindow()) {
-    editor.setActiveWindow(pickNextActiveSession(id));
+    editor.signalWindow(id, "SIGKILL");
+    editor.closeWindow(id);
+    await editor.delay(250);
   }
 
-  const cwd = editor.getCwd();
-  const top = await spawnCollect(
-    "git",
-    ["rev-parse", "--show-toplevel"],
-    cwd,
-  );
-  if (top.exit_code !== 0) {
-    editor.setStatus("Orchestrator: delete failed — not a git repository");
-    clearInFlight();
-    return;
-  }
-  const repoRoot = (top.stdout || "").trim();
-
-  editor.signalWindow(id, "SIGKILL");
-  editor.closeWindow(id);
-  await editor.delay(250);
-
-  // `--force` because the worktree may have unstaged changes
-  // the user explicitly chose to discard via the confirm step.
+  // `--force` because the worktree may have unstaged changes the user
+  // explicitly chose to discard via the confirm step.
   const removeRes = await spawnCollect(
     "git",
-    ["-C", repoRoot, "worktree", "remove", "--force", session.root],
+    ["-C", repoRoot, "worktree", "remove", "--force", s.root],
     repoRoot,
   );
   if (removeRes.exit_code !== 0) {
-    editor.setStatus(
-      `Orchestrator: worktree remove failed: ${
-        lastNonEmptyLine(removeRes.stderr) || "unknown error"
-      }`,
-    );
-    clearInFlight();
-    return;
+    return {
+      ok: false,
+      err: lastNonEmptyLine(removeRes.stderr) || "worktree remove failed",
+      repoRoot,
+    };
   }
 
-  // Drop the matching manifest entry too, in case the session
-  // was already archived (delete-from-archived is the natural
-  // way to drop dormant sessions).
+  // Drop the matching manifest entry too, in case the session was
+  // already archived (delete-from-archived is the natural way to drop
+  // dormant sessions).
   const manifest = loadArchiveManifest(repoRoot);
   const before = manifest.sessions.length;
-  manifest.sessions = manifest.sessions.filter(
-    (e) => e.label !== session.label,
-  );
+  manifest.sessions = manifest.sessions.filter((e) => e.label !== s.label);
   if (manifest.sessions.length !== before) {
     saveArchiveManifest(repoRoot, manifest);
   }
 
-  editor.setStatus(`Orchestrator: deleted [${id}] ${session.label}`);
-  clearInFlight();
-  triggerSyncAsync(repoRoot);
+  if (s.discovered) {
+    orchestratorSessions.delete(id);
+    discoveredIdByPath.delete(s.root);
+  }
+  return { ok: true, repoRoot };
+}
+
+// Unified runner for a confirmed Stop / Archive / Delete over one or
+// many ids. Re-filters to eligible targets at execution time (the
+// selection or single row may have gone stale between confirm and
+// run), drives the in-flight progress markers, runs the per-id cores
+// sequentially, prunes acted-on ids from the selection, and triggers
+// one sync per touched repo at the end.
+async function runConfirmedAction(
+  action: BulkAction,
+  ids: number[],
+): Promise<void> {
+  if (!openDialog) return;
+  const targets = ids.filter((id) => bulkEligible(action, id));
+  if (targets.length === 0) {
+    setDialogError(`nothing eligible to ${action} in the selection`);
+    refreshOpenDialog();
+    return;
+  }
+
+  if (action === "stop") {
+    let n = 0;
+    for (const id of targets) if (stopOne(id)) n += 1;
+    editor.setStatus(`Orchestrator: stop signal sent to ${n} session(s)`);
+    // Stop leaves sessions in place; drop them from the selection so
+    // the bulk bar reflects that the action ran.
+    for (const id of targets) openDialog.selectedIds.delete(id);
+    refreshOpenDialog();
+    return;
+  }
+
+  const single = targets.length === 1;
+  if (single) {
+    openDialog.inFlight = { action, sessionId: targets[0] };
+  } else {
+    openDialog.bulkInFlight = { action, total: targets.length, done: 0 };
+  }
+  refreshOpenDialog();
+
+  const touchedRepos = new Set<string>();
+  let okCount = 0;
+  let lastErr = "";
+  for (let i = 0; i < targets.length; i++) {
+    const id = targets[i];
+    const res = action === "archive" ? await archiveOne(id) : await deleteOne(id);
+    if (res.ok) {
+      okCount += 1;
+      if (res.repoRoot) touchedRepos.add(res.repoRoot);
+    } else {
+      lastErr = res.err ?? "failed";
+    }
+    openDialog?.selectedIds.delete(id);
+    if (openDialog?.bulkInFlight) openDialog.bulkInFlight.done = i + 1;
+    refreshOpenDialog();
+  }
+  if (openDialog) {
+    openDialog.inFlight = null;
+    openDialog.bulkInFlight = null;
+  }
+
+  const verb = action === "archive" ? "archived" : "deleted";
+  if (okCount === 0) {
+    setDialogError(`${action} failed: ${lastErr || "unknown error"}`);
+  } else if (lastErr) {
+    setDialogError(`${verb} ${okCount}/${targets.length}; last error: ${lastErr}`);
+  } else {
+    editor.setStatus(`Orchestrator: ${verb} ${okCount} session(s)`);
+  }
+  for (const repo of touchedRepos) triggerSyncAsync(repo);
+  refreshOpenDialog();
+  // The batch emptied the selection, so the pane is back in
+  // single-preview mode — restore focus to Visit (the bulk buttons
+  // it may have been on are gone).
+  if (openPanel && selectedSessions().length < 2 && !openDialog.pendingConfirm) {
+    openPanel.setFocusKey("visit");
+  }
 }
 
 // `Alt+N` from inside the picker opens the new-session form — saves
@@ -1953,6 +2202,16 @@ editor.defineMode(
     // text; session names don't contain `/`, so that's an
     // acceptable trade for the quick-focus.)
     ["/", "orchestrator_focus_filter"],
+    // Space toggles the highlighted row's membership in the bulk
+    // selection. Bound as a mode chord (not a widget smart-key) so
+    // it's user-rebindable in the keybinding editor and fires
+    // regardless of which control holds focus — the host's
+    // `dispatch_floating_widget_key` defers any explicitly-bound
+    // mode key, including bare chars, before the text-input path.
+    // The trade (same as `/`) is that Space can't be typed into the
+    // filter while the picker is open; session names don't contain
+    // spaces, so that's acceptable.
+    ["Space", "orchestrator_toggle_select"],
   ],
   true,
   true,
@@ -1967,6 +2226,38 @@ registerHandler("orchestrator_open_new_from_picker", () => {
 registerHandler("orchestrator_focus_filter", () => {
   if (!openDialog || !openPanel) return;
   openPanel.setFocusKey("filter");
+});
+
+// Space (rebindable): toggle the highlighted row in/out of the bulk
+// selection. Manages focus across the single↔bulk transition: when
+// the second row is checked the preview pane swaps to the bulk bar
+// (so the now-absent "visit" focus would otherwise be clamped to a
+// random tabbable), and when the selection drops back below two the
+// per-session preview — with its "visit" button — returns.
+registerHandler("orchestrator_toggle_select", () => {
+  if (!openDialog || !openPanel) return;
+  // Inert while a confirm prompt is up — the selection is frozen
+  // behind the confirmation panel.
+  if (openDialog.pendingConfirm) return;
+  const id = openDialog.filteredIds[openDialog.selectedIndex];
+  if (typeof id !== "number") return;
+  const wasBulk = selectedSessions().length >= 2;
+  if (openDialog.selectedIds.has(id)) {
+    openDialog.selectedIds.delete(id);
+  } else {
+    openDialog.selectedIds.add(id);
+  }
+  clearDialogError();
+  refreshOpenDialog();
+  const isBulk = selectedSessions().length >= 2;
+  if (!wasBulk && isBulk) {
+    // Entering bulk mode — land focus on a bulk button (Up/Down from
+    // a button still drives the list, so navigation keeps working).
+    openPanel.setFocusKey("bulk-archive");
+  } else if (wasBulk && !isBulk) {
+    // Back to single preview — restore focus to Visit.
+    openPanel.setFocusKey("visit");
+  }
 });
 
 function toggleScope(): void {
@@ -3595,7 +3886,27 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
       }
     }
   }
-  openDialog.pendingConfirm = { action, sessionId: id };
+  openDialog.pendingConfirm = { action, ids: [id] };
+  openPanel.update(buildOpenSpec());
+  openPanel.setFocusKey("confirm-cancel");
+}
+
+// Open the confirm panel for a *bulk* action over the current
+// checkbox selection. Filters to the eligible members up front (so
+// the confirm count matches what will actually run); refuses with a
+// banner when nothing is eligible.
+function enterBulkConfirm(action: BulkAction): void {
+  if (!openDialog || !openPanel) return;
+  const targets = eligibleSelected(action);
+  if (targets.length === 0) {
+    setDialogError(`no selected session can be ${action === "stop" ? "stopped" : action + "d"}`);
+    refreshOpenDialog();
+    return;
+  }
+  // All three actions confirm — even Stop, so a bulk Stop over a
+  // large selection isn't a single mis-key away. The confirm panel
+  // lists the targets and shows the eligible count.
+  openDialog.pendingConfirm = { action, ids: targets };
   openPanel.update(buildOpenSpec());
   openPanel.setFocusKey("confirm-cancel");
 }
@@ -3754,8 +4065,11 @@ editor.on("widget_event", (e) => {
         // on the button. Snap focus back to Visit so the user can
         // press Enter to open the newly-highlighted session — the
         // dialog's whole reason for being. Idempotent when focus
-        // is already on Visit.
-        openPanel.setFocusKey("visit");
+        // is already on Visit. Skipped in bulk mode and during a
+        // confirm, where "visit" isn't in the spec.
+        if (selectedSessions().length < 2 && !openDialog.pendingConfirm) {
+          openPanel.setFocusKey("visit");
+        }
       }
       return;
     }
@@ -3798,6 +4112,20 @@ editor.on("widget_event", (e) => {
       refreshOpenDialog();
       return;
     }
+    if (e.event_type === "activate" && e.widget_key === "worktree-hide") {
+      openDialog.hideDiscovered = !openDialog.hideDiscovered;
+      lastHideDiscovered = openDialog.hideDiscovered;
+      // A hidden discovered row shouldn't linger in the selection.
+      if (openDialog.hideDiscovered) {
+        for (const id of [...openDialog.selectedIds]) {
+          if (orchestratorSessions.get(id)?.discovered) {
+            openDialog.selectedIds.delete(id);
+          }
+        }
+      }
+      refreshOpenDialog();
+      return;
+    }
     if (e.event_type === "activate" && e.widget_key === "stop") {
       enterConfirm("stop");
       return;
@@ -3810,44 +4138,47 @@ editor.on("widget_event", (e) => {
       enterConfirm("delete");
       return;
     }
+    // Bulk action bar (Layout B) — Stop / Archive / Delete over the
+    // checkbox selection, plus Clear.
+    if (e.event_type === "activate" && e.widget_key === "bulk-stop") {
+      enterBulkConfirm("stop");
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "bulk-archive") {
+      enterBulkConfirm("archive");
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "bulk-delete") {
+      enterBulkConfirm("delete");
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "bulk-clear") {
+      openDialog.selectedIds.clear();
+      refreshOpenDialog();
+      openPanel.setFocusKey("visit");
+      return;
+    }
     if (e.event_type === "activate" && e.widget_key === "confirm-cancel") {
       openDialog.pendingConfirm = null;
       openPanel.update(buildOpenSpec());
       return;
     }
-    if (e.event_type === "activate" && e.widget_key === "confirm-stop") {
+    // Confirmed Stop / Archive / Delete — single row or bulk batch.
+    // The ids were captured into `pendingConfirm` by enterConfirm /
+    // enterBulkConfirm; `runConfirmedAction` re-checks eligibility,
+    // drives the in-flight markers, and triggers sync.
+    if (
+      e.event_type === "activate" &&
+      (e.widget_key === "confirm-stop" ||
+        e.widget_key === "confirm-archive" ||
+        e.widget_key === "confirm-delete")
+    ) {
+      const confirm = openDialog.pendingConfirm;
       openDialog.pendingConfirm = null;
-      stopSelectedSession();
+      if (confirm) {
+        void runConfirmedAction(confirm.action, confirm.ids);
+      }
       if (openPanel) openPanel.update(buildOpenSpec());
-      return;
-    }
-    if (e.event_type === "activate" && e.widget_key === "confirm-archive") {
-      const id = openDialog.filteredIds[openDialog.selectedIndex];
-      openDialog.pendingConfirm = null;
-      // Mark the session in-flight so the preview swaps to
-      // "Archiving…" and its action buttons disappear until git
-      // finishes. The row stays in the list — `editor.listWindows()`
-      // is still the source of truth and will drop it on
-      // `closeWindow`, which is intentional: a slightly-laggy real
-      // state beats a synchronously faked one that can desync from
-      // git reality (e.g. when `git worktree move` fails).
-      if (typeof id === "number" && id > 0) {
-        openDialog.inFlight = { action: "archive", sessionId: id };
-      }
-      void archiveSelectedSession(id);
-      refreshOpenDialog();
-      return;
-    }
-    if (e.event_type === "activate" && e.widget_key === "confirm-delete") {
-      const id = openDialog.pendingConfirm?.sessionId;
-      // Mark in-flight — see comment on confirm-archive above.
-      // `deleteConfirmedSession` clears `pendingConfirm` itself, so
-      // we capture the id here before it goes away.
-      if (typeof id === "number" && id > 0) {
-        openDialog.inFlight = { action: "delete", sessionId: id };
-      }
-      void deleteConfirmedSession();
-      refreshOpenDialog();
       return;
     }
     if (e.event_type === "cancel") {

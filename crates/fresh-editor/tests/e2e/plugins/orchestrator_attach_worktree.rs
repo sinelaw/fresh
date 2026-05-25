@@ -86,6 +86,47 @@ fn set_up_repo_with_worktree() -> (tempfile::TempDir, PathBuf, PathBuf) {
     (temp, repo, worktree)
 }
 
+/// Like `set_up_repo_with_worktree` but adds two linked worktrees
+/// (`feature-x`, `feature-y`) so multi-select / bulk flows have more
+/// than one discovered row to work with. Returns (guard, repo, wt1,
+/// wt2).
+fn set_up_repo_with_two_worktrees() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+    fresh::i18n::set_locale("en");
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("mainrepo");
+    std::fs::create_dir(&repo).unwrap();
+
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.name", "Test User"]);
+    git(&repo, &["config", "user.email", "test@example.com"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("file.txt"), "hello\n").unwrap();
+    git(&repo, &["add", "file.txt"]);
+    git(&repo, &["commit", "-qm", "init"]);
+    git(&repo, &["branch", "feature-x"]);
+    git(&repo, &["branch", "feature-y"]);
+
+    let wt1 = root.join("existing-wt-x");
+    git(
+        &repo,
+        &["worktree", "add", wt1.to_str().unwrap(), "feature-x"],
+    );
+    let wt2 = root.join("existing-wt-y");
+    git(
+        &repo,
+        &["worktree", "add", wt2.to_str().unwrap(), "feature-y"],
+    );
+
+    let plugins_dir = repo.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+
+    (temp, repo, wt1, wt2)
+}
+
 fn wait_for_command(harness: &mut EditorTestHarness, name: &str) {
     let owned = name.to_string();
     harness
@@ -132,6 +173,28 @@ fn open_new_session_form(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
+/// Move the list highlight down onto the discovered `[○]` worktree
+/// row (which now sorts after the live sessions). Down routes to the
+/// list via the host's smart-key dispatch even though focus sits on a
+/// button. Stops once the on-disk preview pane is showing.
+fn navigate_to_discovered_row(harness: &mut EditorTestHarness) {
+    for _ in 0..12 {
+        if harness.screen_to_string().contains("On-disk worktree") {
+            return;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().ok();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("On-disk worktree"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "could not navigate to the discovered `[○]` row.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
 /// Opening the dialog discovers the on-disk `feature-x` worktree and
 /// lists it as an `[○]` row labelled with its branch — even though no
 /// session was ever opened there.
@@ -176,8 +239,10 @@ fn discovered_worktree_preview_offers_open() {
         .wait_until(|h| h.screen_to_string().contains("[○]"))
         .unwrap();
 
-    // The discovered row is the only non-base session; navigate to it
-    // and confirm its preview pane describes the open-by-attach flow.
+    // The discovered row sorts after the live sessions now; navigate
+    // onto it and confirm its preview pane describes the open-by-attach
+    // flow.
+    navigate_to_discovered_row(&mut harness);
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
@@ -209,11 +274,14 @@ fn diving_discovered_worktree_attaches_managed_session() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
-    // The discovered row sorts to the top (synthetic negative id);
-    // wait for it, then dive it.
+    // Discovered worktrees now sort *after* the live sessions, so the
+    // `[○]` row isn't the default selection. Wait for it, then move
+    // the highlight down onto it (Down routes to the list even though
+    // focus sits on a button) until its on-disk preview shows.
     harness
         .wait_until(|h| h.screen_to_string().contains("[○]"))
         .unwrap();
+    navigate_to_discovered_row(&mut harness);
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -277,6 +345,151 @@ fn new_session_form_hints_existing_worktree() {
             panic!(
                 "New Session form should hint that Project Path is an existing \
                  worktree.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
+/// Discovered on-disk worktree rows sort *after* the live sessions:
+/// the base session `[1]` row appears above the discovered `[○]` row.
+#[test]
+fn discovered_rows_sort_after_live_sessions() {
+    let (_temp, repo, _wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    open_orchestrator_dialog(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[○]"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+    let base_idx = lines.iter().position(|l| l.contains("[1]"));
+    let disc_idx = lines.iter().position(|l| l.contains("[○]"));
+    assert!(
+        base_idx.is_some() && disc_idx.is_some() && base_idx < disc_idx,
+        "live `[1]` session must list above the discovered `[○]` worktree.\n\
+         base_idx={:?} disc_idx={:?}\nScreen:\n{}",
+        base_idx,
+        disc_idx,
+        screen
+    );
+}
+
+/// Space-selecting two rows shows the dedicated bulk selection bar
+/// (Layout B) with per-action counts. Uses the two discovered
+/// worktree rows (selectable, no PTY needed). Space is the rebindable
+/// `orchestrator_toggle_select` mode chord, so it fires regardless of
+/// which control holds focus.
+#[test]
+fn space_selects_rows_and_shows_bulk_bar() {
+    let (_temp, repo, _wt1, _wt2) = set_up_repo_with_two_worktrees();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    open_orchestrator_dialog(&mut harness);
+    // Wait for both discovered worktrees to land.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("[○]")
+        })
+        .unwrap();
+
+    // Highlight the first discovered row and check it; move down and
+    // check the second.
+    navigate_to_discovered_row(&mut harness);
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Bulk actions") && s.contains("2 selected") && s.contains("Delete (2)")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "Selecting two rows should show the bulk bar with `Delete (2)`.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
+/// Bulk-deleting two checked discovered worktrees runs `git worktree
+/// remove` on both, so their directories disappear from disk. Drives
+/// the selection → Delete (2) → Confirm Delete flow entirely from the
+/// keyboard.
+#[test]
+fn bulk_delete_removes_selected_worktrees() {
+    let (_temp, repo, wt1, wt2) = set_up_repo_with_two_worktrees();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    open_orchestrator_dialog(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("[○]")
+        })
+        .unwrap();
+
+    // Check both discovered rows.
+    navigate_to_discovered_row(&mut harness);
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Delete (2)"))
+        .unwrap();
+
+    // Entering bulk mode lands focus on `Archive`; Tab to `Delete`
+    // (Stop is disabled for discovered rows, so it's out of the Tab
+    // cycle), Enter to open the confirm panel.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "Delete (2) should open the bulk Confirm Delete panel.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Confirm panel defaults focus to Cancel; Tab to `Confirm Delete`
+    // and activate.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Both worktree directories should be removed from disk.
+    harness
+        .wait_until(|_| !wt1.exists() && !wt2.exists())
+        .unwrap_or_else(|_| {
+            panic!(
+                "bulk delete should `git worktree remove` both worktrees.\n\
+                 wt1.exists()={} wt2.exists()={}\nScreen:\n{}",
+                wt1.exists(),
+                wt2.exists(),
                 harness.screen_to_string()
             )
         });
