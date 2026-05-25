@@ -1187,6 +1187,11 @@ pub(crate) struct ChromeLayout {
     /// list fits in the visible window. Click/drag handlers in
     /// `mouse_input.rs` read this to update `prompt.scroll_offset`.
     pub suggestions_scrollbar_rect: Option<Rect>,
+    /// Hit rects for the floating-overlay prompt's widget toolbar, as
+    /// (widget_key, screen_rect) pairs. Populated when the prompt carries a
+    /// `toolbar_widget`; a click inside one fires the matching
+    /// `live_grep_toggle_<key>` action. Empty otherwise.
+    pub prompt_toolbar_hits: Vec<(String, Rect)>,
     /// Settings modal layout for hit testing
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
     /// Workspace-trust dialog click layout (radios + OK/Quit) for hit testing.

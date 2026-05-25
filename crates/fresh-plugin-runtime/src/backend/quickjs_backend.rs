@@ -4156,6 +4156,33 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,
+    /// clickable `Toggle`/`Button` widgets rendered in the header band, in
+    /// place of the styled-text title). Pass `null`/`undefined` to clear it.
+    #[qjs(rename = "setPromptToolbar")]
+    pub fn set_prompt_toolbar<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        spec_obj: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        let spec = if spec_obj.is_null() || spec_obj.is_undefined() {
+            None
+        } else {
+            let json = js_to_json(&ctx, spec_obj);
+            match serde_json::from_value::<fresh_core::api::WidgetSpec>(json) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::error!("setPromptToolbar: invalid spec: {}", e);
+                    return Ok(false);
+                }
+            }
+        };
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SetPromptToolbar { spec })
+            .is_ok())
+    }
+
     /// Override the currently-highlighted suggestion row in the
     /// open prompt. The editor clamps `index` to the suggestion
     /// list's bounds and the renderer scrolls it into view on

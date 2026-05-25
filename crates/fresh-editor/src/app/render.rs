@@ -2507,7 +2507,7 @@ impl Editor {
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| !p.title.is_empty())
+            .map(|p| !p.title.is_empty() || p.toolbar_widget.is_some())
             .unwrap_or(false);
         let footer_visible = self
             .active_window()
@@ -2623,6 +2623,22 @@ impl Editor {
             return;
         }
 
+        // If the plugin supplied a widget toolbar, render it now (full inner
+        // width) so we know its height before laying out the header band. The
+        // toggles are real `Toggle` widgets — themed and clickable — rather
+        // than styled text. `render_spec` is stateless here (empty prior
+        // state / no focus key): a `Toggle`'s checked-ness lives in the spec,
+        // and click-to-toggle is routed by key (no registry needed).
+        let toolbar_widget_out: Option<crate::widgets::RenderOutput> =
+            prompt.toolbar_widget.as_ref().map(|spec| {
+                crate::widgets::render_spec(
+                    spec,
+                    &std::collections::HashMap::new(),
+                    "",
+                    inner.width as u32,
+                )
+            });
+
         // Layout: a full-width HEADER band (input + toolbar + separator)
         // spans the whole inner width at the top; the BODY below it splits
         // into results | preview; a full-width FOOTER (when the plugin set
@@ -2631,7 +2647,11 @@ impl Editor {
         // left half beside the preview — and places the preview *under* the
         // toolbar, side-by-side with the result list. See
         // docs/internal/global-search-ux.md §12.
-        let toolbar_h: u16 = if toolbar_visible { 1 } else { 0 };
+        let toolbar_h: u16 = match &toolbar_widget_out {
+            Some(out) => out.entries.len() as u16,
+            None if toolbar_visible => 1,
+            None => 0,
+        };
         let footer_h: u16 = if prompt.footer.is_empty() { 0 } else { 1 };
         // Header rows = input(1) + toolbar(toolbar_h) + separator(1).
         let header_h: u16 = 2 + toolbar_h;
@@ -2734,7 +2754,43 @@ impl Editor {
         // separator so the user sees feature-scoped controls right
         // under what they're typing — not on the frame border
         // where shortcut hints get visually lost.
-        if toolbar_visible && inner.height >= 2 {
+        self.active_chrome_mut().prompt_toolbar_hits.clear();
+        if let Some(out) = &toolbar_widget_out {
+            // Widget toolbar: paint each rendered row across the full width
+            // and record screen-space hit rects (key → rect) for click
+            // routing. `HitArea` carries byte offsets within the row's text;
+            // convert to display columns so the rect lines up with the glyphs.
+            use crate::primitives::display_width::str_width;
+            let band_y = inner.y + 1;
+            for (i, entry) in out.entries.iter().enumerate() {
+                let y = band_y + i as u16;
+                if y >= inner.y + inner.height {
+                    break;
+                }
+                paint_text_property_entry(frame, entry, inner.x, y, inner.width, &theme);
+            }
+            for hit in &out.hits {
+                if hit.widget_key.is_empty() {
+                    continue;
+                }
+                let Some(entry) = out.entries.get(hit.buffer_row as usize) else {
+                    continue;
+                };
+                let text = &entry.text;
+                let start_col = str_width(text.get(..hit.byte_start).unwrap_or(""));
+                let end_col = str_width(text.get(..hit.byte_end).unwrap_or(text));
+                let y = band_y + hit.buffer_row as u16;
+                let rect = Rect {
+                    x: inner.x + start_col as u16,
+                    y,
+                    width: (end_col.saturating_sub(start_col)) as u16,
+                    height: 1,
+                };
+                self.active_chrome_mut()
+                    .prompt_toolbar_hits
+                    .push((hit.widget_key.clone(), rect));
+            }
+        } else if toolbar_visible && inner.height >= 2 {
             let toolbar = Rect {
                 x: inner.x,
                 y: inner.y + 1,

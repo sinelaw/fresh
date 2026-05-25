@@ -2730,6 +2730,16 @@ pub enum PluginCommand {
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
 
+    /// Plugin-supplied toolbar for the floating-overlay prompt's header
+    /// band, as a `WidgetSpec` (a `Row`/`Col` of `Toggle`s/`Button`s). Unlike
+    /// `SetPromptTitle` (styled text), these are real widgets: they render
+    /// with the theme's toggle/button styling and are clickable (each carries
+    /// a stable `key`; the host maps a click to the
+    /// `live_grep_toggle_<key>`-style action). `None`/absent leaves the
+    /// styled-text title in place. Has no visible effect on non-overlay
+    /// prompts.
+    SetPromptToolbar { spec: Option<WidgetSpec> },
+
     /// Override the currently-highlighted suggestion row in the
     /// open prompt. Clamped to the suggestion list's bounds; out-
     /// of-range indices snap to the last row. No-op when there is
@@ -4817,6 +4827,12 @@ impl PluginApi {
     /// the bottom of the results pane. Empty vec clears.
     pub fn set_prompt_footer(&self, footer: Vec<StyledText>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptFooter { footer })
+    }
+
+    /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,
+    /// clickable `Toggle`/`Button` widgets). `None` clears it.
+    pub fn set_prompt_toolbar(&self, spec: Option<WidgetSpec>) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptToolbar { spec })
     }
 
     /// Override the currently-highlighted suggestion row in the

@@ -2487,6 +2487,14 @@ interface EditorAPI {
 	*/
 	setPromptFooter(footer: StyledText[]): boolean;
 	/**
+	* Set the floating-overlay prompt's header toolbar as a `WidgetSpec`
+	* (real, clickable `Toggle`/`Button` widgets), rendered in place of the
+	* styled-text title. Give each control a `key` equal to the action it
+	* should fire on click (e.g. `"live_grep_toggle_files"`). Pass `null` to
+	* clear it. No visible effect on non-overlay prompts.
+	*/
+	setPromptToolbar(spec: WidgetSpec | null): boolean;
+	/**
 	* Override the currently-highlighted suggestion row in the
 	* open prompt. The editor clamps `index` to the suggestion
 	* list's bounds and the renderer scrolls it into view on

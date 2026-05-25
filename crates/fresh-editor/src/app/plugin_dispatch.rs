@@ -694,6 +694,11 @@ impl Editor {
                     prompt.footer = footer;
                 }
             }
+            PluginCommand::SetPromptToolbar { spec } => {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
+                    prompt.toolbar_widget = spec;
+                }
+            }
             PluginCommand::SetPromptSelectedIndex { index } => {
                 if let Some(prompt) = &mut self.active_window_mut().prompt {
                     let len = prompt.suggestions.len();

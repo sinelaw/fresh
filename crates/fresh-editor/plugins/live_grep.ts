@@ -32,6 +32,7 @@
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
+import { raw, row, spacer, styledRow, toggle } from "./lib/widgets.ts";
 
 const editor = getEditor();
 
@@ -216,60 +217,52 @@ function unregisterProvider(name: string): boolean {
   return removed;
 }
 
-function updateOverlayTitle(provider: LiveGrepProvider | null): void {
-  // The input row's prefix already says "Live grep: …", so the
-  // frame title doesn't repeat the feature name — it's reserved
-  // for the active provider plus shortcut hints. Shortcuts come
-  // from the keybinding registry (not hardcoded) so labels match
-  // the user's actual binds. Each segment carries its own theme
-  // key (`ui.help_key_fg` for keys, `ui.popup_border_fg` for
-  // separators) so the renderer doesn't have to parse the title.
-  // `resume_live_grep` is intentionally NOT shown here — it only
-  // matters once the prompt is closed; it's surfaced in the
-  // status bar at that point instead.
+// Build the scope toolbar as real `Toggle` widgets (themed + clickable),
+// each keyed to the plugin action it fires on click — the host maps a click
+// straight to that action, the same one the Alt+… binding triggers. The
+// per-control accelerator (`⌥L` etc.) is rendered right after its toggle in
+// the keybinding-hint colour, so the affordance sits at the control rather
+// than in a footer list.
+function buildToolbarSpec(): WidgetSpec {
+  const children: WidgetSpec[] = [spacer(1)];
+  let first = true;
+  for (const s of SCOPES) {
+    if (!first) children.push(spacer(2));
+    first = false;
+    children.push(toggle(scopeEnabled[s.id], editor.t(s.labelKey), { key: s.action }));
+    const accel = editor.getKeybindingLabel(s.action, "prompt");
+    if (accel) {
+      children.push(
+        raw([styledRow([{ text: ` ${accel}`, style: { fg: "ui.help_key_fg" } }])])
+      );
+    }
+  }
+  return row(...children);
+}
+
+// Footer: the active provider, the truncation indicator, and the
+// generic/action hints that have no on-screen control to attach to
+// (provider-cycle, save-matches). Per-control accelerators live on the
+// toggles themselves (see buildToolbarSpec).
+function buildFooterSegments(provider: LiveGrepProvider | null): StyledText[] {
   const sepStyle = { fg: "ui.popup_border_fg" };
   const hintStyle = { fg: "ui.help_key_fg" };
-  const onStyle = { fg: "ui.help_key_fg", bold: true };
-  const offStyle = { fg: "ui.popup_border_fg" };
-  const segments: StyledText[] = [];
-  const pushSegment = (parts: StyledText[]) => {
-    if (segments.length > 0) {
-      segments.push({ text: " · ", style: sepStyle });
-    }
-    segments.push(...parts);
+  const segs: StyledText[] = [];
+  const push = (parts: StyledText[]) => {
+    if (segs.length > 0) segs.push({ text: " · ", style: sepStyle });
+    segs.push(...parts);
   };
-  // Scope checkboxes come first — they're the controls the user reaches
-  // for, and the `[v]`/`[ ]` glyphs match the host's Toggle widget used
-  // elsewhere (search/replace). Toggled via the Alt+… prompt bindings.
-  const scopeParts: StyledText[] = [];
-  for (const s of SCOPES) {
-    const on = scopeEnabled[s.id];
-    if (scopeParts.length > 0) scopeParts.push({ text: "  " });
-    scopeParts.push({ text: on ? "[v] " : "[ ] ", style: on ? onStyle : offStyle });
-    scopeParts.push({ text: editor.t(s.labelKey), style: on ? onStyle : offStyle });
-  }
-  if (scopeParts.length > 0) pushSegment(scopeParts);
-  // Only surface the grep provider when a file-backed scope is on —
-  // it's irrelevant when searching only buffers/diagnostics.
+  // Only surface the grep provider when a file-backed scope is on — it's
+  // irrelevant when searching only buffers/terminals/diagnostics.
   if (provider && (scopeEnabled.files || scopeEnabled.ignored)) {
-    pushSegment([
-      { text: "Provider: " },
-      { text: provider.name, style: { bold: true } },
-    ]);
+    push([{ text: "Provider: " }, { text: provider.name, style: { bold: true } }]);
   }
-  // Match-count indicator goes BEFORE the keybinding hints so a
-  // narrow terminal that truncates the toolbar still shows it —
-  // the trailing hints are easier to lose than the result-set
-  // status.
   if (lastSearchTruncated) {
-    pushSegment([{ text: `${MAX_RESULTS}+ matches` }]);
+    push([{ text: `${MAX_RESULTS}+ matches` }]);
   }
   const pushHint = (key: string | null, label: string) => {
     if (!key) return;
-    pushSegment([
-      { text: key, style: hintStyle },
-      { text: ` ${label}` },
-    ]);
+    push([{ text: key, style: hintStyle }, { text: ` ${label}` }]);
   };
   pushHint(
     editor.getKeybindingLabel("cycle_live_grep_provider", "prompt"),
@@ -279,10 +272,16 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
     editor.getKeybindingLabel("live_grep_export_quickfix", "prompt"),
     "save matches"
   );
-  if (segments.length > 0) {
-    segments.push({ text: " " });
-  }
-  editor.setPromptTitle(segments);
+  if (segs.length > 0) segs.unshift({ text: " " });
+  return segs;
+}
+
+// Refresh the overlay chrome: the scope toolbar (header band) and the footer
+// hints. Name kept as `updateOverlayTitle` for its many call sites; it no
+// longer sets a styled-text title — the widget toolbar replaces it.
+function updateOverlayTitle(provider: LiveGrepProvider | null): void {
+  editor.setPromptToolbar(buildToolbarSpec());
+  editor.setPromptFooter(buildFooterSegments(provider));
 }
 
 async function selectProvider(): Promise<LiveGrepProvider | null> {

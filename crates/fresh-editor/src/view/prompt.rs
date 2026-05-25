@@ -249,6 +249,12 @@ pub struct Prompt {
     undo_stack: Vec<(String, usize)>,
     /// Redo counterpart to `undo_stack`. Cleared on any fresh mutation.
     redo_stack: Vec<(String, usize)>,
+    /// Optional toolbar for the overlay's header band, as real widgets
+    /// (`Toggle`/`Button` in a `Row`/`Col`). When `Some`, it is rendered via
+    /// the widget engine *in place of* the styled-text `title`, so the
+    /// controls are themed and clickable. Plugin-controlled via
+    /// `editor.setPromptToolbar(spec)`. No effect on non-overlay prompts.
+    pub toolbar_widget: Option<fresh_core::api::WidgetSpec>,
 }
 
 /// Maximum number of suggestion rows shown at once. Mirrors the cap used by
@@ -276,6 +282,7 @@ impl Prompt {
             footer: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            toolbar_widget: None,
         }
     }
 
@@ -310,6 +317,7 @@ impl Prompt {
             footer: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            toolbar_widget: None,
         }
     }
 
@@ -363,6 +371,7 @@ impl Prompt {
             footer: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            toolbar_widget: None,
         }
     }
 
