@@ -596,9 +596,13 @@ fn scrollbar_click_scrolls_the_session_list() {
         .position(|l| l.contains('╰'))
         .map(|p| p + top_border_row + 1)
         .expect("Sessions box bottom border");
-    // Scrollbar column = just inside the right border; click row =
-    // last track row (just above the bottom border).
-    let sb_col = (border_col.saturating_sub(1)) as u16;
+    // Scrollbar column = the last content column. The section wraps
+    // its child as `│ <content> │` — a 2-column ` │` suffix — so the
+    // scrollbar sits at `border_col - 2`, not directly under the
+    // border. Click row = last track row (just above the bottom
+    // border). (Verified interactively: border `╮` at col N ⇒ thumb at
+    // col N-2.)
+    let sb_col = (border_col.saturating_sub(2)) as u16;
     let click_row = (bottom_border_row.saturating_sub(1)) as u16;
 
     harness.mouse_click(sb_col, click_row).unwrap();
