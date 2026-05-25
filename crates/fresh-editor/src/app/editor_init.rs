@@ -1899,7 +1899,14 @@ fn populate_builtin_keybinding_labels(
     snapshot
         .keybinding_labels
         .retain(|k, _| !known_suffixes.iter().any(|s| k.ends_with(s)));
-    for action_name in Action::all_action_names() {
+    // Built-in actions plus any plugin actions that are actually bound
+    // (e.g. the Universal Search scope toggles `live_grep_toggle_*`), so
+    // `getKeybindingLabel` can resolve a plugin control's accelerator.
+    let plugin_action_names = resolver.bound_plugin_action_names();
+    let action_names = Action::all_action_names()
+        .into_iter()
+        .chain(plugin_action_names);
+    for action_name in action_names {
         for ctx in &contexts {
             if let Some(label) = resolver.find_keybinding_for_action(&action_name, ctx.clone()) {
                 let key = format!("{}\0{}", action_name, ctx.to_when_clause());

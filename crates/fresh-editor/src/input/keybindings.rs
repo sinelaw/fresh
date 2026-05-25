@@ -2045,6 +2045,21 @@ impl KeybindingResolver {
 
     /// Find the primary keybinding for a given action (for display in menus)
     /// Returns a formatted string like "Ctrl+S" or "F12"
+    /// Names of every `PluginAction` bound in any context (custom or
+    /// default). Used to populate `getKeybindingLabel` for plugin actions,
+    /// which aren't in `Action::all_action_names()`.
+    pub fn bound_plugin_action_names(&self) -> std::collections::HashSet<String> {
+        let mut names = std::collections::HashSet::new();
+        for map in self.bindings.values().chain(self.default_bindings.values()) {
+            for action in map.values() {
+                if let Action::PluginAction(name) = action {
+                    names.insert(name.clone());
+                }
+            }
+        }
+        names
+    }
+
     pub fn find_keybinding_for_action(
         &self,
         action_name: &str,
@@ -2066,7 +2081,14 @@ impl KeybindingResolver {
             let mut matches: Vec<(KeyCode, KeyModifiers)> = map
                 .iter()
                 .filter(|(_, action)| {
-                    std::mem::discriminant(*action) == std::mem::discriminant(&target_action)
+                    // PluginAction carries the action name in its payload, so
+                    // every plugin action shares one enum discriminant —
+                    // match on the inner string instead, or all plugin
+                    // actions would collide onto the first binding.
+                    match (*action, &target_action) {
+                        (Action::PluginAction(a), Action::PluginAction(b)) => a == b,
+                        (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
+                    }
                 })
                 .map(|((key_code, modifiers), _)| (*key_code, *modifiers))
                 .collect();
