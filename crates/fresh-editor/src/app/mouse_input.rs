@@ -287,17 +287,23 @@ impl Editor {
                 needs_render = true;
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                if mouse_event
+                // Mouse-modal overlay: swallow right-click / Ctrl+right-click
+                // so neither the tab context menu nor the theme-info popup
+                // fires, and the buffer below is untouched.
+                if self.overlay_prompt_active() {
+                    needs_render = true;
+                } else if mouse_event
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL)
                 {
                     // Ctrl+Right-Click → theme info popup
                     self.show_theme_info_popup(col, row)?;
+                    needs_render = true;
                 } else {
                     // Normal right-click → tab context menu
                     self.handle_right_click(col, row)?;
+                    needs_render = true;
                 }
-                needs_render = true;
             }
             _ => {
                 // Ignore other mouse events for now
@@ -1091,6 +1097,12 @@ impl Editor {
             return r;
         }
 
+        // Mouse-modal overlay: swallow any double-click that wasn't on a
+        // result row so it can't reach (and word-select in) the buffer below.
+        if self.overlay_prompt_active() {
+            return Ok(());
+        }
+
         // Handle popups: dismiss if clicking outside, block if clicking inside
         if self.is_mouse_over_any_popup(col, row) {
             // Double-click inside popup - block from reaching editor
@@ -1271,6 +1283,12 @@ impl Editor {
     pub(super) fn handle_mouse_triple_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
         tracing::debug!("handle_mouse_triple_click at col={}, row={}", col, row);
 
+        // Mouse-modal overlay: never let a triple-click line-select in the
+        // buffer below the overlay.
+        if self.overlay_prompt_active() {
+            return Ok(());
+        }
+
         // Handle popups: dismiss if clicking outside, block if clicking inside
         if self.is_mouse_over_any_popup(col, row) {
             return Ok(());
@@ -1400,6 +1418,19 @@ impl Editor {
     }
 
     /// Handle mouse click (down event)
+    /// True while a floating-overlay prompt (e.g. Live Grep / Universal
+    /// Search) owns the screen. Such overlays are **mouse-modal**: their own
+    /// targets (result list, scrollbar, and — once wired — toolbar controls)
+    /// are handled, but every other click is swallowed so it never lands in
+    /// the buffer below and moves its cursor. Bottom-anchored (non-overlay)
+    /// prompts are unaffected.
+    pub(super) fn overlay_prompt_active(&self) -> bool {
+        self.active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.overlay)
+    }
+
     pub(super) fn handle_mouse_click(
         &mut self,
         col: u16,
@@ -1468,6 +1499,15 @@ impl Editor {
         }
         if let Some(r) = self.handle_click_tab_bar(col, row) {
             return r;
+        }
+
+        // A floating-overlay prompt is mouse-modal: its own targets (result
+        // list, scrollbar) were handled above; anything else — the input row,
+        // toolbar, separator, preview pane, empty space, or a click outside
+        // the frame — is swallowed here so it never reaches the buffer and
+        // moves its cursor.
+        if self.overlay_prompt_active() {
+            return Ok(());
         }
 
         // Check if click is in editor content area
@@ -2365,6 +2405,16 @@ impl Editor {
             let _ = col;
             return Ok(());
         }
+        // Mouse-modal overlay: the only legitimate drag is on the overlay's
+        // own result-list scrollbar (its drag flag was set on mouse-down).
+        // Anything else — text-selection drag in the buffer, a buffer
+        // scrollbar behind the overlay — is swallowed so the buffer stays put.
+        if self.overlay_prompt_active()
+            && !self.active_window().mouse_state.dragging_prompt_scrollbar
+        {
+            return Ok(());
+        }
+
         // If dragging scrollbar, update scroll position
         if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
             // Snapshot split_areas so we don't borrow `self.active_layout()` and

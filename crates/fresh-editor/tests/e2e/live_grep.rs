@@ -1129,3 +1129,109 @@ fn test_resume_live_grep_enter_opens_selected_result() {
          raw query 'menu_bg' as a path, leaving an empty buffer. Screen:\n{screen}"
     );
 }
+
+/// The floating-overlay search prompt must be **mouse-modal**: clicks on its
+/// chrome (input row, toolbar, separator, empty body) — and right-clicks and
+/// double-clicks — must never reach the buffer behind it and move its cursor.
+/// Regression guard for the §12 full-width header band (which sits over the
+/// buffer) and the toolbar controls.
+#[test]
+fn test_live_grep_overlay_is_mouse_modal() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    // A tall, multi-line file so a leaked click would visibly move the cursor.
+    let file = project_root.join("buf.txt");
+    let body = (0..40)
+        .map(|i| format!("line {i} with some words here"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&file, body).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.render().unwrap();
+
+    // Buffer cursor starts at offset 0.
+    let before = harness.cursor_position();
+    assert_eq!(before, 0);
+
+    // Open the Live Grep overlay via the command palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("Live grep:"),
+        "Live Grep overlay should be open; screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Overlay is 80%×80% centred in 100×30 → x∈[10,90), y∈[3,27). Click on the
+    // input row (y=3), the toolbar row (y=4), the separator (y=5) and the body
+    // (y=15) — all over the buffer behind the overlay.
+    let click = |h: &mut EditorTestHarness, col: u16, row: u16| {
+        h.mouse_click(col, row).unwrap();
+    };
+    for (col, row) in [(50u16, 3u16), (50, 4), (50, 5), (40, 15)] {
+        click(&mut harness, col, row);
+        assert_eq!(
+            harness.cursor_position(),
+            before,
+            "left-click at ({col},{row}) leaked to the buffer and moved its cursor"
+        );
+    }
+
+    // Right-click (would otherwise open a context menu / theme popup).
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 50,
+            row: 4,
+            modifiers: KeyModifiers::empty(),
+        })
+        .unwrap();
+    assert_eq!(
+        harness.cursor_position(),
+        before,
+        "right-click leaked to the buffer"
+    );
+
+    // Double-click (two rapid left presses at the same spot).
+    for _ in 0..2 {
+        harness
+            .send_mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 40,
+                row: 15,
+                modifiers: KeyModifiers::empty(),
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        harness.cursor_position(),
+        before,
+        "double-click leaked to the buffer"
+    );
+
+    // The overlay stays up through all of it (no stray dismissal).
+    assert!(
+        harness.screen_to_string().contains("Live grep:"),
+        "overlay should still be open after the clicks"
+    );
+}

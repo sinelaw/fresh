@@ -740,6 +740,18 @@ Single focus ring owned by the header band, driven by `render_spec`'s
   (direct jumps/toggles), so power users skip the ring entirely.
 - Mouse: `render_spec` emits `hits`, so clicking a checkbox toggles it.
 
+### 12.5c Mouse-modal overlay (LANDED)
+
+The floating overlay is **mouse-modal**: while it's open, only its own
+targets act on a click (result list, scrollbar, and — once wired — the
+toolbar controls); every other mouse event is swallowed so it never reaches
+the buffer behind the overlay and moves its cursor. Implemented in
+`mouse_input.rs` for left-click, double-click, triple-click, right-click,
+Ctrl+right-click, and drag (only the overlay's own scrollbar drag is
+honoured). Covered by `test_live_grep_overlay_is_mouse_modal`. This was a
+prerequisite for the full-width header band, which sits directly over the
+buffer — without it, a click on the toolbar row landed in the buffer.
+
 ### 12.6 Overflow / wrap (goal #3) — two ways
 
 1. **Plugin-side chunking (no core change).** The plugin learns the frame
