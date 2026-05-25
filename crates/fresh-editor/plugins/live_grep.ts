@@ -35,14 +35,24 @@ import { Finder, parseGrepOutput } from "./lib/finder.ts";
 
 const editor = getEditor();
 
+/** The data sources Universal Search can look in. `files` is the
+ *  classic project-file grep; the others are opt-in scopes layered on
+ *  top. Each enabled scope contributes tagged matches to one merged
+ *  result list. See `docs/internal/global-search-ux.md`. */
+type ScopeId = "files" | "ignored" | "buffers" | "diagnostics";
+
 // One Live Grep match. Mirrors the JSON shape ripgrep emits with
 // `--line-number --column --no-heading`; built-in non-rg providers
 // (git grep, grep) normalise to this shape via parseGrepOutput.
+// `source` tags which scope produced the match so the result row can
+// show a badge and (later) pick a scope-appropriate open action.
+// Undefined means the classic file source (`files`).
 interface GrepMatch {
   file: string;
   line: number;
   column: number;
   content: string;
+  source?: ScopeId;
 }
 
 /** Options passed to a provider's `search` callback. */
@@ -53,6 +63,11 @@ export interface SearchOpts {
    *  Returning more is allowed; the Finder caps at its own
    *  `maxResults`. */
   maxResults: number;
+  /** When true, the "Ignored & hidden" scope is on: providers should
+   *  also search `.gitignore`d / hidden files. Built-in `rg` and
+   *  `git-grep` honour this; other built-ins (ag/ack/grep) currently
+   *  ignore it and always search their default set. */
+  includeIgnored?: boolean;
 }
 
 /** A registered Live Grep backend. */
@@ -103,6 +118,51 @@ declare global {
 // hits in one snapshot, but bounded so a runaway query doesn't
 // stream the entire codebase into the overlay.
 const MAX_RESULTS = 1000;
+
+// ── Scopes (Universal Search) ─────────────────────────────────────
+//
+// Live Grep is growing into a one-stop search: the user toggles which
+// data sources to look in from the overlay toolbar. `files` is the
+// classic project grep; `ignored`, `buffers`, `diagnostics` layer on
+// top. Toggles are wired through prompt-context keybindings (Alt+…)
+// that resolve to the plugin handlers registered below — no core
+// Action is required (the host dispatches unknown action names as
+// plugin actions). See `docs/internal/global-search-ux.md`.
+
+interface ScopeDef {
+  id: ScopeId;
+  /** i18n key for the toolbar label. */
+  labelKey: string;
+  /** Plugin action / handler name a keybinding resolves to. */
+  action: string;
+  /** Short badge shown on a result row from this scope (omitted for
+   *  `files`, whose rows are the unprefixed default). */
+  badge?: string;
+}
+
+const SCOPES: ScopeDef[] = [
+  { id: "files", labelKey: "scope.files", action: "live_grep_toggle_files" },
+  { id: "ignored", labelKey: "scope.ignored", action: "live_grep_toggle_ignored", badge: "ign" },
+  { id: "buffers", labelKey: "scope.buffers", action: "live_grep_toggle_buffers", badge: "buf" },
+  { id: "diagnostics", labelKey: "scope.diagnostics", action: "live_grep_toggle_diagnostics", badge: "diag" },
+];
+
+// Default scope set: same as the classic Live Grep, *minus* ignored
+// files (off — they were noisy) and *plus* unsaved open buffers (on,
+// so edits not yet written to disk are still found). `files` on,
+// `ignored` off, `buffers` on, `diagnostics` off.
+const scopeEnabled: Record<ScopeId, boolean> = {
+  files: true,
+  ignored: false,
+  buffers: true,
+  diagnostics: false,
+};
+
+// True only while our floating overlay is open. The scope-toggle
+// keybindings live in the shared `prompt` context, so they can fire
+// inside *any* prompt; the handlers no-op unless our overlay owns the
+// screen.
+let overlayActive = false;
 
 // ── Registry ──────────────────────────────────────────────────────
 
@@ -167,6 +227,8 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
   // status bar at that point instead.
   const sepStyle = { fg: "ui.popup_border_fg" };
   const hintStyle = { fg: "ui.help_key_fg" };
+  const onStyle = { fg: "ui.help_key_fg", bold: true };
+  const offStyle = { fg: "ui.popup_border_fg" };
   const segments: StyledText[] = [];
   const pushSegment = (parts: StyledText[]) => {
     if (segments.length > 0) {
@@ -174,7 +236,20 @@ function updateOverlayTitle(provider: LiveGrepProvider | null): void {
     }
     segments.push(...parts);
   };
-  if (provider) {
+  // Scope checkboxes come first — they're the controls the user reaches
+  // for, and the `[v]`/`[ ]` glyphs match the host's Toggle widget used
+  // elsewhere (search/replace). Toggled via the Alt+… prompt bindings.
+  const scopeParts: StyledText[] = [];
+  for (const s of SCOPES) {
+    const on = scopeEnabled[s.id];
+    if (scopeParts.length > 0) scopeParts.push({ text: "  " });
+    scopeParts.push({ text: on ? "[v] " : "[ ] ", style: on ? onStyle : offStyle });
+    scopeParts.push({ text: editor.t(s.labelKey), style: on ? onStyle : offStyle });
+  }
+  if (scopeParts.length > 0) pushSegment(scopeParts);
+  // Only surface the grep provider when a file-backed scope is on —
+  // it's irrelevant when searching only buffers/diagnostics.
+  if (provider && (scopeEnabled.files || scopeEnabled.ignored)) {
     pushSegment([
       { text: "Provider: " },
       { text: provider.name, style: { bold: true } },
@@ -244,25 +319,29 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults }) => {
-    const r = await editor.spawnProcess(
-      "rg",
-      [
-        "--line-number",
-        "--column",
-        "--no-heading",
-        "--color=never",
-        "--smart-case",
-        `--max-count=${maxResults}`,
-        "-g", "!.git",
-        "-g", "!node_modules",
-        "-g", "!target",
-        "-g", "!*.lock",
-        "--",
-        query,
-      ],
-      cwd
-    );
+  search: async (query, { cwd, maxResults, includeIgnored }) => {
+    const args = [
+      "--line-number",
+      "--column",
+      "--no-heading",
+      "--color=never",
+      "--smart-case",
+      `--max-count=${maxResults}`,
+      // Always skip the VCS metadata dir — even with the Ignored scope
+      // on, `.git` internals are never what the user is looking for.
+      "-g", "!.git",
+    ];
+    if (includeIgnored) {
+      // Search ignored *and* hidden files (dotfiles). `.git` stays
+      // excluded via the glob above.
+      args.push("--no-ignore", "--hidden");
+    } else {
+      // Default: respect ignore files, plus prune the usual heavy
+      // build/vendor dirs and lockfiles that bury real hits.
+      args.push("-g", "!node_modules", "-g", "!target", "-g", "!*.lock");
+    }
+    args.push("--", query);
+    const r = await editor.spawnProcess("rg", args, cwd);
     if (r.exit_code === 0) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
     }
@@ -329,12 +408,16 @@ registerProvider({
       return false;
     }
   },
-  search: async (query, { cwd, maxResults }) => {
-    const r = await editor.spawnProcess(
-      "git",
-      ["grep", "-n", "--column", "-I", "-e", query],
-      cwd
-    );
+  search: async (query, { cwd, maxResults, includeIgnored }) => {
+    const args = ["grep", "-n", "--column", "-I"];
+    if (includeIgnored) {
+      // Widen beyond tracked files: include untracked, and stop
+      // honouring the standard ignore files so `.gitignore`d content
+      // is searched too.
+      args.push("--untracked", "--no-exclude-standard");
+    }
+    args.push("-e", query);
+    const r = await editor.spawnProcess("git", args, cwd);
     // git grep exits 1 when no matches — treat as empty, not error.
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];
@@ -423,10 +506,16 @@ registerProvider({
 
 // ── Wiring ──────────────────────────────────────────────────────
 
+function badgeFor(source: ScopeId | undefined): string {
+  if (!source || source === "files") return "";
+  const def = SCOPES.find((s) => s.id === source);
+  return def?.badge ? `[${def.badge}] ` : "";
+}
+
 const finder = new Finder<GrepMatch>(editor, {
   id: "live-grep",
   format: (match) => ({
-    label: `${match.file}:${match.line}`,
+    label: `${badgeFor(match.source)}${match.file}:${match.line}`,
     description:
       match.content.length > 60
         ? match.content.substring(0, 57).trim() + "..."
@@ -437,6 +526,9 @@ const finder = new Finder<GrepMatch>(editor, {
       column: match.column,
     },
   }),
+  onClose: () => {
+    overlayActive = false;
+  },
   // Override the Finder's default "open file + status: Opened X"
   // so we can surface the resume shortcut here. The shortcut is
   // hidden inside the overlay (it can't apply while the overlay
@@ -531,41 +623,154 @@ editor.registerCommand(
   null
 );
 
-async function search(query: string): Promise<GrepMatch[]> {
-  const provider = await selectProvider();
-  if (!provider) {
-    // Throw rather than return [] — the Finder catches and shows
-    // the message inside the overlay. Returning [] would be
-    // indistinguishable from a real "no matches" result.
-    throw new Error(
-      "no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
-    );
+// Don't pull whole multi-MB buffers across the FFI boundary to grep
+// them line-by-line in JS — cap at a sane size and skip the rest.
+const MAX_BUFFER_SCAN_BYTES = 2_000_000;
+
+/** Search the text of currently-open, modified file buffers.
+ *  Scoped to *modified* buffers on purpose: unmodified buffers are
+ *  already covered by the on-disk file scan, so this surfaces exactly
+ *  the unsaved edits a disk grep would miss, without double-reporting. */
+async function searchOpenBuffers(query: string, limit: number): Promise<GrepMatch[]> {
+  if (limit <= 0) return [];
+  const out: GrepMatch[] = [];
+  const needle = query.toLowerCase();
+  for (const b of editor.listBuffers()) {
+    if (out.length >= limit) break;
+    if (b.is_virtual || !b.path || !b.modified) continue;
+    if (b.length > MAX_BUFFER_SCAN_BYTES) continue;
+    let text: string;
+    try {
+      text = await editor.getBufferText(b.id, 0, b.length);
+    } catch {
+      continue;
+    }
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length && out.length < limit; i++) {
+      const col = lines[i].toLowerCase().indexOf(needle);
+      if (col >= 0) {
+        out.push({ file: b.path, line: i + 1, column: col + 1, content: lines[i], source: "buffers" });
+      }
+    }
   }
-  const wasTruncated = lastSearchTruncated;
+  return out;
+}
+
+function severityLabel(sev: number | null | undefined): string {
+  switch (sev) {
+    case 1: return "error";
+    case 2: return "warning";
+    case 3: return "info";
+    case 4: return "hint";
+    default: return "diagnostic";
+  }
+}
+
+/** Search active LSP diagnostics by message text. Matches jump to the
+ *  diagnostic's range like any other location. */
+function searchDiagnostics(query: string, limit: number): GrepMatch[] {
+  if (limit <= 0) return [];
+  const out: GrepMatch[] = [];
+  const needle = query.toLowerCase();
+  for (const d of editor.getAllDiagnostics()) {
+    if (out.length >= limit) break;
+    if (!d.message.toLowerCase().includes(needle)) continue;
+    const file = d.uri.startsWith("file://") ? decodeURIComponent(d.uri.slice("file://".length)) : d.uri;
+    out.push({
+      file,
+      line: (d.range?.start?.line ?? 0) + 1,
+      column: (d.range?.start?.character ?? 0) + 1,
+      content: `${severityLabel(d.severity)}: ${d.message}`,
+      source: "diagnostics",
+    });
+  }
+  return out;
+}
+
+// Run the project-file grep for the enabled file-backed scopes
+// (`files` / `ignored`). Returns null when no provider is available so
+// the caller can decide whether that's fatal (no other scope on) or
+// merely a skipped source.
+async function searchFiles(query: string): Promise<GrepMatch[] | null> {
+  const provider = await selectProvider();
+  if (!provider) return null;
   try {
     const results = await provider.search(query, {
       cwd: editor.getCwd(),
       maxResults: MAX_RESULTS,
+      includeIgnored: scopeEnabled.ignored,
     });
-    lastSearchTruncated = results.length >= MAX_RESULTS;
-    // Refresh the toolbar whenever the truncation indicator
-    // changes so it appears (or disappears) alongside the new
-    // results in the same render.
-    if (lastSearchTruncated !== wasTruncated) {
-      updateOverlayTitle(provider);
-    }
-    return results;
+    return results.map((m) => ({ ...m, source: "files" as const }));
   } catch (e) {
-    // Log to tracing for diagnostics, then re-throw so the Finder
-    // surfaces the failure in the overlay itself.
     editor.error(`[live_grep:${provider.name}] ${e}`);
-    throw new Error(
-      `${provider.name}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    throw new Error(`${provider.name}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
+// Fan the query out across every enabled scope and merge into one
+// capped, tagged result list. Order is files → buffers → diagnostics
+// so the most common hits lead.
+async function search(query: string): Promise<GrepMatch[]> {
+  const wasTruncated = lastSearchTruncated;
+  const results: GrepMatch[] = [];
+  const remaining = () => MAX_RESULTS - results.length;
+
+  if (scopeEnabled.files || scopeEnabled.ignored) {
+    const fileMatches = await searchFiles(query);
+    if (fileMatches === null) {
+      // No grep backend. Only fatal if there's nothing else to search.
+      if (!scopeEnabled.buffers && !scopeEnabled.diagnostics) {
+        throw new Error(
+          "no search backend available — install ripgrep, or register a provider via init.ts (`editor.getPluginApi(\"live-grep\")?.registerProvider(...)`)."
+        );
+      }
+    } else {
+      for (const m of fileMatches) {
+        if (results.length >= MAX_RESULTS) break;
+        results.push(m);
+      }
+    }
+  }
+
+  if (scopeEnabled.buffers && remaining() > 0) {
+    results.push(...await searchOpenBuffers(query, remaining()));
+  }
+
+  if (scopeEnabled.diagnostics && remaining() > 0) {
+    results.push(...searchDiagnostics(query, remaining()));
+  }
+
+  lastSearchTruncated = results.length >= MAX_RESULTS;
+  // Refresh the toolbar whenever the truncation indicator changes so
+  // it appears (or disappears) alongside the new results.
+  if (lastSearchTruncated !== wasTruncated) {
+    updateOverlayTitle(cachedSelected ?? null);
+  }
+  return results;
+}
+
+// Toggle a single scope on/off, re-run the search, and reflect the new
+// state in the toolbar. No-ops unless our overlay is the active prompt
+// (these bindings live in the shared `prompt` context).
+function toggleScope(id: ScopeId): void {
+  if (!overlayActive) return;
+  scopeEnabled[id] = !scopeEnabled[id];
+  updateOverlayTitle(cachedSelected ?? null);
+  void finder.refresh();
+  const label = editor.t(SCOPES.find((s) => s.id === id)!.labelKey);
+  editor.setStatus(`Search: ${label} ${scopeEnabled[id] ? "on" : "off"}`);
+}
+
+for (const s of SCOPES) {
+  registerHandler(s.action, () => toggleScope(s.id));
+  // registerCommand inserts the handler into the registered-actions
+  // table so the host's execute_action path (and the command palette)
+  // can find it — registerHandler alone only sets a globalThis fn.
+  editor.registerCommand(`%cmd.${s.action}`, `%cmd.${s.action}_desc`, s.action, null);
+}
+
 function start_live_grep(): void {
+  overlayActive = true;
   finder.prompt({
     title: editor.t("prompt.live_grep"),
     source: {

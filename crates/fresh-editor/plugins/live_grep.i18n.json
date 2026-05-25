@@ -12,7 +12,19 @@
     "status.cancelled": "Live grep cancelled",
     "prompt.live_grep": "Live grep: ",
     "cmd.live_grep_cycle_provider": "Live Grep: Cycle Provider",
-    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)"
+    "cmd.live_grep_cycle_provider_desc": "Switch to the next available Live Grep search backend (rg, ag, git-grep, ack, fff, grep)",
+    "scope.files": "Files",
+    "scope.ignored": "Ignored",
+    "scope.buffers": "Buffers",
+    "scope.diagnostics": "Diagnostics",
+    "cmd.live_grep_toggle_files": "Search: Toggle Project Files",
+    "cmd.live_grep_toggle_files_desc": "Include/exclude project files in the search",
+    "cmd.live_grep_toggle_ignored": "Search: Toggle Ignored & Hidden Files",
+    "cmd.live_grep_toggle_ignored_desc": "Include/exclude .gitignore'd and hidden files in the search",
+    "cmd.live_grep_toggle_buffers": "Search: Toggle Open Buffers",
+    "cmd.live_grep_toggle_buffers_desc": "Include/exclude unsaved open buffers in the search",
+    "cmd.live_grep_toggle_diagnostics": "Search: Toggle Diagnostics",
+    "cmd.live_grep_toggle_diagnostics_desc": "Include/exclude LSP diagnostic messages in the search"
   },
   "cs": {
     "cmd.live_grep": "Live Grep (Hledat v souborech)",

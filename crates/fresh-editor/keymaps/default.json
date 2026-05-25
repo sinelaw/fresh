@@ -1816,6 +1816,38 @@
       "action": "cycle_live_grep_provider",
       "args": {},
       "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Project files' scope. Resolves to the live_grep plugin handler (unknown action names dispatch as plugin actions). Mnemonic: 'l' for fiLes ('f' is taken by prompt_move_word_right).",
+      "key": "l",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_files",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'h' for Hidden ('i' is taken by toggle_search_confirm_each).",
+      "key": "h",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_ignored",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Open buffers' (unsaved edits) scope. Mnemonic: 'u' for Unsaved ('b' is taken by prompt_move_word_left).",
+      "key": "u",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_buffers",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Diagnostics' scope (off by default). Mnemonic: 'd' for Diagnostics.",
+      "key": "d",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_diagnostics",
+      "args": {},
+      "when": "prompt"
     }
   ]
 }
