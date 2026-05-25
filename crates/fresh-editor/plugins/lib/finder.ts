@@ -447,6 +447,22 @@ export class Finder<T> {
   // Mode flags
   private isPromptMode = false;
   private isPanelMode = false;
+  /** True when the active prompt is a centred floating overlay. Search
+   *  status then goes to the overlay's own footer (visible inside the frame)
+   *  rather than the editor status bar (off at the bottom, easy to miss). */
+  private isOverlay = false;
+
+  /** Present a search-status message where the user is actually looking: the
+   *  overlay footer for a floating overlay, else the editor status bar. */
+  private setSearchStatus(message: string): void {
+    if (this.isOverlay) {
+      this.editor.setPromptFooter(
+        message.length > 0 ? [{ text: ` ${message}` }] : []
+      );
+    } else {
+      this.editor.setStatus(message);
+    }
+  }
 
   // Handler names (for cleanup)
   private handlerPrefix: string;
@@ -513,6 +529,7 @@ export class Finder<T> {
 
     // Start the prompt
     const overlay = options.floatingOverlay === true;
+    this.isOverlay = overlay;
     if (options.initialQuery) {
       this.editor.startPromptWithInitial(
         options.title,
@@ -525,7 +542,7 @@ export class Finder<T> {
       const result = this.editor.startPrompt(options.title, this.config.id, overlay);
       this.editor.debug(`[Finder] startPrompt returned: ${result}`);
     }
-    this.editor.setStatus("Type to search...");
+    this.setSearchStatus("Type to search…");
   }
 
   /**
@@ -549,7 +566,7 @@ export class Finder<T> {
     // stale. Clear them and show progress immediately rather than leaving the
     // previous output up while the (possibly slow) new search runs.
     this.updatePromptResults([]);
-    this.editor.setStatus("Searching…");
+    this.setSearchStatus("Searching…");
     await this.runSearch(query, this.currentSource);
   }
 
@@ -718,9 +735,9 @@ export class Finder<T> {
       this.updatePromptResults(filtered);
 
       if (filtered.length > 0) {
-        this.editor.setStatus(`Found ${filtered.length} matches`);
+        this.setSearchStatus(`Found ${filtered.length} matches`);
       } else {
-        this.editor.setStatus("No matches");
+        this.setSearchStatus("No matches");
       }
     } else {
       // Search mode: run external search
@@ -798,21 +815,21 @@ export class Finder<T> {
           this.updatePromptResults(parsed);
 
           if (parsed.length > 0) {
-            this.editor.setStatus(`Found ${parsed.length} matches`);
+            this.setSearchStatus(`Found ${parsed.length} matches`);
             // Show preview of first result
             if (this.shouldShowPreview()) {
               await this.updatePreview(this.promptState.entries[0]);
             }
           } else {
-            this.editor.setStatus("No matches");
+            this.setSearchStatus("No matches");
           }
         } else if (result.exit_code === 1) {
           // No matches
           this.updatePromptResults([]);
-          this.editor.setStatus("No matches");
+          this.setSearchStatus("No matches");
         } else if (result.exit_code !== -1) {
           // Error (ignore -1 which means killed)
-          this.editor.setStatus(`Search error: ${result.stderr}`);
+          this.setSearchStatus(`Search error: ${result.stderr}`);
         }
       } else {
         // Promise<T[]>
@@ -826,12 +843,12 @@ export class Finder<T> {
         this.updatePromptResults(results);
 
         if (results.length > 0) {
-          this.editor.setStatus(`Found ${results.length} matches`);
+          this.setSearchStatus(`Found ${results.length} matches`);
           if (this.shouldShowPreview()) {
             await this.updatePreview(this.promptState.entries[0]);
           }
         } else {
-          this.editor.setStatus("No matches");
+          this.setSearchStatus("No matches");
         }
       }
     } catch (e) {

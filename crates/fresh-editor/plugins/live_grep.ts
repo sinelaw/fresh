@@ -391,10 +391,11 @@ function buildMetaRow(provider: LiveGrepProvider | null): WidgetSpec | null {
 // hints. Name kept as `updateOverlayTitle` for its many call sites; it no
 // longer sets a styled-text title — the widget toolbar replaces it.
 function updateOverlayTitle(provider: LiveGrepProvider | null): void {
-  // The provider/meta line now lives in the header band (third toolbar row),
-  // not the footer — so clear the footer.
+  // The provider/meta line lives in the header band (third toolbar row). The
+  // footer is left for the Finder's search-status line ("Searching…",
+  // "Found N matches", …), which is shown inside the overlay rather than the
+  // easy-to-miss editor status bar — so don't touch it here.
   editor.setPromptToolbar(buildToolbarSpec(provider));
-  editor.setPromptFooter([]);
 }
 
 async function selectProvider(): Promise<LiveGrepProvider | null> {
