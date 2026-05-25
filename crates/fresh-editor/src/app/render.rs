@@ -2509,7 +2509,16 @@ impl Editor {
             .as_ref()
             .map(|p| !p.title.is_empty())
             .unwrap_or(false);
-        let chrome_rows: usize = 4 + if toolbar_visible { 1 } else { 0 };
+        let footer_visible = self
+            .active_window()
+            .prompt
+            .as_ref()
+            .map(|p| !p.footer.is_empty())
+            .unwrap_or(false);
+        // Chrome around the result list: frame border (2) + input (1) +
+        // separator (1) + optional toolbar (1) + optional full-width footer (1).
+        let chrome_rows: usize =
+            4 + usize::from(toolbar_visible) + usize::from(footer_visible);
         let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(chrome_rows);
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             prompt.ensure_selected_visible_within(suggestions_visible_rows);
@@ -2614,36 +2623,55 @@ impl Editor {
             return;
         }
 
-        // Decide whether to split the inner area into results | preview.
-        // Below ~120 cols, stack results-only (preview hidden — see
-        // design doc §5 "preview pane size when terminal is narrow").
+        // Layout: a full-width HEADER band (input + toolbar + separator)
+        // spans the whole inner width at the top; the BODY below it splits
+        // into results | preview; a full-width FOOTER (when the plugin set
+        // one) sits at the very bottom. This gives the toolbar the entire
+        // pane width — the scope checkboxes don't fit when squeezed into the
+        // left half beside the preview — and places the preview *under* the
+        // toolbar, side-by-side with the result list. See
+        // docs/internal/global-search-ux.md §12.
+        let toolbar_h: u16 = if toolbar_visible { 1 } else { 0 };
+        let footer_h: u16 = if prompt.footer.is_empty() { 0 } else { 1 };
+        // Header rows = input(1) + toolbar(toolbar_h) + separator(1).
+        let header_h: u16 = 2 + toolbar_h;
+        let body = Rect {
+            x: inner.x,
+            y: inner.y.saturating_add(header_h),
+            width: inner.width,
+            height: inner.height.saturating_sub(header_h + footer_h),
+        };
+
+        // Split the body into results | preview. Below ~120 cols, stack
+        // results-only (preview hidden — see design doc §5 "preview pane size
+        // when terminal is narrow").
         let preview_min_cols: u16 = 120;
-        let show_preview = overlay_rect.width >= preview_min_cols;
+        let show_preview = overlay_rect.width >= preview_min_cols && body.height > 0;
         let (results_area, preview_area) = if show_preview {
-            let results_w = inner.width / 2;
+            let results_w = body.width / 2;
             (
                 Rect {
-                    x: inner.x,
-                    y: inner.y,
+                    x: body.x,
+                    y: body.y,
                     width: results_w,
-                    height: inner.height,
+                    height: body.height,
                 },
                 Some(Rect {
-                    x: inner.x + results_w,
-                    y: inner.y,
-                    width: inner.width - results_w,
-                    height: inner.height,
+                    x: body.x + results_w,
+                    y: body.y,
+                    width: body.width - results_w,
+                    height: body.height,
                 }),
             )
         } else {
-            (inner, None)
+            (body, None)
         };
 
-        // Top row of `results_area` is the prompt input.
+        // The prompt input is the full-width top row of the header band.
         let input_row = Rect {
-            x: results_area.x,
-            y: results_area.y,
-            width: results_area.width,
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
             height: 1,
         };
         // Two distinct styles on this row so the user can tell
@@ -2668,7 +2696,7 @@ impl Editor {
         // Reserve one trailing column so the count doesn't sit
         // flush against the right border.
         let right_gap: usize = if count_w > 0 { 1 } else { 0 };
-        let visible_input_width = (results_area.width as usize).saturating_sub(count_w + right_gap);
+        let visible_input_width = (input_row.width as usize).saturating_sub(count_w + right_gap);
         let truncated_input: String = prompt
             .input
             .chars()
@@ -2678,7 +2706,7 @@ impl Editor {
         // is right-aligned (with `right_gap` empty cols at the
         // very edge), independent of how much the user has typed.
         let used = str_width(&prompt.message) + str_width(&truncated_input) + count_w;
-        let pad = (results_area.width as usize).saturating_sub(used + right_gap);
+        let pad = (input_row.width as usize).saturating_sub(used + right_gap);
         let line = Line::from(vec![
             Span::styled(prompt.message.clone(), title_style),
             Span::styled(truncated_input, input_style),
@@ -2706,12 +2734,11 @@ impl Editor {
         // separator so the user sees feature-scoped controls right
         // under what they're typing — not on the frame border
         // where shortcut hints get visually lost.
-        let toolbar_h: u16 = if toolbar_visible { 1 } else { 0 };
-        if toolbar_visible && results_area.height >= 2 {
+        if toolbar_visible && inner.height >= 2 {
             let toolbar = Rect {
-                x: results_area.x,
-                y: results_area.y + 1,
-                width: results_area.width,
+                x: inner.x,
+                y: inner.y + 1,
+                width: inner.width,
                 height: 1,
             };
             frame.render_widget(
@@ -2721,47 +2748,41 @@ impl Editor {
             );
         }
 
-        // Separator row.
-        if results_area.height >= 2 + toolbar_h {
+        // Separator row (full width), closing the header band.
+        if inner.height >= 2 + toolbar_h {
             let sep = Rect {
-                x: results_area.x,
-                y: results_area.y + 1 + toolbar_h,
-                width: results_area.width,
+                x: inner.x,
+                y: inner.y + 1 + toolbar_h,
+                width: inner.width,
                 height: 1,
             };
             let sep_style = Style::default()
                 .fg(theme.popup_border_fg)
                 .bg(theme.suggestion_bg);
-            let sep_text = "─".repeat(results_area.width as usize);
+            let sep_text = "─".repeat(inner.width as usize);
             frame.render_widget(Paragraph::new(sep_text).style(sep_style), sep);
         }
 
-        // Suggestions list fills the rest of `results_area`. Carve
-        // off the rightmost 1-column lane for a scrollbar so the
-        // user can see how far through the result set the selection
-        // is — important when the visible area only fits ~30 of
-        // 100+ matches. Only carve when the result set actually
-        // exceeds the visible rows; otherwise the scrollbar is
+        // Suggestions list fills `results_area` (the left half of the body)
+        // entirely — the input, toolbar and separator now live in the header
+        // band above, and the footer is a separate full-width row below, so
+        // there's no in-column chrome to subtract here. Carve off the
+        // rightmost 1-column lane for a scrollbar so the user can see how far
+        // through the result set the selection is — only when the result set
+        // actually exceeds the visible rows; otherwise the scrollbar is
         // visual noise.
-        let chrome_above_list: u16 = 2 + toolbar_h;
-        // Plugin-supplied footer row (Primitive #2 chrome region).
-        // Reserves the bottom-most row of `results_area` for
-        // styled hotkey-hint segments. Skipped when the plugin
-        // hasn't set a footer — preserves existing behaviour for
-        // Live Grep et al.
-        let footer_h: u16 = if prompt.footer.is_empty() { 0 } else { 1 };
-        if results_area.height > chrome_above_list + footer_h {
+        if results_area.height >= 1 {
             // No `-2` for popup-own-border — we render the
             // borderless variant below since the overlay frame is
             // already a border.
-            let inner_rows = (results_area.height - chrome_above_list - footer_h) as usize;
+            let inner_rows = results_area.height as usize;
             let needs_scrollbar = prompt.suggestions.len() > inner_rows.max(1);
             let scrollbar_w: u16 = if needs_scrollbar { 1 } else { 0 };
             let list_area = Rect {
                 x: results_area.x,
-                y: results_area.y + chrome_above_list,
+                y: results_area.y,
                 width: results_area.width.saturating_sub(scrollbar_w),
-                height: results_area.height - chrome_above_list - footer_h,
+                height: results_area.height,
             };
             self.active_chrome_mut().suggestions_area = SuggestionsRenderer::render_with_hover(
                 frame,
@@ -2817,11 +2838,11 @@ impl Editor {
         // primitive used by `setPromptTitle` and inline overlays,
         // so plugins can theme hotkey hints with `ui.help_key_fg`,
         // separators with `ui.popup_border_fg`, etc.
-        if footer_h == 1 && results_area.height >= 1 {
+        if footer_h == 1 && inner.height >= 1 {
             let footer_row = Rect {
-                x: results_area.x,
-                y: results_area.y + results_area.height - 1,
-                width: results_area.width,
+                x: inner.x,
+                y: inner.y + inner.height - 1,
+                width: inner.width,
                 height: 1,
             };
             let footer_default_style = Style::default().fg(theme.prompt_fg).bg(theme.suggestion_bg);
