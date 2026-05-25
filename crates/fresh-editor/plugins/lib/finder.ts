@@ -545,6 +545,11 @@ export class Finder<T> {
     // unchanged query.
     this.promptState.lastQuery = "";
     if (query.length === 0) return;
+    // The backend (or scope set) changed, so the on-screen results are now
+    // stale. Clear them and show progress immediately rather than leaving the
+    // previous output up while the (possibly slow) new search runs.
+    this.updatePromptResults([]);
+    this.editor.setStatus("Searching…");
     await this.runSearch(query, this.currentSource);
   }
 
