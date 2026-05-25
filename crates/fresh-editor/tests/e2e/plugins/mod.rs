@@ -40,6 +40,7 @@ pub mod live_diff;
 pub mod load_from_buffer;
 pub mod lsp_find_references;
 pub mod markdown_source;
+pub mod orchestrator_attach_worktree;
 pub mod orchestrator_new_dialog;
 pub mod orchestrator_new_session_renders;
 pub mod orchestrator_open_cross_project;

@@ -76,6 +76,18 @@ interface AgentSession {
   state: AgentState;
   // Wall-clock ms when orchestrator.new fired createWindow.
   createdAt: number;
+  // `true` when this row is a worktree discovered on disk (via
+  // `git worktree list`) that has no live editor window yet.
+  // Discovered rows carry a synthetic negative `id`, no
+  // `terminalId`, and dive by *attaching* a new session to
+  // `root` rather than switching to an existing window. They are
+  // dropped from `orchestratorSessions` the moment a real window
+  // is opened at the same `root`.
+  discovered?: boolean;
+  // Branch checked out in this worktree (best-effort, for
+  // display). Set for discovered rows; left undefined for live
+  // sessions where the tab/label already carries the identity.
+  branch?: string;
 }
 
 // =============================================================================
@@ -83,6 +95,25 @@ interface AgentSession {
 // =============================================================================
 
 const orchestratorSessions = new Map<number, AgentSession>();
+
+// Stable synthetic ids for discovered (on-disk, not-yet-opened)
+// worktrees, keyed by canonical path. Live windows own the
+// positive id space (editor `WindowId`s); discovered rows take
+// negative ids so the two never collide and the existing
+// `orchestratorSessions.get(id)` call sites keep working. Ids
+// stay stable across rescans so the dialog selection doesn't
+// jump when the worktree set is refreshed. `-1` is reserved as a
+// "no selection" sentinel elsewhere, so allocation starts at `-2`.
+const discoveredIdByPath = new Map<string, number>();
+let nextDiscoveredId = -2;
+function discoveredIdFor(path: string): number {
+  let id = discoveredIdByPath.get(path);
+  if (id === undefined) {
+    id = nextDiscoveredId--;
+    discoveredIdByPath.set(path, id);
+  }
+  return id;
+}
 
 // New-session form state. `null` ⇒ the floating form isn't
 // open. Each field's `value` + `cursor` mirrors what the host
@@ -118,6 +149,14 @@ interface NewSessionForm {
   // (checkbox disabled, branch field inert). `null`: probe
   // in flight (keep checkbox in its last-known state).
   projectPathIsGit: boolean | null;
+  // `true` when the resolved Project Path is itself an existing
+  // *linked* worktree (created by `git worktree add`). In that
+  // case leaving "Create a new git worktree" unchecked attaches
+  // the session to it as a managed worktree rather than treating
+  // it as a shared root. The probe defaults the checkbox to
+  // unchecked when it first detects this, and `buildFormSpec`
+  // surfaces an explanatory hint. `null` while the probe runs.
+  projectPathIsLinkedWorktree: boolean | null;
   // Concrete session name the auto-generator would produce
   // for the current Project Path (e.g. "session-3"). Surfaced
   // as the Session Name placeholder so the user sees the
@@ -298,9 +337,120 @@ function reconcileSessions(): void {
       if (s.shared_worktree != null) existing.sharedWorktree = s.shared_worktree;
     }
   }
+  // Live windows live in the positive id space; their absence from
+  // `listWindows()` means they were closed, so drop them. Discovered
+  // worktrees (negative ids) are NOT backed by a window and must
+  // survive this sweep — they're pruned separately, against the
+  // on-disk worktree set, by `refreshDiscoveredWorktrees`.
   for (const id of orchestratorSessions.keys()) {
-    if (!seen.has(id)) orchestratorSessions.delete(id);
+    if (id > 0 && !seen.has(id)) orchestratorSessions.delete(id);
   }
+  // A worktree that's now open as a live window must not also linger
+  // as a discovered row. Drop any discovered entry whose root a live
+  // session already occupies.
+  const liveRoots = new Set<string>();
+  for (const s of orchestratorSessions.values()) {
+    if (!s.discovered) liveRoots.add(s.root);
+  }
+  for (const [id, s] of orchestratorSessions) {
+    if (s.discovered && liveRoots.has(s.root)) orchestratorSessions.delete(id);
+  }
+}
+
+// =============================================================================
+// Discovered-worktree scan
+//
+// Surfaces worktrees that exist on disk but have no live editor
+// window, so the user doesn't have to add them by hand. Because
+// open sessions can span several repos, `git worktree list` must
+// run once *per project*: the scan set is the distinct canonical
+// repo roots of every live session, plus the editor's cwd repo.
+// Each linked worktree not already open (and not an
+// orchestrator-internal tree) becomes a discovered row that dives
+// by attaching a fresh session to it.
+// =============================================================================
+
+let discoveryInFlight = false;
+
+function isInternalWorktreePath(path: string): boolean {
+  // The sync-workspace and the `.archived/` graveyard are
+  // orchestrator bookkeeping, not user sessions.
+  return path.includes(".sync-workspace") || path.includes("/.archived/");
+}
+
+async function refreshDiscoveredWorktrees(): Promise<void> {
+  if (discoveryInFlight) return;
+  discoveryInFlight = true;
+  try {
+    reconcileSessions();
+
+    // (1) Candidate dirs: every live session's root + the editor
+    //     cwd. Resolve each to its canonical main repo root and
+    //     dedupe so a repo with N open worktrees is scanned once.
+    const candidates = new Set<string>([editor.getCwd()]);
+    for (const s of orchestratorSessions.values()) {
+      if (!s.discovered) candidates.add(s.root);
+    }
+    const mainRoots = new Set<string>();
+    for (const dir of candidates) {
+      const canonical = await resolveCanonicalRepoRoot(dir);
+      if (canonical) mainRoots.add(canonical);
+    }
+
+    // (2) Roots already occupied by a live session — discovered rows
+    //     for these would be duplicates.
+    const liveRoots = new Set<string>();
+    for (const s of orchestratorSessions.values()) {
+      if (!s.discovered) liveRoots.add(s.root);
+    }
+
+    // (3) Scan each repo and collect the linked worktrees worth
+    //     surfacing.
+    const foundPaths = new Set<string>();
+    for (const repoRoot of mainRoots) {
+      const listed = await listLinkedWorktrees(repoRoot);
+      if (!listed) continue;
+      for (const wt of listed.worktrees) {
+        if (liveRoots.has(wt.path)) continue;
+        if (isInternalWorktreePath(wt.path)) continue;
+        foundPaths.add(wt.path);
+        const id = discoveredIdFor(wt.path);
+        const label = wt.branch || editor.pathBasename(wt.path);
+        const existing = orchestratorSessions.get(id);
+        if (existing) {
+          existing.label = label;
+          existing.root = wt.path;
+          existing.projectPath = listed.mainRoot;
+          existing.branch = wt.branch;
+        } else {
+          orchestratorSessions.set(id, {
+            id,
+            label,
+            root: wt.path,
+            projectPath: listed.mainRoot,
+            sharedWorktree: false,
+            terminalId: null,
+            state: "ready",
+            createdAt: Date.now(),
+            discovered: true,
+            branch: wt.branch,
+          });
+        }
+      }
+    }
+
+    // (4) Prune discovered rows that vanished from disk (or got
+    //     opened, picked up by the liveRoots check above).
+    for (const [id, s] of orchestratorSessions) {
+      if (s.discovered && !foundPaths.has(s.root)) {
+        orchestratorSessions.delete(id);
+        discoveredIdByPath.delete(s.root);
+      }
+    }
+  } finally {
+    discoveryInFlight = false;
+  }
+  if (openPanel) refreshOpenDialog();
 }
 
 // =============================================================================
@@ -460,16 +610,27 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
   }
   const isActive = id === activeId;
   const isBase = id === 1;
+  const isDiscovered = !!s.discovered;
 
-  const idText = `[${id}]`.padEnd(LIST_ID_W);
+  // Discovered (on-disk, unopened) worktrees have no window id —
+  // render a `[○]` glyph instead of the synthetic negative id so
+  // the row reads as "available to open", not "session #-2".
+  const idText = (isDiscovered ? "[○]" : `[${id}]`).padEnd(LIST_ID_W);
   const entries: { text: string; style?: Record<string, unknown> }[] = [
     {
       text: idText,
       style: isActive
         ? { fg: "ui.tab_active_fg", bold: true }
-        : { fg: "ui.help_key_fg" },
+        : { fg: isDiscovered ? "ui.menu_disabled_fg" : "ui.help_key_fg" },
     },
-    { text: s.label, style: isActive ? { bold: true } : undefined },
+    {
+      text: s.label,
+      style: isActive
+        ? { bold: true }
+        : isDiscovered
+        ? { fg: "ui.menu_disabled_fg" }
+        : undefined,
+    },
   ];
   // Visible width of the NAME column so far (label + badges), used
   // to pad out to LIST_NAME_W before the PROJECT column.
@@ -814,6 +975,48 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // turns details on, pressing `[ Preview ]` turns them off
   // (back to compact).
   const detailsToggleLabel = detailsOn ? "Preview" : "Details";
+  // Discovered worktree: no live window to embed, so there's
+  // nothing to Stop / Archive / Delete yet. Offer only "Open"
+  // (Visit attaches a fresh session to the worktree) and describe
+  // what diving will do. The empty `windowId: 0` embed keeps the
+  // pane the same height as live-session previews so the dialog
+  // doesn't jump when the selection moves between row kinds.
+  if (s.discovered) {
+    const openButtonRow = row(
+      button("Open", { intent: "primary", key: "visit" }),
+      flexSpacer(),
+      button("Stop", { key: "stop", disabled: true }),
+      spacer(2),
+      button("Archive", { key: "archive", disabled: true }),
+      spacer(2),
+      button("Delete", { intent: "danger", key: "delete", disabled: true }),
+    );
+    const info: TextPropertyEntry[] = [
+      styledRow([
+        { text: "On-disk worktree (not open)", style: { fg: "ui.menu_disabled_fg", bold: true } },
+      ]),
+      styledRow([{ text: "" }]),
+      styledRow([{ text: "branch  ", style: { fg: "ui.menu_disabled_fg" } }, { text: s.branch || "(detached)" }]),
+      styledRow([{ text: "path    ", style: { fg: "ui.menu_disabled_fg" } }, { text: s.root }]),
+      styledRow([{ text: "" }]),
+      styledRow([
+        {
+          text: "Press Enter to open this worktree as a session.",
+          style: { fg: "ui.help_key_fg", italic: true },
+        },
+      ]),
+    ];
+    return labeledSection({
+      label: `[○] ${s.label}  on-disk worktree`,
+      child: col(
+        openButtonRow,
+        spacer(0),
+        { kind: "raw", entries: info },
+        spacer(0),
+        windowEmbed({ windowId: 0, rows: Math.max(3, embedRows - 6), key: "live-preview" }),
+      ),
+    });
+  }
   // Per-action availability. The row always renders all four
   // buttons (no layout shift between selections), but each is
   // marked disabled when its action would be refused against the
@@ -890,9 +1093,11 @@ function buildOpenSpec(): WidgetSpec {
   const selIdx = filtered.length === 0
     ? -1
     : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
-  const selectedId = selIdx >= 0 ? filtered[selIdx] : -1;
-  const selectedSession = selectedId > 0
-    ? orchestratorSessions.get(selectedId)
+  // Gate on the *index* (selIdx < 0 means "filter matched nothing"),
+  // not the sign of the id: discovered worktrees carry negative ids
+  // and must still resolve to their row here.
+  const selectedSession = selIdx >= 0
+    ? orchestratorSessions.get(filtered[selIdx])
     : undefined;
 
   // The "New Session" button advertises Alt+N (or whatever the
@@ -1188,6 +1393,12 @@ function openControlRoom(): void {
   // safe — there's nothing to act on then anyway.
   openPanel.setFocusKey("visit");
   editor.setEditorMode(OPEN_MODE);
+
+  // Discover worktrees that exist on disk but aren't open yet and
+  // fold them into the list. Async (it shells out to git per
+  // project); the dialog renders immediately with live sessions and
+  // gains the discovered rows when the scan lands.
+  void refreshDiscoveredWorktrees();
 }
 
 function closeOpenDialog(): void {
@@ -2078,6 +2289,130 @@ async function pathIsInsideGitWorkTree(
   return (res.stdout || "").trim() === "true";
 }
 
+// =============================================================================
+// Worktree classification & discovery
+//
+// Two distinct git facts drive the "attach to an existing worktree"
+// flows:
+//
+//   * `classifyWorktree(path)` answers "is this path a *linked*
+//     worktree, and if so what repo does it belong to?" — used by
+//     the new-session form to attach (rather than fork) when the
+//     user points Project Path at an existing worktree.
+//   * `listLinkedWorktrees(repoRoot)` enumerates every linked
+//     worktree of a repo (via `git worktree list --porcelain`) —
+//     used to surface on-disk worktrees in the Open dialog without
+//     the user adding them by hand.
+// =============================================================================
+
+interface WorktreeInfo {
+  // `git rev-parse --show-toplevel` for the path.
+  toplevel: string;
+  // Canonical main-worktree root (dirname of `--git-common-dir`).
+  // This is the repo the worktree belongs to, used as the
+  // session's `projectPath` so attached worktrees group under
+  // their repo in the picker.
+  mainRoot: string;
+  // `true` when the path is a *linked* worktree (its per-worktree
+  // git dir differs from the shared common dir), i.e. a tree
+  // created by `git worktree add` rather than the main checkout.
+  isLinked: boolean;
+  // Branch checked out there (`refs/heads/<name>` short form), or
+  // empty when detached.
+  branch: string;
+}
+
+/// Classify `path` as a git worktree. Returns `null` when `path`
+/// is not inside any git work tree (the caller then treats it as a
+/// plain directory / shared root).
+async function classifyWorktree(path: string): Promise<WorktreeInfo | null> {
+  if (!path) return null;
+  const top = await spawnCollect("git", ["-C", path, "rev-parse", "--show-toplevel"], path);
+  if (top.exit_code !== 0) return null;
+  const toplevel = (top.stdout || "").trim();
+  if (!toplevel) return null;
+
+  // The per-worktree git dir vs. the shared common dir: they are
+  // equal for the main worktree and differ for every linked
+  // worktree (`<common>/worktrees/<id>`). That difference is the
+  // canonical "is this a linked worktree?" test.
+  const [gitDir, commonDir] = await Promise.all([
+    spawnCollect("git", ["-C", toplevel, "rev-parse", "--path-format=absolute", "--git-dir"], toplevel),
+    spawnCollect(
+      "git",
+      ["-C", toplevel, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      toplevel,
+    ),
+  ]);
+  const gd = gitDir.exit_code === 0 ? (gitDir.stdout || "").trim() : "";
+  const cd = commonDir.exit_code === 0 ? (commonDir.stdout || "").trim() : "";
+  const isLinked = gd !== "" && cd !== "" && gd !== cd;
+  const mainRoot = cd ? editor.pathDirname(cd) : toplevel;
+
+  const head = await spawnCollect(
+    "git",
+    ["-C", toplevel, "rev-parse", "--abbrev-ref", "HEAD"],
+    toplevel,
+  );
+  let branch = head.exit_code === 0 ? (head.stdout || "").trim() : "";
+  if (branch === "HEAD") branch = ""; // detached
+
+  return { toplevel, mainRoot, isLinked, branch };
+}
+
+interface ParsedWorktree {
+  path: string;
+  branch: string;
+  detached: boolean;
+}
+
+/// Parse `git worktree list --porcelain` output. Blocks are
+/// separated by blank lines; the first block is the main worktree,
+/// the rest are linked. Each block has a `worktree <path>` line
+/// plus `branch refs/heads/<name>` or `detached`.
+function parseWorktreePorcelain(stdout: string): ParsedWorktree[] {
+  const out: ParsedWorktree[] = [];
+  let cur: ParsedWorktree | null = null;
+  for (const raw of (stdout || "").split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (line.startsWith("worktree ")) {
+      if (cur) out.push(cur);
+      cur = { path: line.slice("worktree ".length), branch: "", detached: false };
+    } else if (cur && line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length);
+      cur.branch = ref.replace(/^refs\/heads\//, "");
+    } else if (cur && line === "detached") {
+      cur.detached = true;
+    } else if (line === "" && cur) {
+      out.push(cur);
+      cur = null;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/// Enumerate the *linked* worktrees of `repoRoot` (excludes the
+/// main worktree, which is the repo's own checkout). Returns the
+/// parsed entries with the main-repo root resolved so callers can
+/// tag discovered sessions with the right `projectPath`.
+async function listLinkedWorktrees(
+  repoRoot: string,
+): Promise<{ mainRoot: string; worktrees: ParsedWorktree[] } | null> {
+  const res = await spawnCollect(
+    "git",
+    ["-C", repoRoot, "worktree", "list", "--porcelain"],
+    repoRoot,
+  );
+  if (res.exit_code !== 0) return null;
+  const all = parseWorktreePorcelain(res.stdout || "");
+  if (all.length === 0) return null;
+  // The first entry is always the main worktree.
+  const mainRoot = all[0].path;
+  const worktrees = all.slice(1);
+  return { mainRoot, worktrees };
+}
+
 async function nextAutoSessionName(
   repoRoot: string,
   options?: { persist?: boolean },
@@ -2164,9 +2499,11 @@ function buildFormSpec(): WidgetSpec {
   // inert when worktree creation is off.
   let branchPlaceholder: string;
   if (branchInert) {
-    branchPlaceholder = worktreeEnabled
-      ? "shared worktree — N/A"
-      : "no git — N/A";
+    branchPlaceholder = !worktreeEnabled
+      ? "no git — N/A"
+      : form.projectPathIsLinkedWorktree === true
+      ? "existing worktree — N/A"
+      : "shared worktree — N/A";
   } else if (!form.defaultBranch) {
     branchPlaceholder = "detecting default branch…";
   } else if (form.defaultBranchIsHeadFallback) {
@@ -2241,6 +2578,24 @@ function buildFormSpec(): WidgetSpec {
             ]),
           ],
         },
+    // Existing-worktree hint: when Project Path points at a linked
+    // worktree, explain what the (un)checked box now means so the
+    // attach behaviour isn't a silent surprise.
+    ...(form.projectPathIsLinkedWorktree === true
+      ? [{
+          kind: "raw" as const,
+          entries: [
+            styledRow([
+              {
+                text: form.createWorktree
+                  ? "  ↳ existing worktree here — uncheck to attach instead of forking a new one"
+                  : "  ↳ existing worktree — this session will attach to it",
+                style: { fg: "ui.help_key_fg", italic: true },
+              },
+            ]),
+          ],
+        }]
+      : []),
     // === Form body: labeled, full-width inputs. ==================
     // Labels are plain — the `▸` glyph used to be baked into all
     // three strings and stayed put regardless of focus, which was
@@ -2380,6 +2735,7 @@ function openForm(options?: { fromPicker?: boolean }): void {
     lastError: null,
     defaultProjectPath: "",
     projectPathIsGit: null,
+    projectPathIsLinkedWorktree: null,
     defaultSessionName: "",
     defaultBranch: "",
     defaultBranchIsHeadFallback: false,
@@ -2441,6 +2797,24 @@ async function probeProjectPathDefaults(): Promise<void> {
   const isGit = await pathIsInsideGitWorkTree(effectivePath);
   if (!form || form.probeToken !== token) return;
   form.projectPathIsGit = isGit;
+
+  // (2b) Existing-linked-worktree detection. When the path is a
+  //      worktree created by `git worktree add` (not the repo's main
+  //      checkout), default the checkbox to *unchecked* so the
+  //      natural action is to attach to it. Only flip on the
+  //      detection transition so we don't fight a user who
+  //      deliberately re-checks "create a new worktree".
+  const wasLinked = form.projectPathIsLinkedWorktree;
+  if (isGit) {
+    const info = await classifyWorktree(effectivePath);
+    if (!form || form.probeToken !== token) return;
+    form.projectPathIsLinkedWorktree = info?.isLinked === true;
+  } else {
+    form.projectPathIsLinkedWorktree = false;
+  }
+  if (form.projectPathIsLinkedWorktree && wasLinked !== true) {
+    form.createWorktree = false;
+  }
 
   // (3) Default branch + session name probes only make sense on
   //     a git path. On non-git, leave both empty (the renderer
@@ -2861,14 +3235,28 @@ async function submitForm(): Promise<void> {
     editor.setGlobalState("orchestrator.last_cmd", cmd);
   }
 
+  // Attach-to-existing-worktree: when the user opted out of
+  // creating a worktree but pointed Project Path at an *existing
+  // linked worktree* (one created by `git worktree add`, possibly
+  // for a repo Fresh has never opened before), treat it as the
+  // dedicated worktree it is rather than a shared root. That means
+  // `shared_worktree = false` (so Archive / Delete can
+  // `git worktree move` / `remove` it) and a `project_path` of the
+  // owning repo so the session groups with its siblings. A path
+  // that's the repo's *main* worktree, or a non-git directory, stays
+  // shared — you can't `git worktree remove` either of those.
+  const attachInfo = !createWorktree ? await classifyWorktree(root) : null;
+  if (!form) return;
+  const isLinkedAttach = attachInfo?.isLinked === true;
+  const effectiveProjectPath = isLinkedAttach ? attachInfo!.mainRoot : projectPath;
+
   // Branch / cmd values used for the per-window state record —
-  // `branchName` only exists in the worktree-create flow above;
-  // for the shared-worktree / non-git case we report whatever's
-  // currently checked out (best-effort) so the new session record
-  // matches the situation on disk.
+  // `branchName` only exists in the worktree-create flow above; for
+  // an attached linked worktree we report its checked-out branch;
+  // for the shared-worktree / non-git case we leave it blank.
   const reportedBranch = createWorktree
     ? (branchInput || sessionName)
-    : "";
+    : (isLinkedAttach ? attachInfo!.branch : "");
 
   // Append the user-effective values to per-field input
   // history so ↑/↓ can recall them on the next form open.
@@ -2886,7 +3274,9 @@ async function submitForm(): Promise<void> {
   // terminal IS the new window's seed buffer, so the window is
   // born with a single tab.
   const argv = splitAgentCmd(cmd);
-  const sharedWorktree = !createWorktree;
+  // Shared only when we neither created a worktree nor attached to an
+  // existing linked one (i.e. a non-git dir or the repo's main tree).
+  const sharedWorktree = !createWorktree && !isLinkedAttach;
   try {
     const result = await editor.createWindowWithTerminal({
       root,
@@ -2898,22 +3288,79 @@ async function submitForm(): Promise<void> {
     const id = result.windowId;
     // `createWindowWithTerminal` already dove into the new window,
     // so `setWindowState` writes to it.
-    editor.setWindowState("project_path", projectPath);
+    editor.setWindowState("project_path", effectiveProjectPath);
     editor.setWindowState("shared_worktree", sharedWorktree);
+    // If we attached to a worktree that was sitting in the picker as
+    // a discovered row, drop that placeholder — this live window
+    // supersedes it.
+    const discId = discoveredIdByPath.get(root);
+    if (discId !== undefined) {
+      orchestratorSessions.delete(discId);
+      discoveredIdByPath.delete(root);
+    }
     const tracked: AgentSession = {
       id,
       label: sessionName,
       root,
-      projectPath,
+      projectPath: effectiveProjectPath,
       sharedWorktree,
       terminalId: result.terminalId,
       state: "running",
       createdAt: Date.now(),
+      branch: reportedBranch || undefined,
     };
     orchestratorSessions.set(id, tracked);
   } catch (e) {
     editor.setStatus(
       `Orchestrator: failed to start session — ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+}
+
+/// Open a session in an existing worktree without creating one —
+/// the dive action for a discovered row, and the building block the
+/// new-session form reuses when the user points Project Path at an
+/// existing linked worktree. Spawns a bare terminal (no agent
+/// command) rooted at the worktree, tags the window with its
+/// canonical project + `shared_worktree = false` so Archive / Delete
+/// manage it as the real worktree it is, then drops the discovered
+/// placeholder (the live window supersedes it).
+async function attachToWorktree(opts: {
+  root: string;
+  projectPath: string;
+  label: string;
+  branch?: string;
+  discoveredId?: number;
+}): Promise<void> {
+  try {
+    const result = await editor.createWindowWithTerminal({
+      root: opts.root,
+      label: opts.label,
+      cwd: opts.root,
+    });
+    const id = result.windowId;
+    editor.setWindowState("project_path", opts.projectPath);
+    editor.setWindowState("shared_worktree", false);
+    if (opts.discoveredId !== undefined) {
+      orchestratorSessions.delete(opts.discoveredId);
+      discoveredIdByPath.delete(opts.root);
+    }
+    orchestratorSessions.set(id, {
+      id,
+      label: opts.label,
+      root: opts.root,
+      projectPath: opts.projectPath,
+      sharedWorktree: false,
+      terminalId: result.terminalId,
+      state: "running",
+      createdAt: Date.now(),
+      branch: opts.branch,
+    });
+  } catch (e) {
+    editor.setStatus(
+      `Orchestrator: failed to attach session — ${
         e instanceof Error ? e.message : String(e)
       }`,
     );
@@ -3317,6 +3764,20 @@ editor.on("widget_event", (e) => {
       (e.widget_key === "sessions" || e.widget_key === "visit")
     ) {
       const id = openDialog.filteredIds[openDialog.selectedIndex];
+      const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
+      if (sel && sel.discovered) {
+        // Discovered worktree: there's no window to switch to —
+        // open one by attaching a fresh session to the worktree.
+        closeOpenDialog();
+        void attachToWorktree({
+          root: sel.root,
+          projectPath: sel.projectPath ?? sel.root,
+          label: sel.label,
+          branch: sel.branch,
+          discoveredId: sel.id,
+        });
+        return;
+      }
       if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
         editor.setActiveWindow(id);
       }
