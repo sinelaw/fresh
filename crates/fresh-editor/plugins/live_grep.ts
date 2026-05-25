@@ -307,10 +307,11 @@ function unregisterProvider(name: string): boolean {
 // per-control accelerator (`⌥L` etc.) is rendered right after its toggle in
 // the keybinding-hint colour, so the affordance sits at the control rather
 // than in a footer list.
-function buildToolbarSpec(): WidgetSpec {
-  // Two stacked rows: the search *sources* ("Search in: …") and the search
-  // *modes* ("Match: …"). Each toggle is a nested non-wrapping row — an
-  // atomic group of `toggle + accelerator` — so the wrapping parent never
+function buildToolbarSpec(provider: LiveGrepProvider | null): WidgetSpec {
+  // Three stacked rows: the search *sources* ("Search in: …"), the search
+  // *modes* ("Match: …"), and a *meta* row (active provider, match-count,
+  // provider-cycle / save hints). Each toggle is a nested non-wrapping row —
+  // an atomic group of `toggle + accelerator` — so the wrapping parent never
   // splits a label from its `Alt+…` hint across lines.
   const prefix = (text: string): WidgetSpec =>
     raw([styledRow([{ text, style: { fg: "ui.popup_border_fg" } }])]);
@@ -341,14 +342,19 @@ function buildToolbarSpec(): WidgetSpec {
     modes.push(row(...parts));
   });
 
-  return col(wrappingRow(...sources), wrappingRow(...modes));
+  const rows: WidgetSpec[] = [wrappingRow(...sources), wrappingRow(...modes)];
+  const metaSegs = buildMetaSegments(provider);
+  if (metaSegs.length > 0) {
+    rows.push(raw([styledRow(metaSegs)]));
+  }
+  return col(...rows);
 }
 
-// Footer: the active provider, the truncation indicator, and the
-// generic/action hints that have no on-screen control to attach to
-// (provider-cycle, save-matches). Per-control accelerators live on the
+// Meta row (beneath the toggles): the active provider, the truncation
+// indicator, and the action hints that have no on-screen control to attach
+// to (provider-cycle, save-matches). Per-control accelerators live on the
 // toggles themselves (see buildToolbarSpec).
-function buildFooterSegments(provider: LiveGrepProvider | null): StyledText[] {
+function buildMetaSegments(provider: LiveGrepProvider | null): StyledText[] {
   const sepStyle = { fg: "ui.popup_border_fg" };
   const hintStyle = { fg: "ui.help_key_fg" };
   const segs: StyledText[] = [];
@@ -384,8 +390,10 @@ function buildFooterSegments(provider: LiveGrepProvider | null): StyledText[] {
 // hints. Name kept as `updateOverlayTitle` for its many call sites; it no
 // longer sets a styled-text title — the widget toolbar replaces it.
 function updateOverlayTitle(provider: LiveGrepProvider | null): void {
-  editor.setPromptToolbar(buildToolbarSpec());
-  editor.setPromptFooter(buildFooterSegments(provider));
+  // The provider/meta line now lives in the header band (third toolbar row),
+  // not the footer — so clear the footer.
+  editor.setPromptToolbar(buildToolbarSpec(provider));
+  editor.setPromptFooter([]);
 }
 
 async function selectProvider(): Promise<LiveGrepProvider | null> {
@@ -917,11 +925,10 @@ async function search(query: string): Promise<GrepMatch[]> {
   return results;
 }
 
-// Scope toggling is host-owned: the host flips the toggle's checked state
-// (on click, Space on the focused toggle, or the Alt+… shortcuts below) and
-// emits a `widget_event`; we react here by syncing the scope set and
-// re-running the search. We never re-send the toolbar spec on a toggle — the
-// host already updated the checkbox visual.
+// Scope/mode toggling is host-owned: the host flips the toggle's checked
+// state (on click, Space on the focused toggle, or the Alt+… shortcuts) and
+// emits a `widget_event`; we react here by syncing the scope/mode set,
+// refreshing the meta row, and re-running the search.
 editor.on("widget_event", (args) => {
   if (!overlayActive || args.event_type !== "toggle") return;
   const payload = args.payload as { checked?: boolean } | undefined;
@@ -940,8 +947,11 @@ editor.on("widget_event", (args) => {
   } else {
     return;
   }
-  // The footer's provider line depends on the file scopes; refresh it.
-  editor.setPromptFooter(buildFooterSegments(cachedSelected ?? null));
+  // Rebuild the toolbar so the meta row's provider line tracks the file
+  // scopes. The host already flipped the toggle visual, but scopeEnabled/
+  // searchModes were just synced above, so the rebuilt spec keeps the same
+  // checked state (and toolbar_focus persists across setPromptToolbar).
+  updateOverlayTitle(cachedSelected ?? null);
   void finder.refresh();
   editor.setStatus(`Search: ${label} ${on ? "on" : "off"}`);
 });
