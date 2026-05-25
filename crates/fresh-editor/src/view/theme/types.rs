@@ -1940,6 +1940,8 @@ impl Theme {
                 "diff_modify_collision_fg" => self.diff_modify_collision_fg,
                 "ruler_bg" => Some(self.ruler_bg),
                 "whitespace_indicator_fg" => Some(self.whitespace_indicator_fg),
+                "diff_add_highlight_bg" => Some(self.diff_add_highlight_bg),
+                "diff_remove_highlight_bg" => Some(self.diff_remove_highlight_bg),
                 "after_eof_bg" => Some(self.after_eof_bg),
                 _ => None,
             },
@@ -2017,6 +2019,9 @@ impl Theme {
                 "settings_selected_fg" => Some(self.settings_selected_fg),
                 "suggestion_bg" => Some(self.suggestion_bg),
                 "suggestion_selected_bg" => Some(self.suggestion_selected_bg),
+                "help_separator_fg" => Some(self.help_separator_fg),
+                "help_indicator_fg" => Some(self.help_indicator_fg),
+                "help_indicator_bg" => Some(self.help_indicator_bg),
                 _ => None,
             },
             "syntax" => match field {
@@ -2084,6 +2089,8 @@ impl Theme {
                 "diff_modify_collision_fg" => self.diff_modify_collision_fg.as_mut(),
                 "ruler_bg" => Some(&mut self.ruler_bg),
                 "whitespace_indicator_fg" => Some(&mut self.whitespace_indicator_fg),
+                "diff_add_highlight_bg" => Some(&mut self.diff_add_highlight_bg),
+                "diff_remove_highlight_bg" => Some(&mut self.diff_remove_highlight_bg),
                 "after_eof_bg" => Some(&mut self.after_eof_bg),
                 _ => None,
             },
@@ -2169,6 +2176,9 @@ impl Theme {
                 "settings_selected_fg" => Some(&mut self.settings_selected_fg),
                 "suggestion_bg" => Some(&mut self.suggestion_bg),
                 "suggestion_selected_bg" => Some(&mut self.suggestion_selected_bg),
+                "help_separator_fg" => Some(&mut self.help_separator_fg),
+                "help_indicator_fg" => Some(&mut self.help_indicator_fg),
+                "help_indicator_bg" => Some(&mut self.help_indicator_bg),
                 _ => None,
             },
             "syntax" => match field {
@@ -2686,6 +2696,155 @@ mod tests {
             assert!(
                 theme.resolve_theme_key_mut(key).is_some(),
                 "mutator missing key {key}"
+            );
+        }
+    }
+
+    /// The set of `(section, field)` color keys that the theme's JSON
+    /// surface — and therefore the plugin schema — exposes. Derived by
+    /// taking a fully resolved builtin back to a `ThemeFile`, so every
+    /// optional color slot is materialized as `Some`. Non-color leaves
+    /// (text-attribute modifiers, `name`/`extends`) are filtered by shape.
+    ///
+    /// This is the single authority the resolvers/conversions are checked
+    /// against: there is no hand-maintained key list to drift.
+    fn schema_color_keys() -> Vec<(String, String)> {
+        let theme = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+        let file: ThemeFile = theme.into();
+        let value = serde_json::to_value(&file).expect("ThemeFile serializes");
+        let obj = value.as_object().expect("ThemeFile is a JSON object");
+
+        let mut keys = Vec::new();
+        for section in ["editor", "ui", "search", "diagnostic", "syntax"] {
+            let fields = obj
+                .get(section)
+                .and_then(|v| v.as_object())
+                .unwrap_or_else(|| panic!("section `{section}` missing from serialized ThemeFile"));
+            for (field, val) in fields {
+                if is_color_leaf(val) {
+                    keys.push((section.to_string(), field.clone()));
+                }
+            }
+        }
+        assert!(
+            keys.len() >= 100,
+            "expected the theme to expose at least ~100 color keys, found {} — \
+             has the serialization shape changed?",
+            keys.len()
+        );
+        keys
+    }
+
+    /// A `ColorDef` JSON leaf is either a named-color string or an
+    /// `[r, g, b]` array of three numbers. Text-attribute modifiers
+    /// serialize as arrays of *strings*, so this excludes them.
+    fn is_color_leaf(v: &serde_json::Value) -> bool {
+        v.is_string()
+            || v.as_array()
+                .is_some_and(|a| a.len() == 3 && a.iter().all(serde_json::Value::is_number))
+    }
+
+    /// Distinct, round-trip-stable sentinel color for index `i`. Always an
+    /// RGB triple, which `ColorDef` passes through unchanged (only the named
+    /// `Color` variants get folded into `ColorDef::Named`).
+    fn sentinel(i: usize) -> Color {
+        Color::Rgb((i >> 8) as u8, (i & 0xff) as u8, 0x5a)
+    }
+
+    #[test]
+    fn every_exposed_color_key_resolves_in_both_directions() {
+        // Every color the JSON/schema surface exposes must be addressable by
+        // BOTH resolvers, under the SAME section it appears in. A key the
+        // schema advertises but a resolver drops is silently un-overridable
+        // (the drift bug behind #2079): plugin overrides and theme-JSON loads
+        // both go through `resolve_theme_key_mut`, the inspector through
+        // `resolve_theme_key`.
+        let mut theme = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+        let mut missing_reader = Vec::new();
+        let mut missing_mutator = Vec::new();
+        for (section, field) in schema_color_keys() {
+            let key = format!("{section}.{field}");
+            if theme.resolve_theme_key(&key).is_none() {
+                missing_reader.push(key.clone());
+            }
+            if theme.resolve_theme_key_mut(&key).is_none() {
+                missing_mutator.push(key);
+            }
+        }
+        assert!(
+            missing_reader.is_empty() && missing_mutator.is_empty(),
+            "theme color keys exposed by the JSON schema but dropped by a resolver:\n  \
+             resolve_theme_key:     {missing_reader:?}\n  \
+             resolve_theme_key_mut: {missing_mutator:?}"
+        );
+    }
+
+    #[test]
+    fn color_keys_round_trip_through_the_same_field_and_section() {
+        // Assign every exposed key a distinct color, then push it all the way
+        // around the loop and back, checking the value lands in the same slot
+        // at every hop:
+        //   write    via resolve_theme_key_mut   (string key   -> Theme field)
+        //   read     via resolve_theme_key        (Theme field  -> string key)
+        //   serialize via From<Theme> for ThemeFile (Theme field -> section.field)
+        //   reload   via from_json                 (section.field -> Theme field)
+        // If field name OR section disagree between any of these four paths, a
+        // sentinel lands in the wrong field and an assert fires — this is what
+        // pins names and categories together in all directions.
+        let keys = schema_color_keys();
+        let mut theme = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+
+        let pairs: Vec<(String, Color)> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (s, f))| (format!("{s}.{f}"), sentinel(i)))
+            .collect();
+        let applied = theme.override_colors(pairs.iter().map(|(k, c)| (k.as_str(), *c)));
+        assert_eq!(
+            applied,
+            keys.len(),
+            "override_colors should write every exposed key via resolve_theme_key_mut"
+        );
+
+        // reader agrees with mutator on which field each key addresses.
+        for (i, (s, f)) in keys.iter().enumerate() {
+            let key = format!("{s}.{f}");
+            assert_eq!(
+                theme.resolve_theme_key(&key),
+                Some(sentinel(i)),
+                "reader and mutator disagree on the field `{key}` addresses"
+            );
+        }
+
+        // reverse conversion serializes each sentinel back under the SAME
+        // section.field — proves field name + category wiring in From<Theme>.
+        let file: ThemeFile = theme.into();
+        let value = serde_json::to_value(&file).expect("ThemeFile serializes");
+        let obj = value.as_object().expect("ThemeFile is a JSON object");
+        for (i, (s, f)) in keys.iter().enumerate() {
+            let leaf = obj
+                .get(s)
+                .and_then(|sec| sec.get(f))
+                .unwrap_or_else(|| panic!("`{s}.{f}` vanished from serialized ThemeFile"));
+            let color: Color = serde_json::from_value::<ColorDef>(leaf.clone())
+                .expect("color leaf parses as ColorDef")
+                .into();
+            assert_eq!(
+                color,
+                sentinel(i),
+                "`{s}.{f}` serialized back to the wrong field or section"
+            );
+        }
+
+        // forward conversion (from_json) routes each section.field leaf back to
+        // the field the reader reads — proves From<ThemeFile> for Theme wiring.
+        let reloaded = Theme::from_json(&value.to_string()).expect("from_json round-trips");
+        for (i, (s, f)) in keys.iter().enumerate() {
+            let key = format!("{s}.{f}");
+            assert_eq!(
+                reloaded.resolve_theme_key(&key),
+                Some(sentinel(i)),
+                "`{key}` did not survive ThemeFile -> JSON -> from_json"
             );
         }
     }
