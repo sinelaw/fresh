@@ -440,6 +440,47 @@ purge (NN/g #5, #3).
 
 ---
 
+## 10b. Implementation status (live)
+
+Landed in `live_grep.ts` + keymap + i18n (no core Rust changes):
+
+- **Scope model & fan-out.** `search()` runs every enabled scope and
+  merges tagged `GrepMatch`es into one capped list; non-file rows carry a
+  source badge (`ign` / `buf` / `term` / `diag`).
+- **Toolbar checkboxes** rendered via `setPromptTitle`
+  (`[v] Files  [ ] Ignored  [v] Buffers  [v] Terminals  [ ] Diagnostics · Provider: …`).
+- **Toggles need no new core Action.** In prompt context the host resolves
+  any `Alt+<char>` against the keymap and dispatches unknown action names
+  as plugin actions, so `Alt+L/H/U/T/D` → `live_grep_toggle_*` handlers.
+  This is the reusable mechanism for future scope toggles.
+- **Scopes implemented:** Files (provider), Ignored (rg `--no-ignore
+  --hidden` / git-grep `--untracked --no-exclude-standard`), Buffers
+  (modified open buffers via `getBufferText`), Terminals (grep the
+  `<data_dir>/terminals/*.txt` backing files, ANSI-stripped), Diagnostics
+  (`getAllDiagnostics`). Defaults: Files/Buffers/Terminals on, Ignored/
+  Diagnostics off.
+
+Known limitations / follow-ups:
+
+- Terminals scope currently spans **all** projects' terminals, not just the
+  current cwd — cwd-scoping needs the host's `encode_path_for_filename`
+  (percent-encodes non-ASCII, so not safely replicated in JS). Best solved
+  by the `listTerminalLogs()` host API in §8.
+- Terminal hits open the **backing file** at the line, not the live
+  terminal. Fine for "find it"; focusing the live terminal is a refinement.
+- Toggles only work in the live overlay, not the `Resume` (cached) overlay.
+
+### Retention gotcha discovered (blocks naive §8 step 1)
+
+Backing files are named by terminal id: `<data_dir>/terminals/<encoded-cwd>/
+fresh-terminal-<id>.txt`. Terminal ids restart per session, so simply
+*not deleting* the file on close would let a new terminal with the same id
+**clobber** a retained log from a prior session. Retention therefore must
+either (a) rename the file to a unique name on close (e.g. append
+`closed-<epoch>`), or (b) key files by a monotonic/session-unique id, and
+record the survivors in the index manifest. Do **not** land "skip the
+`remove_file`" on its own.
+
 ## 11. Open questions
 
 - **Result ordering across sources** — interleave by relevance, or always group

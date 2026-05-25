@@ -39,7 +39,7 @@ const editor = getEditor();
  *  classic project-file grep; the others are opt-in scopes layered on
  *  top. Each enabled scope contributes tagged matches to one merged
  *  result list. See `docs/internal/global-search-ux.md`. */
-type ScopeId = "files" | "ignored" | "buffers" | "diagnostics";
+type ScopeId = "files" | "ignored" | "buffers" | "terminals" | "diagnostics";
 
 // One Live Grep match. Mirrors the JSON shape ripgrep emits with
 // `--line-number --column --no-heading`; built-in non-rg providers
@@ -144,17 +144,19 @@ const SCOPES: ScopeDef[] = [
   { id: "files", labelKey: "scope.files", action: "live_grep_toggle_files" },
   { id: "ignored", labelKey: "scope.ignored", action: "live_grep_toggle_ignored", badge: "ign" },
   { id: "buffers", labelKey: "scope.buffers", action: "live_grep_toggle_buffers", badge: "buf" },
+  { id: "terminals", labelKey: "scope.terminals", action: "live_grep_toggle_terminals", badge: "term" },
   { id: "diagnostics", labelKey: "scope.diagnostics", action: "live_grep_toggle_diagnostics", badge: "diag" },
 ];
 
 // Default scope set: same as the classic Live Grep, *minus* ignored
-// files (off — they were noisy) and *plus* unsaved open buffers (on,
-// so edits not yet written to disk are still found). `files` on,
-// `ignored` off, `buffers` on, `diagnostics` off.
+// files (off — they were noisy) and *plus* unsaved open buffers and
+// terminal scrollback (on). `files` on, `ignored` off, `buffers` on,
+// `terminals` on, `diagnostics` off.
 const scopeEnabled: Record<ScopeId, boolean> = {
   files: true,
   ignored: false,
   buffers: true,
+  terminals: true,
   diagnostics: false,
 };
 
@@ -627,6 +629,66 @@ editor.registerCommand(
 // them line-by-line in JS — cap at a sane size and skip the rest.
 const MAX_BUFFER_SCAN_BYTES = 2_000_000;
 
+// Strip ANSI escape sequences so terminal scrollback (stored with
+// colour codes in the backing file) shows as plain text in results.
+function stripAnsi(s: string): string {
+  return s
+    // CSI … final byte (colours, cursor moves, etc.)
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    // OSC … terminated by BEL or ST
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    // Remaining two-byte escapes
+    .replace(/\x1b[@-Z\\-_]/g, "");
+}
+
+/** Search terminal scrollback. Terminal backing files live under
+ *  `<data_dir>/terminals/` — open terminals stream their scrollback
+ *  there live, and (once retention lands) closed terminals are kept
+ *  too. We grep that tree directly with rg (falling back to grep),
+ *  then strip ANSI for display. Opening a hit opens the backing file
+ *  at the matched line.
+ *
+ *  Note: this currently spans every project's terminals, not just the
+ *  current cwd — cwd-scoping needs the host's filename encoding and is
+ *  a follow-up (see docs/internal/global-search-ux.md). */
+async function searchTerminals(query: string, limit: number): Promise<GrepMatch[]> {
+  if (limit <= 0) return [];
+  const dir = `${editor.getDataDir()}/terminals`;
+  const cwd = editor.getCwd();
+  let raw: GrepMatch[] = [];
+  try {
+    const r = await editor.spawnProcess(
+      "rg",
+      [
+        "--line-number", "--column", "--no-heading", "--color=never",
+        "--smart-case", "--text", `--max-count=${limit}`,
+        // Only the rendered `.txt` backing files — not the raw `.log`
+        // replay logs, which would double every hit.
+        "-g", "*.txt",
+        "--", query, dir,
+      ],
+      cwd
+    );
+    if (r.exit_code === 0) {
+      raw = parseGrepOutput(r.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
+    } else if (r.exit_code !== 1) {
+      // rg missing or path error → fall back to grep (-a: treat the
+      // ANSI-laden logs as text rather than skipping them as binary).
+      const g = await editor.spawnProcess("grep", ["-rn", "-a", "--include=*.txt", "--", query, dir], cwd);
+      if (g.exit_code === 0) {
+        raw = parseGrepOutput(g.stdout, limit, (m) => editor.debug(m)) as GrepMatch[];
+      }
+    }
+  } catch (e) {
+    editor.debug(`[live_grep:terminals] ${e}`);
+  }
+  return raw.slice(0, limit).map((m) => ({
+    ...m,
+    source: "terminals" as const,
+    content: stripAnsi(m.content),
+  }));
+}
+
 /** Search the text of currently-open, modified file buffers.
  *  Scoped to *modified* buffers on purpose: unmodified buffers are
  *  already covered by the on-disk file scan, so this surfaces exactly
@@ -734,6 +796,10 @@ async function search(query: string): Promise<GrepMatch[]> {
 
   if (scopeEnabled.buffers && remaining() > 0) {
     results.push(...await searchOpenBuffers(query, remaining()));
+  }
+
+  if (scopeEnabled.terminals && remaining() > 0) {
+    results.push(...await searchTerminals(query, remaining()));
   }
 
   if (scopeEnabled.diagnostics && remaining() > 0) {

@@ -1842,6 +1842,14 @@
       "when": "prompt"
     },
     {
+      "comment": "Universal Search overlay — toggle the 'Terminals' scope (terminal scrollback; on by default). Mnemonic: 't' for Terminals.",
+      "key": "t",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_terminals",
+      "args": {},
+      "when": "prompt"
+    },
+    {
       "comment": "Universal Search overlay — toggle the 'Diagnostics' scope (off by default). Mnemonic: 'd' for Diagnostics.",
       "key": "d",
       "modifiers": ["alt"],

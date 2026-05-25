@@ -16,6 +16,7 @@
     "scope.files": "Files",
     "scope.ignored": "Ignored",
     "scope.buffers": "Buffers",
+    "scope.terminals": "Terminals",
     "scope.diagnostics": "Diagnostics",
     "cmd.live_grep_toggle_files": "Search: Toggle Project Files",
     "cmd.live_grep_toggle_files_desc": "Include/exclude project files in the search",
@@ -23,6 +24,8 @@
     "cmd.live_grep_toggle_ignored_desc": "Include/exclude .gitignore'd and hidden files in the search",
     "cmd.live_grep_toggle_buffers": "Search: Toggle Open Buffers",
     "cmd.live_grep_toggle_buffers_desc": "Include/exclude unsaved open buffers in the search",
+    "cmd.live_grep_toggle_terminals": "Search: Toggle Terminal Scrollback",
+    "cmd.live_grep_toggle_terminals_desc": "Include/exclude terminal scrollback in the search",
     "cmd.live_grep_toggle_diagnostics": "Search: Toggle Diagnostics",
     "cmd.live_grep_toggle_diagnostics_desc": "Include/exclude LSP diagnostic messages in the search"
   },
