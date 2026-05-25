@@ -27,8 +27,5 @@ Fresh is a terminal text editor. These docs cover core features, configuration, 
 - **[Architecture](./architecture.md)**
 - **[Plugin API](./plugins/api/)** 
 - **[Plugin Development](./plugins/development/)** 
-- **[Internal Documentation](./internal/README.md)**
-- **[Design: Finder Abstraction](./internal/finder-abstraction.md)**
-- **[Design: Search Next Occurrence](./internal/search-next-occurrence.md)**
 - **[WASM Compatibility](./wasm.md)**
 - **[QuickJS Migration](./quickjs.md)**
