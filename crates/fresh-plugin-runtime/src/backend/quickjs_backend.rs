@@ -2958,6 +2958,23 @@ impl JsEditorApi {
             .to_string()
     }
 
+    /// Per-working-directory data root for plugin state scoped to the current
+    /// project root / worktree (`<data_dir>/workdirs/<encoded-cwd>/`). Use
+    /// instead of `getDataDir()` for state that should not be shared across
+    /// worktrees. The directory is not created here — callers create what
+    /// they need under it.
+    pub fn get_working_data_dir(&self) -> String {
+        let working_dir = self
+            .state_snapshot
+            .read()
+            .map(|s| s.working_dir.clone())
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        self.services
+            .working_data_dir(&working_dir)
+            .to_string_lossy()
+            .to_string()
+    }
+
     /// Get themes directory path
     pub fn get_themes_dir(&self) -> String {
         self.services

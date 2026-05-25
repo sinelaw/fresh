@@ -1237,6 +1237,8 @@ mod tests {
             "reloadGrammars",
             "getConfigDir",
             "getDataDir",
+            "getWorkingDataDir",
+            "getTerminalDir",
             "getThemesDir",
             "applyTheme",
             "getThemeSchema",

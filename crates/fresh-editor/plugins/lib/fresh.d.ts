@@ -2134,6 +2134,15 @@ interface EditorAPI {
 	*/
 	getDataDir(): string;
 	/**
+	* Per-working-directory data root for plugin state that should be scoped
+	* to the current project root / worktree rather than shared across all of
+	* them (`<data_dir>/workdirs/<encoded-cwd>/`). Prefer this over
+	* `getDataDir()` for per-project state; the directory is not created for
+	* you. Note: terminal scrollback and orchestrator state use their own
+	* dedicated layouts (see `getTerminalDir()`), not this root.
+	*/
+	getWorkingDataDir(): string;
+	/**
 	* Directory holding terminal scrollback backing files for the current
 	* working directory. Each project root / worktree has its own subdir, so
 	* a search can stay scoped to the active project's terminals.

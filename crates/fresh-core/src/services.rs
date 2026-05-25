@@ -73,6 +73,16 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
         self.data_dir().join("terminals")
     }
 
+    /// Per-working-directory data root for plugin state that should be scoped
+    /// to a single project root / worktree (e.g. `<data_dir>/workdirs/
+    /// <encoded-cwd>/`). Default falls back to the shared parent; the editor
+    /// bridge overrides with the per-root subdir
+    /// (`DirectoryContext::working_data_dir_for`).
+    fn working_data_dir(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
+        let _ = working_dir;
+        self.data_dir().join("workdirs")
+    }
+
     /// Get theme data (JSON) by name from the in-memory cache.
     fn get_theme_data(&self, _name: &str) -> Option<serde_json::Value> {
         None

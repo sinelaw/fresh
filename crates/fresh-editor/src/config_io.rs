@@ -992,6 +992,16 @@ impl DirectoryContext {
         self.terminals_dir().join(encoded)
     }
 
+    /// Per-working-directory data root (`<data_dir>/workdirs/<encoded-cwd>/`).
+    /// The canonical home for plugin state that should be scoped to a single
+    /// project root / worktree rather than shared across all of them — each
+    /// worktree gets its own subtree. Plugins reach this via
+    /// `editor.getWorkingDataDir()`.
+    pub fn working_data_dir_for(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
+        let encoded = crate::workspace::encode_path_for_filename(working_dir);
+        self.data_dir.join("workdirs").join(encoded)
+    }
+
     /// Get the config file path
     pub fn config_path(&self) -> std::path::PathBuf {
         self.config_dir.join(Config::FILENAME)
