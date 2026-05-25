@@ -2151,10 +2151,18 @@ impl Theme {
                 "status_warning_indicator_fg" => Some(&mut self.status_warning_indicator_fg),
                 "status_error_indicator_bg" => Some(&mut self.status_error_indicator_bg),
                 "status_error_indicator_fg" => Some(&mut self.status_error_indicator_fg),
-                "status_warning_indicator_hover_bg" => Some(&mut self.status_warning_indicator_hover_bg),
-                "status_warning_indicator_hover_fg" => Some(&mut self.status_warning_indicator_hover_fg),
-                "status_error_indicator_hover_bg" => Some(&mut self.status_error_indicator_hover_bg),
-                "status_error_indicator_hover_fg" => Some(&mut self.status_error_indicator_hover_fg),
+                "status_warning_indicator_hover_bg" => {
+                    Some(&mut self.status_warning_indicator_hover_bg)
+                }
+                "status_warning_indicator_hover_fg" => {
+                    Some(&mut self.status_warning_indicator_hover_fg)
+                }
+                "status_error_indicator_hover_bg" => {
+                    Some(&mut self.status_error_indicator_hover_bg)
+                }
+                "status_error_indicator_hover_fg" => {
+                    Some(&mut self.status_error_indicator_hover_fg)
+                }
                 "tab_drop_zone_bg" => Some(&mut self.tab_drop_zone_bg),
                 "tab_drop_zone_border" => Some(&mut self.tab_drop_zone_border),
                 "settings_selected_bg" => Some(&mut self.settings_selected_bg),
