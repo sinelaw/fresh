@@ -322,6 +322,23 @@ impl Prompt {
                 ctx.defer(DeferredAction::UpdatePromptSuggestions);
                 InputResult::Consumed
             }
+            'z' => {
+                // Undo the last input edit. Operates on the prompt's own
+                // history so undo edits the query box, not the underlying
+                // (modal-inaccessible) buffer. Consumed unconditionally so
+                // it never falls through to the global buffer undo.
+                if self.undo_input() {
+                    ctx.defer(DeferredAction::UpdatePromptSuggestions);
+                }
+                InputResult::Consumed
+            }
+            'y' => {
+                // Redo the last undone input edit.
+                if self.redo_input() {
+                    ctx.defer(DeferredAction::UpdatePromptSuggestions);
+                }
+                InputResult::Consumed
+            }
             // Pass through other Ctrl+key combinations to global keybindings (e.g., Ctrl+P to toggle Quick Open)
             _ => InputResult::Ignored,
         }

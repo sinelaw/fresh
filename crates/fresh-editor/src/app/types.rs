@@ -1659,6 +1659,13 @@ pub struct OverlayPreviewState {
     /// Buffers the user already had open are *not* in this set —
     /// dismissing the overlay never disturbs them.
     pub loaded_buffers: HashSet<BufferId>,
+    /// When true, the preview pane renders empty (just its frame). Set
+    /// when the current query has no selectable result so a stale match
+    /// doesn't keep showing after the result list clears. Kept as a flag
+    /// (rather than dropping the whole state) so `loaded_buffers` stays
+    /// tracked for cleanup and the buffer can be re-shown on the next
+    /// match without reloading.
+    pub blanked: bool,
 }
 
 #[cfg(test)]

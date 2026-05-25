@@ -789,3 +789,204 @@ fn test_open_terminal_in_dock_has_only_terminal_tab() {
     let leaf_buffer = sm.get_buffer_id(dock_leaf.into()).expect("leaf has buffer");
     assert_eq!(tabs[0], leaf_buffer);
 }
+
+// ===================================================================
+// Floating-overlay preview / input bug reproductions
+//
+// These exercise the centred Live Grep overlay (issue #1796): the
+// filter input box and the right-hand preview pane.
+//
+// They deliberately do NOT drive the async grep backend (ripgrep / git
+// grep): the live search path is debounced + spawns a subprocess and is
+// known to time out intermittently under the test harness (see the
+// `#[ignore = "flaky test"]` tags on the search-driven tests above).
+// Instead they open the overlay and seed the result list directly — the
+// same pattern the Resume tests use — then drive real keyboard events
+// and assert only on rendered screen output. This keeps the preview /
+// input behaviour under test deterministic and decoupled from grep.
+// ===================================================================
+
+/// Open the editor in a fresh temp project containing `files`, then
+/// launch the Live Grep floating overlay (issue #1796). The overlay is
+/// wide enough (200 cols) that the right-hand preview pane is shown.
+/// Returns the harness plus the `TempDir` guard — keep it alive.
+fn open_live_grep_overlay(
+    files: &[(&str, &str)],
+    config: fresh::config::Config,
+) -> (EditorTestHarness, tempfile::TempDir) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    for (name, content) in files {
+        fs::write(project_root.join(name), content).unwrap();
+    }
+    let start_file = project_root.join("start.txt");
+    fs::write(&start_file, "start\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(200, 44, config, project_root).unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .editor_mut()
+        .start_prompt("Live grep: ".to_string(), PromptType::LiveGrep);
+    // The `floatingOverlay` flag is what triggers the preview-pane layout
+    // and `prepare_overlay_preview`; the plugin sets it at runtime, so we
+    // set it directly here.
+    harness.editor_mut().prompt_mut().unwrap().overlay = true;
+    harness.render().unwrap();
+
+    (harness, temp_dir)
+}
+
+/// Seed the overlay's result list with `labels` (each a parseable
+/// `path:line` string, resolved against the working dir) and select
+/// `selected`. Mirrors the streamed-results shape the Finder produces.
+fn seed_overlay_results(harness: &mut EditorTestHarness, labels: &[&str], selected: Option<usize>) {
+    let prompt = harness.editor_mut().prompt_mut().unwrap();
+    prompt.suggestions = labels
+        .iter()
+        .map(|l| Suggestion::new(l.to_string()))
+        .collect();
+    prompt.selected_suggestion = selected;
+}
+
+/// Issue #1: undo/redo must operate on the filter input box, not the
+/// underlying buffer. Pre-fix, Ctrl+Z/Ctrl+Y returned `Ignored` from the
+/// prompt input handler and fell through to the global buffer
+/// undo/redo, so the typed query was never reverted/restored.
+#[test]
+fn test_live_grep_input_undo_redo() {
+    let (mut harness, _tmp) = open_live_grep_overlay(&[], Default::default());
+
+    harness.type_text("ZQXJV").unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("Live grep: ZQXJV"),
+        "input box should show the typed query; got:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Undo must revert the typed input.
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("ZQXJV"),
+        "Ctrl+Z must undo the input edit; pre-fix it fell through to the \
+         buffer's undo and left the query untouched. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Redo must restore it.
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("ZQXJV"),
+        "Ctrl+Y must redo the input edit. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Issue #2: when the query stops matching anything (result list goes
+/// empty), the preview pane must clear too. Pre-fix,
+/// `prepare_overlay_preview` early-returned without dropping the stale
+/// `overlay_preview_state`, so the previous match's file content kept
+/// rendering in the preview.
+#[test]
+fn test_live_grep_preview_clears_when_no_matches() {
+    // PREVIEWMARKERAAA sits on a context line, so it only ever appears in
+    // the preview pane — the result-list label is the parseable
+    // `path:line`, never the file's contents.
+    let files = &[("aaa.txt", "PREVIEWMARKERAAA\nmatch line here\n")];
+    let (mut harness, _tmp) = open_live_grep_overlay(files, Default::default());
+
+    seed_overlay_results(&mut harness, &["aaa.txt:2"], Some(0));
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("PREVIEWMARKERAAA"),
+        "preview should show the selected file's context; got:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Query now matches nothing: the result list clears.
+    seed_overlay_results(&mut harness, &[], None);
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("PREVIEWMARKERAAA"),
+        "preview must clear when there are no results; pre-fix the stale \
+         match content kept rendering. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Issue #3: navigating between results in *different* files must update
+/// the preview to the newly-selected file. Pre-fix, the buffer switch
+/// updated the preview view-state but not `OverlayPreviewState.buffer_id`,
+/// so the renderer drew the previous file's text at the new file's scroll
+/// offset (wrong content, or blank past EOF).
+#[test]
+fn test_live_grep_preview_follows_selection_across_files() {
+    // Each file has a unique context marker on line 1; the marker only
+    // appears in the preview pane.
+    let files = &[
+        ("aaa.txt", "PREVIEWMARKERAAA\nmatch in aaa\n"),
+        ("bbb.txt", "PREVIEWMARKERBBB\nmatch in bbb\n"),
+    ];
+    let (mut harness, _tmp) = open_live_grep_overlay(files, Default::default());
+
+    seed_overlay_results(&mut harness, &["aaa.txt:2", "bbb.txt:2"], Some(0));
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("PREVIEWMARKERAAA") && !screen.contains("PREVIEWMARKERBBB"),
+        "preview should start on aaa.txt; got:\n{screen}"
+    );
+
+    // Arrow-key down to the second result (bbb.txt).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("PREVIEWMARKERBBB"),
+        "preview must follow the selection to bbb.txt; pre-fix it rendered \
+         aaa.txt's buffer at bbb.txt's scroll offset (wrong content or \
+         blank). Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Issue #4: the preview must wrap long lines so the full match context
+/// is visible, rather than horizontally scrolling and pushing earlier
+/// parts of the line off-screen. A marker near the middle of a very long
+/// line and the token near its end must both be visible at once. The
+/// global `line_wrap` is disabled so the bug is exercised: the preview
+/// must wrap regardless, since it has no horizontal scroll affordance.
+#[test]
+fn test_live_grep_preview_wraps_long_lines() {
+    // One very long line: padding, MIDMARKERWORD (~col 70), more padding,
+    // ENDMATCHWORD (~col 185). Both markers are far past the preview's
+    // visible width, so only wrapping can show them together.
+    let long_line = format!(
+        "{} MIDMARKERWORD {} ENDMATCHWORD\n",
+        "x".repeat(70),
+        "y".repeat(100)
+    );
+    let files = &[("long.txt", long_line.as_str())];
+    let mut config = fresh::config::Config::default();
+    config.editor.line_wrap = false;
+    let (mut harness, _tmp) = open_live_grep_overlay(files, config);
+
+    seed_overlay_results(&mut harness, &["long.txt:1"], Some(0));
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("MIDMARKERWORD") && screen.contains("ENDMATCHWORD"),
+        "preview must wrap the long match line so both the mid-line marker \
+         and the end token are visible; without wrapping the start scrolls \
+         off. Screen:\n{screen}"
+    );
+}
