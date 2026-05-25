@@ -42,6 +42,7 @@ impl crate::app::Editor {
             plugin_manager: std::sync::Arc::clone(&self.plugin_manager),
             theme: std::sync::Arc::clone(&self.theme),
             event_broadcaster: self.event_broadcaster.clone(),
+            recovery_service: std::sync::Arc::clone(&self.recovery_service),
         }
     }
 

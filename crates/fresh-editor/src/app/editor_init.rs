@@ -150,7 +150,7 @@ pub(super) struct EditorParts {
     pub(super) command_registry: Arc<RwLock<CommandRegistry>>,
     pub(super) quick_open_registry: QuickOpenRegistry,
     pub(super) plugin_manager: Arc<RwLock<PluginManager>>,
-    pub(super) recovery_service: RecoveryService,
+    pub(super) recovery_service: Arc<std::sync::Mutex<RecoveryService>>,
     pub(super) key_translator: crate::input::key_translator::KeyTranslator,
     pub(super) update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
 
@@ -1049,6 +1049,31 @@ impl Editor {
         let local_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
             Arc::new(crate::model::filesystem::StdFileSystem);
 
+        // Hot-exit recovery service, shared (Arc<Mutex>) into every
+        // `Window` via `WindowResources` so per-window restore/auto-save
+        // can reach it without an active-window flip.
+        let recovery_service = {
+            let recovery_config = RecoveryConfig {
+                enabled: recovery_enabled,
+                ..RecoveryConfig::default()
+            };
+            // Default to a CWD-scoped recovery directory so each working
+            // directory keeps its own hot-exit recovery files. If this
+            // editor is later promoted to session mode, `set_session_name`
+            // re-creates the service with `RecoveryScope::Session`.
+            // Issue #1550: without per-CWD scoping, opening Fresh in a
+            // second folder would clobber the first folder's unsaved
+            // unnamed buffers on shutdown.
+            let scope = crate::services::recovery::RecoveryScope::Standalone {
+                working_dir: working_dir.clone(),
+            };
+            std::sync::Arc::new(std::sync::Mutex::new(RecoveryService::with_scope(
+                recovery_config,
+                &dir_context.recovery_dir(),
+                &scope,
+            )))
+        };
+
         // Build the resource bundle every `Window` gets a clone of. The
         // base window receives one clone here; subsequent windows
         // (created via `Editor::create_window_at` or first-dive seeding
@@ -1072,6 +1097,7 @@ impl Editor {
             plugin_manager: Arc::clone(&plugin_manager),
             theme: Arc::clone(&theme),
             event_broadcaster: event_broadcaster.clone(),
+            recovery_service: Arc::clone(&recovery_service),
         };
 
         // Build the active window — the one that holds the seed
@@ -1179,6 +1205,7 @@ impl Editor {
                     plugin_manager: Arc::clone(&plugin_manager),
                     theme: Arc::clone(&theme),
                     event_broadcaster: event_broadcaster.clone(),
+                    recovery_service: Arc::clone(&recovery_service),
                 };
                 let mut shell = crate::app::window::Window::new(
                     id,
@@ -1204,24 +1231,6 @@ impl Editor {
             .as_ref()
             .map(|env| env.next_id.max(max_existing + 1))
             .unwrap_or(2);
-
-        let recovery_service = {
-            let recovery_config = RecoveryConfig {
-                enabled: recovery_enabled,
-                ..RecoveryConfig::default()
-            };
-            // Default to a CWD-scoped recovery directory so each working
-            // directory keeps its own hot-exit recovery files. If this
-            // editor is later promoted to session mode, `set_session_name`
-            // re-creates the service with `RecoveryScope::Session`.
-            // Issue #1550: without per-CWD scoping, opening Fresh in a
-            // second folder would clobber the first folder's unsaved
-            // unnamed buffers on shutdown.
-            let scope = crate::services::recovery::RecoveryScope::Standalone {
-                working_dir: working_dir.clone(),
-            };
-            RecoveryService::with_scope(recovery_config, &dir_context.recovery_dir(), &scope)
-        };
 
         let key_translator = crate::input::key_translator::KeyTranslator::load_from_config_dir(
             &dir_context.config_dir,

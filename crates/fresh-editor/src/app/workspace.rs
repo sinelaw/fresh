@@ -183,7 +183,7 @@ impl Editor {
             return Ok(0);
         }
 
-        let entries = self.recovery_service.list_recoverable()?;
+        let entries = self.recovery_service.lock().unwrap().list_recoverable()?;
         if entries.is_empty() {
             return Ok(0);
         }
@@ -203,10 +203,15 @@ impl Editor {
 
         let mut recovered = 0;
         for (buffer_id, file_path) in buffer_files {
-            let recovery_id = self.recovery_service.get_buffer_id(Some(&file_path));
+            let recovery_id = self
+                .recovery_service
+                .lock()
+                .unwrap()
+                .get_buffer_id(Some(&file_path));
             let entry = entries.iter().find(|e| e.id == recovery_id);
             if let Some(entry) = entry {
-                match self.recovery_service.load_recovery(entry) {
+                let loaded = self.recovery_service.lock().unwrap().load_recovery(entry);
+                match loaded {
                     Ok(crate::services::recovery::RecoveryResult::Recovered {
                         content, ..
                     }) => {
@@ -344,208 +349,6 @@ impl Editor {
         // See issue #1156.
     }
 
-    /// Replay hot-exit recovery data onto file-backed buffers in
-    /// `windows[id]` that were modified when the editor last exited.
-    /// Stays on `Editor` because it needs `recovery_service`; targets
-    /// `windows[id]` explicitly so it works for any window without an
-    /// active-window flip.
-    fn restore_hot_exit_changes(
-        &mut self,
-        id: fresh_core::WindowId,
-        path_to_buffer: &HashMap<PathBuf, BufferId>,
-    ) {
-        if !self.config.editor.hot_exit {
-            return;
-        }
-        let entries = self.recovery_service.list_recoverable().unwrap_or_default();
-        if entries.is_empty() {
-            return;
-        }
-        let buffer_ids: Vec<BufferId> = path_to_buffer.values().copied().collect();
-        for buffer_id in buffer_ids {
-            let file_path = self
-                .windows
-                .get(&id)
-                .and_then(|w| w.buffers.get(&buffer_id))
-                .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()));
-            let Some(file_path) = file_path else { continue };
-
-            let recovery_id = self.recovery_service.get_buffer_id(Some(&file_path));
-            let Some(entry) = entries.iter().find(|e| e.id == recovery_id) else {
-                continue;
-            };
-            match self.recovery_service.load_recovery(entry) {
-                Ok(crate::services::recovery::RecoveryResult::Recovered { content, .. }) => {
-                    let mut mutated = false;
-                    if let Some(state) = self
-                        .windows
-                        .get_mut(&id)
-                        .and_then(|w| w.buffers.get_mut(&buffer_id))
-                    {
-                        let current_len = state.buffer.total_bytes();
-                        let text = String::from_utf8_lossy(&content).into_owned();
-                        let current = state.buffer.get_text_range_mut(0, current_len).ok();
-                        let current_text = current
-                            .as_ref()
-                            .map(|b| String::from_utf8_lossy(b).into_owned());
-                        if current_text.as_deref() != Some(&text) {
-                            state.buffer.delete(0..current_len);
-                            state.buffer.insert(0, &text);
-                            state.buffer.set_modified(true);
-                            state.buffer.set_recovery_pending(false);
-                            mutated = true;
-                            tracing::info!(
-                                "Restored unsaved changes for {:?} from hot exit recovery",
-                                file_path
-                            );
-                        }
-                    }
-                    if let Some(log) = self
-                        .windows
-                        .get_mut(&id)
-                        .and_then(|w| w.event_logs.get_mut(&buffer_id))
-                    {
-                        log.clear_saved_position();
-                    }
-                    if mutated {
-                        self.sync_lsp_after_recovery_replay_for(id, buffer_id);
-                    }
-                }
-                Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
-                    chunks, ..
-                }) => {
-                    let mut mutated = false;
-                    if let Some(state) = self
-                        .windows
-                        .get_mut(&id)
-                        .and_then(|w| w.buffers.get_mut(&buffer_id))
-                    {
-                        for chunk in chunks.into_iter().rev() {
-                            let text = String::from_utf8_lossy(&chunk.content).into_owned();
-                            if chunk.original_len > 0 {
-                                state
-                                    .buffer
-                                    .delete(chunk.offset..chunk.offset + chunk.original_len);
-                            }
-                            state.buffer.insert(chunk.offset, &text);
-                        }
-                        state.buffer.set_modified(true);
-                        state.buffer.set_recovery_pending(false);
-                        mutated = true;
-                        tracing::info!(
-                            "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
-                            file_path
-                        );
-                    }
-                    if let Some(log) = self
-                        .windows
-                        .get_mut(&id)
-                        .and_then(|w| w.event_logs.get_mut(&buffer_id))
-                    {
-                        log.clear_saved_position();
-                    }
-                    if mutated {
-                        self.sync_lsp_after_recovery_replay_for(id, buffer_id);
-                    }
-                }
-                Ok(crate::services::recovery::RecoveryResult::OriginalFileModified {
-                    original_path,
-                    ..
-                }) => {
-                    let name = original_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    tracing::warn!("{} changed on disk; unsaved changes not restored", name);
-                    if let Some(w) = self.windows.get_mut(&id) {
-                        w.set_status_message(format!(
-                            "{} changed on disk; unsaved changes not restored",
-                            name
-                        ));
-                    }
-                }
-                Ok(_) => {} // Corrupted, NotFound — skip
-                Err(e) => {
-                    tracing::debug!(
-                        "Failed to load hot exit recovery for {:?}: {}",
-                        file_path,
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    /// Restore unnamed (unsaved) buffers into `windows[id]` from their
-    /// hot-exit recovery files. Returns a map from `recovery_id` to the
-    /// newly created `BufferId`. Stays on `Editor` (needs
-    /// `recovery_service`) but creates the buffers directly in
-    /// `windows[id]` — no active-window flip.
-    fn restore_unnamed_buffers(
-        &mut self,
-        id: fresh_core::WindowId,
-        unnamed_buffers: &[UnnamedBufferRef],
-    ) -> HashMap<String, BufferId> {
-        let mut unnamed_buffer_map: HashMap<String, BufferId> = HashMap::new();
-        if !self.config.editor.hot_exit || unnamed_buffers.is_empty() {
-            return unnamed_buffer_map;
-        }
-        tracing::debug!(
-            "Restoring {} unnamed buffers from recovery",
-            unnamed_buffers.len()
-        );
-        for unnamed_ref in unnamed_buffers {
-            let entries = match self.recovery_service.list_recoverable() {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!("Failed to list recovery entries: {}", e);
-                    continue;
-                }
-            };
-            let Some(entry) = entries.iter().find(|e| e.id == unnamed_ref.recovery_id) else {
-                tracing::debug!(
-                    "Recovery file not found for unnamed buffer {}",
-                    unnamed_ref.recovery_id
-                );
-                continue;
-            };
-            match self.recovery_service.load_recovery(entry) {
-                Ok(crate::services::recovery::RecoveryResult::Recovered { content, .. }) => {
-                    let text = String::from_utf8_lossy(&content).into_owned();
-                    let Some(w) = self.windows.get_mut(&id) else {
-                        continue;
-                    };
-                    let buffer_id = w.create_unnamed_recovery_buffer(
-                        &text,
-                        unnamed_ref.recovery_id.clone(),
-                        unnamed_ref.display_name.clone(),
-                    );
-                    unnamed_buffer_map.insert(unnamed_ref.recovery_id.clone(), buffer_id);
-                    tracing::info!(
-                        "Restored unnamed buffer '{}' (recovery_id={})",
-                        unnamed_ref.display_name,
-                        unnamed_ref.recovery_id
-                    );
-                }
-                Ok(other) => {
-                    tracing::warn!(
-                        "Unexpected recovery result for unnamed buffer {}: {:?}",
-                        unnamed_ref.recovery_id,
-                        std::mem::discriminant(&other)
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load recovery for unnamed buffer {}: {}",
-                        unnamed_ref.recovery_id,
-                        e
-                    );
-                }
-            }
-        }
-        unnamed_buffer_map
-    }
-
     /// Save a specific window's workspace to disk, keyed by its own
     /// `root`. No active-window flip: reads `windows[id]` directly,
     /// snapshots via `Window::capture_workspace`, and injects the
@@ -595,14 +398,12 @@ impl Editor {
 
     /// Restore a specific window's workspace from disk into
     /// `windows[id]`, keyed by its own `root`. No active-window flip:
-    /// the window-local layout restore runs on `windows[id]` via
-    /// `Window::apply_workspace_layout`; the genuinely editor-global
-    /// steps are layered on here:
+    /// the entire window-local layout AND hot-exit recovery now run on
+    /// `windows[id]` via `Window::apply_workspace_layout` (the recovery
+    /// service is shared into the window via `WindowResources`). Only
+    /// genuinely editor-global steps are layered on here:
     /// - `restore_config_overrides` (mutates the shared `Config`),
     /// - `plugin_global_state` assignment,
-    /// - hot-exit recovery (`restore_unnamed_buffers` before the layout
-    ///   so the split tree can reference the restored buffers;
-    ///   `restore_hot_exit_changes` after), which needs `recovery_service`,
     /// - and, for the active window ONLY, the post-restore plugin
     ///   snapshot + `buffer_activated` hook (background restores must not
     ///   fire focus side-effects).
@@ -642,18 +443,14 @@ impl Editor {
             .unwrap_or(false);
 
         let session = self.session_name.clone();
-        let path_to_buffer = if populated {
+        if populated {
             // Normal path: editor_init has already seeded windows[id], so
-            // restore the layout into the existing window. Unnamed-buffer
-            // recovery must precede the split layout (the layout
-            // references those buffers); it needs the editor's
-            // recovery_service but creates buffers directly in windows[id].
-            let unnamed_buffer_map = self.restore_unnamed_buffers(id, &workspace.unnamed_buffers);
+            // restore the layout (incl. hot-exit recovery) into it.
             let win = self
                 .windows
                 .get_mut(&id)
                 .expect("window present for restore");
-            win.apply_workspace_layout(&workspace, &unnamed_buffer_map, session.as_deref())
+            win.apply_workspace_layout(&workspace, session.as_deref());
         } else {
             // Never-seeded shell: build the whole window from the
             // workspace via the `Window::from_workspace` factory, carrying
@@ -675,11 +472,7 @@ impl Editor {
             built.terminal_height = th;
             built.plugin_state = pstate;
             self.windows.insert(id, built);
-            HashMap::new()
-        };
-
-        // Replay hot-exit changes onto the file-backed buffers we opened.
-        self.restore_hot_exit_changes(id, &path_to_buffer);
+        }
 
         // Active-window only: refresh the plugin snapshot and fire
         // buffer_activated for the restored active buffer. Background
@@ -1834,26 +1627,247 @@ impl crate::app::window::Window {
             .insert(buf, crate::model::event::EventLog::new());
     }
 
-    /// Apply a loaded workspace's **window-local** layout onto this
-    /// window: search options, prompt histories, file-explorer settings,
-    /// the opened files (`open_file_no_focus`, no focus side-effects),
-    /// external + read-only files, terminals, the split tree + per-split
-    /// view state, bookmarks, orphan cleanup, and the restore summary.
+    /// Push a recovered buffer's full content to this window's LSP after
+    /// an out-of-band hot-exit replay (the replay edits the buffer
+    /// directly, bypassing the event log's `didChange`).
+    pub(crate) fn sync_lsp_after_recovery_replay(&mut self, buffer_id: BufferId) {
+        let Some(text) = self
+            .buffers
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.to_string())
+        else {
+            return;
+        };
+        let full_change = lsp_types::TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text,
+        };
+        self.send_lsp_changes_for_buffer(buffer_id, vec![full_change]);
+    }
+
+    /// Restore unnamed (unsaved) buffers into this window from their
+    /// hot-exit recovery files (via the shared recovery service in
+    /// `self.resources`). Returns a map from `recovery_id` to the new
+    /// `BufferId`. No focus side-effects — the split-layout restore wires
+    /// each buffer into a tab afterwards.
+    fn restore_unnamed_buffers(
+        &mut self,
+        unnamed_buffers: &[UnnamedBufferRef],
+    ) -> HashMap<String, BufferId> {
+        let mut unnamed_buffer_map: HashMap<String, BufferId> = HashMap::new();
+        if !self.resources.config.editor.hot_exit || unnamed_buffers.is_empty() {
+            return unnamed_buffer_map;
+        }
+        tracing::debug!(
+            "Restoring {} unnamed buffers from recovery",
+            unnamed_buffers.len()
+        );
+        for unnamed_ref in unnamed_buffers {
+            let entries = match self
+                .resources
+                .recovery_service
+                .lock()
+                .unwrap()
+                .list_recoverable()
+            {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!("Failed to list recovery entries: {}", e);
+                    continue;
+                }
+            };
+            let Some(entry) = entries.iter().find(|e| e.id == unnamed_ref.recovery_id) else {
+                tracing::debug!(
+                    "Recovery file not found for unnamed buffer {}",
+                    unnamed_ref.recovery_id
+                );
+                continue;
+            };
+            let loaded = self
+                .resources
+                .recovery_service
+                .lock()
+                .unwrap()
+                .load_recovery(entry);
+            match loaded {
+                Ok(crate::services::recovery::RecoveryResult::Recovered { content, .. }) => {
+                    let text = String::from_utf8_lossy(&content).into_owned();
+                    let buffer_id = self.create_unnamed_recovery_buffer(
+                        &text,
+                        unnamed_ref.recovery_id.clone(),
+                        unnamed_ref.display_name.clone(),
+                    );
+                    unnamed_buffer_map.insert(unnamed_ref.recovery_id.clone(), buffer_id);
+                    tracing::info!(
+                        "Restored unnamed buffer '{}' (recovery_id={})",
+                        unnamed_ref.display_name,
+                        unnamed_ref.recovery_id
+                    );
+                }
+                Ok(other) => {
+                    tracing::warn!(
+                        "Unexpected recovery result for unnamed buffer {}: {:?}",
+                        unnamed_ref.recovery_id,
+                        std::mem::discriminant(&other)
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load recovery for unnamed buffer {}: {}",
+                        unnamed_ref.recovery_id,
+                        e
+                    );
+                }
+            }
+        }
+        unnamed_buffer_map
+    }
+
+    /// Replay hot-exit recovery data onto this window's file-backed
+    /// buffers that were modified when the editor last exited (via the
+    /// shared recovery service in `self.resources`).
+    fn restore_hot_exit_changes(&mut self, path_to_buffer: &HashMap<PathBuf, BufferId>) {
+        if !self.resources.config.editor.hot_exit {
+            return;
+        }
+        let entries = self
+            .resources
+            .recovery_service
+            .lock()
+            .unwrap()
+            .list_recoverable()
+            .unwrap_or_default();
+        if entries.is_empty() {
+            return;
+        }
+        let buffer_ids: Vec<BufferId> = path_to_buffer.values().copied().collect();
+        for buffer_id in buffer_ids {
+            let file_path = self
+                .buffers
+                .get(&buffer_id)
+                .and_then(|s| s.buffer.file_path().map(|p| p.to_path_buf()));
+            let Some(file_path) = file_path else { continue };
+
+            let recovery_id = self
+                .resources
+                .recovery_service
+                .lock()
+                .unwrap()
+                .get_buffer_id(Some(&file_path));
+            let Some(entry) = entries.iter().find(|e| e.id == recovery_id) else {
+                continue;
+            };
+            let loaded = self
+                .resources
+                .recovery_service
+                .lock()
+                .unwrap()
+                .load_recovery(entry);
+            match loaded {
+                Ok(crate::services::recovery::RecoveryResult::Recovered { content, .. }) => {
+                    let mut mutated = false;
+                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        let current_len = state.buffer.total_bytes();
+                        let text = String::from_utf8_lossy(&content).into_owned();
+                        let current = state.buffer.get_text_range_mut(0, current_len).ok();
+                        let current_text = current
+                            .as_ref()
+                            .map(|b| String::from_utf8_lossy(b).into_owned());
+                        if current_text.as_deref() != Some(&text) {
+                            state.buffer.delete(0..current_len);
+                            state.buffer.insert(0, &text);
+                            state.buffer.set_modified(true);
+                            state.buffer.set_recovery_pending(false);
+                            mutated = true;
+                            tracing::info!(
+                                "Restored unsaved changes for {:?} from hot exit recovery",
+                                file_path
+                            );
+                        }
+                    }
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.clear_saved_position();
+                    }
+                    if mutated {
+                        self.sync_lsp_after_recovery_replay(buffer_id);
+                    }
+                }
+                Ok(crate::services::recovery::RecoveryResult::RecoveredChunks {
+                    chunks, ..
+                }) => {
+                    let mut mutated = false;
+                    if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                        for chunk in chunks.into_iter().rev() {
+                            let text = String::from_utf8_lossy(&chunk.content).into_owned();
+                            if chunk.original_len > 0 {
+                                state
+                                    .buffer
+                                    .delete(chunk.offset..chunk.offset + chunk.original_len);
+                            }
+                            state.buffer.insert(chunk.offset, &text);
+                        }
+                        state.buffer.set_modified(true);
+                        state.buffer.set_recovery_pending(false);
+                        mutated = true;
+                        tracing::info!(
+                            "Restored unsaved changes (chunked) for {:?} from hot exit recovery",
+                            file_path
+                        );
+                    }
+                    if let Some(log) = self.event_logs.get_mut(&buffer_id) {
+                        log.clear_saved_position();
+                    }
+                    if mutated {
+                        self.sync_lsp_after_recovery_replay(buffer_id);
+                    }
+                }
+                Ok(crate::services::recovery::RecoveryResult::OriginalFileModified {
+                    original_path,
+                    ..
+                }) => {
+                    let name = original_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    tracing::warn!("{} changed on disk; unsaved changes not restored", name);
+                    self.set_status_message(format!(
+                        "{} changed on disk; unsaved changes not restored",
+                        name
+                    ));
+                }
+                Ok(_) => {} // Corrupted, NotFound — skip
+                Err(e) => {
+                    tracing::debug!(
+                        "Failed to load hot exit recovery for {:?}: {}",
+                        file_path,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    /// Apply a loaded workspace's layout onto this window — now fully
+    /// window-scoped: search options, prompt histories, file-explorer
+    /// settings, unnamed-buffer hot-exit recovery (before the split tree,
+    /// which references those buffers), the opened files
+    /// (`open_file_no_focus`, no focus side-effects), external + read-only
+    /// files, terminals, the split tree + per-split view state, bookmarks,
+    /// orphan cleanup, the restore summary, and finally hot-exit replay
+    /// onto the opened file buffers. Recovery reaches the shared service
+    /// via `self.resources.recovery_service`, so no `Editor` involvement
+    /// is needed.
     ///
-    /// `unnamed_buffer_map` is the result of the editor-global
-    /// `restore_unnamed_buffers` (run beforehand because the split tree
-    /// references those buffers). Returns the path→`BufferId` map so the
-    /// caller can replay editor-global hot-exit changes onto the opened
-    /// files. The editor-global steps (config overrides beyond
-    /// `mouse_enabled`, plugin global state, hot-exit recovery, and the
-    /// active-window plugin snapshot + `buffer_activated`) live on
-    /// `Editor::restore_workspace_for`.
+    /// The only steps that stay on `Editor::restore_workspace_for` are the
+    /// genuinely editor-global ones: config overrides beyond
+    /// `mouse_enabled`, plugin global state, and the active-window plugin
+    /// snapshot + `buffer_activated`.
     pub(crate) fn apply_workspace_layout(
         &mut self,
         workspace: &Workspace,
-        unnamed_buffer_map: &HashMap<String, BufferId>,
         session_name: Option<&str>,
-    ) -> HashMap<PathBuf, BufferId> {
+    ) {
         tracing::debug!(
             "Applying workspace layout with {} split states",
             workspace.split_states.len()
@@ -1869,6 +1883,10 @@ impl crate::app::window::Window {
         self.restore_prompt_histories(&workspace.histories);
         self.restore_file_explorer_settings(&workspace.file_explorer);
 
+        // Unnamed-buffer recovery must precede the split layout (the tree
+        // references those buffers).
+        let unnamed_buffer_map = self.restore_unnamed_buffers(&workspace.unnamed_buffers);
+
         let mut path_to_buffer = self.open_workspace_files(&workspace.split_states);
         self.restore_external_files(&workspace.external_files, &mut path_to_buffer);
         self.apply_read_only_flags(&workspace.read_only_files, &path_to_buffer);
@@ -1880,7 +1898,7 @@ impl crate::app::window::Window {
             &workspace.split_layout,
             &path_to_buffer,
             &terminal_buffer_map,
-            unnamed_buffer_map,
+            &unnamed_buffer_map,
             &workspace.split_states,
             &mut split_id_map,
             true,
@@ -1897,17 +1915,15 @@ impl crate::app::window::Window {
         self.clean_orphaned_buffers();
         self.log_restore_summary(session_name);
 
-        path_to_buffer
+        // Replay hot-exit changes onto the file-backed buffers we opened.
+        self.restore_hot_exit_changes(&path_to_buffer);
     }
 
     /// Build a `Window` directly from a persisted `Workspace`: construct
     /// a fresh window, seed its initial layout, then apply the workspace
-    /// layout into it. The realized "restore is a Window factory" design
-    /// (the `open_file` move in this branch removed the prior blocker
-    /// that kept restore on `Editor`). Editor-global recovery
-    /// (hot-exit / unnamed buffers via `recovery_service`) is layered on
-    /// by `Editor::restore_workspace_for`; this factory restores the pure
-    /// window-local layout.
+    /// layout into it. The realized "restore is a Window factory" design —
+    /// moving the `open_file` core and the recovery service onto `Window`
+    /// removed the prior blockers that kept restore on `Editor`.
     pub(crate) fn from_workspace(
         id: fresh_core::WindowId,
         label: impl Into<String>,
@@ -1917,7 +1933,7 @@ impl crate::app::window::Window {
     ) -> Self {
         let mut window = Self::new(id, label, root, resources);
         window.seed_initial_layout();
-        window.apply_workspace_layout(workspace, &HashMap::new(), None);
+        window.apply_workspace_layout(workspace, None);
         window
     }
 

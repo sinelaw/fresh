@@ -739,8 +739,11 @@ pub struct Editor {
     /// Cached layout for file browser (for mouse hit testing)
     // `file_browser_layout` moved onto `Window`.
 
-    /// Recovery service for auto-recovery-save and crash recovery
-    recovery_service: RecoveryService,
+    /// Recovery service for auto-recovery-save and crash recovery.
+    /// `Arc<Mutex>` because it is shared into every `Window` via
+    /// `WindowResources` so per-window restore / auto-save can reach it
+    /// without an active-window flip.
+    recovery_service: std::sync::Arc<std::sync::Mutex<RecoveryService>>,
 
     /// Request a full terminal clear and redraw on the next frame
     full_redraw_requested: bool,

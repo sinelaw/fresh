@@ -22,39 +22,13 @@ impl Editor {
     /// the on-disk content, the server is left on a stale base and every
     /// position it returns is offset by the net byte delta.
     pub(crate) fn sync_lsp_after_recovery_replay(&mut self, buffer_id: BufferId) {
-        self.sync_lsp_after_recovery_replay_for(self.active_window, buffer_id);
-    }
-
-    /// As [`Self::sync_lsp_after_recovery_replay`] but targets a specific
-    /// window's buffer + LSP, so the workspace-restore path can replay
-    /// hot-exit changes into a non-active window without an active-window
-    /// flip.
-    pub(crate) fn sync_lsp_after_recovery_replay_for(
-        &mut self,
-        id: fresh_core::WindowId,
-        buffer_id: BufferId,
-    ) {
-        let Some(text) = self
-            .windows
-            .get(&id)
-            .and_then(|w| w.buffers.get(&buffer_id))
-            .and_then(|state| state.buffer.to_string())
-        else {
-            return;
-        };
-        let full_change = lsp_types::TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text,
-        };
-        if let Some(w) = self.windows.get_mut(&id) {
-            w.send_lsp_changes_for_buffer(buffer_id, vec![full_change]);
-        }
+        self.active_window_mut()
+            .sync_lsp_after_recovery_replay(buffer_id);
     }
 
     /// Start the recovery session (call on editor startup after recovery check)
     pub fn start_recovery_session(&mut self) -> AnyhowResult<()> {
-        Ok(self.recovery_service.start_session()?)
+        Ok(self.recovery_service.lock().unwrap().start_session()?)
     }
 
     /// End the recovery session cleanly (call on normal shutdown)
@@ -80,9 +54,11 @@ impl Editor {
             let preserve_ids = self.recovery_ids_to_preserve();
             Ok(self
                 .recovery_service
+                .lock()
+                .unwrap()
                 .end_session_preserving(&preserve_ids)?)
         } else {
-            Ok(self.recovery_service.end_session()?)
+            Ok(self.recovery_service.lock().unwrap().end_session()?)
         }
     }
 
@@ -117,7 +93,12 @@ impl Editor {
                 // Use stored recovery_id, or compute from path for file-backed buffers
                 meta.recovery_id.clone().or_else(|| {
                     let file_path = state.buffer.file_path().map(|p| p.to_path_buf());
-                    Some(self.recovery_service.get_buffer_id(file_path.as_deref()))
+                    Some(
+                        self.recovery_service
+                            .lock()
+                            .unwrap()
+                            .get_buffer_id(file_path.as_deref()),
+                    )
                 })
             })
             .collect()
@@ -125,14 +106,18 @@ impl Editor {
 
     /// Check if there are files to recover from a crash
     pub fn has_recovery_files(&self) -> AnyhowResult<bool> {
-        Ok(self.recovery_service.should_offer_recovery()?)
+        Ok(self
+            .recovery_service
+            .lock()
+            .unwrap()
+            .should_offer_recovery()?)
     }
 
     /// Get list of recoverable files
     pub fn list_recoverable_files(
         &self,
     ) -> AnyhowResult<Vec<crate::services::recovery::RecoveryEntry>> {
-        Ok(self.recovery_service.list_recoverable()?)
+        Ok(self.recovery_service.lock().unwrap().list_recoverable()?)
     }
 
     /// Recover all buffers from recovery files
@@ -140,11 +125,16 @@ impl Editor {
     pub fn recover_all_buffers(&mut self) -> AnyhowResult<usize> {
         use crate::services::recovery::RecoveryResult;
 
-        let entries = self.recovery_service.list_recoverable()?;
+        let entries = self.recovery_service.lock().unwrap().list_recoverable()?;
         let mut recovered_count = 0;
 
         for entry in entries {
-            match self.recovery_service.accept_recovery(&entry) {
+            let accepted = self
+                .recovery_service
+                .lock()
+                .unwrap()
+                .accept_recovery(&entry);
+            match accepted {
                 Ok(RecoveryResult::Recovered {
                     original_path,
                     content,
@@ -269,7 +259,11 @@ impl Editor {
     /// Discard all recovery files (user decided not to recover)
     /// Returns the number of recovery files deleted
     pub fn discard_all_recovery(&mut self) -> AnyhowResult<usize> {
-        Ok(self.recovery_service.discard_all_recovery()?)
+        Ok(self
+            .recovery_service
+            .lock()
+            .unwrap()
+            .discard_all_recovery()?)
     }
 
     /// Restore only the hot-exit content from the previous clean exit:
@@ -293,14 +287,15 @@ impl Editor {
             return Ok(0);
         }
 
-        let entries = self.recovery_service.list_recoverable()?;
+        let entries = self.recovery_service.lock().unwrap().list_recoverable()?;
         if entries.is_empty() {
             return Ok(0);
         }
 
         let mut restored = 0;
         for entry in entries {
-            match self.recovery_service.load_recovery(&entry) {
+            let loaded = self.recovery_service.lock().unwrap().load_recovery(&entry);
+            match loaded {
                 Ok(RecoveryResult::Recovered {
                     original_path,
                     content,
@@ -424,7 +419,7 @@ impl Editor {
     /// Perform auto-recovery-save for all modified buffers if needed.
     /// Called frequently (every frame); rate-limited by `auto_recovery_save_interval_secs`.
     pub fn auto_recovery_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {
-        if !self.recovery_service.is_enabled() {
+        if !self.recovery_service.lock().unwrap().is_enabled() {
             return Ok(0);
         }
 
@@ -447,7 +442,7 @@ impl Editor {
     /// Save all buffers marked `recovery_pending` to recovery storage.
     /// Shared by the periodic auto-save and the exit flush.
     fn save_pending_recovery_buffers(&mut self) -> AnyhowResult<usize> {
-        if !self.recovery_service.is_enabled() {
+        if !self.recovery_service.lock().unwrap().is_enabled() {
             return Ok(0);
         }
 
@@ -509,11 +504,16 @@ impl Editor {
                 let recovery_id = if let Some(ref stored_id) = meta.recovery_id {
                     stored_id.clone()
                 } else {
-                    self.recovery_service.get_buffer_id(path.as_deref())
+                    self.recovery_service
+                        .lock()
+                        .unwrap()
+                        .get_buffer_id(path.as_deref())
                 };
                 let recovery_pending = state.buffer.is_recovery_pending();
                 if self
                     .recovery_service
+                    .lock()
+                    .unwrap()
                     .needs_auto_recovery_save(&recovery_id, recovery_pending)
                 {
                     Some((buffer_id, recovery_id, path))
@@ -564,13 +564,19 @@ impl Editor {
                 stored_id
             } else if let Some(state) = state {
                 let path = state.buffer.file_path().map(|p| p.to_path_buf());
-                self.recovery_service.get_buffer_id(path.as_deref())
+                self.recovery_service
+                    .lock()
+                    .unwrap()
+                    .get_buffer_id(path.as_deref())
             } else {
                 return Ok(());
             }
         };
 
-        self.recovery_service.delete_buffer_recovery(&recovery_id)?;
+        self.recovery_service
+            .lock()
+            .unwrap()
+            .delete_buffer_recovery(&recovery_id)?;
 
         // Clear recovery_pending since buffer is now saved
         if let Some(state) = self
@@ -622,7 +628,7 @@ impl Editor {
                 .collect();
             let original_size = state.buffer.original_file_size().unwrap_or(0);
             let final_size = state.buffer.total_bytes();
-            self.recovery_service.save_buffer(
+            self.recovery_service.lock().unwrap().save_buffer(
                 recovery_id,
                 recovery_chunks,
                 path,
@@ -643,7 +649,7 @@ impl Editor {
             let chunks = vec![crate::services::recovery::types::RecoveryChunk::new(
                 0, 0, content,
             )];
-            self.recovery_service.save_buffer(
+            self.recovery_service.lock().unwrap().save_buffer(
                 recovery_id,
                 chunks,
                 path,
