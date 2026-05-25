@@ -591,24 +591,31 @@ results/preview split lives **below** it.
 ```
 ┌─ Universal Search ──────────────────────────────────────────────────────────┐
 │ Search: terminal                                                    1 / 1000  │  ← input row (full width)
-│ [v] Files   [ ] Ignored   [v] Buffers   [v] Terminals   [ ] Diagnostics       │  ← toggle row(s), full width
-│ git-grep · 1000+ matches · Alt+P provider · Alt+M save · Tab to move          │  ← meta/hint row (dim)
+│ [v] Files ⌥L   [ ] Ignored ⌥H   [v] Buffers ⌥U   [v] Terminals ⌥T   [ ] Diag ⌥D│  ← toggles, each with its
+│ git-grep ⌥P · 1000+ matches                                                    │     own accelerator inline
 ├───────────────────────────────────────────┬──────────────────────────────────┤
 │ .github/workflows/release.yml:320  desc…   │  29 │   else                     │
 │ CHANGELOG.md:43  **Terminals**: line-num…  │  30 │   VERSION=$(grep …          │
 │ [term] …closed-….txt:2  ZZTERMTOKEN…        │  31 │   fi                       │
 │ …                                           │  …                               │
-└───────────────────────────────────────────┴──────────────────────────────────┘
+├───────────────────────────────────────────────────────────────────────────--─┤
+│ Tab move · Space toggle · Enter open · Esc close                              │  ← footer: generic hints only
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The `⌥L`/`⌥H`/… accelerators and `⌥P` render in the **keybinding-hint
+theme colour** (`ui.help_key_fg`, the same key the current toolbar already
+uses for its hint segments), so they read as "press this to reach this
+control" rather than as part of the label.
 
 Narrow terminal (toggles wrap; band grows, body shrinks):
 
 ```
 ┌─ Universal Search ───────────────────────────────────┐
 │ Search: terminal                           1 / 1000   │
-│ [v] Files   [ ] Ignored   [v] Buffers                 │  ← wrapped to
-│ [v] Terminals   [ ] Diagnostics                       │     two lines
-│ git-grep · 1000+ matches · Alt+P · Alt+M              │
+│ [v] Files ⌥L   [ ] Ignored ⌥H   [v] Buffers ⌥U        │  ← wrapped to
+│ [v] Terminals ⌥T   [ ] Diagnostics ⌥D                 │     two lines
+│ git-grep ⌥P · 1000+ matches                           │
 ├──────────────────────────────┬────────────────────────┤
 │ results                      │ preview                │
 └──────────────────────────────┴────────────────────────┘
@@ -624,22 +631,28 @@ Narrow terminal (toggles wrap; band grows, body shrinks):
 - **Verdict**: recommended. It's the literal request and the smallest change
   that uses the widget engine.
 
-#### Alternative A′ — A, but meta in the footer (leanest header)
+#### Alternative A′ — A, but generic hints in the footer (leanest header)
+
+Same as A, except the **footer carries only the generic, always-available
+hints** (Tab/Shift+Tab move, Space toggle, Enter open, Esc close). The
+header keeps the input + toggles, and each toggle still carries **its own**
+accelerator inline (`⌥L`/`⌥H`/…) — see §12.5 for why per-control hints don't
+belong in the footer.
 
 ```
 ┌─ Universal Search ──────────────────────────────────────────────────────────┐
 │ Search: terminal                                                    1 / 1000  │
-│ [v] Files   [ ] Ignored   [v] Buffers   [v] Terminals   [ ] Diagnostics       │
+│ [v] Files ⌥L   [ ] Ignored ⌥H   [v] Buffers ⌥U   [v] Terminals ⌥T   [ ] Diag ⌥D│
 ├───────────────────────────────────────────┬──────────────────────────────────┤
 │ results                                     │ preview                          │
 ├─────────────────────────────────────────────────────────────────────────────-┤
-│ git-grep · 1000+ matches · Alt+P provider · Alt+M save · Tab move · Enter open │  ← footer
+│ Tab move · Space toggle · Enter open · Esc close              git-grep · 1000+ │  ← footer: generic hints
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Pros**: header is just 2 rows; hints live where users already look for
-  them (footer); `setPromptFooter` already exists.
-- **Cons**: provider/count slightly less glanceable next to the toggles.
+- **Pros**: header is just 2 rows; generic hints live where users already
+  look for them (footer); `setPromptFooter` already exists.
+- **Cons**: provider/count slightly less glanceable than in a dedicated row.
 - **Verdict**: best if vertical space is precious; pairs well with A.
 
 #### Alternative B — Left scope rail (full-width input on top)
@@ -685,20 +698,46 @@ narrow: │ Search: terminal                                              1 / 10
 - **Verdict**: clever but the weakest for clarity. Not recommended as the
   default; could be a "compact" density option later.
 
-### 12.5 Tab-focus model (applies to A/A′/B)
+### 12.5 Where hints go — generic in the footer, accelerators at the control
+
+Two kinds of hints, two homes:
+
+- **Generic, always-available actions** (Tab/Shift+Tab to move focus, Space
+  to toggle the focused control, Enter to open, Esc to close) → the
+  **footer**. They aren't tied to one widget, so a single shared line is the
+  natural place and keeps the controls uncluttered.
+- **A specific control's accelerator** (the `Alt+key` that jumps straight to
+  *that* control) → **rendered at the control itself**, in the
+  keybinding-hint colour. `Alt+L` means "Files", so it belongs next to the
+  Files toggle, not buried in a footer list the user has to scan. This is
+  recognition-over-recall (NN/g #6): the affordance sits where the action
+  happens. The provider accelerator (`⌥P`) likewise sits on the provider
+  label, since that's the "control" it cycles.
+
+Concretely each toggle renders `[v] <label> <accel>` where `<accel>` (e.g.
+`⌥L`) uses the `ui.help_key_fg` theme key — the same hint colour the toolbar
+already uses — so it's visually distinct from the white label. Action-only
+hints with no on-screen control (e.g. "save matches", `Alt+M`) have nowhere
+to attach, so those stay in the footer.
+
+Accelerators are width-cheap (~3 cols each) but can be **dropped first when
+wrapping is tight** on a very narrow terminal — the label and checkbox are
+the essential part; the `Alt+key` is progressive enhancement.
+
+### 12.5b Tab-focus model (applies to A/A′/B)
 
 Single focus ring owned by the header band, driven by `render_spec`'s
 `tabbable`/`focus_key`:
 
 ```
-[ input ] → [v]Files → [ ]Ignored → [v]Buffers → [v]Terminals → [ ]Diagnostics → (results list) ↺
+[ input ] → [v]Files ⌥L → [ ]Ignored ⌥H → [v]Buffers ⌥U → [v]Terminals ⌥T → [ ]Diag ⌥D → (results) ↺
 ```
 
 - `Tab` / `Shift+Tab` advance / retreat the focus cursor.
 - When a toggle is focused, `Space` (and `Enter`) flips it and re-runs the
   search; when the input is focused, typing edits the query as today.
-- The existing `Alt+L/H/U/T/D` shortcuts keep working regardless of focus
-  (direct toggles), so power users skip the ring entirely.
+- The per-control `Alt+L/H/U/T/D` shortcuts keep working regardless of focus
+  (direct jumps/toggles), so power users skip the ring entirely.
 - Mouse: `render_spec` emits `hits`, so clicking a checkbox toggles it.
 
 ### 12.6 Overflow / wrap (goal #3) — two ways
@@ -734,8 +773,15 @@ Implementation sketch:
   case that yields to the widget ring on Tab).
 - Plugin (`live_grep.ts`): replace the `setPromptTitle(styledText)` toolbar
   with a `setPromptToolbar(spec)`-style API that hands core the
-  `row(toggle…)` spec; move provider/count/hints to `setPromptFooter`.
-- Widget engine: add `Row { wrap: bool }` (+ height-aware layout).
+  `row(toggle…)` spec. Each toggle carries its accelerator — either via a
+  new `Toggle { accel: Option<String> }` field rendered in `ui.help_key_fg`,
+  or, with zero engine change, by emitting `row(toggle(checked,label),
+  raw([{text:" ⌥L", style:{fg:"ui.help_key_fg"}}]))` per control. Move only
+  the **generic** hints (Tab/Space/Enter/Esc) to `setPromptFooter`; keep
+  per-control accelerators inline.
+- Widget engine: add `Row { wrap: bool }` (+ height-aware layout); optionally
+  `Toggle { accel }` so the accelerator is a first-class, themeable segment
+  rather than a hand-built `raw` tail.
 
 This is a core-rendering change (new `setPromptToolbar` plumbing + band
 geometry + focus routing + `Row` wrap), so it's a larger slice than the
