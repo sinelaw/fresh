@@ -35,6 +35,27 @@ fn pty_available() -> bool {
         .is_ok()
 }
 
+/// Canonicalize a path to the form git and the editor both accept.
+///
+/// `std::fs::canonicalize` returns a `\\?\C:\…` *verbatim* path on
+/// Windows; git refuses it (`git worktree add` can't create leading
+/// directories under `//?/C:/…`). Strip the verbatim prefix so we get
+/// a plain `C:\…` path. On Unix this is just `canonicalize` (which
+/// also resolves the macOS `/var → /private/var` symlink so the test
+/// path matches what `git rev-parse` reports).
+fn canonical_dir(p: &Path) -> PathBuf {
+    let c = std::fs::canonicalize(p).expect("canonicalize tempdir");
+    #[cfg(windows)]
+    {
+        // Tempdirs are always local-disk, so the verbatim form is
+        // `\\?\C:\…`; dropping the 4-char prefix yields `C:\…`.
+        if let Some(rest) = c.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+            return PathBuf::from(rest);
+        }
+    }
+    c
+}
+
 /// Run a git subcommand in `cwd`, panicking with stderr on failure.
 fn git(cwd: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -59,7 +80,7 @@ fn set_up_repo_with_worktree() -> (tempfile::TempDir, PathBuf, PathBuf) {
     fresh::i18n::set_locale("en");
 
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().canonicalize().unwrap();
+    let root = canonical_dir(temp.path());
     let repo = root.join("mainrepo");
     std::fs::create_dir(&repo).unwrap();
 
@@ -94,7 +115,7 @@ fn set_up_repo_with_two_worktrees() -> (tempfile::TempDir, PathBuf, PathBuf, Pat
     fresh::i18n::set_locale("en");
 
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().canonicalize().unwrap();
+    let root = canonical_dir(temp.path());
     let repo = root.join("mainrepo");
     std::fs::create_dir(&repo).unwrap();
 
@@ -528,7 +549,7 @@ fn bulk_delete_removes_selected_worktrees() {
 fn set_up_repo_with_many_worktrees(n: usize) -> (tempfile::TempDir, PathBuf) {
     fresh::i18n::set_locale("en");
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().canonicalize().unwrap();
+    let root = canonical_dir(temp.path());
     let repo = root.join("mainrepo");
     std::fs::create_dir(&repo).unwrap();
     git(&repo, &["init", "-q"]);
