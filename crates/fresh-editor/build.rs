@@ -366,6 +366,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/verilog.sublime-syntax", "Verilog"),
         ("src/grammars/systemverilog.sublime-syntax", "SystemVerilog"),
         ("src/grammars/vhdl.sublime-syntax", "VHDL"),
+        ("src/grammars/c3.sublime-syntax", "C3"),
     ];
 
     let mut loaded = 0;
