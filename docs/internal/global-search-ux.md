@@ -508,3 +508,235 @@ titles instead of raw paths.
 - **Closed-terminal retention default** — off (privacy) vs on (utility)? Proposed
   off, with an obvious enable + purge.
 - **Presets** — ship fixed presets, or user-definable saved scopes from the start?
+
+---
+
+## 12. Toolbar layout redesign — full-width header band
+
+Follow-up after the scope toolbar shipped: the checkboxes don't fit. This
+section examines the current rendering, states the goals, assesses the
+widget engine, and proposes layout alternatives with wireframes.
+
+### 12.1 The problem (observed live)
+
+The Live Grep overlay (`render_overlay_prompt` in `app/render.rs`) is an
+80%×80% centred frame. Today it lays the **input + toolbar inside the
+left `results_area`** and gives the **preview the entire right half for the
+full height**:
+
+```
+overlay (≥120 cols → split):
+┌──────────────────────────────────────────────┬─────────────────────────────┐
+│ Search: terminal                     1 / 1000 │ preview pane                │
+│ [v] Files  [ ] Ignored  [v] Buffers  [v] T…   │  (full height, right half)  │   ← toolbar CUT at the
+│ ──────────────────────────────────────────────│                             │     column divider
+│ results list (left half only)                  │                             │
+└──────────────────────────────────────────────┴─────────────────────────────┘
+
+overlay (<120 cols → no preview): toolbar still overflows the single column:
+│ [v] Files  [ ] Ignored  [v] Buffers  [v] Terminals  [ ] Diagnostics · Provider: git-grep · 100│  ← truncated
+```
+
+Two width sinks compound: (a) the preview steals the right half, so the
+toolbar only gets ~½ the frame; (b) even at full frame width the toolbar
+string (5 toggles + `Provider:` + match count + 2 key hints) is ~130 cols
+and overflows. Result: the last toggles and the hints are clipped.
+
+### 12.2 Goals (from the request)
+
+1. **Toolbar spans the full pane width.** Move input + toolbar into a
+   full-width **header band** at the top; put **results | preview
+   side-by-side *below*** it (not beside the toolbar).
+2. **Tab cycles focus**: input field → each checkbox in turn (then results).
+   Space/Enter toggles the focused checkbox.
+3. **Overflow wraps**: when the toggles don't fit on one line they flow onto
+   additional lines, growing the header band's height (and shrinking the
+   body area by the same amount).
+
+### 12.3 Can we use the widget Row/Col system? — Yes
+
+`crates/fresh-editor/src/widgets/render.rs::render_spec(spec, prev,
+prev_focus_key, panel_width)` already renders `Row`/`Col`/`Toggle`/`Button`/
+`TextInput`/`Spacer(flex)` and returns:
+
+- `entries` — the rendered `OverlayRow`s (drop straight into the band),
+- `tabbable` + `focus_key` + `focus_cursor` — **Tab focus is built in**,
+- `hits` — mouse hit-testing (click a checkbox to toggle), and
+- `instance_states` — persisted per-widget state across re-renders.
+
+This is the same engine the `floating_widget_panel` and the search/replace
+options row use (`[v] All files  [ ] Case  [ ] Regex  [ ] Word`). So the
+toolbar can be a real `row(toggle(...), toggle(...), …)` spec rather than a
+hand-built styled-text string — gaining focus, theming, and click for free.
+
+Two gaps to close:
+
+- **`Row` is single-line** (no `wrap` field). For goal #3 we either (a)
+  chunk the toggles into multiple `row()`s inside a `col()` in the plugin,
+  using the known frame width (search/replace already reads
+  `panel.viewportWidth` to do width math), or (b) add a `wrap: bool` to the
+  `Row` widget and let the engine reflow. (a) is no core change; (b) is the
+  cleaner long-term primitive and also helps other plugins.
+- **The overlay input is drawn by hand today**, not as a `TextInput`
+  widget, and Tab isn't routed to the widget focus cursor. The header band
+  needs to own a combined focus ring: input ↔ toggles.
+
+### 12.4 Layout alternatives
+
+#### Alternative A — Full-width header band (RECOMMENDED)
+
+Header (input + wrapped toggles + meta) spans the full inner width; the
+results/preview split lives **below** it.
+
+```
+┌─ Universal Search ──────────────────────────────────────────────────────────┐
+│ Search: terminal                                                    1 / 1000  │  ← input row (full width)
+│ [v] Files   [ ] Ignored   [v] Buffers   [v] Terminals   [ ] Diagnostics       │  ← toggle row(s), full width
+│ git-grep · 1000+ matches · Alt+P provider · Alt+M save · Tab to move          │  ← meta/hint row (dim)
+├───────────────────────────────────────────┬──────────────────────────────────┤
+│ .github/workflows/release.yml:320  desc…   │  29 │   else                     │
+│ CHANGELOG.md:43  **Terminals**: line-num…  │  30 │   VERSION=$(grep …          │
+│ [term] …closed-….txt:2  ZZTERMTOKEN…        │  31 │   fi                       │
+│ …                                           │  …                               │
+└───────────────────────────────────────────┴──────────────────────────────────┘
+```
+
+Narrow terminal (toggles wrap; band grows, body shrinks):
+
+```
+┌─ Universal Search ───────────────────────────────────┐
+│ Search: terminal                           1 / 1000   │
+│ [v] Files   [ ] Ignored   [v] Buffers                 │  ← wrapped to
+│ [v] Terminals   [ ] Diagnostics                       │     two lines
+│ git-grep · 1000+ matches · Alt+P · Alt+M              │
+├──────────────────────────────┬────────────────────────┤
+│ results                      │ preview                │
+└──────────────────────────────┴────────────────────────┘
+```
+
+- **Pros**: directly satisfies all three goals; toggles get full width so
+  all five fit on one line at ≥~90 cols; preview keeps its side-by-side
+  value; minimal disruption to the Finder's streaming/preview machinery
+  (only the band geometry + a widget render are new).
+- **Cons**: header eats 3 rows (input + toggles + meta); on a short
+  terminal that's noticeable. Mitigate by folding the meta row into the
+  bottom **footer** (`setPromptFooter`) so the band is input + toggles only.
+- **Verdict**: recommended. It's the literal request and the smallest change
+  that uses the widget engine.
+
+#### Alternative A′ — A, but meta in the footer (leanest header)
+
+```
+┌─ Universal Search ──────────────────────────────────────────────────────────┐
+│ Search: terminal                                                    1 / 1000  │
+│ [v] Files   [ ] Ignored   [v] Buffers   [v] Terminals   [ ] Diagnostics       │
+├───────────────────────────────────────────┬──────────────────────────────────┤
+│ results                                     │ preview                          │
+├─────────────────────────────────────────────────────────────────────────────-┤
+│ git-grep · 1000+ matches · Alt+P provider · Alt+M save · Tab move · Enter open │  ← footer
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Pros**: header is just 2 rows; hints live where users already look for
+  them (footer); `setPromptFooter` already exists.
+- **Cons**: provider/count slightly less glanceable next to the toggles.
+- **Verdict**: best if vertical space is precious; pairs well with A.
+
+#### Alternative B — Left scope rail (full-width input on top)
+
+Input spans the top; a narrow checkbox **rail** sits left of the results,
+preview on the right.
+
+```
+┌─ Universal Search ──────────────────────────────────────────────────────────┐
+│ Search: terminal                                                    1 / 1000  │
+├──────────────────┬───────────────────────────────┬───────────────────────────┤
+│ SEARCH IN        │ results                       │ preview                   │
+│ [v] Files     96 │  release.yml:320  desc…       │  29 │ else                │
+│ [ ] Ignored    – │  CHANGELOG.md:43  **Term…     │  30 │ VERSION=$(grep …    │
+│ [v] Buffers   18 │  [term] …closed.txt:2  ZZ…    │  31 │ fi                  │
+│ [v] Terminals 14 │  …                            │  …                          │
+│ [ ] Diagnos    – │                               │                           │
+└──────────────────┴───────────────────────────────┴───────────────────────────┘
+```
+
+- **Pros**: never overflows (vertical list); shows **per-scope counts**;
+  Tab walks the rail naturally; great on wide screens.
+- **Cons**: three columns is tight under ~120 cols (preview squeezed);
+  always-on rail chrome even when the user never changes scopes; larger
+  departure from today's two-pane overlay.
+- **Verdict**: strong "command-center" option (matches §5 Alt-C), but heavier
+  than A and weak on narrow terminals. Hold as an optional wide-screen mode.
+
+#### Alternative C — Single adaptive header line, wrap on demand
+
+Toggles share the **input line** when there's room; spill below only when
+needed.
+
+```
+wide:   │ Search: terminal          [v]Files [ ]Ign [v]Buf [v]Term [ ]Diag  1/1000 │
+narrow: │ Search: terminal                                              1 / 1000   │
+        │ [v]Files [ ]Ign [v]Buf [v]Term [ ]Diag                                  │
+```
+
+- **Pros**: most compact (1 row when wide); no wasted vertical space.
+- **Cons**: cramped — input and toggles fight for one line; abbreviated
+  labels hurt recognition (NN/g #6); wrap math is fiddlier. 
+- **Verdict**: clever but the weakest for clarity. Not recommended as the
+  default; could be a "compact" density option later.
+
+### 12.5 Tab-focus model (applies to A/A′/B)
+
+Single focus ring owned by the header band, driven by `render_spec`'s
+`tabbable`/`focus_key`:
+
+```
+[ input ] → [v]Files → [ ]Ignored → [v]Buffers → [v]Terminals → [ ]Diagnostics → (results list) ↺
+```
+
+- `Tab` / `Shift+Tab` advance / retreat the focus cursor.
+- When a toggle is focused, `Space` (and `Enter`) flips it and re-runs the
+  search; when the input is focused, typing edits the query as today.
+- The existing `Alt+L/H/U/T/D` shortcuts keep working regardless of focus
+  (direct toggles), so power users skip the ring entirely.
+- Mouse: `render_spec` emits `hits`, so clicking a checkbox toggles it.
+
+### 12.6 Overflow / wrap (goal #3) — two ways
+
+1. **Plugin-side chunking (no core change).** The plugin learns the frame
+   width (expose it like the search/replace panel's `viewportWidth`, or a
+   `getOverlayWidth()`), greedily packs toggles per line, and emits
+   `col(row(t,t,t), row(t,t))`. The band height = number of rows.
+2. **`Row { wrap: true }` (core primitive).** Teach the widget engine to
+   reflow a Row's children onto new lines when `panel_width` is exceeded.
+   More reusable (every plugin benefits) and keeps the spec declarative.
+   Preferred if we touch the engine anyway.
+
+Either way, `render_overlay_prompt` must compute the band height from the
+rendered toolbar (not assume 1 line) and subtract it from the body before
+splitting results | preview.
+
+### 12.7 Recommendation & sketch
+
+Ship **Alternative A (header band) + A′ (hints in footer)**, render the
+toolbar via `render_spec`, and do overflow with **`Row { wrap }`** so the
+engine owns reflow. Keep Alternative B's scope-rail as a future wide-screen
+"sources" mode.
+
+Implementation sketch:
+
+- Core (`render.rs::render_overlay_prompt`): build the band as
+  `col(input_row?, wrapping_toggle_row)`; render with `render_spec` at
+  `panel_width = inner.width`; measure its row count `band_h`; lay out
+  `header = inner[0..band_h]` full width, then split `inner[band_h..]` into
+  results | preview. Route Tab/Space/click to the band's focus cursor; move
+  the input into the ring (either as a `TextInput` widget or a hand-focus
+  case that yields to the widget ring on Tab).
+- Plugin (`live_grep.ts`): replace the `setPromptTitle(styledText)` toolbar
+  with a `setPromptToolbar(spec)`-style API that hands core the
+  `row(toggle…)` spec; move provider/count/hints to `setPromptFooter`.
+- Widget engine: add `Row { wrap: bool }` (+ height-aware layout).
+
+This is a core-rendering change (new `setPromptToolbar` plumbing + band
+geometry + focus routing + `Row` wrap), so it's a larger slice than the
+plugin-only work so far — flagged for sign-off before implementing.
