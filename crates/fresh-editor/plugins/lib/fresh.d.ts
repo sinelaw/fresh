@@ -2495,6 +2495,13 @@ interface EditorAPI {
 	*/
 	setPromptToolbar(spec: WidgetSpec | null): boolean;
 	/**
+	* Set the floating-overlay prompt's input-row status text, shown
+	* right-aligned just left of the `selected / total` count (e.g.
+	* "Searching…", "No matches"). Empty string clears it. No effect on
+	* non-overlay prompts.
+	*/
+	setPromptStatus(status: string): boolean;
+	/**
 	* Toggle a floating-overlay toolbar control by its widget `key`. The host
 	* owns the toggle's checked state, flips it in place, and emits a
 	* `widget_event` (`event_type: "toggle"`, payload `{ checked }`). Use this

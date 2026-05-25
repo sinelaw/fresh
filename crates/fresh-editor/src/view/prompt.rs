@@ -260,6 +260,10 @@ pub struct Prompt {
     /// toolbar control is focused (Space/Enter toggles it, it renders
     /// highlighted). Tab/Shift+Tab cycle input → toggles → input.
     pub toolbar_focus: Option<String>,
+    /// Short status shown right-aligned on the input row, just left of the
+    /// `selected / total` count (e.g. "Searching…", "No matches"). Plugin-
+    /// controlled via `editor.setPromptStatus(text)`; overlay-only.
+    pub status: String,
 }
 
 /// Maximum number of suggestion rows shown at once. Mirrors the cap used by
@@ -289,6 +293,7 @@ impl Prompt {
             redo_stack: Vec::new(),
             toolbar_widget: None,
             toolbar_focus: None,
+            status: String::new(),
         }
     }
 
@@ -325,6 +330,7 @@ impl Prompt {
             redo_stack: Vec::new(),
             toolbar_widget: None,
             toolbar_focus: None,
+            status: String::new(),
         }
     }
 
@@ -380,6 +386,7 @@ impl Prompt {
             redo_stack: Vec::new(),
             toolbar_widget: None,
             toolbar_focus: None,
+            status: String::new(),
         }
     }
 

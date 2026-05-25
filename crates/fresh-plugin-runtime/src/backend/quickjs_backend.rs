@@ -4156,6 +4156,14 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Set the floating-overlay prompt's input-row status text (right-aligned,
+    /// left of the match count). Empty string clears it.
+    pub fn set_prompt_status(&self, status: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetPromptStatus { status })
+            .is_ok()
+    }
+
     /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,
     /// clickable `Toggle`/`Button` widgets rendered in the header band, in
     /// place of the styled-text title). Pass `null`/`undefined` to clear it.

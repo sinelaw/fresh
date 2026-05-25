@@ -2748,6 +2748,12 @@ pub enum PluginCommand {
     /// prompts.
     SetPromptToolbar { spec: Option<WidgetSpec> },
 
+    /// Short status text shown right-aligned on the floating-overlay prompt's
+    /// input row, just left of the `selected / total` count (e.g.
+    /// "Searching…", "No matches"). Empty clears it. No effect on non-overlay
+    /// prompts.
+    SetPromptStatus { status: String },
+
     /// Flip a toolbar toggle in the floating-overlay prompt by its widget
     /// `key`. The host owns the toggle's checked state: it updates the spec in
     /// place and emits a `widget_event` so the plugin can react (re-run its
@@ -4848,6 +4854,11 @@ impl PluginApi {
     /// clickable `Toggle`/`Button` widgets). `None` clears it.
     pub fn set_prompt_toolbar(&self, spec: Option<WidgetSpec>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptToolbar { spec })
+    }
+
+    /// Set the floating-overlay prompt's input-row status text. Empty clears.
+    pub fn set_prompt_status(&self, status: String) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptStatus { status })
     }
 
     /// Override the currently-highlighted suggestion row in the

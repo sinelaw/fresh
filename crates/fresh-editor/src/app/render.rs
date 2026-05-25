@@ -2483,8 +2483,8 @@ impl Editor {
         use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
         // Compute the overlay rect via the same percentage logic the
-        // popup engine uses. 80% × 80% of the terminal, centred.
-        let overlay_rect = Self::centered_overlay_rect(area, 80, 80);
+        // popup engine uses. 90% × 90% of the terminal, centred.
+        let overlay_rect = Self::centered_overlay_rect(area, 90, 90);
 
         // Snapshot view-relevant state before any mutable borrows.
         let theme = self.theme.read().unwrap().clone();
@@ -2737,27 +2737,35 @@ impl Editor {
         // Reserve one trailing column so the count doesn't sit
         // flush against the right border.
         let right_gap: usize = if count_w > 0 { 1 } else { 0 };
-        let visible_input_width = (input_row.width as usize).saturating_sub(count_w + right_gap);
+        // Right cluster: "<status>  <count>" — the plugin's search status
+        // (e.g. "Searching…", "No matches") sits just left of the count, so
+        // it's on the same row the user is typing on rather than a wasted
+        // chrome row. Two-space gap between status and count when both show.
+        let status_str = prompt.status.clone();
+        let status_w = str_width(&status_str);
+        let status_gap: usize = if status_w > 0 && count_w > 0 { 2 } else { 0 };
+        let right_cluster_w = status_w + status_gap + count_w + right_gap;
+        let visible_input_width = (input_row.width as usize).saturating_sub(right_cluster_w);
         let truncated_input: String = prompt
             .input
             .chars()
             .take(visible_input_width.saturating_sub(str_width(&prompt.message)))
             .collect();
-        // Pad between the typed input and the count so the count
-        // is right-aligned (with `right_gap` empty cols at the
-        // very edge), independent of how much the user has typed.
-        let used = str_width(&prompt.message) + str_width(&truncated_input) + count_w;
-        let pad = (input_row.width as usize).saturating_sub(used + right_gap);
+        // Pad between the typed input and the right cluster so the count is
+        // right-aligned (with `right_gap` empty cols at the very edge),
+        // independent of how much the user has typed.
+        let used = str_width(&prompt.message) + str_width(&truncated_input) + right_cluster_w;
+        let pad = (input_row.width as usize).saturating_sub(used);
+        let dim = Style::default()
+            .fg(theme.popup_border_fg)
+            .bg(theme.editor_bg);
         let line = Line::from(vec![
             Span::styled(prompt.message.clone(), title_style),
             Span::styled(truncated_input, input_style),
             Span::styled(" ".repeat(pad), input_style),
-            Span::styled(
-                count_str,
-                Style::default()
-                    .fg(theme.popup_border_fg)
-                    .bg(theme.editor_bg),
-            ),
+            Span::styled(status_str, dim),
+            Span::styled(" ".repeat(status_gap), input_style),
+            Span::styled(count_str, dim),
         ]);
         frame.render_widget(Paragraph::new(line).style(input_style), input_row);
 

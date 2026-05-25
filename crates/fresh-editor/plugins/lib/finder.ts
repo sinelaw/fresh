@@ -452,15 +452,26 @@ export class Finder<T> {
    *  rather than the editor status bar (off at the bottom, easy to miss). */
   private isOverlay = false;
 
-  /** Present a search-status message where the user is actually looking: the
-   *  overlay footer for a floating overlay, else the editor status bar. */
+  /** Present a search-status message where the user is actually looking: on
+   *  the overlay's input row (right-aligned by the match count) for a
+   *  floating overlay, else the editor status bar. */
   private setSearchStatus(message: string): void {
     if (this.isOverlay) {
-      this.editor.setPromptFooter(
-        message.length > 0 ? [{ text: ` ${message}` }] : []
-      );
+      this.editor.setPromptStatus(message);
     } else {
       this.editor.setStatus(message);
+    }
+  }
+
+  /** Report a successful search with `count` matches. In overlay mode the
+   *  "N / total" count on the input row already conveys this, so the status
+   *  is cleared to avoid duplicating it; the status bar (non-overlay) still
+   *  shows "Found N matches". */
+  private reportFound(count: number): void {
+    if (this.isOverlay) {
+      this.editor.setPromptStatus("");
+    } else {
+      this.editor.setStatus(`Found ${count} matches`);
     }
   }
 
@@ -735,7 +746,7 @@ export class Finder<T> {
       this.updatePromptResults(filtered);
 
       if (filtered.length > 0) {
-        this.setSearchStatus(`Found ${filtered.length} matches`);
+        this.reportFound(filtered.length);
       } else {
         this.setSearchStatus("No matches");
       }
@@ -767,6 +778,7 @@ export class Finder<T> {
       }
       this.editor.setPromptSuggestions([]);
       this.promptState.results = [];
+      this.setSearchStatus("");
       return;
     }
 
@@ -789,6 +801,11 @@ export class Finder<T> {
       return;
     }
     this.promptState.lastQuery = query;
+
+    // A search is now actually starting (every query change that gets here —
+    // typing, deleting, provider/scope refresh). Show pending status so the
+    // user sees the re-scan in progress rather than a stale result count.
+    this.setSearchStatus("Searching…");
 
     try {
       const searchResult = source.search(query);
@@ -815,7 +832,7 @@ export class Finder<T> {
           this.updatePromptResults(parsed);
 
           if (parsed.length > 0) {
-            this.setSearchStatus(`Found ${parsed.length} matches`);
+            this.reportFound(parsed.length);
             // Show preview of first result
             if (this.shouldShowPreview()) {
               await this.updatePreview(this.promptState.entries[0]);
@@ -843,7 +860,7 @@ export class Finder<T> {
         this.updatePromptResults(results);
 
         if (results.length > 0) {
-          this.setSearchStatus(`Found ${results.length} matches`);
+          this.reportFound(results.length);
           if (this.shouldShowPreview()) {
             await this.updatePreview(this.promptState.entries[0]);
           }
