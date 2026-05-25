@@ -622,14 +622,15 @@ function filterSessions(needle: string): number[] {
   return matches.map((m) => m.id);
 }
 
-// Column widths for the tabular session list. ID holds `[NN] `;
-// NAME holds the label plus the BASE / ⇄ badges; PROJECT (filled
-// only for cross-project rows) trails. Kept in sync with
-// `sessionsColumnHeader`.
-const LIST_ID_W = 5;
-const LIST_NAME_W = 20;
+// Width of the NAME column before the trailing PROJECT column kicks
+// in (filled only for cross-project rows). Kept in sync with
+// `sessionsColumnHeader`. There is no id column — the numeric window
+// id is an internal handle the user never needs in the list; rows are
+// identified by name, the active one rendered bold and on-disk
+// worktrees flagged with a `· on-disk` tag.
+const LIST_NAME_W = 24;
 
-// Header row above the session list: `ID   NAME …   PROJECT`.
+// Header row above the session list: `NAME …   PROJECT`.
 function sessionsColumnHeader(): WidgetSpec {
   return {
     kind: "raw",
@@ -637,8 +638,7 @@ function sessionsColumnHeader(): WidgetSpec {
       styledRow([
         {
           // 4-space lead aligns under the per-row `[ ] ` checkbox.
-          text: "    " + "ID".padEnd(LIST_ID_W) + "NAME".padEnd(LIST_NAME_W) +
-            "PROJECT",
+          text: "    " + "NAME".padEnd(LIST_NAME_W) + "PROJECT",
           style: { fg: "ui.menu_disabled_fg" },
         },
       ]),
@@ -646,15 +646,16 @@ function sessionsColumnHeader(): WidgetSpec {
   };
 }
 
-// Build one rendered list-item row for `id`, laid out in columns:
-//   `[id]`  <name + BASE/⇄ badges>   <project basename>
-// The active session's id renders in the active-tab colour (the
-// list has no separate state column); the project column is filled
-// only for sessions that don't belong to the current project.
+// Build one rendered list-item row for `id`:
+//   `[ ] ` <name + BASE/⇄ badges + on-disk tag>   <project basename>
+// The active session's name renders bold; discovered (on-disk,
+// unopened) worktrees render dim with a `· on-disk` tag instead of a
+// glyph. The project column is filled only for sessions that don't
+// belong to the current project.
 function renderListItem(id: number, activeId: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) {
-    return styledRow([{ text: `[${id}] (unknown)` }]);
+    return styledRow([{ text: "(unknown)" }]);
   }
   const isActive = id === activeId;
   const isBase = id === 1;
@@ -671,22 +672,12 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
       : { fg: "ui.menu_disabled_fg" },
   };
 
-  // Discovered (on-disk, unopened) worktrees have no window id —
-  // render a `[○]` glyph instead of the synthetic negative id so
-  // the row reads as "available to open", not "session #-2".
-  const idText = (isDiscovered ? "[○]" : `[${id}]`).padEnd(LIST_ID_W);
   const entries: { text: string; style?: Record<string, unknown> }[] = [
     checkbox,
     {
-      text: idText,
-      style: isActive
-        ? { fg: "ui.tab_active_fg", bold: true }
-        : { fg: isDiscovered ? "ui.menu_disabled_fg" : "ui.help_key_fg" },
-    },
-    {
       text: s.label,
       style: isActive
-        ? { bold: true }
+        ? { fg: "ui.tab_active_fg", bold: true }
         : isDiscovered
         ? { fg: "ui.menu_disabled_fg" }
         : undefined,
@@ -702,6 +693,13 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
   if (s.sharedWorktree || countSiblingsAtRoot(s.root) > 1) {
     entries.push({ text: " ⇄", style: { fg: "ui.menu_disabled_fg" } });
     nameWidth += 2;
+  }
+  if (isDiscovered) {
+    entries.push({
+      text: " · on-disk",
+      style: { fg: "ui.menu_disabled_fg", italic: true },
+    });
+    nameWidth += 10;
   }
   // PROJECT column: basename for cross-project rows only; current-
   // project rows leave it blank (the whole list is one project when
@@ -1031,7 +1029,7 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       ]),
     ];
     return labeledSection({
-      label: `[○] ${s.label}  on-disk worktree`,
+      label: `${s.label}  —  on-disk worktree`,
       child: col(
         openButtonRow,
         spacer(0),
@@ -1096,8 +1094,8 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // its worktree would close the editor / break the user's current
   // tree, so Stop / Archive / Delete refuse against it.
   const sectionLabel = isBase
-    ? `[${s.id}] ${s.label}  BASE — editor session`
-    : `[${s.id}] ${s.label}`;
+    ? `${s.label}  —  BASE (editor session)`
+    : s.label;
   return labeledSection({
     label: sectionLabel,
     child: body,
@@ -1146,8 +1144,8 @@ function buildConfirmPane(
   const cap = action[0].toUpperCase() + action.slice(1);
   const existing = ids.filter((id) => orchestratorSessions.has(id));
   const bulk = existing.length > 1;
-  const tagOf = (id: number): string =>
-    orchestratorSessions.get(id)?.discovered ? "[○]" : `[${id}]`;
+  const diskNote = (id: number): string =>
+    orchestratorSessions.get(id)?.discovered ? "  · on-disk" : "";
   const entries: TextPropertyEntry[] = [];
   if (bulk) {
     entries.push(
@@ -1158,7 +1156,12 @@ function buildConfirmPane(
     );
     for (const id of existing.slice(0, 8)) {
       const ss = orchestratorSessions.get(id)!;
-      entries.push(styledRow([{ text: `  ${tagOf(id)} ${ss.label}` }]));
+      entries.push(
+        styledRow([
+          { text: `  ${ss.label}` },
+          { text: diskNote(id), style: { fg: "ui.menu_disabled_fg", italic: true } },
+        ]),
+      );
     }
     if (existing.length > 8) {
       entries.push(
@@ -1175,10 +1178,7 @@ function buildConfirmPane(
     const ss = id !== undefined ? orchestratorSessions.get(id) : undefined;
     entries.push(
       styledRow([
-        {
-          text: `${cap} session ${id !== undefined ? tagOf(id) : ""} ${ss?.label ?? ""}?`,
-          style: { bold: true },
-        },
+        { text: `${cap} session ${ss?.label ?? ""}?`, style: { bold: true } },
       ]),
     );
   }
@@ -1226,16 +1226,13 @@ function buildBulkPane(): WidgetSpec {
   const stopN = eligibleSelected("stop").length;
   const archiveN = eligibleSelected("archive").length;
   const deleteN = eligibleSelected("delete").length;
-  const tagOf = (id: number): string =>
-    orchestratorSessions.get(id)?.discovered ? "[○]" : `[${id}]`;
 
   const entries: TextPropertyEntry[] = [];
   const cap = openDialog?.listVisibleRows ?? MIN_LIST_ROWS;
   for (const id of sel.slice(0, cap)) {
     const ss = orchestratorSessions.get(id)!;
     const rowParts: StyledSegment[] = [
-      { text: `  ${tagOf(id)} `, style: { fg: "ui.help_key_fg" } },
-      { text: ss.label },
+      { text: `  ${ss.label}` },
     ];
     // Flag rows a destructive bulk action will skip so the count
     // discrepancy is self-explanatory.

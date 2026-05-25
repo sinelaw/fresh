@@ -3,7 +3,7 @@
 //!
 //! 1. **Discovery**: opening the Orchestrator Open dialog scans the
 //!    worktrees of every known project (`git worktree list`, run
-//!    per repo) and lists the ones that aren't open yet as `[○]`
+//!    per repo) and lists the ones that aren't open yet as `· on-disk`
 //!    rows. The user can dive one to open a session there without
 //!    creating it by hand.
 //!
@@ -173,7 +173,7 @@ fn open_new_session_form(harness: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// Move the list highlight down onto the discovered `[○]` worktree
+/// Move the list highlight down onto the discovered on-disk worktree
 /// row (which now sorts after the live sessions). Down routes to the
 /// list via the host's smart-key dispatch even though focus sits on a
 /// button. Stops once the on-disk preview pane is showing.
@@ -189,14 +189,14 @@ fn navigate_to_discovered_row(harness: &mut EditorTestHarness) {
         .wait_until(|h| h.screen_to_string().contains("On-disk worktree"))
         .unwrap_or_else(|_| {
             panic!(
-                "could not navigate to the discovered `[○]` row.\nScreen:\n{}",
+                "could not navigate to the discovered on-disk row.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
 }
 
 /// Opening the dialog discovers the on-disk `feature-x` worktree and
-/// lists it as an `[○]` row labelled with its branch — even though no
+/// lists it as an on-disk row labelled with its branch — even though no
 /// session was ever opened there.
 #[test]
 fn open_dialog_discovers_existing_worktree() {
@@ -207,18 +207,18 @@ fn open_dialog_discovers_existing_worktree() {
 
     open_orchestrator_dialog(&mut harness);
 
-    // The discovered worktree row carries the `[○]` on-disk glyph and
-    // its branch name. The async per-project `git worktree list` scan
+    // The discovered worktree row carries the `· on-disk` tag and its
+    // branch name. The async per-project `git worktree list` scan
     // lands a beat after the dialog opens, so wait for it.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("feature-x") && s.contains("[○]")
+            s.contains("feature-x") && s.contains("· on-disk")
         })
         .unwrap_or_else(|_| {
             panic!(
-                "Open dialog should discover the on-disk `feature-x` worktree as an \
-                 `[○]` row.\nScreen:\n{}",
+                "Open dialog should discover the on-disk `feature-x` worktree as a \
+                 `· on-disk` row.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
@@ -236,7 +236,7 @@ fn discovered_worktree_preview_offers_open() {
 
     open_orchestrator_dialog(&mut harness);
     harness
-        .wait_until(|h| h.screen_to_string().contains("[○]"))
+        .wait_until(|h| h.screen_to_string().contains("· on-disk"))
         .unwrap();
 
     // The discovered row sorts after the live sessions now; navigate
@@ -258,9 +258,9 @@ fn discovered_worktree_preview_offers_open() {
 }
 
 /// Diving a discovered worktree opens a real session there: the
-/// `[○]` placeholder is replaced by a live, numeric-id row at the
-/// worktree (no `⇄` shared badge — it's managed as the worktree it
-/// is). Reproduces the headline "attach to existing worktree" flow.
+/// `· on-disk` row is replaced by a live session row at the worktree
+/// (no `⇄` shared badge — it's managed as the worktree it is).
+/// Reproduces the headline "attach to existing worktree" flow.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
 fn diving_discovered_worktree_attaches_managed_session() {
@@ -275,11 +275,11 @@ fn diving_discovered_worktree_attaches_managed_session() {
 
     open_orchestrator_dialog(&mut harness);
     // Discovered worktrees now sort *after* the live sessions, so the
-    // `[○]` row isn't the default selection. Wait for it, then move
-    // the highlight down onto it (Down routes to the list even though
-    // focus sits on a button) until its on-disk preview shows.
+    // `· on-disk` row isn't the default selection. Wait for it, then
+    // move the highlight down onto it (Down routes to the list even
+    // though focus sits on a button) until its on-disk preview shows.
     harness
-        .wait_until(|h| h.screen_to_string().contains("[○]"))
+        .wait_until(|h| h.screen_to_string().contains("· on-disk"))
         .unwrap();
     navigate_to_discovered_row(&mut harness);
     harness
@@ -293,19 +293,18 @@ fn diving_discovered_worktree_attaches_managed_session() {
         .wait_until(|h| h.editor().session_count() >= 2)
         .unwrap();
 
-    // Reopen the dialog. The worktree is now a live session, so it
-    // lists with a numeric id and the discovery scan no longer
-    // surfaces it as `[○]`.
+    // Reopen the dialog. The worktree is now a live session, so the
+    // discovery scan no longer surfaces it as a `· on-disk` row.
     open_orchestrator_dialog(&mut harness);
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("feature-x") && !s.contains("[○]")
+            s.contains("feature-x") && !s.contains("· on-disk")
         })
         .unwrap_or_else(|_| {
             panic!(
                 "After diving the discovered worktree it should appear as a live \
-                 (non-`[○]`) session.\nScreen:\n{}",
+                 (non-`· on-disk`) session.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
@@ -314,7 +313,7 @@ fn diving_discovered_worktree_attaches_managed_session() {
     let screen = harness.screen_to_string();
     let feature_line = screen
         .lines()
-        .find(|l| l.contains("feature-x") && l.contains('['))
+        .find(|l| l.contains("feature-x") && l.contains("[ ]"))
         .unwrap_or("");
     assert!(
         !feature_line.contains('⇄'),
@@ -351,7 +350,10 @@ fn new_session_form_hints_existing_worktree() {
 }
 
 /// Discovered on-disk worktree rows sort *after* the live sessions:
-/// the base session `[1]` row appears above the discovered `[○]` row.
+/// the base session's list row appears above the discovered worktree
+/// row. The base list row is identified by the `[ ]` checkbox + the
+/// `BASE` badge (both unique to that list row); the discovered row by
+/// its `· on-disk` tag.
 #[test]
 fn discovered_rows_sort_after_live_sessions() {
     let (_temp, repo, _wt) = set_up_repo_with_worktree();
@@ -361,16 +363,18 @@ fn discovered_rows_sort_after_live_sessions() {
 
     open_orchestrator_dialog(&mut harness);
     harness
-        .wait_until(|h| h.screen_to_string().contains("[○]"))
+        .wait_until(|h| h.screen_to_string().contains("· on-disk"))
         .unwrap();
 
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
-    let base_idx = lines.iter().position(|l| l.contains("[1]"));
-    let disc_idx = lines.iter().position(|l| l.contains("[○]"));
+    let base_idx = lines
+        .iter()
+        .position(|l| l.contains("[ ]") && l.contains("BASE"));
+    let disc_idx = lines.iter().position(|l| l.contains("· on-disk"));
     assert!(
         base_idx.is_some() && disc_idx.is_some() && base_idx < disc_idx,
-        "live `[1]` session must list above the discovered `[○]` worktree.\n\
+        "live base session must list above the discovered worktree.\n\
          base_idx={:?} disc_idx={:?}\nScreen:\n{}",
         base_idx,
         disc_idx,
@@ -395,7 +399,7 @@ fn space_selects_rows_and_shows_bulk_bar() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("feature-x") && s.contains("feature-y") && s.contains("[○]")
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("· on-disk")
         })
         .unwrap();
 
@@ -440,7 +444,7 @@ fn bulk_delete_removes_selected_worktrees() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("feature-x") && s.contains("feature-y") && s.contains("[○]")
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("· on-disk")
         })
         .unwrap();
 
