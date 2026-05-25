@@ -13,6 +13,7 @@ architectural decision records for Fresh development.
 | [code-review.md](code-review.md) | Code quality improvements to address |
 | [refactoring-planning-prompt.md](refactoring-planning-prompt.md) | LLM prompt for producing a refactoring plan in the shape of the existing `*-refactor-plan.md` docs |
 | [buffer-refactor-plan.md](buffer-refactor-plan.md) | Plan to decompose `model/buffer.rs` into field-cluster sub-structs (`BufferFormat`, `BufferFileKind`, `Persistence`) |
+| [global-search-ux.md](global-search-ux.md) | UX design to grow Live Grep into a universal "one-stop" search with a visible scope picker (project/ignored files, open + closed terminals, diagnostics, git history, worktrees, all Orchestrator sessions); ASCII wireframe alternatives + NN/g rationale + closed-terminal retention plan |
 | [PLAN-git-log-streaming.md](PLAN-git-log-streaming.md) | Plan to stream `git show` into a file-backed buffer (extend `spawnProcess` with `stdoutTo`; add lightweight `refreshBufferFromDisk`); eliminates 43 MB JS string + 1 M-entry FFI marshal on giant commits |
 | [PLAN-git-log-diff-folding-and-highlighting.md](PLAN-git-log-diff-folding-and-highlighting.md) | Plan for incremental per-file/per-hunk folding (toggleable via standard `toggle_fold` key) and principled syntect-driven diff highlighting (extend `HighlightCategory` + theme bg keys; per-chunk through existing lazy-load), scalable to 2 GB diffs |
 
