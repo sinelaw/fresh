@@ -3356,7 +3356,16 @@ mod tests {
         let known_actions: std::collections::HashSet<String> =
             Action::all_action_names().into_iter().collect();
 
-        const ALLOWED_PLUGIN_ACTIONS_IN_DEFAULTS: &[&str] = &["start_search_replace"];
+        const ALLOWED_PLUGIN_ACTIONS_IN_DEFAULTS: &[&str] = &[
+            "start_search_replace",
+            // Universal Search scope toggles — handled by the live_grep
+            // plugin; dispatched as plugin actions from the prompt context.
+            "live_grep_toggle_files",
+            "live_grep_toggle_ignored",
+            "live_grep_toggle_buffers",
+            "live_grep_toggle_terminals",
+            "live_grep_toggle_diagnostics",
+        ];
 
         let config = Config::default();
 

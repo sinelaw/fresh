@@ -462,10 +462,12 @@ Landed in `live_grep.ts` + keymap + i18n (no core Rust changes):
 
 Known limitations / follow-ups:
 
-- Terminals scope currently spans **all** projects' terminals, not just the
-  current cwd — cwd-scoping needs the host's `encode_path_for_filename`
-  (percent-encodes non-ASCII, so not safely replicated in JS). Best solved
-  by the `listTerminalLogs()` host API in §8.
+- ~~Terminals scope spans all projects~~ **Resolved.** The host now exposes
+  `getTerminalDir()` (→ `<data_dir>/terminals/<encoded-cwd>/` via a new
+  `PluginServiceBridge::terminal_dir(working_dir)` that delegates to
+  `DirectoryContext::terminal_dir_for`). The scope greps only the current
+  project/worktree's subdir. Verified: a planted other-project log is *not*
+  matched.
 - Terminal hits open the **backing file** at the line, not the live
   terminal. Fine for "find it"; focusing the live terminal is a refinement.
 - Toggles only work in the live overlay, not the `Resume` (cached) overlay.

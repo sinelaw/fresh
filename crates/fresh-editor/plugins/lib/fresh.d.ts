@@ -2134,6 +2134,12 @@ interface EditorAPI {
 	*/
 	getDataDir(): string;
 	/**
+	* Directory holding terminal scrollback backing files for the current
+	* working directory. Each project root / worktree has its own subdir, so
+	* a search can stay scoped to the active project's terminals.
+	*/
+	getTerminalDir(): string;
+	/**
 	* Get themes directory path
 	*/
 	getThemesDir(): string;

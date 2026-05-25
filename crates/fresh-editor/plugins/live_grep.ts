@@ -641,19 +641,17 @@ function stripAnsi(s: string): string {
     .replace(/\x1b[@-Z\\-_]/g, "");
 }
 
-/** Search terminal scrollback. Terminal backing files live under
- *  `<data_dir>/terminals/` — open terminals stream their scrollback
- *  there live, and (once retention lands) closed terminals are kept
- *  too. We grep that tree directly with rg (falling back to grep),
- *  then strip ANSI for display. Opening a hit opens the backing file
- *  at the matched line.
- *
- *  Note: this currently spans every project's terminals, not just the
- *  current cwd — cwd-scoping needs the host's filename encoding and is
- *  a follow-up (see docs/internal/global-search-ux.md). */
+/** Search terminal scrollback. Terminal backing files live under the
+ *  current working directory's terminal subdir
+ *  (`getTerminalDir()` → `<data_dir>/terminals/<encoded-cwd>/`) — open
+ *  terminals stream their scrollback there live, and closed terminals
+ *  are retained there too (renamed `*-closed-*.txt`). Scoping to that
+ *  subdir keeps the search to *this* project / worktree. We grep it
+ *  with rg (falling back to grep), then strip ANSI for display.
+ *  Opening a hit opens the backing file at the matched line. */
 async function searchTerminals(query: string, limit: number): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
-  const dir = `${editor.getDataDir()}/terminals`;
+  const dir = editor.getTerminalDir();
   const cwd = editor.getCwd();
   let raw: GrepMatch[] = [];
   try {

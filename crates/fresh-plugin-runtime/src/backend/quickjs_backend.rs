@@ -2942,6 +2942,22 @@ impl JsEditorApi {
         self.services.data_dir().to_string_lossy().to_string()
     }
 
+    /// Directory holding terminal scrollback backing files for the current
+    /// working directory. Each project root / worktree has its own subdir, so
+    /// Universal Search's terminal scope can stay scoped to the active
+    /// project rather than spanning every project's terminals.
+    pub fn get_terminal_dir(&self) -> String {
+        let working_dir = self
+            .state_snapshot
+            .read()
+            .map(|s| s.working_dir.clone())
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        self.services
+            .terminal_dir(&working_dir)
+            .to_string_lossy()
+            .to_string()
+    }
+
     /// Get themes directory path
     pub fn get_themes_dir(&self) -> String {
         self.services

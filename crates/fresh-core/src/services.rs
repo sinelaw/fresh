@@ -62,6 +62,17 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Used for long-lived plugin state such as review-diff comment history.
     fn data_dir(&self) -> std::path::PathBuf;
 
+    /// Directory holding terminal scrollback backing files for the given
+    /// working directory (project root / worktree). Each root gets its own
+    /// subdir, so Universal Search's terminal scope can stay scoped to the
+    /// active project. Default falls back to the shared `terminals` root
+    /// (covers all roots); the editor bridge overrides with the per-root
+    /// subdir (`DirectoryContext::terminal_dir_for`).
+    fn terminal_dir(&self, working_dir: &std::path::Path) -> std::path::PathBuf {
+        let _ = working_dir;
+        self.data_dir().join("terminals")
+    }
+
     /// Get theme data (JSON) by name from the in-memory cache.
     fn get_theme_data(&self, _name: &str) -> Option<serde_json::Value> {
         None
