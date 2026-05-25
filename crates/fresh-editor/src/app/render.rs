@@ -2503,12 +2503,33 @@ impl Editor {
         // provides a border, so adding a nested one creates a
         // double-frame). Inner content height = overlay.height -
         // chrome.
-        let toolbar_visible = self
+        // Toolbar height must be the *actual* rendered row count — a widget
+        // toolbar is ≥2 rows (e.g. "Search in:" + "Match:") and wraps to more
+        // on a narrow terminal. Measuring it (vs assuming 1) keeps
+        // `suggestions_visible_rows` honest, so `ensure_selected_visible`
+        // doesn't let the selection scroll just past the real list bottom.
+        let inner_w = overlay_rect.width.saturating_sub(2);
+        let toolbar_rows: usize = self
             .active_window()
             .prompt
             .as_ref()
-            .map(|p| !p.title.is_empty() || p.toolbar_widget.is_some())
-            .unwrap_or(false);
+            .map(|p| {
+                if let Some(spec) = p.toolbar_widget.as_ref() {
+                    crate::widgets::render_spec_no_autofocus(
+                        spec,
+                        &std::collections::HashMap::new(),
+                        p.toolbar_focus.as_deref().unwrap_or(""),
+                        inner_w as u32,
+                    )
+                    .entries
+                    .len()
+                } else if p.title.is_empty() {
+                    0
+                } else {
+                    1
+                }
+            })
+            .unwrap_or(0);
         let footer_visible = self
             .active_window()
             .prompt
@@ -2516,8 +2537,8 @@ impl Editor {
             .map(|p| !p.footer.is_empty())
             .unwrap_or(false);
         // Chrome around the result list: frame border (2) + input (1) +
-        // separator (1) + optional toolbar (1) + optional full-width footer (1).
-        let chrome_rows: usize = 4 + usize::from(toolbar_visible) + usize::from(footer_visible);
+        // separator (1) + toolbar (`toolbar_rows`) + optional full-width footer (1).
+        let chrome_rows: usize = 4 + toolbar_rows + usize::from(footer_visible);
         let suggestions_visible_rows = (overlay_rect.height as usize).saturating_sub(chrome_rows);
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             prompt.ensure_selected_visible_within(suggestions_visible_rows);
@@ -2649,7 +2670,7 @@ impl Editor {
         // docs/internal/global-search-ux.md §12.
         let toolbar_h: u16 = match &toolbar_widget_out {
             Some(out) => out.entries.len() as u16,
-            None if toolbar_visible => 1,
+            None if !prompt.title.is_empty() => 1,
             None => 0,
         };
         let footer_h: u16 = if prompt.footer.is_empty() { 0 } else { 1 };
@@ -2793,7 +2814,7 @@ impl Editor {
                     .prompt_toolbar_hits
                     .push((hit.widget_key.clone(), rect));
             }
-        } else if toolbar_visible && inner.height >= 2 {
+        } else if !prompt.title.is_empty() && inner.height >= 2 {
             let toolbar = Rect {
                 x: inner.x,
                 y: inner.y + 1,
