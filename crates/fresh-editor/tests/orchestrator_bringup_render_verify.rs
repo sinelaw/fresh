@@ -42,17 +42,6 @@ fn hijack_harness() -> (EditorTestHarness, PathBuf, PathBuf, tempfile::TempDir) 
     std::fs::write(worktree.join("WORKTREE_FILE.md"), "w").unwrap();
 
     let dir_context = DirectoryContext::for_testing(&data_home);
-    let orch = dir_context.data_dir.join("orchestrator");
-    std::fs::create_dir_all(&orch).unwrap();
-    let fixture = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/orchestrator_bringup/v2_worktree_session.json"
-    ))
-    .unwrap()
-    .replace("__PROJECT__", &json_path(&project))
-    .replace("__WORKTREE__", &json_path(&worktree));
-    std::fs::write(orch.join("windows.json"), fixture).unwrap();
-
     let config = Config {
         check_for_updates: false,
         ..Config::default()
@@ -68,7 +57,13 @@ fn hijack_harness() -> (EditorTestHarness, PathBuf, PathBuf, tempfile::TempDir) 
     )
     .unwrap();
     h.startup(true, &[]).unwrap();
-    h.editor_mut().restore_inactive_window_workspaces();
+    // Launch foregrounds the project (the cwd). Open a second window
+    // rooted at the worktree so the diving test has two windows to
+    // switch between — the runtime equivalent of the old windows.json
+    // worktree-session fixture (now that sessions are discovered from
+    // the per-dir workspace cache rather than a central registry).
+    h.editor_mut()
+        .create_window_at(worktree.clone(), "worktree".to_string());
     (h, project, worktree, sandbox)
 }
 
