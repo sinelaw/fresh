@@ -157,7 +157,10 @@ pub(crate) fn read_persisted_windows_env(
     }
     match filesystem.read_file(&global_p) {
         Ok(bytes) => match serde_json::from_slice::<PersistedWindows>(&bytes) {
-            Ok(env) => Some(env),
+            Ok(mut env) => {
+                dedup_windows_by_root(&mut env);
+                Some(env)
+            }
             Err(e) => {
                 tracing::warn!("orchestrator persistence: failed to parse {global_p:?}: {e}");
                 None
@@ -220,9 +223,73 @@ fn window_matches_cwd(w: &PersistedWindow, cwd: &Path) -> bool {
 }
 
 fn paths_equal(a: &Path, b: &Path) -> bool {
-    let ca = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
-    let cb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
-    ca == cb
+    canonical_key(a) == canonical_key(b)
+}
+
+/// Canonicalized identity for a session root. Sessions are
+/// identified by directory (one session per dir), so every root
+/// comparison and dedup goes through this: it resolves symlinks
+/// and normalizes trailing slashes so `/repos/inty` and
+/// `/repos/inty/` (and a symlinked tmpdir vs its real path) map to
+/// the same session.
+pub(crate) fn canonical_key(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Enforce the one-session-per-directory invariant on a freshly
+/// loaded envelope: when two persisted windows share a canonical
+/// root (e.g. a plain project window and an orchestrator session
+/// rooted at the same dir), collapse them to a single entry. The
+/// kept entry is the active one if present, otherwise the
+/// highest-id (most recently created); `active` is repointed when
+/// it referenced a dropped duplicate. Without this, colliding
+/// roots clobber one another's per-dir workspace file under the
+/// non-deterministic save order.
+pub(crate) fn dedup_windows_by_root(env: &mut PersistedWindows) {
+    use std::collections::HashMap as Map;
+    // canonical root -> index of the kept window in env.windows
+    let mut kept: Map<PathBuf, usize> = Map::new();
+    let mut remap: Map<u64, u64> = Map::new();
+    let mut drop_idx: Vec<usize> = Vec::new();
+
+    for i in 0..env.windows.len() {
+        let key = canonical_key(&env.windows[i].root);
+        match kept.get(&key).copied() {
+            None => {
+                kept.insert(key, i);
+            }
+            Some(j) => {
+                // Pick the winner between the already-kept j and i.
+                let win_is_active = |idx: usize| env.windows[idx].id == env.active;
+                let keep_i = if win_is_active(i) {
+                    true
+                } else if win_is_active(j) {
+                    false
+                } else {
+                    env.windows[i].id > env.windows[j].id
+                };
+                let (winner, loser) = if keep_i { (i, j) } else { (j, i) };
+                remap.insert(env.windows[loser].id, env.windows[winner].id);
+                if keep_i {
+                    kept.insert(key, i);
+                }
+                drop_idx.push(loser);
+            }
+        }
+    }
+
+    if drop_idx.is_empty() {
+        return;
+    }
+    // Repoint active if it named a dropped duplicate.
+    if let Some(&target) = remap.get(&env.active) {
+        env.active = target;
+    }
+    drop_idx.sort_unstable();
+    drop_idx.dedup();
+    for &idx in drop_idx.iter().rev() {
+        env.windows.remove(idx);
+    }
 }
 
 /// Scan `<data>/orchestrator/*/windows.json` for legacy v1
@@ -620,12 +687,16 @@ impl Editor {
         // make the file diff differently every quit, producing
         // noisy diffs for anyone inspecting the persisted state.
         windows.sort_by_key(|s| s.id);
-        let envelope = PersistedWindows {
+        let mut envelope = PersistedWindows {
             version: CURRENT_VERSION,
             active: self.active_window.0,
             next_id: self.next_window_id,
             windows,
         };
+        // One session per directory: never persist two entries that
+        // resolve to the same canonical root (a spliced other-process
+        // session can collide with one of ours).
+        dedup_windows_by_root(&mut envelope);
         match serde_json::to_vec_pretty(&envelope) {
             Ok(bytes) => {
                 let path = global_windows_path(&data_dir);

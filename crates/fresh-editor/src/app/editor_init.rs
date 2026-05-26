@@ -1172,12 +1172,22 @@ impl Editor {
             // id so it survives as an inactive shell instead of being
             // shadowed/dropped (issue #2056 cross-project case).
             let active_came_from_pick = picked_active.is_some();
+            let active_root_key =
+                crate::app::orchestrator_persistence::canonical_key(&active_win.root);
             let mut next_fresh_id = env
                 .next_id
                 .max(env.windows.iter().map(|w| w.id).max().unwrap_or(0) + 1)
                 .max(active_window_id.0 + 1);
             for ps in &env.windows {
                 if active_came_from_pick && ps.id == active_window_id.0 {
+                    continue;
+                }
+                // One session per directory: never seed a shell that
+                // resolves to the active window's own directory (the
+                // clean-base case where the cwd has a stale persisted
+                // window the pick didn't claim).
+                if crate::app::orchestrator_persistence::canonical_key(&ps.root) == active_root_key
+                {
                     continue;
                 }
                 let id = if ps.id == active_window_id.0 {

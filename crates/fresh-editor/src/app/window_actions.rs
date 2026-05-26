@@ -59,7 +59,24 @@ impl crate::app::Editor {
     /// immediately. Without this, never-dived windows have
     /// `splits == None` and any cross-window render (e.g. the
     /// Orchestrator preview pane's `WindowEmbed`) draws blank.
+    /// Find an existing window whose root resolves to the same
+    /// canonical directory, if any. Backs the one-session-per-dir
+    /// invariant: opening a directory that already has a window
+    /// reuses it rather than creating a duplicate.
+    pub(crate) fn find_window_by_root(&self, root: &std::path::Path) -> Option<WindowId> {
+        let key = crate::app::orchestrator_persistence::canonical_key(root);
+        self.windows
+            .iter()
+            .find(|(_, w)| crate::app::orchestrator_persistence::canonical_key(&w.root) == key)
+            .map(|(id, _)| *id)
+    }
+
     pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
+        // One session per directory: reuse an existing window at this
+        // root instead of spawning a colliding duplicate.
+        if let Some(existing) = self.find_window_by_root(&root) {
+            return existing;
+        }
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
 
