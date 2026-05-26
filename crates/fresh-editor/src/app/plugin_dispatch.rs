@@ -1417,6 +1417,7 @@ impl Editor {
                 case_sensitive,
                 max_results,
                 whole_words,
+                source_buffer_id,
                 handle_id,
             } => {
                 self.handle_begin_search(
@@ -1425,17 +1426,25 @@ impl Editor {
                     case_sensitive,
                     max_results,
                     whole_words,
+                    source_buffer_id,
                     handle_id,
                 );
             }
 
             PluginCommand::ReplaceInBuffer {
                 file_path,
+                buffer_id,
                 matches,
                 replacement,
                 callback_id,
             } => {
-                self.handle_replace_in_buffer(file_path, matches, replacement, callback_id);
+                self.handle_replace_in_buffer(
+                    file_path,
+                    buffer_id,
+                    matches,
+                    replacement,
+                    callback_id,
+                );
             }
 
             PluginCommand::MountWidgetPanel {

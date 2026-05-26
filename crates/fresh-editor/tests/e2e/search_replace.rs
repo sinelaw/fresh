@@ -440,6 +440,93 @@ fn test_search_replace_scope_after_close_reopen() {
     );
 }
 
+/// §1 regression: "Search and Replace in Current File" must work when the
+/// active buffer is an unnamed/unsaved buffer (no path on disk). The host
+/// can't reach such a buffer via the project file-walk, so it searches the
+/// buffer's in-memory content directly (addressed by buffer id). Before the
+/// fix this showed "No matches found" even when the buffer clearly contained
+/// the pattern, and Replace All was a no-op.
+#[test]
+fn test_search_replace_current_file_unnamed_buffer() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    // Disk files also contain "hello" — they must NOT leak into a search
+    // scoped to the unnamed buffer.
+    create_test_files(&project_root);
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(160, 30, Default::default(), project_root)
+            .unwrap();
+
+    // Create a fresh unnamed buffer and put three "hello" occurrences in it.
+    harness.new_buffer().unwrap();
+    harness.type_text("hello world hello there hello").unwrap();
+    harness.render().unwrap();
+
+    // Open via palette → "Search and Replace in Current File".
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("Search and Replace in Current File")
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Search and Replace in Current File")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+
+    // Search + replace term. The scope is the unnamed buffer.
+    enter_search_and_replace(&mut harness, "hello", "goodbye");
+
+    // The three in-buffer matches must be found (this is the regression:
+    // it used to read "No matches found").
+    harness
+        .wait_until(|h| h.screen_to_string().contains("3 matches"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("No matches"),
+        "Unnamed-buffer search must find the in-memory matches, not report \
+         'No matches'. Got:\n{}",
+        screen
+    );
+    // Disk files that also contain "hello" must stay out of the scoped results.
+    assert!(
+        !screen.contains("alpha.txt") && !screen.contains("beta.txt"),
+        "Disk files must not leak into a search scoped to the unnamed buffer. \
+         Got:\n{}",
+        screen
+    );
+
+    // Replace all three, then close the panel and confirm the buffer's
+    // visible content was actually rewritten in memory.
+    confirm_replace_all(&mut harness);
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("goodbye world goodbye there goodbye")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("hello world hello there hello"),
+        "Original text should be gone after replace. Got:\n{}",
+        screen
+    );
+}
+
 /// Searching for a pattern with no matches shows the "No matches" message.
 #[test]
 fn test_search_replace_no_matches() {

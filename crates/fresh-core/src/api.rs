@@ -3529,6 +3529,11 @@ pub enum PluginCommand {
         max_results: usize,
         /// Whether to match whole words only
         whole_words: bool,
+        /// Source buffer id to additionally search in-memory when it has no
+        /// file path (an unnamed/unsaved buffer). The on-disk walk can't see
+        /// such a buffer, so the host searches its piece-tree content directly
+        /// and emits matches carrying this buffer id. 0 means "no such buffer".
+        source_buffer_id: usize,
         /// Handle ID — key into the shared `SearchHandleRegistry`
         handle_id: u64,
     },
@@ -3539,6 +3544,10 @@ pub enum PluginCommand {
     ReplaceInBuffer {
         /// File path to edit (will open if not already in a buffer)
         file_path: PathBuf,
+        /// Buffer id to edit directly when non-zero and still live. Used for
+        /// unnamed/unsaved buffers that have no path to resolve by. When 0, the
+        /// target is resolved via `file_path` (opening the file if needed).
+        buffer_id: usize,
         /// Matches to replace, each is (byte_offset, length)
         matches: Vec<(usize, usize)>,
         /// Replacement text

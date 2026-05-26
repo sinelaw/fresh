@@ -5845,7 +5845,7 @@ impl JsEditorApi {
     /// `handle.cancel()` to abort.
     #[plugin_api(
         js_name = "beginSearch",
-        ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean }): SearchHandle"
+        ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number }): SearchHandle"
     )]
     #[qjs(rename = "_beginSearch")]
     pub fn begin_search(
@@ -5856,6 +5856,7 @@ impl JsEditorApi {
         case_sensitive: bool,
         max_results: u32,
         whole_words: bool,
+        source_buffer_id: u32,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Register the shared state before sending the command so the
@@ -5870,6 +5871,7 @@ impl JsEditorApi {
             case_sensitive,
             max_results: max_results as usize,
             whole_words,
+            source_buffer_id: source_buffer_id as usize,
             handle_id: id,
         });
         id
@@ -5943,7 +5945,11 @@ impl JsEditorApi {
     /// Replace matches in a file's buffer (async)
     /// Opens the file if not already in a buffer, applies edits via the buffer model,
     /// and saves. All edits are grouped as a single undo action.
-    #[plugin_api(async_promise, js_name = "replaceInFile", ts_return = "ReplaceResult")]
+    #[plugin_api(
+        async_promise,
+        js_name = "replaceInFile",
+        ts_raw = "replaceInFile(filePath: string, matches: number[][], replacement: string, bufferId?: number): Promise<ReplaceResult>"
+    )]
     #[qjs(rename = "_replaceInFileStart")]
     pub fn replace_in_file_start(
         &self,
@@ -5951,6 +5957,7 @@ impl JsEditorApi {
         file_path: String,
         matches: Vec<Vec<u32>>,
         replacement: String,
+        buffer_id: rquickjs::function::Opt<u32>,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Convert [[offset, length], ...] to Vec<(usize, usize)>
@@ -5960,6 +5967,7 @@ impl JsEditorApi {
             .collect();
         let _ = self.command_sender.send(PluginCommand::ReplaceInBuffer {
             file_path: PathBuf::from(file_path),
+            buffer_id: buffer_id.0.unwrap_or(0) as usize,
             matches: match_pairs,
             replacement,
             callback_id: JsCallbackId::new(id),
@@ -6894,8 +6902,9 @@ impl QuickJsBackend {
                     const caseSensitive = opts.caseSensitive !== undefined ? opts.caseSensitive : true;
                     const maxResults = opts.maxResults || 10000;
                     const wholeWords = opts.wholeWords || false;
+                    const sourceBufferId = opts.sourceBufferId || 0;
                     const handleId = editor._beginSearch(
-                        pattern, fixedString, caseSensitive, maxResults, wholeWords
+                        pattern, fixedString, caseSensitive, maxResults, wholeWords, sourceBufferId
                     );
                     return {
                         searchId: handleId,

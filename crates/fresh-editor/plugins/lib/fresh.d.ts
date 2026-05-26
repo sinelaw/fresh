@@ -2961,18 +2961,13 @@ interface EditorAPI {
 	* the consumer drains via `handle.take()` at its own cadence. Call
 	* `handle.cancel()` to abort.
 	*/
-	beginSearch(pattern: string, opts?: {
-		fixedString?: boolean;
-		caseSensitive?: boolean;
-		maxResults?: number;
-		wholeWords?: boolean;
-	}): SearchHandle;
+	beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number }): SearchHandle;
 	/**
 	* Replace matches in a file's buffer (async)
 	* Opens the file if not already in a buffer, applies edits via the buffer model,
 	* and saves. All edits are grouped as a single undo action.
 	*/
-	replaceInFile(filePath: string, matches: number[][], replacement: string): Promise<ReplaceResult>;
+	replaceInFile(filePath: string, matches: number[][], replacement: string, bufferId?: number): Promise<ReplaceResult>;
 	/**
 	* Send LSP request (async, returns request_id)
 	*/

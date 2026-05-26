@@ -68,16 +68,19 @@ interface PanelState {
   caseSensitive: boolean;
   useRegex: boolean;
   wholeWords: boolean;
-  // Scope (§1): when false, results are restricted to `sourceBufferPath`.
+  // Scope (§1): when false, results are restricted to the source buffer.
   // `sourceBufferPath` is the absolute path of the buffer that was
   // active when the panel opened; `sourceBufferRelPath` is the
-  // cwd-relative display form. Empty path means the source buffer was
-  // unsaved/virtual; in that case the "current file" mode degrades to
-  // "no matches" and the toggle visually still flips, but the user
-  // can't usefully restrict to an unnamed buffer.
+  // cwd-relative display form. An empty path means the source buffer is
+  // unnamed/unsaved — in that case scope filtering falls back to
+  // `sourceBufferId`, and the host searches that buffer's in-memory
+  // content directly (it has no on-disk file the project walk can find).
   allFiles: boolean;
   sourceBufferPath: string;
   sourceBufferRelPath: string;
+  // Buffer id of the source buffer, used to scope/replace unnamed buffers
+  // by id when there's no path to match on. 0 means "unknown".
+  sourceBufferId: number;
   // Layout
   viewportWidth: number;
   // State
@@ -1060,6 +1063,9 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
       caseSensitive: panel.caseSensitive,
       maxResults: MAX_RESULTS,
       wholeWords: panel.wholeWords,
+      // Lets the host search an unnamed/unsaved source buffer in-memory;
+      // it has no on-disk file the project walk could otherwise reach.
+      sourceBufferId: panel.sourceBufferId,
     });
     activeSearchHandle = handle;
 
@@ -1108,10 +1114,15 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
       const newExpandedKeys: string[] = []; // file rows added this batch
       for (const m of chunk) {
         // §1 scope filter: when scope is "current file only", drop
-        // matches from any other path. Done client-side because the
-        // host grep API is project-wide. Empty sourceBufferPath
-        // (unsaved buffer) filters everything out by design.
-        if (!panel.allFiles && m.file !== panel.sourceBufferPath) continue;
+        // matches from any other source. Done client-side because the
+        // host grep API is project-wide. A named buffer matches by path;
+        // an unnamed/unsaved buffer (empty sourceBufferPath) matches by
+        // buffer id instead — the host tags its in-memory matches with it.
+        if (!panel.allFiles) {
+          const sameFile = !!panel.sourceBufferPath && m.file === panel.sourceBufferPath;
+          const sameBuffer = !!panel.sourceBufferId && m.bufferId === panel.sourceBufferId;
+          if (!sameFile && !sameBuffer) continue;
+        }
         const result: SearchResult = { match: m, selected: true };
         allResults.push(result);
         let fileIdx = streamingFileIndexByPath?.get(m.file);
@@ -1276,8 +1287,10 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
   // Try to pre-fill search from editor selection
   let prefill = "";
   let sourceBufferPath = "";
+  let sourceBufferId = 0;
   try {
     const activeId = editor.getActiveBufferId();
+    sourceBufferId = activeId;
     sourceBufferPath = editor.getBufferPath(activeId) || "";
     const cursor = editor.getPrimaryCursor();
     if (cursor && cursor.selection) {
@@ -1304,6 +1317,7 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
     panel.allFiles = allFiles;
     panel.sourceBufferPath = sourceBufferPath;
     panel.sourceBufferRelPath = sourceBufferRelPath;
+    panel.sourceBufferId = sourceBufferId;
     updatePanelContent();
     if (panel.searchPattern) rerunSearchDebounced();
     return;
@@ -1329,6 +1343,7 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
     allFiles,
     sourceBufferPath,
     sourceBufferRelPath,
+    sourceBufferId,
     viewportWidth: DEFAULT_WIDTH,
     busy: false,
     searchPerformed: false,
@@ -1383,29 +1398,42 @@ async function executeReplacements(results?: SearchResult[]): Promise<string> {
     return editor.t("status.no_selected");
   }
 
-  const fileGroups: Map<string, Array<[number, number]>> = new Map();
+  // Group edits per target. Matches in an open buffer carry a non-zero
+  // bufferId; key by it so an unnamed buffer (whose `file` is a shared
+  // "[No Name]" label) still resolves to the right buffer rather than
+  // colliding with another unnamed buffer's matches. On-disk files
+  // (bufferId 0) key by path and are opened/saved by the host as before.
+  type Group = { filePath: string; bufferId: number; matches: Array<[number, number]> };
+  const groups: Map<string, Group> = new Map();
   for (const result of toReplace) {
-    const file = result.match.file;
-    if (!fileGroups.has(file)) {
-      fileGroups.set(file, []);
+    const bufferId = result.match.bufferId || 0;
+    const key = bufferId > 0 ? `buf:${bufferId}` : result.match.file;
+    let group = groups.get(key);
+    if (!group) {
+      group = { filePath: result.match.file, bufferId, matches: [] };
+      groups.set(key, group);
     }
-    fileGroups.get(file)!.push([result.match.byteOffset, result.match.length]);
+    group.matches.push([result.match.byteOffset, result.match.length]);
   }
 
   let filesModified = 0;
   let replacementsCount = 0;
   const errors: string[] = [];
 
-  const keys: string[] = [];
-  fileGroups.forEach((_v, k) => keys.push(k));
-  for (const filePath of keys) {
-    const matches = fileGroups.get(filePath)!;
+  const groupList: Group[] = [];
+  groups.forEach((g) => groupList.push(g));
+  for (const group of groupList) {
     try {
-      const result = await editor.replaceInFile(filePath, matches, panel.replaceText);
+      const result = await editor.replaceInFile(
+        group.filePath,
+        group.matches,
+        panel.replaceText,
+        group.bufferId
+      );
       replacementsCount += result.replacements;
       if (result.replacements > 0) filesModified++;
     } catch (e) {
-      errors.push(`${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+      errors.push(`${group.filePath}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

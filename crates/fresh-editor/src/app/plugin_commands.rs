@@ -2746,6 +2746,7 @@ impl Editor {
         case_sensitive: bool,
         max_results: usize,
         whole_words: bool,
+        source_buffer_id: usize,
         handle_id: u64,
     ) {
         // Look up the handle the plugin pre-registered. If it's missing
@@ -2815,6 +2816,68 @@ impl Editor {
                     if let Some(plan) = state.buffer.search_hybrid_plan() {
                         dirty_plans.insert(path, (*bid, plan));
                     }
+                }
+            }
+        }
+
+        // An unnamed/unsaved buffer has no on-disk file, so the project walk
+        // below can never reach it (`search_hybrid_plan` also bails without a
+        // path). When the plugin passes the source buffer id and that buffer
+        // has no path, search its in-memory content here on the main thread
+        // (the piece tree isn't `Send`) and seed the results with matches that
+        // carry the buffer id so a later replace can target it directly.
+        if source_buffer_id != 0 {
+            let bid = BufferId(source_buffer_id);
+            let content = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.buffers.get_mut(&bid))
+                .filter(|state| state.buffer.file_path().is_none())
+                .and_then(|state| state.buffer.to_string());
+            if let Some(content) = content {
+                let bytes = content.as_bytes();
+                let mut grep_matches: Vec<GrepMatch> = Vec::new();
+                let mut running_line = 1usize;
+                let mut counted_to = 0usize;
+                for mat in regex.find_iter(bytes) {
+                    if grep_matches.len() >= max_results {
+                        break;
+                    }
+                    let start = mat.start();
+                    let end = mat.end();
+                    running_line += bytes[counted_to..start]
+                        .iter()
+                        .filter(|&&b| b == b'\n')
+                        .count();
+                    counted_to = start;
+                    let line_start = bytes[..start]
+                        .iter()
+                        .rposition(|&b| b == b'\n')
+                        .map(|p| p + 1)
+                        .unwrap_or(0);
+                    let line_end = bytes[start..]
+                        .iter()
+                        .position(|&b| b == b'\n')
+                        .map(|p| start + p)
+                        .unwrap_or(bytes.len());
+                    grep_matches.push(GrepMatch {
+                        file: "[No Name]".to_string(),
+                        buffer_id: source_buffer_id,
+                        byte_offset: start,
+                        length: end - start,
+                        line: running_line,
+                        column: start - line_start + 1,
+                        context: String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned(),
+                    });
+                }
+                if !grep_matches.is_empty() {
+                    let count = grep_matches.len();
+                    let mut state = match handle.state.lock() {
+                        Ok(s) => s,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    state.pending.extend(grep_matches);
+                    state.total_seen += count;
                 }
             }
         }
@@ -3025,6 +3088,7 @@ impl Editor {
     pub(super) fn handle_replace_in_buffer(
         &mut self,
         file_path: std::path::PathBuf,
+        buffer_id: usize,
         matches: Vec<(usize, usize)>,
         replacement: String,
         callback_id: JsCallbackId,
@@ -3042,8 +3106,16 @@ impl Editor {
             return;
         }
 
-        // Find or open the buffer for this file
-        let buffer_id = if let Some((&bid, _)) = self
+        // Resolve the target buffer. A non-zero, still-live `buffer_id` wins —
+        // this is how unnamed/unsaved buffers (which have no path to match on)
+        // are addressed. Otherwise fall back to matching the open buffer by
+        // path, opening the file when none is open.
+        let explicit_buffer = (buffer_id != 0)
+            .then(|| BufferId(buffer_id))
+            .filter(|bid| self.buffers().contains_key(bid));
+        let buffer_id = if let Some(bid) = explicit_buffer {
+            bid
+        } else if let Some((&bid, _)) = self
             .buffers()
             .iter()
             .find(|(_, state)| state.buffer.file_path() == Some(&file_path))
@@ -3219,7 +3291,12 @@ impl Editor {
                 // the modified flag — leaving the user with a reverted buffer
                 // that looks clean even though disk still has the XYZ
                 // content.  We want the tab to show `a.txt*` after undo.
-                event_log.mark_saved();
+                //
+                // Only when we actually saved, though: an unnamed buffer has
+                // no path and was left in memory, so it must stay modified.
+                if saved_path.is_some() {
+                    event_log.mark_saved();
+                }
             }
             self.active_window_mut()
                 .invalidate_layouts_for_buffer(buffer_id);
