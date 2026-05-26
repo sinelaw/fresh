@@ -130,7 +130,6 @@ fn test_live_grep_git_grep_flow_finds_match_in_repo() {
 /// buffer. This drives the real plugin path (no subprocess: the buffer
 /// scan is pure JS over `listBuffers`/`getBufferText`).
 #[test]
-#[ignore = "flaky test - plugin-driven overlay search times out intermittently"]
 fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
@@ -184,12 +183,13 @@ fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
 
     harness.type_text(token).unwrap();
 
-    // The unmodified open buffer must surface, badged `[buf]`.
+    // The unmodified open buffer must surface in the result list. Assert on
+    // the `path:line` tail (`notes.txt:2`) — the result label is
+    // left-truncated when the (temp-dir) path is long, so the leading
+    // `[buf]` source badge can scroll off-screen; the trailing
+    // `<file>:<line>` stays visible and only ever appears in a result row.
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("notes.txt") && s.contains("[buf]")
-        })
+        .wait_until(|h| h.screen_to_string().contains("notes.txt:2"))
         .unwrap();
 }
 
